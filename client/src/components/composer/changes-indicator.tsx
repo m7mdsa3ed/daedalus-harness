@@ -55,12 +55,8 @@ function DiffCount({ added, removed }: { added: number; removed: number }) {
  */
 export function ChangesIndicator({
   changes,
-  onOpen,
 }: {
   changes?: TurnChanges
-  /** Open source control narrowed to these paths. Absent outside a workspace,
-      where there is no dock to put the review in. */
-  onOpen?: (turn: TurnChanges) => void
 }) {
   const [open, setOpen] = useState(false)
   if (!changes || changes.files.length === 0) return null
@@ -127,23 +123,6 @@ export function ChangesIndicator({
             </li>
           ))}
         </ul>
-        {/* Reviewing is source control narrowed to these paths — the files land
-            where they can be staged, discarded and committed, which a second
-            read-only list of the same names could never do. */}
-        {onOpen && (
-          <Button
-            size="xs"
-            variant="outline"
-            className="w-full"
-            onClick={() => {
-              setOpen(false)
-              onOpen(changes)
-            }}
-          >
-            <GitCompareIcon className="size-3.5" />
-            Review in source control
-          </Button>
-        )}
       </PopoverContent>
     </Popover>
   )

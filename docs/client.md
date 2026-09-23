@@ -200,28 +200,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   route, because the layout is what renders the container and it only knows the
   location; and set by the layout rather than by each page, or the frame would
   jump width as you moved between them.
-  **The window's own material — macOS vibrancy, Windows 11 mica — is a device
-  preference, and `src/lib/window-material.ts` is its owner** (`ui.windowMaterial`,
-  Settings › Appearance › Window). It is the one thing here that is *not* a
-  theme token and cannot be: the material sits behind the window, and the
-  `data-desktop-vibrancy` blocks in `index.css` are what drop the page ground so
-  the sidebar, the gutters and the header band show it through. Off is the
-  absence of that attribute and nothing else — the ground it takes away is
-  opaque and `inset: 0`, so with it gone the material is covered and the app is
-  solid, and no native call has to move. The row is gated on
-  `WINDOW_MATERIAL`, which is `window.desktop.vibrancy` — the **platform's**
-  capability, never the current choice — so a browser and a shell on a platform
-  with no material are offered no switch, and switching it off cannot hide the
-  switch that switches it back on. The preload reads the same key for the one
-  frame before the bundle parses (a window left opaque used to flash the
-  material on), and it reads it **at `mark()` time, never at preload scope**:
-  preload scope runs before the document exists, where the key is not
-  dependably readable, and an empty read cached there fell back to the
-  default-on and then clobbered the module's parsed-time `apply` at
-  `DOMContentLoaded` — so "off" never survived a restart while "on" did. And
-  `mark()` only ever *sets* the attribute when the choice is on; an off choice
-  leaves whatever the module applied standing, so the page's newer reading wins
-  any race. `main.tsx` imports the module for its boot-time `apply`.
+  **The window's own material — macOS vibrancy, Windows 11 acrylic — is on
+  wherever the platform has one, and has no switch.** It is the one thing here
+  that is *not* a theme token and cannot be: the material sits behind the
+  window, and the `data-desktop-vibrancy` blocks in `index.css` are what drop
+  the page ground so the sidebar, the gutters and the header band show it
+  through. The attribute is the preload's, set before first paint, and its whole
+  condition is the platform (`window.desktop.vibrancy`, the preload's own
+  darwin/win32 read) — a browser and a shell on a platform with no material get
+  no attribute and stay opaque. There is no stored preference behind it, and a
+  switch was tried and removed: it read as doing nothing because the material
+  was not arriving on Windows at all. That was `backgroundMaterial: "mica"`,
+  which draws nothing behind a frameless window on build 26200 — the page was
+  genuinely transparent and showed near-black. **`acrylic` is the material that
+  draws** (`electron/main.cjs`, and the measurement is written up there), so
+  there is nothing left for a switch to turn off.
   **The colour before the app exists is
   `src/lib/boot-colors.ts`** — the address-bar tint, the inlined splash and the
   manifest all need the background named before any stylesheet is parsed, so it
@@ -311,7 +304,31 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   arguments}`) and as `mcp__server__tool` from the others; a web search arrives
   under `search`, which is also where ripgrep lives. Each of those rendered as
   a JSON dump or a wrong-shaped pane before it had a view — as did a
-  `MultiEdit`, whose hunks are one level down in an array. The loudest of them
+  `MultiEdit`, whose hunks are one level down in an array. **JSON is a tree, not
+  a dump** (`JsonView`, `tool-parts.tsx`): every place a call arrives *as* JSON
+  is drawn as foldable nodes — the arguments `ToolInput` falls back to (which is
+  also what `McpDetail` points it at, and what the approval card shows in place
+  of its raw-input well), and whatever `SmartBlock` recognized as a document —
+  a key in its own colour, a folded node summarizing itself, because the shape
+  of an MCP result is the thing you opened the step to see and a brace-matched
+  wall of text is what you were doing instead. `preview` is the caller's,
+  because the two sides are not the same payload: arguments open three levels
+  (they are what you came to read), a returned document one. A *flat* object
+  is deliberately left as the key/value table or the one-liner it already was —
+  a tree of four scalars is a table drawn with more punctuation. It replaces the
+  JSON *block* and never the code block — `parseJsonDocument` is what says the
+  bytes are a document — so a log file beginning with `{` still lands where it
+  did, and a payload that will not parse keeps the block it already had. A
+  `SmartBlock` in the error tone is deliberately not parsed at all: a failure is
+  read for what went wrong, and its copy is `CodeBlock`'s. Depth is a mount-time
+  read (`depth < preview`), so opening a node does not re-fold what is under it;
+  a child list stops at `JSON_CHILD_LIMIT` with an "N more" row, the same
+  bargain `OUTPUT_LIMIT` makes; and nothing in the tree is a vendor's, so it
+  lives with the panes rather than in `tool-views/`. Its colours are
+  `--color-code-*` in index.css, tied to the same `--code-*` palette the
+  transcript's own fences use but named for the *roles* the tree gives them, so
+  a JSON key and a JSON boolean read as one language across a `CodeBlock` and a
+  tree of the same bytes. The loudest of them
   is **the terminal**: Codex announces every shell command as `content:
   [{type:"terminal"}]` and streams the bytes through `_meta.terminal_output_delta`
   on later updates, *whether or not the client claimed the capability* — the
@@ -377,9 +394,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   on. Opening it lists the steps on the same rail a subagent's own rows hang
   off (`RAIL_CLASS`, in `step-row.tsx` because thread-items and workflow-run may
   not import each other), each one the *same* `SubagentStep` row it would be on
-  its own, each opening its own transcript in place. Steps the runner has not
-  spawned yet are pending rows, so the run's shape is whole from the first spawn
-  and does not change under the reader. This replaced a preview card (icon tile,
+  its own, each opening its own transcript in place. A subagent step also keeps
+  its newest three child rows under the folded header by default — a separate
+  preview, not a disclosure of the brief/report — with its reader-global view
+  option to hide that preview; opening the row still reveals the full rail.
+  Native workflow transcript previews read at most the recent steps while closed
+  and the full transcript when opened. Steps the runner has not spawned yet are
+  pending rows, so the run's shape is whole from the first spawn and does not
+  change under the reader. This replaced a preview card (icon tile,
   state pill, progress bar, fact line, live foot) over a modal dialog that
   restated all five and then drew its own step rows, phase rules, tone table and
   two fact renderings — a second design language, and a modal that took the
@@ -405,7 +427,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (unsent prompts) chief among them, pruned from
   `refreshSessions` and **scoped to the active server** (`lib/server-scope.ts`),
   along with `pastes.ts`, `draft-attachments.ts`, `agent-options.ts`,
-  `thread-defaults.ts`, the sidebar's collapsed folders and the tasks board's
+  `thread-defaults.ts` — down to the one field a project row cannot hold, which project
+  the front door opens in; what a project's threads are *configured* with is the project's
+  own row now (`projects.default_*`, written by `lib/project-defaults.ts`) —
+  the sidebar's collapsed folders and the tasks board's
   remembered board. Every one of those keys is an id the *server* minted — a session,
   a profile, a project, a board — and unscoped they meant a `prune*` run at server B's
   bootstrap deleted server A's unsent drafts, since the sweep walks
@@ -481,14 +506,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   that opens on hover (Base UI `openOnHover`) and, on a phone, on long press,
   where it also carries the row's actions (it replaces the right-click menu there). Every row, label and group draws from
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). The
-  footer's **plan usage** rows (`sidebar/usage.tsx`, `SidebarUsage`) sit above the
-  account row: one `ROW`-height line per readable plan, the name and the peak
-  window's percentage in the same `quotaTone` colours as everywhere else, and a
-  row click opens Settings › Usage. The windows, the reset times and the raw
-  report stay on that page — the peak is the whole story at this size. Nothing is
-  drawn when no runtime or profile reports a plan. It reads the Usage page's own
-  list route (`useAllQuotaQuery`), so it costs one bounded read per launch and no
-  timer. The
+  footer's **plan usage** gauge (`sidebar/usage.tsx`, `SidebarUsage`) sits above
+  the account row and opens a popover at a glance's measure: one card per
+  provider, each account a block inside it — the name with its fullest window's
+  percentage in the same `quotaTone` colours as everywhere else, then its own
+  bars. A gateway's reading is the same shape one level down: a block per account
+  the gateway named, joined to its bars by `QuotaAccount.group`, with a silent
+  one saying why it has nothing to draw. "Open Settings" goes to the page, which
+  keeps the tiles, the reset times and the raw report. Nothing is drawn when no
+  runtime or profile reports a plan. It reads the Usage page's own list route
+  (`useAllQuotaQuery`), so it costs one bounded read per launch and no timer. The
   main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
   the Threads label carries a sort/filter menu (recent first / by project;
   all / running / needs you) remembered per device as `ui.sidebarView`. Fold
@@ -776,11 +803,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **A `!` row is never windowed away**: `windowStart` opens the replay at the thread's oldest
   shell command (`firstShell`), because a row that belongs to no turn would otherwise be cut off
   by a turn boundary for good, where an old message is merely behind `load earlier`.
-- **Two view options govern the rows** (`lib/view-options.ts`). **Show `!` commands** hides them
+- **Three view options govern the rows** (`lib/view-options.ts`). **Show `!` commands** hides them
   outright — the command still ran and the journal still holds it, only the row is silent — and
   **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,
-  `groupShellRuns`), the way `groupTools` folds tool steps; a single command stays its own block.
-  Both are Detail-group rows, and neither is `answersOnly`'s business: a `!` line is the reader's
+  `groupShellRuns`). **Group parallel tool calls** folds two or more consecutive tool calls, with
+  any thoughts between them, into one expandable run (`ToolRunGroup`, `groupToolRuns`); a single
+  call stays as its own step. These are Detail-group rows, and neither shell option is
+  `answersOnly`'s business: a `!` line is the reader's
   own act, not the agent's work, which is why it is the one thing that option does not drop.
   A turn's footer never anchors to one either — the strip belongs under the answer, not under a
   command the reader ran in the gap after it (`turn-footers.ts`).

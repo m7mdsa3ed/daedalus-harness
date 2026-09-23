@@ -18,7 +18,7 @@
  * draw one name.
  */
 import * as React from "react"
-import { CheckIcon, CloudDownloadIcon, GitBranchIcon, PlusIcon } from "lucide-react"
+import { CheckIcon, CloudDownloadIcon, GitBranchIcon, PlusIcon, SparklesIcon } from "lucide-react"
 
 import {
   Combobox,
@@ -32,8 +32,14 @@ import {
   ComboboxSeparator,
   ComboboxTrigger,
 } from "@/components/ui/combobox"
+import { Spinner } from "@/components/ui/spinner"
+import { canUseAi, gitPick } from "@/lib/ai-picks"
+import { describeError } from "@/lib/errors"
+import { useProfiles } from "@/lib/queries/catalog"
 import { useGitBranches } from "@/lib/queries/surfaces"
+import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
+import { draftCommitMessage } from "@/lib/workspace/git-api"
 
 /** What a pick means. `track` is a remote ref being made local; `create` is a
     name that exists nowhere yet. Neither is inferred by the caller — the picker
@@ -100,6 +106,71 @@ export function BranchPicker({
     setOpen(false)
     setTyped("")
     if (choice.branch !== branch) onPick(choice)
+  }
+
+  /* ── Naming a branch from the work ──
+     The same diff the commit box asks about, asked a different question
+     (`kind: "branch"` — the server has held the house style for this all
+     along and nothing was calling it). It fills the box rather than checking
+     anything out: the create row below is still the gesture that acts, so a
+     name nobody liked costs a keystroke rather than a branch.
+
+     Its own profile pick, the same one source control's commit draft uses —
+     see `lib/ai-picks.ts`. */
+  const settings = useServer()
+  const profiles = useProfiles()
+  gitPick.useProfileId()
+  gitPick.useModelId()
+  const namer = React.useMemo(() => {
+    const picked = gitPick.resolveProfile(profiles)
+    return canUseAi(picked) ? picked : null
+  }, [profiles])
+
+  const [naming, setNaming] = React.useState(false)
+  const [nameError, setNameError] = React.useState<string | null>(null)
+  const nameAbort = React.useRef<AbortController | null>(null)
+  React.useEffect(() => () => nameAbort.current?.abort(), [projectId, repo])
+  /* The popover closing is an abort: the answer had one place to land. */
+  React.useEffect(() => {
+    if (open) return
+    nameAbort.current?.abort()
+    nameAbort.current = null
+    setNaming(false)
+    setNameError(null)
+  }, [open])
+
+  const suggestName = async () => {
+    if (!namer || naming) return
+    nameAbort.current?.abort()
+    const controller = new AbortController()
+    nameAbort.current = controller
+    setNaming(true)
+    setNameError(null)
+    try {
+      const { message } = await draftCommitMessage(
+        settings,
+        projectId,
+        {
+          profileId: namer.id,
+          model: gitPick.resolveModelId(namer) || undefined,
+          repo: repo || undefined,
+          kind: "branch",
+        },
+        controller.signal
+      )
+      if (controller.signal.aborted) return
+      setTyped(message)
+    } catch (err) {
+      if (controller.signal.aborted) return
+      /* Inside the popover, beside the row that asked — a toast would land
+         behind it, and closing the popover is how you dismiss this. */
+      setNameError(describeError(err).title)
+    } finally {
+      if (nameAbort.current === controller) {
+        nameAbort.current = null
+        setNaming(false)
+      }
+    }
   }
 
   return (
@@ -178,6 +249,32 @@ export function BranchPicker({
             </>
           )}
         </ComboboxList>
+
+        {/* Outside the list, because it is not a branch: it is the one row that
+            writes into the box instead of picking out of it. Kept visible with
+            something typed, since "name this properly" is most wanted once you
+            have tried and not liked what you wrote. */}
+        {namer && (
+          <div className="border-t border-border/60 p-1">
+            <button
+              type="button"
+              disabled={naming}
+              onClick={() => void suggestName()}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+            >
+              {naming ? (
+                <Spinner className="size-3.5 shrink-0" />
+              ) : (
+                <SparklesIcon className="size-3.5 shrink-0" />
+              )}
+              <span className="min-w-0 truncate">
+                {naming ? "Reading the changes…" : "Name it from the changes"}
+              </span>
+            </button>
+            {nameError && <p className="px-2 py-1 text-[11px] text-destructive">{nameError}</p>}
+          </div>
+        )}
+
         {/* Only reachable with an empty box: with anything typed the create row
             above is what "no matches" looks like. */}
         <ComboboxEmpty>

@@ -83,6 +83,17 @@
   --color-step-think: var(--step-think);
   --color-step-command: var(--step-command);
   --color-step-tool: var(--step-tool);
+  /* The code palette, as Tailwind colours, for the one surface that is neither
+     a markdown fence nor a Monaco buffer: the JSON tree. That palette already
+     has a home (`--code-*`, below), and the names here follow the *roles* the
+     tree gives them — a JSON key is the palette's `property`, a boolean its
+     `keyword` — rather than the palette's own names, so a component never has
+     to know that a key is spelled `property` in there. */
+  --color-code-string: var(--code-string);
+  --color-code-number: var(--code-number);
+  --color-code-key: var(--code-property);
+  --color-code-boolean: var(--code-keyword);
+  --color-code-punctuation: var(--code-punctuation);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -830,7 +841,7 @@
 
    No surface sets `data-surface="solid"` today: every menu opens `side=
    "right"`, out over the opaque main pane, and the footer's two cards (plan
-   usage, servers) wear the glass over the desktop's own vibrancy/mica, where
+   usage, servers) wear the glass over the desktop's own vibrancy/acrylic, where
    there is a desktop behind the window to show. The door stays for the next
    surface that opens over flat ground. `backdrop-filter` goes with the
    opacity: with an opaque background there is nothing for it to show, and it
@@ -1256,7 +1267,7 @@ html[data-desktop="true"][data-desktop-platform="darwin"] [data-sidebar="sidebar
   padding-top: var(--desktop-titlebar-height);
 }
 
-/* The window's native material (macOS vibrancy / Windows mica): drop the
+/* The window's native material (macOS vibrancy / Windows acrylic): drop the
    opaque page ground so the OS layer shows through the sidebar. */
 html[data-desktop-vibrancy="true"],
 html[data-desktop-vibrancy="true"] body {
@@ -1341,7 +1352,7 @@ html[data-desktop-vibrancy="true"] [data-slot="sidebar-wrapper"] {
    ground is the window's.
 
    ponytail: this trusts `data-desktop-vibrancy`, and the preload sets it for
-   every win32 — but mica needs Windows 11 (build 22000+), and on 10
+   every win32 — but the material needs Windows 11 (build 22000+), and on 10
    `backgroundMaterial` is ignored, so what shows through is the grey void
    electron/preload.cjs's own comment warns about — at `--app-veil`, not fully.
    Gate it by passing a build check from main through
@@ -1351,35 +1362,24 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
   background-color: transparent;
 }
 
-/* ── The sidebar snaps, it does not slide ──
-   shadcn animates the rail's `width` (and the container's `left`) over 200ms.
-   A width is a *layout* property, so for the length of that animation the
-   browser re-lays-out everything to the right of it once per frame — and what
-   is to the right of it is the dock: an un-virtualized transcript whose rows
-   are all in the DOM, inside `@panel-*` container queries that re-evaluate
-   with every one of those frames. On top of the CSS cost, `ResizeObserver`
-   delivers per frame too, so the six observers watching the inset column
-   (`workspace/dock.tsx`, `panel-container.tsx`, `composer-strip.tsx` ×2,
-   `thread-view/thread-view.tsx`, `ide-panel.tsx`) each force a layout read
-   inside it. That is the toggle's lag, and it scales with how long the
-   transcript is — which is why it was there "sometimes".
-
-   Zero frames of animation is zero frames of that work, and instant is not a
-   worse answer to a toggle than 200ms of jank. Only the desktop rail: below
-   `md` the sidebar is a Sheet, which animates a `transform` and costs nothing.
-
-   ponytail: this buys the responsiveness by dropping the slide. To have both,
-   the transcript has to stop laying out off-screen rows — `content-visibility:
-   auto` + `contain-intrinsic-size` on `.thread-transcript > *` is the native
-   way there, and the thing to check when trying it is scroll anchoring: this
-   transcript pins to the bottom while streaming and the turn rail scrolls rows
-   into view, and both read positions that `content-visibility` estimates. */
-@media (min-width: 48rem) {
-  [data-slot="sidebar-gap"],
-  [data-slot="sidebar-container"] {
-    transition: none;
-  }
-}
+/* ── The sidebar slides ──
+   shadcn animates the rail's `width` (and the container's `left`) over 200ms,
+   and that is the behaviour we keep: a toggle that snaps reads as a paint, not
+   as the column folding away. The cost is real — a width is a *layout*
+   property, so for the length of the animation the browser re-lays-out
+   everything to the right of it once per frame, and what is to the right of it
+   is the dock: a transcript whose rows are all in the DOM, inside `@panel-*`
+   container queries that re-evaluate with every one of those frames. On top of
+   the CSS cost, `ResizeObserver` delivers per frame too, so the six observers
+   watching the inset column (`workspace/dock.tsx`, `panel-container.tsx`,
+   `composer-strip.tsx` ×2, `thread-view/thread-view.tsx`, `ide-panel.tsx`)
+   each force a layout read inside it. That cost scales with how long the
+   transcript is, which is why the snap was tried — and why, if the lag ever
+   returns, the fix is to stop the transcript laying out off-screen rows
+   (`content-visibility: auto` + `contain-intrinsic-size`, which the settled
+   rows already wear; see the note above that rule and thread-view.tsx) rather
+   than to drop the animation again. Below `md` the sidebar is a Sheet, which
+   animates a `transform` and costs nothing either way. */
 
 /* The web's own half of that pair. Under vibrancy the OS material is what the
    wrapper and the panel let through; with no window material behind them they

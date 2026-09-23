@@ -11,7 +11,8 @@
    of it however the dock is split.
 
    The list is declarative and **grouped**: add an entry to a group's `options`
-   and the row appears. Grouping is the whole layout argument — thirteen equally
+   and the row appears; non-switch controls can live in the same group's picker.
+   Grouping is the whole layout argument — thirteen equally
    weighted outlined cards read as a wall, and the questions they answer are not
    one question. Four sections, each answering one:
 
@@ -28,6 +29,7 @@ import * as React from "react"
 import {
   AlignJustify,
   ArrowDownToLine,
+  Bot,
   Brain,
   Clock,
   Code,
@@ -59,10 +61,13 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { StreamEffectPicker } from "@/components/stream-effect-picker"
 import { Switch } from "@/components/ui/switch"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import {
   ANSWERS_ONLY_SUPPRESSES,
   CALM_MOTION_SUPPRESSES,
+  RECENT_SUBAGENT_STEP_COUNTS,
+  isRecentSubagentStepCount,
   resetViewOptions,
   setViewOption,
   useViewOptions,
@@ -70,9 +75,8 @@ import {
   type ViewOptions,
 } from "@/lib/view-options"
 
-/** The switches, and only the switches. `ViewOptions` now holds one choice
-    that is not one, and a row that renders a Switch has no business being
-    typed wide enough to hold it. */
+/** The switches, and only the switches. Non-boolean preferences render as
+    their own picker controls, not as a boolean switch row. */
 type BooleanOption = {
   [K in keyof ViewOptions]: ViewOptions[K] extends boolean ? K : never
 }[keyof ViewOptions]
@@ -90,11 +94,8 @@ type Group = {
   icon: typeof Clock
   hint: string
   options: Option[]
-  /** A choice that is not a switch, drawn as the last row of the same card.
-      Only Motion has one; it is a field on the group rather than a section of
-      its own so the reveal reads as part of "what moves on its own" and not as
-      a fifth thing to weigh. */
-  picker?: "streamEffect"
+  /** Non-switch controls that belong to this group's question. */
+  picker?: "streamEffect" | "recentSubagentSteps"
 }
 
 const GROUPS: Group[] = [
@@ -136,6 +137,7 @@ const GROUPS: Group[] = [
     label: "Detail",
     icon: ListTree,
     hint: "How much of each step is spelled out.",
+    picker: "recentSubagentSteps",
     options: [
       {
         key: "answersOnly",
@@ -166,9 +168,9 @@ const GROUPS: Group[] = [
       {
         key: "groupTools",
         icon: Wrench,
-        title: "Group tool steps",
+        title: "Group parallel tool calls",
         description:
-          "Fold a run of consecutive steps, and the thinking between them, into one line you can open — the prose stays the thing you scroll.",
+          "Fold consecutive tool calls, with the thoughts between them, into one expandable group.",
       },
       {
         key: "showShellCommands",
@@ -361,6 +363,7 @@ export function SessionSettingsDialog({
       new Set(
         ([
           ...ALL_OPTIONS.map((o) => o.key),
+          "recentSubagentSteps",
           "streamEffect",
           "streamSpeed",
         ] as (keyof ViewOptions)[]).filter(
@@ -384,18 +387,20 @@ export function SessionSettingsDialog({
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent className="sm:max-w-xl">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>View settings</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            How every thread is displayed on this device. The agent is not told, and other
-            clients are not affected.
+            Shape the transcript around how you like to read. These preferences stay on this device and never affect the agent.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         <div className="flex flex-col gap-5">
           {GROUPS.map((group) => (
             <section key={group.id} className="flex flex-col gap-2">
-              <header className="flex items-baseline gap-2 px-1">
+              <header className="flex items-center gap-2 px-1">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/8 text-primary">
+                  <group.icon className="size-3.5" aria-hidden />
+                </span>
                 <h3 className="text-[11px] font-semibold tracking-wide text-foreground uppercase">
                   {group.label}
                 </h3>
@@ -421,6 +426,44 @@ export function SessionSettingsDialog({
                     onSpeedChange={(speed) => setViewOption("streamSpeed", speed)}
                     moot={mootKeys.has("streamEffect") ? CALM_NOTE : undefined}
                   />
+                )}
+                {group.picker === "recentSubagentSteps" && (
+                  <div className="flex items-center gap-3 px-3 py-3">
+                    <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
+                      <Bot className="size-3.5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
+                        Recent subagent steps
+                        {changedKeys.has("recentSubagentSteps") && (
+                          <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                        )}
+                      </span>
+                      <span className="block text-[11px] leading-4 text-muted-foreground">
+                        Preview steps under each worker without opening it.
+                      </span>
+                    </span>
+                    <Select
+                      value={String(options.recentSubagentSteps)}
+                      onValueChange={(value) => {
+                        const count = value === null ? Number.NaN : Number(value)
+                        if (isRecentSubagentStepCount(count)) {
+                          setViewOption("recentSubagentSteps", count)
+                        }
+                      }}
+                    >
+                      <SelectTrigger aria-label="Recent subagent steps to show" size="sm" className="w-24">
+                        <SelectValue>{options.recentSubagentSteps === 0 ? "Off" : String(options.recentSubagentSteps)}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        {RECENT_SUBAGENT_STEP_COUNTS.map((count) => (
+                          <SelectItem key={count} value={String(count)}>
+                            {count === 0 ? "Off" : `${count} ${count === 1 ? "step" : "steps"}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
               </div>
             </section>

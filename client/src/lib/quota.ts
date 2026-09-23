@@ -1,4 +1,4 @@
-import type { QuotaSnapshot, QuotaWindow } from "@daedalus/protocol"
+import type { QuotaAccount, QuotaSnapshot, QuotaWindow } from "@daedalus/protocol"
 
 import { api, type AgentDef, type Profile, type ServerSettings } from "@/lib/settings"
 
@@ -50,7 +50,7 @@ export function planReadable(
    and how to say when it resets. No component matches on an agent id; a runtime
    whose windows are named differently just renders its own labels. */
 
-export type { QuotaSnapshot, QuotaWindow }
+export type { QuotaAccount, QuotaSnapshot, QuotaWindow }
 
 /** Every probe-capable agent, read on its Default profile — the machine's own
     `claude`/`codex login`, which is what a subscription is — plus every profile
@@ -100,6 +100,13 @@ export const fetchProfileQuota = (
 export const windowTitle = (window: QuotaWindow): string =>
   window.group?.trim() ? `${window.group.trim()} · ${window.label}` : window.label
 
+/** What an account inside a multi-account reading is called where it has to be
+    one string — the sidebar popover's block title, the composer glance's
+    heading. The Usage page draws the two halves itself, as a heading and a
+    subtitle, and does not come through here. */
+export const accountTitle = (account: QuotaAccount): string =>
+  [account.name, account.provider].filter(Boolean).join(" · ")
+
 /** Whether this snapshot has anything to draw a bar for. */
 export const hasWindows = (quota: QuotaSnapshot | null | undefined): quota is QuotaSnapshot =>
   Boolean(quota && quota.windows.length > 0)
@@ -146,6 +153,8 @@ export function providerKindLabel(kind: string): string {
       return "OpenRouter"
     case "command-code":
       return "Command Code"
+    case "9router":
+      return "9Router"
     default:
       return kind || "Other"
   }

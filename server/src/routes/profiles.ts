@@ -5,11 +5,13 @@ import {
   createProfile,
   deleteProfile,
   duplicateProfile,
+  exportProfile,
   getProfile,
   listProfiles,
   redact,
   resolveProfileAgent,
   setProfileFlags,
+  syncProfile,
   updateProfile,
 } from "../profiles.js";
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
@@ -139,6 +141,24 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.post("/api/profiles/:id/duplicate", async (c) => {
     const copy = await duplicateProfile(c.req.param("id"));
     return copy ? c.json(redact(copy)) : c.json({ error: "not found" }, 404);
+  });
+  /* Credentials are omitted by default. This endpoint is intentionally
+     separate from the ordinary redacted list and is only used for an explicit
+     sync action from an authenticated client. */
+  app.get("/api/profiles/:id/sync-export", async (c) => {
+    const includeSecrets = c.req.query("secrets") === "1";
+    const profile = await exportProfile(c.req.param("id"), includeSecrets);
+    return profile ? c.json(profile) : c.json({ error: "not found" }, 404);
+  });
+  app.put("/api/profiles/:id/sync", async (c) => {
+    const id = c.req.param("id");
+    if (!id.startsWith("sync:")) return c.json({ error: "invalid sync profile id" }, 400);
+    const parsed = z
+      .object({ profile: ProfileInputSchema, includeSecrets: z.boolean().default(false) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const profile = await syncProfile(c.req.param("id"), parsed.data.profile, parsed.data.includeSecrets);
+    return profile ? c.json(redact(profile)) : c.json({ error: "not found" }, 404);
   });
   app.patch("/api/profiles/:id", async (c) => {
     const parsed = profilePatchSchema.safeParse(await c.req.json().catch(() => ({})));

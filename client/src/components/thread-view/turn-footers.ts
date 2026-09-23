@@ -165,6 +165,24 @@ export function withTurnDuration(
   return after
 }
 
+/** Union tool-call wall time for each finished turn, keyed by its ending row. */
+export function withTurnToolDuration(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnToolDuration: Record<string, number>,
+  answersOnly: boolean,
+  showConfigNotices = true
+): Map<string, number> {
+  const after = new Map<string, number>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const durationMs = turnId ? turnToolDuration[turnId] : undefined
+    if (durationMs !== undefined) after.set(tailId, durationMs)
+  }
+  return after
+}
+
 /**
  * Whether a turn could be the author of a diff: did it run a single tool that
  * was not a read, a search, a fetch or a thought (`couldTouchFiles`)?

@@ -272,6 +272,23 @@ function keepUsageKey(next: ProfileInput["usage"], previous: ProfileUsage | null
   return { ...next, apiKey: next.apiKey || previous?.apiKey || "" };
 }
 
+async function saveProfileUpdate(updated: Profile): Promise<Profile> {
+  await db.transaction(async (tx) => {
+    await tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, updated.id));
+    /* The probe cache is keyed `profileId:agentId:cwd`, and the answer depends
+       on what was just edited (a new base URL is a new gateway catalog, a new
+       key may change what it serves). A stale row would keep answering the
+       draft menu until someone found `?refresh=1`. */
+    await tx.delete(agentOptionsTable).where(like(agentOptionsTable.key, `${updated.id}:%`));
+    /* Same argument, and it did not apply before this profile could name a usage
+       provider: the quota cache expires on a TTL because a quota moves on its
+       own, but an edit to the credentials or the provider makes the cached
+       number an answer about a different account, which no TTL covers. */
+    await tx.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${updated.id}:%`));
+  });
+  return (await getProfile(updated.id))!;
+}
+
 export async function updateProfile(id: string, input: ProfileInput): Promise<Profile | undefined> {
   if (isVirtualProfile(id)) return undefined;
   const existing = (await db.select().from(profilesTable).where(eq(profilesTable.id, id)).limit(1))[0];
@@ -283,20 +300,51 @@ export async function updateProfile(id: string, input: ProfileInput): Promise<Pr
     apiKey: input.apiKey || existing.apiKey,
     usage: keepUsageKey(input.usage, existing.usage),
   };
-  await db.transaction(async (tx) => {
-    await tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id));
-    /* The probe cache is keyed `profileId:agentId:cwd`, and the answer depends
-       on what was just edited (a new base URL is a new gateway catalog, a new
-       key may change what it serves). A stale row would keep answering the
-       draft menu until someone found `?refresh=1`. */
-    await tx.delete(agentOptionsTable).where(like(agentOptionsTable.key, `${id}:%`));
-    /* Same argument, and it did not apply before this profile could name a usage
-       provider: the quota cache expires on a TTL because a quota moves on its
-       own, but an edit to the credentials or the provider makes the cached
-       number an answer about a different account, which no TTL covers. */
-    await tx.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${id}:%`));
-  });
-  return await getProfile(id);
+  return saveProfileUpdate(updated);
+}
+
+/** Replace a destination profile from a one-way sync. Credentials are preserved
+    when excluded, and replaced exactly (including clearing) when explicitly
+    included. */
+export async function syncProfile(
+  id: string,
+  input: ProfileInput,
+  includeSecrets: boolean,
+): Promise<Profile | undefined> {
+  if (!id.startsWith("sync:") || isVirtualProfile(id)) return undefined;
+  const existing = (await db.select().from(profilesTable).where(eq(profilesTable.id, id)).limit(1))[0];
+  if (!existing) {
+    const created: Profile = { id, ...input };
+    await db.insert(profilesTable).values(columnsOf(created));
+    return await getProfile(id);
+  }
+  const updated: Profile = {
+    ...input,
+    id,
+    apiKey: includeSecrets ? input.apiKey : existing.apiKey,
+    usage: includeSecrets
+      ? input.usage ?? null
+      : keepUsageKey(input.usage, existing.usage),
+  };
+  return saveProfileUpdate(updated);
+}
+
+/** Export a stored profile for a deliberate cross-server copy. */
+export async function exportProfile(id: string, includeSecrets: boolean): Promise<ProfileInput | undefined> {
+  const profile = await getProfile(id);
+  if (!profile || profile.virtual) return undefined;
+  const { id: _id, virtual: _virtual, ...input } = profile;
+  return {
+    ...input,
+    smallModel: input.smallModel ?? "",
+    suppressModelMetadataWarning: input.suppressModelMetadataWarning ?? false,
+    hidden: input.hidden ?? false,
+    disabled: input.disabled ?? false,
+    apiKey: includeSecrets ? input.apiKey : "",
+    usage: input.usage
+      ? { ...input.usage, apiKey: includeSecrets ? input.usage.apiKey ?? "" : "" }
+      : null,
+  };
 }
 
 /**

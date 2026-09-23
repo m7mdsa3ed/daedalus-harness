@@ -334,7 +334,7 @@ export function AppShell({
   const openWorkspacePanel = React.useCallback(
     (kind: PanelKind, reuse?: boolean) => {
       /* Only ever the *second* panel's suffix. The first of a kind keeps the
-         plain `ide:<project>`/`tasks`/`default` id every stored layout and
+         plain panel id every stored layout and
          every reusing caller already names, so nothing has to migrate and a
          chord still lands on the one the + opened. */
       const second = (existing: unknown) =>
@@ -391,11 +391,6 @@ export function AppShell({
           },
           { direction: "right" }
         )
-      } else if (kind === "ide") {
-        const existing = dock
-          .listPanels()
-          .find((entry) => entry.panel.kind === "ide" && entry.panel.projectId === projectId)
-        dock.openPanel({ kind: "ide", projectId, ...second(existing) }, { direction: "right" })
       }
     },
     [dock, projects]
@@ -406,7 +401,6 @@ export function AppShell({
      lib/shortcuts, which is also what the help sheet prints. */
   useShortcut("newThread", () => startRef.current.startThread())
   useShortcut("terminal", () => openWorkspacePanel("terminal", true))
-  useShortcut("ide", () => openWorkspacePanel("ide", true))
   /* The two chords that open a chooser rather than doing a thing. They go
      through the palette's own pages — one list per question, whether it was
      reached by chord or by typing its row — and the palette answers for a
@@ -638,7 +632,7 @@ export function AppShell({
               A `backdrop-blur` here is that paint, and under the window's own
               material it is the thing that turns the material off. A
               backdrop-filter composites its backdrop *from the page*, and
-              macOS vibrancy / Windows mica live behind the **window**, not in
+              macOS vibrancy / Windows acrylic live behind the **window**, not in
               the page — so the filtered box is drawn without them and the
               header's row comes out a flat slab across exactly the tab strip's
               band, against a sidebar two pixels away that still shows the

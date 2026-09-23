@@ -8,6 +8,7 @@ import type {
   ThreadRetry,
   TurnChanges,
   TurnTick,
+  TpsStats,
   WireError,
 } from "@daedalus/protocol"
 import { sameRow } from "../settings"
@@ -19,7 +20,7 @@ import type { PendingElicitation, PendingPermission, TextItem, ThreadItem } from
 import { emptyThread } from "./thread"
 import type { State, ThreadState } from "./thread"
 import { applyMetaUpdate, settleTools } from "./session-update"
-import { addUsage, pushUserMessage } from "./messages"
+import { addTps, addUsage, pushUserMessage } from "./messages"
 
 // ---- reducer ----
 
@@ -76,6 +77,7 @@ export type Action =
       over the `usage_update`s the replay folds: the window may carry none, and
       a `load_earlier` page carries older ones. Null = never reported. */
   | { type: "thread-context"; id: string; context: acp.UsageUpdate | null }
+  | { type: "thread-tps"; id: string; tps: TpsStats | null }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
   | { type: "paused"; id: string; paused: boolean; reason?: "user" | "error"; error?: WireError }
@@ -172,7 +174,8 @@ export type Action =
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
-  | { type: "usage"; id: string; usage: acp.Usage; turnId?: string; durationMs?: number }
+  | { type: "usage"; id: string; usage: acp.Usage; turnId?: string; durationMs?: number; toolDurationMs?: number }
+  | { type: "turn-timing"; id: string; turnId: string; durationMs?: number; toolDurationMs?: number }
   | { type: "ttft"; id: string; ms: number }
   | { type: "turn-changes"; id: string; turn: TurnChanges }
   | { type: "turn-changes-all"; id: string; turns: TurnChanges[] }
@@ -307,6 +310,8 @@ export function reducer(state: State, action: Action): State {
       return withThread(state, action.id, { stagedConfig: action.config })
     case "thread-context":
       return withThread(state, action.id, { context: action.context })
+    case "thread-tps":
+      return withThread(state, action.id, { tps: action.tps })
     case "draft-config-option":
       return {
         ...state,
@@ -567,15 +572,22 @@ export function reducer(state: State, action: Action): State {
       const current = thread(state, action.id)
       return withThread(state, action.id, {
         usage: addUsage(current.usage, action.usage),
-        /* The same reading, kept twice: summed for the thread's own total and
-           filed under its turn for the footer that prints what this answer
-           cost. One `turn_ended` per turn, journaled once, so neither can
-           double-count on a replay. The duration rides the same event and is
-           filed the same way — absent on turns that ended before the server
-           measured it. */
+        /* One journaled `turn_ended` supplies one usage reading, so replay
+           cannot double-count either the thread total or the turn footer. */
         ...(action.turnId ? { turnUsage: { ...current.turnUsage, [action.turnId]: action.usage } } : null),
         ...(action.turnId && action.durationMs !== undefined
+          ? { tps: addTps(current.tps, action.usage, action.durationMs, action.toolDurationMs) }
+          : null),
+      })
+    }
+    case "turn-timing": {
+      const current = thread(state, action.id)
+      return withThread(state, action.id, {
+        ...(action.durationMs !== undefined
           ? { turnDuration: { ...current.turnDuration, [action.turnId]: action.durationMs } }
+          : null),
+        ...(action.toolDurationMs !== undefined
+          ? { turnToolDuration: { ...current.turnToolDuration, [action.turnId]: action.toolDurationMs } }
           : null),
       })
     }

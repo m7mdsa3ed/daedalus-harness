@@ -79,9 +79,7 @@ import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectRepos, useProjectStats } from "@/lib/queries/surfaces"
-import { queuePanel } from "@/lib/workspace/pending-panels"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
-import { openTab } from "@/lib/ide/editors"
 import { useScheduled } from "@/lib/queries/routines"
 
 /** Matches the server's `ACTIVITY_DAYS`. The strip is drawn as a fixed run of
@@ -157,14 +155,6 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
      knowledge base; here it is a file the agent already reads every turn, so
      the honest surface is the editor open on it rather than a second store
      that would have to be kept in step with the file. */
-  const openRules = () => {
-    openTab(project.id, { kind: "file", path: "AGENTS.md" })
-    queuePanel({ kind: "ide", projectId: project.id }, { direction: "right" })
-    const latest = threads[0]
-    if (latest) void navigate(threadPath(latest.id))
-    else openWorkspaceThread()
-  }
-
   const scheduled = React.useMemo(() => {
     const ids = new Set(
       sessions.filter((s) => s.projectId === project.id).map((s) => s.id)
@@ -180,7 +170,6 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
         <ProjectHeader
           project={project}
           onNewThread={() => startIn(project)}
-          onOpenRules={openRules}
           onImport={() => setImporting(true)}
           onEdit={() => void navigate(settingsFormPath("projects", project.id))}
           onRefresh={refresh}
@@ -453,7 +442,6 @@ function ProjectHeader({
   onNewThread,
   onImport,
   onEdit,
-  onOpenRules,
   onRefresh,
   refreshing,
   onRunHelper,
@@ -461,9 +449,6 @@ function ProjectHeader({
   project: Project
   onNewThread: () => void
   onImport: () => void
-  /** Opens AGENTS.md — the project's own rules, which the agent reads on
-      every turn. */
-  onOpenRules: () => void
   onEdit: () => void
   onRefresh: () => void
   refreshing: boolean
@@ -533,21 +518,6 @@ function ProjectHeader({
         <Button variant="outline" onClick={onEdit} size="sm">
           <Pencil className="size-3.5" /> Edit
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="ghost" size="icon" title="More options" aria-label="More options">
-                <MoreHorizontal className="size-4" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={onOpenRules}>
-              <BookOpenIcon className="size-4 text-muted-foreground" />
-              <span>Project rules (AGENTS.md)</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
         <Button onClick={onNewThread} size="sm">
           <Plus className="size-4" /> New thread
         </Button>
@@ -568,10 +538,6 @@ function ProjectHeader({
             }
           />
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={onOpenRules}>
-              <BookOpenIcon className="size-4 text-muted-foreground" />
-              <span>Project rules</span>
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={onImport}>
               <DownloadIcon className="size-4 text-muted-foreground" />
               <span>Import threads</span>

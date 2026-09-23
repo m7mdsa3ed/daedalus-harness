@@ -63,6 +63,7 @@ const PROMPT_OPTIONS = {
        dropped with a validation error. Leading with the prohibition and a
        worked counter-example is the only thing that has held. */
     "Arguments are POSITIONAL ONLY. Write `Stat(\"Builds\", \"412\", \"-2 vs yesterday\")` — NEVER `Stat(label=\"Builds\", value=\"412\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
+    "Use plain prose for ordinary questions, explanations, and facts. When a structured answer is clearer as a view, put the complete OpenUI program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
     "Reach for a fenced block ONLY when the answer is a structure that reads better drawn than described: a comparison, a trend, a handful of figures, a status board. A question, an explanation or a single fact is prose.",
     "Nothing in a generated program can read a file, run a command or fetch anything. Compose the view from what is already in this conversation; never write a Query, a Mutation or an Action.",
     "Keep the prose around a fence short: the block is drawn inline, in the answer it belongs to.",

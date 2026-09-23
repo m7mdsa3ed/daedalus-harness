@@ -308,9 +308,9 @@ function WebResultRow({ hit }: { hit: WebResult }) {
 export function WebFetchDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const call = extractWebFetch(item)
   const openSource = useSourceOpener()
+  const [shown, clipped, showAll] = useShowAll(call?.text ?? "")
   if (!call) return null
   const failed = item.status === "failed" || /^error:/i.test(call.text.trim())
-  const [shown, clipped, showAll] = useShowAll(call.text)
   return (
     <div className="space-y-1.5">
       <div className="flex min-w-0 items-center gap-1.5 text-[11px]">

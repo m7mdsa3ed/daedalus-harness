@@ -166,7 +166,6 @@ export function Composer({
      in one tree would be two subscriptions to the same absolute state. */
   delivery,
   changes,
-  onOpenChanges,
   beforeSend,
   placeholder,
   autoFocus,
@@ -181,7 +180,6 @@ export function Composer({
       transcript (`withTurnChanges`) — the composer holds no opinion about
       which turn qualifies, only about where the reading is drawn. */
   changes?: TurnChanges
-  onOpenChanges?: (turn: TurnChanges) => void
   /** Awaited between "the words have been taken" and the send itself; `false`
       (or a throw) puts them back in the box and sends nothing. While it runs
       the send button shows busy. The build page scaffolds the project here. */
@@ -669,7 +667,7 @@ export function Composer({
                   <ConfigIndicator thread={thread} sessionId={sessionId} actions={actions} />
                   <TodoIndicator thread={thread} />
                   <AgentsIndicator thread={thread} />
-                  <ChangesIndicator changes={changes} onOpen={onOpenChanges} />
+                  <ChangesIndicator changes={changes} />
                   <RepoIndicator meta={meta} />
                   <ContextIndicator
                     thread={thread}

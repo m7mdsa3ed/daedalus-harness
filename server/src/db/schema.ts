@@ -424,6 +424,49 @@ export const projects = pgTable("projects", {
       to every device rather than living in a device-local store. Ties (rows
       from before the column, or an import) fall back to name. */
   sortOrder: integer("sort_order").notNull().default(0),
+  /** ── How a thread started in this project opens ──
+      The same values `POST /api/sessions` takes as spawn inputs, kept on the
+      project so changing the project changes what the draft menu shows. A
+      project is usually one codebase worked one way — the model, the persona,
+      the permission mode and the agent's own selectors belong to it — and
+      before these columns they were a device-local habit store
+      (`lib/thread-defaults.ts`), which is one scope for the one thing that is
+      a fact about the workspace.
+
+      Every column is nullable and every empty string means "nothing picked",
+      which is exactly what a draft with nothing remembered carries: a project
+      that has never been worked in must open on the profile/agent defaults
+      rather than on a value invented here. The reader is always the client's
+      (it is the only side that knows the catalogs), so these are written by
+      `PATCH /api/projects/:id/defaults` and read back whole. */
+  defaultProfileId: text("default_profile_id"),
+  /** "" is "the agent's own model" — see `sessions.model`'s resolution at
+      spawn, which is what a draft's empty value means too. */
+  defaultModel: text("default_model"),
+  defaultEffort: text("default_effort"),
+  defaultAgentId: text("default_agent_id"),
+  /** The permission mode, or "" for the agent's default. Not a third state:
+      the same bargain `sessions.mode_id` makes with null. */
+  defaultModeId: text("default_mode_id"),
+  /** `{configId: value}` — the agent's other selectors, the same shape
+      `sessions.config_choices` holds. */
+  defaultConfigChoices: jsonb("default_config_choices")
+    .$type<Record<string, string | boolean>>()
+    .notNull()
+    .default({}),
+  /** Null for no persona, like `sessions.persona_id`. */
+  defaultPersonaId: text("default_persona_id"),
+  /** The thread's own library picks, the values `POST /api/sessions` takes as
+      `mcpServerIds`/`skillIds`/`commandIds`. */
+  defaultMcpServerIds: jsonb("default_mcp_server_ids").$type<string[]>().notNull().default([]),
+  defaultSkillIds: jsonb("default_skill_ids").$type<string[]>().notNull().default([]),
+  defaultCommandIds: jsonb("default_command_ids").$type<string[]>().notNull().default([]),
+  /** Whether answers close with follow-up suggestions, and whether they may
+      carry a drawn view. Instruction fields rather than provider state, so
+      they travel with the persona; their column default is what a draft's
+      `suggestFollowups: defaults.suggestFollowups ?? true` reads as. */
+  defaultSuggestFollowups: boolean("default_suggest_followups").notNull().default(true),
+  defaultUiBlocks: boolean("default_ui_blocks").notNull().default(true),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the
@@ -835,6 +878,8 @@ export const sessions = pgTable(
         the row is one turn behind at worst — the live session answers from
         memory until then. */
     context: jsonb("context").$type<acp.UsageUpdate>(),
+    /** Min/max measured turn rate, weighted-average inputs, and summed tool-call time. */
+    tps: jsonb("tps").$type<{ min: number; max: number; outputTokens: number; durationMs: number; toolDurationMs?: number }>(),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: bigint("deleted_at", { mode: "number" }),

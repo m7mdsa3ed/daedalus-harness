@@ -13,7 +13,7 @@
 
 import type { SerializedDockview } from "dockview-react"
 
-export type PanelKind = "chat" | "ide" | "terminal" | "web" | "tasks" | "page" | "group"
+export type PanelKind = "chat" | "terminal" | "web" | "tasks" | "page" | "group"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -26,16 +26,6 @@ export type WebTrust = "project" | "external"
 
 export type PanelDescriptor =
   | { kind: "chat"; sessionId: string }
-  /** The IDE — the editor, the file explorer, file search and source control
-      in one. One per project, because what is open *inside* it is its own
-      state (`lib/ide/editors.ts`) and not the dock's — until asked for by name:
-      `viewId` is what lets there be a second one: the panel is the surface and
-      the project is what it is pointed at, so two of them are two views of the
-      same project — the old, unsuffixed id is still a valid one, which is what
-      keeps every stored layout and every "show me the IDE" caller working.
-      ponytail: the two share `lib/ide/editors.ts` (keyed by project), so their
-      tabs move together; give the store the viewId if that ever matters. */
-  | { kind: "ide"; projectId: string; viewId?: string }
   /* `closeOnExit` is a helper command's terminal: it was opened by a button
      that meant "run this", not "give me a shell", so a clean exit is the end of
      the errand and the panel goes with it. A non-zero exit keeps the panel —
@@ -79,9 +69,8 @@ export interface PanelSpec {
 
 export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   chat: { singleton: true, defaultTitle: "Thread", implemented: true },
-  ide: { singleton: true, defaultTitle: "IDE", implemented: true },
   terminal: { singleton: false, defaultTitle: "Terminal", implemented: true },
-  web: { singleton: false, defaultTitle: "Browser", implemented: true },
+  web: { singleton: false, defaultTitle: "Preview", implemented: true },
   tasks: { singleton: true, defaultTitle: "Tasks", implemented: true },
   page: { singleton: false, defaultTitle: "Page", implemented: true },
   group: { singleton: false, defaultTitle: "Group", implemented: true },
@@ -101,8 +90,6 @@ export function panelId(panel: PanelDescriptor): string {
   switch (panel.kind) {
     case "chat":
       return `thread:${panel.sessionId}`
-    case "ide":
-      return panel.viewId ? `ide:${panel.projectId}:${panel.viewId}` : `ide:${panel.projectId}`
     case "terminal":
       return `terminal:${panel.projectId}:${panel.terminalId}`
     case "web":
@@ -150,11 +137,6 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
     case "chat": {
       const sessionId = str(p.sessionId)
       return sessionId ? { kind: "chat", sessionId } : null
-    }
-    case "ide": {
-      return projectId
-        ? { kind: "ide", projectId, ...(str(p.viewId) ? { viewId: str(p.viewId) } : {}) }
-        : null
     }
     case "terminal": {
       const terminalId = str(p.terminalId)

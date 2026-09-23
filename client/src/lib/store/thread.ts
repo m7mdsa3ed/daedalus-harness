@@ -6,6 +6,7 @@ import type {
   ThreadRetry,
   TurnChanges,
   TurnTick,
+  TpsStats,
   WireError,
 } from "@daedalus/protocol"
 import { IDLE_PHASE, isOpening, type ConnPhase } from "../thread/phase"
@@ -92,8 +93,12 @@ export interface ThreadState {
       inside it because `acp.Usage` is the SDK's shape and gains nothing by
       carrying harness timing. Journaled via the event, so it replays. */
   turnDuration: Record<string, number>
+  /** Union wall time spent in the thread's own tool calls, keyed by turn. */
+  turnToolDuration: Record<string, number>
   /** Context window occupancy from usage_update. */
   context: acp.UsageUpdate | null
+  /** Persistent min/max and weighted average inputs for measured output speed. */
+  tps: TpsStats | null
   /** What the model request that produced a step cost, keyed by item id — the
       per-step half of `turnUsage`, and derived rather than reported: see
       `markStepUsage`. Journaled like everything it is built from, so it
@@ -183,7 +188,9 @@ export const emptyThread: ThreadState = {
   usage: null,
   turnUsage: {},
   turnDuration: {},
+  turnToolDuration: {},
   context: null,
+  tps: null,
   stepUsage: {},
   usageMark: null,
   ttftMs: null,

@@ -7,6 +7,12 @@ the same commit as the new entry. The server parses this file for
 `GET /api/meta` (Settings › General shows it), and reads it line by line: keep
 each bullet on a single line.
 
+## [Unreleased]
+
+### Changed
+
+- **A project carries the settings its threads start with.** The agent, profile, model, effort, permission mode, persona, tool picks, suggestions and drawn-UI toggles are stored on the project (`projects.default_*`, `PATCH /api/projects/:id/defaults`), so changing the project changes the model — and the pick follows you to every device instead of living in one browser. A project that has never been worked in opens on the profile/agent defaults rather than on an invented value, and a pick publishes only the fields it names, so two devices cannot clobber each other's settings.
+
 ## [0.2.0] - 2026-09-13
 
 ### Added
@@ -18,7 +24,7 @@ each bullet on a single line.
 - **A development-server preview.** A project can name its dev server, and the Browser panel opens it — probing loopback for a helper marked as the one that starts it, while never rewriting where the browser points.
 - **Plan usage in the sidebar footer**: one row per readable plan and its fullest window behind a popover, reading the same list route the Usage page reads rather than polling on a timer. Providers read from their own account API rather than a runtime's CLI, so a thread on one plan no longer reports another company's.
 - **Profiles are hidden or disabled rather than deleted.** Hiding takes a profile out of the pickers while its plan keeps being tracked; disabling closes it and its usage everywhere. Both keep the row and its threads running.
-- **A translucent window**, a switch in Settings › Appearance, in the Electron app: off, the macOS vibrancy / Windows mica stops showing through the sidebar and the top bar. Stored on the device, and offered only where the platform has a material to turn off.
+- **A translucent window**: in the Electron app the macOS vibrancy / Windows acrylic shows through the sidebar, the gutters and the top bar. No setting — the platform either has a material or it does not.
 - **An "Opened" sidebar tier** listing the threads that have a tab open, in the dock's own order and out of Recents.
 - **Images and audio ride through a prompt**, so a steer that carries one is still a prompt with an image in it, and a model-less Default thread inlines the attachment rather than vetoing it.
 - **Off-peak pricing** is declared on a model and read back as a live indicator, for providers that price a window of the day rather than a request.

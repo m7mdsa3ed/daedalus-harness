@@ -1,11 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-// The window's own material (macOS vibrancy / Windows mica) is a stored device
-// preference, so it is applied before the first render rather than by a
-// component: the preload decided it for the frame before the bundle parsed, and
-// this module owns the attribute from here on (Settings › Appearance).
-import './lib/window-material.ts'
 import { BrowserRouter } from 'react-router'
 import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'

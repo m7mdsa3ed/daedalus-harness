@@ -406,11 +406,44 @@ export const SubagentStep = React.memo(function SubagentStep({
         tokens ? <TokenSummary usage={tokens} label="This step" /> : null,
         showTimestamps ? <Timestamp at={head.at} /> : null,
       ]}
-      detail={hasBody ? <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} /> : undefined}
-      /* Folded by default, live or not: the shimmering title and the step
-         count say enough at a glance, and the rail is one click away. Only
-         the "show tool details" option opens it unasked, as it does every
-         other tool row. */
+      detail={
+        hasBody ? (
+          <SubagentBody
+            group={group}
+            stepThread={stepThread}
+            showTimestamps={showTimestamps}
+          />
+        ) : undefined
+      }
+      below={(open) => {
+        const limit = view.recentSubagentSteps
+        if (limit === 0 || open) return undefined
+        if (!session?.transcript && group.children.length === 0 && !active) return undefined
+        return session?.transcript ? (
+          <NativeStepTranscript
+            transcript={session.transcript}
+            active={active}
+            showTimestamps={showTimestamps}
+            limit={limit}
+          />
+        ) : (
+          <>
+            {group.children.length > limit && (
+              <div className="px-1.5 text-[11px] leading-5 text-muted-foreground/70">
+                {group.children.length - limit} earlier {group.children.length - limit === 1 ? "step" : "steps"}
+              </div>
+            )}
+            <SubagentTranscript
+              rows={group.children.slice(-limit)}
+              active={active}
+              showTimestamps={showTimestamps}
+            />
+          </>
+        )
+      }}
+      /* Subagent details remain independently expandable. The recent child
+         steps are a separate always-visible preview, not a reason to open this
+         row; "Expand tool output" continues to govern only the disclosure. */
       defaultOpen={view.showToolDetails}
       openSetting={view.showToolDetails}
     />
@@ -470,7 +503,11 @@ function SubagentBody({
         <SubagentTranscript rows={group.children} active={active} showTimestamps={showTimestamps} />
       )}
       {session?.transcript && (
-        <NativeStepTranscript transcript={session.transcript} active={active} showTimestamps={showTimestamps} />
+        <NativeStepTranscript
+          transcript={session.transcript}
+          active={active}
+          showTimestamps={showTimestamps}
+        />
       )}
       {tool && <SubagentReport item={tool} active={active} />}
       {session?.report && (
@@ -492,8 +529,8 @@ const NATIVE_STEP_REFRESH_MS = 6_000
  * Its agent runs inside the CLI and produces no ACP frames, so unlike every
  * other subagent this one has no children in the store — what it did is a file
  * (`agent-<agentId>.jsonl` beside the run's journal) that only the server can
- * read. Fetched when the step is opened, never before: a run of thirty agents
- * is thirty files, and a reader opens one.
+ * read. Fetched only while its preview or details are visible: a run of thirty
+ * agents is thirty files, and we never fetch the whole batch up front.
  *
  * The records become ordinary `ThreadItem`s (`workflowAgentItems`) and then
  * ordinary rows, so the rail, the tool views and the nesting are the same ones
@@ -504,10 +541,12 @@ function NativeStepTranscript({
   transcript,
   active,
   showTimestamps,
+  limit,
 }: {
   transcript: { dir: string; agentId: string }
   active: boolean
   showTimestamps?: boolean
+  limit?: number
 }) {
   const events = useAgentTranscript(transcript.dir, transcript.agentId)
   const [failed, setFailed] = React.useState(false)
@@ -546,11 +585,25 @@ function NativeStepTranscript({
       </p>
     )
   }
-  return <SubagentTranscript rows={rows} active={active} showTimestamps={showTimestamps} />
+  const shown = limit ? rows.slice(-limit) : rows
+  return (
+    <div>
+      {limit && rows.length > limit && (
+        <div className="px-1.5 text-[11px] leading-5 text-muted-foreground/70">
+          {rows.length - limit} earlier {rows.length - limit === 1 ? "step" : "steps"}
+        </div>
+      )}
+      <SubagentTranscript
+        rows={shown}
+        active={active}
+        showTimestamps={showTimestamps}
+      />
+    </div>
+  )
 }
 
-/** A subagent's rows, on a rail. Peeks the tail while the subagent is live;
-    the whole thing once it is done, or once asked. */
+/** A subagent's rows, on a rail. Callers choose the full transcript or its
+    latest-step preview; this component only draws the rows it receives. */
 function SubagentTranscript({
   rows,
   active,
@@ -560,18 +613,14 @@ function SubagentTranscript({
   active: boolean
   showTimestamps?: boolean
 }) {
-  const [expanded, setExpanded] = React.useState(false)
-  const showing = expanded || !active ? rows : rows.slice(-PEEK)
-  const hidden = rows.length - showing.length
   return (
     <div className={RAIL_CLASS}>
-      {hidden > 0 && <EarlierSteps count={hidden} onClick={() => setExpanded(true)} />}
-      {showing.map((row, i) => (
+      {rows.map((row, i) => (
         <div key={row.id} className="harness-item-in">
           <RowView
             row={row}
             showTimestamps={showTimestamps}
-            streaming={active && i === showing.length - 1}
+            streaming={active && i === rows.length - 1}
           />
         </div>
       ))}

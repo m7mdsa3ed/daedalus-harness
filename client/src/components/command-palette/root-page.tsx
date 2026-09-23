@@ -50,7 +50,6 @@ import {
   Plus,
   RotateCcw,
   RotateCw,
-  Rows3,
   SearchIcon,
   ServerIcon,
   Settings2,
@@ -89,7 +88,7 @@ import {
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
 import { usePins } from "@/lib/pins"
-import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
+import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useRoutines } from "@/lib/queries/routines"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
@@ -161,7 +160,7 @@ export function RootPage() {
     const defaults = loadThreadDefaults()
     const project =
       projects.find((project) => project.id === defaults.projectId) ?? projects[0]
-    const start = resolveThreadStart(defaults, profiles)
+    const start = resolveThreadStart(project?.defaults ?? emptyDefaults(), profiles)
     return project && start ? { project, ...start } : null
   }, [projects, profiles])
 
@@ -495,8 +494,8 @@ export function RootPage() {
     items.push({
       id: "dock:web",
       group: "Workspace",
-      title: "Browser",
-      keywords: "preview dev server localhost web",
+      title: "Preview",
+      keywords: "browser dev server localhost web",
       icon: <MonitorIcon />,
       onSelect: () => {
         const previewUrl = projects.find((candidate) => candidate.id === meta?.projectId)?.previewUrl ?? ""
@@ -585,15 +584,6 @@ export function RootPage() {
       keywords: "one group merge",
       icon: <SquareStack />,
       onSelect: () => palette.run(() => palette.dock.stackAll()),
-    },
-    {
-      id: "dock:layout-ide",
-      group: "Workspace",
-      title: "Layout: IDE",
-      keywords: "preset terminal arrangement",
-      icon: <Rows3 />,
-      subtitle: "Chat beside a terminal, editor above",
-      onSelect: () => palette.run(() => palette.dock.applyPreset("ide")),
     },
     {
       id: "dock:layout-focus",

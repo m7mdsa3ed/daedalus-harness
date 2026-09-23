@@ -68,7 +68,9 @@ const persona = { id: "p1", prompt: "PERSONA TEXT", thinking: null };
 // --- the trailer itself teaches the two failure modes we actually saw ---
 {
   assert.ok(/positional/i.test(OPENUI_INSTRUCTIONS), "warns about positional arguments");
-  assert.ok(OPENUI_INSTRUCTIONS.includes("root"), "and insists on a root");
+  assert.ok(OPENUI_INSTRUCTIONS.includes("root = Stack([...])"), "requires valid root assignment syntax");
+  assert.ok(OPENUI_INSTRUCTIONS.includes("exactly one fenced code block tagged `openui-lang`"), "requires the client-recognized fence");
+  assert.ok(OPENUI_INSTRUCTIONS.includes("never emit OpenUI statements as unfenced prose"), "prevents raw OpenUI output");
   assert.ok(
     OPENUI_INSTRUCTIONS.includes("StatRow(") && OPENUI_INSTRUCTIONS.includes("Chart("),
     "and carries the generated component table, so every runtime gets the same one",

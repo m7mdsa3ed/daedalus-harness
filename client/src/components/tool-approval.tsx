@@ -43,7 +43,7 @@ import {
   AgentRequestWell,
   REQUEST_BUTTON,
 } from "./agent-request"
-import { FileBadge, PlanFullscreen, Prose } from "./tool-parts"
+import { FileBadge, JSON_INPUT_PREVIEW, JsonView, PlanFullscreen, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 import type { PendingPermission } from "@/lib/store"
 import { isTypingTarget } from "@/lib/shortcuts"
@@ -448,10 +448,17 @@ export function InlineApproval({
           {content.length > 0 ? (
             <ToolCallContent content={content} />
           ) : (
-            input && (
-              <AgentRequestWell>
-                <CodeBlock value={input} />
-              </AgentRequestWell>
+            /* A card with no content of its own is showing a call's
+               *arguments*, and they are JSON in every spelling — the tree
+               reads them as the shape they are, with the band's own scroll
+               around it (`AgentRequestWell` clips, the tree scrolls). */
+            call.rawInput !== null &&
+            call.rawInput !== undefined && (
+              <JsonView
+                value={call.rawInput}
+                text={input ?? ""}
+                preview={JSON_INPUT_PREVIEW}
+              />
             )
           )}
           {locations.length > 0 && (

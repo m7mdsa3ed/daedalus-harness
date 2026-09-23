@@ -111,7 +111,7 @@ interface PreviewState {
 const PROBE_MS = 4000
 const STARTING_PROBE_MS = 1500
 
-/** The Browser panel: a typed URL, or a source followed out of a transcript. */
+/** The project Preview panel, with an optional address bar for external pages. */
 export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const { trust, projectId, url: initialUrl } = params
   /* The catalog lives in the query cache now, so a streamed token never
@@ -196,7 +196,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   }
 
   React.useEffect(() => {
-    api.setTitle(url ? new URL(url).host : project ? `Browser — ${project.name}` : "Browser")
+    api.setTitle(url ? new URL(url).host : project ? `Preview — ${project.name}` : "Preview")
   }, [api, url, project])
 
   /* One panel follows successive sources. `openPanel` re-points an existing

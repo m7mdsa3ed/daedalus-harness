@@ -80,7 +80,7 @@ ipcMain.handle("notify", (_event, payload) => {
 
 ipcMain.on("theme-changed", (_event, resolved, source) => {
   /* The native material tints itself from the OS theme, never from the page:
-     a light app on a dark desktop got a dark mica/vibrancy slab behind its
+     a light app on a dark desktop got a dark acrylic/vibrancy slab behind its
      sidebar, which is what "too dark in light mode" was. `themeSource` is the
      one knob that repoints it, and it takes the app's *mode*, not the resolved
      colour — pinning "light"/"dark" also pins `prefers-color-scheme`, so a
@@ -88,7 +88,7 @@ ipcMain.on("theme-changed", (_event, resolved, source) => {
   nativeTheme.themeSource = source === "light" || source === "dark" ? source : "system"
   if (!win || win.isDestroyed() || process.platform === "darwin") return
   win.setTitleBarOverlay({ color: "#00000000", symbolColor: symbolColorFor(resolved), height: 36 })
-  /* No setBackgroundColor here any more: the tint is a constant, and mica's own
+  /* No setBackgroundColor here any more: the tint is a constant, and acrylic's own
      light/dark variant is picked by the `themeSource` set two lines up. */
 })
 
@@ -248,24 +248,37 @@ async function createWindow() {
         ? undefined
         : { color: "#00000000", symbolColor: symbolColorFor(nativeTheme.shouldUseDarkColors ? "dark" : "light"), height: 36 },
     trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 14 } : undefined,
-    /* The window's own material: macOS vibrancy, Windows 11 mica.
-       Mica and not acrylic. Mica is a still tint of the *wallpaper* rather than
-       a live blur of whatever happens to be behind the window: it costs no
-       per-frame compositing, it does not move when something else moves under
-       it, and it is the material Windows itself dresses app frames in — which
-       is what an app window is supposed to read as. Acrylic was tried and is
-       the louder effect, but its liveness is the cost: text sits over a surface
-       that changes whenever anything behind the window does.
-       Either way nothing stands between the material and the page's text on its
-       own — that is the global layer's job (see WINDOW_TINT and `--app-veil` in
+    /* The window's own material: macOS vibrancy, Windows 11 acrylic.
+       Acrylic and not mica, and that is a measurement, not a taste. On Windows
+       11 build 26200 a frameless window with `backgroundMaterial: "mica"` draws
+       **nothing** — the page is genuinely transparent (html/body/wrapper/sidebar
+       all compute to `rgba(0,0,0,0)`, `body::before` is the 45% veil) and what
+       shows through is near-black, not the desktop. The same window with
+       `acrylic` reveals the wallpaper, and DWM *does* report the mica backdrop
+       as set (`SYSTEMBACKDROP_TYPE=2`), so this is not "the option was ignored":
+       mica is a tint of the wallpaper sampled somewhere the frameless window
+       does not have, and it comes out as the dark flat tone. Acrylic is what
+       actually reads as the desktop behind the app.
+
+       (This repo went the other way once, in bf94706, on the reasoning below —
+       mica is the stiller, cheaper material. Reasonable, but it does not draw
+       here, so it is back to acrylic, which is what shipped before it and what
+       the CHANGELOG's "vibrancy/acrylic" still says.)
+
+       Acrylic is the live blur, so the caveat is real: text sits over a surface
+       that changes whenever something under the window does. That is why nothing
+       stands between the material and the page's text on its own — that is the
+       global layer's job (see WINDOW_TINT and `--app-veil` in
        client/src/index.css), and it is a single knob, so swapping the material
        does not re-open it. */
     vibrancy: process.platform === "darwin" ? "sidebar" : undefined,
     visualEffectState: process.platform === "darwin" ? "active" : undefined,
-    backgroundMaterial: process.platform === "win32" ? "mica" : undefined,
-    // NOT transparent: Windows skips DWM rounding and ignores backgroundMaterial
-    // on transparent windows. Vibrancy/mica composite fine without it — the
-    // alpha backgroundColor below is what lets them through.
+    backgroundMaterial: process.platform === "win32" ? "acrylic" : undefined,
+    /* NOT transparent, and that is load-bearing: a layered window loses its DWM
+       rounding and its hairline border on Windows (verified on build 26200 — the
+       corners go square and the edge disappears), and it is not what reveals the
+       material either. Acrylic composites fine without it; the alpha
+       `backgroundColor` below is what lets it through. */
     roundedCorners: true,
     backgroundColor:
       process.platform === "darwin"

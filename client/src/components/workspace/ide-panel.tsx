@@ -36,6 +36,7 @@ import { FileSearch } from "@/components/workspace/file-search"
 import { FileTab } from "@/components/workspace/file-tab"
 import { ScmView } from "@/components/workspace/scm-view"
 import { disposeCodeModel } from "@/components/workspace/code-editor"
+import { loadMonaco } from "@/lib/ide/monaco"
 import {
   activateTab,
   closeAllTabs,
@@ -86,6 +87,27 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   const project = projects.find((entry) => entry.id === projectId)
   const confirm = useConfirm()
   const coarse = useCoarsePointer()
+
+  /* ── Monaco, fetched before it is wanted ──
+     The editor is a couple of megabytes and is deliberately not in the chunk a
+     reader downloads (`lib/ide/monaco.ts`), so it used to start downloading on
+     the click that opened a file — putting the whole fetch, parse and compile
+     between picking a file and seeing it.
+
+     Opening this panel is the reliable signal that a file is about to be
+     opened, so the fetch starts here instead, when the browser is otherwise
+     idle. `loadMonaco` memoizes its promise, so the open still awaits the same
+     one and this costs nothing when it has already run. Idle, never eager: a
+     panel restored into a background tab by a saved layout must not fight the
+     transcript beside it for bandwidth. */
+  React.useEffect(() => {
+    const idle = window.requestIdleCallback?.bind(window) ?? ((fn: () => void) => setTimeout(fn, 200))
+    const cancel = window.cancelIdleCallback?.bind(window)
+    const handle = idle(() => void loadMonaco().catch(() => {}))
+    return () => {
+      if (cancel && typeof handle === "number") cancel(handle)
+    }
+  }, [])
 
   const editors = useEditors(projectId)
   const active = editors.tabs.find((tab) => tab.id === editors.activeId) ?? null
@@ -313,47 +335,74 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
       )}
 
       <div className={cn("flex min-w-0 flex-1 flex-col", narrow && sideOpen && "hidden")}>
+        {/* ── The editor tabs ──
+            The dock's own tab material (`.dock-tab` in `index.css`), not a
+            second idea of what a tab looks like: three weights of one material,
+            no colour on any of them, rounded on all four sides, the active one
+            carrying the card's ground and its `shadow-sm`. This strip used to
+            be square cells divided by hairlines with `bg-accent` marking the
+            active one — a different tab in the same window as the dock's.
+
+            It is the class and not the component: `panel-tab.tsx` is bound to
+            dockview's API, and what is shared here is the *look*, which is CSS
+            keyed on `.dock-tab[data-active]` and nothing else. */}
         {editors.tabs.length > 0 && (
-          <div className="flex shrink-0 items-stretch gap-px overflow-x-auto border-b border-border/60">
-            {editors.tabs.map((tab) => (
-              <ItemContextMenu key={tab.id} items={menuFor(tab)}>
-                <div
-                  className={cn(
-                    "group flex min-w-0 items-center gap-1 border-r border-border/60 pr-1 pl-2 text-xs",
-                    tab.id === editors.activeId
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent/40"
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => activateTab(projectId, tab.id)}
-                    className="min-w-0 max-w-40 truncate py-1.5"
-                    title={tab.body.path}
+          <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border/60 px-1 py-1">
+            {editors.tabs.map((tab) => {
+              const active = tab.id === editors.activeId
+              const title = titleOf(tab)
+              return (
+                <ItemContextMenu key={tab.id} items={menuFor(tab)}>
+                  <div
+                    className={cn(
+                      "dock-tab group relative flex h-8 min-w-0 shrink-0 items-center gap-1.5 pr-1 pl-2.5 text-xs",
+                      active ? "text-foreground" : "text-muted-foreground"
+                    )}
+                    {...(active ? { "data-active": "" } : {})}
                   >
-                    {titleOf(tab)}
-                  </button>
-                  {editors.dirty.has(tab.id) && (
-                    <span aria-label="Unsaved" className="size-1.5 shrink-0 rounded-full bg-primary" />
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Close ${titleOf(tab)}`}
-                    className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 has-focus-visible:opacity-100"
-                    onClick={() => void close(tab)}
-                  >
-                    <XIcon className="size-3" />
-                  </Button>
-                </div>
-              </ItemContextMenu>
-            ))}
+                    <button
+                      type="button"
+                      onClick={() => activateTab(projectId, tab.id)}
+                      className="min-w-0 max-w-40 truncate text-left"
+                      title={tab.body.path}
+                    >
+                      {title}
+                    </button>
+                    {/* Unsaved is said on the tab because nothing else asks:
+                        the panel does not veto its own close. */}
+                    {editors.dirty.has(tab.id) && (
+                      <span
+                        aria-label="Unsaved"
+                        className="size-1.5 shrink-0 rounded-full bg-primary"
+                      />
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Close ${title}`}
+                      className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 has-focus-visible:opacity-100"
+                      onClick={() => void close(tab)}
+                    >
+                      <XIcon className="size-3" />
+                    </Button>
+                  </div>
+                </ItemContextMenu>
+              )
+            })}
           </div>
         )}
 
-        {/* Every open tab stays mounted and the inactive ones are hidden, so a
-            scroll position, a selection and an in-flight read survive switching
-            away and back — the thing a keyed remount would throw away. */}
+        {/* Every open tab stays mounted and the inactive ones are hidden, so an
+            in-flight read, a draft and a conflict survive switching away and
+            back — the thing a keyed remount would throw away.
+
+            What does *not* stay mounted is the Monaco instance inside each one:
+            the tab passes `active` down and only the tab in front builds an
+            editor. Ten open files used to be ten editors, their DOM and their
+            share of the workers, for nine surfaces nobody could see. The two
+            things that made "keep it mounted" the answer are both kept without
+            it — the model outlives the mount, and the scroll and cursor are
+            saved and restored by `code-editor.tsx`. */}
         <div className="relative min-h-0 flex-1">
           {editors.tabs.length === 0 ? (
             <div className="p-2">
@@ -383,6 +432,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
                       path={tab.body.path}
                       left={tab.body.left}
                       right={tab.body.right}
+                      active={tab.id === editors.activeId}
                     />
                   )}
                 </div>

@@ -97,6 +97,34 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `pnpm test:mcp-oauth` drives the whole of it against a stand-in authorization server and a
   stand-in protected MCP server.
 
+## The marketplace: browsing an MCP Registry
+
+`server/src/mcp-registry.ts`, `GET /api/mcp-registry?q=&cursor=`, and the Browse destination
+beside Import in Settings › MCP.
+
+- **We index nothing.** The MCP Registry is an open spec — `GET /v0/servers` answering a
+  `server.json` per server, with `packages` (stdio) and `remotes` (http) — so the whole
+  feature is one fetch and `entriesOf`'s mapping onto `McpServerInput`. A catalog of our own
+  would be a second thing to keep fresh, and `config.mcpRegistryUrl` is the one line that
+  points this at a private registry implementing the same spec instead of the public one.
+- **`version=latest` is not optional.** Without it the registry returns every published
+  version as its own row, and a search for something popular comes back as twenty copies.
+- **A registry server is flattened into one row per package or remote.** Most publish
+  exactly one, so the cross is usually the identity — but a server offering both an npm
+  package and a hosted remote is two real choices, and the reader is the one who makes it.
+- **The registry never answers how a remote authenticates.** A browsed `http` row lands as
+  `auth: "none"` and the save path's probe decides, exactly as a typed one does: a registry
+  saying "streamable http" says nothing about a 401.
+- **Installing is the form, never a one-click POST.** Half of what publishers ship is a
+  `{placeholder}` or a required API key (`RegistryEntry.needs`, said on the row), so Browse
+  hands the *existing* new-server form a prefill through route state and the ordinary save
+  runs. Nothing here is a second way to write a library row.
+- The name the agent addresses is the tail of the reverse-DNS name (`io.github.acme/search`
+  → `search`); the qualified name and the repository stay on the row as provenance. A
+  container's env has to cross the boundary as `-e NAME` flags, with the values still
+  travelling as env so a secret stays out of the argv a `ps` would show.
+- Pure mapping, so it has a self-check off real captures: `pnpm test:mcp-registry`.
+
 ## Workflows
 
 - **Workflows are the harness's where the agent has none.** Codex and OpenCode have

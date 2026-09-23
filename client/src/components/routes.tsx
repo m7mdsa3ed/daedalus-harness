@@ -90,6 +90,7 @@ const ProjectsPage = lazyPage(settingsModules.projects, "ProjectsPage")
 const ProjectFormPage = lazyPage(settingsModules.projects, "ProjectFormPage")
 const McpPage = lazyPage(settingsModules.mcp, "McpPage")
 const McpImportPage = lazyPage(settingsModules.mcp, "McpImportPage")
+const McpBrowsePage = lazyPage(settingsModules.mcp, "McpBrowsePage")
 const McpFormPage = lazyPage(settingsModules.mcp, "McpFormPage")
 /* A chunk of its own: the playground and the schema rendering are a page
    somebody navigates to, and the library list must not carry them. */
@@ -175,6 +176,7 @@ const SETTINGS_PAGES: readonly {
     element: <McpPage />,
     sub: [
       { path: "import", element: <McpImportPage /> },
+      { path: "browse", element: <McpBrowsePage /> },
       { path: ":entryId/tools", element: <McpDetailPage /> },
       { path: ":entryId", element: <McpFormPage /> },
     ],

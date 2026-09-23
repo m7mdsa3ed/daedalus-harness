@@ -578,7 +578,7 @@ const SCENES = {
 
 const promptUpdates = () => SCENES.default();
 
-createInterface({ input: process.stdin }).on("line", (line) => {
+createInterface({ input: process.stdin }).on("line", async (line) => {
   const msg = JSON.parse(line);
   if (msg.method === "initialize") {
     clientCapabilities = msg.params?.clientCapabilities ?? {};
@@ -756,6 +756,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       } else {
         for (const entry of scene()) {
           const { sessionId, update } = "update" in entry ? entry : { sessionId: "acp-123", update: entry };
+          if (update.sessionUpdate === "tool_call" && update.status === "in_progress") {
+            await new Promise((resolve) => setTimeout(resolve, 3));
+          }
           out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
         }
       }

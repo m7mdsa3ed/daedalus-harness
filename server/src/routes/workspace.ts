@@ -5,10 +5,12 @@ import { enhancePrompt } from "../enhance.js";
 import { profileHasAgent } from "../registry.js";
 import { getProfile } from "../profiles.js";
 import {
+  ProjectDefaultsPatchSchema,
   ProjectInputSchema,
   createProject,
   deleteProject,
   getProject,
+  setProjectDefaults,
   updateProject,
   listProjects,
   reorderProjects,
@@ -90,6 +92,16 @@ export function workspaceRoutes(app: Hono): void {
     return c.json(await reorderProjects(ids.data));
   });
   app.put("/api/projects/:id", projectCrud.update(updateProject));
+  /* How a thread started here opens. Its own `PATCH` rather than a field on
+     the editor's `PUT` for the reason `setProjectDefaults` gives: the composer
+     writes this on every pick, without holding the rest of the project to send
+     back with it. Keys not named are left alone. */
+  app.patch("/api/projects/:id/defaults", async (c) => {
+    const parsed = ProjectDefaultsPatchSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const updated = await setProjectDefaults(c.req.param("id"), parsed.data);
+    return updated ? c.json(updated) : c.json({ error: "not found" }, 404);
+  });
   app.delete("/api/projects/:id", async (c) => {
     const id = c.req.param("id");
     if (!await deleteProject(id)) return c.json({ error: "not found" }, 404);
@@ -378,6 +390,11 @@ export function workspaceRoutes(app: Hono): void {
        everything around the model call — the profile, the agent check, the
        gathering — is identical. */
     kind: z.enum(["commit", "branch"]).optional(),
+    /* What is already in the commit box. Present means "sharpen this", absent
+       means "write one" — the same route either way, because the gathering and
+       the model call are identical and only a section of the prompt differs
+       (`git.commitMessagePrompt`). Ignored for a branch name. */
+    draft: z.string().optional(),
   });
 
   app.post("/api/projects/:projectId/git/draft-message", async (c) => {
@@ -399,6 +416,7 @@ export function workspaceRoutes(app: Hono): void {
         c.req.param("projectId"),
         parsed.data.repo,
         kind,
+        parsed.data.draft,
       );
       const answer = await enhancePrompt(profile, {
         text: prompt,

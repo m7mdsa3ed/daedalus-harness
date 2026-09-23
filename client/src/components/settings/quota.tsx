@@ -165,29 +165,43 @@ function WindowTile({ window }: { window: QuotaWindow }) {
   const pace = windowPace(window)
   const marker = pace ? Math.min(100, Math.max(0, pace.expectedPercent)) : null
 
+  /* A window nothing is counted against — a free tier's metered-but-uncapped
+     allowance, a pay-as-you-go spend against no budget. It has a figure but no
+     wall: a full track under it would read as "there is a limit and you are
+     nowhere near it", which is the opposite of what it says. */
+  const metered = window.unlimited === true
+
   return (
     <div className={cn("min-w-0 p-3", INSET)}>
       <div className="flex min-w-0 items-baseline justify-between gap-2">
         <span className="min-w-0 truncate text-xs font-medium">{window.label}</span>
-        <span className={cn("shrink-0 text-base leading-none font-semibold tabular-nums", tone.text)}>
-          {percent}%
-        </span>
+        {metered ? (
+          <Badge variant="secondary" className="shrink-0 m-0">
+            Unlimited
+          </Badge>
+        ) : (
+          <span className={cn("shrink-0 text-base leading-none font-semibold tabular-nums", tone.text)}>
+            {percent}%
+          </span>
+        )}
       </div>
 
       {/* `relative` so the pace tick can stand over the fill; the track itself is
           the same 1.5 the page has always drawn, thickened a hair so a 1px tick
           has something to sit in. */}
-      <div className="relative mt-2 h-2 overflow-hidden rounded-pill bg-muted">
-        <div className={cn("h-full rounded-pill transition-[width]", tone.bar)} style={{ width: `${percent}%` }} />
-        {marker !== null && (
-          <span
-            aria-hidden
-            title="Where an evenly-paced spend would be now"
-            className="absolute inset-y-0 w-px bg-foreground/50"
-            style={{ left: `${marker}%` }}
-          />
-        )}
-      </div>
+      {!metered && (
+        <div className="relative mt-2 h-2 overflow-hidden rounded-pill bg-muted">
+          <div className={cn("h-full rounded-pill transition-[width]", tone.bar)} style={{ width: `${percent}%` }} />
+          {marker !== null && (
+            <span
+              aria-hidden
+              title="Where an evenly-paced spend would be now"
+              className="absolute inset-y-0 w-px bg-foreground/50"
+              style={{ left: `${marker}%` }}
+            />
+          )}
+        </div>
+      )}
 
       <dl className="mt-2 space-y-1 text-xs text-muted-foreground">
         {amount && (
@@ -392,20 +406,31 @@ function QuotaCardsSkeleton() {
     width asked is the *panel's* — settings squeezed beside a terminal is narrow
     for the same reason a phone is.
 
-    **A window that names a `group` belongs to an account inside the reading,
-    and an account is drawn as the plan it is**: a heading with its own bars
-    under it, in the order the reader gave them, which for a gateway is the
-    order it will spend the accounts in. Four subscriptions behind one 9Router
-    endpoint are four sections in one card, each reading like the z.ai card next
-    to it — where the flat grid put eight tiles of `<account> · session (5h)`
-    beside each other and made none of them answerable.
+    **An account is drawn as the plan it is**: a heading with its own bars under
+    it, in the order the reader gave them, which for a gateway is the order it
+    will spend the accounts in. Four subscriptions behind one 9Router endpoint
+    are four sections in one card, each reading like the z.ai card next to it —
+    where the flat grid put eight tiles of `<account> · session (5h)` beside
+    each other and made none of them answerable.
+
+    The accounts come from `quota.accounts`, and each finds its own bars by
+    `group` — the string its windows carry, plan and all. Grouping the windows
+    by `group` would give sections in first-seen order, which is *nearly* right
+    and is wrong exactly where a gateway's first account has nothing to report.
+
+    **An account the reading names but has no windows for is drawn too**, off
+    `quota.accounts`: it is a real account the gateway holds — turned off, or
+    logged out, or a provider with no usage API — and a page that lists only the
+    accounts that happened to report is a page that never says the silent one
+    exists. It draws as its heading and its own state, and nothing else.
 
     No component knows what a group *is*: this draws whatever the reading
     grouped, in first-seen order, and an ordinary plan — every window ungrouped
     — is the one flat grid it has always been. A reading that groups only some
     of its windows draws the ungrouped ones first, under no heading, because
     they belong to the reading itself and not to any account in it. */
-function WindowGrid({ windows }: { windows: QuotaWindow[] }) {
+function WindowGrid({ quota }: { quota: QuotaSnapshot }) {
+  const { windows, accounts } = quota
   /* Insertion-ordered: `Map` keeps first-seen order, which is the reader's. */
   const sections = React.useMemo(() => {
     const byGroup = new Map<string, QuotaWindow[]>()
@@ -425,6 +450,47 @@ function WindowGrid({ windows }: { windows: QuotaWindow[] }) {
       ))}
     </div>
   )
+
+  /* The reading's own accounts, in its own order. Only the gateway names any;
+     everywhere else this is absent and the flat grid below is the whole body. */
+  if (accounts && accounts.length > 0) {
+    return (
+      <div className="space-y-5">
+        {accounts.map((account) => {
+          const group = sections.find(([name]) => name === account.group)?.[1] ?? []
+          const percent =
+            account.usedPercent === null || account.usedPercent === undefined
+              ? null
+              : Math.min(100, Math.max(0, Math.round(account.usedPercent)))
+          const tone = percent !== null ? quotaTone(percent) : null
+          /* The plan is what it is on, the provider is what kind of account it
+             is. Both are small, both are optional, and one line holds them. */
+          const sub = [account.plan, account.provider].filter(Boolean).join(" · ")
+          return (
+            <section key={account.id} className="space-y-2.5">
+              <div className="flex min-w-0 items-baseline gap-x-2">
+                <h4 className="min-w-0 truncate text-xs font-semibold text-muted-foreground">{account.name}</h4>
+                {sub && <span className="shrink-0 text-[11px] text-muted-foreground/70">{sub}</span>}
+                {percent !== null && tone && (
+                  <span className={cn("ml-auto shrink-0 text-xs font-medium tabular-nums", tone.text)}>{percent}%</span>
+                )}
+              </div>
+              {group.length > 0 ? (
+                grid(group)
+              ) : (
+                /* A named account with no bars says why in words — the gateway's
+                   own message, or that it is out of the rotation. Never an empty
+                   section, which reads as a bar that failed to load. */
+                <p className="text-xs text-muted-foreground">
+                  {account.disabled ? "Turned off in the gateway — not being spent" : (account.state ?? "No quota reported")}
+                </p>
+              )}
+            </section>
+          )
+        })}
+      </div>
+    )
+  }
 
   /* One section with no name is the ordinary plan, and it must not grow a
      wrapper that changes its spacing. */
@@ -458,10 +524,13 @@ function WindowGrid({ windows }: { windows: QuotaWindow[] }) {
 /** Everything under a card's header, and the whole reason both cards can exist:
     a reading is a reading, whichever reader took it. */
 function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string }) {
+  /* An account the gateway named but could not report on is still a body to
+     draw: "no plan here" is only the whole answer when there was nobody to ask. */
+  const filled = quota.windows.length > 0 || Boolean(quota.accounts?.length)
   return (
     <>
-      {quota.windows.length > 0 ? (
-        <WindowGrid windows={quota.windows} />
+      {filled ? (
+        <WindowGrid quota={quota} />
       ) : (
         /* Never a zeroed bar: "no plan here" is a different statement from
            "0% used", and drawing the second for the first is a lie. */

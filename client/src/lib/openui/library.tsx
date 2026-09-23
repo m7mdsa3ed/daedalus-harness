@@ -50,6 +50,7 @@ import { DiffView } from "@/components/ui/diff-view"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Notice } from "@/components/notice"
+import { MermaidFigure, diagramToMermaid } from "@/lib/openui/mermaid"
 import {
   ChartContainer,
   ChartLegend,
@@ -538,9 +539,9 @@ const Badges = defineComponent({
 
 const TONE_TEXT = {
   neutral: "border-border/60 bg-muted/40 text-foreground/80",
-  info: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  warn: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  info: "border-chart-2/30 bg-chart-2/10 text-chart-2",
+  success: "border-primary/30 bg-primary/10 text-primary",
+  warn: "border-chart-3/30 bg-chart-3/10 text-chart-3",
   error: "border-destructive/30 bg-destructive/10 text-destructive",
 } as const
 
@@ -569,7 +570,7 @@ const Timeline = defineComponent({
           <span
             className={cn(
               "mt-1 size-2.5 shrink-0 rounded-full border-2",
-              item.status === "done" && "border-emerald-500 bg-emerald-500",
+              item.status === "done" && "border-primary bg-primary",
               item.status === "active" && "border-primary bg-background",
               item.status === "failed" && "border-destructive bg-destructive",
               (!item.status || item.status === "pending") && "border-border bg-background"
@@ -612,7 +613,7 @@ const Compare = defineComponent({
           <ul className="space-y-0.5 text-[12px]">
             {option.pros?.map((pro, i) => (
               <li key={`p${i}`} className="text-foreground/90">
-                <span className="text-emerald-600 dark:text-emerald-400">+ </span>
+                <span className="text-primary">+ </span>
                 {pro}
               </li>
             ))}
@@ -663,7 +664,13 @@ const Tabs = defineComponent({
   }),
   component: ({ props, renderNode }) => (
     <UiTabs defaultValue={0} className="min-w-0">
-      <TabsList className="max-w-full overflow-x-auto">
+      {/* A strip too narrow for its labels scrolls sideways rather than
+          wrapping. `scrollbar-none` hides that scrollbar, and it is not just
+          tidiness: the list is a fixed `h-9` box, so a classic scrollbar takes
+          its ~10px out of the content box, every trigger measures `100%-1px` of
+          what is left, and each label clips against it. The strip still wheels
+          and swipes, and this is the app's own utility for a touch strip. */}
+      <TabsList className="max-w-full overflow-x-auto scrollbar-none">
         {props.tabs.map((tab, index) => (
           <TabsTrigger key={index} value={index}>
             {tab.label}
@@ -793,6 +800,52 @@ const Gallery = defineComponent({
   ),
 })
 
+/** A graph, written as what it is — nodes and edges — rather than as mermaid
+    source. This is the door to reach for: mermaid's syntax is one more thing to
+    get wrong, and the arrows are where a generated diagram usually breaks. */
+const Diagram = defineComponent({
+  name: "Diagram",
+  description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
+  props: z.object({
+    nodes: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string().optional(),
+        shape: z.enum(["box", "round", "diamond", "circle"]).optional(),
+      })
+    ),
+    edges: z.array(
+      z.object({
+        from: z.string(),
+        to: z.string(),
+        label: z.string().optional(),
+        dashed: z.boolean().optional(),
+      })
+    ),
+    direction: z.enum(["down", "right"]).optional(),
+    caption: z.string().optional(),
+  }),
+  component: ({ props }) => (
+    <MermaidFigure
+      code={diagramToMermaid(props.nodes, props.edges, props.direction ?? "down")}
+      caption={props.caption}
+    />
+  ),
+})
+
+/** Mermaid source, drawn. The escape hatch for the diagram kinds `Diagram`
+    cannot spell — a sequence, a state machine, a gantt — and it falls back to
+    the source when it will not parse. */
+const Mermaid = defineComponent({
+  name: "Mermaid",
+  description: "A diagram written in Mermaid syntax (sequence, state, class, gantt, flowchart).",
+  props: z.object({
+    code: z.string(),
+    caption: z.string().optional(),
+  }),
+  component: ({ props }) => <MermaidFigure code={props.code} caption={props.caption} />,
+})
+
 /** A labelled value with a bar under it — the one chart that needs no pairs of
     arrays, and the shape a "top N" answer usually wants. */
 const Progress = defineComponent({
@@ -899,6 +952,8 @@ export const openuiLibrary = createLibrary({
     Keys,
     People,
     Gallery,
+    Diagram,
+    Mermaid,
   ],
   componentGroups: [
     {
@@ -919,6 +974,15 @@ export const openuiLibrary = createLibrary({
         "- Image only with a URL you were actually given; never invent one. Remote images are loaded only when the reader clicks.",
         "- Diff for a before/after of text, Keys for shortcuts, People for who is involved, Gallery for several images.",
         "- Compare for weighing options, Timeline for ordered steps or history, Badges for short statuses.",
+      ],
+    },
+    {
+      name: "Diagrams",
+      components: ["Diagram", "Mermaid"],
+      notes: [
+        "- Diagram is the default: give nodes and edges, never Mermaid syntax. Every edge's `from`/`to` must be a node's `id`.",
+        "- Mermaid only for what Diagram cannot spell — a sequence, a state machine, a gantt. Write the diagram type on the first line.",
+        '- Keep a diagram under ~12 nodes and use direction "right" for a pipeline, "down" for a hierarchy; a wide graph does not survive a narrow panel.',
       ],
     },
     {

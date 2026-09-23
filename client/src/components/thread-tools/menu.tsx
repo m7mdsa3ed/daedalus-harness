@@ -25,7 +25,6 @@ import {
 } from "@/components/composer/indicator"
 import type { Actions } from "@/lib/actions"
 import { mcpNeedsAuth, mcpSubtitle, type SessionMeta } from "@/lib/settings"
-import { saveThreadDefaults } from "@/lib/thread-defaults"
 import { useAgents, useCommands, useMcpServers, useProfiles, useSkills } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 
@@ -106,13 +105,13 @@ export function ThreadToolsMenu({
     skillIds: meta.skillIds ?? [],
     commandIds: meta.commandIds ?? [],
   }
+  /* Published like the agent is: a reload rebuilds the draft from these, and
+     the next thread starts with the same kit — `configureDraft` writes the
+     project's defaults, and `remember: false` withholds that for a caller
+     configuring a routine rather than the thread you are about to start. */
   const toggle = (key: LinkKey, id: string, on: boolean) => {
     const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
-    actions.configureDraft(meta.id, { [key]: next })
-    // Remembered like the agent is: a reload rebuilds the draft from these,
-    // and the next thread starts with the same kit. Unless this menu is not
-    // about the next thread at all — see `remember`.
-    if (remember) saveThreadDefaults({ ...own, [key]: next })
+    actions.configureDraft(meta.id, { [key]: next }, remember)
   }
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
   const total = useThreadToolCount(meta)
@@ -250,11 +249,13 @@ export function ThreadToolsMenu({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => {
-                const cleared = { mcpServerIds: [], skillIds: [], commandIds: [] }
-                actions.configureDraft(meta.id, cleared)
-                if (remember) saveThreadDefaults(cleared)
-              }}
+              onClick={() =>
+                actions.configureDraft(
+                  meta.id,
+                  { mcpServerIds: [], skillIds: [], commandIds: [] },
+                  remember
+                )
+              }
             >
               Clear this thread&rsquo;s picks
             </DropdownMenuItem>

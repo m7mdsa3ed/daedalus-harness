@@ -67,7 +67,8 @@ export function FileTab({
   tabId: string
   path: string
   reveal?: Reveal
-  /** Only the tab in front binds ⌘S; every tab stays mounted. */
+  /** The tab in front. This component stays mounted for every tab; `active`
+      binds ⌘S and is what decides whether a Monaco instance exists at all. */
   active: boolean
 }) {
   const confirm = useConfirm()
@@ -401,17 +402,31 @@ export function FileTab({
           <DiffEditor original={file.content ?? ""} modified={draft ?? ""} filename={path} />
         </div>
       ) : (
+        /* ── One Monaco, for the tab in front ──
+           This component stays mounted for every open tab — its read, its
+           draft and its conflict are cheap React state and losing them would
+           mean a round trip per tab switch. The *editor* is not cheap: an
+           instance, its DOM and its share of the workers, per tab, for tabs
+           nobody is looking at.
+
+           So the surface is mounted only while this tab is active. Nothing the
+           reader can lose goes with it: the text is the model's and the model
+           outlives the mount, unsaved work is in `lib/workspace/buffers.ts`
+           either way, and the scroll and cursor are saved and restored by
+           `code-editor.tsx`. */
         <div className="min-h-0 flex-1 overflow-hidden">
-          <CodeEditor
-            modelKey={`${projectId}:${path}`}
-            value={draft ?? ""}
-            filename={path}
-            onChange={onChange}
-            onSave={() => void save()}
-            revealLine={reveal?.line}
-            revealEndLine={reveal?.endLine}
-            revealNonce={reveal?.nonce}
-          />
+          {active && (
+            <CodeEditor
+              modelKey={`${projectId}:${path}`}
+              value={draft ?? ""}
+              filename={path}
+              onChange={onChange}
+              onSave={() => void save()}
+              revealLine={reveal?.line}
+              revealEndLine={reveal?.endLine}
+              revealNonce={reveal?.nonce}
+            />
+          )}
         </div>
       )}
     </div>

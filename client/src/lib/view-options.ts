@@ -36,10 +36,17 @@ import { createLocalStore } from "./local-store"
 import { isStreamSpeed, type StreamSpeed } from "./stream-pace"
 import { isStreamEffect, type StreamEffect } from "./stream-words"
 
+export const RECENT_SUBAGENT_STEP_COUNTS = [0, 1, 3, 5, 10] as const
+export type RecentSubagentStepCount = (typeof RECENT_SUBAGENT_STEP_COUNTS)[number]
+
+export function isRecentSubagentStepCount(value: unknown): value is RecentSubagentStepCount {
+  return RECENT_SUBAGENT_STEP_COUNTS.some((count) => count === value)
+}
+
 export interface ViewOptions {
   /** Wall-clock time beside each message and step. */
   showTimestamps: boolean
-  /** Fold runs of consecutive tool steps into one expandable block. */
+  /** Fold runs of consecutive tool calls and interleaved thoughts into one expandable block. */
   groupTools: boolean
   /** Fold a run of consecutive `!` commands into one line you can open. */
   groupShellCommands: boolean
@@ -60,6 +67,8 @@ export interface ViewOptions {
   wideTranscript: boolean
   /** Expand every tool call's input/output by default. */
   showToolDetails: boolean
+  /** Number of each subagent's latest steps shown without opening its row. */
+  recentSubagentSteps: RecentSubagentStepCount
   /** The command, path or pattern under a tool row's description. Off, a step
    *  row says what the call *did* and leaves what it typed to the body. */
   showToolCommand: boolean
@@ -109,6 +118,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
+  recentSubagentSteps: 3,
   showToolCommand: true,
   splitDiffs: false,
   stepDividers: false,
@@ -179,6 +189,13 @@ function pick(raw: unknown): Partial<ViewOptions> {
     const value = source[key]
     if (typeof VIEW_DEFAULTS[key] === "boolean") {
       if (typeof value === "boolean") out[key] = value
+    } else if (key === "recentSubagentSteps") {
+      const savedCount = source.recentSubagentSteps
+      if (isRecentSubagentStepCount(savedCount)) {
+        out[key] = savedCount
+      } else if (typeof source.showRecentSubagentSteps === "boolean") {
+        out[key] = source.showRecentSubagentSteps ? 3 : 0
+      }
     } else if (key === "streamEffect") {
       if (isStreamEffect(value)) out[key] = value
     } else if (key === "streamSpeed") {

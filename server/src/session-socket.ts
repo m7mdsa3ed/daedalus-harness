@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import type * as acp from "./acp.js";
+import type { CancelReply, EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, ThreadRetry, TpsStats, WireError } from "./protocol.js";
 import { toWireError } from "./acp-bridge.js";
 import { queueItems } from "./session-queue.js";
 import type { SessionJournal } from "./session-journal.js";
@@ -38,7 +39,10 @@ function stagedFields(session: Session): { staged?: StagedConfig } {
 function contextFields(session: Session): { context?: acp.UsageUpdate } {
   return session.context ? { context: session.context } : {};
 }
-import type { CancelReply, EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, ThreadRetry, WireError } from "./protocol.js";
+
+function tpsFields(session: Session): { tps?: TpsStats } {
+  return session.tps ? { tps: session.tps } : {};
+}
 
 /**
  * What the socket router needs from the SessionManager — a port, so this
@@ -245,6 +249,7 @@ export class SessionSocket {
       ...retryFields(session),
       ...stagedFields(session),
       ...contextFields(session),
+      ...tpsFields(session),
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
        in the order it was journaled, and from here the peer is live. */
@@ -343,6 +348,7 @@ export class SessionSocket {
       ...retryFields(session),
       ...stagedFields(session),
       ...contextFields(session),
+      ...tpsFields(session),
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
   }

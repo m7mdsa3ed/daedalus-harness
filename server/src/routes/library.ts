@@ -28,6 +28,7 @@ import {
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
 import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
+import { searchRegistry } from "../mcp-registry.js";
 import { mcpServersFor } from "../sessions.js";
 import { listProjects } from "../projects.js";
 
@@ -174,6 +175,15 @@ export function libraryRoutes(app: Hono): void {
     if (!isBuiltinMcp(kind)) return c.json({ error: "unknown builtin" }, 404);
     return c.json(await mcpServers.ensureBuiltin(kind), 201);
   });
+
+  /* The marketplace. A proxy and nothing else — no row is written here, and
+     what comes back is already `McpServerInput`-shaped, so installing one is
+     the ordinary `POST /api/mcp-servers` every other door uses. Uncached: a
+     search is a keystroke's answer, and the registry is the thing that knows
+     what it holds. */
+  app.get("/api/mcp-registry", async (c) =>
+    c.json(await searchRegistry(c.req.query("q") ?? "", c.req.query("cursor") || undefined)),
+  );
 
   // Importable entries from the agents' own configs, minus what the library already has.
   app.get("/api/import", async (c) => {

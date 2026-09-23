@@ -1,5 +1,13 @@
 import type * as acp from "./acp.js";
 
+export interface TpsStats {
+  min: number;
+  max: number;
+  outputTokens: number;
+  durationMs: number;
+  toolDurationMs?: number;
+}
+
 /**
  * The Daedalus thread protocol — what travels over `/ws`.
  *
@@ -51,6 +59,12 @@ export interface QuotaWindow {
       both are present. */
   resetsLabel?: string;
   windowMinutes?: number | null;
+  /** A window nothing is counted against — a free tier's metered-but-uncapped
+      allowance, a pay-as-you-go spend against no stated budget. It still has a
+      reading (`usedPercent` is a figure to show, not a wall to hit) but no bar
+      to fill: a renderer draws the number and no track under it, because a bar
+      at 0% and a bar at "there is no ceiling" are different statements. */
+  unlimited?: boolean;
   /** Which *account* inside this reading the window belongs to, when the reading
       is of more than one — a gateway (9Router) is many subscriptions behind one
       endpoint, and its five-hour window is a different five hours per account.
@@ -59,6 +73,54 @@ export interface QuotaWindow {
       string is saying they are one account. Absent on every ordinary plan, where
       the profile *is* the account and the windows are one flat set. */
   group?: string | null;
+}
+
+/** One account *inside* a reading that is of more than one.
+ *
+ * A gateway (9Router) fronts many accounts behind one endpoint, and the reading
+ * is therefore not one plan: which accounts there are is read from the gateway's
+ * own connection list, before any quota is asked for, and an account the gateway
+ * turned off or whose credential no longer answers has no window to carry its
+ * name. So the accounts are a list of their own rather than inferred from
+ * `QuotaWindow.group`.
+ *
+ * This is display metadata and only that — which accounts to name, in which
+ * order, and what state each is in when it has nothing to draw. `group` stays
+ * the joining key: an account that reported windows says one of these names on
+ * each of them, so a renderer matches a heading to its bars by string.
+ * Absent on every ordinary plan, where the profile *is* the account. */
+export interface QuotaAccount {
+  /** The gateway's own connection id. A renderer keys on it and otherwise
+      ignores it; two accounts the gateway gives one name are still two. */
+  id: string;
+  /** What to call it — the name the gateway shows, else its login. */
+  name: string;
+  /** The string its windows carry as `QuotaWindow.group` — which is `name`,
+      with the plan appended when the provider reported one, and with the
+      `Claude (2)` disambiguator when two accounts share a name. This is the
+      join key, and the only reliable one: a renderer matching on `name` would
+      find nothing once a plan is in play, and on `id` would be reading one
+      field's format out of another's. */
+  group: string;
+  /** The provider behind it (`claude`, `codex`, `glm`), as a word, for a
+      subtitle that says what kind of account this is. Null when unnamed. */
+  provider?: string | null;
+  /** The plan that account is on, when its provider reported one. */
+  plan?: string | null;
+  /** How many readable windows it contributed. Zero is an account that is
+      named but silent — the state below is why. */
+  windows: number;
+  /** The fullest window's percentage, for a heading that has to summarise. */
+  usedPercent?: number | null;
+  /** When that window rolls over. */
+  resetsAt?: number | null;
+  /** Nobody could be asked. The gateway turned it off, so it is not being
+      spent and its quota is not this reading's to report. */
+  disabled?: boolean;
+  /** It answered, but not with quotas — an expired login, a provider with no
+      usage API, a free tier that is all `unlimited`. `state` is what it said
+      or a stand-in for it; either way there is no bar to draw. */
+  state?: string | null;
 }
 
 export type QuotaStatus =
@@ -93,6 +155,11 @@ export interface QuotaSnapshot {
   /** The plan the runtime names, when it names one (`pro`, `max`, `plus`). */
   planName?: string | null;
   windows: QuotaWindow[];
+  /** Every account a multi-account gateway has, in its own priority order —
+      see `QuotaAccount`. Absent where the reading is one account, which is
+      everywhere but 9Router. `windows` may hold fewer than are named here and
+      never holds one this list does not name. */
+  accounts?: QuotaAccount[] | null;
   credits?: { balance: string | null; unlimited: boolean } | null;
   /** What the runtime said, always — one adapter parses prose, and prose moves
       between releases. A wording change then degrades to "here is the report,
@@ -889,6 +956,8 @@ export type ThreadEvent =
           an older one, so the last word has to be the server's. Absent means
           this runtime has never reported one. */
       context?: acp.UsageUpdate;
+      /** Extrema and weighted-average inputs for measured turns. */
+      tps?: TpsStats;
     }
   /** The replay, in bulk. A container, not a fifth journaled kind: the events
       inside are the same events a live socket receives and the client unrolls
@@ -1064,6 +1133,8 @@ export type ThreadEvent =
           every prompt in it. Absent on turns that ended before this field
           existed, which simply draw no speed. */
       durationMs?: number;
+      /** Union wall time spent in the thread's own tool calls; overlapping calls count once. */
+      toolDurationMs?: number;
       /** The ACP `messageId` of the last content chunk this turn produced —
           absent when the runtime never sent one, or the turn produced no
           assistant chunks at all. Rewind reads this off the turn *before* the

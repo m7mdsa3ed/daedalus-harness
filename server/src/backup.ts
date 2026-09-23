@@ -46,6 +46,10 @@ import {
 } from "./db/index.js";
 import type { AutonomyPolicy } from "./autonomy.js";
 import { SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
+/* A project's start defaults are folded into the row on the wire and written
+   back through the same mapping the route uses, so the bundle and the API
+   cannot disagree about which column a field lives in. */
+import { projectDefaultsColumns, projectDefaultsOf, withoutDefaults } from "./projects.js";
 /* The routine link descriptor lives with the engine rather than in db/links.ts
    — see the note there. It is imported for its links exactly as
    SESSION_LINKS is used above. */
@@ -253,6 +257,27 @@ const ModelPromptRow = z.object({
   seededVersion: int.default(0),
 });
 
+/** A project's start defaults — the fields a bundle from before them has
+    none of, which is why every one is optional and every one defaults to the
+    empty pick. Folding them into the row (rather than exporting the columns
+    raw) is the choice this shape exists for: a bundle is the *reader's* shape,
+    the same one `GET /api/projects` answers, so an importer never has to know
+    which of two names a field arrived under. */
+const ProjectDefaultsRow = z.object({
+  profileId: str.default(""),
+  agentId: str.default(""),
+  model: str.default(""),
+  effort: str.default(""),
+  modeId: str.default(""),
+  configChoices: z.record(str, z.union([str, z.boolean()])).default({}),
+  personaId: str.default(""),
+  mcpServerIds: z.array(str).default([]),
+  skillIds: z.array(str).default([]),
+  commandIds: z.array(str).default([]),
+  suggestFollowups: z.boolean().default(true),
+  uiBlocks: z.boolean().default(true),
+});
+
 const ProjectRow = z.object({
   id: str.min(1),
   name: str,
@@ -262,6 +287,13 @@ const ProjectRow = z.object({
   /** Absent on bundles from before the column; 0 then, which leaves the
       imported rows tied and ordered by name. */
   sortOrder: z.number().int().nullish(),
+  /** Absent on bundles from before the columns; the whole empty pick then,
+      which is exactly the state a project nobody has worked in is in.
+      `prefault` rather than `default` on purpose: the fields inside carry
+      their own defaults, and an absent key here has to be run through them —
+      `default({})` would install a `{}` that never reaches them and fail the
+      insert on a NOT NULL column. */
+  defaults: ProjectDefaultsRow.prefault({}),
 });
 
 /** A standing instruction rule — individual title and content. */
@@ -341,6 +373,8 @@ const SessionRow = z.object({
      recorded, which reads as "no failure" — the same thing every row said
      before the column existed. */
   lastTurnError: optStr,
+  /* Measured output-speed extrema. Older bundles have no recorded rates. */
+  tps: z.object({ min: z.number(), max: z.number(), outputTokens: z.number(), durationMs: z.number(), toolDurationMs: z.number().optional() }).nullish(),
   deletedAt: int.nullish(),
   /* Absent in a bundle written before pins moved to the server, which reads as
      unpinned — which is what every thread in it was. */
@@ -795,7 +829,10 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     commands: await db.select().from(commandsTable),
     personas: await db.select().from(personasTable),
     modelPrompts: await db.select().from(modelPromptsTable),
-    projects: await db.select().from(projectsTable),
+    projects: (await db.select().from(projectsTable)).map((row) => ({
+      ...withoutDefaults(row),
+      defaults: projectDefaultsOf(row),
+    })),
     projectHelpers: await db.select().from(projectHelpersTable),
     knowledge: await db.select().from(knowledgeTable),
     sessions: withLinks(sessions, await readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
@@ -1053,12 +1090,19 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       tx,
       projectsTable,
       "id",
-      bundle.projects.map((p) => ({
-        ...p,
-        description: p.description ?? null,
-        logoUrl: p.logoUrl ?? "",
-        sortOrder: p.sortOrder ?? 0,
-      })),
+      bundle.projects.map((p) => {
+        const { defaults, ...row } = p;
+        return {
+          ...row,
+          description: p.description ?? null,
+          logoUrl: p.logoUrl ?? "",
+          sortOrder: p.sortOrder ?? 0,
+          /* The two writers of these columns are this and `setProjectDefaults`,
+             and both go through `projectDefaultsColumns` — a bundle that
+             rewrote them by hand would be a second spelling of the mapping. */
+          ...projectDefaultsColumns(defaults),
+        };
+      }),
     );
     summary.projects = bundle.projects.length;
 

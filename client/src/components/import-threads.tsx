@@ -68,7 +68,11 @@ import { threadPath } from "@/lib/router"
 import { profileSupports, type Project } from "@/lib/settings"
 import type { Actions } from "@/lib/actions"
 import { useAgents, useInvalidateCatalog, useProfiles, useProjects } from "@/lib/queries/catalog"
-import { defaultToolPicks, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
+import {
+  defaultToolPicks,
+  emptyDefaults,
+  resolveThreadStart,
+} from "@/lib/thread-defaults"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -191,7 +195,14 @@ export function ImportThreadsDialog({
   )
   React.useEffect(() => {
     if (!open) return
-    const start = resolveThreadStart(loadThreadDefaults(), allProfiles)
+    /* The import's own project picks the pair, the same way every other new
+       thread does — the listing is read through a (profile, agent) pair, and a
+       bundle of conversations pulled into a project belongs in the pair that
+       project is worked in. */
+    const start = resolveThreadStart(
+      projects.find((p) => p.id === projectId)?.defaults ?? emptyDefaults(),
+      allProfiles
+    )
     if (!start) return
     setAgentId((current) => current || start.agentId)
     setProfileId((current) => {
@@ -421,7 +432,9 @@ export function ImportThreadsDialog({
         profileId,
         agentId,
         sessions: chosen,
-        ...defaultToolPicks(loadThreadDefaults()),
+        ...defaultToolPicks(
+          projects.find((p) => p.id === projectId)?.defaults ?? emptyDefaults()
+        ),
       })
       await actions.refreshSessions()
       const n = result.created.length

@@ -196,49 +196,65 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   - `9router` — a **self-hosted gateway**, and the one adapter whose reading is
     not one plan: 9Router fronts many accounts (a Claude subscription, a Codex
     login, a GLM key, a free tier) and falls back between them. **So every account is its own
-    plan, and a window says which it belongs to** (`QuotaWindow.group`, the new
-    and only field this needed): the card draws a section per account — name,
-    its fullest window beside it, its own tiles under it — which is the shape
-    the sidebar popover already drew two accounts of one provider in. Pooling
-    across the accounts was tried first, on the theory that fallback makes the
-    gateway's aggregate the only number that gates a turn, and it is wrong for
-    what a person does with this page: a five-hour window is a *different* five
-    hours per account, a Max subscription and a GLM key are not interchangeable
-    capacity, and "60% across four accounts" hides both the exhausted account
-    and the untouched one. **The accounts stay in the gateway's own priority
-    order** — the order it will spend them in, so the first section is the one
-    serving now and sorting by fullness would scramble the one fact a fallback
-    chain has to show. Two accounts the gateway gives the same name are
-    disambiguated (`Claude`, `Claude (2)`), because one `group` string is one
-    section. The plan name counts the accounts actually behind the bars
-    (`9Router · 4 accounts (1 not reporting)`), plus the ones past the cap that
-    were never read (`(+3 not shown)`, from the gateway's own `pagination.total`
-    — an account nobody asked about is not an account that stayed quiet).
+    plan, and a window says which it belongs to** (`QuotaWindow.group`): the card
+    draws a section per account — name, its fullest window beside it, its own
+    tiles under it — which is the shape the sidebar popover already drew two
+    accounts of one provider in. Pooling across the accounts was tried first, on
+    the theory that fallback makes the gateway's aggregate the only number that
+    gates a turn, and it is wrong for what a person does with this page: a
+    five-hour window is a *different* five hours per account, a Max subscription
+    and a GLM key are not interchangeable capacity, and "60% across four
+    accounts" hides both the exhausted account and the untouched one. **The
+    accounts stay in the gateway's own priority order** — the order it will spend
+    them in, so the first section is the one serving now and sorting by fullness
+    would scramble the one fact a fallback chain has to show. Two accounts the
+    gateway gives the same name are disambiguated (`Claude`, `Claude (2)`), on
+    the name as well as the group string, because a heading has no second line
+    for the group to hide in.
+    **Every account the gateway holds is named, in `QuotaSnapshot.accounts`, not
+    only the ones that answered.** The list is read from the gateway's own
+    connection route before any quota is asked for, so an account that has been
+    turned off, or whose credential no longer answers, is still a section — with
+    no bars and its own state in words, the gateway's message where it left one
+    (`Kiro quota API rejected the current token.`) and a stand-in where it did
+    not. A page that lists only the accounts that reported is a page that never
+    says the silent one exists. Only a *turned-off* account is not asked at all:
+    the call would disagree with the gateway's own reading of its rotation.
+    `GET /api/providers/client?accountStatus=all&sort=priority` (already filtered
+    to the connections it can report on, which is why it and not
+    `/api/providers`) then `GET /api/usage/:connectionId` per *active* row,
+    capped at 40 so one refresh cannot become hundreds of upstream calls; the cap
+    is this adapter's, so the accounts past it are counted as `+n not shown` off
+    the gateway's own `pagination.total` rather than as "not reporting". The plan
+    name counts the rest (`9Router · 4 accounts (1 off, 2 not reporting)`).
+    Host from the profile's own base URL's origin — it is the same server as
+    `…:20128/v1`. **Its `sk-` key is not the credential**: that authorizes `/v1`
+    inference only, while every `/api/*` route sits behind the dashboard session,
+    so the call is made bare (the whole answer with `requireLogin` off) and, on a
+    401, retried after a `POST /api/auth/login` with the dashboard password —
+    which is what `ProfileUsage.apiKey` holds here. A 401 with no password says
+    so in words. One account failing is that account's row, never the reading's.
     **A window is named the way the gateway's own dashboard names it, not the
     way its handler keyed it**: `/api/usage/:id` is a raw body 9Router runs
     through one provider-aware normalizer before drawing (`parseQuotaData` in
     `ProviderLimits/utils.js`), and reading it without that is how the same
-    account said `spark_weekly` here and "Spark (Weekly)" there. Ported, and
-    only where it differs from the raw body: Codex's window names, Antigravity's
+    account said `spark_weekly` here and "Spark (Weekly)" there. Ported, and only
+    where it differs from the raw body: Codex's window names, Qoder's
+    `user`/`organization` names and its skipped empty bucket, and Antigravity's
     dozen model rows collapsed to one bar per family at the family's **worst**
-    window (the model that runs out first is what gates the account), Qoder's
-    empty `organization` bucket skipped, and `unit` carried. The percentage was
-    already the gateway's own rule — `remainingPercentage`, else `used`/`total`.
-    Nothing in the client knows what
-    a group *is*: `WindowGrid` draws whatever the reading grouped, an ungrouped
-    reading is the flat grid it always was, and the flat surfaces (the composer
-    popover, the sidebar, the overview's tightest line) prefix the account
-    through the one `windowTitle` helper. `GET /api/providers/client?accountStatus=active` (already
-    filtered to the connections it can report on, which is why it and not
-    `/api/providers`) then `GET /api/usage/:connectionId` per row, capped at 20
-    so one refresh cannot become fifty upstream calls. Host from the profile's
-    own base URL's origin — it is the same server as `…:20128/v1`. **Its `sk-`
-    key is not the credential**: that authorizes `/v1` inference only, while
-    every `/api/*` route sits behind the dashboard session, so the call is made
-    bare (the whole answer with `requireLogin` off) and, on a 401, retried after
-    a `POST /api/auth/login` with the dashboard password — which is what
-    `ProfileUsage.apiKey` holds here. A 401 with no password says so in words.
-    One account failing is that account's row, never the reading's.
+    window (the model that runs out first is what gates the account). The
+    percentage is the gateway's own rule, extended the one way it had to be:
+    `remainingPercentage`, else a `remaining` that is the same kind of number as
+    `total` read as an absolute remainder (Kiro, Qoder) and a `total: 100` pair
+    read as a percentage, else the pair. A window marked `unlimited` is **kept**,
+    carrying `QuotaWindow.unlimited` — a spend against no stated budget is a real
+    reading (Vercel's `Used (USD)`), and dropping it is how a pay-as-you-go
+    account read as having no windows at all; the renderer draws the figure and
+    no track, because a bar at 0% and "there is no ceiling" are different
+    statements. Nothing in the client knows what a group *is*: `WindowGrid` draws
+    the reading's accounts, each joined to its own bars through `group`, an
+    ungrouped reading is the flat grid it always was, and the flat surfaces (the
+    composer popover, the sidebar) draw the same accounts under their own names.
   Two that were checked and deliberately not added: Alibaba's coding-plan quota (the
   console's `queryCodingPlanInstanceInfoV2` route answers `ConsoleNeedLogin` to a bare
   API key — it needs a browser session the harness will not hold) and Chutes (no pinned

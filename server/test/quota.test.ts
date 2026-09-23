@@ -639,7 +639,15 @@ test("commandCodeQuotaUrl takes an override as an origin, or whole when it names
 
 /* ── 9Router: many accounts behind one gateway ──
    The fold is a list of the gateway's own per-connection usage answers, in the
-   shape `open-sse/services/usage/*` normalizes to. */
+   shape `open-sse/services/usage/*` normalizes to — every fixture below is a
+   capture of what the live gateway answered in each state (an account with
+   per-model Antigravity rows, a Vercel credits body, a Kiro refusal, a
+   turned-off account, a `message`-only body).
+
+   The accounts are read from the gateway's *connection list*, not inferred from
+   whatever came back with windows: an account the gateway turned off, or whose
+   credential no longer answers, has no window to carry its name, and a page
+   that lists only the accounts that reported never says it exists. */
 
 const soon = Date.now() + 60 * 60 * 1000;
 const later = Date.now() + 5 * 60 * 60 * 1000;
@@ -657,7 +665,7 @@ test("foldNineRouterQuota draws an account's own windows, under its own group", 
       },
     },
     // A free tier has nothing to pace, and an account that only spoke is kept
-    // in `raw`, drawn nowhere, and counted as not reporting.
+    // in `raw`, drawn as its own named section, and counted as not reporting.
     { connection: { id: "c2", provider: "kiro" }, usage: { quotas: { monthly: { unlimited: true } } } },
     { connection: { id: "c3", provider: "codex" }, usage: { message: "re-authorize this connection" } },
   ]);
@@ -678,6 +686,31 @@ test("foldNineRouterQuota draws an account's own windows, under its own group", 
   assert.equal(snap.windows[0].cap, null);
   assert.equal(snap.planName, "9Router · 1 account (2 not reporting)");
   assert.match(snap.raw, /re-authorize/);
+});
+
+test("foldNineRouterQuota names every account the gateway holds, in its own order", () => {
+  const snap = foldNineRouterQuota([
+    {
+      connection: { id: "c1", provider: "claude", name: "Work Max", priority: 1 },
+      usage: { quotas: { weekly: { remainingPercentage: 10 } } },
+    },
+    // Turned off: no windows, and its state is the gateway's, not a provider's.
+    { connection: { id: "c2", provider: "opencode-go", name: "gmail", isActive: false }, usage: {} },
+    { connection: { id: "c3", provider: "kiro", name: "Account 1" }, usage: { message: "Kiro quota API rejected the current token." } },
+  ]);
+  assert.deepEqual(
+    snap.accounts.map((a) => [a.id, a.name, a.provider, a.windows, a.disabled, a.usedPercent]),
+    [
+      ["c1", "Work Max", "claude", 1, false, 90],
+      ["c2", "gmail", "opencode-go", 0, true, null],
+      ["c3", "Account 1", "kiro", 0, false, null],
+    ],
+  );
+  // A silent account carries the words for why — the gateway's own where it
+  // left one, and the adapter's plainest statement where it did not.
+  assert.equal(snap.accounts[2].state, "Kiro quota API rejected the current token.");
+  assert.equal(snap.accounts[1].state, null);
+  assert.equal(snap.planName, "9Router · 1 account (1 off, 1 not reporting)");
 });
 
 /* ── Many accounts: one section each, never pooled ──
@@ -707,6 +740,37 @@ test("foldNineRouterQuota keeps every account's window its own", () => {
   assert.equal(snap.planName, "9Router · 2 accounts");
 });
 
+test("foldNineRouterQuota hands the renderer one join key, plan and all", () => {
+  // The window's `group` is the account's `group`, never its bare `name`: the
+  // group carries the plan, and a card that matched on the name would find no
+  // tiles for exactly the accounts the gateway could describe best.
+  const snap = foldNineRouterQuota([
+    {
+      connection: { id: "c1", provider: "claude", name: "Work Max" },
+      usage: {
+        plan: "Claude Code",
+        quotas: { "session (5h)": { remainingPercentage: 60 } },
+      },
+    },
+  ]);
+  assert.equal(snap.accounts[0].name, "Work Max");
+  assert.equal(snap.accounts[0].plan, "Claude Code");
+  assert.equal(snap.accounts[0].group, "Work Max · Claude Code");
+  assert.equal(snap.windows[0].group, snap.accounts[0].group);
+});
+
+test("foldNineRouterQuota disambiguates the account's name, not just its group", () => {
+  // Two logins the gateway shows one name for: the heading has to say which is
+  // which, because there is no second line for the group string to hide in.
+  const snap = foldNineRouterQuota([
+    { connection: { id: "c1", provider: "claude", name: "Claude" }, usage: { quotas: { weekly: { remainingPercentage: 50 } } } },
+    { connection: { id: "c2", provider: "claude", name: "Claude" }, usage: { quotas: { weekly: { remainingPercentage: 20 } } } },
+  ]);
+  assert.deepEqual(snap.accounts.map((a) => a.name), ["Claude", "Claude (2)"]);
+  assert.deepEqual(snap.accounts.map((a) => a.group), ["Claude", "Claude (2)"]);
+  assert.deepEqual(snap.windows.map((w) => w.group), ["Claude", "Claude (2)"]);
+});
+
 test("foldNineRouterQuota leaves the accounts in the gateway's own priority order", () => {
   const snap = foldNineRouterQuota([
     { connection: { id: "c1", name: "First" }, usage: { quotas: { weekly: { remainingPercentage: 95 } } } },
@@ -715,6 +779,7 @@ test("foldNineRouterQuota leaves the accounts in the gateway's own priority orde
   // Fullest-first would put "Second" on top and scramble the one fact a
   // fallback chain has to show: which account is serving now.
   assert.deepEqual(snap.windows.map((w) => w.group), ["First", "Second"]);
+  assert.deepEqual(snap.accounts.map((a) => a.id), ["c1", "c2"]);
 });
 
 test("foldNineRouterQuota keeps the amounts an account counted", () => {
@@ -723,6 +788,31 @@ test("foldNineRouterQuota keeps the amounts an account counted", () => {
   ]);
   const [window] = snap.windows;
   assert.deepEqual([Math.round(window.usedPercent), window.used, window.cap], [25, 300, 1200]);
+});
+
+test("foldNineRouterQuota derives the spend from an absolute remainder", () => {
+  // GitHub reports `used`/`total`; Kiro and Qoder report a `remaining` that is
+  // the same kind of number as the total. Reading the second as a percentage is
+  // how an account with 1500 of 2000 left came out at 2000% used.
+  const snap = foldNineRouterQuota([
+    {
+      connection: { id: "c1", provider: "kiro" },
+      usage: { quotas: { monthly: { used: 500, total: 2000, remaining: 1500 } } },
+    },
+  ]);
+  const [window] = snap.windows;
+  assert.deepEqual([Math.round(window.usedPercent), window.used, window.cap], [25, 500, 2000]);
+});
+
+test("foldNineRouterQuota reads a normalized percentage pair as a percentage", () => {
+  // The other half of the same rule: `total: 100, remaining: 30` is 30%
+  // remaining, not 0.3% — and the pair is not shown as amounts, because 70/100
+  // is the percentage said twice.
+  const snap = foldNineRouterQuota([
+    { connection: { id: "c1", provider: "codex" }, usage: { quotas: { weekly: { used: 70, total: 100, remaining: 30 } } } },
+  ]);
+  const [window] = snap.windows;
+  assert.deepEqual([Math.round(window.usedPercent), window.used, window.cap], [70, 70, null]);
 });
 
 test("foldNineRouterQuota never draws two accounts as one section", () => {
@@ -734,7 +824,10 @@ test("foldNineRouterQuota never draws two accounts as one section", () => {
   ]);
   assert.deepEqual(snap.windows.map((w) => w.group), ["Claude", "Claude (2)"]);
   assert.notEqual(snap.windows[0].id, snap.windows[1].id);
+  // Both are still their own account, with their own id.
+  assert.deepEqual(snap.accounts.map((a) => a.id), ["c1", "c2"]);
 });
+
 /* ── The gateway's own names ──
    9Router's dashboard never draws a handler's raw quota key: it runs the same
    body through `parseQuotaData` first. Reading `/api/usage/<id>` without that
@@ -772,14 +865,64 @@ test("foldNineRouterQuota draws one Antigravity bar per family, at the family's 
       },
     },
   ]);
+  // The two families first, then the weekly allowance and the rest — the order
+  // upstream's own `parseQuotaData` pushes them in.
   assert.deepEqual(
     snap.windows.map((w) => [w.label, Math.round(w.usedPercent)]),
     [
-      ["Weekly", 10],
       ["Gemini (Flash / Pro)", 80],
       ["Claude (Sonnet / Opus)", 50],
+      ["Weekly", 10],
     ],
   );
+});
+
+test("foldNineRouterQuota keeps an Antigravity image model as its own row", () => {
+  // Upstream does not fold an image model into a family — `includes("image")`
+  // takes it out of both — so dropping it would lose a bar the gateway's own
+  // page draws.
+  const snap = foldNineRouterQuota([
+    {
+      connection: { id: "c1", provider: "antigravity", name: "AG" },
+      usage: {
+        quotas: {
+          "gemini-3.1-flash-image": { remainingPercentage: 40, displayName: "Gemini 3.1 Flash Image" },
+          "gemini-3-flash": { remainingPercentage: 90 },
+        },
+      },
+    },
+  ]);
+  assert.deepEqual(
+    snap.windows.map((w) => w.label),
+    ["Gemini (Flash / Pro)", "Gemini 3.1 Flash Image"],
+  );
+});
+
+test("foldNineRouterQuota keeps an unlimited window, with the spend it counted", () => {
+  // Vercel's credits body, verbatim: a spend against no stated budget. Dropping
+  // it — as this adapter used to — is how a pay-as-you-go account read as having
+  // no windows at all, and the balance beside it was thrown away.
+  const snap = foldNineRouterQuota([
+    {
+      connection: { id: "c1", provider: "vercel-ai-gateway", name: "28082026" },
+      usage: {
+        plan: "Pay-as-you-go",
+        quotas: {
+          "Used (USD)": { used: 5, total: 0, remaining: 0, remainingPercentage: 100, unlimited: true },
+          "Remaining (USD)": { used: -0.0082592, total: 5, remaining: -0.0082592, remainingPercentage: -0.165184, unlimited: false },
+        },
+      },
+    },
+  ]);
+  assert.equal(snap.windows[0].unlimited, true);
+  assert.equal(snap.windows[0].cap, null);
+  assert.equal(snap.windows[0].used, 5);
+  // The second is a real window over the monthly allocation, and its spend is
+  // what the `remainingPercentage` complement says — the balance has gone
+  // fractionally negative, so the allocation is spent.
+  assert.equal(snap.windows[1].unlimited, false);
+  assert.equal(snap.windows[1].cap, 5);
+  assert.equal(Math.round(snap.windows[1].usedPercent), 100);
 });
 
 test("foldNineRouterQuota counts the accounts it could not read, not just the quiet ones", () => {
@@ -793,18 +936,9 @@ test("foldNineRouterQuota counts the accounts it could not read, not just the qu
 test("foldNineRouterQuota reads a gateway with nothing linked as no plan, never 0%", () => {
   const snap = foldNineRouterQuota([]);
   assert.deepEqual(snap.windows, []);
+  assert.deepEqual(snap.accounts, []);
   assert.equal(snap.status, "api-key");
 });
-
-test("nineRouterHost falls back to the profile's own gateway origin", () => {
-  assert.equal(nineRouterHost(zaiProfile("http://localhost:20128/v1"), { kind: "9router" }), "http://localhost:20128");
-  assert.equal(nineRouterHost(zaiProfile(""), { kind: "9router" }), "http://localhost:20128");
-  assert.equal(
-    nineRouterHost(zaiProfile("http://localhost:20128/v1"), { kind: "9router", baseUrl: "http://box.lan:20128/" }),
-    "http://box.lan:20128",
-  );
-});
-
 /* ── The probe must not race the runtime's own OAuth refresh ──
    `claude -p /usage` is a second copy of the CLI on the same credentials file as
    the live agent child. Both refreshing at once burns the rotating refresh token

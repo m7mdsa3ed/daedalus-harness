@@ -32,7 +32,7 @@ import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { threadPath } from "@/lib/router"
 import { useSessionMeta, useThread } from "@/lib/store"
-import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
+import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { cn } from "@/lib/utils"
 import type { SettingsSectionId } from "@/components/settings/sections"
 
@@ -115,7 +115,10 @@ function LandingComposer({ actions }: { actions: Actions }) {
   React.useLayoutEffect(() => {
     const project = projects.find((p) => p.id === projectId)
     if (!project) return
-    const start = resolveThreadStart(loadThreadDefaults(), profiles)
+    /* The console's own project — the deep-linked one, else the remembered
+       one, else the first — resolved against *that project's* start defaults,
+       so the composer below draws the same agent and model ⌘N would open on. */
+    const start = resolveThreadStart(project.defaults ?? emptyDefaults(), profiles)
     if (!start) return
     const id = actions.newDraftThread({ project, ...start })
     setSessionId(id)

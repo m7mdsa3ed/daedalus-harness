@@ -76,6 +76,13 @@ export interface ServerConfig {
    * the client is re-registered rather than reused.
    */
   mcpOauthRedirectBase?: string;
+  /**
+   * Base URL of the MCP Registry the marketplace browses (see
+   * `mcp-registry.ts`). Unset means the official one. Set it to a private
+   * registry implementing the same spec — the only thing that makes the
+   * browse page an internal catalog rather than the public one.
+   */
+  mcpRegistryUrl?: string;
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
 }
@@ -145,6 +152,7 @@ export function loadConfig(): ServerConfig {
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
     sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
     ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
+    ...(existing.mcpRegistryUrl ? { mcpRegistryUrl: existing.mcpRegistryUrl } : {}),
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
   };

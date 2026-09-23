@@ -3,8 +3,8 @@
    the checklist — a `todos` tool call, or failing that the thread's own ACP
    plan. */
 import { useMemo } from "react"
-import { CheckCircle2Icon, CircleDashedIcon, LoaderCircleIcon } from "lucide-react"
 
+import { TodoChecklist } from "@/components/todo-checklist"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -17,13 +17,6 @@ import {
 import { extractTodos, toolViewOf } from "@/lib/tools"
 import { type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
-
-/** One checklist row, in the shape both a plan entry and a todo entry reduce
-    to. The two surfaces read from different channels but draw the same row. */
-interface ChecklistRowData {
-  content: string
-  status: "completed" | "in_progress" | "pending"
-}
 
 /**
  * The agent's checklist, when it arrives through a tool call instead of ACP's
@@ -40,7 +33,7 @@ interface ChecklistRowData {
  * newest such call wins, so an agent revising its list mid-turn replaces the
  * reading rather than stacking one per revision.
  */
-function threadTodos(thread: ThreadState): ChecklistRowData[] | null {
+function threadTodos(thread: ThreadState) {
   const todoItem = [...thread.items]
     .reverse()
     // Not a subagent's: a child's checklist is its own, drawn in its rail, and
@@ -117,40 +110,11 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
             {completed}/{total}
           </span>
         </div>
-        {/* Its own scroll, capped against the panel: a forty-step list is
-            longer than a phone. The popover is a fixed surface, so this costs
-            the transcript nothing — which is the whole reason the list moved
-            here. */}
-        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
-          {todos.map((row, index) => (
-            <li key={`${row.content}-${index}`} className="flex items-start gap-2 text-xs">
-              <span className="grid size-5 shrink-0 place-items-center">
-                {row.status === "completed" ? (
-                  <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
-                ) : row.status === "in_progress" ? (
-                  <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
-                ) : (
-                  <CircleDashedIcon aria-hidden className="size-3.5 text-muted-foreground/60" />
-                )}
-              </span>
-              {/* break-words, not truncate: the popover is opened to read the
-                  list in full, and a step is often a path or a command whose
-                  one long token would otherwise read as missing. */}
-              <span
-                className={cn(
-                  "min-w-0 flex-1 leading-5 break-words",
-                  row.status === "completed"
-                    ? "text-muted-foreground line-through opacity-70"
-                    : row.status === "in_progress"
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                )}
-              >
-                {row.content}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {/* The fixed popover owns the scroll; long checklists never take room
+            from the transcript, and the same row design appears in plan details. */}
+        <div className="-mx-1 max-h-[min(50svh,20rem)] overflow-y-auto overscroll-contain px-1">
+          <TodoChecklist items={todos} />
+        </div>
       </PopoverContent>
     </Popover>
   )

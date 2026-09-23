@@ -247,6 +247,9 @@ export function draftCommitMessage(
     model?: string
     repo?: string
     kind?: "commit" | "branch"
+    /** What is already typed. Present asks for it to be sharpened against the
+        diff rather than replaced; absent asks for one to be written. */
+    draft?: string
   },
   signal?: AbortSignal
 ): Promise<{ message: string; files: number; staged: boolean }> {

@@ -222,6 +222,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and deliberately no models. Never written to `data/`, uneditable.
 - **A draft cannot ask a process that does not exist**: option sets come from a live session
   or a cached one-shot probe, coalesced so two tabs cost one spawn.
+- **A project carries the settings a thread started in it opens with** (`projects.default_*`,
+  `PATCH /api/projects/:id/defaults`), because that is the scope the change is about —
+  changing the project changes the model, and the pick follows the person to every device.
+  `lib/thread-defaults.ts` is down to the one field a project row cannot hold: which project
+  the front door opens in. A project that has named no pair has the resolved fallback written
+  back (`seedProjectPair` on draft mint), and a pick publishes only **the keys it names** —
+  a whole-row write would clobber a concurrent one from another device. `configChoices` is
+  one object on the wire and is merged from the draft row, never from a cache the last write
+  has not answered yet.
 
 ## MCP, skills, commands, workflows → `docs/mcp-and-workflows.md`
 
@@ -256,6 +265,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   It connects per call and hands the answer back verbatim. **Something that ran and failed is
   an answer, not an error** — only a call that never happened is one. Arguments are typed as
   JSON beside the field list, never a generated form.
+- **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
+  Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
+  `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one
+  server, one row per package *or* remote, and **installing is the existing form prefilled**,
+  never a one-click POST, because half of what publishers ship is a placeholder or an API key.
+  **The registry never says how a remote authenticates**: a browsed row is `auth: "none"` and
+  the save path's probe decides.
 - **Workflows are the harness's, except where the runtime says it has its own**
   (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
   so ours is not offered). A definition is **declarative JSON**, never a script. **Every step is a real thread** on the parent's own profile, agent, model,
@@ -517,13 +533,46 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **The dock holds six panel kinds: chat, ide, terminal, web, tasks, page**, and **Monaco is the
   text surface and the diff and nothing else** — the official `monaco-editor`, so there is no
   workbench and no "initialize once per page" rule.
-- **Source control starts from `GET …/git/repos`, never from "the project's git"**: a section
-  per repository, and every read and write names its `repo`. **Status paths are
-  repository-relative** — `projectPath(repo, path)` is the one join back to the file routes.
-  **A comparison names both its sides**, never just the left: a staged row is HEAD ↔ index and
-  an unstaged one index ↔ worktree, or staging shows edits made after it. **Branches, stashes
-  and the log are read when asked for** — the branch list on the menu's open, the two sections
-  on their first expand — never with the status, which the watch stream re-reads.
+- **Source control starts from `GET …/git/repos`, never from "the project's git"**, and every
+  read and write names its `repo`. **Status paths are repository-relative** —
+  `projectPath(repo, path)` is the one join back to the file routes. **A comparison names both
+  its sides**, never just the left: a fully staged row is HEAD ↔ index and anything with work
+  on disk is index ↔ worktree, or staging shows edits made after it. **Branches, stashes and
+  the log are read when asked for** — the branch list on the picker's open, the stash and
+  history lists on their tab's first open — never with the status, which the watch stream
+  re-reads.
+- **One repository is drawn at a time, picked in the toolbar** (`scm/view.tsx`). Stacked
+  sections in one scroller was the first version, and it is what forced the commit box to
+  scroll with the files: sections sharing a scroller can pin nothing.
+- **The panel is three zones and the outer two do not move** (`scm/repo-section.tsx`): a
+  header, a tabbed middle (Changes · Stashes · History, each with its own scroller and its own
+  git process, paid on first open), and **the commit box pinned to the bottom edge, outside
+  every scroller**. The old rule said the box sits *above* the files, because below them forty
+  changed files pushed it off a 320px column — pinning is what actually answers that, and it
+  gives the panel the shape the app's other write surface has, a transcript above and a
+  composer fixed beneath it. It is drawn over Changes only: a commit box under a list of old
+  commits points at the wrong thing.
+- **The working set is one list, not four groups** (`lib/workspace/working-set.ts`). Git
+  reports staged/unstaged/untracked/conflicted, but a path that is staged *and* edited again
+  was two rows in two groups with nothing saying they were one file. One entry per path with a
+  staged tri-state — `yes`/`no`/`partial` — **and the tick is the verb**: staging was two
+  hover-revealed icon buttons and is a checkbox, so a folder wears its children's folded
+  answer and ticking it stages everything under it. A conflicted file is never "staged".
+- **The explorer's tree and the working set are both flattened before they are drawn**
+  (`lib/ide/tree-rows.ts`, `flattenWorkingSet`) and windowed off that array
+  (`hooks/use-windowed-rows.ts` — fixed line height, prefix sums, no dependency). **Selection
+  is never an input to the derivation**: it changes on every click, and folding it in
+  invalidates the memo the array exists to feed. The explorer recursed into JSX inside
+  `render`, so every keystroke in the filter box rebuilt every expanded node.
+- **One Monaco instance per IDE panel, not one per tab.** `FileTab` stays mounted for every
+  tab — its read, its draft and its conflict are cheap React state — and `active` decides
+  whether an editor exists. Nothing is lost: the model outlives the mount, unsaved text is in
+  `lib/workspace/buffers.ts` either way, and scroll and cursor are saved and restored by
+  `code-editor.tsx`'s `viewStates`. The panel prefetches the Monaco chunk on idle when it
+  opens, because opening it is the reliable signal a file is about to be.
+- **The editor tab strip wears `.dock-tab`**, the dock's own material — three weights of one
+  material, no colour, the active one carrying the card's ground and `shadow-sm`. The class,
+  never `panel-tab.tsx`, which is bound to dockview's API; what is shared is the look.
 - **Monaco's workers are wired by `?worker` import, never by path**, and
   `MonacoEnvironment.getWorker` answers for **every** label while `getWorkerUrl` is never
   defined — a `?worker` import makes a stale path a build error instead of a blank editor.

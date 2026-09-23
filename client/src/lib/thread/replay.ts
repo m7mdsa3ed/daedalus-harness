@@ -136,7 +136,8 @@ export const foldCaughtUp: Fold<"onCaughtUp"> = (
   hold,
   staged,
   context,
-  retry
+  retry,
+  tps
 ) => {
   const { host, sink } = ctx
   const id = host.id
@@ -175,6 +176,7 @@ export const foldCaughtUp: Fold<"onCaughtUp"> = (
      `load_earlier` page holds older ones. The server keeps the newest on
      the row; it lands here, after the fold, so it is the last word. */
   send({ type: "thread-context", id, context })
+  send({ type: "thread-tps", id, tps })
   flush()
 }
 

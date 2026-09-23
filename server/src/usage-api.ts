@@ -1,6 +1,6 @@
 import { USAGE_KINDS } from "./db/index.js";
 import type { ProfileUsage, ProfileUsageKind } from "./db/index.js";
-import type { QuotaSnapshot, QuotaStatus, QuotaWindow } from "./protocol.js";
+import type { QuotaSnapshot, QuotaStatus, QuotaWindow, QuotaAccount } from "./protocol.js";
 import type { Profile } from "./profiles.js";
 
 /*
@@ -240,7 +240,7 @@ async function readZaiUsage(
 // Shared: one JSON GET, with the body kept whatever it is
 // ---------------------------------------------------------------------------
 
-type Fold = Pick<QuotaSnapshot, "status" | "windows" | "raw" | "planName" | "credits">;
+type Fold = Pick<QuotaSnapshot, "status" | "windows" | "raw" | "planName" | "credits" | "accounts">;
 
 /** GET/POST a provider's JSON, or throw with the body — the way `readZaiUsage`
     does: a non-JSON answer (a login page, a proxy error) is not something to
@@ -1050,18 +1050,27 @@ async function readCommandCodeUsage(profile: Profile, usage: ProfileUsage): Prom
  * wrong for the thing a person actually does with this page: a five-hour
  * window is a *different* five hours per account, a Max subscription and a GLM
  * key are not interchangeable capacity, and "60% across four accounts" hides
- * both the one that is exhausted and the one that has not been touched. The
- * accounts arrive in the gateway's own priority order — the order it will
- * spend them in — and stay in it, so the first section is the one serving now.
+ * both the one that is exhausted and the one that has not been touched.
  *
- * It is read in two calls plus one per account, all on the gateway's own HTTP
+ * The accounts are the gateway's whole list, in its own priority order — the
+ * order it will spend them in — and they are carried as the snapshot's
+ * `accounts` rather than inferred from whatever came back with windows. An
+ * account the gateway has turned off, or whose credential no longer answers, has
+ * no window to carry its name, and a page that lists only the accounts that
+ * happened to report is a page that never says they exist. So a silent account
+ * is drawn too, saying its own state, and only then does the reading have an
+ * answer for "where did my account go".
+ *
+ * It is read in one call, plus one per account, all on the gateway's own HTTP
  * API:
  *
- *   GET /api/providers/client?accountStatus=active&pageSize=…
- *     → { connections: [{ id, provider, name, authType, … }], … }
+ *   GET /api/providers/client?accountStatus=all&sort=priority&pageSize=…
+ *     → { connections: [{ id, provider, name, isActive, priority, … }], … }
  *       already filtered to the connections 9Router can report usage for
  *       (`isUsageEligible` there), which is why this route is used and not the
- *       unfiltered `/api/providers`.
+ *       unfiltered `/api/providers`. `accountStatus=all` and not `active`: a
+ *       turned-off account is a fact about the machine, and the gateway's own
+ *       page offers it as a filter rather than hiding it.
  *   GET /api/usage/<connectionId>
  *     → { plan?, quotas: { "<label>": { used, total, remaining,
  *         remainingPercentage, resetAt, unlimited } } }  — or `{ message }`
@@ -1078,16 +1087,20 @@ async function readCommandCodeUsage(profile: Profile, usage: ProfileUsage): Prom
  */
 
 const NINEROUTER_HOST = "http://localhost:20128";
-/** One page is the whole list in practice; the cap is what stops a gateway with
-    fifty linked accounts from becoming fifty upstream calls behind one refresh.
-    ponytail: a flat cap, paginate when someone actually has more. */
-const NINEROUTER_MAX_CONNECTIONS = 20;
+/** The gateway takes up to 500 per page; the cap is what stops a gateway with
+    hundreds of linked accounts from becoming hundreds of upstream calls behind
+    one refresh. ponytail: a flat cap, a summary line when someone actually has
+    more. */
+const NINEROUTER_MAX_CONNECTIONS = 40;
 
 interface NineRouterConnection {
   id?: unknown;
   provider?: unknown;
   name?: unknown;
   email?: unknown;
+  displayName?: unknown;
+  isActive?: unknown;
+  priority?: unknown;
 }
 
 interface NineRouterQuota {
@@ -1113,6 +1126,13 @@ interface NineRouterUsageBody {
   error?: unknown;
 }
 
+/** One account, as the fold sees it: the gateway's row and whatever its own
+    usage call answered. */
+interface NineRouterEntry {
+  connection: NineRouterConnection;
+  usage: NineRouterUsageBody;
+}
+
 /** The gateway's origin. An override is used whole (minus a trailing slash);
     otherwise the profile's own base URL is the gateway — it is the same server,
     `…:20128/v1` — and its path is dropped. */
@@ -1130,38 +1150,72 @@ export function nineRouterHost(profile: Profile, usage: ProfileUsage): string {
   return NINEROUTER_HOST;
 }
 
+/** Whether the gateway would spend this account at all. `isActive` missing is
+    active: an installation that predates the column has no turned-off ones. */
+const nineRouterActive = (connection: NineRouterConnection): boolean => connection.isActive !== false;
+
 /** What to call an account in a label and an id: the name the gateway shows,
-    else the login it belongs to, else the provider it is. */
+    else the login it belongs to, else what it is. */
 function nineRouterWho(connection: NineRouterConnection): string {
+  const pick = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : "");
   return (
-    (typeof connection.name === "string" && connection.name.trim()) ||
-    (typeof connection.email === "string" && connection.email.trim()) ||
-    (typeof connection.provider === "string" && connection.provider) ||
+    pick(connection.name) ||
+    pick(connection.displayName) ||
+    pick(connection.email) ||
+    pick(connection.provider) ||
     "account"
   );
 }
 
-/** One account's reading of one window, before pooling. The percentage is what
-    9Router already computed (`remainingPercentage`, so the spend is its
-    complement); `used`/`total` are kept only when they count something — a
-    provider whose handler normalized to `total: 100` is reporting the
-    percentage twice. An `unlimited` window is a free tier with nothing to pace
-    and is dropped, as is a window with no percentage and no pair to compute one
-    from: a shape that moved is visible in `raw`, never drawn as 0%. */
-function nineRouterReading(quota: NineRouterQuota): { usedPercent: number; used: number | null; cap: number | null } | null {
-  if (!quota || typeof quota !== "object" || quota.unlimited === true) return null;
+/** One account's reading of one window, before grouping: how full it is, and
+    the amounts behind that where they mean something. A window with nothing to
+    derive a percentage from is dropped — a shape that moved is visible in
+    `raw`, never drawn as 0%.
+ *
+    `unlimited` is *not* dropped. It is a fact about a window with a real spend
+    beside it (Vercel's `Used (USD)`), and leaving it out is how a
+    pay-as-you-go account reads as having no windows at all. The flag travels
+    with the reading and the renderer decides how to draw a window nothing is
+    counted against. */
+function nineRouterReading(
+  quota: NineRouterQuota,
+): { usedPercent: number; used: number | null; cap: number | null } | null {
+  if (!quota || typeof quota !== "object") return null;
   const used = num(quota.used);
   const total = num(quota.total);
+  const remaining = num(quota.remaining);
   const remainingPercent = num(quota.remainingPercentage);
+  /* `remainingPercentage` is the gateway's own figure and wins where it is
+     there. Otherwise the spend is derived — from `remaining` when it is the
+     same kind of number as `total` (an absolute remainder, as Kiro and Qoder
+     report), else from the percentage itself. A handler that normalized to
+     `total: 100, remaining: 30` is saying 30% remaining, not 0.3%; one that
+     counted `total: 1200, remaining: 900` is saying a quarter used. Both go
+     through the same guard, so neither has to be special-cased by provider. */
+  const spent =
+    used ??
+    (remaining !== null && total !== null && total > 0 && !(total === 100 && remaining <= 100)
+      ? total - remaining
+      : null);
   const usedPercent =
     remainingPercent !== null
       ? Math.max(0, Math.min(100, 100 - remainingPercent))
-      : used !== null && total !== null && total > 0
-        ? pct(used, total)
-        : null;
+      : spent !== null && total !== null && total > 0
+        ? pct(spent, total)
+        : total === 100 && remaining !== null
+          ? Math.max(0, Math.min(100, 100 - remaining))
+          : quota.unlimited === true && spent !== null
+            ? pct(spent, spent)
+            : null;
   if (usedPercent === null) return null;
-  const counted = used !== null && total !== null && total !== 100;
-  return { usedPercent, used: counted ? used : null, cap: counted ? total : null };
+  /* The spend is kept whenever it is a number — an unlimited window's `5 USD`
+     is a real figure and the whole reading for it. The *cap* is the half that
+     has to earn its place: a `total: 100` is the percentage said twice, and a
+     `total: 0` is no cap at all, and a tile showing "5 / 0" or "40 / 100" is
+     either nonsense or a repeat. A window with a spent figure and no cap draws
+     the figure alone. */
+  const capped = total !== null && total > 0 && total !== 100;
+  return { usedPercent, used: spent, cap: capped ? total : null };
 }
 
 /* The gateway's dashboard does not draw its handlers' raw quota keys: it runs
@@ -1184,44 +1238,40 @@ const NINEROUTER_CODEX_LABELS: Record<string, string> = {
   review_weekly: "Review (Weekly)",
 };
 
-/** Antigravity reports a window per *model*, a dozen of them, which is a dozen
-    bars for one account. The gateway draws one bar per family instead, and the
-    one it draws is the family's **worst** window — the model that runs out
-    first is what gates the account. Weekly, image and anything else stay as
-    they are. */
-function nineRouterAntigravity(entries: [string, NineRouterQuota][]): [string, string, NineRouterQuota][] {
-  const family = (key: string): string | null =>
-    key.includes("image")
-      ? null
-      : key.startsWith("gemini-")
-        ? "Gemini (Flash / Pro)"
-        : key.startsWith("claude-")
-          ? "Claude (Sonnet / Opus)"
-          : null;
-  const out: [string, string, NineRouterQuota][] = [];
-  const worst = new Map<string, [string, NineRouterQuota]>();
-  for (const [key, quota] of entries) {
-    const name = family(key);
-    if (!name) {
-      out.push([key, nineRouterLabel(quota, key), quota]);
-      continue;
-    }
-    const standing = worst.get(name);
-    const percent = (q: NineRouterQuota) => num(q?.remainingPercentage) ?? 100;
-    /* Keyed on the family, not the model, so the row is stable across a refresh
-       that changes which model is worst. */
-    if (!standing || percent(quota) < percent(standing[1])) worst.set(name, [key, quota]);
-  }
-  for (const [name, [, quota]] of worst) out.push([name.toLowerCase(), name, quota]);
-  return out;
-}
+/** Qoder names its buckets after who owns them. */
+const NINEROUTER_QODER_LABELS: Record<string, string> = {
+  user: "Personal",
+  organization: "Organization",
+};
 
+/** What a window is called when nothing more specific is known. The handler's
+    `displayName` when it gave one (Antigravity's rows), else the key. */
 function nineRouterLabel(quota: NineRouterQuota, key: string): string {
   return (typeof quota?.displayName === "string" && quota.displayName.trim()) || key;
 }
 
+/** Upstream's own reading, for a comparison that has to happen on the same
+    number the gateway's page sorts by: `remaining` when it is a percentage,
+    `remainingPercentage`, else the pair, else 0 on an `unlimited` window. */
+function nineRouterRemaining(quota: NineRouterQuota): number {
+  const remaining = num(quota?.remaining);
+  if (quota?.unlimited === true) return 100;
+  if (remaining !== null && remaining <= 100) return remaining;
+  const remainingPercent = num(quota?.remainingPercentage);
+  if (remainingPercent !== null) return remainingPercent;
+  const used = num(quota?.used);
+  const total = num(quota?.total);
+  return used !== null && total !== null && total > 0 ? (1 - used / total) * 100 : 0;
+}
+
 /** The windows of one account, named the way the gateway's own dashboard names
-    them: `[id, label, quota]`. */
+    them, in the order it draws them: `[id, label, quota]`.
+
+    Two providers need more than a rename and are read off `parseQuotaData`
+    exactly — see `nineRouterAntigravity` and the Qoder bucket below. Everything
+    else keeps the gateway's own insertion order and its own key, which is what
+    the mixed-provider list amounts to: upstream runs the same `Object.entries`
+    with no sort of its own for a provider it has no case for. */
 function nineRouterWindows(
   connection: NineRouterConnection,
   quotas: Record<string, NineRouterQuota>,
@@ -1234,9 +1284,52 @@ function nineRouterWindows(
        gateway skips it rather than drawing 0/0. */
     if (provider === "qoder" && key === "organization" && (num(quota?.total) ?? 0) === 0) return [];
     const label =
-      provider === "codex" ? (NINEROUTER_CODEX_LABELS[key] ?? key) : nineRouterLabel(quota, key);
+      provider === "codex"
+        ? (NINEROUTER_CODEX_LABELS[key] ?? key)
+        : provider === "qoder"
+          ? nineRouterLabel(quota, NINEROUTER_QODER_LABELS[key] ?? key)
+          : nineRouterLabel(quota, key);
     return [[key, label, quota] as [string, string, NineRouterQuota]];
   });
+}
+
+/** Antigravity reports a window per *model*, and the set moves with the model
+    rollout, so no fixed key list survives it. The gateway draws one bar per
+    *family* instead — the family's **worst** window, because the model that runs
+    out first is what gates the account — and keeps everything else as it is.
+
+    The same partition `parseQuotaData` makes, in the order it draws them:
+    every `gemini-` model that is not an image is the Gemini family and every
+    `claude-` model the Claude one, both collapsed to their worst; then the
+    weekly rows and the image models, each under its own name; then anything
+    else the provider added, which keeps its key. */
+function nineRouterAntigravity(entries: [string, NineRouterQuota][]): [string, string, NineRouterQuota][] {
+  const isImage = (key: string) => key.includes("image");
+  const family = (key: string): string | null =>
+    isImage(key) ? null : key.startsWith("gemini-") ? "gemini" : key.startsWith("claude-") ? "claude" : null;
+  const names: Record<string, string> = { gemini: "Gemini (Flash / Pro)", claude: "Claude (Sonnet / Opus)" };
+  const out: [string, string, NineRouterQuota][] = [];
+  const worst = new Map<string, [string, NineRouterQuota]>();
+
+  for (const [key, quota] of entries) {
+    const name = family(key);
+    if (!name) continue;
+    const standing = worst.get(name);
+    /* Keyed on the family, not the model, so the row is stable across a refresh
+       that changes which model is worst. */
+    if (!standing || nineRouterRemaining(quota) < nineRouterRemaining(standing[1])) worst.set(name, [key, quota]);
+  }
+  for (const [name, [, quota]] of worst) out.push([name, names[name], quota]);
+
+  /* Everything that is not a model of one of the two families: the weekly
+     allowances (`gemini_weekly`, `claude_gpt_weekly`, already worst-cased by the
+     gateway's own handler), the image models, and whatever else. Each keeps its
+     own key and takes the handler's `displayName` where it gave one. */
+  for (const [key, quota] of entries) {
+    if (family(key)) continue;
+    out.push([key, nineRouterLabel(quota, key), quota]);
+  }
+  return out;
 }
 
 /** What the account's section is headed with. The gateway's own name for it,
@@ -1251,53 +1344,112 @@ function nineRouterGroup(connection: NineRouterConnection, body: NineRouterUsage
   return `${who} · ${plan}`;
 }
 
+/** The usable reading of one account: its named windows, its fullest one, and
+    the buckets upstream drops before anything is drawn. Shared by the drawing
+    fold and the account list so a silent account and a reporting one cannot
+    disagree about how many windows it has. */
+function nineRouterAccount(
+  connection: NineRouterConnection,
+  usage: NineRouterUsageBody,
+): { windows: QuotaWindow[]; peak: { usedPercent: number; resetsAt: number | null } | null } {
+  const quotas = usage?.quotas;
+  if (!quotas || typeof quotas !== "object") return { windows: [], peak: null };
+  const id = typeof connection.id === "string" ? connection.id : nineRouterWho(connection);
+  const windows: QuotaWindow[] = [];
+  let peak: { usedPercent: number; resetsAt: number | null } | null = null;
+
+  for (const [key, label, quota] of nineRouterWindows(connection, quotas)) {
+    const reading = nineRouterReading(quota);
+    /* A window the gateway can read and this adapter cannot is upstream's to
+       drop too: `parseQuotaData` filters it out of the tiles, so counting it in
+       `accounts.windows` would promise a bar the gateway's own page never drew. */
+    if (!reading) continue;
+    const resetsAt = when(quota.resetAt);
+    windows.push({
+      id: `${id}:${key}`,
+      /* The window's own name: the account is said once, on the section it
+         heads, and repeating it in every tile beneath it is the noise that
+         made eight accounts unreadable. */
+      label,
+      ...reading,
+      unit: typeof quota.unit === "string" ? quota.unit : null,
+      resetsAt,
+      unlimited: quota.unlimited === true,
+    });
+    if (!peak || reading.usedPercent > peak.usedPercent) peak = { usedPercent: reading.usedPercent, resetsAt };
+  }
+  return { windows, peak };
+}
+
+/** A turned-off account is never asked — the call would disagree with the
+    gateway's own reading of its rotation — so it folds as nothing at all. */
+const EMPTY_ACCOUNT = { windows: [] as QuotaWindow[], peak: null } as {
+  windows: QuotaWindow[];
+  peak: { usedPercent: number; resetsAt: number | null } | null;
+};
+
+/** What an account with nothing to draw says for itself. The gateway's own
+    words when it left a message — a logged-out Codex, a provider with no usage
+    API — else the adapter's plainest reading of the same state. */
+function nineRouterState(usage: NineRouterUsageBody): string {
+  const message = typeof usage?.message === "string" ? usage.message.trim() : "";
+  if (message) return message;
+  const error = typeof usage?.error === "string" ? usage.error.trim() : "";
+  if (error) return error;
+  return "No quota reported for this account";
+}
+
 export function foldNineRouterQuota(
-  entries: { connection: NineRouterConnection; usage: NineRouterUsageBody }[],
+  entries: NineRouterEntry[],
   /** How many eligible accounts the gateway has, when it said — the list is one
       page and the cap is this adapter's, so the accounts past it are not
       "not reporting", they are not read at all. */
   linked = entries.length,
-): Fold {
+): Fold & { accounts: QuotaAccount[] } {
   const windows: QuotaWindow[] = [];
-  /* An account is "reporting" once it has contributed a single window. The rest
-     — an expired login, a provider with no usage API, a free tier that is all
-     `unlimited` — are counted and said in the plan name, because "4 accounts"
-     over a card drawn from two of them is a number that lies. */
-  let reporting = 0;
+  const accounts: QuotaAccount[] = [];
   /* Two accounts the gateway shows the same name for would otherwise be drawn
      as one section, which is the one thing `group` must not let happen. */
   const taken = new Map<string, number>();
 
   for (const { connection, usage } of entries) {
-    const quotas = usage?.quotas;
-    if (!quotas || typeof quotas !== "object") continue;
     const id = typeof connection.id === "string" ? connection.id : nineRouterWho(connection);
-    const before = windows.length;
-    let group = nineRouterGroup(connection, usage);
+    const disabled = !nineRouterActive(connection);
+    const { windows: accountWindows, peak } = disabled ? EMPTY_ACCOUNT : nineRouterAccount(connection, usage);
 
-    for (const [key, label, quota] of nineRouterWindows(connection, quotas)) {
-      const reading = nineRouterReading(quota);
-      if (!reading) continue;
-      if (windows.length === before) {
-        /* Claimed on the account's first readable window, so a name is only
-           disambiguated against accounts that are actually drawn. */
-        const seen = taken.get(group) ?? 0;
-        taken.set(group, seen + 1);
-        if (seen > 0) group = `${group} (${seen + 1})`;
-      }
-      windows.push({
-        id: `${id}:${key}`,
-        /* The window's own name: the account is said once, on the section it
-           heads, and repeating it in every tile beneath it is the noise that
-           made eight accounts unreadable. */
-        label,
-        ...reading,
-        unit: typeof quota.unit === "string" ? quota.unit : null,
-        resetsAt: when(quota.resetAt),
-        group,
-      });
-    }
-    if (windows.length > before) reporting += 1;
+    /* The one string this account's windows carry and the one a renderer joins
+       on. Claimed on the account's first readable window, so a name is only
+       disambiguated against accounts that are actually drawn — and held for a
+       silent account too, so the list is stable across a refresh that happens
+       to land between the two. */
+    const groupClaim = nineRouterGroup(connection, usage);
+    const seen = taken.get(groupClaim) ?? 0;
+    taken.set(groupClaim, seen + 1);
+    const suffix = seen > 0 ? ` (${seen + 1})` : "";
+    const group = `${groupClaim}${suffix}`;
+    for (const window of accountWindows) windows.push({ ...window, group });
+
+    const plan = typeof usage?.plan === "string" && usage.plan.trim() ? usage.plan.trim() : null;
+    /* The disambiguator rides the *name* as well as the group, because a heading
+       has no room for a second line and two accounts called `Claude` with
+       different bars are otherwise two identical sections. */
+    const who = `${nineRouterWho(connection)}${suffix}`;
+    accounts.push({
+      id,
+      group,
+      name: who,
+      provider: typeof connection.provider === "string" ? connection.provider : null,
+      /* The plan only when the name does not already say it — the same rule the
+         group string follows, so a heading and its subtitle cannot repeat. */
+      plan: plan && !who.toLowerCase().includes(plan.toLowerCase()) ? plan : null,
+      windows: accountWindows.length,
+      usedPercent: peak ? peak.usedPercent : null,
+      resetsAt: peak ? peak.resetsAt : null,
+      disabled,
+      /* An account with windows is saying what it has; a silent one is saying
+         why it is silent, and the two never both apply. */
+      state: accountWindows.length || disabled ? null : nineRouterState(usage),
+    });
   }
 
   /* Deliberately unsorted: the gateway hands its connections back in priority
@@ -1306,26 +1458,38 @@ export function foldNineRouterQuota(
      Sorting by fullness would scramble exactly the fact a fallback chain has to
      show. Within an account the order is the gateway's too. */
 
-  const quiet = entries.length - reporting;
+  const reporting = accounts.filter((account) => account.windows > 0).length;
+  const off = accounts.filter((account) => account.disabled).length;
+  const quiet = accounts.length - reporting - off;
   const unread = Math.max(0, linked - entries.length);
-  const plural = (n: number) => `${n} account${n === 1 ? "" : "s"}`;
+  /* A count and its noun, plural only where the noun is one — "3 not shown"
+     needs no `s`, "2 accounts" does. */
+  const say = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const extras: string[] = [];
+  if (off > 0) extras.push(say(off, "off", "off"));
+  if (quiet > 0) extras.push(say(quiet, "not reporting", "not reporting"));
+  /* `+` because these were never asked: they are not quiet, they are past the
+     page the adapter reads. */
+  if (unread > 0) extras.push(`+${unread} not shown`);
+
   return {
     status: windows.length ? "subscription" : "api-key",
     windows,
+    accounts,
     /* Every account's answer, named and in full — the sections are what folded,
        and an account that is expired, throttled or simply has no usage API is
        only answerable here. */
     raw: JSON.stringify(entries, null, 2),
     /* No single plan: the gateway is several, and how many of them are actually
        behind the bars is the honest headline. */
-    planName: entries.length
-      ? `9Router · ${plural(reporting)}${quiet > 0 ? ` (${quiet} not reporting)` : ""}${unread > 0 ? ` (+${unread} not shown)` : ""}`
+    planName: accounts.length
+      ? `9Router · ${say(reporting, "account")}${extras.length ? ` (${extras.join(", ")})` : ""}`
       : null,
     credits: null,
   };
 }
 
-async function readNineRouterUsage(profile: Profile, usage: ProfileUsage): Promise<Fold> {
+async function readNineRouterUsage(profile: Profile, usage: ProfileUsage): Promise<Fold & { accounts: QuotaAccount[] }> {
   const host = nineRouterHost(profile, usage);
   const password = usage.apiKey?.trim() || "";
   let cookie = "";
@@ -1363,15 +1527,27 @@ async function readNineRouterUsage(profile: Profile, usage: ProfileUsage): Promi
     connections?: NineRouterConnection[];
     pagination?: { total?: unknown };
   }>(
-    `/api/providers/client?accountStatus=active&sort=priority&pageSize=${NINEROUTER_MAX_CONNECTIONS}`,
+    `/api/providers/client?accountStatus=all&sort=priority&pageSize=${NINEROUTER_MAX_CONNECTIONS}`,
   );
   const httpFold = httpStatus(status);
   if (httpFold)
-    return { status: httpFold, windows: [], raw: JSON.stringify(body, null, 2), planName: null, credits: null };
+    return {
+      status: httpFold,
+      windows: [],
+      accounts: [],
+      raw: JSON.stringify(body, null, 2),
+      planName: null,
+      credits: null,
+    };
 
   const connections = (body?.connections ?? []).slice(0, NINEROUTER_MAX_CONNECTIONS);
   const entries = await Promise.all(
     connections.map(async (connection) => {
+      /* A turned-off account is not asked: the gateway is not spending it, its
+         quota call is the one most likely to be a stale credential, and the
+         account is the gateway's own state to report — not a provider's answer
+         this adapter would be second-guessing. */
+      if (!nineRouterActive(connection)) return { connection, usage: {} };
       /* One account failing is that account's row, never the reading's: a
          revoked Codex login must not blank the Claude subscription beside it. */
       try {

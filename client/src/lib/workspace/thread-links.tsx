@@ -13,16 +13,6 @@
 import * as React from "react"
 
 export interface ThreadLinks {
-  projectId: string
-  /**
-   * Open a file from the transcript. `line` scrolls to it and puts the caret
-   * there; `endLine` makes it a span, which the editor highlights — the
-   * difference between "here is the file" and "here is the part the call was
-   * about". See `lib/tools/files.fileRangeOf` for where a span comes from.
-   */
-  openFile: (path: string, line?: number, endLine?: number) => void
-  /** Open an agent's edit as a comparison against the last commit. */
-  openDiff: (path: string) => void
   /**
    * Open a page the agent read or cited in the external browser.
    *

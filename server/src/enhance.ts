@@ -36,7 +36,9 @@ Preserve verbatim, never reword: @file mentions, /slash commands, code fences, a
  */
 const COMMIT_SYSTEM = `Write a commit message for the changes shown. Follow the conventional-commit style: a subject line of at most 72 characters ("feat: …", "fix: …", "refactor: …"), then a blank line and, only where the change needs it, a short body saying why rather than what.
 
-Describe what the diff actually does — read it, do not invent work that is not there. The file list is a summary of the diff, not a substitute for reading it. Return only the commit message, no preamble and no code fences.`;
+Describe what the diff actually does — read it, do not invent work that is not there. The file list is a summary of the diff, not a substitute for reading it. Return only the commit message, no preamble and no code fences.
+
+Where the author has already written a message, that is the one to rewrite: keep their intent and their emphasis, correct it only where the diff contradicts it, and do not swap their reading of the change for your own.`;
 
 /**
  * The branch-name half. Same diff, a third question: a branch name is what the

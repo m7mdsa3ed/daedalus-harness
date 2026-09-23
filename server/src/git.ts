@@ -974,6 +974,11 @@ export async function commitMessagePrompt(
      prompt in `enhance.ts`) differ. A second copy of the untracked-file
      handling below is how the two would drift. */
   kind: "commit" | "branch" = "commit",
+  /* What the author has already typed into the commit box, when they asked for
+     it to be *sharpened* rather than written. The diff is gathered either way —
+     a message is only worth rewriting against the work it describes — so this
+     is one more section of the same prompt and not a second question. */
+  draft?: string,
 ): Promise<{ prompt: string; files: string[]; staged: boolean }> {
   const { dir } = await repoOrThrow(projectId, repo);
   const state = await status(projectId, repo);
@@ -1027,14 +1032,14 @@ export async function commitMessagePrompt(
     }
     if (added.length > 0) {
       return {
-        prompt: buildPrompt(kind, staged, files, `${stdout}${added.join("")}`),
+        prompt: buildPrompt(kind, staged, files, `${stdout}${added.join("")}`, draft),
         files,
         staged,
       };
     }
   }
 
-  return { prompt: buildPrompt(kind, staged, files, stdout), files, staged };
+  return { prompt: buildPrompt(kind, staged, files, stdout, draft), files, staged };
 }
 
 /** The prompt's own shape, in one place so both exits above agree. */
@@ -1043,14 +1048,33 @@ function buildPrompt(
   staged: boolean,
   files: string[],
   diff: string,
+  draft?: string,
 ): string {
   const patch = diff.slice(0, COMMIT_PROMPT_DIFF_MAX);
   const scope = staged ? "staged" : "working-tree";
+  /* Only the commit half can be sharpened: a branch name is a single token the
+     author does not half-write, and a "draft" of one is a name, not a sketch. */
+  const started = kind === "commit" ? (draft ?? "").trim() : "";
 
   return [
     kind === "branch"
       ? `Name a git branch for these ${scope} changes.`
-      : `Write a commit message for these ${scope} changes.`,
+      : started
+        ? `Rewrite the author's commit message for these ${scope} changes.`
+        : `Write a commit message for these ${scope} changes.`,
+    ...(started
+      ? [
+          "",
+          /* Last, after the diff, would bury it: the instruction that changes
+             the job is the one the model should read first. */
+          "The author has already written this. Keep what they meant and say it",
+          "in the house style — sharpen it against the diff, do not replace their",
+          "intent with your own reading of the change:",
+          "```",
+          started,
+          "```",
+        ]
+      : []),
     "",
     "Files:",
     files.length > 0 ? files.join("\n") : "(none)",

@@ -26,8 +26,8 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useSidebar } from "@/components/ui/sidebar"
 import { FOOTER_ICON } from "./scale"
-import { formatReset, providerKindLabel, quotaTone, windowTitle } from "@/lib/quota"
-import type { QuotaSnapshot } from "@/lib/quota"
+import { accountTitle, formatReset, providerKindLabel, quotaTone, windowTitle } from "@/lib/quota"
+import type { QuotaAccount, QuotaSnapshot } from "@/lib/quota"
 import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { settingsPath } from "@/lib/router"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
@@ -44,6 +44,9 @@ type WindowReading = {
   percent: number
   tone: Tone
   reset: string | null
+  /** Which account inside the reading it belongs to, verbatim — the same string
+      `QuotaAccount.name` holds, which is how a block finds its own bars. */
+  group: string
 }
 
 type PlanReading = {
@@ -57,11 +60,22 @@ type PlanReading = {
   /** The fullest window — what each popover block summarises with. */
   peak: WindowReading
   windows: WindowReading[]
+  /** The accounts a multi-account gateway holds, when it named any — see
+      `QuotaAccount`. Each draws its own block inside the reading, because a
+      fallback chain's five-hour window is a different five hours per account.
+      Empty for every ordinary plan. */
+  accounts: QuotaAccount[]
 }
 
-const readingOf = (usedPercent: number, id: string, label: string, reset: string | null): WindowReading => {
+const readingOf = (
+  usedPercent: number,
+  id: string,
+  label: string,
+  reset: string | null,
+  group = ""
+): WindowReading => {
   const percent = Math.min(100, Math.max(0, Math.round(usedPercent)))
-  return { id, label, percent, tone: quotaTone(percent), reset }
+  return { id, label, percent, tone: quotaTone(percent), reset, group }
 }
 
 /** A plan's windows, one bar each — the same reading the composer's glance
@@ -91,24 +105,76 @@ function WindowReadingRow({ plan, window }: { plan: string; window: WindowReadin
   )
 }
 
-/** One plan as a section inside its kind's card: the name with its fullest
-    window beside it, then each window with its own bar. The summary lives
-    here and not on the sidebar row — with several plans reporting, one number
-    on the row names the wrong account. */
+/** A plan's blocks: one per account when the reading has accounts, one
+    anonymous block otherwise. The account's name is the block title, and its
+    windows (or its reason for having none) sit under it. */
 function PlanReadingBlock({ plan }: { plan: PlanReading }) {
+  /* No accounts: the reading is one account and its own name heads the block,
+     which is what it always was. */
+  if (plan.accounts.length === 0) {
+    return <BlockReading name={plan.name} peak={plan.peak} windows={plan.windows} />
+  }
+  return (
+    <>
+      {plan.accounts.map((account) => {
+        const windows = plan.windows.filter((window) => window.group === account.group)
+        const peak = windows.reduce<WindowReading | null>(
+          (worst, window) => (!worst || window.percent > worst.percent ? window : worst),
+          null
+        )
+        return (
+          <BlockReading
+            key={account.id}
+            name={accountTitle(account)}
+            peak={peak}
+            windows={windows}
+            note={
+              account.disabled
+                ? "Turned off in the gateway"
+                : windows.length === 0
+                  ? (account.state ?? "No quota reported")
+                  : null
+            }
+          />
+        )
+      })}
+    </>
+  )
+}
+
+/** One block: a name with its fullest window beside it, then each window with
+    its own bar. The summary lives here and not on the sidebar row — with
+    several plans reporting, one number on the row names the wrong account. */
+function BlockReading({
+  name,
+  peak,
+  windows,
+  note,
+}: {
+  name: string
+  peak: WindowReading | null
+  windows: WindowReading[]
+  /** Why an account with nothing to draw is drawn anyway — the gateway turned
+      it off, or it has nothing to report. Prose where the bars would be. */
+  note?: string | null
+}) {
   return (
     <div className="px-3 py-2">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="min-w-0 truncate text-[13px] leading-5 font-medium">{plan.name}</p>
-        <span className={cn("shrink-0 text-xs font-medium tabular-nums", plan.peak.tone.text)}>
-          {plan.peak.percent}%
-        </span>
+        <p className="min-w-0 truncate text-[13px] leading-5 font-medium">{name}</p>
+        {peak && (
+          <span className={cn("shrink-0 text-xs font-medium tabular-nums", peak.tone.text)}>{peak.percent}%</span>
+        )}
       </div>
-      <div className="mt-1.5 space-y-1.5">
-        {plan.windows.map((window) => (
-          <WindowReadingRow key={window.id} plan={plan.name} window={window} />
-        ))}
-      </div>
+      {note ? (
+        <p className="mt-0.5 text-[10px] text-muted-foreground">{note}</p>
+      ) : (
+        <div className="mt-1.5 space-y-1.5">
+          {windows.map((window) => (
+            <WindowReadingRow key={window.id} plan={name} window={window} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -127,12 +193,15 @@ export function SidebarUsage() {
     const agentName = (id: string) => agents.find((a) => a.id === id)?.name
     return (quotas ?? []).flatMap((quota: QuotaSnapshot) => {
       if (quota.status === "unsupported") return []
+      const accounts = quota.accounts ?? []
       const windows = quota.windows.map((window) =>
-        readingOf(window.usedPercent, window.id, windowTitle(window), formatReset(window))
+        readingOf(window.usedPercent, window.id, windowTitle(window), formatReset(window), window.group ?? "")
       )
       /* A plan with no windows has nothing a bar can say — "metered per token"
-         is prose, and prose is the page's. */
-      if (windows.length === 0) return []
+         is prose, and prose is the page's. A gateway that named accounts is the
+         exception: a turned-off account has no bars either, and saying so is
+         exactly what the popover is for. */
+      if (windows.length === 0 && accounts.length === 0) return []
       const peak = windows.reduce((worst, window) => (window.percent >= worst.percent ? window : worst))
       /* Which card the reading files under. A provider plan carries its
          provider's `usage.kind` (`zai`, `command-code`, …) — two Z.AI keys land
@@ -165,6 +234,7 @@ export function SidebarUsage() {
           name,
           peak,
           windows,
+          accounts,
         },
       ]
     })

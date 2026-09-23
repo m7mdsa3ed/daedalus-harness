@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Link, Navigate, useNavigate, useParams } from "react-router"
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -16,6 +16,7 @@ import {
   type McpAuthProbe,
   type McpCheckResult,
   type McpServerDef,
+  type RegistryEntry,
   type ServerSettings,
 } from "@/lib/settings"
 import { Button } from "@/components/ui/button"
@@ -28,6 +29,7 @@ import {
   PlugZapIcon,
   PlusIcon,
   SearchCheckIcon,
+  StoreIcon,
   TerminalIcon,
   UnplugIcon,
   WorkflowIcon,
@@ -44,13 +46,14 @@ import { useInvalidateCatalog, useMcpCatalog, useMcpServers } from "@/lib/querie
 import { mcpCatalogKey } from "@/lib/queries/keys"
 import { useQueryClient } from "@tanstack/react-query"
 import { useStoreSelect } from "@/lib/store"
-import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
+import { EmptyCard, FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
-import { mcpDetailPath, settingsPath } from "@/lib/router"
+import { PickerSkeleton } from "@/components/ui/skeletons"
+import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
 type BuiltinKind = "web-search" | "knowledge" | "workflow"
 
@@ -110,6 +113,7 @@ function McpDetail({ server }: { server: McpServerDef }) {
 
 export function McpPage() {
   const { settings } = useSettingsPage()
+  const navigate = useNavigate()
   const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("mcp")
   const mcpServers = useMcpServers()
@@ -130,6 +134,14 @@ export function McpPage() {
     }
   }
   const missing = BUILTINS.filter((b) => !has(b.kind))
+  /* Browse sits beside Import for a reason: they are the same question asked of
+     two places — what is already on this machine, and what the world has
+     published. Neither writes a row without the form. */
+  const browse = (
+    <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "browse"))}>
+      <StoreIcon className="size-4" /> Browse
+    </Button>
+  )
   const builtins = missing.length > 0 && (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -159,7 +171,12 @@ export function McpPage() {
       subtitle={mcpSubtitle}
       settings={settings}
       refresh={() => invalidate("mcp-servers")}
-      extraActions={builtins}
+      extraActions={
+        <>
+          {browse}
+          {builtins}
+        </>
+      }
       rowIcon={mcpIcon}
       rowDetail={(s) => <McpDetail server={s} />}
       /* Reads first, then the controls that produce them — the same order the
@@ -393,6 +410,131 @@ function McpCheck({ server, settings }: { server: McpServerDef; settings: Server
   )
 }
 
+/**
+ * The marketplace: search an MCP Registry and install what it lists.
+ *
+ * Install is deliberately **not** a POST from this page. A row lands in the
+ * form, prefilled — because half of what a registry publishes is a
+ * `{placeholder}` or a required API key, and a one-click install would write a
+ * library row that cannot connect and say nothing about why. The form is where
+ * a server is described in this app; browsing only fills it in.
+ *
+ * The search is the server's (`/api/mcp-registry`, a proxy — see
+ * `mcp-registry.ts`), debounced here and aborted on the next keystroke, the
+ * same bargain ⌘K's search destination makes.
+ */
+export function McpBrowsePage() {
+  const { settings } = useSettingsPage()
+  const navigate = useNavigate()
+  const meta = sectionMeta("mcp")
+  const mcpServers = useMcpServers()
+  const [query, setQuery] = React.useState("")
+  const [entries, setEntries] = React.useState<RegistryEntry[] | null>(null)
+  const [error, setError] = React.useState<InlineError | null>(null)
+
+  React.useEffect(() => {
+    const abort = new AbortController()
+    const timer = window.setTimeout(() => {
+      setEntries(null)
+      setError(null)
+      api<{ entries: RegistryEntry[] }>(settings, `/api/mcp-registry?q=${encodeURIComponent(query)}`, {
+        signal: abort.signal,
+      })
+        .then((r) => setEntries(r.entries))
+        .catch((err) => {
+          if (abort.signal.aborted) return
+          setError(captureError(err, "Couldn't search the MCP registry"))
+          setEntries([])
+        })
+    }, 250)
+    return () => {
+      window.clearTimeout(timer)
+      abort.abort()
+    }
+  }, [settings, query])
+
+  /* A name already in the library is the one fact this page knows that the
+     registry does not — and installing a second copy under the same name is
+     two servers the agent cannot tell apart. */
+  const have = new Set(mcpServers.map((s) => s.name))
+
+  return (
+    <>
+      <FormPageHeader
+        title="Browse MCP servers"
+        description="Search a public MCP Registry. Installing opens the form prefilled — API keys and placeholders are yours to fill in."
+        onBack={() => void navigate(settingsPath(meta.id))}
+      />
+      <PageForm onSubmit={(e) => e.preventDefault()}>
+        <Field label="Search" hint="Leave empty for the most recently published.">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="github, postgres, figma…"
+            autoFocus
+          />
+        </Field>
+        <ErrorNote error={error} />
+        {entries === null ? (
+          <PickerSkeleton rows={5} />
+        ) : entries.length === 0 ? (
+          <EmptyCard icon={meta.icon} text={query ? `Nothing published matches "${query}".` : "The registry answered with nothing."} />
+        ) : (
+          <ul className="divide-y rounded-lg border">
+            {entries.map((entry) => (
+              <li key={entry.id} className="flex flex-wrap items-start gap-2 p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="truncate text-sm font-medium">{entry.server.name}</span>
+                    <Badge variant="outline" className="shrink-0 font-normal">
+                      {entry.via === "remote" ? "HTTP" : entry.via}
+                    </Badge>
+                    {entry.version && <span className="text-xs text-muted-foreground">{entry.version}</span>}
+                    {have.has(entry.server.name) && (
+                      <Badge variant="secondary" className="shrink-0">
+                        In library
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-pretty text-muted-foreground">{entry.description}</p>
+                  {/* Provenance: a reverse-DNS name is namespace-verified by the
+                      registry, and the repository is the only other thing worth
+                      reading before running somebody's command. */}
+                  <p className="mt-1 font-mono text-[11px] break-all text-muted-foreground/70">
+                    {entry.qualifiedName}
+                    {entry.repositoryUrl && (
+                      <>
+                        {" · "}
+                        <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="underline">
+                          source
+                        </a>
+                      </>
+                    )}
+                  </p>
+                  {entry.needs.length > 0 && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
+                    </p>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void navigate(settingsFormPath(meta.id), { state: { prefill: entry.server } })
+                  }
+                >
+                  <PlusIcon className="size-4" /> Install
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </PageForm>
+    </>
+  )
+}
+
 export function McpImportPage() {
   const invalidate = useInvalidateCatalog()
   return <LibraryImportPage meta={sectionMeta("mcp")} kind="mcpServers" endpoint="/api/mcp-servers" noun="MCP server" refresh={() => invalidate("mcp-servers")} />
@@ -405,13 +547,19 @@ export function McpFormPage() {
   const invalidate = useInvalidateCatalog()
   const mcpServers = useMcpServers()
   const server = entryId === "new" ? null : mcpServers.find((item) => item.id === entryId)
+  /* What Browse filled in. Route state and not a query string: it is a whole
+     definition, it is single-use, and a reload landing on an empty form is
+     exactly right — the registry row is still one click away. */
+  const prefill = (useLocation().state as { prefill?: McpServerDef } | null)?.prefill ?? null
   // A built-in is not editable (see McpPage); a stale link lands on the list.
   if ((entryId !== "new" && !server) || server?.type === "builtin") {
     return <Navigate to={settingsPath("mcp")} replace />
   }
   return (
     <McpForm
-      server={server ?? null}
+      server={server ?? prefill}
+      /* A prefilled form is creating, not editing: it has no id to PUT to. */
+      creating={!server}
       settings={settings}
       onDone={async (saved) => {
         if (saved) await invalidate("mcp-servers")
@@ -423,10 +571,13 @@ export function McpFormPage() {
 
 function McpForm({
   server,
+  creating = false,
   settings,
   onDone,
 }: {
   server: McpServerDef | null
+  /** True when `server` is a template to fill in rather than a stored row. */
+  creating?: boolean
   settings: ServerSettings
   onDone: (saved: boolean) => void
 }) {
@@ -491,7 +642,7 @@ function McpForm({
               args: lines(form.args),
               env: pairs(form.env, "="),
             }
-      await saveLibraryEntry(settings, "/api/mcp-servers", server?.id, payload)
+      await saveLibraryEntry(settings, "/api/mcp-servers", creating ? undefined : server?.id, payload)
       onDone(true)
     })
   }
@@ -499,7 +650,7 @@ function McpForm({
   return (
     <>
       <FormPageHeader
-        title={server ? `Edit ${server.name}` : "New MCP server"}
+        title={server && !creating ? `Edit ${server.name}` : "New MCP server"}
         description="Define how projects connect to this MCP server."
         onBack={() => onDone(false)}
       />

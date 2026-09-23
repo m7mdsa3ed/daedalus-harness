@@ -24,7 +24,6 @@ import {
   LayoutGrid,
   PanelsTopLeft,
   PlusIcon,
-  Rows3,
   SaveIcon,
   Square,
   Trash2,
@@ -54,14 +53,8 @@ const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: Short
     hint: "A shell in this project",
     shortcut: "terminal",
   },
-  { kind: "web", label: "Browser", hint: "A page beside the thread" },
+  { kind: "web", label: "Preview", hint: "Preview the current project" },
   { kind: "tasks", label: "Tasks", hint: "A board beside the work" },
-  {
-    kind: "ide",
-    label: "IDE",
-    hint: "Editor, files, search and source control",
-    shortcut: "ide",
-  },
 ]
 
 /** One row, in the one shape every row of this menu has. */
@@ -139,7 +132,7 @@ export function WorkspacePanelItems({
             <MenuRow
               icon={<PanelsTopLeft />}
               label="Open a panel"
-              hint="A terminal, a browser, a board or the IDE"
+              hint="A terminal, a preview or a board"
             />
           </DropdownMenuSubTrigger>
           {/* Same sizing as the menu that holds it: a submenu is anchored to
@@ -195,9 +188,6 @@ export function WorkspaceLayoutItems({ dock }: { dock: WorkspaceDock }) {
           />
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className={MENU_WIDTH}>
-          <DropdownMenuItem onClick={() => dock.applyPreset("ide")} className={MENU_ROW}>
-            <MenuRow icon={<Rows3 />} label="Arrange: IDE" />
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => dock.applyPreset("focus")} className={MENU_ROW}>
             <MenuRow icon={<Square />} label="Arrange: Focus" />
           </DropdownMenuItem>

@@ -4,9 +4,10 @@
    the pair that has a plan to read — the account the thread spends. */
 import * as React from "react"
 import { useState } from "react"
-import { LoaderCircleIcon } from "lucide-react"
+import { ChevronDownIcon, LoaderCircleIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Notice } from "@/components/notice"
 import {
@@ -16,12 +17,22 @@ import {
   ReadingFace,
   Ring,
 } from "@/components/composer/indicator"
-import { formatAmount, formatReset, peakWindow, planReadable, quotaStatusText, quotaTone, windowTitle } from "@/lib/quota"
+import {
+  accountTitle,
+  formatAmount,
+  formatReset,
+  peakWindow,
+  planReadable,
+  quotaStatusText,
+  quotaTone,
+  windowTitle,
+  type QuotaWindow,
+} from "@/lib/quota"
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import type { ThreadState } from "@/lib/store"
-import { formatRate, formatTokens, windowEstimated } from "@/lib/tokens"
+import { formatDuration, formatRate, formatTokens, formatTps, windowEstimated } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /** Above this the agent is about to compact, so the popover says so. */
@@ -32,6 +43,47 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
     <div>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className={cn("font-medium tabular-nums", valueClass)}>{value}</dd>
+    </div>
+  )
+}
+
+/** One window of a plan, at a glance's measure: the name, the amounts behind
+    the percentage, the bar and when it rolls over. Shared by a flat reading and
+    by each account inside a gateway's, because an account's bars are the same
+    bars. A window nothing is counted against wears `Unlimited` instead of a
+    track — a bar at 0% and "there is no ceiling" are different statements. */
+function WindowBar({ window, label }: { window: QuotaWindow; label: string }) {
+  const percent = Math.min(100, Math.max(0, Math.round(window.usedPercent)))
+  const tone = quotaTone(percent)
+  const reset = formatReset(window)
+  const amount = formatAmount(window)
+  const metered = window.unlimited === true
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="truncate text-muted-foreground">{label}</span>
+        <span className="flex shrink-0 items-baseline gap-1.5">
+          {amount && <span className="text-muted-foreground tabular-nums">{amount}</span>}
+          {metered ? (
+            <span className="font-medium text-muted-foreground">Unlimited</span>
+          ) : (
+            <span className={cn("font-medium tabular-nums", tone.text)}>{percent}%</span>
+          )}
+        </span>
+      </div>
+      {!metered && (
+        <div
+          className="mt-1 h-1 w-full overflow-hidden rounded-pill bg-muted"
+          role="progressbar"
+          aria-label={label}
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className={cn("h-full rounded-pill transition-all", tone.bar)} style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      {reset && <p className="mt-0.5 text-[10px] text-muted-foreground">Resets {reset}</p>}
     </div>
   )
 }
@@ -94,43 +146,67 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
   }
   if (quota.status === "unsupported") return null
   const peak = peakWindow(quota)
+  const accounts = quota.accounts ?? []
+  const windowsByGroup = new Map<string, QuotaWindow[]>()
+  for (const window of quota.windows) {
+    if (!window.group) continue
+    const grouped = windowsByGroup.get(window.group)
+    if (grouped) grouped.push(window)
+    else windowsByGroup.set(window.group, [window])
+  }
 
   return (
     <div className="border-t pt-2">
       <p className="font-medium">Plan usage</p>
-      {quota.windows.length === 0 ? (
+      {quota.windows.length === 0 && accounts.length === 0 ? (
         <p className="mt-0.5 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
-      ) : (
-        <div className="mt-1.5 space-y-2">
-          {quota.windows.map((window) => {
-            const percent = Math.min(100, Math.max(0, Math.round(window.usedPercent)))
-            const tone = quotaTone(percent)
-            const reset = formatReset(window)
+      ) : accounts.length > 0 ? (
+        /* A gateway's reading, at a glance's measure: the account is the
+           heading — a thread that spends one of four accounts has to be told
+           which — and its own bars sit under it. */
+        <div className="mt-1.5 max-h-48 space-y-1 overflow-y-auto overscroll-contain pr-1">
+          {accounts.map((account, index) => {
+            const windows = windowsByGroup.get(account.group) ?? []
+            const accountPeak = windows.reduce<QuotaWindow | null>(
+              (worst, window) => (!worst || window.usedPercent > worst.usedPercent ? window : worst),
+              null
+            )
+            const percent = accountPeak ? Math.min(100, Math.max(0, Math.round(accountPeak.usedPercent))) : null
+            const tone = percent === null ? null : quotaTone(percent)
             return (
-              <div key={window.id}>
-                <div className="flex items-baseline justify-between gap-2 text-xs">
-                  <span className="truncate text-muted-foreground">{windowTitle(window)}</span>
-                  <span className="flex shrink-0 items-baseline gap-1.5">
-                    {formatAmount(window) && (
-                      <span className="text-muted-foreground tabular-nums">{formatAmount(window)}</span>
-                    )}
-                    <span className={cn("font-medium tabular-nums", tone.text)}>{percent}%</span>
+              <Collapsible key={account.id} defaultOpen={index === 0} className="border-b last:border-0">
+                <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 py-1.5 text-left">
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium">{accountTitle(account)}</span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                    {windows.length} {windows.length === 1 ? "window" : "windows"}
                   </span>
-                </div>
-                <div
-                  className="mt-1 h-1 w-full overflow-hidden rounded-pill bg-muted"
-                  role="progressbar"
-                  aria-label={windowTitle(window)}
-                  aria-valuenow={percent}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                >
-                  <div className={cn("h-full rounded-pill transition-all", tone.bar)} style={{ width: `${percent}%` }} />
-                </div>
-                {reset && <p className="mt-0.5 text-[10px] text-muted-foreground">Resets {reset}</p>}
-              </div>
+                  {percent !== null && tone && (
+                    <span className={cn("shrink-0 text-xs font-medium tabular-nums", tone.text)}>{percent}%</span>
+                  )}
+                  <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="space-y-1.5 pb-2 pl-2">
+                    {windows.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground">
+                        {account.disabled ? "Turned off in the gateway" : (account.state ?? "No quota reported")}
+                      </p>
+                    ) : (
+                      windows.map((window) => (
+                        <WindowBar key={window.id} window={window} label={window.label} />
+                      ))
+                    )}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             )
           })}
+        </div>
+      ) : (
+        <div className="mt-1.5 space-y-2">
+          {quota.windows.map((window) => (
+            <WindowBar key={window.id} window={window} label={windowTitle(window)} />
+          ))}
           {peak && peak.usedPercent >= 90 && (
             <Notice tone="error" className="px-2 py-1.5 text-[11px]">
               Nearly out of plan — {windowTitle(peak).toLowerCase()} is {Math.round(peak.usedPercent)}% used.
@@ -198,7 +274,11 @@ export function ContextIndicator({
   const measured = Object.entries(thread.turnUsage).filter(([id]) => thread.turnDuration[id] !== undefined)
   const measuredOutput = measured.reduce((n, [, u]) => n + u.outputTokens, 0)
   const measuredMs = measured.reduce((n, [id]) => n + (thread.turnDuration[id] ?? 0), 0)
-  const avgRate = formatRate(measuredOutput, measuredMs)
+  const avgRate = thread.tps ? formatRate(thread.tps.outputTokens, thread.tps.durationMs) : formatRate(measuredOutput, measuredMs)
+  const minRate = thread.tps ? formatTps(thread.tps.min) : null
+  const maxRate = thread.tps ? formatTps(thread.tps.max) : null
+  const toolDurationMs = thread.tps?.toolDurationMs ??
+    Object.values(thread.turnToolDuration).reduce((sum, duration) => sum + duration, 0)
 
   return (
     <Popover>
@@ -300,7 +380,10 @@ export function ContextIndicator({
             />
           )}
           {usage && <Stat label="Total" value={formatTokens(usage.totalTokens)} />}
-          {avgRate && <Stat label="Output avg" value={avgRate} />}
+          {avgRate && <Stat label="Avg whole-turn TPS" value={avgRate} />}
+          {toolDurationMs > 0 && <Stat label="Tool-call time" value={formatDuration(toolDurationMs)} />}
+          {minRate && <Stat label="Min whole-turn TPS" value={minRate} />}
+          {maxRate && <Stat label="Peak TPS" value={maxRate} />}
           {ttftMs !== null && <Stat label="TTFT" value={`${ttftMs}ms`} />}
           {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
           {context?.cost && (

@@ -11,7 +11,7 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { profiles as profilesTable, db } from "../src/db/index.js";
-import { createProfile, duplicateProfile, getProfile, redact, updateProfile } from "../src/profiles.js";
+import { createProfile, duplicateProfile, exportProfile, getProfile, redact, syncProfile, updateProfile } from "../src/profiles.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -110,6 +110,31 @@ await test("a duplicate carries the credentials and lands hidden", async () => {
 await test("a virtual profile has nothing to duplicate", async () => {
   assert.equal(await duplicateProfile("default:claude-code"), undefined);
   assert.equal(await duplicateProfile("nope"), undefined);
+});
+
+await test("profile sync excludes secrets by default and preserves destination credentials", async () => {
+  const exported = await exportProfile(seeded.id, false);
+  assert.ok(exported);
+  assert.equal(exported.apiKey, "");
+  assert.equal(exported.usage?.apiKey, "");
+
+  const id = "sync:source-profile";
+  const first = await syncProfile(id, exported, false);
+  assert.equal(first?.apiKey, "");
+  assert.equal(first?.usage?.apiKey, "");
+
+  const withSecrets = await exportProfile(seeded.id, true);
+  assert.equal(withSecrets?.apiKey, "sk-secret");
+  const copied = await syncProfile(id, withSecrets!, true);
+  assert.equal(copied?.apiKey, "sk-secret");
+  assert.equal(copied?.usage?.apiKey, "sk-usage");
+
+  const updatedWithoutSecrets = { ...exported, name: "gateway updated" };
+  const updated = await syncProfile(id, updatedWithoutSecrets, false);
+  assert.equal(updated?.name, "gateway updated");
+  assert.equal(updated?.apiKey, "sk-secret");
+  assert.equal(updated?.usage?.apiKey, "sk-usage");
+  assert.equal(await syncProfile("not-sync-id", exported, false), undefined);
 });
 
 await db.delete(profilesTable);

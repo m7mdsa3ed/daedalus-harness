@@ -10,6 +10,7 @@ import {
   MessageCircleQuestionIcon,
   SparklesIcon,
 } from "lucide-react"
+import { TodoChecklist } from "@/components/todo-checklist"
 import {
   LABEL,
   PANE,
@@ -20,7 +21,6 @@ import {
   ProsePreview,
   SmartBlock,
 } from "@/components/tool-parts"
-import { useThreadLinks } from "@/lib/workspace/thread-links"
 import {
   extractFindings,
   extractPlanProposal,
@@ -32,21 +32,8 @@ import {
   type TodoEntry,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
-import { cn } from "@/lib/utils"
 
 // ─── Todos ───────────────────────────────────────────────────────────────────
-
-const TODO_DOT: Record<TodoEntry["status"], string> = {
-  completed: "bg-primary",
-  in_progress: "harness-node-active bg-primary",
-  pending: "bg-muted-foreground/40",
-}
-
-const TODO_TEXT: Record<TodoEntry["status"], string> = {
-  completed: "text-muted-foreground line-through",
-  in_progress: "text-foreground",
-  pending: "text-muted-foreground",
-}
 
 /**
  * The agent's checklist.
@@ -58,21 +45,7 @@ const TODO_TEXT: Record<TodoEntry["status"], string> = {
  * `lib/tools`' problem.
  */
 export function TodoList({ todos }: { todos: TodoEntry[] }) {
-  return (
-    <ul className="space-y-1">
-      {todos.map((todo, index) => (
-        <li key={index} className="flex items-start gap-2 text-xs">
-          <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", TODO_DOT[todo.status])} />
-          <span className={cn("min-w-0", TODO_TEXT[todo.status])}>
-            {todo.content}
-            {todo.priority === "high" && todo.status !== "completed" ? (
-              <span className="ml-1.5 text-[10px] tracking-wide uppercase text-primary/70">high</span>
-            ) : null}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
+  return <TodoChecklist items={todos} />
 }
 
 export function TodosDetail({ item }: { item: ToolItem }) {
@@ -242,7 +215,6 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
     table is exactly what a JSON dump of them was hiding. */
 export function FindingsDetail({ item }: { item: ToolItem }) {
   const findings = extractFindings(item)
-  const links = useThreadLinks()
   if (!findings) return null
   if (findings.length === 0) {
     return <p className="text-[11px] text-muted-foreground">No findings.</p>
@@ -255,19 +227,9 @@ export function FindingsDetail({ item }: { item: ToolItem }) {
           <li key={index} className="space-y-0.5 px-2.5 py-1.5 text-[11.5px]">
             <div className="flex items-center gap-1.5">
               <FileWarningIcon className="size-3 shrink-0 text-muted-foreground/50" />
-              {links ? (
-                <button
-                  type="button"
-                  className="min-w-0 truncate font-mono text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  onClick={() => links.openFile(finding.file, finding.line ?? undefined)}
-                >
-                  {where}
-                </button>
-              ) : (
-                <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-                  {where}
-                </span>
-              )}
+              <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+                {where}
+              </span>
               {finding.category && (
                 <span className="shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground/70">
                   {finding.category}

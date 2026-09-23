@@ -560,6 +560,8 @@ export class AcpBridge {
       working. */
   private inflight = 0;
   private turnStartedAt: number | null = null;
+  private turnToolDurationMs = 0;
+  private toolWindowStartedAt: number | null = null;
   private ttftSent = false;
   private nextRequestId = 1;
   /** True while a `session/load` is streaming the conversation back, so the
@@ -1225,9 +1227,16 @@ export class AcpBridge {
     const status = update.sessionUpdate === "tool_call" ? (update.status ?? "pending") : update.status;
     if (status === "completed" || status === "failed") {
       this.openToolCalls.delete(update.toolCallId);
+      if (this.openToolCalls.size === 0 && this.toolWindowStartedAt !== null) {
+        this.turnToolDurationMs += performance.now() - this.toolWindowStartedAt;
+        this.toolWindowStartedAt = null;
+      }
       return true;
     }
-    if (status) this.openToolCalls.add(update.toolCallId);
+    if (status && !this.openToolCalls.has(update.toolCallId)) {
+      if (this.openToolCalls.size === 0) this.toolWindowStartedAt = performance.now();
+      this.openToolCalls.add(update.toolCallId);
+    }
     return false;
   }
 
@@ -1468,6 +1477,8 @@ export class AcpBridge {
       this.lastSeenMessageId = null;
       this.host.markTurnStderr();
       this.turnStartedAt = performance.now();
+      this.turnToolDurationMs = 0;
+      this.toolWindowStartedAt = null;
       this.ttftSent = false;
     }
     /* The turn is in flight from **here**, not from the dispatch below, and the
@@ -1564,6 +1575,10 @@ export class AcpBridge {
     /* The turn is over, so every step in it is: nothing is still running for a
        held steer to wait on, and its bubble must land before `turn_ended`
        rather than never. Ahead of the emit below for exactly that ordering. */
+    if (this.toolWindowStartedAt !== null) {
+      this.turnToolDurationMs += performance.now() - this.toolWindowStartedAt;
+      this.toolWindowStartedAt = null;
+    }
     this.openToolCalls.clear();
     this.flushSteers();
     /* A turn that is over is not retrying. The agent clears its own notice on
@@ -1575,7 +1590,11 @@ export class AcpBridge {
        a turn rather than opening one, so this covers every prompt in it. */
     const durationMs =
       this.turnStartedAt !== null ? Math.round(performance.now() - this.turnStartedAt) : undefined;
+    const toolDurationMs = durationMs !== undefined
+      ? Math.min(durationMs, Math.round(this.turnToolDurationMs))
+      : undefined;
     this.turnStartedAt = null;
+    this.turnToolDurationMs = 0;
     /* The session has content now, so the agent has written it down and a later
        `session/load` can find it. Before this point its id is unloadable, and
        recording an unloadable id is how a thread loses the transcript it had.
@@ -1602,6 +1621,7 @@ export class AcpBridge {
       ...(continued ? { continued: true } : {}),
       ...(this.lastSeenMessageId ? { lastMessageId: this.lastSeenMessageId } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(toolDurationMs !== undefined ? { toolDurationMs } : {}),
     });
     this.releaseIdle();
     this.host.onTurnSettled({ error, interrupted, continued, turnId });
@@ -1878,6 +1898,10 @@ export class AcpBridge {
     this.paused = paused;
     this.pausedReason = nextReason;
     this.pausedError = nextError;
+    if (paused && reason === "error" && this.toolWindowStartedAt !== null) {
+      this.turnToolDurationMs += performance.now() - this.toolWindowStartedAt;
+      this.toolWindowStartedAt = null;
+    }
     if (paused && !was) this.heldSince = Date.now();
     if (!paused) this.heldSince = null;
     this.host.emit(this.pausedEvent());
@@ -1891,6 +1915,10 @@ export class AcpBridge {
        is still the tool call that ends the step. */
     if (wasErrorHold && !paused) {
       this.openToolCalls.clear();
+      if (this.toolWindowStartedAt !== null) {
+        this.turnToolDurationMs += performance.now() - this.toolWindowStartedAt;
+        this.toolWindowStartedAt = null;
+      }
       this.flushSteers();
     }
   }

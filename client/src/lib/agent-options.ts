@@ -128,9 +128,10 @@ export function saveAgentOptions(
 }
 
 /** Learned from a probe: the whole map in one go (see server/src/probe.ts). */
-export function saveProbedOptions(key: string, probed: AgentOptionSet): void {
+export function saveProbedOptions(key: string, probed: AgentOptionSet, replace = false): void {
   if (probed.base.length === 0 && !probed.modes) return
-  const known = loadAgentOptions(key)
+  // A refresh answers for the whole set: merging would keep the stale per-model ones.
+  const known = replace ? EMPTY : loadAgentOptions(key)
   store.set({
     ...store.get(),
     [key]: {

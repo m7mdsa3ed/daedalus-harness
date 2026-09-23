@@ -706,13 +706,12 @@ function groupCodexLifecycle(
 }
 
 /**
- * Consecutive tool steps — and the thoughts woven between them — become one
- * `ToolRunGroup`; everything else passes through untouched. A thought is the
- * reasoning behind the steps around it, so it belongs inside the group:
- * toggling the group shut hides the thinking too. A run still needs a tool —
- * two thoughts alone are two standalone rows, not a "group" with nothing in
- * it — and runs of one stay ungrouped, a lone step wrapped in a "1 step"
- * disclosure is strictly worse than the step. An edit is not one of the steps:
+ * Runs of at least two consecutive tool calls — and the thoughts woven between
+ * them — become one `ToolRunGroup`; everything else passes through untouched.
+ * A thought is the reasoning behind the calls around it, so it belongs inside
+ * the group: toggling it shut hides the thinking too. A single call stays
+ * ungrouped, since a lone step wrapped in a disclosure is strictly worse than
+ * the step. An edit is not one of the calls:
  * a change is the thing the reader comes to read, so it stands as its own row
  * and breaks a run like any other non-tool row. A subagent group breaks a run
  * too: its rail inside a run's rail would be two rails for one thing.
@@ -722,7 +721,7 @@ export function groupToolRuns(rows: Row[]): Row[] {
   let run: (ToolItem | TextItem)[] = []
 
   const flush = () => {
-    if (run.length > 1 && run.some((item) => item.kind === "tool"))
+    if (run.filter((item) => item.kind === "tool").length > 1)
       out.push({ kind: "run", id: `tools-${run[0].id}`, items: run })
     else out.push(...run)
     run = []

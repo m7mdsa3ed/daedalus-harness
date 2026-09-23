@@ -67,7 +67,27 @@ async function seed() {
   await db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 });
   await db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [] }] });
   
-  await db.insert(projectsTable).values({ id: "w1", name: "ws", cwd: "/tmp/ws", logoUrl: "" });
+  /* A project with start defaults picked, so the round trip below is a real
+     one: an empty defaults object would pass whether or not the columns are
+     carried at all. */
+  await db.insert(projectsTable).values({
+    id: "w1",
+    name: "ws",
+    cwd: "/tmp/ws",
+    logoUrl: "",
+    defaultProfileId: "p1",
+    defaultAgentId: "fake",
+    defaultModel: "m",
+    defaultEffort: "high",
+    defaultModeId: "plan",
+    defaultConfigChoices: { sandbox: "workspace-write" },
+    defaultPersonaId: "builtin:terse",
+    defaultMcpServerIds: ["m1"],
+    defaultSkillIds: ["s1"],
+    defaultCommandIds: ["c1"],
+    defaultSuggestFollowups: false,
+    defaultUiBlocks: false,
+  });
   await db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now });
   await db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", personaId: "builtin:terse", title: "Thread", acpSessionId: "acp-1", createdAt: now });
   await db.insert(eventsTable).values([
@@ -270,6 +290,45 @@ await test("replace drops what the bundle does not name; merge keeps it", async 
   assert.equal(await count(tasksTable), 2);
   await importBundle(bundle, "replace");
   assert.equal(await count(tasksTable), 1);
+});
+
+await test("a project's start defaults survive export and import", async () => {
+  await seed();
+  const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
+  // The export answers the reader's shape, one field per column, never the
+  // raw `default_*` names.
+  const exported = bundle.projects.find((p) => p.id === "w1")!;
+  assert.equal("defaultModel" in exported, false, "the columns travel folded, not raw");
+  assert.deepEqual(exported.defaults, {
+    profileId: "p1",
+    agentId: "fake",
+    model: "m",
+    effort: "high",
+    modeId: "plan",
+    configChoices: { sandbox: "workspace-write" },
+    personaId: "builtin:terse",
+    mcpServerIds: ["m1"],
+    skillIds: ["s1"],
+    commandIds: ["c1"],
+    suggestFollowups: false,
+    uiBlocks: false,
+  });
+  /* A bundle from before the columns: the key is absent and every field of
+     the defaults is missing too, which is the shape `prefault` exists for. */
+  const legacy = JSON.parse(JSON.stringify(bundle)) as { projects: Record<string, unknown>[] };
+  delete legacy.projects[0]!.defaults;
+  await importBundle(BundleSchema.parse(legacy), "replace");
+  const restored = (await db.select().from(projectsTable).where(eq(projectsTable.id, "w1")))[0]!;
+  assert.equal(restored.defaultModel, null, "a bundle from before the columns clears them");
+  assert.equal(restored.defaultSuggestFollowups, true, "and the booleans land on their defaults");
+  // And the modern bundle puts them back.
+  await importBundle(bundle, "replace");
+  const round = (await db.select().from(projectsTable).where(eq(projectsTable.id, "w1")))[0]!;
+  assert.equal(round.defaultModel, "m");
+  assert.deepEqual(round.defaultConfigChoices, { sandbox: "workspace-write" });
+  assert.deepEqual(round.defaultMcpServerIds, ["m1"]);
+  assert.equal(round.defaultSuggestFollowups, false);
+  assert.equal(round.defaultUiBlocks, false);
 });
 
 await test("merge upserts by id without cascading the row's children", async () => {

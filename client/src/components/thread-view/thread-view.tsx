@@ -9,7 +9,7 @@
    `ThreadWelcome` at the path every caller already spells. */
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { ChevronUp } from "lucide-react"
+import { ChevronUp, PanelRightOpenIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ActivityIndicator } from "@/components/composer-status"
 import { ComposerQueue } from "@/components/composer-queue"
@@ -32,15 +32,12 @@ import { useLocation } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn, stagger } from "@/lib/utils"
-import { StepTokensProvider, TokenSummary } from "@/components/token-usage"
-import { useDock } from "@/components/workspace/dock"
-import { requestIde } from "@/lib/ide/open"
-import { useServer } from "@/lib/server-context"
-import { sessionChanges, type TurnChanges } from "@/lib/workspace/git-api"
+import { StepTokensProvider } from "@/components/token-usage"
+import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
 import { InlineApproval } from "@/components/tool-approval"
 import { InlineHeldTurn } from "@/components/held-turn"
-import { RowView, SourcesStrip } from "@/components/thread-items"
+import { RowView } from "@/components/thread-items"
 import type { TurnSources } from "@/lib/sources"
 import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
 import { PromptSuggestions } from "@/components/prompt-suggestions"
@@ -50,8 +47,8 @@ import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
 import { useAgents } from "@/lib/queries/catalog"
 import {
   useStepTurnUsage,
-  withTurnChanges,
   withTurnDuration,
+  withTurnToolDuration,
   withTurnSources,
   withTurnSuggestions,
   withTurnUsage,
@@ -61,6 +58,7 @@ import { useThreadKeys } from "@/components/thread-view/thread-keys"
 import { StartingLine, useWaitShown } from "@/components/thread-view/starting-line"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
+import { ThreadInspector } from "@/components/thread-view/thread-inspector"
 
 /** A transcript, addressed by the pair that names it. The panel above hands
     the key down (see workspace/chat-panel): every store read, every action and
@@ -77,10 +75,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   /* Whether the connection's own wait is on screen — read by the two rows at
      the foot of the transcript that trade places with it. */
   const waitShown = useWaitShown(thread.phase)
-  /* Safe unconditionally: a transcript only ever exists inside a chat panel
-     (`workspace/chat-panel.tsx`), which is inside the dock. The composer does
-     not do this itself — it is also the build page's, where there is none. */
-  const dock = useDock()
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
@@ -212,43 +206,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     ]
   )
   const durationFor = (row: Row): number | undefined => durationAfter.get(rowTailId(row))
-  const changesAfter = React.useMemo(
+  const toolDurationAfter = React.useMemo(
     () =>
-      withTurnChanges(
+      withTurnToolDuration(
         thread.items,
         thread.turnActive,
-        thread.turnChanges,
+        thread.turnToolDuration,
         options.answersOnly,
         options.showConfigNotices
       ),
-    [
-      thread.items,
-      thread.turnActive,
-      thread.turnChanges,
-      options.answersOnly,
-      options.showConfigNotices,
-    ]
+    [thread.items, thread.turnActive, thread.turnToolDuration, options.answersOnly, options.showConfigNotices]
   )
-  /* The newest turn that wrote anything, for the composer's cluster. The map
-     is built in transcript order, so its last value is the most recent gated
-     turn — and it stays put when the next turn only reads, which is the point:
-     the reading is "what has this thread done to the worktree", not "what did
-     the very last turn do". */
-  const latestChanges = React.useMemo(
-    () => [...changesAfter.values()].at(-1),
-    [changesAfter]
-  )
-  /* The per-turn rows are the server's and live-only on the socket, so a
-     transcript opened cold seeds them once here. Failure is silence: the
-     chips are ambient, and a thread with no project has nothing to read. */
-  const settings = useServer()
-  React.useEffect(() => {
-    const controller = new AbortController()
-    sessionChanges(settings, sessionId, controller.signal)
-      .then(({ turns }) => dispatch({ type: "turn-changes-all", id: sessionId, turns }))
-      .catch(() => {})
-    return () => controller.abort()
-  }, [settings, sessionId, dispatch])
+  const toolDurationFor = (row: Row): number | undefined => toolDurationAfter.get(rowTailId(row))
   /* Held at one identity until a figure actually moves — see `useStepTurnUsage`.
      The raw walk returns a fresh object per token, and this is half of a
      *context* value, which no `React.memo` below it can absorb. */
@@ -328,20 +297,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      files *that are still uncommitted*. A turn whose work has been committed
      since filters down to nothing, and the view says so rather than pretending
      the turn changed nothing. */
-  const openChanges = React.useCallback(
-    (turn: TurnChanges) => {
-      const projectId = meta?.projectId
-      if (!projectId) return
-      dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
-      requestIde({
-        kind: "review",
-        projectId,
-        label: `${turn.files.length} ${turn.files.length === 1 ? "file" : "files"} from this turn`,
-        paths: turn.files.map((file) => file.path),
-      })
-    },
-    [dock, meta?.projectId]
-  )
   /* The agent's rewind door: absent/false = the conversation half is not
      offered on this thread, and files are restored on their own. Read off the
      catalog like every other agent capability — the server still refuses what
@@ -411,6 +366,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
 
   const rootRef = React.useRef<HTMLDivElement>(null)
   const composerRef = React.useRef<HTMLDivElement>(null)
+  const [inspectorOpen, setInspectorOpen] = React.useState(true)
   /* The docked composer is an overlay of unknown height — shelf rows, the
      queue, attachments and textarea growth all move it — so its pixel height
      is measured and published as `--composer-dock-h` on the grid root for the
@@ -449,8 +405,26 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     <div
       ref={rootRef}
       data-empty={empty || undefined}
-      className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+      className={cn(
+        "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+        inspectorOpen && "@panel-xl:grid-cols-[minmax(0,1fr)_18rem]"
+      )}
     >
+      {inspectorOpen && meta && (
+        <ThreadInspector thread={thread} meta={meta} onClose={() => setInspectorOpen(false)} />
+      )}
+      {!inspectorOpen && (
+        <Button
+          variant="outline"
+          size="icon-sm"
+          className="absolute right-3 top-[var(--dock-content-overlap,0px)] z-30 mt-2 hidden shadow-sm @panel-xl:inline-flex"
+          onClick={() => setInspectorOpen(true)}
+          aria-label="Show thread sidebar"
+          title="Show thread sidebar"
+        >
+          <PanelRightOpenIcon aria-hidden className="size-4" />
+        </Button>
+      )}
       {/* `autoScroll` defaults to FALSE — without it the transcript never follows
            the stream. Every direct child of Content must be an Item with a
            `messageId`: the visibility/preservation scanner skips elements without
@@ -458,7 +432,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
            The primitive's own follow is kept (it is what hides the
            scroll-to-bottom button while following) but it is not trusted on its
            own — `useFollowStream` owns the pin. See hooks/use-follow-stream. */}
-        <MessageScroller className="min-h-0 flex-1">
+        <MessageScroller className="min-h-0 flex-1 @panel-xl:col-start-1 @panel-xl:row-start-1">
           <MessageScrollerViewport
             ref={follow.viewportRef}
             /* Measured dock height: the follow/scroll-into-view offset keeps
@@ -642,32 +616,14 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
                     />
                   </div>
-                  {options.showSources && sourcesFor(row) && (
-                    <div className="harness-item-in" style={stagger(1)}>
-                      <SourcesStrip turn={sourcesFor(row)!} />
-                    </div>
-                  )}
-                  {options.showTokens && usageFor(row) && (
-                    <div className="harness-item-in -ml-1" style={stagger(2)}>
-                      <TokenSummary usage={usageFor(row)!} label="This turn" durationMs={durationFor(row)} />
-                    </div>
-                  )}
-                  {/* The model's closing follow-ups, under the answer that
-                      suggested them. Deliberately NOT on the composer dock: the
-                      dock is for state being typed with the turn, and next
-                      actions belong where the reader is when they arrive — in
-                      the same footer slot Sources and the token figure use. A
-                      click fills the composer (replaced, unsent, focused) via
-                      its imperative handle, so the box stays the box's own
-                      state. */}
-                  {suggestionsFor(row) && (
-                    <div className="harness-item-in mt-1" style={stagger(3)}>
-                      <PromptSuggestions
-                        suggestions={suggestionsFor(row)!.prompts}
-                        onPick={(prompt) => composerApiRef.current?.fill(prompt)}
-                      />
-                    </div>
-                  )}
+                  <TurnFooter
+                    sources={options.showSources ? sourcesFor(row) : undefined}
+                    usage={options.showTokens ? usageFor(row) : undefined}
+                    durationMs={durationFor(row)}
+                    toolDurationMs={toolDurationFor(row)}
+                    suggestions={suggestionsFor(row)?.prompts}
+                    onPick={(prompt) => composerApiRef.current?.fill(prompt)}
+                  />
                 </MessageScrollerItem>
                 )
               })}
@@ -863,11 +819,14 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       <div
         ref={composerRef}
         className={cn(
-          "min-w-0",
+          "min-w-0 @panel-xl:col-start-1 @panel-xl:row-start-2",
           empty ? KEYBOARD_CENTER_FLOW : KEYBOARD_LIFT,
           empty
             ? "relative"
-            : "pointer-events-none absolute inset-x-0 bottom-0 z-20",
+            : cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 z-20",
+                inspectorOpen && "@panel-xl:left-0 @panel-xl:right-[18rem]"
+              ),
         )}
       >
         {empty && <ThreadWelcome draft={meta?.draft} />}
@@ -878,13 +837,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           thread={thread}
           meta={meta}
           delivery={delivery}
-          changes={latestChanges}
-          onOpenChanges={openChanges}
         />
       </div>
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
-      <span aria-hidden />
+      <span aria-hidden className="@panel-xl:col-start-1 @panel-xl:row-start-3" />
     </div>
     {rewindTarget && (
       <RewindDialog

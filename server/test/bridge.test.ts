@@ -216,12 +216,21 @@ assert.deepEqual(
 assert.equal(ws1.of("turn_started").length, 0);
 assert.ok(ws1.of("ttft")[0], "time to first update is measured server-side");
 assert.ok(ws1.of("turn_ended")[0].usage, "usage rides the turn end");
+assert.ok((ws1.of("turn_ended")[0].durationMs ?? 0) > 0, "turn duration rides the turn end");
+assert.ok((ws1.of("turn_ended")[0].toolDurationMs ?? 0) > 0, "tool-call time is measured");
+assert.ok(
+  ws1.of("turn_ended")[0].toolDurationMs! <= ws1.of("turn_ended")[0].durationMs!,
+  "tool-call wall time is within the turn duration",
+);
 
 // --- and a second turn on the same session ---
 
 send(ws1, { id: 2, cmd: "prompt", text: "and again" });
 await waitFor(() => ws1.of("turn_ended").length === 2, "the second turn");
 assert.equal(session.acpSessionId, "acp-123", "the session id is unchanged");
+assert.ok(session.tps, "measured turn rates are kept on the session");
+assert.ok(session.tps!.max >= session.tps!.min, "TPS extrema are ordered");
+assert.ok(ws1.of("turn_ended")[1].durationMs, "the second turn has a measured duration");
 assert.equal(session.acpSessionProvisional, false);
 
 // --- reattach: the journaled events come back, in order ---
@@ -819,6 +828,8 @@ assert.equal(
     { sessionUpdate: "usage_update", used: 12_000, size: 200_000 },
     "…and is handed to an attaching peer after the replay",
   );
+  assert.deepEqual(row?.tps, logged.tps, "measured TPS extrema are persisted on the session row");
+  assert.deepEqual(reader.of("caught_up")[0]?.tps, logged.tps, "TPS extrema are handed over after replay");
 }
 
 // Commands still need an agent — reading is the only thing the journal serves.

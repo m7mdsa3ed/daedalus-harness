@@ -17,6 +17,7 @@ import type {
   TurnTick,
   ThreadHold,
   ThreadRetry,
+  TpsStats,
   WireError,
 } from "@daedalus/protocol"
 import { api, wsUrl, type ServerSettings } from "./settings"
@@ -193,10 +194,10 @@ export interface ThreadCallbacks {
     /** Which turn's numbers those are — what lets a turn print its own cost
         where it sits, rather than only feeding the thread's running total. */
     turnId: string,
-    /** Server-measured wall clock for the whole logical turn, ms — the
-        denominator output tok/s is drawn against. Absent on turns that ended
-        before the server measured it. */
-    durationMs?: number
+    /** Server-measured wall clock for the whole logical turn, ms. */
+    durationMs?: number,
+    /** Union wall time spent in tool calls, ms. */
+    toolDurationMs?: number
   ) => void
   /** The thread's queue, whole. Every change to it arrives this way — this
       device's own included, since the ids are the server's. */
@@ -265,7 +266,8 @@ export interface ThreadCallbacks {
     /** A retry the turn is waiting out, for the same reason the hold is here:
         it is state, it is never journaled, and a backoff is exactly the window
         a peer is most likely to attach in. Null means not retrying. */
-    retry: ThreadRetry | null
+    retry: ThreadRetry | null,
+    tps: TpsStats | null
   ) => void
   /** The turn is held at a step boundary, or released. Absolute, live-only,
       to every peer — the one that asked included. Carries *why*: `"user"` is
@@ -622,7 +624,8 @@ export class ThreadSocket {
           event.hold ?? { paused: false },
           event.staged ?? null,
           event.context ?? null,
-          event.retry ?? null
+          event.retry ?? null,
+          event.tps ?? null
         )
         return
       case "paused": {
@@ -758,7 +761,8 @@ export class ThreadSocket {
           this.catchingUp,
           event.continued ?? false,
           event.turnId,
-          event.durationMs
+          event.durationMs,
+          event.toolDurationMs
         )
         return
     }

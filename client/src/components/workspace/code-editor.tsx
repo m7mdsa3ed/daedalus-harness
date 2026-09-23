@@ -42,7 +42,19 @@ export interface CodeEditorProps {
     split, a re-mount) share a buffer instead of forking it. */
 const models = new Map<string, Monaco.editor.ITextModel>()
 
+/* Where the reader was in the file: scroll, cursor, selection, folds. Held
+   beside the model and for the same lifetime, because it is the other half of
+   "this tab is where I left it".
+
+   This is what lets the panel mount an editor for the tab in front and no
+   others (`file-tab.tsx`). It used to keep one Monaco instance alive per open
+   tab purely so that switching away and back did not jump to the top — which is
+   an editor, its DOM and its workers held open per tab to remember two numbers.
+   Now the numbers are kept and the instance is not. */
+const viewStates = new Map<string, Monaco.editor.ICodeEditorViewState>()
+
 export function disposeCodeModel(modelKey: string): void {
+  viewStates.delete(modelKey)
   const model = models.get(modelKey)
   if (!model) return
   models.delete(modelKey)
@@ -99,6 +111,11 @@ export function CodeEditor({
   onSaveRef.current = onSave
   const valueRef = React.useRef(value)
   valueRef.current = value
+  /* A mount that was asked to land on a line is not a mount that should be put
+     back where it was; the reveal effect below would win the race anyway, but
+     only after painting the restored position first. */
+  const revealPendingRef = React.useRef(false)
+  revealPendingRef.current = revealLine !== undefined
 
   React.useEffect(() => {
     let live = true
@@ -114,6 +131,12 @@ export function CodeEditor({
         readOnly,
       })
       editor.current = instance
+      /* Back where the reader left this file. Restored before the first paint
+         the effects below can cause, so the tab does not flash at line 1 — and
+         skipped when a reveal is pending, which is a deliberate jump somewhere
+         else and must not be undone by where you happened to be last. */
+      const saved = viewStates.get(modelKey)
+      if (saved && !revealPendingRef.current) instance.restoreViewState(saved)
       decorations.current = instance.createDecorationsCollection([])
       instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSaveRef.current?.())
       contentListener.current = model.onDidChangeContent(() => {
@@ -127,6 +150,11 @@ export function CodeEditor({
     })
     return () => {
       live = false
+      /* Remember where we were *before* the instance goes: `saveViewState`
+         answers null once disposed, and a null here is the jump-to-top this
+         map exists to prevent. */
+      const state = instance?.saveViewState()
+      if (state) viewStates.set(modelKey, state)
       decorations.current = null
       contentListener.current?.dispose()
       contentListener.current = null

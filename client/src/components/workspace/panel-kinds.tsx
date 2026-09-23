@@ -6,8 +6,6 @@ import {
   AppWindowIcon,
   BellIcon,
   CalendarClockIcon,
-  CodeIcon,
-  GlobeIcon,
   LayersIcon,
   MessageSquareIcon,
   SquareKanbanIcon,
@@ -28,9 +26,8 @@ import { pageKey, type PanelDescriptor, type PanelKind } from "@/lib/workspace/p
     about, which is the "open a panel" menu. An open panel is `PanelIcon`. */
 export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
   chat: MessageSquareIcon,
-  ide: CodeIcon,
   terminal: SquareTerminalIcon,
-  web: GlobeIcon,
+  web: AppWindowIcon,
   tasks: SquareKanbanIcon,
   page: AppWindowIcon,
   group: LayersIcon,

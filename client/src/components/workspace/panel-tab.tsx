@@ -78,7 +78,7 @@ import { cn } from "@/lib/utils"
 
 /** What a tab can open beside itself in a group — everything the + offers but
     a thread, which the composer's own doors open. */
-const GROUPABLE = ["terminal", "web", "ide", "tasks"] as const
+const GROUPABLE = ["terminal", "web", "tasks"] as const
 
 type PanelApi = IDockviewPanelHeaderProps["api"]
 type ContainerApi = IDockviewPanelHeaderProps["containerApi"]

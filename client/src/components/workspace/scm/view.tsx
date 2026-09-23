@@ -5,25 +5,35 @@
 
    The decisions that shape it now live beside the code each one is about: this
    file is the list of repositories and the chrome that spans them,
-   `repo-section.tsx` is one repository's status, staging and commit box,
-   `file-rows.tsx` the groups and the rows, `branch-menu.tsx` the header's
-   branch control, and the two lists below the working set are `scm-log.tsx`.
+   `repo-section.tsx` is one repository's whole panel, `working-list.tsx` the
+   rows, `branch-picker.tsx` the branch control, and the stash and history
+   lists are `scm-log.tsx`.
 
    **A project is not one repository.** It may hold several — a directory of
    checkouts, a `packages/` of them — or sit inside a larger one, so the view
-   starts from `GET …/git/repos` and draws a section per repository, each with
-   its own status, its own staging and its own commit box. That is what git
-   means: an index and a HEAD belong to one repository, and a commit box that
-   spanned two would be a button with no single thing to do. With exactly one
-   repository the sections' chrome disappears and it reads as one list. */
+   starts from `GET …/git/repos`. That is what git means: an index and a HEAD
+   belong to one repository, and a commit box that spanned two would be a
+   button with no single thing to do.
+
+   **One repository is drawn at a time**, picked in the toolbar. They used to
+   be stacked sections in a single scroller, which is what forced the commit
+   box to scroll with the files: sections sharing a scroller cannot pin
+   anything. A picker costs one click and gives each repository the full
+   height — its own list, its own tabs, and a commit box fixed to the bottom
+   edge. With one repository the picker is a label. */
 import * as React from "react"
 import { FilterIcon, FolderTreeIcon, ListIcon, RefreshIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { GitBranchIcon } from "lucide-react"
+import { ChevronDownIcon, GitBranchIcon } from "lucide-react"
 
 import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { PanelToolbar } from "@/components/workspace/primitives"
@@ -33,6 +43,7 @@ import { describeError } from "@/lib/errors"
 import { idePrefs, setIdePref, type FileLayout } from "@/lib/ide/prefs"
 import type { ScmFilter } from "@/lib/ide/scm-filter"
 import { useServer } from "@/lib/server-context"
+import { cn } from "@/lib/utils"
 import {
   gitRepos,
   gitStatus,
@@ -92,6 +103,8 @@ export function ScmView({
   const [reposError, setReposError] = React.useState<string | null>(null)
   const [states, setStates] = React.useState<Record<string, RepoState>>({})
   const [open, setOpen] = React.useState<ReadonlySet<string>>(() => new Set())
+  /** Which repository the panel is showing; "" is the project's own. */
+  const [current, setCurrent] = React.useState<string | null>(null)
 
   const alive = React.useRef(true)
   React.useEffect(() => {
@@ -129,6 +142,7 @@ export function ScmView({
     setRepos(null)
     setStates({})
     setOpen(new Set())
+    setCurrent(null)
     void loadRepos()
   }, [loadRepos])
 
@@ -217,15 +231,6 @@ export function ScmView({
     for (const repo of watchedRef.current) void refreshRepo(repo)
   }, [loadRepos, refreshRepo])
 
-  const toggleRepo = React.useCallback((path: string) => {
-    setOpen((current) => {
-      const next = new Set(current)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }, [])
-
   if (reposError)
     return (
       <div className="p-2">
@@ -244,16 +249,34 @@ export function ScmView({
     )
 
   const single = repos.length === 1
+  /* One repository is drawn at a time. They used to be stacked sections in one
+     scroller, which is what made the commit box a thing that scrolled: eight
+     repositories meant eight commit boxes somewhere down a single column, and
+     none of them could be pinned because they shared the scroller. A picker
+     costs one click and gives every repository the whole panel — its own list,
+     its own tabs, and a commit box fixed to the bottom edge. */
+  const active = repos.find((entry) => entry.path === current) ?? repos[0]!
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
-        {/* The branch used to live here, and it could only be read. It is a
-            control now, so it belongs on the repository it switches — one
-            repository or eight. What is left is what is about the *view*. */}
-        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted-foreground">
-          {single ? "Source control" : `${repos.length} repositories`}
-        </span>
+        {single ? (
+          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted-foreground">
+            Source control
+          </span>
+        ) : (
+          <RepoPicker
+            repos={repos}
+            active={active}
+            states={states}
+            onPick={(path) => {
+              setCurrent(path)
+              /* Picking is what makes a repository watched when there are many
+                 — see `watched` — so its status is read on the way in. */
+              setOpen((prior) => new Set(prior).add(path))
+            }}
+          />
+        )}
         <LayoutToggle layout={layout} onChange={(next) => setIdePref("scmLayout", next)} />
         <IconAction label="Refresh" icon={RefreshIcon} onClick={refreshAll} />
       </PanelToolbar>
@@ -273,36 +296,86 @@ export function ScmView({
         </div>
       )}
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="pb-2">
-          {repos.map((repo) => (
-            <RepoSection
-              key={repo.path || "."}
-              projectId={projectId}
-              repo={repo}
-              state={states[repo.path]}
-              filter={filter ?? null}
-              layout={layout}
-              /* One repository has nothing to choose between, so it is always
-                 open and its header carries no name and no disclosure — only
-                 the branch and the actions, which it needs either way. */
-              collapsible={!single}
-              open={single || open.has(repo.path)}
-              onToggle={() => toggleRepo(repo.path)}
-              onRefresh={() => void refreshRepo(repo.path)}
-              onStatus={(status) =>
-                setStates((current) => ({
-                  ...current,
-                  [repo.path]: { status, error: null, loading: false },
-                }))
-              }
-              onOpenDiff={onOpenDiff}
-              onOpenFile={onOpenFile}
-            />
-          ))}
-        </div>
-      </ScrollArea>
+      {/* No scroller here: the section owns its own, because its commit box is
+          pinned outside it. */}
+      <RepoSection
+        key={active.path || "."}
+        projectId={projectId}
+        repo={active}
+        state={states[active.path]}
+        filter={filter ?? null}
+        layout={layout}
+        onRefresh={() => void refreshRepo(active.path)}
+        onStatus={(status) =>
+          setStates((prior) => ({
+            ...prior,
+            [active.path]: { status, error: null, loading: false },
+          }))
+        }
+        onOpenDiff={onOpenDiff}
+        onOpenFile={onOpenFile}
+      />
     </div>
+  )
+}
+
+/** Which repository the panel is showing, with what each has outstanding —
+    the count is why this is a menu and not a row of tabs: eight checkouts do
+    not fit across a 320px column, and the number is the reason you switch. */
+function RepoPicker({
+  repos,
+  active,
+  states,
+  onPick,
+}: {
+  repos: GitRepo[]
+  active: GitRepo
+  states: Record<string, RepoState>
+  onPick: (path: string) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            className="min-w-0 flex-1 justify-start gap-1 px-1 text-[11px] font-medium"
+          >
+            <GitBranchIcon className="size-3 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate">{active.name}</span>
+            <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-auto min-w-56">
+        {repos.map((repo) => {
+          const status = states[repo.path]?.status
+          const count = status
+            ? status.staged.length +
+              status.unstaged.length +
+              status.untracked.length +
+              status.conflicted.length
+            : null
+          return (
+            <DropdownMenuItem key={repo.path || "."} onClick={() => onPick(repo.path)}>
+              <GitBranchIcon
+                className={cn(
+                  "size-3.5",
+                  repo.path === active.path ? "text-foreground" : "text-muted-foreground"
+                )}
+              />
+              <span className="min-w-0 flex-1 truncate">{repo.name}</span>
+              {count !== null && count > 0 && (
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                  {count}
+                </span>
+              )}
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

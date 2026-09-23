@@ -2,20 +2,20 @@
    A project's tree, lazily expanded. The harness's own, over the workspace
    routes — not a VS Code view and not a file system provider behind one.
 
-   Two decisions shape the whole file.
+   Split in three, along the seam between reading and doing:
 
-   **Listings are cached per directory, not as a tree.** The state is
-   `Map<dirPath, entries>` plus a set of expanded paths, and the rendered tree
-   is derived from the two. That is what lets a watch event invalidate exactly
-   the directory that changed and leave every other branch — including its
-   expansion and its scroll position — untouched. A nested tree object would
-   have to be rebuilt from the root, which is the version of this that collapses
-   everything you had open every time a build writes a file.
+   - **`lib/ide/use-file-tree.ts`** is the directory cache and the watch
+     stream — what is listed, what is expanded, and keeping both current.
+   - **`lib/ide/tree-rows.ts`** derives the flat, memoizable row array the
+     tree is drawn from, which is also what makes it windowable.
+   - **this file** is what a person does to the tree and what that looks
+     like: open, create, rename, delete, filter.
 
-   **The server is the authority on what exists.** Nothing here optimistically
-   inserts a row: create, rename and delete re-read the affected directory. A
-   tree that shows a file the server would refuse to open is worse than one that
-   takes 20ms to catch up. */
+   The rows are **data before they are JSX**, and selection is deliberately not
+   an input to the derivation. This used to recurse into JSX in the middle of
+   `render`, so every keystroke in the filter box rebuilt every expanded node —
+   each one allocating a fresh context-menu array of six closures on the way
+   past, which is why nothing downstream could be memoized. */
 import * as React from "react"
 import {
   ChevronRightIcon,
@@ -34,35 +34,25 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { PanelToolbar } from "@/components/workspace/primitives"
+import { useWindowedRows } from "@/hooks/use-windowed-rows"
 import { describeError, reportError } from "@/lib/errors"
+import {
+  flattenTree,
+  rowLines,
+  ROW_HEIGHT,
+  type Draft,
+  type TreeRow,
+} from "@/lib/ide/tree-rows"
+import { useFileTree } from "@/lib/ide/use-file-tree"
 import { cn } from "@/lib/utils"
 import {
   createEntry,
   deleteEntry,
   dirname,
   joinPath,
-  listTree,
   renameEntry,
   type WorkspaceEntry,
 } from "@/lib/workspace/fs-api"
-import { watchProject } from "@/lib/workspace/watch"
-
-interface DirState {
-  entries: WorkspaceEntry[]
-  truncated: boolean
-  loading: boolean
-  error?: string
-}
-
-/** An inline row being typed into: a new file/folder, or a rename. */
-interface Draft {
-  kind: "create-file" | "create-dir" | "rename"
-  /** The directory it lives in. */
-  dir: string
-  /** For a rename, the path being renamed. */
-  target?: string
-  value: string
-}
 
 const ROW = "flex h-7 w-full items-center gap-1 rounded-md pr-1 text-xs"
 
@@ -80,117 +70,11 @@ export function FileExplorer({
 }) {
   const confirm = useConfirm()
 
-  const [dirs, setDirs] = React.useState<Map<string, DirState>>(() => new Map())
-  const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set([""]))
+  const { dirs, expanded, showHidden, setShowHidden, load, refresh, toggle, setExpanded } =
+    useFileTree(projectId)
   const [picked, setPicked] = React.useState<string | null>(null)
-  const [showHidden, setShowHidden] = React.useState(false)
   const [filter, setFilter] = React.useState("")
   const [draft, setDraft] = React.useState<Draft | null>(null)
-
-  /* `load` has to be *stable*. Everything downstream keys off its identity: the
-     watch subscription, which would otherwise tear down and re-open the server
-     stream every time the dotfile toggle moves, and the on-demand effect, which
-     would re-run and duplicate every in-flight request. So the toggle lives in
-     a ref that `load` reads, and changing it triggers exactly one refresh. */
-  const showHiddenRef = React.useRef(showHidden)
-  showHiddenRef.current = showHidden
-
-  /* Staleness is tracked per directory, not globally. A single counter is
-     wrong here: expanding four folders at once bumps it four times, so the
-     first answer back looks stale against a generation that a *different*
-     directory advanced. Each path only races itself. */
-  const inflight = React.useRef(new Map<string, number>())
-  const load = React.useCallback(
-    async (path: string) => {
-      const mine = (inflight.current.get(path) ?? 0) + 1
-      inflight.current.set(path, mine)
-      setDirs((current) => {
-        const next = new Map(current)
-        next.set(path, { ...(next.get(path) ?? { entries: [], truncated: false }), loading: true })
-        return next
-      })
-      try {
-        const listing = await listTree(projectId, path, { hidden: showHiddenRef.current })
-        if (inflight.current.get(path) !== mine) return
-        setDirs((current) => {
-          const next = new Map(current)
-          next.set(path, { entries: listing.entries, truncated: listing.truncated, loading: false })
-          return next
-        })
-      } catch (err) {
-        if (inflight.current.get(path) !== mine) return
-        const { title, detail } = describeError(err)
-        setDirs((current) => {
-          const next = new Map(current)
-          next.set(path, {
-            entries: [],
-            truncated: false,
-            loading: false,
-            error: detail ? `${title} — ${detail}` : title,
-          })
-          return next
-        })
-      }
-    },
-    [projectId]
-  )
-
-  /** Re-read every directory currently on screen. */
-  const expandedRef = React.useRef(expanded)
-  expandedRef.current = expanded
-  const refresh = React.useCallback(() => {
-    for (const path of [...expandedRef.current]) void load(path)
-  }, [load])
-
-  /* Anything expanded and not yet read, loads. Collapsing keeps the listing
-     cached, so re-expanding is instant and only a refresh goes back to disk. */
-  const dirsRef = React.useRef(dirs)
-  dirsRef.current = dirs
-  React.useEffect(() => {
-    for (const path of expanded) if (!dirsRef.current.has(path)) void load(path)
-  }, [expanded, load])
-
-  const hiddenFirstRun = React.useRef(true)
-  React.useEffect(() => {
-    /* The toggle re-reads what is open rather than clearing it: the tree you
-       were looking at should still be the tree you are looking at. */
-    if (hiddenFirstRun.current) {
-      hiddenFirstRun.current = false
-      return
-    }
-    refresh()
-  }, [showHidden, refresh])
-
-  /* Watch events name a path; what they invalidate is the directory that holds
-     it. An overflow names nothing, so everything open is re-read — which is
-     what "I stopped counting" has to mean. */
-  React.useEffect(
-    () =>
-      watchProject(projectId, (batch) => {
-        if (batch.overflow) {
-          setExpanded((open) => {
-            for (const path of open) void load(path)
-            return open
-          })
-          return
-        }
-        const touched = new Set<string>()
-        for (const event of batch.events) touched.add(dirname(event.path))
-        setExpanded((open) => {
-          for (const dir of touched) if (open.has(dir)) void load(dir)
-          return open
-        })
-      }),
-    [projectId, load]
-  )
-
-  const toggle = (path: string) =>
-    setExpanded((current) => {
-      const next = new Set(current)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
 
   /* ── Mutations ───────────────────────────────────────────────────────────── */
 
@@ -219,7 +103,7 @@ export function FileExplorer({
     }
   }
 
-  const remove = async (entry: WorkspaceEntry) => {
+  const remove = React.useCallback(async (entry: WorkspaceEntry) => {
     const ok = await confirm({
       title: `Delete ${entry.name}?`,
       description:
@@ -236,164 +120,106 @@ export function FileExplorer({
     } catch (err) {
       reportError(err, "Couldn't delete that")
     }
-  }
+  }, [confirm, load, projectId])
 
-  const copyPath = (path: string) => {
+  const copyPath = React.useCallback((path: string) => {
     writeClipboard(path).catch((err) => reportError(err, "Couldn't copy the path"))
-  }
+  }, [])
 
   /* ── Rendering ───────────────────────────────────────────────────────────── */
 
   const query = filter.trim().toLowerCase()
 
-  const menuFor = (entry: WorkspaceEntry): MenuItemSpec[] => [
-    ...(entry.type === "file"
-      ? [{ label: "Open", onClick: () => onOpenFile(entry.path) }]
-      : [
-          {
-            label: "New file…",
-            onClick: () => {
-              setExpanded((current) => new Set(current).add(entry.path))
-              setDraft({ kind: "create-file", dir: entry.path, value: "" })
-            },
-          },
-          {
-            label: "New folder…",
-            onClick: () => {
-              setExpanded((current) => new Set(current).add(entry.path))
-              setDraft({ kind: "create-dir", dir: entry.path, value: "" })
-            },
-          },
-        ]),
-    { type: "separator" },
-    {
-      label: "Rename…",
-      onClick: () =>
+  /* The tree is derived **once** per shape change and then drawn. Selection is
+     deliberately not an input (`lib/ide/tree-rows.ts`): a click that only moves
+     the highlight must not rebuild every row. */
+  const rows = React.useMemo(
+    () => flattenTree({ dirs, expanded, query, draft }),
+    [dirs, expanded, query, draft]
+  )
+  const win = useWindowedRows({ rows, lineHeight: ROW_HEIGHT, linesOf: rowLines })
+
+  /* One stable bundle of callbacks for every row, so `EntryRow`'s `React.memo`
+     can actually hit. Handed down whole rather than as eight props, because a
+     row that re-renders when any one of them changes is the same as a row with
+     no memo at all — and none of these change. */
+  const actions = React.useMemo<RowActions>(
+    () => ({
+      onOpenFile,
+      onPick: setPicked,
+      onToggle: toggle,
+      onNewFile: (dir) => {
+        setExpanded((current) => new Set(current).add(dir))
+        setDraft({ kind: "create-file", dir, value: "" })
+      },
+      onNewDir: (dir) => {
+        setExpanded((current) => new Set(current).add(dir))
+        setDraft({ kind: "create-dir", dir, value: "" })
+      },
+      onRename: (entry) =>
         setDraft({ kind: "rename", dir: dirname(entry.path), target: entry.path, value: entry.name }),
-    },
-    { label: "Copy relative path", onClick: () => copyPath(entry.path) },
-    { type: "separator" },
-    { label: "Delete", destructive: true, onClick: () => void remove(entry) },
-  ]
+      onCopyPath: copyPath,
+      onDelete: (entry) => void remove(entry),
+    }),
+    [onOpenFile, toggle, copyPath, remove]
+  )
 
-  const renderDir = (path: string, depth: number): React.ReactNode[] => {
-    const dir = dirs.get(path)
-    if (!dir) return []
-    const rows: React.ReactNode[] = []
-
-    if (dir.error) {
-      rows.push(
-        <div
-          key={`${path}:error`}
-          className="flex items-start gap-1 px-2 py-1"
-          style={indent(depth)}
-        >
-          <p className="min-w-0 flex-1 text-xs text-destructive">{dir.error}</p>
-          <CopyButton
-            text={dir.error}
-            size="icon-xs"
-            className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+  const drawRow = (row: TreeRow): React.ReactNode => {
+    switch (row.kind) {
+      case "entry":
+        return (
+          <EntryRow
+            key={row.key}
+            row={row}
+            /* The two props that change on a click. Everything else a row needs
+               is `actions`, which never changes — so a selection move re-renders
+               the row leaving and the row arriving, and nothing else. */
+            current={selected === row.entry.path || picked === row.entry.path}
+            actions={actions}
           />
-        </div>
-      )
-      return rows
-    }
-
-    const entries = query
-      ? dir.entries.filter((entry) => entry.name.toLowerCase().includes(query))
-      : dir.entries
-
-    for (const entry of entries) {
-      const isOpen = expanded.has(entry.path)
-      const renaming = draft?.kind === "rename" && draft.target === entry.path
-      const isCurrent = selected === entry.path || picked === entry.path
-      rows.push(
-        renaming ? (
-          <DraftRow
-            key={entry.path}
-            depth={depth}
-            draft={draft}
-            onChange={(value) => setDraft({ ...draft, value })}
-            onCommit={() => void commitDraft()}
-            onCancel={() => setDraft(null)}
-          />
-        ) : (
-          <ItemContextMenu key={entry.path} items={menuFor(entry)}>
-            <button
-              type="button"
-              style={indent(depth)}
-              onClick={() => {
-                setPicked(entry.path)
-                if (entry.type === "dir") toggle(entry.path)
-                else onOpenFile(entry.path)
-              }}
-              className={cn(
-                ROW,
-                "text-left transition-colors",
-                isCurrent
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                entry.ignored && "opacity-60"
-              )}
-            >
-              <ChevronRightIcon
-                aria-hidden
-                className={cn(
-                  "size-3 shrink-0 transition-transform",
-                  entry.type === "dir" ? (isOpen ? "rotate-90" : "") : "invisible"
-                )}
-              />
-              <span className="truncate">{entry.name}</span>
-              {entry.link && <span className="shrink-0 text-[10px] opacity-60">↗</span>}
-            </button>
-          </ItemContextMenu>
         )
-      )
-
-      if (entry.type === "dir" && isOpen) rows.push(...renderDir(entry.path, depth + 1))
+      case "draft":
+        return (
+          draft && (
+            <DraftRow
+              key={row.key}
+              depth={row.depth}
+              draft={draft}
+              onChange={(value) => setDraft({ ...draft, value })}
+              onCommit={() => void commitDraft()}
+              onCancel={() => setDraft(null)}
+            />
+          )
+        )
+      case "error":
+        return (
+          <div key={row.key} className="flex items-start gap-1 px-2 py-1" style={indent(row.depth)}>
+            <p className="min-w-0 flex-1 text-xs text-destructive">{row.message}</p>
+            <CopyButton
+              text={row.message}
+              size="icon-xs"
+              className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+            />
+          </div>
+        )
+      case "loading":
+        return (
+          <div key={row.key} style={indent(row.depth)}>
+            <PanelRowsSkeleton rows={4} className="p-0" />
+          </div>
+        )
+      case "note":
+        return (
+          <p
+            key={row.key}
+            style={indent(row.depth)}
+            className={cn(ROW, "text-muted-foreground/60")}
+            title={row.title}
+          >
+            {row.text}
+          </p>
+        )
     }
-
-    if (draft && draft.kind !== "rename" && draft.dir === path) {
-      rows.push(
-        <DraftRow
-          key={`${path}:draft`}
-          depth={depth}
-          draft={draft}
-          onChange={(value) => setDraft({ ...draft, value })}
-          onCommit={() => void commitDraft()}
-          onCancel={() => setDraft(null)}
-        />
-      )
-    }
-
-    if (dir.loading && dir.entries.length === 0) {
-      rows.push(
-        <div key={`${path}:loading`} style={indent(depth)}>
-          <PanelRowsSkeleton rows={4} className="p-0" />
-        </div>
-      )
-    } else if (!dir.loading && entries.length === 0 && !draft) {
-      rows.push(
-        <p key={`${path}:empty`} style={indent(depth)} className={cn(ROW, "text-muted-foreground/60")}>
-          {query ? "No matches" : "Empty"}
-        </p>
-      )
-    }
-
-    if (dir.truncated) {
-      rows.push(
-        <p
-          key={`${path}:truncated`}
-          style={indent(depth)}
-          className={cn(ROW, "text-muted-foreground/60")}
-          title="This directory has more entries than the server will list at once."
-        >
-          … more, not shown
-        </p>
-      )
-    }
-
-    return rows
   }
 
   return (
@@ -460,10 +286,90 @@ export function FileExplorer({
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </PanelToolbar>
-      <div className="min-h-0 flex-1 overflow-auto p-1">{renderDir("", 0)}</div>
+      {/* Only the rows on screen exist; the two spacers stand in for the rest,
+          so the scrollbar is the height of the whole tree. */}
+      <div ref={win.ref} className="min-h-0 flex-1 overflow-auto p-1">
+        <div style={{ height: win.padTop }} />
+        {rows.slice(win.start, win.end).map(drawRow)}
+        <div style={{ height: win.padBottom }} />
+      </div>
     </div>
   )
 }
+
+/** Everything a row can do, as one stable object — see `actions` above. */
+interface RowActions {
+  onOpenFile: (path: string) => void
+  onPick: (path: string) => void
+  onToggle: (path: string) => void
+  onNewFile: (dir: string) => void
+  onNewDir: (dir: string) => void
+  onRename: (entry: WorkspaceEntry) => void
+  onCopyPath: (path: string) => void
+  onDelete: (entry: WorkspaceEntry) => void
+}
+
+/* One file or folder. Memoized on three props, two of which are stable and one
+   of which is a boolean — so scrolling, typing in the filter box and selecting
+   another file all leave an untouched row untouched. The context menu is built
+   here rather than passed in, which is what stops it being six fresh closures
+   per row on every render of the panel. */
+const EntryRow = React.memo(function EntryRow({
+  row,
+  current,
+  actions,
+}: {
+  row: Extract<TreeRow, { kind: "entry" }>
+  current: boolean
+  actions: RowActions
+}) {
+  const { entry, depth, expanded } = row
+  const items: MenuItemSpec[] = [
+    ...(entry.type === "file"
+      ? [{ label: "Open", onClick: () => actions.onOpenFile(entry.path) }]
+      : [
+          { label: "New file…", onClick: () => actions.onNewFile(entry.path) },
+          { label: "New folder…", onClick: () => actions.onNewDir(entry.path) },
+        ]),
+    { type: "separator" },
+    { label: "Rename…", onClick: () => actions.onRename(entry) },
+    { label: "Copy relative path", onClick: () => actions.onCopyPath(entry.path) },
+    { type: "separator" },
+    { label: "Delete", destructive: true, onClick: () => actions.onDelete(entry) },
+  ]
+
+  return (
+    <ItemContextMenu items={items}>
+      <button
+        type="button"
+        style={indent(depth)}
+        onClick={() => {
+          actions.onPick(entry.path)
+          if (entry.type === "dir") actions.onToggle(entry.path)
+          else actions.onOpenFile(entry.path)
+        }}
+        className={cn(
+          ROW,
+          "text-left transition-colors",
+          current
+            ? "bg-muted text-foreground"
+            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          entry.ignored && "opacity-60"
+        )}
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 transition-transform",
+            entry.type === "dir" ? (expanded ? "rotate-90" : "") : "invisible"
+          )}
+        />
+        <span className="truncate">{entry.name}</span>
+        {entry.link && <span className="shrink-0 text-[10px] opacity-60">↗</span>}
+      </button>
+    </ItemContextMenu>
+  )
+})
 
 function DraftRow({
   depth,

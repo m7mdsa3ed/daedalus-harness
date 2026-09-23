@@ -30,6 +30,7 @@ import {
   Trash2Icon,
 } from "lucide-react"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { Notice } from "@/components/notice"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
@@ -40,6 +41,7 @@ import {
   fileRangeOf,
   formatRange,
   hostOf,
+  safeJson,
   shortPath,
   splitCommand,
   toolKindOf,
@@ -51,6 +53,7 @@ import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import { writeClipboard } from "@/lib/clipboard"
 import { useCoarsePointer } from "@/hooks/use-device"
+import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
 
 export const KIND_LABELS: Record<string, string> = {
   read: "read",
@@ -459,10 +462,19 @@ export function DetailSection({ label, children }: { label: string; children: Re
 const isScalar = (value: unknown) =>
   value === null || ["string", "number", "boolean"].includes(typeof value)
 
+/** How many levels of a tool call's arguments open on their own. Deeper than
+    the one `SmartBlock` gives a payload, because these are the thing you
+    opened the step to read rather than something it happened to return — see
+    the JSON block below. Exported because the approval card draws the same
+    arguments the same way (`tool-approval.tsx`), and a card and a step that
+    disagreed about how far the tree opens would read as two readers. */
+export const JSON_INPUT_PREVIEW = 3
+
 /** What the tool was called with. A flat object — the overwhelmingly common
     shape — becomes a key/value table, because `{"command":"pnpm build"}` is
-    JSON noise around the one word you wanted. Anything nested falls back to
-    pretty-printed JSON rather than to a lossy summary. */
+    JSON noise around the one word you wanted. Anything that is a shape rather
+    than a greeting becomes a tree, which is the same JSON read as structure
+    instead of as lines to scan. */
 export function ToolInput({ item }: { item: ToolItem }) {
   const input = item.rawInput
   const language = toolLanguage(item)
@@ -471,6 +483,7 @@ export function ToolInput({ item }: { item: ToolItem }) {
     return input.trim() ? <CodeBlock language={language}>{input}</CodeBlock> : null
   }
   if (isScalar(input)) return <CodeBlock language={language}>{String(input)}</CodeBlock>
+  if (Array.isArray(input)) return <JsonView value={input} text={safeJson(input)} preview={JSON_INPUT_PREVIEW} />
 
   const entries =
     typeof input === "object" && !Array.isArray(input)
@@ -493,7 +506,7 @@ export function ToolInput({ item }: { item: ToolItem }) {
       </dl>
     )
   }
-  return <CodeBlock language="json">{JSON.stringify(input, null, 2)}</CodeBlock>
+  return <JsonView value={input} text={safeJson(input)} preview={JSON_INPUT_PREVIEW} />
 }
 
 /**
@@ -506,42 +519,12 @@ export function ToolInput({ item }: { item: ToolItem }) {
  * file say" but "what did it just change".
  */
 export function ToolLocations({ item }: { item: ToolItem }) {
-  const links = useThreadLinks()
-  // `item.kind` is the ThreadItem discriminant ("tool"); the *tool*'s kind is
-  // what ACP reported, read through the quarantine in lib/tools.
-  const isEdit = toolKindOf(item) === "edit"
-
   return (
     <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
       {item.locations.map((location, index) => {
-        /* The span, not just the point ACP carries: a windowed read or a
-           multi-line rewrite says `:400-460`, and opening it highlights those
-           lines rather than dropping a caret on the first of them. */
         const range = fileRangeOf(item, location)
         const label = `${location.path}${range ? `:${formatRange(range)}` : ""}`
-        if (!links) return <li key={index} className="truncate">{label}</li>
-        return (
-          <li key={index} className="flex min-w-0 items-center gap-1.5">
-            <button
-              type="button"
-              className="min-w-0 flex-1 truncate text-left underline-offset-2 hover:text-foreground hover:underline"
-              title={`Open ${location.path}`}
-              onClick={() => links.openFile(location.path, range?.line, range?.end)}
-            >
-              {label}
-            </button>
-            {isEdit && (
-              <button
-                type="button"
-                className="shrink-0 text-[10px] whitespace-nowrap opacity-70 underline-offset-2 hover:text-foreground hover:underline hover:opacity-100"
-                title="Compare with the last commit"
-                onClick={() => links.openDiff(location.path)}
-              >
-                diff
-              </button>
-            )}
-          </li>
-        )
+        return <li key={index} className="truncate">{label}</li>
       })}
     </ul>
   )
@@ -686,21 +669,39 @@ export function ProseWithOpenui({
   streaming?: boolean
 }) {
   const parts = React.useMemo(() => {
-    if (!text.includes("```")) return null
-    const split = splitOpenuiFences(text, streaming)
-    return split.some((part) => typeof part !== "string") ? split : null
+    if (text.includes("```")) {
+      const split = splitOpenuiFences(text, streaming)
+      if (split.some((part) => typeof part !== "string")) return { kind: "parts" as const, split }
+    }
+    if (!streaming) {
+      const recovered = recoverUnfencedOpenui(text)
+      if (recovered) return { kind: "recovered" as const, ...recovered }
+    }
+    return null
   }, [text, streaming])
   if (!parts) return <Prose text={text} stream={stream} className={className} />
+  if (parts.kind === "recovered") {
+    return (
+      <div className={cn("min-w-0 space-y-2", className)}>
+        <Notice tone="info" size="sm" title="Recovered OpenUI view">
+          This reply looked like an unfenced OpenUI program. It was recovered for display; the original reply is unchanged.
+        </Notice>
+        <OpenuiFenceView code={parts.code} open={false} />
+        {parts.remainder && <ProseWithOpenui text={parts.remainder} />}
+      </div>
+    )
+  }
+  const split = parts.split
 
   return (
     /* The same gap the view's own sections keep, so prose and a drawn view
        sit as one rhythm instead of touching. */
     <div className={cn("flex min-w-0 flex-col gap-3", className)}>
-      {parts.map((part, index) =>
+      {split.map((part, index) =>
         typeof part === "string" ? (
           /* Keyed by offset, not by index: a chunk arriving at the tail must not
              make React tear down and rebuild the prose above it. */
-          <Prose key={`t${index}`} text={part} stream={index === parts.length - 1 ? stream : undefined} />
+          <Prose key={`t${index}`} text={part} stream={index === split.length - 1 ? stream : undefined} />
         ) : (
           <OpenuiFenceView key={`f${part.start}`} code={part.code} open={part.open} />
         )
@@ -854,18 +855,15 @@ export function SmartBlock({
 }) {
   const trimmed = text.trim()
   if (!trimmed) return null
-  const isJson =
-    (trimmed.startsWith("{") || trimmed.startsWith("[")) &&
-    (() => {
-      try {
-        JSON.parse(trimmed)
-        return true
-      } catch {
-        return false
-      }
-    })()
-  if (tone !== "error" && (isJson || LOOKS_LIKE_MARKDOWN.test(trimmed))) {
-    return <ToolProse text={isJson ? "```json\n" + trimmed + "\n```" : trimmed} />
+  /* JSON is a shape before it is text, so it reaches the tree — unless it is an
+     error, where the payload is read for what went wrong rather than parsed,
+     and the failure's own code block is what carries the Copy. */
+  if (tone !== "error") {
+    const json = parseJsonDocument(trimmed)
+    if (json !== null) return <JsonView value={json.value} text={trimmed} />
+  }
+  if (tone !== "error" && LOOKS_LIKE_MARKDOWN.test(trimmed)) {
+    return <ToolProse text={trimmed} />
   }
   return (
     <CodeBlock tone={tone} language={language}>
@@ -894,6 +892,275 @@ export function ShowAll({ onClick }: { onClick: () => void }) {
       Show everything
     </button>
   )
+}
+
+/* ── JSON, as a tree ──
+   A tool's arguments and an MCP server's result are usually a *shape* — an
+   object with four keys, an array of records — and pretty-printed JSON is a
+   wall of text you read by scanning lines and matching braces by eye. This is
+   the same bytes as a tree: a node you can fold, a key you can see, a value
+   coloured by what it is.
+
+   Four things decided for it:
+
+   — **It replaces the JSON block, not the code block.** `SmartBlock` calls it
+   only for payloads that actually parse: a log file that happens to start with
+   `{` is prose, and a tree that refuses to draw it would be worse than the
+   blob it was handed. A payload that does not parse falls back to the block
+   that was there before.
+
+   — **`preview` is the caller's, because the payload is not the same thing on
+   both sides.** A call's *arguments* are what you came to read, so they open a
+   level or two; a *result* is what you asked for and only sometimes a shape,
+   so it opens one and the summary line says whether to open the rest.
+
+   — **The children are capped and the cap is a row.** A `{"data": [ … ]}` with
+   ten thousand entries is one render away from locking the transcript up, so
+   past the cap the list stops and offers the rest — the same bargain
+   `OUTPUT_LIMIT`, `ShowAll` and `DiffView`'s `MAX_LINES` each make in their own
+   place.
+
+   — **Nothing here is a vendor's.** This is the harness's own reader for the
+   one serialization every runtime's tool call arrives in, so it belongs beside
+   the panes rather than in `tool-views/`. */
+
+const JSON_CHILD_LIMIT = 300
+const JSON_SUMMARY_ITEMS = 4
+const JSON_SUMMARY_LEN = 72
+
+/** One value on a folded node's own line: a string stays quoted, an array or an
+    object shows only the shape of itself, everything else is itself. */
+function jsonAtom(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value)
+  if (Array.isArray(value)) return "[…]"
+  if (value !== null && typeof value === "object") return "{…}"
+  return String(value)
+}
+
+/** What a folded node holds, on the node's own line. Deliberately plain rather
+    than coloured: the colours are for values you can read, and this is for
+    deciding whether to read them. */
+function jsonSummary(value: unknown): string {
+  const entries = Array.isArray(value)
+    ? value.map(jsonAtom)
+    : Object.entries(value as Record<string, unknown>).map(([key, inner]) => `${key}: ${jsonAtom(inner)}`)
+  const shown = entries.slice(0, JSON_SUMMARY_ITEMS).join(", ")
+  const text = entries.length > JSON_SUMMARY_ITEMS ? `${shown}, …` : shown
+  return text.length > JSON_SUMMARY_LEN ? `${text.slice(0, JSON_SUMMARY_LEN)}…` : text
+}
+
+/** A JSON value that is not a container. `null` is its own colour because it
+    is the one value whose *text* is also a word — `null` in the string green
+    of a value that happens to say "null" reads as a mistake. */
+function JsonLeaf({ value }: { value: unknown }) {
+  if (value === null) return <span className="italic text-code-punctuation">null</span>
+  if (typeof value === "string") return <span className="text-code-string">{JSON.stringify(value)}</span>
+  if (typeof value === "number") return <span className="text-code-number">{String(value)}</span>
+  if (typeof value === "boolean") return <span className="text-code-boolean">{String(value)}</span>
+  return <span className="text-code-punctuation">{String(value)}</span>
+}
+
+/**
+ * One node of the tree.
+ *
+ * `name` is the key it hangs under and `index` the position it holds in an
+ * array — array children are numbered rather than keyed, and only the number is
+ * drawn, quietly, because `"0": "a"` is a key that does not exist. `depth` is
+ * read once and only to decide whether it starts open; folding a node does not
+ * re-fold what is under it, so what you opened stays open.
+ */
+function JsonNode({
+  name,
+  index,
+  value,
+  depth,
+  preview,
+  last,
+}: {
+  name: string | null
+  index: number | null
+  value: unknown
+  depth: number
+  preview: number
+  last: boolean
+}) {
+  const composite = value !== null && typeof value === "object"
+  const [open, setOpen] = React.useState(composite && depth < preview)
+  const [showAll, setShowAll] = React.useState(false)
+  const comma = !last && <span className="text-code-punctuation">,</span>
+
+  const toggle = (event: React.MouseEvent) => {
+    /* A click that has a selection in it is a reader copying the tree, not
+       folding it — collapsing the row out from under their drag is the one
+       thing this could do that they did not ask for. */
+    if (window.getSelection()?.toString()) return
+    event.stopPropagation()
+    setOpen((was) => !was)
+  }
+
+  const list = Array.isArray(value)
+  /* Keys and indices kept apart rather than one `string | number`: React needs
+     the key to be unique among siblings and a `"0"` key beside a `0` index is
+     a collision, while what is *drawn* differs too — a number is written
+     quietly and a key in the key colour. */
+  const entries: { key: string; name: string | null; index: number | null; value: unknown }[] =
+    !composite
+      ? []
+      : list
+        ? (value as unknown[]).map((entry, i) => ({ key: String(i), name: null, index: i, value: entry }))
+        : Object.entries(value as Record<string, unknown>).map(([key, entry]) => ({
+            key,
+            name: key,
+            index: null,
+            value: entry,
+          }))
+  const brackets = list ? (["[", "]"] as const) : (["{", "}"] as const)
+
+  /* A scalar and an *empty* container are the same row — there is nothing to
+     fold, so there is no trigger, and `{}` is a value rather than a closed
+     node. The chevron is drawn invisible rather than omitted so a key sits at
+     the same x whether its value is a string or an object; in a mixed list
+     that is the difference between reading a column and reading a staircase. */
+  if (!composite || entries.length === 0) {
+    return (
+      <div className="flex flex-wrap items-baseline gap-x-1 font-mono text-[11px] leading-5">
+        <ChevronRightIcon aria-hidden className="invisible size-3 shrink-0" />
+        {index !== null && <span className="text-muted-foreground/50">{index}</span>}
+        {name !== null && <span className="text-code-key">{name}</span>}
+        {name !== null && <span className="text-code-punctuation">:</span>}
+        {composite ? (
+          <span className="text-code-punctuation">
+            {brackets[0]}
+            {brackets[1]}
+          </span>
+        ) : (
+          <JsonLeaf value={value} />
+        )}
+        {comma}
+      </div>
+    )
+  }
+
+  const capped = !showAll && entries.length > JSON_CHILD_LIMIT
+  const visible = capped ? entries.slice(0, JSON_CHILD_LIMIT) : entries
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex w-full items-baseline gap-1 rounded-sm text-left font-mono text-[11px] leading-5 outline-hidden hover:bg-muted/60 focus-visible:bg-muted/60"
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 translate-y-[3px] text-muted-foreground/50 transition-transform",
+            open && "rotate-90"
+          )}
+        />
+        {index !== null && <span className="text-muted-foreground/50">{index}</span>}
+        {name !== null && <span className="text-code-key">{name}</span>}
+        {name !== null && <span className="text-code-punctuation">:</span>}
+        <span className="text-code-punctuation">{brackets[0]}</span>
+        {/* Folded: what it holds, and its own closing bracket, so the line
+            reads as the whole value rather than as an opening brace. */}
+        {!open && (
+          <span className="min-w-0 truncate">
+            <span className="text-muted-foreground/70">{jsonSummary(value)}</span>
+            <span className="text-code-punctuation">{brackets[1]}</span>
+          </span>
+        )}
+        {!open && comma}
+      </button>
+      {open && entries.length > 0 && (
+        <>
+          {/* The rail is the child container's own edge rather than a drawn
+              line, so every level of the tree hangs off the last by one
+              indent — `ms-1.5` puts it under the chevron it belongs to. */}
+          <div className="ms-1.5 border-s border-border/50 ps-2">
+            {visible.map((entry, position) => (
+              <JsonNode
+                key={entry.key}
+                name={entry.name}
+                index={entry.index}
+                value={entry.value}
+                depth={depth + 1}
+                preview={preview}
+                last={position === visible.length - 1 && !capped}
+              />
+            ))}
+            {capped && (
+              <button
+                type="button"
+                onClick={() => setShowAll(true)}
+                className="font-mono text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
+              >
+                {entries.length - JSON_CHILD_LIMIT} more …
+              </button>
+            )}
+          </div>
+          <div className="flex gap-1 font-mono text-[11px] leading-5 ps-4">
+            <span className="text-code-punctuation">{brackets[1]}</span>
+            {comma}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A JSON document as a tree.
+ *
+ * `text` is the source the tree was read from — what Copy hands back, byte for
+ * byte, so a copy is the JSON and not a re-serialization of it.
+ */
+export function JsonView({
+  value,
+  text,
+  preview = 1,
+  className,
+}: {
+  value: unknown
+  text: string
+  /** How many levels open on their own. Zero is the whole document folded. */
+  preview?: number
+  className?: string
+}) {
+  const coarse = useCoarsePointer()
+  return (
+    <div className={cn("group/json relative", className)}>
+      <div className={cn(PANE, PANE_MAX_H, "overflow-auto px-2 py-1.5")}>
+        <JsonNode name={null} index={null} value={value} depth={0} preview={preview} last />
+      </div>
+      {/* The copy rides the tree the way it rides a fenced block — hover on a
+          fine pointer, always on touch, where there is no hover to reveal it. */}
+      <CopyButton
+        text={text}
+        size="icon-xs"
+        className={cn(
+          "absolute top-1 right-1 bg-popover/90 text-muted-foreground/70 backdrop-blur-sm transition-opacity hover:text-foreground",
+          coarse ? "opacity-100" : "opacity-0 group-hover/json:opacity-100 focus-visible:opacity-100"
+        )}
+      />
+    </div>
+  )
+}
+
+/** A payload that is a JSON document, or null.
+ *
+ * The first-character guard is not a correctness check — the parse is — but it
+ * is what keeps a five-megabyte log file from being handed to `JSON.parse` on
+ * every render just to be told it is a log file. */
+function parseJsonDocument(text: string): { value: unknown } | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null
+  try {
+    return { value: JSON.parse(trimmed) as unknown }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -965,7 +1232,6 @@ export function FileBadge({
       which is the part of the file the row is actually about. */
   range?: FileRange
 }) {
-  const links = useThreadLinks()
   const inner = (
     <>
       <FileTextIcon aria-hidden className="size-3 shrink-0 opacity-70" />
@@ -982,17 +1248,7 @@ export function FileBadge({
      lands with the title it belongs to — it inherits that part's `--part-i`,
      so it is the same 45ms, not a slot of its own. */
   const cls = "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
-  if (!links) return <span className={cls} title={filePath ?? file}>{inner}</span>
-  return (
-    <button
-      type="button"
-      className={cn(cls, "transition-colors hover:text-foreground hover:bg-muted")}
-      title={filePath ? `Open ${filePath}` : file}
-      onClick={() => links.openFile(filePath ?? file, range?.line, range?.end)}
-    >
-      {inner}
-    </button>
-  )
+  return <span className={cls} title={filePath ?? file}>{inner}</span>
 }
 
 

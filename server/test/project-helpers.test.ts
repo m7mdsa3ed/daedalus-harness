@@ -7,7 +7,8 @@ import { join } from "node:path";
 const dir = mkdtempSync(join(tmpdir(), "daedalus-test-helpers-"));
 process.env.DAEDALUS_DATA_DIR = dir;
 
-const { createProject, listProjects, reorderProjects } = await import("../src/projects.js");
+const { createProject, getProject, listProjects, reorderProjects, setProjectDefaults } =
+  await import("../src/projects.js");
 const { db, projectHelpers: helpersTable } = await import("../src/db/index.js");
 const { eq } = await import("drizzle-orm");
 const {
@@ -160,7 +161,53 @@ try {
   await reorderProjects([p2.id]);
   assert.deepEqual(await named(), ["P2", "P3", "P1"]);
 
-  console.log("project-helpers: 10 passed, 0 failed");
+  // 11. Start defaults: a fresh project is all-empty, a patch moves only what
+  // it names, and the columns come back folded into one `defaults` object.
+  const fresh = (await getProject(p1.id))!;
+  assert.deepEqual(fresh.defaults, {
+    profileId: "",
+    agentId: "",
+    model: "",
+    effort: "",
+    modeId: "",
+    configChoices: {},
+    personaId: "",
+    mcpServerIds: [],
+    skillIds: [],
+    commandIds: [],
+    suggestFollowups: true,
+    uiBlocks: true,
+  });
+  assert.equal("defaultProfileId" in fresh, false, "the wire folds the columns, not raw");
+
+  await setProjectDefaults(p1.id, { profileId: "prof-1", agentId: "agent-1", model: "m-1" });
+  const picked = (await getProject(p1.id))!;
+  assert.equal(picked.defaults?.profileId, "prof-1");
+  assert.equal(picked.defaults?.model, "m-1");
+  // Untouched fields are the empty ones, not whatever the patch's neighbours
+  // happened to hold — and the sibling project is untouched entirely.
+  assert.equal(picked.defaults?.effort, "");
+  assert.equal((await getProject(p2.id))!.defaults?.profileId, "");
+
+  // A second patch moves one field and leaves the rest where they are.
+  await setProjectDefaults(p1.id, { effort: "high", uiBlocks: false });
+  const again = (await getProject(p1.id))!;
+  assert.equal(again.defaults?.effort, "high");
+  assert.equal(again.defaults?.uiBlocks, false);
+  assert.equal(again.defaults?.profileId, "prof-1", "an unnamed field keeps its value");
+  assert.equal(again.defaults?.model, "m-1");
+
+  // An empty string is the empty pick, stored as null in the column.
+  await setProjectDefaults(p1.id, { profileId: "", model: "" });
+  const blanked = (await getProject(p1.id))!;
+  assert.equal(blanked.defaults?.profileId, "");
+  assert.equal(blanked.defaults?.model, "");
+  assert.equal(blanked.defaults?.effort, "high", "clearing one field does not clear another");
+
+  // And an unknown project is a miss, not a silent no-op row.
+  assert.equal(await setProjectDefaults("nope", { model: "x" }), undefined);
+
+  console.log("project-helpers: 11 passed, 0 failed");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

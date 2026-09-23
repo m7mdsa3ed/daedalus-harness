@@ -419,6 +419,22 @@ export interface McpCheckResult {
   checkedAt?: number
 }
 
+/** One row of the marketplace (`GET /api/mcp-registry`): a server published to
+    an MCP Registry, already mapped to what this library stores. `server` is
+    what the form is prefilled with — installing is the ordinary save, so
+    nothing here is a second way to write a row. */
+export interface RegistryEntry {
+  id: string
+  qualifiedName: string
+  description: string
+  version: string
+  repositoryUrl: string | null
+  via: string
+  server: McpServerStdio | McpServerHttp
+  /** Placeholders and required variables the publisher left for the user. */
+  needs: string[]
+}
+
 /** One of the harness's own servers, in the library as a row that holds
     nothing but which one it is — command, env and credentials are synthesized
     at spawn from the server's config and the thread's project. Injected from
@@ -706,6 +722,39 @@ export interface Project {
       the project page's header ("Run migrations"). Absent on stubs, like the
       other optional fields. */
   helpers?: HelperCommand[]
+  /** How a thread started in this project opens — the profile/agent pair, the
+      model and effort, the permission mode, the agent's other selectors, the
+      persona, the tool picks and the two instruction toggles. Written by the
+      composer as you pick (`rememberThreadDefaults`), so changing the project
+      changes what a new thread in it is configured with.
+
+      Absent on stubs, like the other optional fields; a project the server
+      answers always carries it, with every field present and `""` as the
+      empty pick. */
+  defaults?: ProjectDefaults
+}
+
+/**
+ * What a thread started in a project opens on (`projects.default_*`).
+ *
+ * The client's shape, not the row's: every field is present and `""` is the
+ * empty pick everywhere it appears — no model (the agent's own), no effort,
+ * no mode, no persona. A project nobody has configured reads as all of this
+ * empty, which is exactly what a draft with nothing remembered holds.
+ */
+export interface ProjectDefaults {
+  profileId: string
+  agentId: string
+  model: string
+  effort: string
+  modeId: string
+  configChoices: Record<string, string | boolean>
+  personaId: string
+  mcpServerIds: string[]
+  skillIds: string[]
+  commandIds: string[]
+  suggestFollowups: boolean
+  uiBlocks: boolean
 }
 
 /** One of a project's helper commands: a shell line run on the project's

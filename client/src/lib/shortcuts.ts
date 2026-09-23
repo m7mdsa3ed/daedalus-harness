@@ -197,7 +197,6 @@ export type ShortcutId =
   | "fillPanel"
   | "reopenPanel"
   | "terminal"
-  | "ide"
   | "changeModel"
   | "changeProject"
   | "viewOptions"
@@ -281,10 +280,6 @@ export const KEYS = {
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
-  /** The IDE, beside the thread. Not ⌘⇧E (VS Code's explorer chord): inside
-      the panel Monaco binds its own keys, and a chord the app claims first is
-      one the editor can never see. */
-  ide: "mod+shift+g",
   /** The three that open a chooser rather than doing a thing. Alt+letter, the
       same well the tab strip's keys came out of: every ⌘/Ctrl letter with a
       mnemonic worth having is either Chromium's (⌘M, ⌘P, ⌘L) or already
@@ -359,14 +354,6 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.terminal],
     rebindable: true,
     note: "A shell on the Daedalus server, in the current thread's project directory.",
-  },
-  {
-    id: "ide",
-    scope: "Global",
-    label: "Open the IDE",
-    chords: [KEYS.ide],
-    rebindable: true,
-    note: "The editor, files, search and source control for the current thread's project.",
   },
   {
     id: "reopenPanel",

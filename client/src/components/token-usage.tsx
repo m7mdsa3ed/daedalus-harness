@@ -24,7 +24,14 @@ import { CoinsIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { formatDuration, formatRate, formatTokens, promptTokens, windowEstimated } from "@/lib/tokens"
+import {
+  formatDuration,
+  formatRate,
+  formatTokens,
+  promptBreakdown,
+  promptTokens,
+  windowEstimated,
+} from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /* The trigger box both popover figures wear. One padding, one line box, one
@@ -122,6 +129,9 @@ export function StepTokens({
   /* Both figures are a fraction of a window the runtime had to guess at — the
      request count beside them is real either way. */
   const about = windowEstimated(usage) ? "~" : ""
+  /* What this request's prompt was made of. Our runtime measures it and no
+     other does, so the whole block is absent rather than zeroed elsewhere. */
+  const split = promptBreakdown(usage)
   const turn = useStepTurnUsage(itemId ?? "")
   const prompt = turn ? promptTokens(turn) : 0
   const cacheRate = turn && prompt > 0 ? Math.round(((turn.cachedReadTokens ?? 0) / prompt) * 100) : null
@@ -153,6 +163,23 @@ export function StepTokens({
             />
           )}
         </dl>
+        {split ? (
+          <>
+            {/* Where that request's prompt went. The system prompt and the tool
+                block are counted locally — approximate, and the tilde says so —
+                while the conversation is what the provider's own total left over,
+                so the three sum to the headline figure exactly. */}
+            <p className="pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              This request's prompt
+            </p>
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+              <Stat label="System" value={`~${formatTokens(split.system)}`} />
+              <Stat label="Tools" value={`~${formatTokens(split.tools)}`} />
+              <Stat label="Conversation" value={formatTokens(split.conversation)} />
+              <Stat label="Prompt" value={formatTokens(split.total)} />
+            </dl>
+          </>
+        ) : null}
         {turn ? (
           <>
             <p className="pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -211,6 +238,7 @@ export function TokenSummary({
   context,
   label = "Tokens",
   durationMs,
+  toolDurationMs,
   className,
 }: {
   usage: acp.Usage
@@ -220,6 +248,8 @@ export function TokenSummary({
   /** Server-measured wall clock for the turn, ms — what tok/s is drawn
       against. Absent on turns that ended before the server measured it. */
   durationMs?: number
+  /** Union wall time spent in the thread's own tool calls, ms. */
+  toolDurationMs?: number
   className?: string
 }) {
   const prompt = promptTokens(usage)
@@ -257,9 +287,20 @@ export function TokenSummary({
           {cacheRate !== null && <Stat label="Cache rate" value={`${cacheRate}%`} />}
           <Stat label="Total" value={formatTokens(usage.totalTokens)} />
           {durationMs !== undefined && (
-            <Stat label="Duration" value={formatDuration(durationMs)} />
+            <>
+              <Stat label="Turn time" value={formatDuration(durationMs)} />
+              {toolDurationMs !== undefined && (
+                <>
+                  <Stat label="Tool calls" value={formatDuration(toolDurationMs)} />
+                  <Stat
+                    label="Outside tools"
+                    value={formatDuration(Math.max(0, durationMs - toolDurationMs))}
+                  />
+                </>
+              )}
+            </>
           )}
-          {rate && <Stat label="Speed" value={rate} />}
+          {rate && <Stat label="Whole-turn speed" value={rate} />}
           {context && (
             <Stat label="Context" value={`${formatTokens(context.used)} / ${formatTokens(context.size)}`} />
           )}

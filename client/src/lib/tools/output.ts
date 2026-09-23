@@ -63,7 +63,10 @@ export function stringifyOutput(
     : { text, truncated: false }
 }
 
-function safeJson(value: unknown): string {
+/** A value back as JSON text, for reading and for the clipboard. The fallback
+    is `String(value)` rather than an empty string, because a payload that will
+    not stringify — a cycle — is still something the reader can be shown. */
+export function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? ""
   } catch {

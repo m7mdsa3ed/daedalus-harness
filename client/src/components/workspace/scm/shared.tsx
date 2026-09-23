@@ -1,10 +1,11 @@
 /* ── The vocabulary source control is read in ──
-   What every part of the view agrees on: which list a row came out of, how a
-   row's mark is derived from it, what a repository's read is worth so far, and
-   the one icon button the toolbar, the header, the groups and the rows all
-   use. Nothing here talks to the server and nothing here holds state — it is
-   the shared words, so that `view.tsx`, `repo-section.tsx` and `file-rows.tsx`
-   cannot drift into three ideas of what a row is. */
+   What every part of the view agrees on: what a repository's read is worth so
+   far, and the one icon button the toolbar, the header and the rows all use.
+   Nothing here talks to the server and nothing here holds state.
+
+   What a *row* is no longer lives here: the four-groups-of-rows model it used
+   to describe is gone, and one entry per path with a staged tri-state is
+   `lib/workspace/working-set.ts`. */
 import * as React from "react"
 import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -13,19 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
-import type { GitFileState, GitStatus } from "@/lib/workspace/git-api"
-
-/** Which list a row came out of. It decides the mark, the buttons and the
-    comparison the row opens — one value rather than four booleans. */
-export type Side = "conflict" | "index" | "worktree" | "untracked"
-
-export interface Row {
-  file: GitFileState
-  side: Side
-}
-
-export const markOf = (file: GitFileState, side: Side): string =>
-  side === "untracked" ? "?" : side === "conflict" ? "U" : side === "index" ? file.index : file.worktree
+import type { GitStatus } from "@/lib/workspace/git-api"
 
 export interface RepoState {
   status: GitStatus | null

@@ -31,6 +31,7 @@ import {
 } from "./hold.js";
 import type { Session } from "./session.js";
 import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
+import { prefixTokens, promptBreakdown, type PrefixTokens } from "./token-breakdown.js";
 import { Emitter } from "./updates.js";
 
 export interface TurnDeps {
@@ -261,9 +262,18 @@ export async function handlePrompt(
         };
         const { tools, meta } = buildTools(rt);
 
+        /* Hoisted out of the call so `pumpStream` can divide the prompt the
+           request carries: the same string and the same tool set go to the
+           model and to the breakdown, so the two cannot drift. */
+        const system = systemPrompt(session, deps.env, { toolNames: Object.keys(tools) });
+        /* The static prefix is walked once per attempt rather than per step —
+           neither the system prompt nor the tool set changes between the steps
+           of one, and the walk is the expensive half of the breakdown. */
+        const prefix = prefixTokens(system, tools);
+
         const result = streamText({
           model,
-          system: systemPrompt(session, deps.env, { toolNames: Object.keys(tools) }),
+          system,
           messages: session.messages,
           tools,
           abortSignal: abort.signal,
@@ -333,6 +343,7 @@ export async function handlePrompt(
           session,
           undefined,
           subagentsNegotiated(deps),
+          prefix,
         );
         if (outcome.totalUsage) turnUsage = addUsage(turnUsage, outcome.totalUsage);
 
@@ -674,6 +685,11 @@ async function pumpStream(
   /* Whether the client negotiated the subagent RFD — the one thing that
      decides if `announcesOwnSession` has anything to defer to. */
   subagentsRfd = false,
+  /* The static share of every prompt this stream's requests carry — the system
+     prompt and the tool block, counted once by the caller. The provider reports
+     one total per request and never divides it, so this is what lets each step's
+     `usage_update` carry where its prompt actually went. */
+  prefix?: PrefixTokens,
 ): Promise<StreamOutcome> {
   const outcome: StreamOutcome = {
     finishReason: "stop",
@@ -824,7 +840,10 @@ async function pumpStream(
              all thirteen add up to different totals but to the same story, and
              only the step series says which happened. ACP has no field for it,
              so it rides `_meta` — journaled with the event, which is what makes
-             a cold step answerable by a query instead of a reconstruction. */
+             a cold step answerable by a query instead of a reconstruction.
+             `_meta.cache` is the provider's own counters, exact; `_meta.breakdown`
+             below is the local split of the same prompt, and the two are kept
+             in different blocks so a reader always knows which one is which. */
           const cacheRead = part.usage.inputTokenDetails?.cacheReadTokens ?? null;
           const cacheWrite = part.usage.inputTokenDetails?.cacheWriteTokens ?? null;
           const window = windowFor(env, modelId);
@@ -836,8 +855,16 @@ async function pumpStream(
              not know", so an unknown window ships the fallback and says so
              beside it — the client draws the reading as approximate rather
              than as a percentage of a number nobody measured. */
+          /* Where this request's prompt went. `used` is the whole prompt as the
+             provider billed it — cache hits included — which is exactly the
+             anchor `promptBreakdown` divides, so the figures cannot disagree
+             with the headline number above them. Journaled with the event like
+             `cache`, and for the same reason: it is what answers "why was that
+             step expensive" after a reload instead of a reconstruction. */
+          const breakdown = prefix ? promptBreakdown(used, prefix) : undefined;
           const usageMeta = {
             ...(cache ? { cache } : {}),
+            ...(breakdown ? { breakdown } : {}),
             ...(window.known ? {} : { daedalus: { windowEstimated: true } }),
           };
           await emit.update({
@@ -920,7 +947,7 @@ async function runSubagent(
     clientCaps: deps.clientCaps(),
     runSubagent: () => Promise.reject(new Error("subagents cannot launch subagents")),
   };
-  const { tools, meta } = buildTools(rt, { subagent: true });
+        const { tools, meta } = buildTools(rt, { subagent: true });
   childEmit.record({
     sessionUpdate: "user_message_chunk",
     content: { type: "text", text: prompt },
@@ -937,9 +964,10 @@ async function runSubagent(
         if (session.abort?.signal.aborted) throw lastError;
       }
 
+      const system = systemPrompt(session, deps.env, { subagent: true, toolNames: Object.keys(tools) });
       const result = streamText({
         model: deps.makeModel(deps.env, session.modelId),
-        system: systemPrompt(session, deps.env, { subagent: true, toolNames: Object.keys(tools) }),
+        system,
         messages: [{ role: "user", content: prompt }],
         tools,
         abortSignal: session.abort?.signal,
@@ -960,7 +988,17 @@ async function runSubagent(
       });
 
       try {
-        const outcome = await pumpStream(result, childEmit, meta, deps.env, session.modelId, null, undefined, rfd);
+        const outcome = await pumpStream(
+          result,
+          childEmit,
+          meta,
+          deps.env,
+          session.modelId,
+          null,
+          undefined,
+          rfd,
+          prefixTokens(system, tools),
+        );
         if (outcome.totalUsage) reportUsage(outcome.totalUsage);
         if (outcome.error !== undefined) {
           if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {

@@ -81,11 +81,17 @@ export function DiffTab({
   path,
   left,
   right,
+  active,
 }: {
   projectId: string
   path: string
   left: Comparison
   right: Comparison
+  /** The tab in front. Both sides keep being read either way — that is what
+      makes a comparison current when you come back to it — but the diff editor
+      is two models and the diff worker, so it exists only while it is being
+      looked at. See `file-tab.tsx`. */
+  active: boolean
 }) {
   const [generation, setGeneration] = React.useState(0)
   const original = useSide(projectId, path, left, generation)
@@ -149,7 +155,7 @@ export function DiffTab({
         {original.text === null || modified.text === null ? (
           <DiffRowsSkeleton className="h-full overflow-y-auto" />
         ) : (
-          <DiffEditor original={original.text} modified={modified.text} filename={path} />
+          active && <DiffEditor original={original.text} modified={modified.text} filename={path} />
         )}
       </div>
     </div>

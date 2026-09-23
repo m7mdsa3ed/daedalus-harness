@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Copy, ExternalLink, KeyRound, Pencil, Plus, Search, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
@@ -9,6 +9,15 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import {
   Select,
   SelectContent,
@@ -25,6 +34,7 @@ import {
   type ProfileAgentLink,
   type ProfilePreset,
   type ProfileUsageKind,
+  loadServers,
   type ServerSettings,
 } from "@/lib/settings"
 import {
@@ -107,7 +117,7 @@ const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; ho
   {
     kind: "9router",
     label: "9Router — every linked account",
-    hint: "A self-hosted 9Router gateway is many accounts behind one endpoint that falls back between them, so each limit is pooled across every account reporting it — one bar for what the gateway has left, not one per account, with each account's own numbers in the raw report. The gateway is taken from the base URL above unless you name a host. Its sk- key does not open the dashboard API: if the dashboard asks for a login, put its password in the token field below.",
+    hint: "A self-hosted 9Router gateway is many accounts behind one endpoint that falls back between them, so each is drawn as its own plan, in the order the gateway will spend them — never pooled, because a five-hour window is a different five hours per account. Every account it can report on is listed, including the ones that are turned off or no longer answer, each saying its own state. The gateway is taken from the base URL above unless you name a host. Its sk- key does not open the dashboard API: if the dashboard asks for a login, put its password in the token field below.",
     hostPlaceholder: "http://localhost:20128",
   },
 ]
@@ -196,6 +206,67 @@ export function ProfilesPage() {
      would otherwise answer "nothing matches" about a profile that is right
      there. Disabled rows are not folded — disabled is a state to see. */
   const [showHidden, setShowHidden] = React.useState(false)
+  const [syncing, setSyncing] = React.useState<string | null>(null)
+  const [syncProfileRow, setSyncProfileRow] = React.useState<Profile | null>(null)
+  const [syncDestination, setSyncDestination] = React.useState("")
+  const [includeSecrets, setIncludeSecrets] = React.useState(false)
+  const servers = loadServers().filter((server) => server.id !== settings.id)
+
+  const syncProfileTo = async () => {
+    if (!syncProfileRow || !syncDestination) return
+    const destination = servers.find((server) => server.id === syncDestination)
+    if (!destination) return
+    const profile = syncProfileRow
+    const secrets = includeSecrets
+    let missingAgents: string[] = []
+    try {
+      const destinationAgents = await api<{ id: string }[]>(destination, "/api/agents")
+      missingAgents = profileAgentIds(profile).filter((id) => !destinationAgents.some((agent) => agent.id === id))
+    } catch (err) {
+      reportError(err, "Couldn't check destination agents")
+      return
+    }
+    const agentWarning = missingAgents.length > 0
+      ? ` The destination does not have these source agents: ${missingAgents.join(", ")}. The copied profile may not be usable for them.`
+      : ""
+    const ok = await confirm({
+      title: `Sync ${profile.name} to ${destination.name}?`,
+      description: `${secrets
+        ? "This replaces the matching destination profile and includes both the profile API key and usage API key."
+        : "This replaces the matching destination profile. Credentials are excluded; any stored destination credentials are kept."} Sync is a one-way push; future changes are not automatic.${agentWarning}`,
+      confirmLabel: "Sync profile",
+    })
+    if (!ok) return
+
+    setSyncing(profile.id)
+    try {
+      const exported = await api<Record<string, unknown>>(
+        settings,
+        `/api/profiles/${encodeURIComponent(profile.id)}/sync-export${secrets ? "?secrets=1" : ""}`
+      )
+      const destinationId = `sync:${profile.id}`
+      await api(destination, `/api/profiles/${encodeURIComponent(destinationId)}/sync`, {
+        method: "PUT",
+        body: JSON.stringify({ profile: exported, includeSecrets: secrets }),
+      })
+      toast.success(`Synced ${profile.name} to ${destination.name}`)
+      setSyncProfileRow(null)
+    } catch (err) {
+      reportError(err, "Couldn't sync the profile")
+    } finally {
+      setSyncing(null)
+    }
+  }
+
+  const startSync = (profile: Profile) => {
+    if (servers.length === 0) {
+      toast.error("Add another server connection before syncing profiles")
+      return
+    }
+    setSyncProfileRow(profile)
+    setSyncDestination(servers[0]?.id ?? "")
+    setIncludeSecrets(false)
+  }
   const needle = query.trim().toLowerCase()
   const hiddenCount = stored.filter((p) => p.hidden).length
   const rank = (p: Profile) => (p.disabled ? 2 : p.hidden ? 1 : 0)
@@ -363,6 +434,12 @@ export function ProfilesPage() {
             onClick: (profile) => void duplicate(profile),
           },
           {
+            id: "sync",
+            label: "Sync to server",
+            icon: <RefreshCw />,
+            onClick: startSync,
+          },
+          {
             id: "edit",
             label: "Edit",
             icon: <Pencil />,
@@ -425,6 +502,45 @@ export function ProfilesPage() {
           )
         }
       />
+      <ResponsiveDialog open={syncProfileRow !== null} onOpenChange={(open) => !open && setSyncProfileRow(null)}>
+        <ResponsiveDialogContent className="@panel-sm:max-w-md">
+          <ResponsiveDialogHeader>
+            <ResponsiveDialogTitle>Sync profile to another server</ResponsiveDialogTitle>
+            <ResponsiveDialogDescription>
+              Push this profile to one connected server. It creates or updates a dedicated copy there; future changes need another manual sync.
+            </ResponsiveDialogDescription>
+          </ResponsiveDialogHeader>
+          <Field label="Destination server">
+            <Select value={syncDestination} onValueChange={(value) => value && setSyncDestination(value)}>
+              <SelectTrigger className="w-full">
+                <SelectValue>{servers.find((server) => server.id === syncDestination)?.name ?? "Choose a server"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {servers.map((server) => (
+                  <SelectItem key={server.id} value={server.id}>{server.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+            <Checkbox checked={includeSecrets} onCheckedChange={(checked) => setIncludeSecrets(checked === true)} />
+            <span>
+              Include API keys
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Transfers the profile key and separate usage key. Off by default; existing destination keys are preserved.
+              </span>
+            </span>
+          </label>
+          <ResponsiveDialogFooter>
+            <Button variant="outline" onClick={() => setSyncProfileRow(null)} disabled={syncing !== null}>
+              Cancel
+            </Button>
+            <Button onClick={() => void syncProfileTo()} disabled={!syncDestination || syncing !== null}>
+              {syncing ? "Syncing…" : "Sync profile"}
+            </Button>
+          </ResponsiveDialogFooter>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
     </>
   )
 }

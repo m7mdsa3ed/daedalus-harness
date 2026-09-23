@@ -392,9 +392,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   is also why both config menus list only profiles that serve the thread's agent. On the
   client, `Profile.agents` replaces `agentId`, `lib/agent-options.ts` is keyed
   `optionKey(profileId, agentId)` (what codex offers on a gateway is not what Claude Code
-  offers on it), `thread-defaults` remembers the agent too and `resolveThreadStart` degrades
-  the pair one half at a time (the agent is the stickier habit: a remembered profile that no
-  longer serves it loses to the first profile that does). Migration `0019` filled every
+  offers on it), and the pair is remembered **on the project** (`projects.default_profile_id`/
+  `default_agent_id`): `resolveThreadStart` degrades it one half at a time (the agent is the
+  stickier habit — a named profile that no longer serves it loses to the first profile that
+  does), and a project that has named neither has the resolved fallback written back at draft
+  mint, so the pair a project is actually worked in survives. Migration `0019` filled every
   existing row with `{ [agent_id]: {} }`; it was written by hand under `generate --custom`
   because drizzle-kit's rename prompt needs a TTY and its table-rebuild for this diff
   selected a column the old table did not have. **The harness's own model calls are the one

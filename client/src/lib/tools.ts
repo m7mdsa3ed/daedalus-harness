@@ -49,7 +49,7 @@ export { splitCommand, toolLanguage } from "./tools/shell"
 export type { EditInputDiff } from "./tools/edits"
 export { extractEditInput, extractEdits, diffStats } from "./tools/edits"
 
-export { stringifyOutput, toolOutputText, toolFailed } from "./tools/output"
+export { stringifyOutput, toolOutputText, toolFailed, safeJson } from "./tools/output"
 
 export type { FileRange } from "./tools/files"
 export { fileRangeOf, formatRange } from "./tools/files"

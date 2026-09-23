@@ -1,43 +1,38 @@
-/* ── New-thread defaults ──
-   How the last thread you started was configured, so the next one opens on the
-   same agent instead of on whatever happens to sort first. Device-local, like
-   drafts and pins: which agent *you* reach for is not a property of the harness
-   everyone shares.
+/* ── How a new thread opens ──
+   The values a draft starts on. Since the start defaults moved onto the
+   project (`projects.default_*`, `PATCH /api/projects/:id/defaults`) the
+   *scoped* half of this is the server's: "the model I use for this codebase"
+   is a fact about the codebase, so it follows the person to every device and
+   changing the project changes the model. That is the one thing this module
+   is still for — everything else is a fallback for the questions the project
+   cannot answer.
 
-   Nothing prunes this. The ids it holds go stale when a profile or project is
-   deleted, and the readers all resolve with a fallback — a dangling id costs a
-   default, never a crash. */
-import { profileAgentIds, profileSupports, type Profile } from "@/lib/settings"
+   Two of those are real and this file exists for them:
+
+   - **A project nobody has configured has nothing to say**, and a value the
+     reader invents (the first profile, the profile's default model) is worse
+     than no answer: the menu should say "Profile default" because nobody has
+     chosen, not because the harness chose one. So the empty fields stay
+     empty, and `resolveThreadStart` leaves them for the profile to resolve at
+     spawn.
+   - **There is a keyboard habit the project row cannot express.** ⌘N with a
+     session open starts in *that* project (`actions.startThreadIn`), while
+     on the console there is no session at all and the project itself is
+     remembered here. That is the only field this store still holds, and it is
+     genuinely device-local: which project *you* open a front-door thread in
+     is not a property of any project's row.
+
+   Nothing prunes `projectId`. The id goes stale when a project is deleted and
+   every reader resolves with a fallback — a dangling id costs a default,
+   never a crash. */
+import { profileAgentIds, profileSupports, type ProjectDefaults, type Profile } from "@/lib/settings"
 
 const KEY = "ui.newThread"
 
 export interface ThreadDefaults {
+  /** Which project a front-door thread opens in. The one field the server's
+      project rows cannot hold — see the module note. */
   projectId?: string
-  profileId?: string
-  /** Which of the profile's agents answered last time. */
-  agentId?: string
-  model?: string
-  effort?: string
-  /** How the last thread you started was worked on. Not scoped to a profile
-      the way model and effort are — a persona is instructions, and they mean
-      the same thing on any provider — so it is carried whichever profile the
-      fallback lands on. A persona since deleted matches nothing and the draft
-      opens with none, which is the right answer either way. */
-  personaId?: string
-  /** Whether new threads ask answers to close with follow-up suggestions.
-      Carried like the persona: it is instructions, not provider state. */
-  suggestFollowups?: boolean
-  /** Whether new threads may be answered with a drawn view. Also instructions
-      rather than provider state, so it travels with the persona above. */
-  uiBlocks?: boolean
-  /** The library picks the last draft made on its composer strip — the MCP
-      servers, skills and slash commands it brought on top of its profile's.
-      Remembered so a reload (which rebuilds an unsent draft from these
-      defaults) does not silently drop them, and so the next thread starts
-      with the same kit. Ids, so a row since deleted simply matches nothing. */
-  mcpServerIds?: string[]
-  skillIds?: string[]
-  commandIds?: string[]
 }
 
 export function loadThreadDefaults(): ThreadDefaults {
@@ -49,6 +44,39 @@ export function loadThreadDefaults(): ThreadDefaults {
     return {}
   }
 }
+
+/** Merges over what is remembered. A pick made from a project's own controls
+    does *not* come through here — it is published to that project's row
+    (`rememberThreadDefaults`) — so this only ever moves `projectId`. */
+export function saveThreadDefaults(next: ThreadDefaults): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ ...loadThreadDefaults(), ...next }))
+  } catch {
+    // A convenience, not a setting: losing it costs one extra pick.
+  }
+}
+
+/** A project's defaults, or the all-empty set for a project nobody has
+    configured — and for the local store, which no longer holds one. */
+export const emptyDefaults = (): ProjectDefaults => ({
+  profileId: "",
+  agentId: "",
+  model: "",
+  effort: "",
+  modeId: "",
+  configChoices: {},
+  personaId: "",
+  mcpServerIds: [],
+  skillIds: [],
+  commandIds: [],
+  suggestFollowups: true,
+  uiBlocks: true,
+})
+
+/** What a project row says, with an absent object read as the empty set —
+    a server that predates the columns, or a stub. */
+export const projectDefaults = (project?: { defaults?: ProjectDefaults }): ProjectDefaults =>
+  project?.defaults ?? emptyDefaults()
 
 export interface ThreadStart {
   profile: Profile
@@ -62,34 +90,35 @@ export interface ThreadStart {
  * that go with it — the shape `actions.newDraftThread` takes, so a caller
  * spreads it and adds the project.
  *
- * Both halves are remembered, and each degrades on its own: the profile you
- * last used may be gone, or may no longer be configured for the agent you last
- * used. The agent is the stickier habit — when the remembered profile cannot
- * serve it, the first profile that can (the agent's virtual Default sorts
- * first) is picked over switching agents. With nothing usable remembered, the
- * first profile and its first agent. Null only when there are no profiles at
- * all, which is the "set up a project" empty state.
+ * A project's defaults degrade one half at a time, and for the reason the
+ * whole store used to: the profile a project names may be gone, or may no
+ * longer be configured for the agent it names. The agent is the stickier
+ * habit — when the named profile cannot serve it, the first profile that can
+ * (the agent's virtual Default sorts first) is picked over switching agents.
+ * With nothing named or nothing usable, the first profile and its first agent,
+ * which is the "set up a project" empty state.
  *
- * Model and effort ride along only when the remembered profile is the one
- * actually resolved. `projectId`/`profileId` degrade to a fallback on their
- * own; these two cannot — they name ids in the remembered *profile's* catalog,
- * and once the fallback picks a different profile they name something it has
- * never heard of, passed straight through to the agent's env at spawn (a codex
- * model id filling claude-code's ANTHROPIC_MODEL). Same rule the
- * `configure-draft` reducer applies to `configChoices`.
+ * Model and effort ride along only when the profile that was *named* is the
+ * one actually resolved. `profileId`/`agentId` degrade to a fallback on their
+ * own; these two cannot — they name ids in the named *profile's* catalog, and
+ * once the fallback picks a different profile they name something it has never
+ * heard of, passed straight through to the agent's env at spawn (a codex model
+ * id filling claude-code's ANTHROPIC_MODEL). The same rule the
+ * `configure-draft` reducer applies to `configChoices`, and the reason the
+ * caller fills these from the project row the profile was read off.
  */
 export function resolveThreadStart(
-  defaults: ThreadDefaults,
+  defaults: ProjectDefaults,
   profiles: readonly Profile[]
 ): ThreadStart | null {
   const pair = resolvePair(defaults, profiles)
   if (!pair) return null
   if (pair.profile.id !== defaults.profileId) return pair
-  return { ...pair, model: defaults.model, effort: defaults.effort }
+  return { ...pair, model: defaults.model || undefined, effort: defaults.effort || undefined }
 }
 
 function resolvePair(
-  defaults: ThreadDefaults,
+  defaults: ProjectDefaults,
   profiles: readonly Profile[]
 ): { profile: Profile; agentId: string } | null {
   /* A hidden or disabled profile is not a candidate for a new thread, and that
@@ -111,26 +140,14 @@ function resolvePair(
   return profile && first ? { profile, agentId: first } : null
 }
 
-/** The library picks, as the arrays a draft carries — every key present, so
-    a caller can spread it over a `SessionMeta` without a fallback each. */
+/** The library picks a project's threads open with — every key present, so a
+    caller can spread it over a `SessionMeta` without a fallback each. */
 export function defaultToolPicks(
-  defaults: ThreadDefaults
-): Required<Pick<ThreadDefaults, "mcpServerIds" | "skillIds" | "commandIds">> {
-  const ids = (value: unknown): string[] =>
-    Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []
+  defaults: ProjectDefaults
+): Required<Pick<ProjectDefaults, "mcpServerIds" | "skillIds" | "commandIds">> {
   return {
-    mcpServerIds: ids(defaults.mcpServerIds),
-    skillIds: ids(defaults.skillIds),
-    commandIds: ids(defaults.commandIds),
-  }
-}
-
-/** Merges over what is remembered: a caller that knows about the agent should
-    not have to know about the tool picks to keep them, and vice versa. */
-export function saveThreadDefaults(next: ThreadDefaults): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ ...loadThreadDefaults(), ...next }))
-  } catch {
-    // A convenience, not a setting: losing it costs one extra pick.
+    mcpServerIds: defaults.mcpServerIds,
+    skillIds: defaults.skillIds,
+    commandIds: defaults.commandIds,
   }
 }

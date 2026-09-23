@@ -26,8 +26,6 @@ import {
 import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
-import { forgetProjectEditors } from "@/lib/ide/editors"
-import { forgetScmFilter } from "@/lib/ide/scm-filter"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
 import { PagePanel } from "@/components/workspace/page-panel"
@@ -35,19 +33,9 @@ import { WebPanel } from "@/components/workspace/web-panel"
 import { UnsupportedPanel } from "@/components/workspace/unsupported-panel"
 import { TabActions } from "@/components/workspace/tab-actions"
 
-/* The three panels that carry a library the rest of the app does not: Monaco
-   (the IDE), xterm (the terminal) and the whole board (the tasks tree). The
-   chat is not one of them — it is what the dock opens with, so lazy loading it
-   would only put a suspense boundary in front of the first paint.
-
-   They are the kind of thing dockview's own `defaultRenderer="always"` keeps
-   mounted once opened, so the chunk is fetched once per session at most, when
-   the reader opens the panel. Anything else importing these modules statically
-   puts them back in the entry chunk — Rollup calls it INEFFECTIVE_DYNAMIC_IMPORT
-   and says so in the build output, which is the check on this. */
-const IdePanel = React.lazy(async () => ({
-  default: (await import("@/components/workspace/ide-panel")).IdePanel as React.FC<IDockviewPanelProps>,
-}))
+/* The terminal and board carry libraries the rest of the app does not. The
+   chat is what the dock opens with, so lazy loading it would only put a
+   suspense boundary in front of the first paint. */
 const TerminalPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/terminal-panel"))
     .TerminalPanel as React.FC<IDockviewPanelProps>,
@@ -209,13 +197,13 @@ export interface OpenPanelOptions {
   /** Add beside the current panel instead of replacing it. */
   newTab?: boolean
   /**
-   * Where the caller thinks this panel *belongs* — navigation left, streams
-   * below, the IDE preset's arrangement one panel at a time.
+   * Where the caller thinks this panel *belongs* — navigation left or streams
+   * below, one panel at a time.
    *
    * **It no longer splits the dock, and reads as `newTab`.** Every panel opens
    * the way a new thread does: a tab beside what you are looking at. Opening a
-   * terminal used to cut the dock in half under the transcript and opening the
-   * IDE cut it in half beside it, so the answer to "open something" depended on
+   * terminal used to cut the dock in half under the transcript, so the answer
+   * to "open something" depended on
    * which something — and a layout the reader had arranged rearranged itself
    * under them. Splitting is still available and is now only ever *asked for*:
    * `splitActive` (the strip's chord and the palette's row), which names the
@@ -232,7 +220,7 @@ export interface OpenPanelOptions {
   background?: boolean
 }
 
-export type PresetId = "ide" | "focus"
+export type PresetId = "focus"
 
 /** Asked before a panel closes. `false` cancels the close. */
 export type CloseGuard = () => boolean | Promise<boolean>
@@ -277,8 +265,7 @@ export interface WorkspaceDock {
   applySavedLayout: (id: string) => void
   deleteSavedLayout: (id: string) => void
   savedLayouts: () => SavedLayout[]
-  /** A panel's veto on its own closing — live terminals. The IDE keeps its
-      own dirty buffers across a close, so it never vetoes one. */
+  /** A panel's veto on its own closing — live terminals. */
   registerCloseGuard: (id: string, guard: CloseGuard) => () => void
   /** Descriptors currently open, in tab order, for menus and the palette. */
   listPanels: () => { id: string; panel: PanelDescriptor; title: string }[]
@@ -287,7 +274,7 @@ export interface WorkspaceDock {
   /** The descriptor of the panel in front of you — a nested group's own when a
       group tab is active. The route only follows chats and pages, so this is
       the one thing that can answer "which project am I looking at" while a
-      terminal or an IDE has the focus. */
+      terminal or a preview has the focus. */
   activeDescriptor: () => PanelDescriptor | undefined
 
   /* ── The strip you are looking at ──
@@ -864,38 +851,16 @@ export function useWorkspaceDock(): DockController {
   /** Rebuild the dock from the panels that are open. Presets are arrangements,
       not contents: nothing is opened or closed, only moved. */
   const applyPreset = React.useCallback(
-    (preset: PresetId) => {
+    () => {
       const api = apiRef.current
       if (!api) return
       const active = api.activeGroup?.activePanel
       if (api.hasMaximizedGroup()) api.exitMaximizedGroup()
 
-      if (preset === "focus") {
-        stackAll()
-        if (active) api.maximizeGroup(active)
-        return
-      }
-
-      /* IDE: work centre, streams below. A kind with nothing open contributes
-         no group, so a dock holding only threads is one centre group, which is
-         exactly right. */
-      const BOTTOM: PanelKind[] = ["terminal"]
-      const bucket = (panel: IDockviewPanel) =>
-        BOTTOM.includes(panel.api.component as PanelKind) ? "bottom" : "centre"
-      silently(() => {
-        stackAll()
-        const centre = api.activeGroup ?? api.groups[0]
-        if (!centre) return
-        let bottom: ReturnType<DockviewApi["addGroup"]> | undefined
-        for (const panel of [...api.panels]) {
-          if (bucket(panel) === "centre") continue
-          bottom ??= api.addGroup({ referenceGroup: centre, direction: "below" })
-          panel.api.moveTo({ group: bottom })
-        }
-      })
-      active?.api.setActive()
+      stackAll()
+      if (active) api.maximizeGroup(active)
     },
-    [silently, stackAll]
+    [stackAll]
   )
 
   const resetLayout = React.useCallback(() => {
@@ -1062,17 +1027,10 @@ export function useWorkspaceDock(): DockController {
                     : !projects.has(descriptor.projectId)
           /* A pruned panel takes its guard with it — the panel is gone, so
              there is nothing left to ask, and a stale entry would veto a future
-             panel that happens to reuse the id. An IDE panel takes its open
-             tabs too: they outlive the panel on purpose (`lib/ide/editors.ts`),
-             which for a project that no longer exists would be a set of tabs
-             pointing at a directory the server will not read. */
+             panel that happens to reuse the id. */
           if (gone) {
             guardsRef.current.delete(panel.id)
             forgetPanelPin(panel.id)
-            if (descriptor.kind === "ide") {
-              forgetProjectEditors(descriptor.projectId)
-              forgetScmFilter(descriptor.projectId)
-            }
             owner.removePanel(panel)
           }
         }
@@ -1679,7 +1637,6 @@ export function WorkspaceDock({
     map.chat = contained((props) => (
       <ChatPanel {...(props as IDockviewPanelProps<{ sessionId: string }>)} actions={actions} />
     ))
-    map.ide = contained(IdePanel)
     map.terminal = contained(TerminalPanel)
     map.tasks = contained(TasksPanel)
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)

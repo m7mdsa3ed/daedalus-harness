@@ -288,8 +288,9 @@ export function makeThreadCallbacks(
     onTurnChanges: (turn) => send({ type: "turn-changes", id, turn }),
     /* The catalog is TanStack Query's; the row is refetched, not patched
        in from a socket frame (docs/client.md, "one owner per slice"). */
-    onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs) => {
+    onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs, toolDurationMs) => {
       send({ type: "turn-active", id, active: false })
+      send({ type: "turn-timing", id, turnId, durationMs, toolDurationMs })
       if (usage) send({ type: "usage", id, usage, turnId, durationMs })
       if (error) {
         // Recorded in the transcript either way — a failure that survived a

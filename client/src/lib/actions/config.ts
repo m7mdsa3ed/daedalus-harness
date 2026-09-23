@@ -6,7 +6,8 @@
 
 import type * as acp from "@daedalus/acp"
 import { toast } from "../toast"
-import { api, type Profile, type SessionMeta } from "../settings"
+import { saveProjectDefaults } from "../project-defaults"
+import { api, type Profile, type ProjectDefaults, type SessionMeta } from "../settings"
 import type { ActionsCore } from "./core"
 
 /* ── Thread settings: what one pick is, and how several become one request ──
@@ -108,8 +109,41 @@ export function describeConfig(patch: ConfigPatch, profiles: Profile[]): string 
 }
 
 export function configActions(core: ActionsCore) {
-  const { settings, dispatch, getState, catalog, threads, recordError, known, refreshSessions } =
+  const { settings, dispatch, getState, catalog, queryClient, threads, recordError, known, refreshSessions } =
     core
+
+  /**
+   * Publish a spawn-setting pick onto the project the thread runs in, so the
+   * next thread started there opens the same way.
+   *
+   * The project's start defaults are what a *draft* in it opens on, and a
+   * change made to a running thread is the same statement one message later:
+   * "this is how I work in this codebase". It used to be remembered on the
+   * device (`thread-defaults`), which is no scope for a fact about a workspace
+   * — another machine started the next thread in the working directory on the
+   * agent's defaults.
+   *
+   * Only `next`'s own keys are published, and a profile move carries the model
+   * and effort it clears: `changeProfile` sends all three together, and a
+   * project left holding a model its profile does not serve would hand the
+   * next draft a value the menu cannot draw. A *live* pick that the server
+   * takes on the running process is published all the same — the row is what
+   * the draft reads, and where the change landed (live, staged, restarted) is
+   * the server's answer about the process, not about the project.
+   */
+  const publishToProject = (meta: SessionMeta, next: ConfigPatch) => {
+    if (!meta.projectId) return
+    const patch: Partial<ProjectDefaults> = {}
+    if (next.profileId !== undefined) patch.profileId = next.profileId
+    if (next.model !== undefined) patch.model = next.model
+    if (next.effort !== undefined) patch.effort = next.effort
+    if (next.personaId !== undefined) patch.personaId = next.personaId
+    if (next.suggestFollowups !== undefined) patch.suggestFollowups = next.suggestFollowups
+    if (next.uiBlocks !== undefined) patch.uiBlocks = next.uiBlocks
+    if (Object.keys(patch).length > 0) {
+      saveProjectDefaults(settings, queryClient, meta.projectId, patch)
+    }
+  }
 
   /**
    * Change a thread's profile, model or effort — and let the server say what
@@ -265,6 +299,12 @@ export function configActions(core: ActionsCore) {
    */
   const changeThreadConfig = (meta: SessionMeta, next: ConfigPatch, context: string): void => {
     dispatch({ type: "pending-config", id: meta.id, patch: next })
+    /* Remembered for the project, not only for the thread — see
+       `publishToProject`. Done at the pick rather than once the server has
+       answered: a pick the server stages is still the way this workspace is
+       worked, and waiting for a spawn that may never come (nobody sends again)
+       would leave the project holding the old value. */
+    publishToProject(meta, next)
     const held = configBuffer.get(meta.id)
     if (held?.timer) clearTimeout(held.timer)
     const patch: ConfigPatch = { ...(held?.patch ?? {}), ...next }

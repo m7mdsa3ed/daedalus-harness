@@ -37,7 +37,6 @@ import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions, useProbeStatus } from "@/lib/agent-options"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
-import { saveThreadDefaults } from "@/lib/thread-defaults"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
 
 const DEFAULT_CHOICE = "__default__"
@@ -67,26 +66,20 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
     (p) => profileSupports(p, meta.agentId) && (p.id === meta.profileId || (!p.hidden && !p.disabled))
   )
 
+  /* Every pick is published onto the thread's project — that is what makes the
+     model a property of the workspace rather than of this device, and what
+     `actions.configureDraft` does with it (one write, so the menus and the
+     store cannot disagree about what a project holds).
+
+     Not always, though. `remember: false` is for a caller that reuses these
+     controls to configure something that is NOT the thread you are about to
+     start (a routine's saved thread-start). Picking a profile there is a
+     statement about that routine, and publishing it would mean editing a
+     nightly job silently rewrote what the next thread in that project opens
+     on — so the pick moves the draft/form and stops there. */
   const configure = (next: Parameters<Actions["configureDraft"]>[1]) => {
-    actions.configureDraft(meta.id, next)
-    /* Remembered for the next new thread: the agent you reach for is a habit,
-       not a decision worth making twice. Not always, though — `remember: false`
-       is for a caller that reuses these controls to configure something that is
-       NOT the thread you are about to start (a routine's saved thread-start).
-       Picking a profile there is a statement about that routine, and letting it
-       move the defaults would mean editing a nightly job silently changed what
-       the next ⌘N opens on. */
-    if (!remember) return
-    saveThreadDefaults({
-      projectId: next.projectId ?? meta.projectId,
-      profileId: next.profileId ?? meta.profileId,
-      agentId: next.agentId ?? meta.agentId,
-      model: next.model ?? meta.model,
-      effort: next.effort ?? meta.effort,
-      personaId: next.personaId ?? meta.personaId,
-      suggestFollowups: next.suggestFollowups ?? meta.suggestFollowups,
-      uiBlocks: next.uiBlocks ?? meta.uiBlocks,
-    })
+    /* The draft's own fields always move; only the *publication* is gated. */
+    actions.configureDraft(meta.id, next, remember)
   }
 
   return { projects, profiles, agents, personas, project, profile, agent, agentProfiles, configure }
@@ -758,6 +751,28 @@ export function DraftConfigPopover({
                   </DropdownMenuCheckboxItem>
                 )
               )}
+              {/* The probe is cached on both ends, keyed on what the harness can
+                  see — an upgraded binary or a new login is not in the key. */}
+              <DropdownMenuItem
+                className="text-xs text-muted-foreground"
+                disabled={probeStatus === "asking"}
+                onSelect={(event) => {
+                  event.preventDefault()
+                  void actions.learnAgentOptions(
+                    meta.profileId,
+                    meta.agentId,
+                    meta.projectId,
+                    true
+                  )
+                }}
+              >
+                {probeStatus === "asking" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCwIcon className="size-4" />
+                )}
+                Refresh options
+              </DropdownMenuItem>
             </DropdownMenuGroup>
           </>
         )}

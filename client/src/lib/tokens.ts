@@ -27,6 +27,39 @@ export function windowEstimated(usage: acp.UsageUpdate | null | undefined): bool
   return vendorMeta(usage?._meta, "daedalus")?.windowEstimated === true
 }
 
+/**
+ * How a request's prompt divided, when our own runtime measured it.
+ *
+ * A provider bills one `prompt_tokens` and says nothing about what was in it, so
+ * the split is our runtime's own (`agent/src/token-breakdown.ts`): the system
+ * prompt and the tool block are counted locally, and everything left over —
+ * the history, this turn's message, every tool result — is the conversation.
+ * `total` and `conversation` are the provider's exact arithmetic; `system` and
+ * `tools` are the estimate, which is why every surface that draws them says so.
+ *
+ * Absent for any runtime that does not measure it, which is every one but ours —
+ * the caller draws nothing rather than a row of zeros.
+ */
+export interface PromptBreakdown {
+  total: number
+  system: number
+  tools: number
+  conversation: number
+}
+
+export function promptBreakdown(
+  usage: acp.UsageUpdate | null | undefined
+): PromptBreakdown | null {
+  const raw = vendorMeta(usage?._meta, "daedalus")?.breakdown
+  if (raw === null || typeof raw !== "object") return null
+  const { total, system, tools, conversation } = raw as Record<string, unknown>
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null)
+  const [t, s, tl, c] = [num(total), num(system), num(tools), num(conversation)]
+  return t === null || s === null || tl === null || c === null
+    ? null
+    : { total: t, system: s, tools: tl, conversation: c }
+}
+
 /** `842`, `12.4k`, `1.3M` — three significant-ish digits at every scale, so a
     column of them stays the same width. */
 export function formatTokens(value: number): string {
@@ -47,7 +80,11 @@ export function promptTokens(usage: acp.Usage): number {
     by: no output tokens, or no measured duration. */
 export function formatRate(outputTokens: number, durationMs: number): string | null {
   if (!(outputTokens > 0) || !(durationMs > 0)) return null
-  const perSec = (outputTokens * 1000) / durationMs
+  return formatTps((outputTokens * 1000) / durationMs)
+}
+
+export function formatTps(perSec: number): string | null {
+  if (!(perSec > 0) || !Number.isFinite(perSec)) return null
   return `${perSec >= 100 ? Math.round(perSec).toString() : perSec.toFixed(1)} tok/s`
 }
 

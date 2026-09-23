@@ -49,6 +49,7 @@ import {
   type StagedConfig,
   type ThreadEvent,
   type TracePage,
+  type TpsStats,
   type WireError,
 } from "./protocol.js";
 import { enqueue } from "./queue.js";
@@ -219,6 +220,8 @@ export interface Session {
       on `caught_up`, and written to the row at the turn boundary. Null for a
       runtime that reports no usage, which the ring draws as "—". */
   context: acp.UsageUpdate | null;
+  /** Min/max measured turn rate and its weighted-average inputs. */
+  tps: TpsStats | null;
   /** Events ever journaled for this session. `cursor` is an index into this,
       not into any array — the log itself is a table (see session-journal.ts),
       so nothing about a long thread is held in memory. */
@@ -1006,6 +1009,28 @@ export class SessionManager {
         event.ev === "turn_ended" && event.error
           ? event.error.message.slice(0, LAST_ERROR_MAX)
           : null;
+      if (event.ev === "turn_ended" && event.usage && event.durationMs && event.durationMs > 0) {
+        const rate = (event.usage.outputTokens * 1000) / event.durationMs;
+        if (Number.isFinite(rate) && rate > 0) {
+          session.tps = session.tps
+            ? {
+                min: Math.min(session.tps.min, rate),
+                max: Math.max(session.tps.max, rate),
+                outputTokens: session.tps.outputTokens + event.usage.outputTokens,
+                durationMs: session.tps.durationMs + event.durationMs,
+                ...(event.toolDurationMs !== undefined || session.tps.toolDurationMs !== undefined
+                  ? { toolDurationMs: (session.tps.toolDurationMs ?? 0) + (event.toolDurationMs ?? 0) }
+                  : {}),
+              }
+            : {
+                min: rate,
+                max: rate,
+                outputTokens: event.usage.outputTokens,
+                durationMs: event.durationMs,
+                ...(event.toolDurationMs !== undefined ? { toolDurationMs: event.toolDurationMs } : {}),
+              };
+        }
+      }
       this.persist(session);
       /* A staged change used to be flushed here, at `turn_ended`. It is not any
          more: the change is taken by the next *spawn* (`respawnNow` folds it)
@@ -1422,6 +1447,7 @@ export class SessionManager {
       lastActivityAt: opts.createdAt ?? now,
       lastTurnError: null,
       context: null,
+      tps: null,
       eventCount: 0,
       stderr: [],
       stderrCount: 0,
@@ -3268,6 +3294,7 @@ function rowValues(s: Session) {
     lastActivityAt: s.lastActivityAt,
     lastTurnError: s.lastTurnError,
     context: s.context,
+    tps: s.tps,
     deletedAt: s.deletedAt,
     pinnedAt: s.pinnedAt,
     parentSessionId: s.parentSessionId,
