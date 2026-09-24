@@ -500,6 +500,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`setTabIndex`/`cycleTab`/`closeActiveTab`, which the palette's rows call too); ⌘Tab is the
   browser's own, so it rides `RESERVED` to the desktop shell like ⌘1…9 and ⌘⇧T, and **⌘W is
   never the close chord** because Electron gives it to close-window.
+- **The desktop shell names a shortcut, never an action** (`lib/desktop.ts`): the native
+  menu, the tray and the quick-entry hotkey send a `ShortcutId` and the renderer runs
+  `runShortcut(id)` — the chord's own handler. **A thread popout is one transcript and no
+  shell** (`lib/popout.ts`): it never saves a layout, never restores or prunes drafts, and
+  never notifies — it shares the main window's origin, so every store is the main window's.
 - **A restart the user asked for is not a thread coming back from the dead**, and the wait
   says which (`ConnPhase.reviving.because`): one paragraph explaining idle-retirement used to
   be shown to someone who had just picked a persona. **A wait in front of a transcript that

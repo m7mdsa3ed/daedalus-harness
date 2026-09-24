@@ -45,6 +45,7 @@ import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
+import { useDesktopBridge } from "@/lib/desktop"
 import { HEADER_BADGE, HEADER_CHIP } from "@/lib/header-chrome"
 import { useChord } from "@/lib/keybindings"
 import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -409,6 +410,8 @@ export function AppShell({
   useShortcut("changeModel", () => palette.openAt("model"))
   useShortcut("changeProject", () => palette.openAt("project"))
   useShortcut("viewOptions", () => setViewSettings(true))
+  // The desktop shell's tray, native menu and quick-entry hotkey (lib/desktop.ts).
+  useDesktopBridge()
 
   /* The route tree — every page that is not the transcript — lives in
      `components/routes.tsx`, which is also the only module that imports those

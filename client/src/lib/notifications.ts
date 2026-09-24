@@ -21,6 +21,7 @@ import { notificationOptions, type NotificationShape } from "./notification-shap
 import { pushRegistration } from "./pwa"
 import { currentThreadId, navigateTo, threadPath } from "./router"
 import { loadSettings } from "./settings"
+import { IS_POPOUT } from "./popout"
 
 export type ThreadEvent = "turnFinished" | "turnFailed" | "permissionNeeded" | "questionAsked"
 
@@ -290,6 +291,8 @@ export function notifyThreadEvent(
      render changes — it is the same call the real events make. */
   force = false
 ): void {
+  // The main window announces; a popout of the same thread would say it twice.
+  if (!force && IS_POPOUT) return
   if (!force && !cache[event]) return
   if (!force && isViewing(sessionId)) return
 

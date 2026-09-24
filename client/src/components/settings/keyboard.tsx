@@ -54,7 +54,11 @@ import {
   type ShortcutId,
 } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
-import { PageHeader, Group } from "./primitives"
+import { Input } from "@/components/ui/input"
+import { CopyButton } from "@/components/ui/copy-button"
+import { Notice } from "@/components/notice"
+import { QUICK_ENTRY_DEFAULT, useQuickEntry } from "@/lib/desktop"
+import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** The desktop shell is the one place a browser-reserved chord is free: the
@@ -272,6 +276,55 @@ function ShortcutRow({
   )
 }
 
+/** The desktop shell's one system-wide key: bring the app forward on a new
+    thread from anywhere (lib/desktop.ts). An Electron accelerator, not one of
+    the app's chords — the OS holds it — so it is typed, not recorded. */
+function QuickEntryGroup() {
+  const quick = useQuickEntry()
+  const [value, setValue] = React.useState(quick.accelerator)
+  const [saving, setSaving] = React.useState(false)
+  const save = async (next: string) => {
+    setSaving(true)
+    await quick.set(next)
+    setSaving(false)
+  }
+  return (
+    <Group label="Desktop">
+      <Row
+        icon={KeyboardIcon}
+        title="Quick entry"
+        subtitle={`Starts a new thread from any application. An Electron accelerator such as ${QUICK_ENTRY_DEFAULT} or CommandOrControl+Shift+Space; empty turns it off.`}
+      >
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void save(value)
+          }}
+        >
+          <Input
+            aria-label="Quick entry shortcut"
+            className="w-48 font-mono text-xs"
+            value={value}
+            placeholder="Off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+          <Button type="submit" variant="outline" disabled={saving || value.trim() === quick.accelerator}>
+            Save
+          </Button>
+        </form>
+      </Row>
+      {quick.error && (
+        <div className="pb-3">
+          <Notice tone="error" action={<CopyButton text={quick.error} />}>
+            {quick.error}
+          </Notice>
+        </div>
+      )}
+    </Group>
+  )
+}
+
 export function KeyboardPage() {
   const meta = sectionMeta("keyboard")
   const bindings = useKeybindings()
@@ -318,6 +371,7 @@ export function KeyboardPage() {
           </Group>
         )
       })}
+      {window.desktop?.setQuickEntry && <QuickEntryGroup />}
       <Group label="About these keys">
         <div className="flex items-start gap-3 py-3 text-xs text-muted-foreground">
           <KeyboardIcon className="mt-0.5 size-4 shrink-0" />

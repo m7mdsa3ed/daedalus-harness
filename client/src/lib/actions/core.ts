@@ -13,6 +13,7 @@ import { prunePastes } from "../pastes"
 import { pruneDraftAttachments } from "../draft-attachments"
 import { loadDraftSessions, pruneDraftSessions } from "../draft-sessions"
 import { loadLayout } from "../workspace/layout"
+import { IS_POPOUT } from "../popout"
 import { panelId } from "../workspace/panels"
 import { api, profileSupports, type ServerSettings, type SessionMeta } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
@@ -254,9 +255,13 @@ export function createCore(deps: CoreDeps) {
       ...sessions.map((session) => session.id),
       ...getState().sessions.filter((s) => s.draft).map((s) => s.id),
     ]
-    pruneDrafts(ids)
-    prunePastes(ids)
-    pruneDraftAttachments(ids)
+    /* A popout holds none of the main window's drafts in its store, so its
+       `ids` would prune their half-written messages (lib/popout.ts). */
+    if (!IS_POPOUT) {
+      pruneDrafts(ids)
+      prunePastes(ids)
+      pruneDraftAttachments(ids)
+    }
     /* And the draft rows themselves: an id the server reports is a thread that
        has been sent (here or on another device), so its row stops being this
        device's to bring back. Drafts still unknown to the server stay. */
@@ -331,6 +336,8 @@ export function sessionActions(core: ActionsCore) {
     async bootstrap() {
       const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
       dispatch({ type: "bootstrap", sessions })
+      // A popout draws one sent thread; the drafts are the main window's (lib/popout.ts).
+      if (IS_POPOUT) return { sessions }
       /* ── Unsent threads come back with their tabs ──
          A draft has no server row, so the list above cannot carry it — and
          without it, boot's `prunePanels` closes every draft tab the saved dock

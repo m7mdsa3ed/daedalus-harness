@@ -1,6 +1,8 @@
 import * as React from "react"
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client"
 import { AppShell } from "@/components/app-shell"
+import { PopoutThread } from "@/components/popout-thread"
+import { IS_POPOUT } from "@/lib/popout"
 import { AppToaster } from "@/components/app-toaster"
 import { ConfirmProvider } from "@/components/confirm-dialog"
 import { PromptProvider } from "@/components/prompt-dialog"
@@ -162,13 +164,18 @@ function ConnectedShell({
   return (
     <>
       <PruneAgentOptions />
-      <AppShell
-        loading={!loaded}
-        failed={bootFailed}
-        settings={settings}
-        actions={actions}
-        onAddServer={onAddServer}
-      />
+      {/* A desktop popout is one thread and no shell (lib/popout.ts). */}
+      {IS_POPOUT ? (
+        <PopoutThread actions={actions} />
+      ) : (
+        <AppShell
+          loading={!loaded}
+          failed={bootFailed}
+          settings={settings}
+          actions={actions}
+          onAddServer={onAddServer}
+        />
+      )}
     </>
   )
 }

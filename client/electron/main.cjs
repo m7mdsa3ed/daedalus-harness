@@ -1,7 +1,8 @@
-const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard } = require("electron")
+const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard, globalShortcut } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
+const { installTray, setActivity, refreshTray } = require("./tray.cjs")
 
 const DEV_URL = process.env.ELECTRON_DEV_URL || ""
 
@@ -68,11 +69,8 @@ ipcMain.handle("notify", (_event, payload) => {
     icon: path.join(__dirname, "..", "build", "icon.png"),
   })
   notification.on("click", () => {
-    if (!win || win.isDestroyed()) return
-    if (win.isMinimized()) win.restore()
-    win.show()
-    win.focus()
-    if (sessionId) win.webContents.send("notification-click", String(sessionId))
+    if (sessionId) openThreadInMain(String(sessionId))
+    else showMain()
   })
   notification.show()
   return true
@@ -94,6 +92,83 @@ ipcMain.on("theme-changed", (_event, resolved, source) => {
 
 ipcMain.handle("write-clipboard", (_event, text) => {
   clipboard.writeText(String(text ?? ""))
+  return true
+})
+
+/* ── Reaching the main window from outside it ──
+   The tray, the quick-entry hotkey, the native menu and a notification all end
+   the same way: the main window comes forward and the renderer is told what to
+   do. What it does is never decided here — `shortcut` carries a ShortcutId and
+   the renderer runs the handler that chord is bound to (`runShortcut`,
+   hooks/use-hotkey.ts), and `notification-click` carries a thread id that
+   `installDesktopNotifications` routes. A window closed on macOS is reopened
+   first; a message sent before its renderer has mounted is lost (ponytail:
+   queue it in main if that ever matters). */
+/* One window, however many doors ask for it at once: macOS fires `activate`
+   on launch too, and two callers each seeing "no window" made two. */
+let creating = null
+function ensureWindow() {
+  creating ??= createWindow().finally(() => {
+    creating = null
+  })
+  return creating
+}
+async function showMain() {
+  if (!win || win.isDestroyed()) await ensureWindow()
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+  return win
+}
+const sendToMain = async (channel, value) => (await showMain()).webContents.send(channel, value)
+const openThreadInMain = (sessionId) => void sendToMain("notification-click", sessionId)
+const runInMain = (shortcutId) => void sendToMain("shortcut", shortcutId)
+
+ipcMain.on("set-activity", (_event, summary) => setActivity(summary))
+
+/* ── Quick entry: a global hotkey that starts a thread from anywhere ──
+   The accelerator is the renderer's device-local setting (Settings › Keyboard),
+   sent here on boot and on every change; "" turns it off. A chord another app
+   holds, or one Electron cannot parse, is an answer the settings row shows —
+   never a throw. */
+let quickEntry = ""
+ipcMain.handle("set-quick-entry", (_event, accelerator) => {
+  const next = String(accelerator ?? "").trim()
+  if (quickEntry) globalShortcut.unregister(quickEntry)
+  quickEntry = ""
+  if (!next) return { ok: true }
+  try {
+    if (!globalShortcut.register(next, () => runInMain("newThread"))) {
+      return { ok: false, error: `${next} is already taken by another application` }
+    }
+  } catch (err) {
+    return { ok: false, error: `${next} is not a shortcut this system understands (${err?.message ?? err})` }
+  }
+  quickEntry = next
+  return { ok: true }
+})
+
+/* ── A thread in a window of its own ──
+   Same origin as the main window, so it shares every device-local store; the
+   `?popout=1` flag is what makes the renderer draw the one transcript and none
+   of the shell (`lib/popout.ts`) — and never save a layout or restore a draft
+   over the main window's. Framed, because it has no header to drag it by. */
+ipcMain.handle("open-thread-window", (_event, sessionId) => {
+  if (!win || win.isDestroyed() || typeof sessionId !== "string" || !sessionId) return false
+  const origin = new URL(win.webContents.getURL()).origin
+  const popout = new BrowserWindow({
+    width: 760,
+    height: 820,
+    minWidth: 420,
+    minHeight: 400,
+    icon: iconFile(),
+    autoHideMenuBar: true,
+    ...material(),
+    // Survives any navigation inside the window, unlike the URL flag (preload → desktop.popout).
+    webPreferences: { ...webPreferences(), additionalArguments: ["--daedalus-popout"] },
+  })
+  guardWindow(popout)
+  void popout.loadURL(`${origin}/t/${encodeURIComponent(sessionId)}?popout=1`)
   return true
 })
 
@@ -187,13 +262,105 @@ function installMenu() {
       ...(isMac ? [{ role: "appMenu" }] : []),
       { role: "fileMenu" },
       { role: "editMenu" },
-      { role: "viewMenu" },
+      /* The app's own rows run the renderer's shortcut handlers (`runInMain`),
+         so a menu row and its chord are one implementation. No accelerators on
+         them: the chords are the reader's to rebind, and a menu accelerator
+         would swallow the key before the page's binding saw it. */
+      {
+        label: "View",
+        submenu: [
+          { label: "Toggle Sidebar", click: () => runInMain("sidebar") },
+          { label: "New Thread", click: () => runInMain("newThread") },
+          { label: "Command Palette", click: () => runInMain("palette") },
+          { label: "Split Right", click: () => runInMain("splitRight") },
+          { type: "separator" },
+          { role: "reload" },
+          { role: "forceReload" },
+          { role: "toggleDevTools" },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
       { role: "windowMenu" },
     ]),
   )
 }
 
-function installClipboardHandlers() {
+/* Dev/unpackaged runs have the source PNG; a packaged build ships only dist/,
+   whose PWA icon is the stand-in (the tray needs a real file on every OS). */
+function iconFile() {
+  const source = path.join(__dirname, "..", "build", "icon.png")
+  return fs.existsSync(source) ? source : path.join(app.getAppPath(), "dist", "icon-192.png")
+}
+
+const webPreferences = () => ({
+  preload: path.join(__dirname, "preload.cjs"),
+  contextIsolation: true,
+  nodeIntegration: false,
+  spellcheck: true,
+})
+
+/* The window's own material — see the long note in createWindow. Shared with a
+   thread popout, because preload marks every window translucent on these
+   platforms and a popout without the material would draw a grey void. */
+const material = () => ({
+  vibrancy: process.platform === "darwin" ? "sidebar" : undefined,
+  visualEffectState: process.platform === "darwin" ? "active" : undefined,
+  backgroundMaterial: process.platform === "win32" ? "acrylic" : undefined,
+  roundedCorners: true,
+  backgroundColor:
+    process.platform === "darwin"
+      ? undefined
+      : process.platform === "win32"
+        ? WINDOW_TINT
+        : nativeTheme.shouldUseDarkColors
+          ? "#0a0a0a"
+          : "#ffffff",
+})
+
+/** Clipboard keys, the context menu and the external-link rules — every window's. */
+function guardWindow(w) {
+  installClipboardHandlers(w)
+  /* External links open in the real browser, never inside the app shell — but a
+     dock popout is `window.open` too (dockview's `addPopoutGroup` opens
+     `popout.html` and portals the panel's DOM into it). It is same-origin and
+     it needs a real window object back, so it is allowed as a native child
+     window; denying it sent the empty room to the system browser. */
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    const sameOrigin = (() => {
+      try {
+        return new URL(url).origin === new URL(w.webContents.getURL()).origin
+      } catch {
+        return false
+      }
+    })()
+    if (!sameOrigin) {
+      shell.openExternal(url)
+      return { action: "deny" }
+    }
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+        webPreferences: webPreferences(),
+      },
+    }
+  })
+  w.webContents.on("will-navigate", (event, url) => {
+    const base = w.webContents.getURL()
+    if (new URL(url).origin !== new URL(base).origin) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+}
+
+function installClipboardHandlers(win) {
   win.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.alt) return
     if (!(input.control || input.meta)) return
@@ -238,7 +405,7 @@ async function createWindow() {
        be pointed at the source PNG; a packaged build takes it from the
        electron-builder `icon` config instead. macOS ignores this entirely and
        uses the bundle icon. */
-    icon: path.join(__dirname, "..", "build", "icon.png"),
+    icon: iconFile(),
     // Edge-to-edge: no OS title bar, the app paints its own chrome. macOS keeps
     // the traffic lights inset; Windows/Linux get an overlay for min/max/close.
     frame: process.platform === "darwin",
@@ -270,35 +437,22 @@ async function createWindow() {
        stands between the material and the page's text on its own — that is the
        global layer's job (see WINDOW_TINT and `--app-veil` in
        client/src/index.css), and it is a single knob, so swapping the material
-       does not re-open it. */
-    vibrancy: process.platform === "darwin" ? "sidebar" : undefined,
-    visualEffectState: process.platform === "darwin" ? "active" : undefined,
-    backgroundMaterial: process.platform === "win32" ? "acrylic" : undefined,
-    /* NOT transparent, and that is load-bearing: a layered window loses its DWM
+       does not re-open it.
+
+       NOT transparent, and that is load-bearing: a layered window loses its DWM
        rounding and its hairline border on Windows (verified on build 26200 — the
        corners go square and the edge disappears), and it is not what reveals the
        material either. Acrylic composites fine without it; the alpha
-       `backgroundColor` below is what lets it through. */
-    roundedCorners: true,
-    backgroundColor:
-      process.platform === "darwin"
-        ? undefined
-        : process.platform === "win32"
-          ? WINDOW_TINT
-          : nativeTheme.shouldUseDarkColors
-            ? "#0a0a0a"
-            : "#ffffff",
+       `backgroundColor` in material() is what lets it through. */
+    ...material(),
     title: "Daedalus",
     autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      spellcheck: true,
-    },
+    webPreferences: webPreferences(),
   })
 
-  installClipboardHandlers()
+  guardWindow(win)
+  win.on("show", refreshTray)
+  win.on("hide", refreshTray)
 
   if (state.maximized) win.maximize()
 
@@ -317,40 +471,6 @@ async function createWindow() {
   win.on("close", saveState)
   win.on("closed", () => {
     win = null
-  })
-
-  /* External links open in the real browser, never inside the app shell — but a
-     dock popout is `window.open` too (dockview's `addPopoutGroup` opens
-     `popout.html` and portals the panel's DOM into it). It is same-origin and
-     it needs a real window object back, so it is allowed as a native child
-     window; denying it sent the empty room to the system browser. */
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    const sameOrigin = (() => {
-      try {
-        return new URL(url).origin === new URL(win.webContents.getURL()).origin
-      } catch {
-        return false
-      }
-    })()
-    if (!sameOrigin) {
-      shell.openExternal(url)
-      return { action: "deny" }
-    }
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        autoHideMenuBar: true,
-        backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
-        webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, spellcheck: true },
-      },
-    }
-  })
-  win.webContents.on("will-navigate", (event, url) => {
-    const base = win.webContents.getURL()
-    if (new URL(url).origin !== new URL(base).origin) {
-      event.preventDefault()
-      shell.openExternal(url)
-    }
   })
 
   // Mic access for native SpeechRecognition (voice input) + notifications.
@@ -373,7 +493,8 @@ async function createWindow() {
     // deployed client — same door, different intent.
     if (/^https?:\/\/(localhost|127\.0\.0\.1)/.test(DEV_URL)) win.webContents.openDevTools({ mode: "detach" })
   } else {
-    server = await startStaticServer(path.join(app.getAppPath(), "dist"))
+    // Once per run: a window reopened on macOS must land on the same origin.
+    server ??= await startStaticServer(path.join(app.getAppPath(), "dist"))
     await win.loadURL(`http://127.0.0.1:${server.port}/`)
   }
 }
@@ -382,21 +503,24 @@ async function createWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on("second-instance", () => {
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
-  })
+  app.on("second-instance", () => void showMain())
 
   app.whenReady().then(() => {
     installMenu()
-    return createWindow()
+    installTray(iconFile(), {
+      openThread: openThreadInMain,
+      newThread: () => runInMain("newThread"),
+      isVisible: () => !!win && !win.isDestroyed() && win.isVisible(),
+      show: () => void showMain(),
+      toggleWindow: () => (win && !win.isDestroyed() && win.isVisible() ? win.hide() : void showMain()),
+    })
+    return ensureWindow()
   })
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  // A hidden (tray) window is still a window, so the dock icon has to show it.
+  app.on("activate", () => void showMain())
+
+  app.on("will-quit", () => globalShortcut.unregisterAll())
 
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit()
