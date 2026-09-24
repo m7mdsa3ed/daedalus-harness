@@ -40,6 +40,7 @@ export function DiffEditor({
   modified,
   filename,
   review,
+  inline = false,
   onLineChanges,
   editorRef,
 }: {
@@ -49,6 +50,8 @@ export function DiffEditor({
   modified: string
   filename: string
   review?: DiffReview
+  /** One stacked column whatever the width — for a diff drawn inside a list. */
+  inline?: boolean
   onLineChanges?: (changes: Monaco.editor.ILineChange[]) => void
   /** The live instance, for a caller that reveals a hunk. */
   editorRef?: React.RefObject<Monaco.editor.IStandaloneDiffEditor | null>
@@ -61,7 +64,7 @@ export function DiffEditor({
   /* Two panes side by side need room; on a phone, and in a narrow panel, they
      are stacked into one inline diff instead. The pointer answers "phone", the
      panel's own width answers "narrow" — so this reads both. */
-  const coarse = useCoarsePointer()
+  const coarse = useCoarsePointer() || inline
   /* Read through refs by listeners wired once, at creation. */
   const reviewRef = React.useRef(review)
   reviewRef.current = review

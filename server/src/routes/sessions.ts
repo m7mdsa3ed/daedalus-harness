@@ -509,9 +509,28 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
 
   const scopeOf = (raw: string | undefined): Scope | null => {
     if (!raw || raw === "uncommitted") return { kind: "uncommitted" };
+    if (raw === "thread" || raw === "branch") return { kind: raw };
     if (raw.startsWith("turn:") && raw.length > 5) return { kind: "turn", turnId: raw.slice(5) };
     return null;
   };
+
+  /* Undo one ended turn's files in the working tree — never the index, never
+     another path. 409 `{error, conflicts}` when a path moved since the turn
+     ended, unless `force`. */
+  app.post("/api/sessions/:id/turn-changes/:turnId/revert", async (c) => {
+    const id = c.req.param("id");
+    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as { force?: unknown };
+    /* Refusals are HttpErrors (git's are WorkspaceErrors), which app.onError
+       shapes with their status. */
+    const result = await sessions.revertTurn(id, c.req.param("turnId"), body.force === true);
+    if (result.reverted.length === 0 && result.conflicts.length > 0)
+      return c.json(
+        { error: `${result.conflicts.length} of this turn's files changed since it ended`, conflicts: result.conflicts },
+        409,
+      );
+    return c.json(result);
+  });
 
   app.get("/api/sessions/:id/changes/files", async (c) => {
     const id = c.req.param("id");

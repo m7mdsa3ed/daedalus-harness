@@ -106,4 +106,8 @@ export const agentOptionsKey = (s: ServerSettings, profileId: string, agentId: s
     tail are near-static history, invalidated rather than refetched. */
 export const threadTraceKey = (s: ServerSettings, sessionId: string) =>
   scope(s).concat(["thread-trace", sessionId])
+/** What a thread's changes scope covers (`GET …/changes/files?scope=`), one
+    key per scope under the thread's — a revert invalidates the prefix. */
+export const sessionChangesKey = (s: ServerSettings, sessionId: string, changeScope?: string) =>
+  scope(s).concat(["session-changes", sessionId], changeScope === undefined ? [] : [changeScope])
 

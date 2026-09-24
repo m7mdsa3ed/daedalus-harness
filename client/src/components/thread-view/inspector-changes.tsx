@@ -1,145 +1,281 @@
 /* ── The inspector's Changes tab ──
-   The newest gated turn's files, drawn by source control narrowed to them —
-   never a list of its own (a second list of the same files that could not
-   stage, discard or commit is the changes tab this app already removed). A
-   file opens in the Monaco diff surface over the list, with a way back.
+   A turn timeline: every measured turn that could have written a file
+   (`changesTimeline`, the chip's own gate) as a card on a rail, newest first
+   and open, each file's diff drawn inline under its row. Three other scopes
+   read one flat card — the whole thread (first measured turn's start → now),
+   what is uncommitted (HEAD → now) and the branch against its base — all read
+   by git on the server (`turn-changes.ts`), never off the transcript.
 
-   The diff is also where a review is written: a "+" in the gutter anchors a
-   line comment, the comments collect as drafts (`lib/review-comments.ts`,
-   device-local, per thread) listed under the view, and "Send review" makes
-   them ONE user message through the thread's one prompt door — so it queues
-   behind a running turn and never steers.
+   The bar on top says the scope's size, how much of it has been read (viewed
+   marks, `lib/changes-marks.ts`), and holds the two messages this tab can
+   send: "Ask to review" and "Fix flagged". Both — like "Send review" under
+   the list — are ONE ordinary message through the thread's prompt door, so
+   they queue behind a running turn and never steer.
 
-   Its own module, loaded lazily by `thread-inspector.tsx`: source control and
-   the diff editor are a chunk a reader who never opens this tab never pays
-   for. */
+   Its own module, loaded lazily by `thread-inspector.tsx`: the diff editor is
+   a chunk a reader who never opens this tab never pays for. */
 import * as React from "react"
-import { ArrowLeftIcon, MessageSquarePlusIcon, PencilIcon, Trash2Icon } from "lucide-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { MoreHorizontalIcon } from "lucide-react"
 
 import { Empty } from "@/components/empty"
 import { Notice } from "@/components/notice"
-import { Shortcut } from "@/components/shortcut"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
-import { Textarea } from "@/components/ui/textarea"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import type { ReviewAnchor } from "@/components/workspace/diff-editor"
-import { DiffTab } from "@/components/workspace/diff-tab"
-import { ScmView } from "@/components/workspace/scm-view"
-import { useShortcut } from "@/hooks/use-hotkey"
+import {
+  isViewed,
+  setChangesScope,
+  setFlagged,
+  setViewed,
+  useChangesMarks,
+  type ChangesScope,
+} from "@/lib/changes-marks"
 import { describeError } from "@/lib/errors"
-import type { ScmFilter } from "@/lib/ide/scm-filter"
+import { sessionChangesKey } from "@/lib/queries/keys"
 import {
   addReviewComment,
-  clearReviewComments,
-  composeReview,
+  composeAskReview,
+  composeFixFlagged,
   removeReviewComment,
-  updateReviewComment,
+  threadRelative,
   useReviewComments,
-  type ReviewComment,
 } from "@/lib/review-comments"
-import type { Comparison, TurnChanges } from "@/lib/workspace/git-api"
+import { useServer } from "@/lib/server-context"
+import { scopeFiles, type ChangedFile } from "@/lib/workspace/git-api"
+import { FileList, Stat, type FileListContext } from "./changes/file-list"
+import { CommentForm, ReviewDrafts } from "./changes/review-drafts"
+import { totals, TurnCard } from "./changes/turn-card"
+import type { TimelineTurn } from "./turn-footers"
+
+const SCOPE_LABEL: Record<ChangesScope, string> = {
+  turns: "By turn",
+  thread: "Whole thread",
+  uncommitted: "Uncommitted",
+  branch: "Branch vs base",
+}
+
+/** What "Ask to review" calls the scope, in the message. */
+const SCOPE_ASK: Record<ChangesScope, string> = {
+  turns: "the changes from your last turn",
+  thread: "all the changes you made in this thread",
+  uncommitted: "the uncommitted changes in the working tree",
+  branch: "this branch's changes against its base branch",
+}
 
 export default function InspectorChanges({
   projectId,
   sessionId,
-  changes,
+  turns,
+  turnActive,
   repo,
   onSend,
 }: {
   projectId: string
   sessionId: string
-  changes?: TurnChanges
-  /** The thread's own repository, when it is not the project's — a worktree
-      thread's (project-relative). Source control is pinned to it, and the
-      review's mentions are written relative to it. */
+  /** `changesTimeline`, newest first. */
+  turns: TimelineTurn[]
+  turnActive: boolean
+  /** The thread's own checkout when it is not the project's — a worktree
+      thread's (project-relative). Diff paths are joined onto it, and the
+      messages' mentions are written relative to it. */
   repo?: string
   /** The thread's prompt door (`actions.send`). */
   onSend: (text: string) => Promise<void>
 }) {
-  /* A fresh filter per turn, keyed on the turn: the view reads `paths` and the
-     label, and a new object per render would re-derive its rows for nothing. */
-  const filter = React.useMemo<ScmFilter | null>(
-    () =>
-      changes && changes.files.length > 0
-        ? {
-            label: `${changes.files.length} ${changes.files.length === 1 ? "file" : "files"} from the last turn`,
-            paths: new Set(changes.files.map((file) => file.path)),
-            nonce: 0,
-          }
-        : null,
-    [changes]
-  )
-  const [diff, setDiff] = React.useState<{
-    path: string
-    left: Comparison
-    right: Comparison
-    repo?: string
-  } | null>(null)
+  const settings = useServer()
+  const queryClient = useQueryClient()
+  const marks = useChangesMarks(sessionId)
+  const scope = marks.scope ?? "turns"
   const comments = useReviewComments(sessionId)
   const [anchor, setAnchor] = React.useState<(ReviewAnchor & { path: string }) | null>(null)
-
-  const marks = React.useMemo(
-    () =>
-      diff
-        ? comments
-            .filter((c) => c.path === diff.path)
-            .map((c) => ({ side: c.side, line: c.line, endLine: c.endLine }))
-        : [],
-    [comments, diff]
-  )
-  const review = React.useMemo(
-    () =>
-      diff
-        ? { marks, onComment: (next: ReviewAnchor) => setAnchor({ ...next, path: diff.path }) }
-        : undefined,
-    [diff, marks]
+  const ctx = React.useMemo<FileListContext>(
+    () => ({ projectId, sessionId, repo: repo ?? "", comments, onComment: setAnchor }),
+    [projectId, sessionId, repo, comments]
   )
 
-  const body = diff ? (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center border-b border-border/60 px-1 py-0.5">
-        <Button variant="ghost" size="xs" onClick={() => setDiff(null)}>
-          <ArrowLeftIcon data-icon="inline-start" />
-          Changes
-        </Button>
-        <span className="ml-auto truncate pr-1.5 text-[10px] text-muted-foreground">
-          <MessageSquarePlusIcon aria-hidden className="mr-1 inline size-3" />
-          Click + beside a line to comment
-        </span>
-      </div>
-      <div className="min-h-0 flex-1">
-        <DiffTab
-          projectId={projectId}
-          path={diff.path}
-          left={diff.left}
-          right={diff.right}
-          repo={diff.repo}
-          review={review}
-          active
-        />
-      </div>
-    </div>
-  ) : filter || repo !== undefined ? (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <ScmView
-        projectId={projectId}
-        filter={filter}
-        pinnedRepo={repo}
-        onOpenDiff={(path, left, right, inRepo) => setDiff({ path, left, right, repo: inRepo })}
-        /* A file with nothing to compare (untracked) is still a diff: empty on
-           the left, the file on the right. */
-        onOpenFile={(path) => setDiff({ path, left: "head", right: "worktree" })}
-      />
-    </div>
-  ) : (
-    <div className="p-3">
-      <Empty>No turn has written to the worktree yet.</Empty>
-    </div>
+  /* The running turn's row carries no files until it ends, so it is read
+     live; everything else in "By turn" is the rows the socket already sent. */
+  const running = turns.find((turn) => !turn.changes.ended && !turn.changes.unavailable)
+  const liveScope = running ? `turn:${running.changes.turnId}` : ""
+  const live = useQuery({
+    queryKey: sessionChangesKey(settings, sessionId, liveScope),
+    queryFn: ({ signal }) => scopeFiles(settings, sessionId, liveScope, signal),
+    enabled: scope === "turns" && !!running,
+    refetchInterval: 4000,
+  })
+  const flat = useQuery({
+    queryKey: sessionChangesKey(settings, sessionId, scope),
+    queryFn: ({ signal }) => scopeFiles(settings, sessionId, scope, signal),
+    enabled: scope !== "turns",
+    refetchInterval: turnActive ? 5000 : false,
+  })
+
+  const filesOf = React.useCallback(
+    (turn: TimelineTurn): ChangedFile[] => (turn === running ? (live.data?.files ?? []) : turn.changes.files),
+    [running, live.data]
   )
+  const entries = React.useMemo(
+    () =>
+      scope === "turns"
+        ? turns.flatMap((turn) => filesOf(turn).map((file) => ({ scopeKey: `turn:${turn.changes.turnId}`, file })))
+        : (flat.data?.files ?? []).map((file) => ({ scopeKey: scope, file })),
+    [scope, turns, filesOf, flat.data]
+  )
+  const stats = totals(entries.map((entry) => entry.file))
+  const viewed = entries.filter((entry) => isViewed(marks, entry.scopeKey, entry.file)).length
+  const flagged = marks.flagged ?? []
+
+  const [openTurns, setOpenTurns] = React.useState<Record<string, boolean>>({})
+  const [sending, setSending] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  const send = async (text: string, after?: () => void) => {
+    setSending(true)
+    setError(null)
+    try {
+      await onSend(text)
+      after?.()
+    } catch (err) {
+      setError(describeError(err).title)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const reviewPaths = scope === "turns" ? (turns[0] ? filesOf(turns[0]) : []) : (flat.data?.files ?? [])
+  const askReview = () => void send(composeAskReview(SCOPE_ASK[scope], reviewPaths.map((file) => file.path)))
+  const fixFlagged = () => {
+    const onFlagged = comments.filter((c) => flagged.includes(threadRelative(c.path, repo)))
+    void send(composeFixFlagged(flagged, onFlagged, repo), () => {
+      for (const c of onFlagged) removeReviewComment(sessionId, c.id)
+      setFlagged(sessionId, flagged, false)
+    })
+  }
+  const markAll = (value: boolean) => {
+    const byScope = new Map<string, ChangedFile[]>()
+    for (const entry of entries) byScope.set(entry.scopeKey, [...(byScope.get(entry.scopeKey) ?? []), entry.file])
+    for (const [key, files] of byScope) setViewed(sessionId, key, files, value)
+  }
+
+  let body: React.ReactNode
+  if (scope === "turns") {
+    body =
+      turns.length === 0 ? (
+        <div className="p-3">
+          <Empty>No turn has written to the worktree yet.</Empty>
+        </div>
+      ) : (
+        <ol className="ml-3 space-y-2 border-l border-border/60 py-2 pr-2 @panel-sm:ml-4">
+          {turns.map((turn, index) => {
+            const id = turn.changes.turnId
+            return (
+              <TurnCard
+                key={id}
+                ctx={ctx}
+                turn={turn}
+                files={filesOf(turn)}
+                unavailable={turn === running ? live.data?.unavailable : undefined}
+                open={openTurns[id] ?? index === 0}
+                onToggle={() => setOpenTurns((current) => ({ ...current, [id]: !(current[id] ?? index === 0) }))}
+              />
+            )
+          })}
+        </ol>
+      )
+  } else if (flat.isPending) {
+    body = <PanelRowsSkeleton rows={5} className="py-1" />
+  } else if (flat.error) {
+    const message = describeError(flat.error).title
+    body = (
+      <Notice tone="error" className="m-2" action={<CopyButton text={message} size="icon-xs" />}>
+        {message}
+      </Notice>
+    )
+  } else if (flat.data?.unavailable) {
+    body = (
+      <div className="p-3">
+        <Empty>{flat.data.unavailable}</Empty>
+      </div>
+    )
+  } else {
+    body = (
+      <div className="m-2 rounded-lg border border-border/60 bg-card shadow-sm">
+        <FileList ctx={ctx} files={flat.data?.files ?? []} scopeKey={scope} scope={scope} live />
+      </div>
+    )
+  }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {body}
+    <div className="@container flex min-h-0 flex-1 flex-col">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 px-2 py-1.5">
+        <NativeSelect
+          size="sm"
+          value={scope}
+          aria-label="What to show"
+          className="w-36 shrink-0"
+          onChange={(event) => setChangesScope(sessionId, event.target.value as ChangesScope)}
+        >
+          {(Object.keys(SCOPE_LABEL) as ChangesScope[]).map((value) => (
+            <NativeSelectOption key={value} value={value}>
+              {SCOPE_LABEL[value]}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+          <Stat {...stats} />
+          <span className="truncate">
+            · {entries.length} {entries.length === 1 ? "file" : "files"} · Viewed {viewed}/{entries.length}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {flagged.length > 0 && (
+            <Button size="xs" variant="outline" disabled={sending} onClick={fixFlagged}>
+              Fix flagged ({flagged.length})
+            </Button>
+          )}
+          <Button size="xs" variant="ghost" disabled={sending || reviewPaths.length === 0} onClick={askReview}>
+            Ask to review
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="ghost" size="icon-xs" aria-label="More" title="More" />}
+            >
+              <MoreHorizontalIcon aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-44">
+              <DropdownMenuItem disabled={entries.length === 0} onClick={() => markAll(true)}>
+                Mark all viewed
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={viewed === 0} onClick={() => markAll(false)}>
+                Clear viewed
+              </DropdownMenuItem>
+              {flagged.length > 0 && (
+                <DropdownMenuItem onClick={() => setFlagged(sessionId, flagged, false)}>Clear flags</DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onClick={() => void queryClient.invalidateQueries({ queryKey: sessionChangesKey(settings, sessionId) })}
+              >
+                Refresh
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </span>
+      </header>
+      {error && (
+        <Notice tone="error" className="mx-2 mt-1.5" action={<CopyButton text={error} size="icon-xs" />}>
+          {error}
+        </Notice>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
       {anchor && (
         <CommentForm
           anchor={anchor}
@@ -156,192 +292,8 @@ export default function InspectorChanges({
           comments={comments}
           strip={repo}
           onSend={onSend}
-          onOpen={(c) => setDiff((current) => (current?.path === c.path ? current : { path: c.path, left: "head", right: "worktree" }))}
         />
       )}
     </div>
-  )
-}
-
-const lineLabel = (c: Pick<ReviewComment, "line" | "endLine">) =>
-  c.line === c.endLine ? `${c.line}` : `${c.line}–${c.endLine}`
-
-/** Writing one comment, anchored where the "+" was clicked. ⌘/Ctrl+Enter
-    saves (the textarea's own, and it says so to the review's shortcut by
-    living inside `data-review-form`); Escape drops it. */
-function CommentForm({
-  anchor,
-  onCancel,
-  onSave,
-}: {
-  anchor: ReviewAnchor & { path: string }
-  onCancel: () => void
-  onSave: (text: string) => void
-}) {
-  const [text, setText] = React.useState("")
-  const save = () => {
-    if (text.trim()) onSave(text.trim())
-  }
-  return (
-    <div data-review-form className="shrink-0 space-y-1.5 border-t border-border/60 bg-muted/30 p-2">
-      <p className="truncate font-mono text-[10px] text-muted-foreground" title={anchor.path}>
-        {anchor.path}:{lineLabel(anchor)}
-        {anchor.side === "original" ? " (before)" : ""}
-      </p>
-      <Textarea
-        autoFocus
-        rows={3}
-        value={text}
-        placeholder="What should change here?"
-        className="min-h-16 text-xs"
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault()
-            save()
-          } else if (event.key === "Escape") {
-            event.preventDefault()
-            onCancel()
-          }
-        }}
-      />
-      <div className="flex justify-end gap-1">
-        <Button variant="ghost" size="xs" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="xs" disabled={!text.trim()} onClick={save}>
-          Add comment
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** The pending comments and the one button that sends them. */
-function ReviewDrafts({
-  sessionId,
-  comments,
-  strip,
-  onSend,
-  onOpen,
-}: {
-  sessionId: string
-  comments: ReviewComment[]
-  strip?: string
-  onSend: (text: string) => Promise<void>
-  onOpen: (comment: ReviewComment) => void
-}) {
-  const [editing, setEditing] = React.useState<string | null>(null)
-  const [sending, setSending] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const root = React.useRef<HTMLElement>(null)
-
-  const send = async () => {
-    if (sending || comments.length === 0) return
-    setSending(true)
-    setError(null)
-    try {
-      await onSend(composeReview(comments, strip))
-      clearReviewComments(sessionId)
-    } catch (err) {
-      /* The send path records a failure in the transcript too; this is the
-         surface the reader is looking at, and the drafts are still here. */
-      setError(describeError(err).title)
-    } finally {
-      setSending(false)
-    }
-  }
-
-  /* Only with the focus in this tab, and never from the comment box, whose
-     own ⌘↵ saves the comment — the composer keeps its ⌘↵. */
-  useShortcut("sendReview", (event) => {
-    const target = (event.target as Element | null) ?? document.activeElement
-    const inside = root.current?.parentElement?.contains(document.activeElement ?? null)
-    if (!inside || target?.closest?.("[data-review-form]")) return false
-    void send()
-  })
-
-  return (
-    <section
-      ref={root}
-      aria-label="Pending review comments"
-      className="flex max-h-[45%] shrink-0 flex-col border-t border-border/60"
-    >
-      <header className="flex items-center gap-1.5 px-2 py-1.5">
-        <span className="text-[11px] font-medium">
-          Review · {comments.length} {comments.length === 1 ? "comment" : "comments"}
-        </span>
-        <span className="flex-1" />
-        <Button variant="ghost" size="xs" onClick={() => clearReviewComments(sessionId)}>
-          Discard
-        </Button>
-        <Button size="xs" disabled={sending} onClick={() => void send()}>
-          Send review
-          <Shortcut id="sendReview" className="ml-1" />
-        </Button>
-      </header>
-      {error && (
-        <Notice tone="error" className="mx-2 mb-1.5" action={<CopyButton text={error} size="icon-xs" />}>
-          {error}
-        </Notice>
-      )}
-      <ul className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto px-2 pb-1.5">
-        {comments.map((c) => (
-          <li key={c.id} className="py-1.5">
-            <div className="flex min-w-0 items-center gap-1">
-              <button
-                type="button"
-                className="min-w-0 flex-1 truncate text-left font-mono text-[10px] text-muted-foreground hover:text-foreground"
-                title={`Open ${c.path}`}
-                onClick={() => onOpen(c)}
-              >
-                {c.path}:{lineLabel(c)}
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Edit comment"
-                title="Edit comment"
-                onClick={() => setEditing(editing === c.id ? null : c.id)}
-              >
-                <PencilIcon aria-hidden />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Delete comment"
-                title="Delete comment"
-                onClick={() => removeReviewComment(sessionId, c.id)}
-              >
-                <Trash2Icon aria-hidden />
-              </Button>
-            </div>
-            {editing === c.id ? (
-              <div data-review-form>
-                <Textarea
-                  autoFocus
-                  rows={2}
-                  defaultValue={c.text}
-                  className="mt-1 min-h-12 text-xs"
-                  onBlur={(event) => {
-                    const text = event.target.value.trim()
-                    if (text) updateReviewComment(sessionId, c.id, text)
-                    setEditing(null)
-                  }}
-                  onKeyDown={(event) => {
-                    if ((event.key === "Enter" && (event.metaKey || event.ctrlKey)) || event.key === "Escape") {
-                      event.preventDefault()
-                      event.currentTarget.blur()
-                    }
-                  }}
-                />
-              </div>
-            ) : (
-              <p className="mt-0.5 line-clamp-3 text-xs whitespace-pre-wrap">{c.text}</p>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
   )
 }

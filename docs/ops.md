@@ -45,9 +45,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   skills and commands are written into the worktree and swept against only the threads in it.
   A fork shares its parent's worktree and a workflow step works in its parent's.
 - **Source control reaches it as a `repo`.** The worktree lives inside the project, so every
-  file and git route already addresses it by project-relative path; the inspector pins
-  `ScmView` to `meta.worktree.path` (`pinnedRepo` — the walk never finds it, since it does not
-  descend through the project's own checkout, nor into dot-directories).
+  file and git route already addresses it by project-relative path; the inspector's Changes
+  tab joins `meta.worktree.path` onto every thread-relative path it opens and names it as the
+  diff's `repo` (the walk never finds it, since it does not descend through the project's own
+  checkout, nor into dot-directories).
 - **Archiving leaves the worktree; removing it is its own door** (`DELETE
   /api/sessions/:id/worktree`, "Remove worktree" in the thread and Trash menus). It refuses a
   running turn, and uncommitted work unless `?force=1` — the 409 names the files, and the
@@ -78,17 +79,34 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   a snapshot taken now while it is still running (or when the end snapshot failed);
   `uncommitted` is `HEAD` (the empty tree on an unborn branch) against a snapshot taken now —
   which is what makes untracked files appear, where `git diff HEAD` would not show them.
+  `thread` is the thread's first measured turn's start tree against now; `branch` is the
+  merge-base of HEAD with the default branch (`origin/HEAD` when the remote names one, else a
+  local `main` or `master`) against now — "unavailable" when there is no such branch or HEAD
+  is it (`git.branchBase`).
   Diffs are `--relative` to the project directory, so a project inside a larger checkout is
   measured at the project, the way `status` scopes itself. A tree git has pruned (they are
   dangling; the grace period is git's, a fortnight by default) reads as "unavailable", and so
   does a project that is not a repository — a sentence in the panel, never an error toast.
+- **Reverting a turn is a working-tree write of exactly that turn's paths**
+  (`git.revertTurn`, `POST /api/sessions/:id/turn-changes/:turnId/revert {force?}`). The
+  paths are the turn's start ↔ end diff with renames split into their two halves; each goes
+  back to the start tree — rewritten, recreated, or deleted if the turn created it — through
+  `checkout-index` out of a scratch index holding the start tree, so **the real index is
+  never touched** and neither is any other path. **It refuses when one of those paths
+  differs between the turn's end tree and a snapshot now** — a later turn, the user, an
+  editor — answering 409 `{error, conflicts}` with nothing written, and `force` reverts over
+  them. The session refuses while a turn runs, since the agent could be writing the same
+  files. `pnpm test:turn-revert` covers modified/created/deleted paths, the index, the
+  refusal, force and `branchBase`. A rewind's file half now restores into a worktree
+  thread's own checkout (`repo: session.worktree`) rather than the project's.
 - **Writes are the project's git routes.** Stage/unstage/discard/commit act on the index and
   the worktree *as they are now*, whatever scope is being read: staging a file a turn touched
   stages the whole file. The one hunk-level door is `POST …/git/apply` (`git apply --cached`
   to stage a hunk, `--reverse` to discard one); git checks the preimage and refuses a hunk
   whose surroundings have moved on, with its own message. Routes:
   `GET /api/sessions/:id/changes` (every turn's summary), `…/changes/files?scope=`,
-  `…/changes/patch?scope=&path=`. `pnpm test:fs` covers the tree helpers. The rows are not
+  `…/changes/patch?scope=&path=`, `…/changes/file?scope=&path=&side=` (scope `turn:<id>`,
+  `thread`, `uncommitted` or `branch`). `pnpm test:fs` covers the tree helpers. The rows are not
   in a backup: the trees live in the repository, and a row without them is a summary that
   can no longer be opened.
 

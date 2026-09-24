@@ -1574,10 +1574,9 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   Subagent rows count too: they carry a `parentId`, but a child's Edit is the parent turn's
   change. Nothing here spells a vendor tool name — a new runtime's writer is free as long as
   it declares a kind.
-  The scope's own reads — `GET /api/sessions/:id/changes/files|patch|file`, the turn's two
-  trees compared directly — are still served and no longer called by anything: they are what a
-  turn-scoped diff would need if one is ever wanted again. What the client reads from the
-  session is the per-turn summary (`sessionChanges`) the chips are drawn from.
+  The scope's own reads — `GET /api/sessions/:id/changes/files|file`, the turn's two trees
+  compared directly — are what the inspector's Changes timeline reads (below); `patch` is
+  still served and called by nothing.
 - **The editor wears the app's palette, and the conversion is the browser's.** Monaco's theme
   format takes a hex string per key; the app's palette is `oklch()` and `color-mix()`. So each
   token is resolved by painting it into a 1×1 canvas and reading the pixel back — the one
@@ -1719,13 +1718,38 @@ goes to it.
   grid). Opening a panel never splits the dock, and a column that belongs to one thread has
   no business being a panel another thread could land beside. Four tabs, each the *full*
   reading behind one of the composer footer's readings:
-  - **Changes** — the same value `ChangesIndicator` draws (`ThreadView` picks the last value
-    of `withTurnChanges`, and seeds `thread.turnChanges` from `GET …/changes` on mount — both
-    had been lost in a refactor, which is why the footer's reading had gone quiet). Drawn by
-    `ScmView` with a `ScmFilter` built from that turn's paths, never by a list of its own —
-    the rule above about the changes tab applies here too. A file opens `DiffTab` (the Monaco
-    diff) *over* the list with a way back, since the IDE is no longer a dock kind to send it
-    to. Source control and Monaco are the lazily-loaded `inspector-changes.tsx` chunk.
+  - **Changes** — a **turn timeline** (`inspector-changes.tsx`, pieces in
+    `thread-view/changes/`). `ThreadView` still seeds `thread.turnChanges` from
+    `GET …/changes` on mount, and the tab count is still the footer's value. The rail is
+    `changesTimeline` (`turn-footers.ts`): every measured turn newest first, gated per turn by
+    the chip's own `couldTouchFiles` walk — a turn the loaded window holds is drawn only if it
+    ran a tool that could write; one from before the window cannot be asked, and is drawn when
+    git says it changed something (the allowlist's bargain again). A card is the turn's first
+    line, its age, `+/−`, file chips and a status: the running turn is **Live** and reads its
+    start tree against the disk every 4s; an unmeasured or pruned one is a sentence. The
+    newest is open. **A file's diff opens under its row** (`DiffTab` with `inline`: stacked,
+    no toolbar, a bounded box) — the list → diff → back navigation is gone, because reading
+    the next file should be one click. A scope switcher (a native select; device-local per
+    thread, `lib/changes-marks.ts`) swaps the rail for one flat card: **Whole thread** (the
+    first measured turn's start tree → now), **Uncommitted** (HEAD → now) and **Branch vs
+    base** (merge-base with `origin/HEAD`, else `main`/`master` → now; a sentence when there
+    is none or HEAD is it). Every side is read through the scope's own routes
+    (`…/changes/file?scope=&side=`, `DiffTab`'s `TreeSide`), never re-derived client-side.
+    **Why not source control any more**: `ScmView` narrowed to a turn could only ever show
+    what is *still uncommitted*, so a committed turn read as nothing, and it could not show a
+    turn other than the newest at all. Staging a whole file is still the IDE's; the hunk
+    verbs came along (below).
+    **Viewed and flagged are the reader's**: a checkbox per row folds and dims it, counted
+    "Viewed x/N" in the bar (with "Mark all viewed" in its menu), keyed per thread + scope +
+    path on a fingerprint (status and `+/−`), so a file whose content moved comes back unread
+    with nothing having to clear it. A flag marks a file for **Fix flagged**, one message
+    listing them with any draft comments on them (those drafts and the flags clear on
+    success); **Ask to review** is one message naming the scope's files as `@` mentions (≤ 30,
+    then "…and N more") — "By turn" means the newest turn's. Both go through `onSend`, the
+    same door as Send review. **Revert turn** sits under an open ended turn's files: it
+    confirms with the count, and a 409 draws the paths that moved since with "Revert anyway"
+    (`force`); success is a toast, since no transcript row fits a working-tree write the
+    agent did not make.
   - **Plan** — `threadTodos` (exported from `todo-indicator.tsx`, the one place that decides
     which item *is* the checklist), full height.
   - **Agents** — every subagent group, running first, each a button that scrolls the
@@ -1753,13 +1777,16 @@ goes to it.
   pending-nest list `moveToGroup` already fills, each entry placed to the right of the last)
   and sends the words through `actions.send` a task later, because `send` finds a draft in the
   last-*committed* store. Attachments stay behind.
-- **A hunk is acted on where it is drawn, through doors that already existed.** On an
-  unstaged comparison (index ↔ worktree, and only when the opener named the `repo`),
+- **A hunk is acted on where it is drawn, through doors that already existed.** On a
+  comparison whose right side is the disk and whose left is the index or a scope's tree (and
+  only when the opener named the `repo`) — or whose right is a scope's "after" tree that still
+  reads exactly as the disk does, which is the newest turn before anything else wrote —
   `DiffTab` draws a bar over Monaco's own line changes (`onDidUpdateDiff` →
   `getLineChanges`): the current change, prev/next, **Stage** and **Revert**. Stage is the
   `apply` git route with `cached` — a one-hunk patch cut by `lib/workspace/hunks.ts` with its
   context read off the index, so git's preimage check is what refuses a hunk whose
-  surroundings moved. Revert writes the worktree text with the hunk's lines put back through
+  surroundings moved (against a turn's start tree that is also what refuses a hunk the index
+  does not already agree with). Revert writes the worktree text with the left side's lines put back through
   the **file route at the version the diff was read at**, so a file the agent wrote since is
   a 409 said in the bar. Keep is doing nothing. `hunks.check.mjs` stages every hunk of a few
   shapes (insertions, deletions, no trailing newline) against a real git.
