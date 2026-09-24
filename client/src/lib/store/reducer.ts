@@ -47,6 +47,7 @@ export type Action =
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"
+          | "isolate"
         >
       >
     }

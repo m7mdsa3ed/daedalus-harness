@@ -57,6 +57,16 @@ export function lifecycleActions(core: ActionsCore) {
       dispatch({ type: "pin-session", id: sessionId, pinnedAt })
     },
 
+    /** Remove an isolated thread's git worktree (the branch is kept). The
+        server refuses uncommitted work unless `force`, naming what would be
+        lost — the caller shows that and asks again. */
+    async removeWorktree(sessionId: string, force = false) {
+      await api(settings, `/api/sessions/${sessionId}/worktree${force ? "?force=1" : ""}`, {
+        method: "DELETE",
+      })
+      await refreshSessions()
+    },
+
     /** Reversible: the agent process dies, the thread moves to Trash.
         A draft has neither, and nothing to be restored from — closing it just
         forgets it. */

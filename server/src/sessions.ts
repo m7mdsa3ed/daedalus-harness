@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
@@ -287,6 +288,10 @@ export interface Session {
       retired and revived on its own clock. Persisted. */
   forkedFromSessionId: string | null;
   forkedFromTurnId: string | null;
+  /** The git worktree this thread runs in, project-relative, or null for the
+      project's own cwd (`git.createWorktree`). Chosen on the draft, never
+      moved: the agent names its conversation by the cwd it ran in. */
+  worktree: string | null;
   /** How this thread answers the agent's own questions, or null for the
       ordinary thread with a human in front of it (`autonomy.ts`).
 
@@ -845,6 +850,9 @@ export class SessionManager {
        it: unioning across the cwd would have one runtime's links deleted by a
        sweep of another's directory the moment the layouts differ. */
     ensureProjectDir(project.cwd);
+    /* A worktree thread shares its directory with no one but the threads in
+       the same worktree, so the union is per *thread* cwd. */
+    const cwd = threadCwd(session, project);
     const layouts = new Map<string, { layout: WorkspaceLayout; sets: LinkSet[] }>();
     const agentCache = new Map<string, AgentDef | undefined>();
     const add = async (agentId: string, links: LinkSet) => {
@@ -859,11 +867,11 @@ export class SessionManager {
     await add(session.agentId, this.effectiveLinks(session, profile));
     for (const other of this.sessions.values()) {
       if (other === session || other.exited || other.deletedAt !== null) continue;
-      if (other.project?.cwd !== project.cwd) continue;
+      if (!other.project || threadCwd(other, other.project) !== cwd) continue;
       await add(other.agentId, this.effectiveLinks(other));
     }
     for (const { layout, sets } of layouts.values()) {
-      materializeWorkspace(project.cwd, layout, unionLinks(...sets));
+      materializeWorkspace(cwd, layout, unionLinks(...sets));
     }
     /* The attachments materialised into `<cwd>/.daedalus/attachments/` follow
        the same rule and for the same reason: the directory is shared by every
@@ -873,9 +881,9 @@ export class SessionManager {
        project's own gitignore (we write one into it), so this sweep is the only
        thing keeping it from growing. */
     const cwds = [session, ...this.sessions.values()].filter(
-      (s) => s.deletedAt === null && (s === session || (!s.exited && s.project?.cwd === project.cwd)),
+      (s) => s.deletedAt === null && (s === session || (!s.exited && !!s.project && threadCwd(s, s.project) === cwd)),
     );
-    sweepMaterialisedAttachments(project.cwd, await claimedAttachmentIds(cwds.map((s) => s.id)));
+    sweepMaterialisedAttachments(cwd, await claimedAttachmentIds(cwds.map((s) => s.id)));
   }
 
   // ---- the event log (see session-journal.ts for the table itself) ----
@@ -1307,11 +1315,27 @@ export class SessionManager {
           `create` returns, and a policy applied a tick late is a policy that
           missed the request it existed for. */
       autonomy?: AutonomyPolicy;
+      /** Run in a git worktree: `true` makes one for this thread
+          (`git.createWorktree`), a string is an existing one (project-relative)
+          — a workflow step working in its parent's. */
+      worktree?: boolean | string;
     } = {},
   ): Promise<Session> {
     await this.ready;
+    /* Made before anything else exists, so a refusal (not a repository, not
+       its root, an unborn branch) is a failed create with git's own words and
+       no half-made thread behind it. The id is needed to name it, so it is
+       minted here when the caller did not. */
+    const threadId = id ?? randomUUID();
+    const worktree =
+      opts.worktree === true
+        ? await git.createWorktree(project.cwd, threadId)
+        : typeof opts.worktree === "string"
+          ? opts.worktree
+          : null;
     const session = this.blankSession(profile, agentId, project, links, {
-      id,
+      worktree,
+      id: threadId,
       model,
       effort,
       modeId: opts.modeId,
@@ -1412,6 +1436,8 @@ export class SessionManager {
       /** Where a forked thread was branched from — the parent's id and the
           turn the branch carries through. Provenance only; see `Session`. */
       forkedFrom?: { sessionId: string; turnId: string };
+      /** Project-relative worktree this thread runs in. */
+      worktree?: string | null;
       /** An imported thread already had a life before this row existed; its
           own last-activity time is where it belongs in the list. */
       createdAt?: number;
@@ -1467,6 +1493,7 @@ export class SessionManager {
       parentSessionId: opts.parentSessionId ?? null,
       forkedFromSessionId: opts.forkedFrom?.sessionId ?? null,
       forkedFromTurnId: opts.forkedFrom?.turnId ?? null,
+      worktree: opts.worktree ?? null,
       autonomy: opts.autonomy ?? null,
       deadline: null,
       autonomyBlocked: 0,
@@ -1556,7 +1583,7 @@ export class SessionManager {
        nothing rather than a Claude Code settings file it will never open. */
     const allowlist = agent?.workspaceLayout;
     if (agent?.liveConfig === "acp" && allowlist) {
-      materializeModelAllowlist(project.cwd, allowlist, modelAllowlistFor(agent, profile, await listProfiles()));
+      materializeModelAllowlist(threadCwd(session, project), allowlist, modelAllowlistFor(agent, profile, await listProfiles()));
     }
     session.spawnProfileId = profile.id;
     session.viaGateway = !!gatewayUrlFor(profile.id, session.agentId, profileBaseUrl(profile, session.agentId), session.id);
@@ -1595,7 +1622,8 @@ export class SessionManager {
     const proc = await spawnAgent(
       profile,
       session.agentId,
-      project,
+      /* The agent runs where the thread does — its worktree, when it has one. */
+      { ...project, cwd: threadCwd(session, project) },
       ownsCatalog ? model : undefined,
       ownsCatalog ? effort : undefined,
       session.id,
@@ -1626,7 +1654,7 @@ export class SessionManager {
     session.liveAcpSessionId = null;
     session.historyLost = null;
     const bridge = new AcpBridge(this.hostFor(session), agentStream(proc, feed?.stream), {
-      cwd: project.cwd,
+      cwd: threadCwd(session, project),
       mcpServers,
       ...opts,
       agentOwned: ownsCatalog ? undefined : { model, effort },
@@ -2747,6 +2775,9 @@ export class SessionManager {
        proves the fork loadable at all (see `rewind`). */
     child.acpSessionId = forkId;
     child.acpSessionProvisional = true;
+    /* A branch of a worktree thread is in the same worktree: its conversation
+       names that cwd, and so do the files the fork point describes. */
+    child.worktree = session.worktree;
     this.sessions.set(child.id, child);
     // Before the bridge, for the same reason `create` does it this way: the
     // event rows reference this row, and the load replay starts arriving the
@@ -2955,7 +2986,10 @@ export class SessionManager {
 
   /** Per-turn worktree snapshots and their diffs — see turn-changes.ts. */
   readonly turnChanges = new TurnChangesRecorder({
-    cwdOf: (id) => this.sessions.get(id)?.project?.cwd ?? null,
+    cwdOf: (id) => {
+      const s = this.sessions.get(id);
+      return s?.project ? threadCwd(s, s.project) : null;
+    },
     emit: (id, turn) => {
       const session = this.sessions.get(id);
       if (!session) return;
@@ -3087,6 +3121,28 @@ export class SessionManager {
     this.processGone(session, reason);
   }
 
+  /**
+   * Remove a thread's worktree — the thread menu's door. Archiving leaves it
+   * (the work is in it); this is the deliberate second step. A running turn
+   * refuses, and so does uncommitted work unless `force` (`git.removeWorktree`
+   * names what would go). The branch stays, and so does the column: the
+   * thread is still the record of that work, and a revive into a directory
+   * that is gone fails on it rather than quietly moving the agent elsewhere.
+   */
+  async removeWorktree(id: string, force: boolean): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    if (!session.worktree) throw new HttpError("this thread has no worktree", 400);
+    if (session.bridge?.promptActive) throw new HttpError("a turn is running — stop it before removing its worktree", 409);
+    const project = session.project ?? (await getProject(session.projectId));
+    if (!project) throw new HttpError("this thread's project no longer exists", 409);
+    session.project = project;
+    await git.removeWorktree(project.cwd, session.worktree, force);
+    if (!session.exited)
+      this.retire(session, "This thread's worktree was removed, so its agent process was stopped.");
+    return true;
+  }
+
   list() {
     return [...this.sessions.values()].map((s) => ({
       id: s.id,
@@ -3126,6 +3182,20 @@ export class SessionManager {
       parentSessionId: s.parentSessionId,
       forkedFromSessionId: s.forkedFromSessionId,
       forkedFromTurnId: s.forkedFromTurnId,
+      /* The thread's own checkout, when it was isolated: where it is, the
+         branch it was made on, and whether it is still there (a removed one
+         keeps the column — a revive then fails on the missing cwd, loudly).
+         ponytail: `exists` is only known for a thread whose project has been
+         resolved (it has spawned since boot); unknown is left out and read as
+         there — removing is idempotent, so the worst case is a menu row that
+         prunes nothing. */
+      worktree: s.worktree
+        ? {
+            path: s.worktree,
+            branch: git.worktreeBranch(s.worktree),
+            ...(s.project ? { exists: existsSync(threadCwd(s, s.project)) } : {}),
+          }
+        : null,
     }));
   }
 
@@ -3326,6 +3396,11 @@ function modelFor(session: Session, profile: Profile, model: string | undefined)
 }
 
 /** The durable half of a session, as the row shape. */
+/** Where a thread's agent runs: its worktree, or the project's own cwd. */
+export function threadCwd(session: Pick<Session, "worktree">, project: Pick<Project, "cwd">): string {
+  return session.worktree ? join(project.cwd, session.worktree) : project.cwd;
+}
+
 function rowValues(s: Session) {
   return {
     id: s.id,
@@ -3340,6 +3415,7 @@ function rowValues(s: Session) {
     suggestFollowups: s.suggestFollowups,
     uiBlocks: s.uiBlocks,
     title: s.title,
+    worktree: s.worktree,
     acpSessionId: s.acpSessionId ?? null,
     acpSessionProvisional: s.acpSessionProvisional,
     createdAt: s.createdAt,

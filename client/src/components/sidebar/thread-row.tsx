@@ -57,6 +57,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   onRestore,
   onPurge,
   onPin,
+  onRemoveWorktree,
 }: {
   session: SessionMeta
   state: ThreadStatus
@@ -69,18 +70,20 @@ export const ThreadRow = React.memo(function ThreadRow({
   onRestore: (session: SessionMeta) => void
   onPurge: (session: SessionMeta) => void
   onPin: (session: SessionMeta) => void
+  onRemoveWorktree?: (session: SessionMeta) => void
 }) {
   /* One list feeds both the ⋯ menu and the right-click menu. */
   const items = React.useMemo(
     () =>
       trash
-        ? trashMenuItems(session, onRestore, onPurge)
+        ? trashMenuItems(session, onRestore, onPurge, onRemoveWorktree)
         : threadMenuItems(session, pinned, {
             onRename,
             onDelete,
             onPin,
+            onRemoveWorktree,
           }),
-    [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge, onPin]
+    [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree]
   )
   const { isMobile } = useSidebar()
   /* The second line's first half. A project the catalog has not landed yet reads

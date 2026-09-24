@@ -531,7 +531,10 @@ beside Import in Settings › MCP.
   project's cwd**, which every thread of the project shares, and the materialiser sweeps
   whatever it did not write — so `materializeFor` hands `materializeWorkspace` the union
   across *every live thread in that cwd* plus the one spawning, never one thread's set alone
-  (that pulled the symlinks out from under the thread next to it). It runs in
+  (that pulled the symlinks out from under the thread next to it). "That cwd" is the
+  *thread's* (`threadCwd`): an isolated thread's is its git worktree, so its links are
+  written there and swept against only the threads in the same worktree (see `docs/ops.md`,
+  "A thread's own worktree"). It runs in
   `SessionManager.start`, not in `spawnAgent`, because only the manager knows the other
   threads; the probe materialises the profile's own set itself, which is additive and safe.
   **Which directory is the runtime's** (`AgentDef.workspaceLayout`, seed 20), so the sweep is

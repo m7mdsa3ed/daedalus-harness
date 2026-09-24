@@ -159,6 +159,8 @@ async function ensureSchema(): Promise<void> {
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS suggest_followups BOOLEAN NOT NULL DEFAULT TRUE
   `);
   await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS rules TEXT`);
+  /* A thread's git worktree (worktree.ts). */
+  await db.execute(sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS worktree TEXT`);
   /* The rules table (rules.ts). */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS rules (

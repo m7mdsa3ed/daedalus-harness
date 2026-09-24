@@ -363,6 +363,9 @@ const SessionRow = z.object({
      existed reads as on, which is the default every new thread carries. */
   uiBlocks: z.boolean().default(true),
   title: str.default("New thread"),
+  /* The thread's git worktree, project-relative. Absent in older bundles,
+     which is a thread in the project's own cwd — what they all were. */
+  worktree: optStr,
   acpSessionId: optStr,
   acpSessionProvisional: z.boolean().default(false),
   createdAt: int,

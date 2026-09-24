@@ -24,6 +24,38 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   view (`scm-view.tsx`, the status and the writes) and its diff tab (`diff-tab.tsx`, which
   reads one side through `fileAt`).
 
+## A thread's own worktree
+
+- **Isolation is picked on the draft and made before the thread exists.** "Isolate in a git
+  worktree" (the draft scope row's `WorktreeChip`, offered when `git/repos` has a root entry)
+  rides `POST /api/sessions {worktree:true}`; `SessionManager.create` calls
+  `git.createWorktree` first — `git worktree add .daedalus/worktrees/<short-id> -b
+  daedalus/<short-id>` in the project directory — so a refusal (not a repository, not its
+  root, an unborn branch) is a failed create in git's own words with no half-made thread.
+  **`.daedalus/` is ignored through `$(git rev-parse --git-common-dir)/info/exclude`, never the
+  user's `.gitignore`**, which is what keeps the project's own status and every turn snapshot
+  from seeing the checkout. Only a project that *is* its repository's root may isolate: nested
+  in a larger checkout, the thread's turn paths and source control's would be measured from
+  two different roots.
+- **`sessions.worktree` is project-relative and never moves.** The agent names its
+  conversation by the cwd it ran in, so a thread that changed directory would lose it. Every
+  place that asks where the thread runs goes through `threadCwd(session, project)` — the
+  spawn, the bridge's `session/new` cwd, the model allowlist, the turn snapshots (`cwdOf`),
+  the `!` shell route — and **materialisation unions per *thread* cwd**, so a worktree's
+  skills and commands are written into the worktree and swept against only the threads in it.
+  A fork shares its parent's worktree and a workflow step works in its parent's.
+- **Source control reaches it as a `repo`.** The worktree lives inside the project, so every
+  file and git route already addresses it by project-relative path; the inspector pins
+  `ScmView` to `meta.worktree.path` (`pinnedRepo` — the walk never finds it, since it does not
+  descend through the project's own checkout, nor into dot-directories).
+- **Archiving leaves the worktree; removing it is its own door** (`DELETE
+  /api/sessions/:id/worktree`, "Remove worktree" in the thread and Trash menus). It refuses a
+  running turn, and uncommitted work unless `?force=1` — the 409 names the files, and the
+  client asks again with that text. The branch is kept (its commits are the work) and so is
+  the column: a revive into a directory that is gone fails on it rather than moving the agent
+  elsewhere. `list()` reports `exists` only for a thread whose project it has resolved since
+  boot. `pnpm test:worktree` covers create, the exclude line, the refusals and removal.
+
 ## Turn changes and the review panel
 
 - **A turn's footprint is measured by git, never read off the transcript.** The

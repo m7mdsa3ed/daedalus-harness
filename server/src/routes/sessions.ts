@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
@@ -59,6 +60,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       mcpServerIds,
       skillIds,
       commandIds,
+      worktree,
     } = await c.req.json();
     const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
@@ -109,6 +111,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
          has to survive becoming a real thread — `create` keeps it and the
          first-prompt sniff then leaves it alone. */
       title: typeof title === "string" && title.trim() ? title.trim() : undefined,
+      /* "Isolate in a git worktree", picked on the draft: the server makes the
+         checkout before the thread exists, and refuses in git's words when
+         the project cannot have one. */
+      worktree: worktree === true,
     });
     /* Wait for the handshake. A 201 therefore means the agent has answered
        session/new, its settings have been applied, and the first `session_config`
@@ -526,6 +532,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
 
   // Delete is reversible by default: the process dies, the thread stays in the
   // list marked deleted. `?purge=1` is the irreversible one.
+  /* Remove an isolated thread's worktree (`SessionManager.removeWorktree`):
+     refused with what would be lost while it has uncommitted work, unless
+     `force=1`. */
+  app.delete("/api/sessions/:id/worktree", async (c) => {
+    const ok = await sessions.removeWorktree(c.req.param("id"), c.req.query("force") === "1");
+    return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+  });
+
   app.delete("/api/sessions/:id", async (c) => {
     const purge = c.req.query("purge") === "1";
     const ok = purge ? await sessions.purge(c.req.param("id")) : await sessions.softDelete(c.req.param("id"));
@@ -626,7 +640,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        A caller that does not — curl, a test — still gets a row of its own. */
     const shellId = (parsed.success ? parsed.data.shellId?.trim() : "") || randomUUID();
 
-    const root = await projectRoot(session.projectId);
+    /* A worktree thread's line runs in its worktree, where its agent works. */
+    const project = await projectRoot(session.projectId);
+    const root = session.worktree ? join(project, session.worktree) : project;
     const helper = (await listHelpers(session.projectId)).find(
       (candidate) => candidate.command.trim() === typed || candidate.name === typed,
     );

@@ -20,6 +20,10 @@ export const agentsKey = (s: ServerSettings) => scope(s).concat(["agents"])
     (`GET /api/agents/status`) — a reading about this machine, not a row. */
 export const agentsStatusKey = (s: ServerSettings) => scope(s).concat(["agents-status"])
 export const projectsKey = (s: ServerSettings) => scope(s).concat(["projects"])
+/** The repositories a project can see (`GET …/git/repos`) — asked by the
+    draft's worktree toggle, which needs only whether the project is one. */
+export const gitReposKey = (s: ServerSettings, projectId: string) =>
+  scope(s).concat(["git-repos", projectId])
 /** The scripts a project's package.json files declare, read off the disk —
     suggested by the composer's `!` completer, so its staleness is a
     suggestion's, not a catalog's. */

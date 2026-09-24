@@ -60,7 +60,7 @@ export const ThreadList = React.memo(function ThreadList({
      header menu's too (components/thread-menu), which is why they are a hook
      rather than three closures here; memoized inside it, so the memoized rows
      see the same handler across renders. */
-  const { rename, remove, restore, purge, pin } = useThreadRowActions(actions, {
+  const { rename, remove, restore, purge, pin, removeWorktree } = useThreadRowActions(actions, {
     activeThreadId,
     onLeave: () => void navigate("/"),
   })
@@ -123,6 +123,7 @@ export const ThreadList = React.memo(function ThreadList({
               onRestore={restore}
               onPurge={purge}
               onPin={pin}
+              onRemoveWorktree={removeWorktree}
             />
           </React.Fragment>
         )

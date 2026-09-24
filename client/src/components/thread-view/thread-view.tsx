@@ -531,6 +531,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
             thread={thread}
             meta={meta}
             changes={latestChanges}
+            onSend={(text) => actions.send(sessionId, text)}
             mode={docked ? "docked" : "sheet"}
             onClose={() => (docked ? setInspectorPref("open", false) : setSheetOpen(false))}
             locate={locate}

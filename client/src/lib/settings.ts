@@ -869,6 +869,14 @@ export interface SessionMeta {
       `parentSessionId`, it hides nothing). */
   forkedFromSessionId?: string | null
   forkedFromTurnId?: string | null
+  /** The git worktree this thread runs in (server-side `git.createWorktree`):
+      its project-relative path — which is also its `repo` for source control
+      — the branch it was made on, and whether it is still on disk (absent
+      when the server has not looked since boot, which reads as there). */
+  worktree?: { path: string; branch: string; exists?: boolean } | null
+  /** Client-only, draft-only: "Isolate in a git worktree", sent with the
+      create. */
+  isolate?: boolean
 }
 
 /** A thread that is nobody's workflow step. Half of `isListed`, which is what
@@ -946,6 +954,8 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.parentSessionId === b.parentSessionId &&
     a.forkedFromSessionId === b.forkedFromSessionId &&
     a.forkedFromTurnId === b.forkedFromTurnId &&
+    a.worktree?.path === b.worktree?.path &&
+    a.worktree?.exists === b.worktree?.exists &&
     sameIds(a.mcpServerIds, b.mcpServerIds) &&
     sameIds(a.skillIds, b.skillIds) &&
     sameIds(a.commandIds, b.commandIds)
