@@ -3070,6 +3070,13 @@ export class SessionManager {
       peerCount: s.peers.size,
       exited: s.exited,
       promptActive: s.bridge?.promptActive ?? false,
+      /* Live state for a list that has never opened the thread (the agents
+         dashboard): read off the bridge, never stored. A permission or a
+         question the agent is blocked on, a turn held at a failure, and the
+         newest context reading. */
+      waiting: (s.bridge?.pending.size ?? 0) > 0,
+      held: !!s.bridge?.paused && s.bridge.pausedReason === "error",
+      context: s.context ? { used: s.context.used, size: s.context.size } : null,
       cursor: s.eventCount,
       parentSessionId: s.parentSessionId,
       forkedFromSessionId: s.forkedFromSessionId,

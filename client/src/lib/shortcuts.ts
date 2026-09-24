@@ -199,6 +199,7 @@ export type ShortcutId =
   | "terminal"
   | "changeModel"
   | "changeProject"
+  | "inspector"
   | "viewOptions"
   | "send"
   | "steer"
@@ -287,6 +288,11 @@ export const KEYS = {
   changeModel: "alt+m",
   changeProject: "alt+p",
   viewOptions: "alt+v",
+  /** The thread inspector. ⌥/Alt is the well the choosers came out of; the
+      ⌘/Ctrl beside it keeps a bare ⌥I (a dead key on a Mac layout) out of it.
+      Chrome on a Mac keeps ⌘⌥I for its devtools, which is what rebinding is
+      for. */
+  inspector: "mod+alt+i",
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -388,6 +394,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.changeProject],
     rebindable: true,
     note: "Only until the first message: a started thread's project is the agent's cwd, so the page reads it out instead of offering it.",
+  },
+  {
+    id: "inspector",
+    scope: "Thread",
+    label: "Toggle the thread inspector",
+    chords: [KEYS.inspector],
+    rebindable: true,
+    note: "The column beside the transcript — the last turn's changes, the plan, the subagents. A narrow panel shows it as a sheet over the chat instead.",
   },
 
   {

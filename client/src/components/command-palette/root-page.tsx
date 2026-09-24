@@ -21,6 +21,8 @@
 import * as React from "react"
 import {
   AppWindowIcon,
+  Bot,
+  PanelRight,
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
@@ -76,7 +78,8 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
+import { agentsPath, boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
+import { runShortcut } from "@/hooks/use-hotkey"
 import {
   activityAt,
   clearSettings,
@@ -192,6 +195,15 @@ export function RootPage() {
     icon: <SearchIcon />,
     subtitle: "Titles instantly, full transcripts from the index",
     onSelect: () => palette.descend("search"),
+  })
+  items.push({
+    id: "jump:agents",
+    group: "Jump",
+    title: "Agents",
+    keywords: "dashboard running waiting approval held failed status every thread overview",
+    icon: <Bot />,
+    subtitle: "Every thread's live state — which ones are running, and which are waiting on you",
+    onSelect: () => palette.run(() => void navigate(agentsPath())),
   })
   if (routines.length > 0) {
     /* The one surface that answers "what have these been doing while I wasn't
@@ -327,6 +339,17 @@ export function RootPage() {
 
   /* ── This thread ── */
   if (meta) {
+    /* The chord's own handler (`runShortcut`), which only the routed
+       transcript answers — the same door the desktop menu uses. */
+    items.push({
+      id: "thread:inspector",
+      group: "This thread",
+      title: "Toggle the inspector",
+      keywords: "changes plan checklist todos subagents details sidebar panel right column",
+      icon: <PanelRight />,
+      chord: binds.inspector.chords[0],
+      onSelect: () => palette.run(() => runShortcut("inspector")),
+    })
     if (options.model) {
       items.push({
         id: "thread:model",

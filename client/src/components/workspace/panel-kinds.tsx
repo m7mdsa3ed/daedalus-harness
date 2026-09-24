@@ -5,6 +5,7 @@ import {
   ActivityIcon,
   AppWindowIcon,
   BellIcon,
+  BotIcon,
   CalendarClockIcon,
   LayersIcon,
   MessageSquareIcon,
@@ -43,6 +44,7 @@ const PAGE_ICONS: Record<string, LucideIcon> = {
   routines: ZapIcon,
   schedules: CalendarClockIcon,
   notifications: BellIcon,
+  agents: BotIcon,
 }
 
 function PageIcon({ path, className }: { path: string; className?: string }) {

@@ -12,7 +12,7 @@
    row is a place you go; the plans are a reading, and they belong with the
    server's name. */
 import * as React from "react"
-import { CalendarClock, MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
+import { Bot, CalendarClock, MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -25,7 +25,7 @@ import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-me
 import { Shortcut } from "@/components/shortcut"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
-import { boardPath, routinesPath, schedulesPath } from "@/lib/router"
+import { agentsPath, boardPath, routinesPath, schedulesPath } from "@/lib/router"
 import { useRoutines, useScheduled } from "@/lib/queries/routines"
 import { GROUP, MENU, ROW } from "./scale"
 
@@ -86,6 +86,14 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
       tooltip: "Tasks board",
       isActive: inBoard,
       onClick: () => void navigate(boardPath()),
+    },
+    {
+      key: "agents",
+      icon: <Bot />,
+      label: "Agents",
+      tooltip: "Agents — every thread's live state",
+      isActive: location.pathname.startsWith("/agents"),
+      onClick: () => void navigate(agentsPath()),
     },
     /* Two pages for what happens with nobody watching. The labels are the
        feature: a routine starts a NEW thread on its own (a clock, a webhook, a

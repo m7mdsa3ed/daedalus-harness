@@ -11,6 +11,7 @@ import {
   READING_TRIGGER,
   ReadingBubble,
   ReadingFace,
+  OpenInInspector,
 } from "@/components/composer/indicator"
 import { extractSubagent } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
@@ -128,6 +129,7 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
             </li>
           ))}
         </ul>
+        <OpenInInspector tab="agents" onOpen={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

@@ -729,6 +729,21 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   surface of its own: the files are already where they can be staged, discarded and committed,
   and a second list that could do none of that was the changes tab this replaced. The
   narrowing is one derivation of the status, so every count and every "stage all" follows it.
+- **The thread inspector is the chat panel's, never a dock split**
+  (`thread-view/thread-inspector.tsx`, a grid column of `ThreadView`): Changes (the same
+  `withTurnChanges` pick, drawn by `ScmView` narrowed to it — never a second list — with the
+  diff opening over it), Plan (`threadTodos`), Agents (the subagent groups, a row jumps the
+  transcript), Details. **Docked or a sheet is the *panel's* width** (measured, 1024px); open,
+  width and tab are the device's (`lib/inspector.ts`), and **the sheet's open state is never
+  stored** — a restored overlay covers every narrow transcript. The footer readings stay the
+  readings; their popovers end in "Open in inspector" (`InspectorContext`, null outside a
+  transcript). Toggled by the `inspector` shortcut, which only the routed thread answers.
+- **The agents dashboard (`/agents`) fetches nothing of its own**: the session list and
+  `agentState` over `threadStatus`. **A list's live state for a thread with no socket is the
+  server's snapshot of its bridge** — `waiting`/`held`/`context` on `GET /api/sessions`,
+  derived in `list()` and never stored — and **the live thread outranks it** wherever a tab
+  holds one. The snapshot moves only when the list is re-read, so the page re-reads it while
+  visible.
 - A project's own page reads its settled half from one `/stats` call, on mount and by Refresh
   and **never on a timer**. **Turns, not events**, are counted; a tile skeletons rather than
   zeroes. **Header carries a "Run" dropdown** for the project's custom helper commands

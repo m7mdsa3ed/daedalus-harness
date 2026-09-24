@@ -11,6 +11,7 @@ import {
   READING_TRIGGER,
   ReadingBubble,
   ReadingFace,
+  OpenInInspector,
 } from "@/components/composer/indicator"
 import { shortPath } from "@/lib/tools"
 import type { ChangedFile, TurnChanges } from "@/lib/workspace/git-api"
@@ -123,6 +124,7 @@ export function ChangesIndicator({
             </li>
           ))}
         </ul>
+        <OpenInInspector tab="changes" onOpen={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )
