@@ -6,7 +6,7 @@
 import * as React from "react"
 
 import { ErrorBoundary } from "@/components/error-boundary"
-import { ThreadView } from "@/components/thread-view"
+import { ThreadView } from "@/components/thread-view/thread-view"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import type { Actions } from "@/lib/actions"
 import { currentThreadId } from "@/lib/router"
