@@ -82,7 +82,13 @@ export function ScmView({
   onClearFilter,
   onOpenDiff,
   onOpenFile,
+  pinnedRepo,
 }: {
+  /** Draw this one repository (project-relative) and do not walk for others —
+      a worktree thread's checkout, which the walk never finds: it lives under
+      the project's own `.daedalus/`, inside a repository it does not descend
+      through. */
+  pinnedRepo?: string
   projectId: string
   /** Show only these paths, under a banner saying why (`lib/ide/scm-filter.ts`
       — a turn's changed files). The working set underneath is untouched: this
@@ -93,7 +99,7 @@ export function ScmView({
   onClearFilter?: () => void
   /** `path` is project-relative — see `projectPath`. Both sides are named: a
       staged row is HEAD ↔ index, an unstaged one index ↔ worktree. */
-  onOpenDiff: (path: string, left: Comparison, right: Comparison) => void
+  onOpenDiff: (path: string, left: Comparison, right: Comparison, repo?: string) => void
   onOpenFile: (path: string) => void
 }) {
   const settings = useServer()
@@ -121,7 +127,10 @@ export function ScmView({
      a directory walk per keystroke's worth of agent output. */
   const loadRepos = React.useCallback(async () => {
     try {
-      const found = await gitRepos(settings, projectId)
+      const found =
+        pinnedRepo !== undefined
+          ? [{ path: pinnedRepo, name: pinnedRepo.split("/").pop() || "Project", branch: null }]
+          : await gitRepos(settings, projectId)
       if (!alive.current) return
       setRepos(found)
       setReposError(null)
@@ -136,7 +145,7 @@ export function ScmView({
     } catch (err) {
       if (alive.current) setReposError(describeError(err).title)
     }
-  }, [projectId, settings])
+  }, [projectId, settings, pinnedRepo])
 
   React.useEffect(() => {
     setRepos(null)

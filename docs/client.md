@@ -1733,6 +1733,27 @@ goes to it.
     rail's own gesture). A sheet closes itself on a jump.
   - **Details** — what the whole column was before it had tabs: model, workspace, usage,
     workflow runs, history.
+- **A review is written on the diff and sent as one ordinary message.** In the Changes tab's
+  diff, a "+" follows the pointer down the gutter (`DiffEditor`'s `review` opt-in: a glyph
+  decoration, `glyphMargin` on only then); a click anchors a comment at that line — or at the
+  selection, if the line is inside one — on either side. Comments are **drafts, device-local
+  and per thread** (`lib/review-comments.ts`, a `createLocalStore`, so a reload keeps them the
+  way it keeps a half-typed message): counted on the Changes tab, listed under the view with
+  edit/delete, and drawn on their lines. **"Send review" (`sendReview`, ⌘/Ctrl+↵, answered
+  only with the focus in the tab so the composer keeps its own) is `actions.send` and nothing
+  else** — one message (a header, then per comment `@path (line N)`, the quoted lines and the
+  words), so it queues behind a running turn and never steers, and `@path` is a mention the
+  server links like a typed one. The drafts are cleared only when the send resolves.
+- **A hunk is acted on where it is drawn, through doors that already existed.** On an
+  unstaged comparison (index ↔ worktree, and only when the opener named the `repo`),
+  `DiffTab` draws a bar over Monaco's own line changes (`onDidUpdateDiff` →
+  `getLineChanges`): the current change, prev/next, **Stage** and **Revert**. Stage is the
+  `apply` git route with `cached` — a one-hunk patch cut by `lib/workspace/hunks.ts` with its
+  context read off the index, so git's preimage check is what refuses a hunk whose
+  surroundings moved. Revert writes the worktree text with the hunk's lines put back through
+  the **file route at the version the diff was read at**, so a file the agent wrote since is
+  a 409 said in the bar. Keep is doing nothing. `hunks.check.mjs` stages every hunk of a few
+  shapes (insertions, deletions, no trailing newline) against a real git.
 - **Docked or sheet is the panel's width, measured** (a ResizeObserver on the grid root, 1024px
   — `--container-panel-lg`; a hidden tab measures 0 and is ignored). Docked, it is the grid's
   second column (`grid-cols-[minmax(0,1fr)_auto]`), resizable on its left edge (held while

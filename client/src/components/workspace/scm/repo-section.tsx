@@ -106,7 +106,7 @@ export function RepoSection({
   layout: FileLayout
   onRefresh: () => void
   onStatus: (status: GitStatus) => void
-  onOpenDiff: (path: string, left: Comparison, right: Comparison) => void
+  onOpenDiff: (path: string, left: Comparison, right: Comparison, repo?: string) => void
   onOpenFile: (path: string) => void
 }) {
   const settings = useServer()
@@ -227,8 +227,8 @@ export function RepoSection({
     (file: WorkingFile) => {
       const path = projectPath(repo.path, file.path)
       if (file.untracked || (file.staged !== "yes" && file.mark === "A")) onOpenFile(path)
-      else if (file.staged === "yes") onOpenDiff(path, "head", "staged")
-      else onOpenDiff(path, "staged", "worktree")
+      else if (file.staged === "yes") onOpenDiff(path, "head", "staged", repo.path)
+      else onOpenDiff(path, "staged", "worktree", repo.path)
     },
     [onOpenDiff, onOpenFile, repo.path]
   )

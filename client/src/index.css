@@ -1627,6 +1627,40 @@ html[data-window-controls-overlay="true"] {
   color: oklch(0.8 0.1 325);
 }
 
+/* ── Review comments in a diff (`diff-editor.tsx`) ──
+   The "+" rides the gutter of the line under the pointer, the way a code
+   host's does; a commented line wears a wash of the primary and a dot. */
+.review-glyph-add {
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.review-glyph-add::before {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: calc(var(--radius) * 0.5);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: 600 12px/1 var(--font-sans, system-ui);
+}
+.review-glyph-mark {
+  display: grid;
+  place-items: center;
+}
+.review-glyph-mark::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--primary);
+}
+.review-line-mark {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
 /* ── The editor's palette ──
    Monaco's theme is built from these at load and rebuilt whenever the palette
    moves (`lib/ide/monaco.ts`), so a custom theme carries the editor with it

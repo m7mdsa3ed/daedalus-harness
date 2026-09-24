@@ -200,6 +200,7 @@ export type ShortcutId =
   | "changeModel"
   | "changeProject"
   | "inspector"
+  | "sendReview"
   | "viewOptions"
   | "send"
   | "steer"
@@ -293,6 +294,9 @@ export const KEYS = {
       Chrome on a Mac keeps ⌘⌥I for its devtools, which is what rebinding is
       for. */
   inspector: "mod+alt+i",
+  /** Send the pending review comments — answered only while the focus is in
+      the inspector, so the composer keeps its own ⌘↵. */
+  sendReview: "mod+enter",
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -402,6 +406,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.inspector],
     rebindable: true,
     note: "The column beside the transcript — the last turn's changes, the plan, the subagents. A narrow panel shows it as a sheet over the chat instead.",
+  },
+  {
+    id: "sendReview",
+    scope: "Thread",
+    label: "Send review comments",
+    chords: [KEYS.sendReview],
+    rebindable: true,
+    note: "Only while the focus is in the inspector's Changes tab: the pending line comments go to the agent as one message, queued behind a running turn like any other.",
   },
 
   {

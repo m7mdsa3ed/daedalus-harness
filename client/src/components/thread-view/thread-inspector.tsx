@@ -30,6 +30,7 @@ import {
   setInspectorPref,
   type InspectorTab,
 } from "@/lib/inspector"
+import { useReviewComments } from "@/lib/review-comments"
 import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 import { ProjectIcon } from "@/components/entity-icon"
@@ -353,6 +354,7 @@ export function ThreadInspector({
   thread,
   meta,
   changes,
+  onSend,
   mode,
   onClose,
   locate,
@@ -363,6 +365,8 @@ export function ThreadInspector({
   /** The newest gated turn's changes, picked by `ThreadView` — the same value
       `ChangesIndicator` draws. */
   changes?: TurnChanges
+  /** The thread's prompt door, for "Send review". */
+  onSend: (text: string) => Promise<void>
   mode: "docked" | "sheet"
   onClose: () => void
   /** The transcript row an item is drawn in — a subagent nested in a run or
@@ -373,6 +377,9 @@ export function ThreadInspector({
   maxWidth: number
 }) {
   const prefs = inspectorPrefs.use()
+  const comments = useReviewComments(meta.id)
+  /* A worktree thread's changes live in its own checkout, not the project's. */
+  const worktreeRepo: string | undefined = undefined
   /* Rendered inside `ThreadView`'s scroller provider, so a jump is the rail's
      own gesture; a sheet gets out of the way of what it jumped to. */
   const { scrollToMessage } = useMessageScroller()
@@ -462,6 +469,14 @@ export function ThreadInspector({
             <TabsTrigger value="changes" className="text-xs">
               Changes
               {changes && changes.files.length > 0 && <TabCount>{changes.files.length}</TabCount>}
+              {comments.length > 0 && (
+                <span
+                  className="ml-1 rounded-full bg-primary px-1.5 font-mono text-[10px] leading-4 text-primary-foreground tabular-nums"
+                  title={`${comments.length} review ${comments.length === 1 ? "comment" : "comments"} not sent yet`}
+                >
+                  {comments.length}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="plan" className="text-xs">
               Plan
@@ -493,13 +508,19 @@ export function ThreadInspector({
             <div className="p-3">
               <Empty>This thread has no project, so there is no worktree to measure.</Empty>
             </div>
-          ) : !changes || changes.files.length === 0 ? (
+          ) : (!changes || changes.files.length === 0) && comments.length === 0 && !worktreeRepo ? (
             <div className="p-3">
               <Empty>No turn has written to the worktree yet.</Empty>
             </div>
           ) : (
             <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
-              <InspectorChanges projectId={meta.projectId} changes={changes} />
+              <InspectorChanges
+                projectId={meta.projectId}
+                sessionId={meta.id}
+                changes={changes}
+                repo={worktreeRepo}
+                onSend={onSend}
+              />
             </React.Suspense>
           )}
         </TabsContent>

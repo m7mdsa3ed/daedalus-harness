@@ -747,6 +747,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   stored** — a restored overlay covers every narrow transcript. The footer readings stay the
   readings; their popovers end in "Open in inspector" (`InspectorContext`, null outside a
   transcript). Toggled by the `inspector` shortcut, which only the routed thread answers.
+- **A review is drafts on this device, sent as ONE ordinary message through `actions.send`**
+  (`lib/review-comments.ts`): it queues behind a running turn and never steers, and the drafts
+  are cleared only once the send resolves. **Hunk actions reuse the existing doors** — stage
+  is the `apply` git route (`cached`, patch cut by `lib/workspace/hunks.ts`, context from the
+  index), revert is the file route at the version the diff was read at — and are offered only
+  on index ↔ worktree with a named `repo`.
 - **The agents dashboard (`/agents`) fetches nothing of its own**: the session list and
   `agentState` over `threadStatus`. **A list's live state for a thread with no socket is the
   server's snapshot of its bridge** — `waiting`/`held`/`context` on `GET /api/sessions`,
