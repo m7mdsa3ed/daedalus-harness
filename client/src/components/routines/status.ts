@@ -7,7 +7,7 @@
    run fine for a fortnight.
 
    So each status carries a *sentence*, not just a tint, and the list prints it.
-   The tints follow `WF_TONE` in thread-items.tsx deliberately: a workflow step
+   The tints follow `WF_TONE` in thread-items/rows.tsx deliberately: a workflow step
    and a routine run are the same kind of thing to a reader, and two tables in
    one app disagreeing about what "failed" looks like is the bug that table
    exists to prevent. */

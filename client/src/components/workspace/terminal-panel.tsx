@@ -52,7 +52,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
-import { useDock } from "@/components/workspace/dock"
+import { useDock } from "@/components/workspace/dock-context"
 import { Notice } from "@/components/notice"
 import { PanelToolbar } from "@/components/workspace/primitives"
 import { TerminalKeyRow } from "@/components/workspace/terminal-keys"

@@ -17,7 +17,7 @@ import {
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 import { cn } from "@/lib/utils";
 import { useShape } from "@/lib/shape-context";
-import { useTouchPrimary } from "@/hooks/use-touch-primary";
+import { useCoarsePointer } from "@/hooks/use-device";
 
 // On touch-primary devices the Base UI machinery is skipped entirely in
 // favour of native overflow scrolling (better physics, momentum,
@@ -46,7 +46,7 @@ const ScrollArea = forwardRef<
     },
     ref
   ) => {
-    const isTouch = useTouchPrimary();
+    const isTouch = useCoarsePointer();
 
     return (
       <ScrollAreaContext.Provider value={isTouch}>

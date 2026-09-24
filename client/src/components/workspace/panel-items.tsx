@@ -40,7 +40,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { usePrompt } from "@/components/prompt-dialog"
 import { toast } from "@/lib/toast"
-import type { WorkspaceDock } from "@/components/workspace/dock"
+import type { WorkspaceDock } from "@/components/workspace/dock-context"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import type { ShortcutId } from "@/lib/shortcuts"

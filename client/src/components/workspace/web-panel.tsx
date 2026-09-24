@@ -44,7 +44,7 @@ import { api as request, type HelperCommand } from "@/lib/settings"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
-import { useDock } from "@/components/workspace/dock"
+import { useDock } from "@/components/workspace/dock-context"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 
 /**

@@ -59,7 +59,7 @@ import { cn } from "@/lib/utils"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
 import type { Actions } from "@/lib/actions"
-import type { WorkspaceDock } from "@/components/workspace/dock"
+import type { WorkspaceDock } from "@/components/workspace/dock-context"
 import {
   PAGE_LABEL,
   PAGE_PLACEHOLDER,

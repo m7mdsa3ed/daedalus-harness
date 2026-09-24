@@ -402,7 +402,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   kind's glyph (`PANEL_ICONS`, for the menu that opens one); an **open panel** wears
   `PanelIcon`, and a chat's is its thread's agent — four threads used to be four identical
   speech bubbles.
-- **The composer is `components/composer.tsx`: one card, two rows** — what *adds to* the
+- **The composer is `components/composer/composer.tsx`: one card, two rows** — what *adds to* the
   message behind "+", what governs *how it sends* behind the chevron beside Send. Touch
   targets follow `useCoarsePointer` (the device); what Enter means follows `useIsMobile`
   (the width).

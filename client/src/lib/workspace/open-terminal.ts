@@ -7,11 +7,11 @@
 
    Nothing here touches xterm: a terminal is the server's, so opening one is a
    POST and a panel descriptor. The panel is what needs the library, and it is
-   lazy (see the component map in `workspace/dock.tsx`).
+   lazy (see the component map in `workspace/dock-surface.tsx`).
 
    `useDock`'s return type is imported for its shape only — a `type` import, so
    it is erased and this module does not pull the dock in either. */
-import type { useDock } from "@/components/workspace/dock"
+import type { useDock } from "@/components/workspace/dock-context"
 import { describeError, reportError } from "@/lib/errors"
 import { queuePanel } from "@/lib/workspace/pending-panels"
 import { createTerminal, startHelperTerminal } from "@/lib/workspace/terminals"

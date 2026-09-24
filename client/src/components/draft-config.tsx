@@ -31,7 +31,8 @@ import {
   READING_TRIGGER_ALWAYS,
   ReadingFace,
 } from "@/components/composer/indicator"
-import { ThreadToolsMenu, useThreadToolCount } from "@/components/thread-tools"
+import { ThreadToolsMenu } from "@/components/thread-tools/menu"
+import { useThreadToolCount } from "@/components/thread-tools/use-thread-tool-count"
 import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions, useProbeStatus } from "@/lib/agent-options"

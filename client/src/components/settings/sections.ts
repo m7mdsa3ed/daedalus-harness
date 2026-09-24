@@ -1,14 +1,26 @@
-/* ── Settings sections ──
-   The metadata both sides of the settings screen share: the sidebar nav
-   (`components/routes.tsx`, which draws it) and each page's header. Every
-   section is its own route — /settings/<id> — with its page component in this
-   directory.
+/* ── Settings sections, declared once ──
+   The one table the settings screen is read off: the sidebar nav, the
+   overview, the palette, each page's header *and* the `<Route>`s under
+   /settings (`components/routes.tsx` maps this array). Adding a section is
+   one entry here plus its row in `SETTINGS_NAV_GROUPS` below; there used to be
+   a second hand-kept list of pages beside the routes, and a forgotten entry
+   was a nav row that redirected straight back to the overview.
 
-   Adding one is two entries, in two files that each own half the answer: the
-   label and the icon here, and the lazy page in `SETTINGS_PAGES`
-   (`components/routes.tsx`), which is where the `<Route>` and the nav row are
-   both generated from. `id` is the URL segment as well as the section id — the
-   two have never differed, and the route tree relies on that. */
+   `id` is the section id *and* the URL segment (`/settings/<id>`) — the two
+   have never differed, and the route tree relies on that. `page` is the lazy
+   list page; `sub` are the routes that hang off it — its import screen and its
+   form — with paths relative to it, declared as siblings because that is what
+   they are: the list page is not their layout. Route *declaration* order
+   carries no meaning: React Router ranks by specificity, so `mcp/import` beats
+   `mcp/:entryId` wherever either stands.
+
+   ── Why `page` is a lazy binding and still here ──
+   The pages are chunks (see the top of `routes.tsx`): a static import of one
+   anywhere in the shell pulls it into the entry chunk. `lazyPage` is a dynamic
+   import, so this module — which the sidebar and the palette load eagerly —
+   costs one small closure per page and nothing more. The pages import this
+   module back for their headers (`sectionMeta`); a dynamic edge closing that
+   loop is harmless. */
 import {
   Bell,
   BookOpen,
@@ -31,9 +43,12 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
+import { lazyPage } from "@/lib/lazy-page"
+
 export const SETTINGS_SECTIONS = [
   {
     id: "general",
+    page: lazyPage(() => import("./general"), "GeneralPage"),
     label: "General",
     icon: Server,
     title: "General",
@@ -42,6 +57,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "ai",
+    page: lazyPage(() => import("./ai"), "AiPage"),
     label: "AI helpers",
     icon: Sparkles,
     title: "AI helpers",
@@ -50,6 +66,14 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "appearance",
+    page: lazyPage(() => import("./appearance"), "AppearancePage"),
+    /* The theme editor is its own chunk rather than Appearance's: it is the
+       single largest page in the app, and Appearance is a section someone
+       opens to change the mode. Appearance imports the gallery from the same
+       directory (`theme-builder/gallery`), never the editor. */
+    sub: [
+      { path: "themes/:themeId", page: lazyPage(() => import("@/components/theme-builder/editor"), "ThemeEditorPage") },
+    ],
     label: "Appearance",
     icon: Palette,
     title: "Appearance",
@@ -57,6 +81,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "notifications",
+    page: lazyPage(() => import("./notifications"), "NotificationsPage"),
     label: "Notifications",
     icon: Bell,
     title: "Notifications",
@@ -65,6 +90,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "keyboard",
+    page: lazyPage(() => import("./keyboard"), "KeyboardPage"),
     label: "Keyboard",
     icon: Keyboard,
     title: "Keyboard shortcuts",
@@ -73,6 +99,10 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "projects",
+    page: lazyPage(() => import("./projects"), "ProjectsPage"),
+    sub: [
+      { path: ":entryId", page: lazyPage(() => import("./projects"), "ProjectFormPage") },
+    ],
     label: "Projects",
     icon: FolderIcon,
     title: "Projects",
@@ -81,6 +111,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "knowledge",
+    page: lazyPage(() => import("./knowledge"), "KnowledgePage"),
     label: "Knowledge base",
     icon: BookOpen,
     title: "Knowledge base",
@@ -89,6 +120,15 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "mcp",
+    page: lazyPage(() => import("./mcp"), "McpPage"),
+    sub: [
+      { path: "import", page: lazyPage(() => import("./mcp"), "McpImportPage") },
+      { path: "browse", page: lazyPage(() => import("./mcp"), "McpBrowsePage") },
+      /* A chunk of its own: the playground and the schema rendering are a
+         page somebody navigates to, and the library list must not carry them. */
+      { path: ":entryId/tools", page: lazyPage(() => import("./mcp-detail"), "McpDetailPage") },
+      { path: ":entryId", page: lazyPage(() => import("./mcp"), "McpFormPage") },
+    ],
     label: "MCP servers",
     icon: Plug,
     title: "MCP servers",
@@ -97,6 +137,11 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "skills",
+    page: lazyPage(() => import("./skills"), "SkillsPage"),
+    sub: [
+      { path: "import", page: lazyPage(() => import("./skills"), "SkillImportPage") },
+      { path: ":entryId", page: lazyPage(() => import("./skills"), "SkillFormPage") },
+    ],
     label: "Skills",
     icon: Sparkles,
     title: "Skills",
@@ -105,6 +150,11 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "commands",
+    page: lazyPage(() => import("./commands"), "CommandsPage"),
+    sub: [
+      { path: "import", page: lazyPage(() => import("./commands"), "CommandImportPage") },
+      { path: ":entryId", page: lazyPage(() => import("./commands"), "CommandFormPage") },
+    ],
     label: "Commands",
     icon: SquareSlash,
     title: "Slash commands",
@@ -113,6 +163,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "rules",
+    page: lazyPage(() => import("./rules"), "RulesPage"),
     label: "Rules",
     icon: ScrollText,
     title: "Rules",
@@ -121,6 +172,12 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "personas",
+    page: lazyPage(() => import("./personas"), "PersonasPage"),
+    /* No import route: nothing in the agents' own configs is a persona to
+       import — see settings/personas.tsx. */
+    sub: [
+      { path: ":entryId", page: lazyPage(() => import("./personas"), "PersonaFormPage") },
+    ],
     label: "Personas",
     icon: Drama,
     title: "Personas",
@@ -129,6 +186,10 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "model-prompts",
+    page: lazyPage(() => import("./model-prompts"), "ModelPromptsPage"),
+    sub: [
+      { path: ":entryId", page: lazyPage(() => import("./model-prompts"), "ModelPromptFormPage") },
+    ],
     label: "Model prompts",
     icon: Lightbulb,
     title: "Model prompts",
@@ -137,6 +198,10 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "profiles",
+    page: lazyPage(() => import("./profiles"), "ProfilesPage"),
+    sub: [
+      { path: ":entryId", page: lazyPage(() => import("./profiles"), "ProfileFormPage") },
+    ],
     label: "Profiles",
     icon: KeyRound,
     title: "Profiles",
@@ -144,6 +209,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "agents",
+    page: lazyPage(() => import("./agents"), "AgentsPage"),
     label: "Agents",
     icon: Cpu,
     title: "Agents",
@@ -151,6 +217,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "usage",
+    page: lazyPage(() => import("./quota"), "QuotaPage"),
     label: "Usage",
     icon: Gauge,
     title: "Plan usage",
@@ -159,6 +226,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "backup",
+    page: lazyPage(() => import("./backup"), "BackupPage"),
     label: "Backup",
     icon: DatabaseBackup,
     title: "Backup",
@@ -167,6 +235,7 @@ export const SETTINGS_SECTIONS = [
   },
   {
     id: "web-search",
+    page: lazyPage(() => import("./web-search"), "WebSearchPage"),
     label: "Web search",
     icon: Search,
     title: "Web search",
@@ -225,9 +294,6 @@ const FULL_WIDTH_SETTINGS: readonly RegExp[] = [/^\/settings\/appearance\/themes
     the studio is already two columns and a third is what makes neither fit. */
 export const isFullWidthSettings = (pathname: string): boolean =>
   FULL_WIDTH_SETTINGS.some((pattern) => pattern.test(pathname))
-
-export const settingsMaxWidth = (pathname: string): string =>
-  isFullWidthSettings(pathname) ? "max-w-none" : "max-w-5xl"
 
 export const SETTINGS_NAV_GROUPS: readonly {
   label: string

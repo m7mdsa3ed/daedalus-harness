@@ -46,6 +46,7 @@ import {
   XIcon,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
+import { PageFrame } from "@/components/page-primitives"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -165,8 +166,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   }, [allScheduled, sessions, project.id])
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
-      <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-16 sm:px-8">
+    <PageFrame width="wide">
         <ProjectHeader
           project={project}
           onNewThread={() => startIn(project)}
@@ -277,8 +277,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             <GlanceCard stats={stats} trashed={trashed} />
           </div>
         </div>
-      </div>
-    </div>
+    </PageFrame>
   )
 }
 

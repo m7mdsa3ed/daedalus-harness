@@ -12,9 +12,9 @@
    run and a folded thought say about themselves), `rail.tsx` (the run rail's
    geometry and its "N earlier steps" head) and `user-message.tsx` (a user
    bubble's prose and its pasted-text toggles). Each is imported one way, from
-   here. `thread-items.tsx` above is the barrel that keeps this file's exports
-   — and the transcript vocabulary it re-exports — at the path every caller
-   already spells. */
+   here. There is no barrel above this directory: callers import the file
+   that owns what they use (the row views here, `tool-parts.tsx` for the
+   kind chips and `Prose`, `thread-cards.tsx` for `SourcesStrip`). */
 import * as React from "react"
 import {
   ArrowUpRightIcon,

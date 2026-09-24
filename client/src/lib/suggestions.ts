@@ -43,7 +43,7 @@ export function parsePromptSuggestions(text: string): string[] {
 
 /** `text` with every suggestions block removed, for painting the answer. The
     raw message is untouched everywhere else — copy, search and the journal
-    still read the whole thing (`thread-items.tsx` paints, never rewrites). */
+    still read the whole thing (`thread-items/rows.tsx` paints, never rewrites). */
 export function stripPromptSuggestions(text: string): string {
   if (!text || text.indexOf(SUGGEST_PROMPTS_FENCE) === -1) return text
   return text

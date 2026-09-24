@@ -14,7 +14,7 @@ import * as React from "react"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { openHelperTerminal } from "@/lib/workspace/open-terminal"
-import type { useDock } from "@/components/workspace/dock"
+import type { useDock } from "@/components/workspace/dock-context"
 import type { HelperCommand } from "@/lib/settings"
 
 export type RunHelper = (helper: HelperCommand, projectId: string) => Promise<boolean>

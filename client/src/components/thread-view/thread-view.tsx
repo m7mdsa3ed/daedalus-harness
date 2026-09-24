@@ -37,11 +37,11 @@ import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
 import { InlineApproval } from "@/components/tool-approval"
 import { InlineHeldTurn } from "@/components/held-turn"
-import { RowView } from "@/components/thread-items"
+import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
 import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
 import { PromptSuggestions } from "@/components/prompt-suggestions"
-import { Composer, type ComposerHandle } from "@/components/composer"
+import { Composer, type ComposerHandle } from "@/components/composer/composer"
 import { ThreadRail } from "@/components/thread-rail"
 import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
 import { useAgents } from "@/lib/queries/catalog"
@@ -444,7 +444,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                scroll-padding keeps a jump-to-message landing there too rather
                than hidden under it. */
             /* `--dock-content-overlap` is how much of *this panel* the floating
-               header actually covers, measured per group by workspace/dock.tsx
+               header actually covers, measured per group by workspace/dock-header.ts
                — zero for a thread in a group that is not at the top. The
                constant is the fallback: outside the dock (and for the frame
                before the first measurement) it is the whole header. */

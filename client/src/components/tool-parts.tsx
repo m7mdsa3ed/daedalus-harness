@@ -1,7 +1,7 @@
 /* ── Tool-call rendering primitives ──
    The boxes every tool view is built out of: the panes, the code blocks, the
    markdown renderer, the content-block switch. They live apart from
-   `thread-items.tsx` (which owns the transcript's own rows) and from
+   `thread-items/rows.tsx` (which owns the transcript's own rows) and from
    `tool-views/` (which owns one layout per kind of tool) so that the two
    can share them without importing each other — a tool view needs a pane, and
    the transcript needs to draw a tool view, and a cycle between those two is

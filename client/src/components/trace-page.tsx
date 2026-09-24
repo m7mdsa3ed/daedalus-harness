@@ -28,6 +28,7 @@ import { useNavigate, useParams } from "react-router"
 import type * as acp from "@daedalus/acp"
 import type { JournaledEvent, SessionUpdate, TraceEvent } from "@daedalus/protocol"
 
+import { PageFrame } from "@/components/page-primitives"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -64,8 +65,7 @@ export function TracePage() {
   }, [events])
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
-      <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-16 sm:px-8">
+    <PageFrame width="wide">
         <TraceHeader
           sessionId={sessionId}
           onBack={() => void navigate(threadPath(sessionId))}
@@ -152,8 +152,7 @@ export function TracePage() {
             </ol>
           )}
         </CardShell>
-      </div>
-    </div>
+    </PageFrame>
   )
 }
 

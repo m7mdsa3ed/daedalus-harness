@@ -1,7 +1,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-device"
 import { COLOR_DOT } from "@/lib/boards"
 import { taskKey, type Task } from "@/lib/tasks-board"
 import { startOfDay } from "@/lib/tasks-view"
