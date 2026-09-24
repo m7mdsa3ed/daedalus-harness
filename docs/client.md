@@ -1711,3 +1711,60 @@ goes to it.
   transcript is the record. The page names the thread, says when it fires next and how
   often, shows the skip state, and holds the editor. The list files schedules under the
   thread they land in.
+
+## The thread inspector and the agents dashboard
+
+- **The inspector is a column of the chat panel, never a dock split**
+  (`components/thread-view/thread-inspector.tsx`, rendered by `ThreadView` inside its own
+  grid). Opening a panel never splits the dock, and a column that belongs to one thread has
+  no business being a panel another thread could land beside. Four tabs, each the *full*
+  reading behind one of the composer footer's readings:
+  - **Changes** — the same value `ChangesIndicator` draws (`ThreadView` picks the last value
+    of `withTurnChanges`, and seeds `thread.turnChanges` from `GET …/changes` on mount — both
+    had been lost in a refactor, which is why the footer's reading had gone quiet). Drawn by
+    `ScmView` with a `ScmFilter` built from that turn's paths, never by a list of its own —
+    the rule above about the changes tab applies here too. A file opens `DiffTab` (the Monaco
+    diff) *over* the list with a way back, since the IDE is no longer a dock kind to send it
+    to. Source control and Monaco are the lazily-loaded `inspector-changes.tsx` chunk.
+  - **Plan** — `threadTodos` (exported from `todo-indicator.tsx`, the one place that decides
+    which item *is* the checklist), full height.
+  - **Agents** — every subagent group, running first, each a button that scrolls the
+    transcript to the top-level row containing it (`rowContains` → `scrollToMessage`, the
+    rail's own gesture). A sheet closes itself on a jump.
+  - **Details** — what the whole column was before it had tabs: model, workspace, usage,
+    workflow runs, history.
+- **Docked or sheet is the panel's width, measured** (a ResizeObserver on the grid root, 1024px
+  — `--container-panel-lg`; a hidden tab measures 0 and is ignored). Docked, it is the grid's
+  second column (`grid-cols-[minmax(0,1fr)_auto]`), resizable on its left edge (held while
+  dragging, written on release, double-click resets — the IDE side view's bargain) and it
+  publishes its live width as `--inspector-w` on the grid root so the absolutely-positioned
+  composer stops at its edge. Below that it is the same column laid over the transcript
+  with a scrim.
+- **What is stored is the device's** (`lib/inspector.ts`: open, width, tab — global, like
+  `view-options`). **The sheet's open state is not stored**: it is `ThreadView`'s own state,
+  because a restored overlay would cover every narrow transcript on a phone.
+- The footer readings stay the readings; their popovers end in **Open in inspector**
+  (`OpenInInspector` in `composer/indicator.tsx`), which reaches the column through
+  `InspectorContext` — null outside a transcript (the landing console), where the row is not
+  drawn. The toggle is the rebindable `inspector` shortcut (⌘/Ctrl+⌥/Alt+I), bound with
+  `enabled: routed` because every opened transcript is mounted, a button at the transcript's
+  top-right, and a palette row that calls `runShortcut`.
+
+- **`/agents` is every listed thread's live state** (`components/agents-page.tsx`, a page panel
+  in `PageFrame`, a sidebar nav row and a palette row). It fetches nothing of its own: rows are
+  the store's session list (`isListed`, not deleted), and the state is `agentState`
+  (`lib/thread/statuses.ts`) — `threadStatus` folded to waiting / held / running / failed /
+  idle / archived, plus the two things `markFor` does not say (a turn held at a failure is
+  still `turnActive`, and a thread with no process). Context % is `contextPercent`.
+- **A thread with no socket is read from the server's snapshot of its bridge.** `list()`
+  adds `waiting` (`bridge.pending` non-empty), `held` (paused by error) and `context` (the
+  row's `sessions.context`), all derived per request and never stored; `sameRow` compares
+  them so a refresh that changed one reaches the page. **The live thread outranks the
+  snapshot** wherever a tab holds one (`phase.kind === "live"`), which is also why
+  `threadStatus` now lights the sidebar's "Needs you" for a thread nobody has open. The
+  snapshot only moves when the list is re-read, so the page re-reads it on mount, on Refresh
+  and every 15s while the document is visible.
+- The page reads the whole store through one selector that returns a `Map` keeping its
+  identity until a reading moves (`useReadings`, the `useThreadStatuses` shape), because
+  `state.threads` is replaced on every streamed token. Rows are a table from `@panel-md` and
+  cards below it — one element per row, the columns folding onto a meta line.

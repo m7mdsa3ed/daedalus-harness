@@ -8,7 +8,31 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { PanelRightOpenIcon } from "lucide-react"
+import { useOpenInspector, type InspectorTab } from "@/lib/inspector"
 import { cn } from "@/lib/utils"
+
+/** The last row of a reading's popover: the same reading, full height, in the
+    thread's inspector. Draws nothing where there is no inspector to open (the
+    landing console's composer). `onOpen` closes the popover first. */
+export function OpenInInspector({ tab, onOpen }: { tab: InspectorTab; onOpen?: () => void }) {
+  const open = useOpenInspector()
+  if (!open) return null
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="-mx-1 -mb-1 justify-start text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        onOpen?.()
+        open(tab)
+      }}
+    >
+      <PanelRightOpenIcon aria-hidden data-icon="inline-start" />
+      Open in inspector
+    </Button>
+  )
+}
 
 export function Ring({ percent, className }: { percent: number; className?: string }) {
   const radius = 8.5

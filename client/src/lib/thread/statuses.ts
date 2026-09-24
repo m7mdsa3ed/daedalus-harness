@@ -22,21 +22,53 @@ import { IDLE_PHASE, markFor, type ThreadActivity } from "@/lib/thread/phase"
  * own it never lights up mid-turn — it is the fallback, and the only signal
  * there is for a thread this client has never connected to.
  *
- * "Waiting on you" (an open permission or elicitation) is likewise only known
- * for a thread with a live connection, so it is best-effort by construction and
- * correct whenever a tab has the thread open.
+ * "Waiting on you" (an open permission or elicitation) is exact for a thread
+ * with a live connection; for any other it is the list's snapshot of the
+ * server's bridge (`SessionMeta.waiting`), current as of the last refresh.
  */
 export function threadStatus(
   session: SessionMeta,
   thread: ThreadState | undefined
 ): ThreadActivity {
-  const waiting = !!thread && (thread.permissions.length > 0 || thread.elicitations.length > 0)
+  /* A live socket is the truth; without one the server's snapshot of its
+     bridge (`SessionMeta.waiting`) is the only word there is. */
+  const waiting =
+    thread?.phase.kind === "live"
+      ? thread.permissions.length > 0 || thread.elicitations.length > 0
+      : (!!thread && (thread.permissions.length > 0 || thread.elicitations.length > 0)) || !!session.waiting
   return markFor(
     thread?.phase ?? IDLE_PHASE,
     thread?.turnActive ?? session.promptActive,
     waiting,
     !!session.lastTurnError
   )
+}
+
+/** The agents dashboard's vocabulary: `threadStatus` folded down to what a
+    person scanning every thread asks, plus the two things it does not say — a
+    turn *held* at a failure (which `markFor` reads as running, because a held
+    turn is still `turnActive`) and a thread with no agent process behind it. */
+export type AgentState = "waiting" | "held" | "running" | "failed" | "idle" | "archived"
+
+export function agentState(session: SessionMeta, thread: ThreadState | undefined): AgentState {
+  const status = threadStatus(session, thread)
+  if (status === "waiting") return "waiting"
+  const held =
+    thread?.phase.kind === "live" ? thread.paused && thread.pausedReason === "error" : !!session.held
+  if (held) return "held"
+  if (status === "running") return "running"
+  if (status === "failed") return "failed"
+  const live = thread?.phase.kind === "live"
+  if (status === "stopped" || (!live && session.exited)) return "archived"
+  return "idle"
+}
+
+/** How full the thread's context window is, 0–100, or null where no reading
+    exists. The live thread's when a tab holds one, else the list's snapshot. */
+export function contextPercent(session: SessionMeta, thread: ThreadState | undefined): number | null {
+  const context = thread?.context ?? session.context
+  if (!context || !context.size) return null
+  return Math.min(100, Math.round((context.used / context.size) * 100))
 }
 
 /**

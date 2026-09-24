@@ -830,6 +830,14 @@ export interface SessionMeta {
   peerCount?: number
   exited: boolean
   promptActive: boolean
+  /** Live state off the server's bridge, for a list that has no socket to the
+      thread (the agents dashboard): the agent is blocked on a permission or a
+      question, or its turn is held at a failure. A snapshot — the live thread
+      outranks it wherever a tab has one. Absent from an older server. */
+  waiting?: boolean
+  held?: boolean
+  /** The newest context reading the server holds (`sessions.context`). */
+  context?: { used: number; size: number } | null
   cursor: number
   /** Client-only: this thread has been opened but never sent a message, so the
       server has never heard of it and no agent process exists. It holds a real
@@ -930,6 +938,10 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.peerCount === b.peerCount &&
     a.exited === b.exited &&
     a.promptActive === b.promptActive &&
+    (a.waiting ?? false) === (b.waiting ?? false) &&
+    (a.held ?? false) === (b.held ?? false) &&
+    a.context?.used === b.context?.used &&
+    a.context?.size === b.context?.size &&
     a.cursor === b.cursor &&
     a.parentSessionId === b.parentSessionId &&
     a.forkedFromSessionId === b.forkedFromSessionId &&

@@ -2,7 +2,7 @@
    The reading, and the one place that decides which of the thread's items IS
    the checklist — a `todos` tool call, or failing that the thread's own ACP
    plan. */
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 
 import { TodoChecklist } from "@/components/todo-checklist"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ import {
   ReadingBubble,
   ReadingFace,
   Ring,
+  OpenInInspector,
 } from "@/components/composer/indicator"
 import { extractTodos, toolViewOf } from "@/lib/tools"
 import { type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
@@ -33,7 +34,7 @@ import { cn } from "@/lib/utils"
  * newest such call wins, so an agent revising its list mid-turn replaces the
  * reading rather than stacking one per revision.
  */
-function threadTodos(thread: ThreadState) {
+export function threadTodos(thread: Pick<ThreadState, "items">) {
   const todoItem = [...thread.items]
     .reverse()
     // Not a subagent's: a child's checklist is its own, drawn in its rail, and
@@ -70,6 +71,7 @@ function threadTodos(thread: ThreadState) {
 export function TodoIndicator({ thread }: { thread: ThreadState }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
   const todos = useMemo(() => threadTodos(thread), [thread.items])
+  const [open, setOpen] = useState(false)
   if (!todos) return null
 
   const total = todos.length
@@ -80,7 +82,7 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
   const percent = Math.round((completed / total) * 100)
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <Button
@@ -115,6 +117,7 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
         <div className="-mx-1 max-h-[min(50svh,20rem)] overflow-y-auto overscroll-contain px-1">
           <TodoChecklist items={todos} />
         </div>
+        <OpenInInspector tab="plan" onOpen={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

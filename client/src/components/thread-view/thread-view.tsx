@@ -51,14 +51,43 @@ import {
   withTurnToolDuration,
   withTurnSources,
   withTurnSuggestions,
+  withTurnChanges,
   withTurnUsage,
 } from "@/components/thread-view/turn-footers"
+import { useShortcut } from "@/hooks/use-hotkey"
+import { useChord } from "@/lib/keybindings"
+import { formatChord } from "@/lib/shortcuts"
+import {
+  InspectorContext,
+  inspectorPrefs,
+  setInspectorPref,
+  type InspectorTab,
+} from "@/lib/inspector"
+import { useServer } from "@/lib/server-context"
+import { sessionChanges } from "@/lib/workspace/git-api"
 import { useEarlierAnchor } from "@/components/thread-view/earlier-anchor"
 import { useThreadKeys } from "@/components/thread-view/thread-keys"
 import { StartingLine, useWaitShown } from "@/components/thread-view/starting-line"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
 import { ThreadInspector } from "@/components/thread-view/thread-inspector"
+
+/** How wide the *panel* must be for the inspector to dock beside the
+    transcript (`--container-panel-lg`, 64rem); below it the column is a sheet. */
+const INSPECTOR_WIDE = 1024
+/** What the transcript keeps when the inspector is dragged wider. */
+const INSPECTOR_TRANSCRIPT_MIN = 480
+
+/** Whether an item is drawn inside this row — the row itself, or a group any
+    level down (a subagent in a run of steps, a workflow, a batch). */
+function rowContains(row: Row, id: string): boolean {
+  if (row.id === id) return true
+  if (row.kind === "subagent-group") return row.children.some((child) => rowContains(child, id))
+  if (row.kind === "workflow-group" || row.kind === "subagent-batch")
+    return row.steps.some((step) => rowContains(step, id))
+  if (row.kind === "run") return row.items.some((item) => item.id === id)
+  return false
+}
 
 /** A transcript, addressed by the pair that names it. The panel above hands
     the key down (see workspace/chat-panel): every store read, every action and
@@ -218,6 +247,34 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     [thread.items, thread.turnActive, thread.turnToolDuration, options.answersOnly, options.showConfigNotices]
   )
   const toolDurationFor = (row: Row): number | undefined => toolDurationAfter.get(rowTailId(row))
+  /* What each finished turn wrote, gated on the transcript (`withTurnChanges`
+     — git measures a window, not an author). The newest gated turn is the
+     reading the composer's `ChangesIndicator` and the inspector's Changes tab
+     both draw; it stays put when the next turn only reads, because the
+     question is "what has this thread done to the worktree". */
+  const changesAfter = React.useMemo(
+    () =>
+      withTurnChanges(
+        thread.items,
+        thread.turnActive,
+        thread.turnChanges,
+        options.answersOnly,
+        options.showConfigNotices
+      ),
+    [thread.items, thread.turnActive, thread.turnChanges, options.answersOnly, options.showConfigNotices]
+  )
+  const latestChanges = React.useMemo(() => [...changesAfter.values()].at(-1), [changesAfter])
+  /* The per-turn rows are the server's and live-only on the socket, so a
+     transcript opened cold seeds them once here. Failure is silence: the
+     reading is ambient, and a thread with no project has nothing to read. */
+  const server = useServer()
+  React.useEffect(() => {
+    const controller = new AbortController()
+    sessionChanges(server, sessionId, controller.signal)
+      .then(({ turns }) => dispatch({ type: "turn-changes-all", id: sessionId, turns }))
+      .catch(() => {})
+    return () => controller.abort()
+  }, [server, sessionId, dispatch])
   /* Held at one identity until a figure actually moves — see `useStepTurnUsage`.
      The raw walk returns a fresh object per token, and this is half of a
      *context* value, which no `React.memo` below it can absorb. */
@@ -337,12 +394,14 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      take-back — goes through this handle rather than shared state. Declared
      above the keys because Escape is one of them. */
   const composerApiRef = React.useRef<ComposerHandle>(null)
+  const routed = currentThreadId(location.pathname, location.search) === sessionId
+  const inspectorChord = useChord("inspector")
   useThreadKeys({
     sessionId,
     thread,
     actions,
     composer: composerApiRef,
-    enabled: currentThreadId(location.pathname, location.search) === sessionId,
+    enabled: routed,
   })
   // Shared with the hero behind the whole inset, which the shell paints — the
   // two must agree about when this thread counts as empty. See lib/store.
@@ -366,7 +425,53 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
 
   const rootRef = React.useRef<HTMLDivElement>(null)
   const composerRef = React.useRef<HTMLDivElement>(null)
-  const [inspectorOpen, setInspectorOpen] = React.useState(true)
+
+  /* ── The inspector ──
+     A column of this panel, never a dock split (see thread-inspector). Where
+     the *panel* is wide it is docked beside the transcript and whether it is
+     open is the device's (`lib/inspector.ts`); where it is not, it is a sheet
+     over the transcript and its open state is this view's alone — a stored
+     overlay would cover every narrow transcript on the device. The width is
+     measured on the panel, not the window: a chat beside a terminal is narrow
+     on a wide screen. A hidden tab measures 0, which is "not on screen", not
+     "narrow". */
+  const inspector = inspectorPrefs.use()
+  const [panelWidth, setPanelWidth] = React.useState(0)
+  React.useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const measure = (width: number) => {
+      if (width > 0) setPanelWidth(width)
+    }
+    measure(root.getBoundingClientRect().width)
+    const observer = new ResizeObserver(([entry]) => measure(entry?.contentRect.width ?? 0))
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [])
+  const wide = panelWidth >= INSPECTOR_WIDE
+  const [sheetOpen, setSheetOpen] = React.useState(false)
+  const docked = wide && inspector.open && !!meta
+  const sheet = !wide && sheetOpen && !!meta
+  const openInspector = React.useCallback(
+    (tab?: InspectorTab) => {
+      if (tab) setInspectorPref("tab", tab)
+      if (wide) setInspectorPref("open", true)
+      else setSheetOpen(true)
+    },
+    [wide]
+  )
+  const toggleInspector = () => {
+    if (wide) setInspectorPref("open", !inspector.open)
+    else setSheetOpen((open) => !open)
+  }
+  useShortcut("inspector", toggleInspector, { enabled: routed })
+  /* The row a subagent is drawn in, for the Agents tab's jump: a nested group
+     lives inside a run, a batch or a workflow, and only top-level rows are
+     scroller items. */
+  const locate = React.useCallback(
+    (id: string) => rows.find((row) => rowContains(row, id))?.id,
+    [rows]
+  )
   /* The docked composer is an overlay of unknown height — shelf rows, the
      queue, attachments and textarea growth all move it — so its pixel height
      is measured and published as `--composer-dock-h` on the grid root for the
@@ -402,25 +507,45 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
         the turn rail needs the scroller's `scrollToMessage`/`currentAnchorId`
         as much as the transcript does. The provider renders no DOM of its own
         — context only — so this changes nothing about the layout. */}
+    <InspectorContext.Provider value={meta ? openInspector : null}>
     <div
       ref={rootRef}
       data-empty={empty || undefined}
       className={cn(
         "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
-        inspectorOpen && "@panel-xl:grid-cols-[minmax(0,1fr)_18rem]"
+        docked && "grid-cols-[minmax(0,1fr)_auto]"
       )}
     >
-      {inspectorOpen && meta && (
-        <ThreadInspector thread={thread} meta={meta} onClose={() => setInspectorOpen(false)} />
+      {(docked || sheet) && meta && (
+        <>
+          {sheet && (
+            <button
+              type="button"
+              aria-label="Close the inspector"
+              tabIndex={-1}
+              className="absolute inset-0 z-30 bg-background/40 backdrop-blur-[1px]"
+              onClick={() => setSheetOpen(false)}
+            />
+          )}
+          <ThreadInspector
+            thread={thread}
+            meta={meta}
+            changes={latestChanges}
+            mode={docked ? "docked" : "sheet"}
+            onClose={() => (docked ? setInspectorPref("open", false) : setSheetOpen(false))}
+            locate={locate}
+            maxWidth={panelWidth - INSPECTOR_TRANSCRIPT_MIN}
+          />
+        </>
       )}
-      {!inspectorOpen && (
+      {meta && !docked && !sheet && (
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon-sm"
-          className="absolute right-3 top-[var(--dock-content-overlap,0px)] z-30 mt-2 hidden shadow-sm @panel-xl:inline-flex"
-          onClick={() => setInspectorOpen(true)}
-          aria-label="Show thread sidebar"
-          title="Show thread sidebar"
+          className="absolute right-3 top-[var(--dock-content-overlap,0px)] z-30 mt-2 text-muted-foreground hover:text-foreground"
+          onClick={() => openInspector()}
+          aria-label="Show the inspector"
+          title={inspectorChord ? `Show the inspector (${formatChord(inspectorChord)})` : "Show the inspector"}
         >
           <PanelRightOpenIcon aria-hidden className="size-4" />
         </Button>
@@ -432,7 +557,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
            The primitive's own follow is kept (it is what hides the
            scroll-to-bottom button while following) but it is not trusted on its
            own — `useFollowStream` owns the pin. See hooks/use-follow-stream. */}
-        <MessageScroller className="min-h-0 flex-1 @panel-xl:col-start-1 @panel-xl:row-start-1">
+        <MessageScroller className="col-start-1 row-start-1 min-h-0 flex-1">
           <MessageScrollerViewport
             ref={follow.viewportRef}
             /* Measured dock height: the follow/scroll-into-view offset keeps
@@ -819,13 +944,16 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       <div
         ref={composerRef}
         className={cn(
-          "min-w-0 @panel-xl:col-start-1 @panel-xl:row-start-2",
+          "col-start-1 row-start-2 min-w-0",
           empty ? KEYBOARD_CENTER_FLOW : KEYBOARD_LIFT,
           empty
             ? "relative"
             : cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 z-20",
-                inspectorOpen && "@panel-xl:left-0 @panel-xl:right-[18rem]"
+                "pointer-events-none absolute bottom-0 z-20",
+                /* Docked beside the inspector, the overlay stops at its edge —
+                   the column publishes its live width (drag included) as
+                   `--inspector-w` on this grid root. */
+                docked ? "left-0 right-[var(--inspector-w,20rem)]" : "inset-x-0"
               ),
         )}
       >
@@ -837,12 +965,14 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           thread={thread}
           meta={meta}
           delivery={delivery}
+          changes={latestChanges}
         />
       </div>
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
-      <span aria-hidden className="@panel-xl:col-start-1 @panel-xl:row-start-3" />
+      <span aria-hidden className="col-start-1 row-start-3" />
     </div>
+    </InspectorContext.Provider>
     {rewindTarget && (
       <RewindDialog
         open={rewindTarget !== null}
