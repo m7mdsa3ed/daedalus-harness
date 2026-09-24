@@ -977,6 +977,43 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   either** — Electron gives it to close-window, so it would quit the app rather
   than close a tab, the same reason `splitRight` is not ⌘W.
 
+## The desktop shell
+
+`client/electron/` — `main.cjs` (windows, menu, IPC, the static server), `tray.cjs` (the
+tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer's half is
+`lib/desktop.ts`, mounted once by the shell (`useDesktopBridge`).
+
+- **Main names a shortcut, never an action.** View › Toggle Sidebar / New Thread / Command
+  Palette / Split Right, the tray's New thread and the quick-entry hotkey all send a
+  `ShortcutId` on the `shortcut` channel, and the renderer calls `runShortcut(id)`
+  (`hooks/use-hotkey.ts`), which fires every mounted, enabled `useShortcut(id)` handler — the
+  same one the chord runs. So there is no second implementation to drift, and a binding the
+  reader moved moves with it. The menu rows carry **no accelerators** for the same reason: a
+  menu accelerator swallows the key before the page's (rebindable) binding sees it. The
+  sidebar's ⌘B is a `useShortcut("sidebar")` now, not shadcn's hand-rolled listener, which is
+  what made it reachable (and rebindable) at all.
+- **The tray reads what the sidebar reads** (`useThreadStatuses`): threads that are
+  `running` or `waiting`, pushed as `desktop.setActivity({running, waiting, items})` on a
+  1s trailing throttle. Tooltip counts everywhere; on macOS the menu-bar title says
+  "2 running · 1 waiting". A row is routed exactly like a clicked notification
+  (`notification-click` → `installDesktopNotifications`). "Waiting" is only known for a thread
+  with a live connection, the same best-effort the sidebar's badge is.
+- **Quick entry is an Electron accelerator, not a chord** (Settings › Keyboard › Desktop,
+  device-local `desktop.quickEntry`, default `Alt+Space`, `""` = off). Main registers
+  nothing on its own: the renderer re-sends it on every boot. A taken or unparsable
+  accelerator comes back as `{ok:false, error}` and is drawn on the row — never thrown.
+- **A popout is one thread and no shell** (`lib/popout.ts`, tab menu "Open thread in its
+  own window", sent threads only). It shares the main window's origin, so it shares every
+  device-local store — which is why it mounts no dock (and `saveLayout` refuses in it
+  anyway), skips the boot's draft restore/prune and `refreshSessions`' composer-draft prunes
+  (its store holds none of the main window's drafts, so it would delete their text), and
+  raises no notifications (the main window already does). The flag is a process argument
+  (`desktop.popout`) as well as `?popout=1`, so a reload after something navigated the URL
+  still knows what window it is.
+- **Auto-update is not wired**: `electron-updater` is not a dependency. Adding it is the
+  dependency, a `publish` block in `build`, and `autoUpdater.checkForUpdatesAndNotify()`
+  after `whenReady`.
+
 ## Errors
 
 - **Errors are never `String(err)`.** `client/src/lib/errors.ts` normalizes everything

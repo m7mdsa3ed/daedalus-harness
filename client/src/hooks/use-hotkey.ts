@@ -74,4 +74,24 @@ export function useShortcut(
     },
     options
   )
+
+  /* The same handler, reached without a key: the desktop shell's native menu,
+     tray and quick-entry hotkey name a shortcut, not a chord (`runShortcut`). */
+  const ref = React.useRef(handler)
+  ref.current = handler
+  const enabled = options?.enabled ?? true
+  React.useEffect(() => {
+    if (!enabled) return
+    const run = () => void ref.current(new KeyboardEvent("keydown"))
+    commands.addEventListener(id, run)
+    return () => commands.removeEventListener(id, run)
+  }, [id, enabled])
+}
+
+const commands = new EventTarget()
+
+/** Run a named shortcut's handler as if its chord had been pressed — every
+    mounted, enabled `useShortcut(id)` answers, exactly as it would to the key. */
+export function runShortcut(id: ShortcutId): void {
+  commands.dispatchEvent(new Event(id))
 }

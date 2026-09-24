@@ -22,6 +22,7 @@
 import type { SerializedDockview } from "dockview-react"
 
 import { isPanelKind, parsePanel } from "./panels"
+import { IS_POPOUT } from "../popout"
 
 const PREFIX = "daedalus.dock.v2"
 const LEGACY_KEY = "daedalus.sessionDock.v1"
@@ -237,6 +238,8 @@ export function loadLayout(serverId: string): SerializedDockview | null {
 }
 
 export function saveLayout(serverId: string, layout: SerializedDockview): void {
+  // A popout mounts no dock; this is the backstop that it never writes one.
+  if (IS_POPOUT) return
   try {
     localStorage.setItem(layoutKey(serverId), JSON.stringify(layout))
   } catch (error) {

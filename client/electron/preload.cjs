@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("desktop", {
       read by the renderer to decide whether the page may be translucent. */
   vibrancy,
   version: process.versions.electron,
+  /** A thread window (main.cjs `open-thread-window`) — true for its whole life, whatever it navigates to. */
+  popout: process.argv.includes("--daedalus-popout"),
   // Caption buttons (min/max/close) are drawn natively, colored via
   // titleBarOverlay; the app's theme is a user choice, so main must be told.
   setTitleBarTheme: (resolved, source) => ipcRenderer.send("theme-changed", resolved, source),
@@ -27,6 +29,20 @@ contextBridge.exposeInMainWorld("desktop", {
     const listener = (_event, sessionId) => handler(sessionId)
     ipcRenderer.on("notification-click", listener)
     return () => ipcRenderer.off("notification-click", listener)
+  },
+  /** What the agents are doing, for the tray: `{running, waiting, items:[{id,title,state}]}`. */
+  setActivity: (summary) => ipcRenderer.send("set-activity", summary),
+  /** Register the global quick-entry accelerator ("" turns it off).
+      Resolves `{ok}` or `{ok:false, error}` — never rejects for a taken chord. */
+  setQuickEntry: (accelerator) => ipcRenderer.invoke("set-quick-entry", accelerator),
+  /** Open one thread in a window of its own (`?popout=1`). */
+  openThreadWindow: (sessionId) => ipcRenderer.invoke("open-thread-window", sessionId),
+  /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
+      the renderer to run. Returns an unsubscribe. */
+  onShortcut: (handler) => {
+    const listener = (_event, id) => handler(id)
+    ipcRenderer.on("shortcut", listener)
+    return () => ipcRenderer.off("shortcut", listener)
   },
 })
 

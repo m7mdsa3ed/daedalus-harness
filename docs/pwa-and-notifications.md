@@ -116,6 +116,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `requestSystemNotifications` returns true there and the enable-notifications offer never
   shows: there is nothing to ask, and a browser-level "denied" must not switch off a
   channel that works regardless.
+  The click always lands on the **main** window (reopened if macOS closed it), and the
+  tray's thread rows ride the same `notification-click` channel, so there is one routing
+  path. A thread popout (`lib/popout.ts`) raises nothing — `notifyThreadEvent` returns early
+  there — because the main window holding the same thread would say it twice.
 
 ## Backgrounded pages
 

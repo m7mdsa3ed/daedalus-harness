@@ -285,12 +285,27 @@ declare global {
       isElectron: boolean
       platform: string
       vibrancy: boolean
+      /** This window is a single-thread popout (lib/popout.ts). */
+      popout?: boolean
       setTitleBarTheme?: (resolved: "light" | "dark", source: Theme) => void
       writeClipboard?: (text: string) => Promise<boolean>
       /** Raise an OS notification through the main process (lib/notifications). */
       notify?: (payload: { title: string; body: string; sessionId?: string }) => Promise<boolean>
       /** Subscribe to clicks on those notifications; returns an unsubscribe. */
       onNotificationClick?: (handler: (sessionId: string) => void) => () => void
+      /** Tray summary (lib/desktop.ts publishes it, throttled). */
+      setActivity?: (summary: DesktopActivity) => void
+      /** Global quick-entry accelerator; "" unregisters. */
+      setQuickEntry?: (accelerator: string) => Promise<{ ok: true } | { ok: false; error: string }>
+      /** A thread in a window of its own, drawn with no shell (`lib/popout.ts`). */
+      openThreadWindow?: (sessionId: string) => Promise<boolean>
+      /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */
+      onShortcut?: (handler: (id: string) => void) => () => void
     }
+  }
+  interface DesktopActivity {
+    running: number
+    waiting: number
+    items: { id: string; title: string; state: "running" | "waiting" }[]
   }
 }
