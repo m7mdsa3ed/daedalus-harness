@@ -12,6 +12,7 @@ import * as React from "react"
 import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
+import { BottomNav } from "@/components/bottom-nav"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
 import { SidebarGroupsSkeleton } from "@/components/ui/skeletons"
@@ -44,6 +45,7 @@ import {
 import { useWorkspaceDock } from "@/components/workspace/dock"
 import { WorkspaceDock } from "@/components/workspace/dock-surface"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
+import { useIsMobile } from "@/hooks/use-device"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
@@ -133,6 +135,7 @@ export function AppShell({
   const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
   const headingFor = usePageHeading()
+  const isMobile = useIsMobile()
 
   const inSettings = location.pathname.startsWith("/settings")
   const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
@@ -656,7 +659,9 @@ export function AppShell({
               over). At `sm` it widened to 8px while the tab 2px away from it
               did not, which is the row reading as two different spacings. */}
           <div data-header-left className="flex min-w-0 items-center gap-1 md:gap-2">
-            <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
+            {/* On a phone the bottom bar's Threads is this toggle, within
+                thumb reach, so the header row gives its width to the tab. */}
+            {!isMobile && <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />}
             {/* How transcripts are drawn, on this device — beside the one other
                 control that is also this device's and not this route's.
                 Sliders, not a cog: a cog in this app means the *server's*
@@ -708,6 +713,8 @@ export function AppShell({
             />
           </PageRoutesProvider>
         </div>
+        {/* The phone's bar, in flow under the dock (see bottom-nav.tsx). */}
+        {isMobile && <BottomNav onNewThread={() => startRef.current.startThread()} />}
       </SidebarInset>
       <CommandPalette
         open={palette.open}

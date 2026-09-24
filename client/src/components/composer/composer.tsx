@@ -620,7 +620,7 @@ export function Composer({
   const shelfTone = connectionTone(thread) ?? "neutral"
 
   return (
-    <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,var(--safe-bottom))]">
       <ComposerStrip
         tone={shelfTone}
         /* ── The scope row ──

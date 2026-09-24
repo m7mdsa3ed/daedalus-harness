@@ -226,7 +226,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
     /* `overscroll-x-contain`: this table is always wider than the panel, so a
        sideways swipe is the normal way to read it — and reaching the last
        column must not hand the gesture to the browser's back-navigation. */
-    <div className="min-h-0 flex-1 overflow-auto overscroll-x-contain p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="min-h-0 flex-1 overflow-auto overscroll-x-contain p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       <table className="w-full min-w-[56rem] border-separate border-spacing-0 text-sm">
         <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">

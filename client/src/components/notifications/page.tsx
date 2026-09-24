@@ -21,6 +21,7 @@ import { useNavigate } from "react-router"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Empty } from "@/components/empty"
 import { KIND_META, NotificationRow } from "@/components/notifications/items"
+import { NeedsYou } from "@/components/notifications/needs-you"
 import { EmptyCard, FormPageHeader } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
@@ -93,6 +94,8 @@ export function NotificationsInboxPage() {
         description="What the harness recorded while you were elsewhere: a turn that finished or failed, a permission the agent is blocked on, a question it asked. Opening one goes to its thread and marks it read."
         onBack={() => void navigate("/")}
       />
+
+      <NeedsYou />
 
       {!inbox && isPending ? (
         /* A read in flight is not an empty inbox. The card below says "nothing

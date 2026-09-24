@@ -6,7 +6,7 @@ import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
 import { installChunkReload } from './lib/chunk-reload.ts'
-import { installDesktopNotifications, installNotificationTestHelper } from './lib/notifications.ts'
+import { installDesktopNotifications, installNotificationTestHelper, installWorkerNotificationClicks } from './lib/notifications.ts'
 import { registerPwa } from './lib/pwa'
 import { watchInstallability } from './lib/install.ts'
 import { startKeyboardInset } from './lib/keyboard-inset.ts'
@@ -30,6 +30,8 @@ installNotificationTestHelper()
 // The desktop shell's notifications are the main process's, so a click on one
 // arrives over IPC rather than on a Notification object (electron/main.cjs).
 installDesktopNotifications()
+// A push's click, steered in the page rather than by reloading it (sw.ts).
+installWorkerNotificationClicks()
 // Service worker: the offline shell, the install, and the push notifications
 // that arrive when no tab is attached. Silent no-op off https or in a browser
 // without support.

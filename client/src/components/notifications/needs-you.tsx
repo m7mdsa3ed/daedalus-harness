@@ -1,0 +1,127 @@
+/* ── Needs you: what the agents are blocked on, right now ──
+   The top of the inbox, above the history. The history is what *happened*;
+   this is what is *waiting* — read off every live bridge's `pending` map
+   (`GET /api/pending`), so a row is here exactly as long as the agent is
+   actually blocked and gone the moment anybody answers, on any device.
+
+   Approving is the primary action, because on a phone that is the whole job:
+   a permission gets its Allow and Deny right on the card, picked by ACP option
+   kind (never by name), and the answer goes through the same first-answer-wins
+   door a thread's own card does. A question (a form or a URL) is answered in
+   its thread, where its fields are drawn — the card only opens it. */
+import { ArrowUpRightIcon } from "lucide-react"
+
+import type * as acp from "@daedalus/acp"
+import { ErrorNote } from "@/components/error-note"
+import { KindGlyph } from "@/components/notifications/items"
+import { Button } from "@/components/ui/button"
+import { useCoarsePointer } from "@/hooks/use-device"
+import { captureError, inlineFromQuery } from "@/lib/errors"
+import { useAnswerPending, usePending, type PendingItem } from "@/lib/queries/pending"
+import { useProjects } from "@/lib/queries/catalog"
+import { navigateTo, threadPath } from "@/lib/router"
+import { ApiError } from "@/lib/settings"
+import { shortAge } from "@/lib/time"
+import { cn } from "@/lib/utils"
+
+type Options = acp.RequestPermissionRequest["options"]
+
+/** The narrow yes over the standing one, and the same for no — the same
+    preference the thread's own card gives its primary button. */
+const pick = (options: Options, prefix: "allow" | "reject") =>
+  options.find((o) => o.kind === `${prefix}_once`) ?? options.find((o) => o.kind.startsWith(prefix))
+
+function summary(item: PendingItem): string {
+  if (item.kind === "permission") return item.request.toolCall?.title ?? "Permission requested"
+  return item.request.message
+}
+
+export function NeedsYou() {
+  const query = usePending()
+  const items = query.data ?? []
+  const loadError = inlineFromQuery(query.error, "Could not read what the agents are waiting on")
+  if (!items.length && !loadError) return null
+  return (
+    <section className="mb-6">
+      <h2 className="mb-2 flex items-baseline gap-2 px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        Needs you
+        <span className="text-[10px] font-normal tabular-nums normal-case tracking-normal text-muted-foreground/70">
+          {items.length}
+        </span>
+      </h2>
+      <ErrorNote error={loadError} onRetry={() => void query.refetch()} className="mb-2" />
+      {items.length > 0 && (
+        <ul className="divide-y overflow-hidden rounded-2xl border border-amber-500/30 bg-card/45 shadow-glass backdrop-blur-md supports-[backdrop-filter]:bg-card/30">
+          {items.map((item) => (
+            <li key={`${item.sessionId}:${item.requestId}`}>
+              <PendingCard item={item} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function PendingCard({ item }: { item: PendingItem }) {
+  const answer = useAnswerPending()
+  const coarse = useCoarsePointer()
+  const projects = useProjects()
+  const project = projects.find((p) => p.id === item.projectId)?.name
+  const allow = item.kind === "permission" ? pick(item.request.options, "allow") : undefined
+  const deny = item.kind === "permission" ? pick(item.request.options, "reject") : undefined
+  /* A lost race is not a failure: somebody answered first and the row is
+     leaving on the invalidation that follows. */
+  const lost = answer.error instanceof ApiError && answer.error.status === 409
+  const error = answer.error && !lost ? captureError(answer.error, "Could not send the answer") : null
+  const size = coarse ? "default" : "sm"
+  const open = () => navigateTo(threadPath(item.sessionId))
+  const send = (optionId: string) =>
+    answer.mutate({ sessionId: item.sessionId, requestId: item.requestId, optionId })
+
+  return (
+    <article className="flex items-start gap-3 px-4 py-3.5">
+      <KindGlyph
+        kind={item.kind === "permission" ? "permission" : "question"}
+        read={false}
+        className="mt-0.5 size-8"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold">
+            {item.threadTitle}
+          </span>
+          <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground">
+            {shortAge(item.askedAt)}
+          </span>
+        </div>
+        <p className="mt-0.5 line-clamp-3 text-xs leading-[1.4] text-pretty break-words text-muted-foreground">
+          {summary(item)}
+        </p>
+        {project && <p className="mt-1 truncate text-[11px] leading-4 text-muted-foreground/80">{project}</p>}
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {allow && (
+            <Button size={size} disabled={answer.isPending} onClick={() => send(allow.optionId)}>
+              {allow.kind === "allow_always" ? "Always allow" : "Allow"}
+            </Button>
+          )}
+          {deny && (
+            <Button size={size} variant="outline" disabled={answer.isPending} onClick={() => send(deny.optionId)}>
+              Deny
+            </Button>
+          )}
+          <Button
+            size={size}
+            variant={allow || deny ? "ghost" : "outline"}
+            className={cn(allow || deny ? "text-muted-foreground" : undefined)}
+            onClick={open}
+          >
+            {item.kind === "elicitation" ? "Answer" : "Open"}
+            <ArrowUpRightIcon data-icon="inline-end" />
+          </Button>
+        </div>
+        <ErrorNote error={error} className="mt-2" />
+      </div>
+    </article>
+  )
+}

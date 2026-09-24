@@ -93,7 +93,7 @@ export function TimelineView({ board, statuses, tasks, ctx, onOpen }: ViewProps)
   }, [range.from])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       <div ref={scroller} className="min-h-0 flex-1 overflow-auto rounded-xl border bg-card">
         <div style={{ width: labelW + width }} className="relative">
           {/* Header: weeks, then days. */}

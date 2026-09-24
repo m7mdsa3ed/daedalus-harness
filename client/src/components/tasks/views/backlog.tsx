@@ -141,7 +141,7 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
   }
 
   return (
-    <div className="mx-auto flex w-full min-h-0 max-w-5xl flex-1 flex-col gap-3 overflow-y-auto p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto flex w-full min-h-0 max-w-5xl flex-1 flex-col gap-3 overflow-y-auto p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       {active.map((s) => section(s))}
       {planned.map((s) => section(s))}
       <button

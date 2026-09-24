@@ -21,6 +21,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   The one thing the server still does not interpret is a `session/update` payload — it
   forwards them whole.
 
+- **The cross-thread inbox reads `bridge.pending` and nothing else.** `GET /api/pending`
+  (`SessionManager.pendingAll`) lists every open permission and elicitation on every live,
+  undeleted thread, oldest first (`askedAt`, stamped on the entry in `park`) — there is no
+  journal to read it from, by design. `POST /api/sessions/:id/pending/:requestId
+  {optionId}` answers a **permission** by one of the options the agent offered
+  (`answerPending`), and it is `bridge.answer(requestId, response)` with no origin peer: the
+  same first-answer-wins settle a socket's `answer_permission` takes, so every attached peer
+  gets `request_answered` (none of them caused it) and a slower answer gets a 409. An
+  elicitation is refused there — its fields are drawn in its thread.
+
 ## Opening a thread over HTTP
 
 - **A thread is opened over HTTP, and no socket follows: one is opened by an outgoing

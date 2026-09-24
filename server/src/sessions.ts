@@ -45,6 +45,7 @@ import {
   type AttachmentRef,
   type HistoryLost,
   type CancelReply,
+  type PendingItem,
   type PromptReply,
   type StagedConfig,
   type ThreadEvent,
@@ -2776,6 +2777,50 @@ export class SessionManager {
 
   get(id: string): Session | undefined {
     return this.sessions.get(id);
+  }
+
+  /** Every question any live agent is blocked on, oldest first — the
+      cross-thread inbox. Built from each bridge's `pending` map and nothing
+      else: a permission is never journaled, so there is no second source. */
+  pendingAll(): PendingItem[] {
+    const items: PendingItem[] = [];
+    for (const s of this.sessions.values()) {
+      if (!s.bridge || s.deletedAt !== null) continue;
+      for (const entry of s.bridge.pending.values()) {
+        const base = {
+          sessionId: s.id,
+          parentSessionId: s.parentSessionId ?? null,
+          projectId: s.projectId,
+          agentId: s.agentId,
+          threadTitle: s.title,
+          requestId: entry.requestId,
+          askedAt: entry.askedAt,
+        };
+        items.push(
+          entry.kind === "permission"
+            ? { ...base, kind: "permission", request: entry.payload as acp.RequestPermissionRequest }
+            : { ...base, kind: "elicitation", request: entry.payload as acp.CreateElicitationRequest },
+        );
+      }
+    }
+    return items.sort((a, b) => a.askedAt - b.askedAt);
+  }
+
+  /** Answer a permission with one of the options the agent offered, from a
+      surface with no socket (the inbox). It is `bridge.answer` with no origin
+      peer — the door the socket's `answer_permission` takes — so first answer
+      wins exactly as there, and `request_answered` fans out to every peer,
+      since none of them caused it. `"gone"` is a slower answerer losing the
+      race (or a request that never existed); `"bad"` an option the agent did
+      not offer, or an elicitation, whose fields are drawn in its thread. */
+  answerPending(id: string, requestId: string, optionId: string): "ok" | "gone" | "bad" {
+    const bridge = this.sessions.get(id)?.bridge;
+    const entry = bridge?.pending.get(requestId);
+    if (!bridge || !entry) return "gone";
+    if (entry.kind !== "permission") return "bad";
+    const offered = (entry.payload as acp.RequestPermissionRequest).options.some((o) => o.optionId === optionId);
+    if (!offered) return "bad";
+    return bridge.answer(requestId, { outcome: { outcome: "selected", optionId } }) ? "ok" : "gone";
   }
 
   /**

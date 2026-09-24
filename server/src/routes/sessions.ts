@@ -28,6 +28,20 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     return c.json(c.req.query("deleted") === "1" ? list : list.filter((s) => s.deletedAt === null));
   });
 
+  /* The cross-thread inbox: every question a live agent is blocked on. */
+  app.get("/api/pending", (c) => c.json(sessions.pendingAll()));
+
+  /* Answer one from that inbox. Permissions only — a form or a URL question
+     is answered in its thread, where its fields are drawn. */
+  app.post("/api/sessions/:id/pending/:requestId", async (c) => {
+    const body = z.object({ optionId: z.string().min(1) }).safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "optionId is required" }, 400);
+    const result = sessions.answerPending(c.req.param("id"), c.req.param("requestId"), body.data.optionId);
+    if (result === "gone") return c.json({ error: "already answered" }, 409);
+    if (result === "bad") return c.json({ error: "not an option this request offered" }, 400);
+    return c.json({ ok: true });
+  });
+
   app.post("/api/sessions", async (c) => {
     const {
       id,

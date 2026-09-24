@@ -315,7 +315,7 @@ export function KanbanView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:snap-none">
+    <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 pb-[max(0.75rem,var(--safe-bottom))] sm:snap-none">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
