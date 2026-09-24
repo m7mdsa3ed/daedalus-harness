@@ -753,6 +753,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   is the `apply` git route (`cached`, patch cut by `lib/workspace/hunks.ts`, context from the
   index), revert is the file route at the version the diff was read at — and are offered only
   on index ↔ worktree with a named `repo`.
+- **Best-of-N adds no concept**: N drafts from `startThreadIn`, each `isolate`d and retuned
+  with `remember=false`, opened side by side by `dock.openGroup`, sent through
+  `actions.send` a task after the mint (it reads the committed store).
 - **The agents dashboard (`/agents`) fetches nothing of its own**: the session list and
   `agentState` over `threadStatus`. **A list's live state for a thread with no socket is the
   server's snapshot of its bridge** — `waiting`/`held`/`context` on `GET /api/sessions`,

@@ -85,6 +85,7 @@ import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { ComposerAddMenu } from "@/components/composer/add-menu"
+import { BestOfNMenu } from "@/components/composer/best-of-n"
 import { EnhanceButton } from "@/components/composer/enhance-button"
 import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
@@ -964,6 +965,19 @@ export function Composer({
               ground — a muted chip — and fills primary the moment it becomes
               sendable. Wears the row's own corner (`rounded-pill`, like the
               "+"), so the cluster is one shape. */}
+          {/* How it sends, beside Send: best-of-N. Draws nothing where it
+              cannot isolate the copies (not a repository root, no dock). */}
+          <BestOfNMenu
+            meta={meta}
+            actions={actions}
+            text={text}
+            size={iconSize}
+            disabled={!canSend || text.trim().startsWith("!")}
+            onSent={() => {
+              setText("")
+              clearDraft(sessionId)
+            }}
+          />
           <Button
             variant="default"
             size={iconSize}

@@ -114,6 +114,9 @@ export interface WorkspaceDock {
   /** Move a panel into a group — an existing one, or `null` for a new one.
       Answers the group panel's id, so a caller can aim the next open at it. */
   moveToGroup: (id: string, groupPanelId: string | null) => string | null
+  /** Open these panels in a new group, side by side (best-of-N). Answers the
+      group panel's id. */
+  openGroup: (panels: PanelDescriptor[]) => string | null
   /** Move a panel out of its group, back beside the group's own tab. */
   unnestPanel: (id: string) => void
 }

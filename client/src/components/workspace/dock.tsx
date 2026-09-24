@@ -108,7 +108,7 @@ export function useWorkspaceDock(): DockController {
   /* Panels promised to a group that does not have an instance yet: minting the
      group panel and filling it are two frames apart (`attachNested` drains
      this). */
-  const pendingNestRef = React.useRef(new Map<string, { panel: PanelDescriptor; title: string }[]>())
+  const pendingNestRef = React.useRef(new Map<string, { panel: PanelDescriptor; title: string; beside?: boolean }[]>())
 
   /** Every live instance, the top level first. */
   const instances = React.useCallback((): DockviewApi[] => {
@@ -803,6 +803,7 @@ export function useWorkspaceDock(): DockController {
       pendingNestRef.current.delete(groupPanelId)
       if (pending?.length) {
         silently(() => {
+          let previous: string | null = null
           for (const entry of pending) {
             if (api.getPanel(panelId(entry.panel))) continue
             api.addPanel({
@@ -810,7 +811,10 @@ export function useWorkspaceDock(): DockController {
               component: entry.panel.kind,
               title: entry.title,
               params: entry.panel as unknown as Record<string, unknown>,
+              /* `openGroup`'s side-by-side: each to the right of the last. */
+              ...(entry.beside && previous ? { position: { referencePanel: previous, direction: "right" as const } } : {}),
             })
+            previous = panelId(entry.panel)
           }
         })
       }
@@ -929,6 +933,28 @@ export function useWorkspaceDock(): DockController {
     },
     [findPanel, ownerOf, isNested, groupPanelOf, silently]
   )
+
+  /* A new group holding these panels side by side — best-of-N's N threads.
+     The same pending list a move into a new group fills, drained by
+     `attachNested` once the group's instance exists; the group itself is a
+     tab beside what you are looking at, like every open. */
+  const openGroup = React.useCallback((panels: PanelDescriptor[]): string | null => {
+    const root = apiRef.current
+    if (!root || panels.length === 0) return null
+    const groupId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    const newId = panelId({ kind: "group", groupId })
+    pendingNestRef.current.set(
+      newId,
+      panels.map((panel) => ({ panel, title: PANEL_SPECS[panel.kind].defaultTitle, beside: true }))
+    )
+    root.addPanel({
+      id: newId,
+      component: "group",
+      title: PANEL_SPECS.group.defaultTitle,
+      params: { kind: "group", groupId },
+    })
+    return newId
+  }, [])
 
   const unnestPanel = React.useCallback(
     (id: string) => {
@@ -1140,6 +1166,7 @@ export function useWorkspaceDock(): DockController {
       attachNested,
       groupIdOf,
       moveToGroup,
+      openGroup,
       unnestPanel,
     }),
     [
@@ -1179,6 +1206,7 @@ export function useWorkspaceDock(): DockController {
       attachNested,
       groupIdOf,
       moveToGroup,
+      openGroup,
       unnestPanel,
     ]
   )

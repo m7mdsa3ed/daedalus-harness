@@ -1744,6 +1744,15 @@ goes to it.
   else** — one message (a header, then per comment `@path (line N)`, the quoted lines and the
   words), so it queues behind a running turn and never steers, and `@path` is a mention the
   server links like a typed one. The drafts are cleared only when the send resolves.
+- **Best-of-N is N ordinary threads** (`composer/best-of-n.tsx`, the chevron beside Send,
+  drawn only inside the dock and only where a worktree can be made). "Send to several
+  threads…" mints 2–4 drafts through `actions.startThreadIn`, retunes each with
+  `configureDraft(…, remember=false)` — `isolate: true`, and the model picked for that copy out
+  of the profile the project's pair resolves to (a copy's model must not become the project's
+  next default) — opens them side by side in a new `group` panel (`dock.openGroup`: the
+  pending-nest list `moveToGroup` already fills, each entry placed to the right of the last)
+  and sends the words through `actions.send` a task later, because `send` finds a draft in the
+  last-*committed* store. Attachments stay behind.
 - **A hunk is acted on where it is drawn, through doors that already existed.** On an
   unstaged comparison (index ↔ worktree, and only when the opener named the `repo`),
   `DiffTab` draws a bar over Monaco's own line changes (`onDidUpdateDiff` →
