@@ -398,7 +398,7 @@ export function FormActions({
        not resize when one opens and `bottom-0` would be behind them. */
     <footer
       className={cn(
-        "sticky z-20 -mx-4 mt-2 flex flex-col gap-3 border-t bg-background px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] @panel-sm:-mx-8 @panel-sm:px-8",
+        "sticky z-20 -mx-4 mt-2 flex flex-col gap-3 border-t bg-background px-4 pt-3 pb-[max(0.75rem,var(--safe-bottom))] @panel-sm:-mx-8 @panel-sm:px-8",
         KEYBOARD_RISE
       )}
     >

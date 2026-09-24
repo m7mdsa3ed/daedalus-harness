@@ -88,6 +88,8 @@ export const tasksKey = (s: ServerSettings) => scope(s).concat(["tasks"])
 export const taskDetailKey = (s: ServerSettings, taskId?: string) =>
   taskId === undefined ? scope(s).concat(["task-detail"]) : scope(s).concat(["task-detail", taskId])
 export const notificationsKey = (s: ServerSettings) => scope(s).concat(["notifications"])
+/** Every question a live agent is blocked on, across threads (`GET /api/pending`). */
+export const pendingKey = (s: ServerSettings) => scope(s).concat(["pending"])
 /** Every prompt this server has been sent, newest first — global across
     threads, which is why it hangs off the connection and not off a session.
     Persisted with the rest of the cache on purpose: Up must answer on the

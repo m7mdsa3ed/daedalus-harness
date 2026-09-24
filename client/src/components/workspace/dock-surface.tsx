@@ -125,6 +125,68 @@ export function DockSurface({
   )
 }
 
+/* How far a finger travels before the gesture is read at all, and how far it
+   must go sideways for a tab change. The lock is the first: a touch that has
+   moved mostly vertically by then is a scroll and is let go for good. */
+const SWIPE_LOCK_PX = 10
+const SWIPE_COMMIT_PX = 56
+
+/**
+ * ── Swipe the strip to walk the tabs, on a phone ──
+ * The one-stack rule leaves a phone one tab in view and the rest in a list, so
+ * a sideways swipe *on the strip* is the thumb's way to the neighbour — left
+ * for the next tab, right for the previous, wrapping like Alt+↓/↑, through the
+ * same `cycleTab` the chords and palette rows call. Only the strip: on the
+ * transcript a sideways drag is a text selection or a code block's own
+ * horizontal scroll, and both have to keep working.
+ *
+ * Native pointer events on the document (a strip is created and destroyed by
+ * dockview, and a nested group has its own), touch only. The strip carries
+ * `touch-action: pan-y` below `md` (`index.css`) so the browser hands us the
+ * horizontal half instead of scrolling the strip.
+ */
+function useTabSwipe(enabled: boolean, cycle: (delta: number) => void) {
+  const cycleRef = React.useRef(cycle)
+  cycleRef.current = cycle
+  React.useEffect(() => {
+    if (!enabled) return
+    let start: { id: number; x: number; y: number; axis: "x" | "y" | null } | null = null
+    const down = (e: PointerEvent) => {
+      if (e.pointerType !== "touch" || !e.isPrimary) return
+      const target = e.target as Element | null
+      if (!target?.closest(".dv-tabs-and-actions-container")) return
+      start = { id: e.pointerId, x: e.clientX, y: e.clientY, axis: null }
+    }
+    const move = (e: PointerEvent) => {
+      if (!start || e.pointerId !== start.id || start.axis) return
+      const dx = Math.abs(e.clientX - start.x)
+      const dy = Math.abs(e.clientY - start.y)
+      if (Math.max(dx, dy) < SWIPE_LOCK_PX) return
+      start.axis = dx > dy * 1.5 ? "x" : "y"
+    }
+    const up = (e: PointerEvent) => {
+      if (!start || e.pointerId !== start.id) return
+      const dx = e.clientX - start.x
+      const horizontal = start.axis === "x"
+      start = null
+      if (horizontal && Math.abs(dx) >= SWIPE_COMMIT_PX) cycleRef.current(dx < 0 ? 1 : -1)
+    }
+    const cancel = () => {
+      start = null
+    }
+    document.addEventListener("pointerdown", down, true)
+    document.addEventListener("pointermove", move, true)
+    document.addEventListener("pointerup", up, true)
+    document.addEventListener("pointercancel", cancel, true)
+    return () => {
+      document.removeEventListener("pointerdown", down, true)
+      document.removeEventListener("pointermove", move, true)
+      document.removeEventListener("pointerup", up, true)
+      document.removeEventListener("pointercancel", cancel, true)
+    }
+  }, [enabled])
+}
+
 export function WorkspaceDock({
   actions,
   dock,
@@ -148,6 +210,7 @@ export function WorkspaceDock({
   React.useEffect(() => {
     if (isMobile) dock.stackAll()
   }, [isMobile, dock])
+  useTabSwipe(isMobile, dock.cycleTab)
 
   /* Every kind gets an entry, including the ones this build has not written
      yet: Dockview throws on an unknown component name, so a layout saved by a

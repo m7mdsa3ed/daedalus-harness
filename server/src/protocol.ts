@@ -594,6 +594,27 @@ export interface AutoAnswer {
 }
 
 /**
+ * One question an agent is blocked on right now, in any thread — a row of the
+ * cross-thread inbox (`GET /api/pending`). Read straight off each live
+ * bridge's `pending` map, so it is exactly as current as a peer's cards: never
+ * journaled, and gone the moment anybody answers. Answered through
+ * `POST /api/sessions/:id/pending/:requestId`, which is `bridge.answer` — the
+ * same first-answer-wins door the socket's `answer_permission` takes.
+ */
+export type PendingItem = {
+  sessionId: string;
+  parentSessionId: string | null;
+  projectId: string;
+  agentId: string;
+  threadTitle: string;
+  requestId: string;
+  askedAt: number;
+} & (
+  | { kind: "permission"; request: acp.RequestPermissionRequest }
+  | { kind: "elicitation"; request: acp.CreateElicitationRequest }
+);
+
+/**
  * One queued prompt — typed while a turn was running, waiting for it to end.
  * `id` is minted by the server; editing and removing go by it.
  */

@@ -43,7 +43,7 @@ export function ListView({ statuses, sprints, tasks, allTasks, view, ctx, onOpen
   const statusOf = (id: string) => statuses.find((s) => s.id === id) ?? null
 
   return (
-    <div className="mx-auto flex w-full min-h-0 max-w-5xl flex-1 flex-col gap-3 overflow-y-auto p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="mx-auto flex w-full min-h-0 max-w-5xl flex-1 flex-col gap-3 overflow-y-auto p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       {groups.map((group) => {
         if (group.tasks.length === 0 && groupBy !== "status") return null
         const points = group.tasks.reduce((n, t) => n + (t.estimate ?? 0), 0)

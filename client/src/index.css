@@ -469,6 +469,13 @@
      app's controls a step below the window's. */
   --app-frame-gap: 0.5rem;
   --keyboard-inset: 0px;
+  /* The home-indicator inset a surface at the bottom of the *shell* pads by
+     (the composer, a board's list, a settings save bar). The raw `env()`
+     everywhere but a phone showing its bottom bar (`bottom-nav.tsx`), which
+     owns that inset itself and zeroes this — padding for it above the bar as
+     well would stack it twice. A sheet or dialog drawn over the bar keeps the
+     raw `env()`: it covers the bar, so the inset is its again. */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* ── The transcript's three work accents ──
      One hue per act — a thought, a shell command, a tool call — worn by the
@@ -501,6 +508,10 @@
   --destructive-light: #FEF2F2;
   --overlay: 0 0 0;
   --focus-ring: #6B97FF;
+}
+
+:root[data-bottom-nav] {
+  --safe-bottom: 0px;
 }
 
 :root:not(.dark) {
@@ -2458,6 +2469,14 @@ html {
 @media (width < 48rem) {
   html .dv-tab.dv-inactive-tab {
     display: none;
+  }
+
+  /* A horizontal swipe on the strip walks the group's tabs (`useTabSwipe`,
+     dock-surface.tsx). `pan-y` hands the horizontal half of a touch to the
+     page's pointer events instead of the strip's own overflow scroll — there
+     is nothing to scroll sideways in a strip of one tab. */
+  html .dv-tabs-and-actions-container {
+    touch-action: pan-y;
   }
 
   /* ── and the one that is left takes the strip ──

@@ -59,7 +59,7 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
   const label = new Date(cursor.year, cursor.month, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" })
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="flex min-h-0 flex-1 flex-col p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       <div className="mb-2 flex items-center gap-2">
         <button type="button" onClick={() => shift(-1)} aria-label="Previous month" className="grid size-8 place-items-center rounded-lg hover:bg-accent">
           <ChevronLeft className="size-4" />

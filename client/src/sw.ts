@@ -206,8 +206,28 @@ self.addEventListener("notificationclick", (event) => {
 })
 
 /** Prefer a window that is already open: focus it, and steer it to the thread
-    if it is somewhere else. Opening a second one loses the user's place. */
+    if it is somewhere else. Opening a second one loses the user's place.
+
+    A window this worker controls is steered **in the page** (`OPEN_PATH`,
+    answered by `installWorkerNotificationClicks` in lib/notifications.ts): a
+    route change, which opens or focuses the thread's tab through the same
+    route effect a sidebar row does. `navigate()` was a full reload of an app
+    that was already open — every socket re-attached and every transcript
+    re-replayed on a phone — and focusing a window whose URL already matched
+    left it on whatever panel was in front, since focusing a terminal writes
+    no route. A controlled page always has the listener: a new worker only
+    takes over on the Reload that also loads the new page. A popout is never
+    the target — it is one transcript and no shell (lib/popout.ts). */
 async function focusOrOpen(href: string): Promise<void> {
+  const url = new URL(href)
+  const controlled = (await self.clients.matchAll({ type: "window" })).find(
+    (client) => new URL(client.url).origin === self.location.origin && !new URL(client.url).searchParams.has("popout")
+  )
+  if (controlled) {
+    await controlled.focus().catch(() => {})
+    controlled.postMessage({ type: "OPEN_PATH", path: url.pathname + url.search })
+    return
+  }
   const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
   const sameOrigin = clients.filter((client) => new URL(client.url).origin === self.location.origin)
   const exact = sameOrigin.find((client) => client.url === href)

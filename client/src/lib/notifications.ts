@@ -243,6 +243,19 @@ export function installDesktopNotifications(): void {
   })
 }
 
+/** Route a click on a worker-shown notification (a push, or the Android
+    fallback below) to its thread without reloading the page: the worker
+    posts the path to the window it controls (`focusOrOpen` in sw.ts) and the
+    route effect opens or focuses the tab. A popout ignores it — the worker
+    never picks one, and it has no dock to open a tab in. */
+export function installWorkerNotificationClicks(): void {
+  if (IS_POPOUT || !("serviceWorker" in navigator)) return
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data as { type?: string; path?: string } | undefined
+    if (data?.type === "OPEN_PATH" && data.path?.startsWith("/")) navigateTo(data.path)
+  })
+}
+
 /* ── The resume window ──
    While the page is frozen the SERVER raises the notification (it is told the
    page cannot — see `setBackground` in thread-socket.ts). Everything that

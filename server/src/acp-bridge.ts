@@ -348,6 +348,9 @@ interface PendingRequest {
   /** The request itself, so a peer that attaches while the agent is still
       blocked can be handed the question rather than a dead thread. */
   payload: acp.RequestPermissionRequest | acp.CreateElicitationRequest;
+  /** When the agent asked — what the cross-thread inbox (`GET /api/pending`)
+      orders by. */
+  askedAt: number;
   settle: (response: never) => void;
   /** The ask-timeout fallback for this request, when a policy armed one. Held
       on the entry rather than in a second map so `settle` — the ONE place a
@@ -1311,6 +1314,7 @@ export class AcpBridge {
         kind,
         toolCallId,
         payload: request,
+        askedAt: Date.now(),
         settle: resolve as (response: never) => void,
       };
       this.pending.set(requestId, entry);

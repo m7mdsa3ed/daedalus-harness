@@ -69,6 +69,23 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   only the newest message per topic, so coming back means the state of each thread
   rather than a night of history, and nothing arrives about a turn already read.
 
+## A click opens the thread's tab, in the page
+
+- **A worker notification's click steers the window it controls, never reloads it.**
+  `focusOrOpen` (`sw.ts`) focuses a controlled, non-popout window and posts
+  `{type: "OPEN_PATH", path}`; `installWorkerNotificationClicks` (`lib/notifications.ts`,
+  from `main.tsx`) turns that into `navigateTo`, and the route effect in `app-shell.tsx`
+  opens or focuses the thread's tab — on a phone, the one stack's front tab. It used to be
+  `client.navigate(href)`: a full reload of an app already open (every socket re-attached,
+  every transcript re-replayed), and when the URL already matched it only *focused* the
+  window, leaving whatever panel was in front — focusing a terminal writes no route.
+  A controlled page always has the listener, because a new worker takes over only on the
+  Reload that also loads the new page. Only an uncontrolled window or none falls back to
+  `navigate`/`openWindow`, which boots at `/t/<id>`; the boot path is safe because
+  `handleDockReady` opens the routed chat *after* the restore has written the restored
+  active panel's path. The web `Notification` and the Electron IPC click were already
+  in-page (`openThread` → `navigateTo`).
+
 ## Unregistering push
 
 - **Registering for push is reversible, and the reverse has to reach the server.**

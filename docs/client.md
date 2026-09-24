@@ -871,6 +871,44 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **after** the surfaces above have ridden (320ms > 285ms) — so a composer or a dialog that
   has already moved reports no overlap and nothing scrolls twice.
 
+## The phone
+
+A phone is for attention, not deep work — approving, switching threads, reading what
+landed. Every rule here is gated on `useIsMobile()` (the device), never a panel's width.
+
+- **The bottom bar is in flow, not fixed** (`components/bottom-nav.tsx`, drawn by
+  `app-shell.tsx` as the last row of `SidebarInset`): Threads (opens the sidebar sheet),
+  Agents (`/agents`), New (`startThread` → the one `actions.startThreadIn` door), Inbox
+  (`/notifications`, badged with what is *waiting* — amber — over what is unread) and
+  Settings. Because the dock ends where the bar starts, everything anchored to a panel's
+  bottom — the composer, the terminal's key row — sits above it with no offset to keep in
+  sync; toasts are top-anchored on a phone already. The header's sidebar toggle is not drawn
+  on a phone: Threads is that toggle, within thumb reach.
+- **The bar owns the home-indicator inset**, and while it is drawn `data-bottom-nav` on the
+  root zeroes `--safe-bottom` (`index.css`), which is what a surface at the bottom of the
+  *shell* pads by (the composer, a board's views, a settings save bar) — padding for the
+  inset above the bar as well stacked it twice. A sheet or dialog drawn *over* the bar keeps
+  the raw `env()`.
+- **The bar is not drawn while the soft keyboard is open** (`useKeyboardInset() > 0`). The
+  keyboard covers the page's bottom and the composer rides it by `KEYBOARD_LIFT`; a bar
+  still in flow would sit between the two and push the composer up by its own height.
+- **A sideways swipe on the tab strip walks the group's tabs** (`useTabSwipe`,
+  `dock-surface.tsx`) — left is next, right previous, wrapping, through the same
+  `cycleTab` the chords call. Only the strip: on the transcript a sideways drag is a text
+  selection or a code block's horizontal scroll. Native touch pointer events on the
+  document (dockview makes and unmakes strips, and a nested group has its own), a 10px
+  axis lock that lets a mostly-vertical touch go for good, a 56px commit, and
+  `touch-action: pan-y` on the narrow strip so the browser hands over the horizontal half.
+- **"Needs you" is the inbox's top** (`components/notifications/needs-you.tsx`), read from
+  `GET /api/pending` — every question a live agent is blocked on, across threads, straight
+  off each bridge's `pending` map. A permission is answered on the card (Allow/Deny picked
+  by ACP option **kind**, the narrow one first) through `POST
+  /api/sessions/:id/pending/:requestId`, which is `bridge.answer` — the socket's own
+  first-answer-wins door, so a 409 is a lost race and not an error. A question is answered
+  in its thread (the card opens it). Freshness is a 15s poll while a reader is mounted, focus,
+  and an invalidation whenever the count of open cards across the store moves
+  (`lib/queries/pending.ts`) — no global socket.
+
 ## Panel vs device width
 
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.**

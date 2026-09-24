@@ -66,7 +66,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   out minus the peer that caused them. **The server never interprets a `session/update`.**
 - **Four kinds are journaled and replayed** — `update`, `session_config`, `turn_started`,
   `turn_ended`; the rest are live-only. **A permission or elicitation is never journaled** —
-  it lives in `bridge.pending` while the agent blocks. First answer wins.
+  it lives in `bridge.pending` while the agent blocks. First answer wins. **The cross-thread
+  inbox reads that map and nothing else** (`GET /api/pending`), and its answer route is
+  `bridge.answer` with no origin peer — the socket's own door, so a lost race is a 409.
 - **State is handed over on `caught_up`; only history is replayed.** The queue, the hold and
   a staged change are not journaled — and **the context reading is journaled and still not
   the replay's to decide**: a window may hold no `usage_update` and a `load_earlier` page
@@ -489,6 +491,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   where the visual viewport did not already shrink, or a flyout rises by two keyboards. A
   field on an ordinary form is `lib/keyboard-caret.ts`'s, because the browser's own
   scroll-into-view is the thing `overlays-content` turned off.
+- **The phone's bottom bar is in flow, not fixed** (`components/bottom-nav.tsx`, gated on
+  `useIsMobile`): the dock ends where it starts, so panel-anchored surfaces need no offset.
+  It owns the home-indicator inset — while drawn, `data-bottom-nav` zeroes `--safe-bottom`,
+  which a surface at the bottom of the *shell* pads by instead of the raw `env()` — and it
+  is **not drawn while the soft keyboard is open**, or it would push the lifted composer up
+  by its own height. **A sideways swipe on the strip, never the transcript, is `cycleTab`**
+  (`useTabSwipe` in `dock-surface.tsx`). → `docs/client.md` "The phone".
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.** Layout
   uses the `@panel-*` container queries; touch targets and centred surfaces stay on media
   queries.
@@ -766,6 +775,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   payload is a contract: data-only**, carrying `title`/`body`/`sessionId`.
 - Updates are `registerType: "prompt"`: the new worker only `skipWaiting()`s on the user's
   Reload.
+- **A notification click steers the open window in the page, never reloads it**: the
+  worker posts `OPEN_PATH` to the window it controls and the route effect opens the tab;
+  `navigate()`/`openWindow` are only for a window it does not control, or none.
 - **Registering for push is reversible and the reverse must reach the server.**
 - `new Notification()` is not available everywhere and push does not cover the gap; both paths
   build their options in `lib/notification-shape.ts`. In Electron the OS layer is Electron's
