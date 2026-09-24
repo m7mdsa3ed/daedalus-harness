@@ -48,7 +48,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { copyFile, unlink } from "node:fs/promises";
+import { copyFile, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -1099,6 +1099,91 @@ export async function patchBetween(dir: string, from: string, to: string, path?:
   ]);
   return stdout;
 }
+
+/** NUL-separated `--name-only` output as a list. */
+const names = (stdout: string): string[] => stdout.split("\0").filter(Boolean);
+
+/**
+ * Where "this branch" forked from — the merge-base of HEAD with the
+ * repository's default branch: `origin/HEAD` when the remote says, else a
+ * local `main` or `master`, whichever exists. Null (with the sentence the
+ * panel shows) when there is no such branch, or HEAD *is* it.
+ */
+export async function branchBase(dir: string): Promise<{ base: string } | { unavailable: string }> {
+  const verify = async (ref: string) => {
+    try {
+      return (await run(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])).stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const head = await verify("HEAD");
+  if (!head) return { unavailable: "This repository has no commits yet, so there is no branch to compare." };
+  let ref: string | null = null;
+  try {
+    ref = (await run(dir, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])).stdout.trim() || null;
+  } catch {
+    /* no remote default — fall through to the local names */
+  }
+  for (const candidate of [ref, "refs/heads/main", "refs/heads/master"]) {
+    if (!candidate) continue;
+    const tip = await verify(candidate);
+    if (!tip) continue;
+    if (tip === head) return { unavailable: "HEAD is the base branch — there is no branch of its own to compare." };
+    const { stdout } = await run(dir, ["merge-base", "HEAD", tip], undefined, [1]);
+    const base = stdout.trim();
+    if (!base) return { unavailable: "This branch shares no history with the base branch." };
+    return { base };
+  }
+  return { unavailable: "No base branch found (no origin/HEAD, main or master)." };
+}
+
+/**
+ * Undo one turn in the working tree: every path that differs between `start`
+ * and `end` is put back as `start` had it — rewritten, recreated, or deleted
+ * when the turn created it. Nothing else is touched, and **never the real
+ * index**: the files are written out of a scratch index holding `start`
+ * (`checkout-index`), the same trick `snapshotTree` uses for reading.
+ *
+ * Refused — answered with the paths, nothing written — when any of those
+ * paths has changed since `end` (a later turn, the user, an editor), unless
+ * `force`, because reverting over that would silently take their work too.
+ */
+export async function revertTurn(
+  dir: string,
+  start: string,
+  end: string,
+  force: boolean,
+): Promise<{ reverted: string[]; conflicts: string[] }> {
+  /* Renames as their two halves: the new name goes, the old one comes back. */
+  const paths = names((await run(dir, ["diff", "--relative", "--name-only", "--no-renames", "-z", start, end])).stdout);
+  if (paths.length === 0) return { reverted: [], conflicts: [] };
+  const now = await snapshotTree(dir);
+  const conflicts = names(
+    (await run(dir, ["diff", "--relative", "--name-only", "--no-renames", "-z", end, now, "--", ...paths.map(literal)])).stdout,
+  );
+  if (conflicts.length > 0 && !force) return { reverted: [], conflicts };
+
+  const present = new Set(
+    names((await run(dir, ["ls-tree", "-r", "--name-only", "-z", start, "--", ...paths.map(literal)])).stdout),
+  );
+  const restore = paths.filter((path) => present.has(path));
+  for (const path of paths) if (!present.has(path)) await rm(join(dir, path), { force: true });
+  if (restore.length > 0) {
+    const scratch = join(tmpdir(), `daedalus-index-${randomBytes(6).toString("hex")}`);
+    try {
+      const env = { GIT_INDEX_FILE: scratch };
+      await run(dir, ["read-tree", start], env);
+      await run(dir, ["checkout-index", "-f", "--", ...restore], env);
+    } finally {
+      await unlink(scratch).catch(() => {});
+    }
+  }
+  return { reverted: paths, conflicts };
+}
+
+/** A path as a pathspec that means exactly itself — no globbing. */
+const literal = (path: string) => `:(literal)${path}`;
 
 /**
  * Apply a unified patch — one hunk the panel cut out of a file's diff — to the

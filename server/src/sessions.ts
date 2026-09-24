@@ -2663,7 +2663,8 @@ export class SessionManager {
     if (physical) {
       const tree = await this.turnChanges.startTreeOf(session.id, turnId);
       if (!tree) throw new HttpError("no file snapshot for this turn", 404);
-      restored = (await git.restoreToTree(session.projectId, tree)).restored;
+      /* A worktree thread's snapshots are of its own checkout. */
+      restored = (await git.restoreToTree(session.projectId, tree, { repo: session.worktree || undefined })).restored;
     }
 
     if (cut) {
@@ -3141,6 +3142,15 @@ export class SessionManager {
     if (!session.exited)
       this.retire(session, "This thread's worktree was removed, so its agent process was stopped.");
     return true;
+  }
+
+  /** Undo one ended turn's files in the working tree (`TurnChangesRecorder.revert`).
+      Refused while a turn runs: the agent would be writing the same paths. */
+  async revertTurn(id: string, turnId: string, force: boolean) {
+    const session = this.sessions.get(id);
+    if (!session) throw new HttpError("not found", 404);
+    if (session.bridge?.promptActive) throw new HttpError("a turn is running — stop it before reverting one", 409);
+    return this.turnChanges.revert(id, turnId, force);
   }
 
   list() {

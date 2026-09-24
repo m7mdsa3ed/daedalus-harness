@@ -33,6 +33,7 @@ import {
 import { useReviewComments } from "@/lib/review-comments"
 import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
+import { changesTimeline } from "./turn-footers"
 import { ProjectIcon } from "@/components/entity-icon"
 import { stepNameOf, stepStateOf } from "@/components/workflow-run"
 import type { SessionMeta } from "@/lib/settings"
@@ -394,6 +395,10 @@ export function ThreadInspector({
     [thread.items, thread.turnActive]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
+  const timeline = React.useMemo(
+    () => changesTimeline(thread.items, thread.turnChanges),
+    [thread.items, thread.turnChanges]
+  )
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
   const todos = React.useMemo(() => threadTodos(thread), [thread.items])
   const running = groups.filter((group) => group.active).length
@@ -508,16 +513,13 @@ export function ThreadInspector({
             <div className="p-3">
               <Empty>This thread has no project, so there is no worktree to measure.</Empty>
             </div>
-          ) : (!changes || changes.files.length === 0) && comments.length === 0 && !worktreeRepo ? (
-            <div className="p-3">
-              <Empty>No turn has written to the worktree yet.</Empty>
-            </div>
           ) : (
             <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
               <InspectorChanges
                 projectId={meta.projectId}
                 sessionId={meta.id}
-                changes={changes}
+                turns={timeline}
+                turnActive={thread.turnActive}
                 repo={worktreeRepo}
                 onSend={onSend}
               />

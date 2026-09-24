@@ -100,13 +100,45 @@ export function clearReviewComments(sessionId: string): void {
  * `strip` is the prefix to take off a project-relative path so the mention
  * resolves against the thread's own cwd — a worktree thread's.
  */
+const MENTION_LIMIT = 30
+
+/** `@path` lines for a file list, capped — a hundred mentions is a hundred
+    resource links, and the rest is said as a count. */
+function mentions(paths: string[]): string {
+  const shown = paths.slice(0, MENTION_LIMIT).map((path) => `@${path}`)
+  if (paths.length > MENTION_LIMIT) shown.push(`…and ${paths.length - MENTION_LIMIT} more`)
+  return shown.join("\n")
+}
+
+/** "Ask to review": one message naming the scope and its files
+    (thread-relative paths, so each `@` resolves against the agent's cwd). */
+export function composeAskReview(what: string, paths: string[]): string {
+  return [
+    `Please review ${what} (${paths.length} ${paths.length === 1 ? "file" : "files"}). Look for bugs, missed edge cases and anything left unfinished, and tell me what you find before changing anything:`,
+    mentions(paths),
+  ].join("\n\n")
+}
+
+/** "Fix flagged": the flagged files, each with the draft comments on it. */
+export function composeFixFlagged(paths: string[], comments: ReviewComment[], strip = ""): string {
+  const parts = [
+    `I flagged ${paths.length} ${paths.length === 1 ? "file" : "files"} in your changes — please fix ${paths.length === 1 ? "it" : "them"}:`,
+    mentions(paths),
+  ]
+  if (comments.length > 0) parts.push(composeReview(comments, strip))
+  return parts.join("\n\n")
+}
+
+/** A project-relative path as the thread's cwd reads it. */
+export const threadRelative = (path: string, strip = "") =>
+  strip && path.startsWith(`${strip}/`) ? path.slice(strip.length + 1) : path
+
 export function composeReview(comments: ReviewComment[], strip = ""): string {
-  const prefix = strip ? `${strip}/` : ""
   const parts = [
     `Review comments (${comments.length}) on your changes — please address each:`,
   ]
   for (const c of comments) {
-    const path = prefix && c.path.startsWith(prefix) ? c.path.slice(prefix.length) : c.path
+    const path = threadRelative(c.path, strip)
     const lines = c.line === c.endLine ? `line ${c.line}` : `lines ${c.line}-${c.endLine}`
     const where = c.side === "original" ? `${lines}, before the change` : lines
     const fence = c.code.includes("```") ? "~~~" : "```"

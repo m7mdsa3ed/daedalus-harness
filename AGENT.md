@@ -739,9 +739,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and a second list that could do none of that was the changes tab this replaced. The
   narrowing is one derivation of the status, so every count and every "stage all" follows it.
 - **The thread inspector is the chat panel's, never a dock split**
-  (`thread-view/thread-inspector.tsx`, a grid column of `ThreadView`): Changes (the same
-  `withTurnChanges` pick, drawn by `ScmView` narrowed to it — never a second list — with the
-  diff opening over it), Plan (`threadTodos`), Agents (the subagent groups, a row jumps the
+  (`thread-view/thread-inspector.tsx`, a grid column of `ThreadView`): Changes (a **turn
+  timeline** — `changesTimeline`, the chip's own `couldTouchFiles` gate per turn — or one flat
+  card for the `thread`/`uncommitted`/`branch` scopes, every diff **inline under its file row**,
+  never over the list), Plan (`threadTodos`), Agents (the subagent groups, a row jumps the
   transcript), Details. **Docked or a sheet is the *panel's* width** (measured, 1024px); open,
   width and tab are the device's (`lib/inspector.ts`), and **the sheet's open state is never
   stored** — a restored overlay covers every narrow transcript. The footer readings stay the
@@ -752,7 +753,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   are cleared only once the send resolves. **Hunk actions reuse the existing doors** — stage
   is the `apply` git route (`cached`, patch cut by `lib/workspace/hunks.ts`, context from the
   index), revert is the file route at the version the diff was read at — and are offered only
-  on index ↔ worktree with a named `repo`.
+  where the right side is the disk (or a scope's "after" tree that still reads as it) and the
+  left the index or a scope tree, with a named `repo`; git's preimage check refuses the rest.
+  "Ask to review" and "Fix flagged" are the same one-message door. **Viewed and flagged marks
+  are device-local** (`lib/changes-marks.ts`), and a viewed mark is keyed on the file's
+  fingerprint, so a file that moved comes back unread.
+- **Reverting a turn restores exactly its paths to its start tree, in the working tree only**
+  (`git.revertTurn`, `POST …/turn-changes/:turnId/revert`): written out of a scratch index,
+  **never the real one**, never another path. It **refuses (409 with the paths) when any of
+  them changed since the turn's end tree** unless `force`, and refuses while a turn runs.
 - **Best-of-N adds no concept**: N drafts from `startThreadIn`, each `isolate`d and retuned
   with `remember=false`, opened side by side by `dock.openGroup`, sent through
   `actions.send` a task after the mint (it reads the committed store).

@@ -30,20 +30,52 @@ export function gitFileAt(
 }
 
 /* ── What a turn did ──
-   The per-turn summary the transcript's chips draw, and the one thing the
-   client reads from the session's own changes routes. The scope's *files*,
-   *patch* and per-file *sides* are still served (`/changes/files|patch|file`)
-   and nothing here calls them any more: reviewing a turn is source control
-   narrowed to its paths (`lib/ide/scm-filter.ts`), which reads `git status`
-   through the project's git routes below and can act on what it shows. */
+   The per-turn summary the footer chip draws, and the inspector's Changes
+   tab's reads: a scope's files and each file's two sides, read by git on the
+   server (`turn-changes.ts`). A scope is `turn:<id>`, `thread`, `uncommitted`
+   or `branch`; its paths are relative to the thread's own cwd. */
 
 export type { ChangedFile, TurnChanges } from "@daedalus/protocol"
-import type { TurnChanges } from "@daedalus/protocol"
+import type { ChangedFile, TurnChanges } from "@daedalus/protocol"
 
 const session = (sessionId: string) => `/api/sessions/${encodeURIComponent(sessionId)}/changes`
 
 export function sessionChanges(settings: ServerSettings, sessionId: string, signal?: AbortSignal) {
   return api<{ turns: TurnChanges[] }>(settings, session(sessionId), { signal })
+}
+
+/** The files a scope covers now. `unavailable` is a sentence, not a failure. */
+export function scopeFiles(settings: ServerSettings, sessionId: string, scope: string, signal?: AbortSignal) {
+  return api<{ files: ChangedFile[]; unavailable?: string }>(
+    settings,
+    `${session(sessionId)}/files?${new URLSearchParams({ scope }).toString()}`,
+    { signal }
+  )
+}
+
+/** One side of one file under a scope, whole. `path` is thread-relative. */
+export function scopeFileSide(sessionId: string, scope: string, path: string, side: "before" | "after") {
+  return api<{ content: string; missing: boolean; unavailable?: string }>(
+    server(),
+    `${session(sessionId)}/file?${new URLSearchParams({ scope, path, side }).toString()}`
+  )
+}
+
+/** Put one ended turn's files back as they were before it, in the working
+    tree only. A 409 whose body carries `conflicts` is a refusal: those paths
+    changed since the turn ended, and `force` reverts over them. */
+export function revertTurn(settings: ServerSettings, sessionId: string, turnId: string, force = false) {
+  return api<{ reverted: string[]; conflicts: string[] }>(
+    settings,
+    `/api/sessions/${encodeURIComponent(sessionId)}/turn-changes/${encodeURIComponent(turnId)}/revert`,
+    { method: "POST", body: JSON.stringify({ force }) }
+  )
+}
+
+/** The paths a refused revert names, or null when the error is anything else. */
+export function revertConflicts(err: unknown): string[] | null {
+  const body = err instanceof ApiError && err.status === 409 ? (err.body as { conflicts?: unknown } | null) : null
+  return Array.isArray(body?.conflicts) ? body.conflicts.filter((p): p is string => typeof p === "string") : null
 }
 
 export interface GitFileState {

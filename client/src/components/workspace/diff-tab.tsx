@@ -36,7 +36,7 @@ import { PanelToolbar } from "@/components/workspace/primitives"
 import { describeError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { isConflict, readFile, writeFile } from "@/lib/workspace/fs-api"
-import { gitFileAt, gitWrite, type Comparison } from "@/lib/workspace/git-api"
+import { gitFileAt, gitWrite, scopeFileSide, type Comparison } from "@/lib/workspace/git-api"
 import { hunkPatch, revertHunk, type LineChange } from "@/lib/workspace/hunks"
 import { watchProject } from "@/lib/workspace/watch"
 
@@ -48,12 +48,30 @@ const SIDE_LABEL: Record<Comparison, string> = {
   worktree: "Working tree",
 }
 
+/** A side read out of a thread's changes scope (`turn:<id>`, `thread`,
+    `branch`, …) — a tree the server snapshotted, not a revision git names.
+    `path` is thread-relative, which is what the scope's routes speak. */
+export interface TreeSide {
+  sessionId: string
+  scope: string
+  side: "before" | "after"
+  path: string
+}
+
+export type DiffSide = Comparison | TreeSide
+
+const sideLabel = (side: DiffSide) =>
+  typeof side === "string" ? SIDE_LABEL[side] : side.side === "before" ? "Before" : "After"
+const sideKey = (side: DiffSide | null) =>
+  side === null || typeof side === "string" ? side : `${side.sessionId}\0${side.scope}\0${side.side}\0${side.path}`
+
 /** One side of the comparison, whole. `generation` is how a caller says
-    "read it again" — bumped by the watch stream and by Refresh. */
+    "read it again" — bumped by the watch stream and by Refresh. A null side
+    reads nothing. */
 function useSide(
   projectId: string,
   path: string,
-  side: Comparison,
+  side: DiffSide | null,
   generation: number
 ): { text: string | null; error: string | null; version?: string } {
   const [text, setText] = React.useState<string | null>(null)
@@ -69,12 +87,23 @@ function useSide(
       setVersion(read)
       setError(null)
     }
+    if (side === null) return
     if (side === "worktree") {
       void readFile(projectId, path, controller.signal)
         .then((file) => settle(file.content ?? "", file.version))
         /* Deleted on disk is a real answer, and an empty side is what it looks
            like. */
         .catch(() => settle(""))
+    } else if (typeof side === "object") {
+      void scopeFileSide(side.sessionId, side.scope, side.path, side.side)
+        .then((result) => {
+          /* A pruned snapshot is a sentence, said where the diff would be. */
+          if (result.unavailable) throw new Error(result.unavailable)
+          settle(result.missing ? "" : result.content)
+        })
+        .catch((err: unknown) => {
+          if (!controller.signal.aborted) setError(describeError(err).title)
+        })
     } else {
       void gitFileAt(projectId, path, side)
         .then((result) => settle(result.missing ? "" : result.content))
@@ -83,7 +112,8 @@ function useSide(
         })
     }
     return () => controller.abort()
-  }, [projectId, path, side, generation])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the side's value, not its object
+  }, [projectId, path, sideKey(side), generation])
 
   return { text, error, version }
 }
@@ -96,34 +126,43 @@ export function DiffTab({
   active,
   repo,
   review,
+  inline,
 }: {
   projectId: string
   path: string
-  left: Comparison
-  right: Comparison
+  left: DiffSide
+  right: DiffSide
   /** The tab in front. Both sides keep being read either way — that is what
       makes a comparison current when you come back to it — but the diff editor
       is two models and the diff worker, so it exists only while it is being
       looked at. See `file-tab.tsx`. */
   active: boolean
   /** The repository the path is in (project-relative, "" for the project's
-      own). Given on an unstaged comparison — index ↔ worktree — it turns on
-      the per-hunk Stage and Revert; without it there is no repository to
-      stage into. */
+      own). Given on a comparison whose right side is the file on disk and
+      whose left is the index or a scope's tree, it turns on the per-hunk
+      Stage and Revert; without it there is no repository to stage into. */
   repo?: string
   /** Line comments — see `DiffEditor`. */
   review?: DiffReview
+  /** One stacked diff with no toolbar, for a caller that already names the
+      file (the inspector's inline rows). */
+  inline?: boolean
 }) {
   const [generation, setGeneration] = React.useState(0)
   const original = useSide(projectId, path, left, generation)
   const modified = useSide(projectId, path, right, generation)
   const [changes, setChanges] = React.useState<LineChange[]>([])
   const editorRef = React.useRef<MonacoDiff | null>(null)
-  const hunks = repo !== undefined && left === "staged" && right === "worktree"
+  /* A scope's "after" tree that still reads as the disk does is the disk for
+     the hunk verbs — the newest turn, reviewed before anything else wrote. */
+  const afterTree = typeof right === "object" && right.side === "after"
+  const disk = useSide(projectId, path, afterTree && repo !== undefined ? "worktree" : null, generation)
+  const onDisk = right === "worktree" || (afterTree && disk.text !== null && disk.text === modified.text)
+  const hunks = repo !== undefined && (left === "staged" || typeof left === "object") && onDisk
 
   /* Only worth listening for when one of the sides is the file on disk — two
      revisions do not move because someone saved. */
-  const live = left === "worktree" || right === "worktree"
+  const live = left === "worktree" || right === "worktree" || afterTree
   React.useEffect(() => {
     if (!live) return
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -148,7 +187,7 @@ export function DiffTab({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PanelToolbar>
+      {!inline && <PanelToolbar>
         <span
           className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
           title={path}
@@ -156,7 +195,7 @@ export function DiffTab({
           {path}
         </span>
         <span className="shrink-0 text-[11px] text-muted-foreground">
-          {SIDE_LABEL[left]} ↔ {SIDE_LABEL[right]}
+          {sideLabel(left)} ↔ {sideLabel(right)}
         </span>
         <Tooltip>
           <TooltipTrigger
@@ -174,7 +213,7 @@ export function DiffTab({
           />
           <TooltipContent>Read both sides again</TooltipContent>
         </Tooltip>
-      </PanelToolbar>
+      </PanelToolbar>}
       {hunks && original.text !== null && modified.text !== null && changes.length > 0 && (
         <HunkBar
           projectId={projectId}
@@ -182,7 +221,7 @@ export function DiffTab({
           repo={repo!}
           original={original.text}
           modified={modified.text}
-          version={modified.version}
+          version={right === "worktree" ? modified.version : disk.version}
           changes={changes}
           editorRef={editorRef}
           onDone={() => setGeneration((current) => current + 1)}
@@ -198,6 +237,7 @@ export function DiffTab({
               modified={modified.text}
               filename={path}
               review={review}
+              inline={inline}
               onLineChanges={hunks ? setChanges : undefined}
               editorRef={editorRef}
             />
@@ -300,7 +340,7 @@ function HunkBar({
         <Button variant="ghost" size="xs" disabled={busy} onClick={() => void act("stage")} title="Stage this change only">
           Stage
         </Button>
-        <Button variant="ghost" size="xs" disabled={busy} onClick={() => void act("revert")} title="Put this change's lines back as the index has them">
+        <Button variant="ghost" size="xs" disabled={busy} onClick={() => void act("revert")} title="Put this change's lines back as the left side has them">
           Revert
         </Button>
       </div>

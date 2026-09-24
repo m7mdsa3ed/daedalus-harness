@@ -26,13 +26,21 @@
  * failure — see CLAUDE.md, "An error a surface could render as emptiness
  * must be rendered as an error".
  */
-import { and, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull } from "drizzle-orm";
 
 import { db, sessionTurnChanges } from "./db/index.js";
 import * as git from "./git.js";
+import { HttpError } from "./http-error.js";
 import type { ChangedFile, TurnChanges } from "./protocol.js";
 
-export type Scope = { kind: "turn"; turnId: string } | { kind: "uncommitted" };
+/** What a review reads: one turn; the whole thread (its first measured
+    turn's start tree → the worktree now); `uncommitted` (HEAD → now); or
+    `branch` (the merge-base with the default branch → now). */
+export type Scope =
+  | { kind: "turn"; turnId: string }
+  | { kind: "thread" }
+  | { kind: "uncommitted" }
+  | { kind: "branch" };
 
 export interface TurnChangesDeps {
   /** The project's cwd, or null when the session's project is gone. */
@@ -170,12 +178,52 @@ export class TurnChangesRecorder {
          compares an unborn branch against. */
       return { dir, from: head ?? EMPTY_TREE, to };
     }
+    if (scope.kind === "branch") {
+      const found = await git.branchBase(dir);
+      if ("unavailable" in found) return found;
+      return { dir, from: found.base, to: await git.snapshotTree(dir) };
+    }
+    if (scope.kind === "thread") {
+      const [first] = await db
+        .select({ startTree: sessionTurnChanges.startTree })
+        .from(sessionTurnChanges)
+        .where(and(eq(sessionTurnChanges.sessionId, sessionId), isNotNull(sessionTurnChanges.startTree)))
+        .orderBy(asc(sessionTurnChanges.startedAt))
+        .limit(1);
+      if (!first?.startTree) return { unavailable: "No turn of this thread has been measured yet." };
+      if (!(await git.hasObject(dir, first.startTree)))
+        return { unavailable: "The thread's first snapshot has been pruned by git and can no longer be compared." };
+      return { dir, from: first.startTree, to: await git.snapshotTree(dir) };
+    }
     const row = await this.row(sessionId, scope.turnId);
     if (!row?.startTree) return { unavailable: "This turn was not measured — the project was not a repository when it ran." };
     if (!(await git.hasObject(dir, row.startTree)))
       return { unavailable: "This turn's snapshot has been pruned by git and can no longer be compared." };
     const to = row.endTree && (await git.hasObject(dir, row.endTree)) ? row.endTree : await git.snapshotTree(dir);
     return { dir, from: row.startTree, to };
+  }
+
+  /**
+   * Put one ended turn's paths back as its start tree had them, in the
+   * working tree only (`git.revertTurn`). Non-empty `conflicts` with nothing
+   * `reverted` means refused: those paths moved since the turn ended. The
+   * caller refuses a running thread — this only knows trees.
+   */
+  async revert(
+    sessionId: string,
+    turnId: string,
+    force: boolean,
+  ): Promise<{ reverted: string[]; conflicts: string[] }> {
+    const dir = await this.repoDirOf(sessionId);
+    if (!dir) throw new HttpError("This project is not a git repository.", 409);
+    const row = await this.row(sessionId, turnId);
+    if (!row) throw new HttpError("unknown turn", 404);
+    if (row.endedAt === null) throw new HttpError("this turn is still running", 409);
+    if (!row.startTree || !row.endTree) throw new HttpError("This turn was not measured, so it cannot be reverted.", 409);
+    for (const tree of [row.startTree, row.endTree])
+      if (!(await git.hasObject(dir, tree)))
+        throw new HttpError("This turn's snapshot has been pruned by git, so it cannot be reverted.", 409);
+    return git.revertTurn(dir, row.startTree, row.endTree, force);
   }
 
   private async row(sessionId: string, turnId: string) {

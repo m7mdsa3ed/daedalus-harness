@@ -3,7 +3,7 @@
    took, what it did to the worktree, the follow-ups it offered, and the split
    a step's own popover reads. All pure reads of `thread.items` — a reading of
    the transcript, never a change to one — so they live apart from the surface
-   in `thread-view.tsx`, which is the only importer.
+   in `thread-view.tsx` (and the inspector, for the Changes timeline).
 
    One exception, and it is deliberate: `useStepTurnUsage` is a hook, because
    holding a derivation at one identity needs somewhere to hold it. It sits
@@ -225,6 +225,45 @@ export function withTurnChanges(
     after.set(tailId, changes)
   }
   return after
+}
+
+/** One card of the inspector's turn timeline. */
+export interface TimelineTurn {
+  changes: TurnChanges
+  /** The turn's message, when the transcript window holds it. */
+  prompt?: string
+}
+
+/**
+ * Every measured turn worth a card, newest first — the inspector's Changes
+ * timeline. The same gate as the chip (`turnCouldTouchFiles`), read per turn
+ * id: a turn the loaded window holds is drawn only if it could have written;
+ * one from before the window cannot be asked, so it is drawn when git says it
+ * changed something (the allowlist's bargain — a card over someone else's diff
+ * is a smaller lie than hiding real work). The running turn is live, drawn
+ * once it has run something that could write.
+ */
+export function changesTimeline(
+  items: ThreadItem[],
+  turnChanges: Record<string, TurnChanges>
+): TimelineTurn[] {
+  const seen = new Map<string, { prompt: string; touches: boolean }>()
+  let current: { prompt: string; touches: boolean } | undefined
+  for (const item of items) {
+    if (item.kind === "user") {
+      /* A steer joins the turn it lands in; a replayed bubble has no id. */
+      current = item.turnId ? (seen.get(item.turnId) ?? { prompt: item.text, touches: false }) : undefined
+      if (item.turnId && current) seen.set(item.turnId, current)
+    } else if (current && item.kind === "tool" && couldTouchFiles(item)) current.touches = true
+  }
+  return Object.values(turnChanges)
+    .filter((changes) => {
+      const turn = seen.get(changes.turnId)
+      if (turn) return turn.touches && (!changes.ended || changes.unavailable || changes.files.length > 0)
+      return changes.ended && changes.files.length > 0
+    })
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .map((changes) => ({ changes, prompt: seen.get(changes.turnId)?.prompt }))
 }
 
 /** Each finished turn's suggestion card, keyed by the id of the answer that
