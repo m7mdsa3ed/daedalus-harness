@@ -3,7 +3,7 @@ import { PackageOpenIcon } from "lucide-react"
 
 import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
-import { useDock } from "@/components/workspace/dock"
+import { useDock } from "@/components/workspace/dock-context"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
 
 /**

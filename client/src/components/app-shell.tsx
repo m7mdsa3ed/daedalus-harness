@@ -41,7 +41,8 @@ import {
   SidebarUsage,
   ThreadSidebar,
 } from "@/components/thread-sidebar"
-import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
+import { useWorkspaceDock } from "@/components/workspace/dock"
+import { WorkspaceDock } from "@/components/workspace/dock-surface"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
@@ -420,7 +421,6 @@ export function AppShell({
     actions,
     loading,
     ready,
-    pathname: location.pathname,
     onAddServer,
     onOpenSettings: openSettings,
   })
@@ -594,7 +594,7 @@ export function AppShell({
       <SidebarInset className="flex min-h-0 flex-col overflow-hidden">
         {/* An overlay spanning the whole top, INSIDE `SidebarInset` — it is the
             card's bar, not the window's. The dock's top groups join this row
-            (`data-header-band`; `headerOverlap` in workspace/dock.tsx measures
+            (`data-header-band`; `syncHeaderOverlap` in workspace/dock-header.ts measures
             how much of a panel it covers, which a constant answered wrongly
             for every group not at the top), and a strip cannot join a row
             above the box it is in. Standing it outside the sidebar wrapper as
@@ -615,7 +615,7 @@ export function AppShell({
             everything under it.)
             `px-1` above `md`, where the chips stand on the card's own edge. The
             tab strip in the band pads by this box's content edge
-            (`--dock-band-left`, workspace/dock.tsx), so it follows. */}
+            (`--dock-band-left`, workspace/dock-header.ts), so it follows. */}
         <header
           data-app-header
           data-drag-region

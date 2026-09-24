@@ -4,7 +4,7 @@
 import * as React from "react"
 
 import type { Actions } from "@/lib/actions"
-import type { WorkspaceDock } from "@/components/workspace/dock"
+import type { WorkspaceDock } from "@/components/workspace/dock-context"
 
 /** Each page is a screen of the palette. `root` is the command list; the rest
     are entered from it and exited with Backspace, Escape or the chip in the

@@ -22,11 +22,11 @@
 import * as React from "react"
 import { useNavigate, useSearchParams } from "react-router"
 
-import { Composer } from "@/components/composer"
+import { Composer } from "@/components/composer/composer"
 import { useAttachmentDelivery } from "@/components/composer-attachments"
 import { LandingSetup } from "@/components/landing/landing-setup"
 import { LandingSkeleton } from "@/components/landing/landing-skeleton"
-import { ThreadWelcome } from "@/components/thread-view"
+import { ThreadWelcome } from "@/components/thread-view/welcome"
 import type { Actions } from "@/lib/actions"
 import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"

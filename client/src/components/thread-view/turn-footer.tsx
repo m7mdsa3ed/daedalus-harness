@@ -4,7 +4,7 @@
 import type * as acp from "@daedalus/acp"
 
 import { PromptSuggestions } from "@/components/prompt-suggestions"
-import { SourcesStrip } from "@/components/thread-items"
+import { SourcesStrip } from "@/components/thread-cards"
 import { TokenSummary } from "@/components/token-usage"
 import type { TurnSources } from "@/lib/sources"
 import { stagger } from "@/lib/utils"

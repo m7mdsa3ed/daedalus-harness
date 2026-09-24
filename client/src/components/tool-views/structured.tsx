@@ -32,6 +32,7 @@ import {
   type TodoEntry,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
+import { cn } from "@/lib/utils"
 
 // ─── Todos ───────────────────────────────────────────────────────────────────
 

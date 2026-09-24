@@ -44,7 +44,7 @@ import {
   REQUEST_BUTTON,
 } from "./agent-request"
 import { FileBadge, JSON_INPUT_PREVIEW, JsonView, PlanFullscreen, Prose } from "./tool-parts"
-import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
+import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "@/components/tool-parts"
 import type { PendingPermission } from "@/lib/store"
 import { isTypingTarget } from "@/lib/shortcuts"
 import { extractPlanProposalFromPermission, toolDescription, toolHeading } from "@/lib/tools"

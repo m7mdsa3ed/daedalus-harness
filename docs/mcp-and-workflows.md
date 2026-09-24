@@ -218,7 +218,7 @@ beside Import in Settings › MCP.
   name, step, index/total, this step's `phase`) — decoded only in `lib/tools/subagents.ts`
   (`workflowInfoOf`), stamped onto the `SubagentItem`, and folded at view time by
   `mergeWorkflowRuns` (`transcript-rows.ts`) into one `workflow-group` row per run, which
-  `WorkflowRun` (`thread-items.tsx`) draws as a **compact preview card that opens the run
+  `WorkflowRun` (`thread-items/rows.tsx`) draws as a **compact preview card that opens the run
   in a dialog** — instead of N stray subagent rows, and instead of the phase-banded table
   the card itself used to hold: a run is N whole threads, and a transcript column is the
   wrong room to read one in (the table fought the panel for width, and a step's events
@@ -509,7 +509,7 @@ beside Import in Settings › MCP.
 - **MCP servers, skills and commands have two owners, and the agent gets the union.**
   A profile links them (the provider setup: a gateway's own servers, the skills that go with
   a house style), and a thread picks its own on the draft's composer strip
-  (`ThreadToolsMenu` in `components/thread-tools.tsx`, where the profile's show checked and
+  (`ThreadToolsMenu` in `components/thread-tools/menu.tsx`, where the profile's show checked and
   locked, so the thread's picks are exactly the additions). **That control outlives the
   draft**: the same component, `editable={false}`, sits in the composer's control row beside
   `SessionConfigPopover` for the whole of a started thread and reads the kit back — what the
@@ -543,7 +543,7 @@ beside Import in Settings › MCP.
   never looks, and a `.claude/` directory in a project nobody had run Claude Code in. The
   frontmatter follows the layout too (`argumentHintKey`: Claude Code's `argument-hint`,
   nothing for OpenCode). A layout with no slot is said out loud in the link pickers
-  (`components/thread-tools.tsx`) rather than left as a silence. One consequence worth
+  (`components/thread-tools/menu.tsx`) rather than left as a silence. One consequence worth
   knowing: the cwd used to be created as a side effect of `mkdir -p <cwd>/.claude/skills`, so
   it is now made deliberately by `ensureProjectDir` on the same path — a spawn into a
   directory that does not exist fails as an `ENOENT` naming the *command*, which reads as a

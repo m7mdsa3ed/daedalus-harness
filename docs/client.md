@@ -158,7 +158,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   choices as `--theme-radius` / `--theme-depth` / `--theme-font-*` holding the
   *ids*, which is how `readThemeBase` seeds a copy that reopens in the studio
   with the same named presets rather than a resolved stack nothing maps back to
-  a picker row. The studio is `components/theme-builder.tsx`: **two columns —
+  a picker row. The studio is `components/theme-builder/editor.tsx`: **two columns —
   controls left, a live mock of the app right, sticky, in both modes at once** —
   because none of these choices can be judged from the control that sets them (a
   radius is a number until it is on a badge beside a card beside an input), and
@@ -190,9 +190,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   Solarized publish no darker blue). Every preset swatch draws *itself* — the
   shape one shows a corner **and** a capsule, the glass one is a real
   `backdrop-filter` over a stripe — since "Soft" and "Deep" are not the choice.
-  It is also why the settings frame's width is **`settingsMaxWidth`**
-  (`components/settings/sections.ts`) rather than the constant `max-w-3xl` it
-  was: forms read at `max-w-5xl` now, and the routes that are *not* forms — the
+  It is also why the settings frame's width is chosen by **`isFullWidthSettings`**
+  (`components/settings/sections.ts`, handed to `PageFrame` as `full` or
+  `settings`) rather than the constant `max-w-3xl` it was: forms read at
+  `max-w-4xl` now, and the routes that are *not* forms — the
   studio is the only one so far — take the frame's full width, because at a
   form's measure the preview shrinks to a thumbnail and the colour grid wraps
   its light/dark pair onto separate lines, which is the one comparison the
@@ -286,7 +287,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   Reading a tool call — inferring its kind, target, language and diff out of
   ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`, and
   **drawing** one is `components/tool-views/` on top of the primitives in
-  `components/tool-parts.tsx` (which exists so those two and `thread-items.tsx`
+  `components/tool-parts.tsx` (which exists so those two and `thread-items/rows.tsx`
   can share a pane without importing each other). No component matches on a
   vendor tool name: `toolViewOf` picks the layout and the matching `extract*`
   supplies the fields, so a new runtime's tool is one file's edit. Reading a
@@ -559,7 +560,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## Composer
 
-- **The composer is one component, `components/composer.tsx`, and one card of two rows** — the
+- **The composer is one component, `components/composer/composer.tsx`, and one card of two rows** — the
   textarea and a toolbar — with the shelf above it.
 - **The shelf has a floor: `ComposerStrip`'s `footer`, the one row that is always there**
   (`DraftScopeRow` in `components/draft-config.tsx`): the project this thread runs in at the
@@ -674,9 +675,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **Both are imported from `hooks/use-device.ts`, never from `hooks/use-mobile.ts`.** The
   latter is shadcn's own generated file: `useCoarsePointer` used to live there, and a
   `shadcn add` of any component that depends on it rewrote the file back to stock, taking the
-  export with it and blanking every screen that imported it. `use-device.ts` owns the harness's
-  additions (`useCoarsePointer`, `MOBILE_BREAKPOINT`) and re-exports `useIsMobile`, so a
-  regenerated `use-mobile.ts` is always a file nothing outside `ui/` reads.
+  export with it and blanking every screen that imported it. `use-device.ts` is the one home of
+  every device question (`useIsMobile`, `useIsNarrow`, `useCoarsePointer`, and
+  `MOBILE_BREAKPOINT`, defined nowhere else); `use-mobile.ts` is a one-line re-export of it for
+  `ui/sidebar.tsx`, so a regenerated one is a private copy nothing outside `ui/` reads. The
+  scroll area's native-overflow switch asks `useCoarsePointer` too — it had its own effect-based
+  `useTouchPrimary`, which answered one render late.
 - **What Enter does is a preference, not a key binding** (`lib/composer-prefs.ts`,
   `ui.composerPrefs`, global and device-local like the view options). `enterSends` on: Enter
   sends, Shift+Enter breaks the line. Off: Enter breaks the line and the steer chord (an
@@ -701,7 +705,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `/name args` is sent, the agent resolves it, the send path is untouched. The harness's own
   (`HARNESS_COMMANDS` in `components/slash-commands.tsx`, declared in the same
   `acp.AvailableCommand` shape) are the exception the send path knows about:
-  `harnessCommandFor` reads the composed text in `Composer`'s `send` (`components/composer.tsx`) and, for
+  `harnessCommandFor` reads the composed text in `Composer`'s `send` (`components/composer/composer.tsx`) and, for
   `/schedule`, opens the schedule form with the rest of the line as its message instead of
   sending anything. That is how a message is scheduled now — the clock button beside the
   composer is gone: scheduling is *what to say and when*, which is typing, not a second
@@ -874,7 +878,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   for anything a *panel* has to fit — a chat squeezed to 320px beside a terminal was
   drawing the desktop layout because the window was still 1600px wide.
   `components/workspace/panel-container.tsx` wraps every panel's content, in the one place
-  the component map is built (`dock.tsx`), in an unnamed `@container`, and `index.css`
+  the component map is built (`dock-surface.tsx`), in an unnamed `@container`, and `index.css`
   declares `--container-panel-sm: 40rem` / `--container-panel-md: 48rem` — deliberately the
   pixel values of `sm:`/`md:`, since the variants they replace were written against those.
   So layout that needs *room* (the workflow table's activity column, the queue rows that
@@ -1050,7 +1054,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   have to clear it — and both did that with the constant `--app-header-h`, which is right for
   the group at the top and wrong for every other one. A terminal docked *below* a thread
   reserved three rems twice over, once in the strip's margin and once in its own padding, for a
-  header nowhere near it. `workspace/dock.tsx` measures the header's bottom against each
+  header nowhere near it. `workspace/dock-header.ts` measures the header's bottom against each
   group's box and publishes `--dock-header-overlap` on the group element, which is what the tab
   strip clears. **What a panel's own content pads by is measured by the panel**
   (`--dock-content-overlap`, `lib/workspace/panel-overlap.ts`), and that split is not tidiness:
@@ -1066,7 +1070,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **Nested tabs are a dock inside a tab.** The `group` panel kind
   (`components/workspace/group-panel.tsx`, descriptor `{kind:"group", groupId, layout?}`)
   renders a second `DockviewReact` where a panel's content goes — dockview's own "nested
-  instances" — through `DockSurface`, the one component in `dock.tsx` that both levels are
+  instances" — through `DockSurface`, the one component in `dock-surface.tsx` that both levels are
   drawn with, so a tab inside a group has the same tab, strip, `+`, list and theme it had
   outside one. What the group holds is its serialized inner layout, kept on the panel's
   params: dockview treats a panel's params change as a layout change of the outer, so the
@@ -1585,7 +1589,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 `/routines` and `/schedules` are places, not settings sections, and both are drawn
 the way the project page is: a `SurfaceHeader`, a row of `StatTile`s, then the list
 (`components/page-primitives.tsx` holds those pieces; nothing in it knows which
-surface it is on). **The sidebar reaches each through one fixed nav row** (Routines,
+surface it is on). **Every scrolling page route sits in its `PageFrame`** — the scroller
+that pads for `--app-header-h` and the centred column, with a `width` (`form`,
+`settings`, `wide`, `full`) — the schedules, routines, inbox, project, trace and settings
+pages alike; only the board (whose views own their scrollers) and the landing console
+(a centred composer, not a column) build their own. **The sidebar reaches each through one fixed nav row** (Routines,
 Scheduled — beside Tasks and Notifications, carrying the armed count) and lists
 neither. They used to be two fold groups under an "Automations" tier, each a smaller
 copy of its page's list with fewer controls: the page had to exist anyway for the

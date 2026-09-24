@@ -10,6 +10,52 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
+/* How wide a page's column may get. `form` is a form's measure, `settings` the
+   settings frame's, `wide` a page with tiles and two columns (the project
+   page, a schedule, a routine, a trace), `full` no cap at all. */
+const PAGE_WIDTH = {
+  form: "mx-auto max-w-3xl",
+  settings: "mx-auto max-w-4xl",
+  wide: "mx-auto max-w-5xl",
+  full: "",
+} as const
+
+/** The frame every scrolling page route sits in: a scroller that pads for the
+    app header (`--app-header-h`, re-pointed per page tab by `page-panel.tsx`)
+    and a centred column inside it. `min-w-0`, or a wide row (a textarea, a
+    table) makes the flex item refuse to shrink and the page scrolls sideways.
+    `gutter` is where the side padding steps up: the viewport's `sm` (every page
+    that has always used it) or the panel's `@panel-sm` (settings). */
+export function PageFrame({
+  width = "wide",
+  gutter = "viewport",
+  scrollRef,
+  className,
+  children,
+}: {
+  width?: keyof typeof PAGE_WIDTH
+  gutter?: "viewport" | "panel"
+  scrollRef?: React.Ref<HTMLDivElement>
+  /** Extra classes on the column (not the scroller). */
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
+      <div
+        className={cn(
+          "w-full px-4 pt-6 pb-16",
+          gutter === "panel" ? "@panel-sm:px-8" : "sm:px-8",
+          PAGE_WIDTH[width],
+          className
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 /** A page's title block: an optional way back, a title over a description or a
     line of badges, and the page's actions trailing. On a phone the actions
     drop under the text and stretch; on sm+ they sit beside it. */

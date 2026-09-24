@@ -3,7 +3,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { Drawer as DrawerPrimitive } from "@base-ui/react/drawer"
 
 import { Button } from "@/components/ui/button"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
 import { KEYBOARD_CENTER, KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { HugeiconsIcon } from "@hugeicons/react"

@@ -1371,7 +1371,7 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    is the dock: a transcript whose rows are all in the DOM, inside `@panel-*`
    container queries that re-evaluate with every one of those frames. On top of
    the CSS cost, `ResizeObserver` delivers per frame too, so the six observers
-   watching the inset column (`workspace/dock.tsx`, `panel-container.tsx`,
+   watching the inset column (`workspace/dock-surface.tsx`, `panel-container.tsx`,
    `composer-strip.tsx` ×2, `thread-view/thread-view.tsx`, `ide-panel.tsx`)
    each force a layout read inside it. That cost scales with how long the
    transcript is, which is why the snap was tried — and why, if the lag ever
@@ -2115,7 +2115,7 @@ html .dv-tabs-and-actions-container {
    the space has to come from outside its box.
 
    The amount is *measured*, per group (`--dock-header-overlap`, set by
-   workspace/dock.tsx), and the constant is only the fallback for the frame
+   workspace/dock-header.ts), and the constant is only the fallback for the frame
    before the first measurement. It used to be the constant outright, which
    meant a group docked below another cleared a header that is nowhere near it
    — and its panel then padded its own top by the same constant on top of that,
@@ -2142,7 +2142,7 @@ html .dv-groupview > .dv-tabs-and-actions-container {
    above is then the safe-area inset alone, and the strip lands in the header's
    own band (`--app-header-row-h`). That is the whole merge — one bar carrying the app's controls
    and this group's tabs, rather than a bar of controls with a bar of tabs under
-   it. `data-header-band` is set by workspace/dock.tsx on the groups it is true
+   it. `data-header-band` is set by workspace/dock-header.ts on the groups it is true
    of, which on a horizontal split is more than one of them.
 
    What the strip owes the header is horizontal, and it is measured for the same
@@ -2326,7 +2326,7 @@ html .dv-render-overlay {
    rule above — the same strip, the same tab, the same card — because it is the
    same DockviewReact. Two things are the outer level's alone and have to be
    said not to apply. The header overlap is set on the *outer* groups by
-   `dock.tsx` and never on the inner ones, and an inner strip lives in the
+   `dock-surface.tsx` and never on the inner ones, and an inner strip lives in the
    outer's render overlay where the outer group's variable does not reach, so
    without this it fell back to the constant and opened three rems of nothing
    under the group's own tab. And the card's right and bottom gutters are the

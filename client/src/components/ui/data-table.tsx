@@ -58,7 +58,7 @@ import { useMotionValue } from "framer-motion";
 import { HeaderActionOverflow } from "@/components/ui/action-overflow";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { PaginationControls } from "@/components/pagination-controls";
-import { useIsNarrow } from "@/hooks/use-mobile";
+import { useIsNarrow } from "@/hooks/use-device";
 import {
   FiltersBar,
   type FilterFieldDef,

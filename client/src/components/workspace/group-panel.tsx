@@ -13,7 +13,8 @@
 import * as React from "react"
 import type { DockviewApi, IDockviewPanelProps } from "dockview-react"
 
-import { DockSurface, useDock } from "@/components/workspace/dock"
+import { useDock } from "@/components/workspace/dock-context"
+import { DockSurface } from "@/components/workspace/dock-surface"
 import { parsePanel } from "@/lib/workspace/panels"
 
 export function GroupPanel({ api, containerApi }: IDockviewPanelProps) {

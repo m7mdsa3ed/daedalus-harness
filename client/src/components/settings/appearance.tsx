@@ -1,7 +1,7 @@
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
-import { ThemeGallery } from "@/components/theme-builder"
+import { ThemeGallery } from "@/components/theme-builder/gallery"
 import {
   FONT_SIZE_DEFAULT,
   FONT_SIZE_MAX,

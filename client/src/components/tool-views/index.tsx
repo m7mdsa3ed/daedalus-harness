@@ -35,7 +35,7 @@ import { extractBackgroundTask, toolOutputText, toolViewOf, type ToolView } from
 import type { ToolItem } from "@/lib/store"
 
 /* What the rest of the transcript reaches for: the pieces of a view that are
-   drawn outside their own step (`thread-items.tsx` puts a subagent's transcript
+   drawn outside their own step (`thread-items/rows.tsx` puts a subagent's transcript
    between its brief and its report, and `thread-cards.tsx` draws a checklist
    from ACP's plan channel), plus the row-level strips. */
 export { TodoList, ToolAnswers } from "@/components/tool-views/structured"

@@ -62,8 +62,8 @@ import {
 } from "@/components/item-context-menu"
 import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
-import { useDock, useDockGroups, useDockOpeners } from "@/components/workspace/dock"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useDock, useDockGroups, useDockOpeners } from "@/components/workspace/dock-context"
+import { useIsMobile } from "@/hooks/use-device"
 import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
@@ -496,7 +496,7 @@ function useTabMenuItems({
     /* Close comes first and names *this* tab, so a pinned panel still has a way
        out — the bulk closes below are the ones pinning is a defence against.
        Every tab closes, the last one included: an empty dock goes to the
-       landing console (`dock.tsx`). */
+       landing console (`dock-surface.tsx`). */
     { label: "Close", shortcut: "closeTab", onClick: () => void dock.closePanel(api.id) },
     { label: "Close others", disabled: !hasOthers, onClick: () => void dock.closeOthers(api.id) },
     {

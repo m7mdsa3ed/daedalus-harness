@@ -27,6 +27,7 @@ import * as React from "react"
 import { ChevronsUpDown } from "lucide-react"
 import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { PageFrame } from "@/components/page-primitives"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -149,22 +150,14 @@ export function SettingsLayout({
   )
 
   return (
-    <div
-      ref={scrollRef}
-      className="min-h-0 min-w-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]"
+    <PageFrame
+      scrollRef={scrollRef}
+      width={bare ? "full" : "settings"}
+      gutter="panel"
+      className={bare ? undefined : "pb-24"}
     >
-      {/* `min-w-0` above, or a wide row (a command's textarea, a table) makes
-          the flex item refuse to shrink and the pane scrolls sideways. */}
-      <div
-        className={
-          bare
-            ? "w-full px-4 pt-6 pb-16 @panel-sm:px-8"
-            : "mx-auto w-full max-w-4xl px-4 pt-6 pb-24 @panel-sm:px-8"
-        }
-      >
-        {!bare && !loading && isMobile && <SectionPicker section={section} go={go} />}
-        {page}
-      </div>
-    </div>
+      {!bare && !loading && isMobile && <SectionPicker section={section} go={go} />}
+      {page}
+    </PageFrame>
   )
 }

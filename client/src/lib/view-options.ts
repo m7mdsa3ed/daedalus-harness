@@ -24,7 +24,7 @@
     everything already on screen and works only on rows that mount afterwards —
     which reads as "sometimes". If an option must seed component state, the
     component has to re-sync when the option itself changes; `StepRow`'s
-    `openSetting` prop in `thread-items.tsx` is the worked example, including
+    `openSetting` prop in `thread-items/rows.tsx` is the worked example, including
     why it watches the option rather than the derived value.
 
     CSS-only options are the cheap path and don't have that problem: set a data

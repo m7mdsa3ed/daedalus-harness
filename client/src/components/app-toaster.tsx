@@ -39,7 +39,7 @@ import {
   MultiplicationSignCircleIcon,
 } from "@hugeicons/core-free-icons"
 
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobile } from "@/hooks/use-device"
 import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { cn } from "@/lib/utils"
 import {

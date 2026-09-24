@@ -8,7 +8,7 @@
    One-shot and consumed by the shell's route effect right after it opens the
    chat, so the chat is the panel the queued ones split against — a preview
    queued first would have become the group the chat then tabbed into. */
-import type { OpenPanelOptions } from "@/components/workspace/dock"
+import type { OpenPanelOptions } from "@/components/workspace/dock-context"
 import type { PanelDescriptor } from "@/lib/workspace/panels"
 
 interface Queued {

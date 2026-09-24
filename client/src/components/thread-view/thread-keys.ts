@@ -8,7 +8,7 @@ import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { KEYS, isInteractiveTarget, isTypingTarget, overlayOpen } from "@/lib/shortcuts"
 import type { ThreadState } from "@/lib/store"
-import type { ComposerHandle } from "@/components/composer"
+import type { ComposerHandle } from "@/components/composer/composer"
 import { primaryPermissionOption } from "@/components/tool-approval"
 
 /* ── Thread keys ──

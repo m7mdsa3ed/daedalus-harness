@@ -252,7 +252,7 @@ function ThemeEditor({
 
       {/* The preview column grows with the frame rather than staying a fixed
           thumbnail: this page runs at the settings frame's full width
-          (settingsMaxWidth in settings/sections.ts), and the mock is the half
+          (isFullWidthSettings in settings/sections.ts), and the mock is the half
           that benefits from it. */}
       <div className="grid gap-4 @panel-lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @panel-lg:items-start @panel-xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] @panel-xl:gap-6">
         {/* Controls */}

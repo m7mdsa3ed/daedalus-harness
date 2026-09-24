@@ -17,107 +17,46 @@
    builder and the task workspace into the entry chunk — a megabyte gzipped,
    downloaded by every reader who only ever opens a thread.
 
-   Nothing else in the app imports these page modules (this file is the one
-   importer), which is what makes the split real: a second static import
-   anywhere would pull the module straight back into the entry chunk, and
-   Rollup would say so — `INEFFECTIVE_DYNAMIC_IMPORT`. Check the build output
-   before adding one.
+   Nothing else in the app imports these page modules statically (this file
+   and `settings/sections.ts` bind them, both by dynamic import), which is
+   what makes the split real: a second static import anywhere would pull the
+   module straight back into the entry chunk, and Rollup would say so —
+   `INEFFECTIVE_DYNAMIC_IMPORT`. Check the build output before adding one.
 
-   `lazyPage` keeps the component's own prop types, so the route tree still
-   type-checks the `actions`/`settings` it hands over; `React.lazy`'s own
-   signature erases them to whatever the module's default export is. */
+   `lazyPage` (`lib/lazy-page.ts`) keeps the component's own prop types, so the
+   route tree still type-checks the `actions`/`settings` it hands over. The
+   settings sections' pages are bound on their rows in `settings/sections.ts`,
+   the other module allowed to name them — by dynamic import only. */
 import * as React from "react"
 import { Navigate, Route } from "react-router"
 import { LandingPage } from "@/components/landing/landing-page"
+import { PageFrame } from "@/components/page-primitives"
 import {
+  SETTINGS_SECTIONS,
   sectionMeta,
   sectionOf,
-  settingsMaxWidth,
   type SettingsSectionId,
 } from "@/components/settings/sections"
+import { lazyPage } from "@/lib/lazy-page"
 import { settingsRootPath } from "@/lib/router"
 import type { Actions } from "@/lib/actions"
 import { useProjects } from "@/lib/queries/catalog"
 import { useRoutines } from "@/lib/queries/routines"
 import type { ServerSettings } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
-import { cn } from "@/lib/utils"
 
 export interface PageHeading {
   crumb?: string
   title: string
 }
 
-function lazyPage<K extends string, M extends Record<K, React.ComponentType<any>>>(
-  load: () => Promise<M>,
-  key: K
-): M[K] {
-  return React.lazy(async () => ({ default: (await load())[key] })) as unknown as M[K]
-}
-
-const settingsModules = {
-  layout: () => import("@/components/settings/layout"),
-  overview: () => import("@/components/settings/overview"),
-  general: () => import("@/components/settings/general"),
-  knowledge: () => import("@/components/settings/knowledge"),
-  appearance: () => import("@/components/settings/appearance"),
-  keyboard: () => import("@/components/settings/keyboard"),
-  notifications: () => import("@/components/settings/notifications"),
-  projects: () => import("@/components/settings/projects"),
-  mcp: () => import("@/components/settings/mcp"),
-  skills: () => import("@/components/settings/skills"),
-  commands: () => import("@/components/settings/commands"),
-  personas: () => import("@/components/settings/personas"),
-  rules: () => import("@/components/settings/rules"),
-  modelPrompts: () => import("@/components/settings/model-prompts"),
-  profiles: () => import("@/components/settings/profiles"),
-  agents: () => import("@/components/settings/agents"),
-  quota: () => import("@/components/settings/quota"),
-  webSearch: () => import("@/components/settings/web-search"),
-  backup: () => import("@/components/settings/backup"),
-  ai: () => import("@/components/settings/ai"),
-}
-
-const SettingsLayout = lazyPage(settingsModules.layout, "SettingsLayout")
-const SettingsOverviewPage = lazyPage(settingsModules.overview, "SettingsOverviewPage")
-const GeneralPage = lazyPage(settingsModules.general, "GeneralPage")
-const AiPage = lazyPage(settingsModules.ai, "AiPage")
-const KnowledgePage = lazyPage(settingsModules.knowledge, "KnowledgePage")
-const AppearancePage = lazyPage(settingsModules.appearance, "AppearancePage")
-const KeyboardPage = lazyPage(settingsModules.keyboard, "KeyboardPage")
-const NotificationsPage = lazyPage(settingsModules.notifications, "NotificationsPage")
-const ProjectsPage = lazyPage(settingsModules.projects, "ProjectsPage")
-const ProjectFormPage = lazyPage(settingsModules.projects, "ProjectFormPage")
-const McpPage = lazyPage(settingsModules.mcp, "McpPage")
-const McpImportPage = lazyPage(settingsModules.mcp, "McpImportPage")
-const McpBrowsePage = lazyPage(settingsModules.mcp, "McpBrowsePage")
-const McpFormPage = lazyPage(settingsModules.mcp, "McpFormPage")
-/* A chunk of its own: the playground and the schema rendering are a page
-   somebody navigates to, and the library list must not carry them. */
-const McpDetailPage = lazyPage(() => import("@/components/settings/mcp-detail"), "McpDetailPage")
-const SkillsPage = lazyPage(settingsModules.skills, "SkillsPage")
-const SkillImportPage = lazyPage(settingsModules.skills, "SkillImportPage")
-const SkillFormPage = lazyPage(settingsModules.skills, "SkillFormPage")
-const CommandsPage = lazyPage(settingsModules.commands, "CommandsPage")
-const CommandImportPage = lazyPage(settingsModules.commands, "CommandImportPage")
-const CommandFormPage = lazyPage(settingsModules.commands, "CommandFormPage")
-const PersonasPage = lazyPage(settingsModules.personas, "PersonasPage")
-const PersonaFormPage = lazyPage(settingsModules.personas, "PersonaFormPage")
-const RulesPage = lazyPage(settingsModules.rules, "RulesPage")
-const ModelPromptsPage = lazyPage(settingsModules.modelPrompts, "ModelPromptsPage")
-const ModelPromptFormPage = lazyPage(settingsModules.modelPrompts, "ModelPromptFormPage")
-const ProfilesPage = lazyPage(settingsModules.profiles, "ProfilesPage")
-const ProfileFormPage = lazyPage(settingsModules.profiles, "ProfileFormPage")
-const AgentsPage = lazyPage(settingsModules.agents, "AgentsPage")
-const QuotaPage = lazyPage(settingsModules.quota, "QuotaPage")
-const WebSearchPage = lazyPage(settingsModules.webSearch, "WebSearchPage")
-const BackupPage = lazyPage(settingsModules.backup, "BackupPage")
-
-/* The theme editor is its own chunk rather than Appearance's: it is the single
-   largest page in the app, and Appearance is a section someone opens to change
-   the mode. Settings › Appearance imports it too — statically, which is fine
-   because that importer is itself inside this chunk group. */
-const ThemeEditorPage = lazyPage(() => import("@/components/theme-builder"), "ThemeEditorPage")
+/* The settings frame and its index. Every section's page is bound on its own
+   row in `settings/sections.ts`, the one table the sections are declared in. */
+const SettingsLayout = lazyPage(() => import("@/components/settings/layout"), "SettingsLayout")
+const SettingsOverviewPage = lazyPage(
+  () => import("@/components/settings/overview"),
+  "SettingsOverviewPage"
+)
 
 const ProjectPage = lazyPage(() => import("@/components/project-page"), "ProjectPage")
 const TracePage = lazyPage(() => import("@/components/trace-page"), "TracePage")
@@ -130,88 +69,28 @@ const NotificationsInboxPage = lazyPage(
 /* The board has two doors — this route and the dock's tasks panel — so both
    have to be lazy or neither is: a static import from either one puts the
    whole `components/tasks` tree back in the entry chunk. The panel's binding
-   is in `workspace/dock.tsx`. */
+   is in `workspace/dock-surface.tsx`. */
 const TasksWorkspace = lazyPage(() => import("@/components/tasks"), "TasksWorkspace")
 
-/* ── The settings sections, once ──
-   The sidebar nav and the `<Route>`s under /settings were two hand-kept lists
-   of the same twenty-odd sections, so a new page was two edits and a forgotten
-   one was a nav row that redirected straight back to the overview. Both are
-   read off this array now: a section with no entry here has no route and no row
-   — consistent rather than a dead link.
-
-   `id` is the section id *and* the URL segment (`/settings/<id>`) — the two
-   have never differed, and a section whose page needs a different word would be
-   a different key on the metadata row, not a special case here. `sub` are the
-   routes that hang off a section's own — its import screen and its form — with
-   paths relative to it, declared as siblings because that is what they are:
-   the list page is not their layout.
-
-   Order is `SETTINGS_SECTIONS`', because the nav filters this array per group
-   and the reader sees that order. Route *declaration* order carries no meaning:
-   React Router ranks by specificity, so `mcp/import` beats `mcp/:entryId`
-   wherever either stands.
-
-   Elements are built once at module scope: none of the section pages takes a
-   prop from the shell (the layout does, below), and a fresh element per render
-   would only be a new object saying the same thing. */
-const SETTINGS_PAGES: readonly {
-  id: SettingsSectionId
-  element: React.ReactNode
-  sub?: readonly { path: string; element: React.ReactNode }[]
-}[] = [
-  { id: "general", element: <GeneralPage /> },
-  { id: "ai", element: <AiPage /> },
-  {
-    id: "appearance",
-    element: <AppearancePage />,
-    sub: [{ path: "themes/:themeId", element: <ThemeEditorPage /> }],
-  },
-  { id: "notifications", element: <NotificationsPage /> },
-  { id: "keyboard", element: <KeyboardPage /> },
-  { id: "projects", element: <ProjectsPage />, sub: [{ path: ":entryId", element: <ProjectFormPage /> }] },
-  { id: "knowledge", element: <KnowledgePage /> },
-  {
-    id: "mcp",
-    element: <McpPage />,
-    sub: [
-      { path: "import", element: <McpImportPage /> },
-      { path: "browse", element: <McpBrowsePage /> },
-      { path: ":entryId/tools", element: <McpDetailPage /> },
-      { path: ":entryId", element: <McpFormPage /> },
-    ],
-  },
-  {
-    id: "skills",
-    element: <SkillsPage />,
-    sub: [
-      { path: "import", element: <SkillImportPage /> },
-      { path: ":entryId", element: <SkillFormPage /> },
-    ],
-  },
-  {
-    id: "commands",
-    element: <CommandsPage />,
-    sub: [
-      { path: "import", element: <CommandImportPage /> },
-      { path: ":entryId", element: <CommandFormPage /> },
-    ],
-  },
-  { id: "rules", element: <RulesPage /> },
-  /* No import route: nothing in the agents' own configs is a persona to
-     import — see settings/personas.tsx. */
-  { id: "personas", element: <PersonasPage />, sub: [{ path: ":entryId", element: <PersonaFormPage /> }] },
-  {
-    id: "model-prompts",
-    element: <ModelPromptsPage />,
-    sub: [{ path: ":entryId", element: <ModelPromptFormPage /> }],
-  },
-  { id: "profiles", element: <ProfilesPage />, sub: [{ path: ":entryId", element: <ProfileFormPage /> }] },
-  { id: "agents", element: <AgentsPage /> },
-  { id: "usage", element: <QuotaPage /> },
-  { id: "backup", element: <BackupPage /> },
-  { id: "web-search", element: <WebSearchPage /> },
-]
+/* The routes under /settings, read off the one table (`SETTINGS_SECTIONS`).
+   Built once at module scope: none of the section pages takes a prop from the
+   shell (the layout does, below), and a fresh element per render would only be
+   a new object saying the same thing. The cast widens the `as const` union so
+   `sub` can be read on a row that has none. */
+const SETTINGS_ROUTES = (
+  SETTINGS_SECTIONS as readonly {
+    id: SettingsSectionId
+    page: React.ComponentType
+    sub?: readonly { path: string; page: React.ComponentType }[]
+  }[]
+).map(({ id, page: Page, sub }) => (
+  <React.Fragment key={id}>
+    <Route path={id} element={<Page />} />
+    {sub?.map(({ path, page: Sub }) => (
+      <Route key={path} path={`${id}/${path}`} element={<Sub />} />
+    ))}
+  </React.Fragment>
+))
 
 /** What a page route is called — a page tab's title. Beside the route table
     because adding a page is adding a name for it: the section over the page's
@@ -262,8 +141,7 @@ export function usePageHeading(): (path: string) => PageHeading | null {
   }
 }
 
-/** What the tree needs from the shell. `pathname` is the shell's location, not
-    a page tab's: `settingsMaxWidth` is asked once, where the frame is built. */
+/** What the tree needs from the shell. */
 export interface PageRoutesProps {
   settings: ServerSettings
   actions: Actions
@@ -271,7 +149,6 @@ export interface PageRoutesProps {
   loading: boolean
   /** A project and a profile exist, so a thread can be started. */
   ready: boolean
-  pathname: string
   onAddServer: () => void
   onOpenSettings: (section?: SettingsSectionId) => void
 }
@@ -285,7 +162,6 @@ export function pageRoutes({
   actions,
   loading,
   ready,
-  pathname,
   onAddServer,
   onOpenSettings,
 }: PageRoutesProps): React.ReactNode {
@@ -303,14 +179,7 @@ export function pageRoutes({
         }
       >
         <Route index element={<SettingsOverviewPage />} />
-        {SETTINGS_PAGES.map((entry) => (
-          <React.Fragment key={entry.id}>
-            <Route path={entry.id} element={entry.element} />
-            {entry.sub?.map((sub) => (
-              <Route key={sub.path} path={`${entry.id}/${sub.path}`} element={sub.element} />
-            ))}
-          </React.Fragment>
-        ))}
+        {SETTINGS_ROUTES}
         {/* /settings/<unknown> — back to the overview, which lists what exists. */}
         <Route path="*" element={<Navigate to={settingsRootPath()} replace />} />
       </Route>
@@ -324,37 +193,25 @@ export function pageRoutes({
           key={path}
           path={path}
           element={
-            <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
-              <div
-                className={cn(
-                  "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
-                  path === "/schedules/new" ? "max-w-3xl" : "max-w-5xl"
-                )}
-              >
-                <SchedulePage actions={actions} />
-              </div>
-            </div>
+            <PageFrame width={path === "/schedules/new" ? "form" : "wide"}>
+              <SchedulePage actions={actions} />
+            </PageFrame>
           }
         />
       ))}
       {/* /routines is the list, /routines/new the form, /routines/<id> one
-          routine — one component reads the path (see RoutinesPage). The
-          frame is the settings frame's width rather than the schedules
-          page's max-w-3xl: the autonomy control is ten labelled rows each
-          with a three-way choice trailing it, and at a form's measure the
-          label wraps under the control it belongs to. */}
+          routine — one component reads the path (see RoutinesPage). Every
+          one of them is `wide`, the form included: the autonomy control is
+          ten labelled rows each with a three-way choice trailing it, and at
+          a form's measure the label wraps under the control it belongs to. */}
       {["/routines", "/routines/new", "/routines/:routineId"].map((path) => (
         <Route
           key={path}
           path={path}
           element={
-            <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
-              <div
-                className={cn("mx-auto w-full px-4 pt-6 pb-16 sm:px-8", settingsMaxWidth(pathname))}
-              >
-                <RoutinesPage actions={actions} />
-              </div>
-            </div>
+            <PageFrame width="wide">
+              <RoutinesPage actions={actions} />
+            </PageFrame>
           }
         />
       ))}
@@ -362,11 +219,9 @@ export function pageRoutes({
       <Route
         path="/notifications"
         element={
-          <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
-            <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
-              <NotificationsInboxPage />
-            </div>
-          </div>
+          <PageFrame width="form">
+            <NotificationsInboxPage />
+          </PageFrame>
         }
       />
       {/* A project's own page: the overview, its threads and its numbers.
