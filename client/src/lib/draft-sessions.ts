@@ -85,6 +85,7 @@ function parseRow(value: unknown): SessionMeta | null {
     ...(str(row.personaId) ? { personaId: str(row.personaId) } : {}),
     ...(typeof row.suggestFollowups === "boolean" ? { suggestFollowups: row.suggestFollowups } : {}),
     ...(typeof row.uiBlocks === "boolean" ? { uiBlocks: row.uiBlocks } : {}),
+    ...(row.isolate === true ? { isolate: true } : {}),
     ...(str(row.modeId) ? { modeId: str(row.modeId) } : {}),
     ...(choices ? { configChoices: choices } : {}),
     ...(mcpServerIds ? { mcpServerIds } : {}),

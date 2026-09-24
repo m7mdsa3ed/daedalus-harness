@@ -811,6 +811,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 
 - **A project is a directory, and a directory is not one git repository.** `server/src/git.ts`
   addresses a `RepoContext`, never "the project's git".
+- **An isolated thread runs in its own worktree, and where a thread runs is `threadCwd`**
+  (`sessions.worktree`, project-relative `.daedalus/worktrees/<id>` on branch
+  `daedalus/<id>`): spawn, bridge cwd, snapshots, `!` lines and materialisation (unioned per
+  *thread* cwd) all ask it, never `project.cwd`. Made before the thread exists, only at a
+  repository root, ignored via `.git/info/exclude` — **never the user's `.gitignore`**. The
+  column never moves; archiving leaves the checkout, removing it is its own route and refuses
+  uncommitted work unless forced.
 - **Backup is one JSON document and import is one transaction.** Never exported: the server
   token/host/port, the probe cache, `history_*` rows.
 - **Subscription quota is read by asking the runtime's own CLI, out of band**, naming the

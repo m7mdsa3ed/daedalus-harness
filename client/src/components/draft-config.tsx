@@ -1,6 +1,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { BotIcon, Loader2, RefreshCwIcon } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { BotIcon, GitBranchIcon, Loader2, RefreshCwIcon } from "lucide-react"
 import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -39,6 +40,9 @@ import { optionKey, shownOptions, useAgentOptions, useProbeStatus } from "@/lib/
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { gitReposKey } from "@/lib/queries/keys"
+import { useServer } from "@/lib/server-context"
+import { gitRepos } from "@/lib/workspace/git-api"
 
 const DEFAULT_CHOICE = "__default__"
 /** Sentinel for "no persona", which is not itself a persona id. */
@@ -207,6 +211,8 @@ export function DraftScopeRow({
           />
         </span>
       )}
+      {/* Where in the project: its own checkout, when the thread is isolated. */}
+      <WorktreeChip meta={meta} editable={editable && remember} onToggle={(isolate) => configure({ isolate })} />
       {/* Before the `ms-auto` cluster, so `leading` is the row's start whatever
           the row grows into. */}
       {leading}
@@ -229,6 +235,72 @@ export function DraftScopeRow({
         {trailing}
       </span>
     </div>
+  )
+}
+
+/**
+ * "Isolate in a git worktree", on a draft whose project directory is a
+ * repository — and, once the thread exists, the branch it was isolated on.
+ *
+ * Asked of `GET …/git/repos` (a root entry, `""`, is the project's own); the
+ * server is still the one that decides, and refuses in git's words a project
+ * nested in a larger checkout. A started thread's chip is a read-out, like the
+ * project beside it: where the work lands is fixed once the agent runs there.
+ */
+function WorktreeChip({
+  meta,
+  editable,
+  onToggle,
+}: {
+  meta: SessionMeta
+  editable: boolean
+  onToggle: (isolate: boolean) => void
+}) {
+  const settings = useServer()
+  const repos = useQuery({
+    queryKey: gitReposKey(settings, meta.projectId),
+    queryFn: ({ signal }) => gitRepos(settings, meta.projectId, signal),
+    enabled: editable && !!meta.projectId,
+    staleTime: 60_000,
+  })
+  const mark = <GitBranchIcon aria-hidden className={READING_MARK} />
+  if (!editable) {
+    if (!meta.worktree) return null
+    const gone = meta.worktree.exists === false
+    return (
+      <span
+        title={
+          gone
+            ? `The worktree was removed; branch ${meta.worktree.branch} is kept`
+            : `Isolated in ${meta.worktree.path}, on branch ${meta.worktree.branch}`
+        }
+        className={cn(
+          READING_TRIGGER,
+          "flex h-6 items-center text-muted-foreground",
+          gone && "line-through opacity-70"
+        )}
+      >
+        <ReadingFace icon={mark} label={meta.worktree.branch} labelClass="max-w-40" />
+      </span>
+    )
+  }
+  if (!repos.data?.some((repo) => repo.path === "")) return null
+  const on = meta.isolate === true
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-pressed={on}
+      title={
+        on
+          ? "Isolated: this thread gets its own git worktree and branch (click to run in the project instead)"
+          : "Isolate in a git worktree — its own checkout and branch, so its edits never touch the project's"
+      }
+      onClick={() => onToggle(!on)}
+      className={cn(READING_TRIGGER, on ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+    >
+      <ReadingFace icon={mark} label={on ? "Worktree" : "Isolate"} />
+    </Button>
   )
 }
 

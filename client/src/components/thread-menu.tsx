@@ -21,6 +21,7 @@ import {
   ExternalLink,
   Eye,
   FolderOpen,
+  GitBranchIcon,
   Link as LinkIcon,
   MessageSquare,
   MoreHorizontal,
@@ -62,10 +63,10 @@ import type { WorkspaceDock } from "@/components/workspace/dock-context"
 import type { PanelKind } from "@/lib/workspace/panels"
 import { usePrompt } from "@/components/prompt-dialog"
 import type { Actions } from "@/lib/actions"
-import { reportError } from "@/lib/errors"
+import { describeError, reportError } from "@/lib/errors"
 import { usePins } from "@/lib/pins"
 import { projectPath, settingsFormPath, threadPath, threadTracePath } from "@/lib/router"
-import { type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
+import { ApiError, type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
 import { useStoreSelect } from "@/lib/store"
@@ -111,6 +112,17 @@ const deleteItem = (
   onClick: () => onDelete(session),
 })
 
+/** "Remove worktree", for an isolated thread whose checkout is still there.
+    Archiving leaves it on purpose — the work is in it — so this is the
+    deliberate second step, on both the live and the Trash menu. */
+const worktreeItems = (
+  session: SessionMeta,
+  onRemove?: (session: SessionMeta) => void
+): MenuItemSpec[] =>
+  onRemove && session.worktree && session.worktree.exists !== false
+    ? [{ label: "Remove worktree", icon: <GitBranchIcon />, onClick: () => onRemove(session) }]
+    : []
+
 /** The row menu for a live thread — Trash rows get their own two items. */
 export function threadMenuItems(
   session: SessionMeta,
@@ -119,6 +131,7 @@ export function threadMenuItems(
     onRename: (session: SessionMeta) => void
     onDelete: (session: SessionMeta) => void
     onPin: (session: SessionMeta) => void
+    onRemoveWorktree?: (session: SessionMeta) => void
   }
 ): MenuItemSpec[] {
   /* No "Open in new tab": opening a thread IS opening a tab now (see the route
@@ -129,6 +142,7 @@ export function threadMenuItems(
     pinItem(session, pinned, handlers.onPin),
     { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(session) },
     { type: "separator" },
+    ...worktreeItems(session, handlers.onRemoveWorktree),
     deleteItem(session, handlers.onDelete),
   ]
 }
@@ -136,10 +150,12 @@ export function threadMenuItems(
 export function trashMenuItems(
   session: SessionMeta,
   restore: (session: SessionMeta) => void,
-  purge: (session: SessionMeta) => void
+  purge: (session: SessionMeta) => void,
+  removeWorktree?: (session: SessionMeta) => void
 ): MenuItemSpec[] {
   return [
     { label: "Restore", icon: <Undo2 />, onClick: () => restore(session) },
+    ...worktreeItems(session, removeWorktree),
     { type: "separator" },
     {
       label: "Delete forever",
@@ -278,7 +294,47 @@ export function useThreadRowActions(
     [confirm, actions]
   )
 
-  return { rename, remove, restore, purge, pin }
+  /* Asked once plainly; when the server refuses because of uncommitted work,
+     its refusal — which names the files — is the second question. */
+  const removeWorktree = React.useCallback(
+    async (session: SessionMeta) => {
+      const branch = session.worktree?.branch ?? "its branch"
+      if (
+        !(await confirm({
+          title: "Remove this thread's worktree?",
+          description: `The checkout under ${session.worktree?.path ?? ".daedalus/worktrees"} is deleted; the branch ${branch} and its commits are kept. The thread cannot run again without it.`,
+          confirmLabel: "Remove",
+          destructive: true,
+        }))
+      )
+        return
+      try {
+        await actions.removeWorktree(session.id)
+        toast.success("Worktree removed", { description: `Branch ${branch} is kept.` })
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 409)) {
+          reportError(err, "Couldn't remove the worktree")
+          return
+        }
+        if (
+          !(await confirm({
+            title: "Remove it anyway?",
+            description: describeError(err).title,
+            confirmLabel: "Remove anyway",
+            destructive: true,
+          }))
+        )
+          return
+        actions
+          .removeWorktree(session.id, true)
+          .then(() => toast.success("Worktree removed", { description: `Branch ${branch} is kept.` }))
+          .catch((again) => reportError(again, "Couldn't remove the worktree"))
+      }
+    },
+    [confirm, actions]
+  )
+
+  return { rename, remove, restore, purge, pin, removeWorktree }
 }
 
 /**
@@ -351,7 +407,7 @@ export function ThreadHeaderMenu({
   )
   /* The same three the sidebar list holds, from the same hook: deleting from
      here asks the same question, and leaves the route the same way. */
-  const { rename, remove, pin } = useThreadRowActions(actions, {
+  const { rename, remove, pin, removeWorktree } = useThreadRowActions(actions, {
     activeThreadId: sessionId,
     onLeave: () => void navigate("/"),
   })
@@ -455,6 +511,7 @@ export function ThreadHeaderMenu({
         onClick: () => void navigate(threadTracePath(thread.id)),
       },
       { type: "separator" },
+      ...worktreeItems(thread, removeWorktree),
       deleteItem(thread, remove),
     ]
   }

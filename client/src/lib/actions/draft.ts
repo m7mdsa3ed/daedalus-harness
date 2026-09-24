@@ -312,6 +312,7 @@ export function draftActions(core: ActionsCore) {
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"
+          | "isolate"
         >
       >,
       /** Whether the pick is also published onto the project (`publish`).
@@ -322,6 +323,9 @@ export function draftActions(core: ActionsCore) {
           project opens on. Default on, which is the composer. */
       remember = true
     ) {
+      /* Isolation is a question about one repository: a different project
+         asks it again rather than inheriting a yes it may not be able to keep. */
+      if (next.projectId !== undefined && next.isolate === undefined) next = { ...next, isolate: false }
       dispatch({ type: "configure-draft", id, next })
       /* The same rescope the reducer applies: a different agent or profile is a
          different set of settings, so the picks made against the old one must

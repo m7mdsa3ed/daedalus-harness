@@ -698,6 +698,9 @@ export class WorkflowRunner {
         parentSessionId: run.parent.id,
         title: `${run.def.name} · ${step.name}`,
         restore,
+        /* A step works where its parent does — in the parent's worktree, when
+           the parent was isolated in one. */
+        worktree: run.parent.worktree ?? undefined,
         /* And how the parent works, for the same reason: a step is the same
            actor working in another thread, so a parent running "quick fix"
            must not spawn steps that refactor. */

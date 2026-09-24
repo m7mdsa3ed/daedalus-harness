@@ -47,10 +47,10 @@
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { copyFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
   DEFAULT_IGNORES,
@@ -1224,4 +1224,65 @@ export async function stashPop(projectId: string, index: number, repo?: string):
 export async function stashDrop(projectId: string, index: number, repo?: string): Promise<void> {
   const { dir } = await repoOrThrow(projectId, repo);
   await run(dir, ["stash", "drop", stashRef(index)]);
+}
+
+/* ── A thread's own worktree ──
+   An isolated thread runs in `git worktree add <project>/.daedalus/worktrees/
+   <short-id> -b daedalus/<short-id>`: a second checkout of the project's
+   repository on a branch of its own, so two agents (or an agent and a person)
+   never write the same files. Inside the project on purpose — every file and
+   git route already addresses it as a project-relative path, and source control
+   reaches it as a `repo` — and ignored through `.git/info/exclude`, never the
+   user's `.gitignore`, so the project's own status and a turn's snapshot never
+   see it. Only a project whose directory IS the repository root may isolate: a
+   project nested in a larger checkout would have its thread's paths measured
+   from two different roots. */
+
+export const WORKTREES_DIR = ".daedalus/worktrees";
+
+/** The branch a worktree was made on — its directory's own name. */
+export const worktreeBranch = (rel: string): string => `daedalus/${rel.split("/").pop() ?? rel}`;
+
+/** Make the worktree for a thread and answer its project-relative path. */
+export async function createWorktree(cwd: string, sessionId: string): Promise<string> {
+  const top = await toplevelOf(cwd);
+  if (!top) throw fail(400, "this project is not a git repository, so it has no worktree to isolate in");
+  if (realpathSync(top) !== realpathSync(cwd))
+    throw fail(400, "isolating needs the project directory to be the repository's root");
+  const short = sessionId.replace(/-/g, "").slice(0, 8);
+  const rel = `${WORKTREES_DIR}/${short}`;
+  const { stdout } = await run(cwd, ["rev-parse", "--git-common-dir"]);
+  const exclude = join(resolve(cwd, stdout.trim()), "info", "exclude");
+  const held = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  if (!held.split(/\r?\n/).includes(".daedalus/")) {
+    mkdirSync(dirname(exclude), { recursive: true });
+    appendFileSync(exclude, `${held && !held.endsWith("\n") ? "\n" : ""}.daedalus/\n`);
+  }
+  await run(cwd, ["worktree", "add", rel, "-b", worktreeBranch(rel)]);
+  return rel;
+}
+
+/**
+ * Remove a thread's worktree. The branch is kept — its commits are the work —
+ * so what removing can lose is only what is not committed, and that is refused
+ * unless `force`, with the paths that would go named in the refusal.
+ */
+export async function removeWorktree(cwd: string, rel: string, force: boolean): Promise<void> {
+  const dir = join(cwd, rel);
+  if (!existsSync(dir)) {
+    await run(cwd, ["worktree", "prune"]);
+    return;
+  }
+  if (!force) {
+    const { stdout } = await run(dir, ["status", "--porcelain", "--untracked-files=all"]);
+    const dirty = stdout.split("\n").filter(Boolean);
+    if (dirty.length > 0) {
+      const shown = dirty.slice(0, 20).map((line) => line.slice(3));
+      throw fail(
+        409,
+        `The worktree has ${dirty.length} uncommitted ${dirty.length === 1 ? "change" : "changes"} that removing it would lose: ${shown.join(", ")}${dirty.length > shown.length ? ", …" : ""}. Commit them to ${worktreeBranch(rel)}, or remove anyway.`,
+      );
+    }
+  }
+  await run(cwd, ["worktree", "remove", ...(force ? ["--force"] : []), rel]);
 }

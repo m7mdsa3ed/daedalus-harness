@@ -202,6 +202,9 @@ export function createCore(deps: CoreDeps) {
         mcpServerIds: meta.mcpServerIds ?? [],
         skillIds: meta.skillIds ?? [],
         commandIds: meta.commandIds ?? [],
+        /* "Isolate in a git worktree": the server makes the checkout first and
+           spawns the agent in it. */
+        worktree: meta.isolate === true || undefined,
         /* A draft renamed before it was ever sent to: the name travels with
            the create call, and the server's first-prompt sniff then leaves
            it alone. Left out when nobody has named it, so the sniff still

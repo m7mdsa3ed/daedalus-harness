@@ -831,6 +831,13 @@ export const sessions = pgTable(
       .notNull()
       .default(true),
     title: text("title").notNull(),
+    /** The git worktree this thread runs in, project-relative
+        (`.daedalus/worktrees/<short-id>`), or null for a thread in the
+        project's own cwd. Chosen once, on the draft, and never moved: the
+        agent's store names its conversation by the cwd it ran in, so a thread
+        that changed directory would lose it. Its branch is
+        `daedalus/<short-id>`, the directory's own name (`worktree.ts`). */
+    worktree: text("worktree"),
     /** The agent's own session id — what `session/load` is called with. */
     acpSessionId: text("acp_session_id"),
     /** True while `acpSessionId` is an id the agent handed out but no turn has

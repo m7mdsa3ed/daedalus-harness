@@ -379,7 +379,7 @@ export function ThreadInspector({
   const prefs = inspectorPrefs.use()
   const comments = useReviewComments(meta.id)
   /* A worktree thread's changes live in its own checkout, not the project's. */
-  const worktreeRepo: string | undefined = undefined
+  const worktreeRepo = meta.worktree?.path
   /* Rendered inside `ThreadView`'s scroller provider, so a jump is the rail's
      own gesture; a sheet gets out of the way of what it jumped to. */
   const { scrollToMessage } = useMessageScroller()
