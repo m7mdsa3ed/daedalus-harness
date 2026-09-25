@@ -142,6 +142,26 @@ assert.equal(session.acpSessionId, "acp-123", "the first turn runs on the sessio
 assert.equal(session.acpSessionProvisional, false, "a turn promotes the id to a proven one");
 assert.equal(session.bridge!.promptActive, false);
 assert.ok(ws1.of("update").length > 0, "the transcript streamed");
+// --- the trajectory: the harness's own spans for a runtime that does not trace itself ---
+{
+  const { listSpans } = await import("../src/tracing.js");
+  const spans = await listSpans(session.id);
+  const turnSpan = spans.find((s) => s.kind === "turn");
+  assert.ok(turnSpan, "the turn is a span");
+  assert.equal(turnSpan.parentSpanId, null, "…the root of its own trace");
+  assert.equal(turnSpan.attributes["daedalus.prompt"], "hello fake agent");
+  assert.notEqual(turnSpan.end, null, "…and ended with the turn");
+  const request = spans.find((s) => s.kind === "request");
+  assert.equal(request?.parentSpanId, turnSpan.spanId, "session/prompt sits under the turn");
+  const inTurn = spans.filter((s) => s.traceId === turnSpan.traceId);
+  assert.ok(inTurn.some((s) => s.kind === "model" && s.parentSpanId === request!.spanId), "a generation is derived from the chunks");
+  const tool = inTurn.find((s) => s.kind === "tool");
+  assert.ok(tool, "a tool call is derived from its updates");
+  assert.equal(typeof tool.attributes["gen_ai.tool.call.id"], "string");
+  assert.ok(inTurn.some((s) => s.kind === "agent" && s.attributes["daedalus.subagent_session_id"]), "a subagent gets a span of its own");
+  assert.ok(inTurn.every((s) => s.end !== null), "nothing is left open once the turn has ended");
+  assert.ok(spans.some((s) => s.kind === "session" && s.name === "session/new"), "the handshake is a span too");
+}
 // --- subagents, both mechanisms ---
 // claude-agent-acp's: the child's prose is sent only to a client that claimed
 // `_meta["subagent-transcript"]` at initialize, so seeing it at all is the
@@ -540,14 +560,18 @@ send(tuner, { id: 7, cmd: "set_config_option", configId: "model", value: "smart"
 await waitFor(() => session.model === "smart", "a model change reaches the spawn record");
 tuner.close();
 
+const countBefore = session.eventCount;
 await manager.respawn(session.id, { ...profile, name: "test2", defaultModel: "m2" }, "fake", project);
 assert.equal(session.model, "m2");
 assert.equal(session.exited, false);
-assert.ok(session.eventCount > 0, "the load replay refilled the log it cleared");
+/* The journal was written live in this server run, so it is the whole
+   conversation: the respawn kept it and asked for `session/resume`, and not a
+   word was narrated back into it. */
+assert.ok(session.eventCount >= countBefore, "a whole journal is kept, not cleared and refilled");
 const reloaded = (await manager.journal(session.id))!;
 assert.ok(
-  reloaded.events.some((e) => e.ev === "update" && e.historyReplay),
-  "the conversation came back as history, not as news",
+  !reloaded.events.some((e) => e.ev === "update" && e.historyReplay),
+  "a resume re-narrates nothing",
 );
 assert.equal(
   session.bridge!.configOptions.find((o) => o.id === "verbose")?.currentValue,
@@ -606,7 +630,8 @@ watcher.close();
 // than left hanging until the socket eventually closes.
 await manager.respawn(session.id, profile, "fake", project);
 const doomed = new MockWs();
-assert.equal(await manager.attach(session.id, doomed as never, 0), null);
+// From the head: the kept journal still holds the 529 turn above.
+assert.equal(await manager.attach(session.id, doomed as never, session.eventCount), null);
 send(doomed, { id: 9, cmd: "prompt", text: "now crash" });
 await waitFor(() => doomed.of("turn_ended").some((t) => t.error), "the abandoned prompt is answered");
 const abandoned = doomed.of("turn_ended").find((t) => t.error)!;
@@ -828,7 +853,12 @@ assert.equal(
     { sessionUpdate: "usage_update", used: 12_000, size: 200_000 },
     "…and is handed to an attaching peer after the replay",
   );
-  assert.deepEqual(row?.tps, logged.tps, "measured TPS extrema are persisted on the session row");
+  /* `persist` is not awaited by the turn that calls it, so the row is read
+     until the last turn's write has landed rather than once. */
+  const tpsRow = async () => (await db.select().from(sessionsTable).where(eq(sessionsTable.id, logged.id)))[0]?.tps;
+  const { isDeepStrictEqual } = await import("node:util");
+  await waitFor(async () => isDeepStrictEqual(await tpsRow(), logged.tps), "the TPS write to land");
+  assert.deepEqual(await tpsRow(), logged.tps, "measured TPS extrema are persisted on the session row");
   assert.deepEqual(reader.of("caught_up")[0]?.tps, logged.tps, "TPS extrema are handed over after replay");
 }
 
@@ -1102,7 +1132,8 @@ assert.ok(
 // A turn on the fallback session is what finally moves the record: there is
 // something to load now, and the old id has proven it leads nowhere.
 send(orphanWs2, { id: 1, cmd: "prompt", text: "start over" });
-await waitFor(() => orphanWs2.of("turn_ended").length === 1, "the turn on the new session");
+// Two: the kept journal still holds the turn that went before the refusal.
+await waitFor(() => orphanWs2.of("turn_ended").length === 2, "the turn on the new session");
 assert.equal(orphan.acpSessionId, "acp-123", "a session with a turn in it takes over the record");
 assert.equal(orphan.historyLost, null, "and the warning goes with it");
 assert.ok(await manager.purge(orphan.id));
@@ -1401,12 +1432,14 @@ await waitFor(() => styledWs.of("turn_ended").length === 1, "the styled thread's
 assert.equal(styled.acpSessionProvisional, false, "the turn proved the id");
 const beforeLoad = metaLog().length;
 await manager.respawn(styled.id, profile, "fake", project);
-const loadMeta = metaLog().slice(beforeLoad).find((e) => e.method === "session/load");
-assert.ok(loadMeta, "the respawn loaded the conversation rather than starting a new one");
+/* The journal is whole, so the conversation comes back by `session/resume`
+   (no replay) — and the persona rides that request just as it rides a load. */
+const loadMeta = metaLog().slice(beforeLoad).find((e) => e.method === "session/resume");
+assert.ok(loadMeta, "the respawn resumed the conversation rather than starting a new one");
 assert.deepEqual(
   loadMeta!.meta?.systemPrompt,
   { append: "Answer in one line." },
-  "session/load carries the persona too — this is what makes a switch keep the thread",
+  "session/resume carries the persona too — this is what makes a switch keep the thread",
 );
 
 // Dropping it is a real value, not an omission: the next spawn says nothing

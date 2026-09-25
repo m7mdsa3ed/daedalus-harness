@@ -104,11 +104,12 @@ export const pendingKey = (s: ServerSettings) => scope(s).concat(["pending"])
 export const composerHistoryKey = (s: ServerSettings) => scope(s).concat(["composer-history"])
 export const agentOptionsKey = (s: ServerSettings, profileId: string, agentId: string, projectId?: string | null) =>
   scope(s).concat(["agent-options", profileId, agentId, projectId ?? ""])
-/** The raw journaled events of one thread, as `GET /api/sessions/:id/trace`
-    pages them (newest page first). One key per thread — the pages of a long
-    tail are near-static history, invalidated rather than refetched. */
-export const threadTraceKey = (s: ServerSettings, sessionId: string) =>
-  scope(s).concat(["thread-trace", sessionId])
+/** A thread's OpenTelemetry spans (`GET /api/sessions/:id/spans`), and one
+    span whole (`…/spans/:spanId`) under it — a thread's invalidation takes both. */
+export const threadSpansKey = (s: ServerSettings, sessionId: string) =>
+  scope(s).concat(["thread-spans", sessionId])
+export const spanDetailKey = (s: ServerSettings, sessionId: string, spanId: string) =>
+  threadSpansKey(s, sessionId).concat(["span", spanId])
 /** What a thread's changes scope covers (`GET …/changes/files?scope=`), one
     key per scope under the thread's — a revert invalidates the prefix. */
 export const sessionChangesKey = (s: ServerSettings, sessionId: string, changeScope?: string) =>

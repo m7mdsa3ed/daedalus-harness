@@ -1,7 +1,7 @@
 /* ── The composer's box ──
    A Tiptap editor standing where the textarea stood, so the things riding
-   along with a message are drawn *in* it: a long paste is an inline chip, an
-   excerpt picked with "Ask about this" is a quote card. The model is still the
+   along with a message are drawn *in* it, as one kind of inline chip: a long
+   paste, an excerpt picked with "Ask about this", and a finished `@` mention. The model is still the
    string (`editor-text.ts`): `value`/`onChange` are the textarea's contract,
    and the ref is a `TextSurface` — the four textarea members the completers,
    the history walk and the "+" menu's insertions read — so none of them had
@@ -26,9 +26,17 @@ import {
 } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
-import { ClipboardListIcon, MessageSquareQuoteIcon, XIcon } from "lucide-react"
+import { ClipboardListIcon, TextQuoteIcon, XIcon } from "lucide-react"
 
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  ChipBody,
+  ChipPreview,
+  chipClass,
+  linesLabel,
+  quoteFace,
+  useMentionFace,
+  type ChipFace,
+} from "@/components/inline-chip"
 import { pasteToken, type Paste } from "@/lib/pastes"
 import { cn } from "@/lib/utils"
 import {
@@ -52,56 +60,36 @@ export interface TextSurface {
    portals inside `EditorContent`, so context reaches them. */
 const PastesContext = React.createContext<Paste[]>([])
 
-const chipButton =
-  "inline-flex items-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:pointer-events-none"
-
-function PasteChipView({ node, deleteNode, selected }: NodeViewProps) {
-  const n = node.attrs.n as number
-  const paste = React.useContext(PastesContext).find((p) => p.n === n)
+/* The chip is `components/inline-chip.tsx`'s, shared with the sent bubble;
+   what the box adds is the node view around it and a ✕ — the mouse's delete
+   (Backspace already takes an atom whole). */
+function Chip({
+  selected,
+  onRemove,
+  removeLabel,
+  title,
+  ...body
+}: ChipFace & {
+  title?: string
+  preview?: React.ReactNode
+  selected: boolean
+  onRemove: () => void
+  removeLabel: string
+}) {
   return (
     <NodeViewWrapper
       as="span"
       contentEditable={false}
-      className={cn(
-        "mx-0.5 inline-flex max-w-full items-center gap-0.5 rounded-md border border-border/70 bg-muted/60 py-px ps-1.5 pe-0.5 align-baseline text-[0.9em] leading-snug",
-        selected && "ring-2 ring-ring/60"
-      )}
+      title={title}
+      className={chipClass({ selected, trailing: true })}
     >
-      <Popover>
-        <PopoverTrigger
-          render={
-            <button
-              type="button"
-              className="inline-flex min-w-0 items-center gap-1 text-foreground [&_svg]:pointer-events-none"
-              aria-label={`Preview ${pasteToken(n)}`}
-            />
-          }
-        >
-          <ClipboardListIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          <span className="truncate">Pasted text #{n}</span>
-          {paste && (
-            <span className="shrink-0 text-muted-foreground">
-              · {paste.lines.toLocaleString()} line{paste.lines === 1 ? "" : "s"}
-            </span>
-          )}
-        </PopoverTrigger>
-        <PopoverContent className="w-[min(32rem,calc(100vw-2rem))] p-0">
-          <div className="border-b px-3 py-2 text-xs text-muted-foreground">
-            {paste
-              ? `${paste.chars.toLocaleString()} chars — sent in place of the chip, fenced.`
-              : "This paste is no longer on this device."}
-          </div>
-          <pre className="max-h-72 overflow-auto p-3 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {paste?.text}
-          </pre>
-        </PopoverContent>
-      </Popover>
+      <ChipBody {...body} />
       <button
         type="button"
-        className={cn(chipButton, "p-0.5")}
-        aria-label={`Remove ${pasteToken(n)}`}
+        className="inline-flex shrink-0 items-center rounded-sm p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground [&_svg]:pointer-events-none"
+        aria-label={removeLabel}
         title="Remove"
-        onClick={() => deleteNode()}
+        onClick={onRemove}
       >
         <XIcon aria-hidden className="size-3" />
       </button>
@@ -109,33 +97,55 @@ function PasteChipView({ node, deleteNode, selected }: NodeViewProps) {
   )
 }
 
+function PasteChipView({ node, deleteNode, selected }: NodeViewProps) {
+  const n = node.attrs.n as number
+  const paste = React.useContext(PastesContext).find((p) => p.n === n)
+  return (
+    <Chip
+      icon={ClipboardListIcon}
+      label={`Pasted text #${n}`}
+      aside={paste ? linesLabel(paste.lines) : undefined}
+      selected={selected}
+      onRemove={deleteNode}
+      removeLabel={`Remove ${pasteToken(n)}`}
+      preview={
+        <ChipPreview
+          caption={
+            paste
+              ? `${paste.chars.toLocaleString()} chars — sent in place of the chip, fenced.`
+              : "This paste is no longer on this device."
+          }
+          text={paste?.text ?? ""}
+        />
+      }
+    />
+  )
+}
+
 function QuoteView({ node, deleteNode, selected }: NodeViewProps) {
   const text = node.attrs.text as string
   return (
-    <NodeViewWrapper
-      contentEditable={false}
-      className={cn(
-        "my-1 flex items-start gap-2 rounded-md border-s-2 border-primary/60 bg-muted/50 py-1.5 ps-2.5 pe-1",
-        selected && "ring-2 ring-ring/60"
-      )}
-    >
-      <MessageSquareQuoteIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-      <p
-        title={text}
-        className="line-clamp-4 min-w-0 flex-1 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]"
-      >
-        {text}
-      </p>
-      <button
-        type="button"
-        className={cn(chipButton, "shrink-0 p-0.5")}
-        aria-label="Remove quote"
-        title="Remove quote"
-        onClick={() => deleteNode()}
-      >
-        <XIcon aria-hidden className="size-3.5" />
-      </button>
-    </NodeViewWrapper>
+    <Chip
+      icon={TextQuoteIcon}
+      {...quoteFace(text)}
+      selected={selected}
+      onRemove={deleteNode}
+      removeLabel="Remove quote"
+      preview={<ChipPreview caption="Quote" text={text} />}
+    />
+  )
+}
+
+function MentionView({ node, deleteNode, selected }: NodeViewProps) {
+  const path = node.attrs.path as string
+  return (
+    <Chip
+      {...useMentionFace(path)}
+      title={`@${path}`}
+      selected={selected}
+      onRemove={deleteNode}
+      removeLabel={`Remove @${path}`}
+    />
   )
 }
 
@@ -158,9 +168,29 @@ const PasteToken = Node.create({
   addNodeView: () => ReactNodeViewRenderer(PasteChipView),
 })
 
+const Mention = Node.create({
+  name: "mention",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes: () => ({
+    path: {
+      default: "",
+      parseHTML: (el) => el.getAttribute("data-path") ?? "",
+      renderHTML: (attrs) => ({ "data-path": attrs.path }),
+    },
+  }),
+  parseHTML: () => [{ tag: "span[data-mention]" }],
+  renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-mention": "" })],
+  renderText: ({ node }) => `@${node.attrs.path as string}`,
+  addNodeView: () => ReactNodeViewRenderer(MentionView),
+})
+
 const Quote = Node.create({
   name: "quote",
-  group: "block",
+  group: "inline",
+  inline: true,
   atom: true,
   selectable: true,
   addAttributes: () => ({
@@ -170,8 +200,8 @@ const Quote = Node.create({
       renderHTML: (attrs) => ({ "data-text": attrs.text }),
     },
   }),
-  parseHTML: () => [{ tag: "div[data-quote]" }],
-  renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-quote": "" })],
+  parseHTML: () => [{ tag: "span[data-quote]" }],
+  renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-quote": "" })],
   addNodeView: () => ReactNodeViewRenderer(QuoteView),
 })
 
@@ -244,6 +274,7 @@ export function ComposerEditor({
       }),
       Placeholder.configure({ placeholder: () => latest.current.placeholder }),
       PasteToken,
+      Mention,
       Quote,
       LineBreaks,
     ],

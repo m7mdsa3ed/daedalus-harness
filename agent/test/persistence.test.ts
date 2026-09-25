@@ -78,6 +78,24 @@ let sessionId = "";
   console.log("persistence: load + list ok");
 }
 
+// --- resume restores the same session without narrating it ---
+{
+  const agent = buildAgentApp({ env, makeModel: scriptedModel([]) });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    const init = await initialize(ctx);
+    assert.ok(init.agentCapabilities?.sessionCapabilities?.resume, "resume advertised");
+    const resumed = await ctx.request("session/resume", { sessionId, cwd, mcpServers: [] });
+    assert.ok(resumed.modes);
+    const narrated = harness.updates.filter((u) =>
+      ["user_message_chunk", "agent_message_chunk"].includes((u.update as { sessionUpdate: string }).sessionUpdate),
+    );
+    assert.equal(narrated.length, 0, "resume replays nothing");
+    await assert.rejects(ctx.request("session/resume", { sessionId: "no-such-session", cwd, mcpServers: [] }));
+  });
+  console.log("persistence: resume ok");
+}
+
 // --- a loaded session can keep talking: history reached the model ---
 {
   let sawMessages = 0;

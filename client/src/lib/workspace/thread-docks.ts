@@ -22,6 +22,7 @@ export type ThreadPanelKind =
   | "details"
   | "terminal"
   | "web"
+  | "trajectory"
 
 export interface ThreadDockHandle {
   /** Show the one there is (`reuse`) or open one — a fresh shell for a

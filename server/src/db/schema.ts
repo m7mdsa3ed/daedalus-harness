@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -236,6 +237,11 @@ export const agents = pgTable("agents", {
       `"env"` = a key in its own config template, filled from `{personaPrompt}`
       or `{personaFile}`. Null = no known door, and a persona is not applied. */
   personaVia: text("persona_via").$type<"acp-meta" | "env">(),
+  /** Whether threads may share one process of this runtime, and the door each
+      thread's env goes through when they do (`AgentDef.sharedProcess`).
+      `"acp-meta"` = the ACP `_meta` on session/new|resume|load. Null = one
+      process per thread. */
+  sharedProcess: text("shared_process").$type<"acp-meta">(),
   /** Where this runtime's subagent transcripts come from when its ACP bridge
       does not carry them. `"opencode-http"` = the sidecar in
       `opencode-subagents.ts`: the process is spawned with an HTTP port and the
@@ -488,14 +494,14 @@ export const projects = pgTable("projects", {
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge" | "workflow";
+export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents";
 
 export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
   type: text("type", { enum: ["http", "stdio", "builtin"] }).notNull(),
   name: text("name").notNull(),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: jsonb("headers").$type<NameValue[]>(),
@@ -2104,4 +2110,38 @@ export const taskLinks = pgTable(
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("task_links_from").on(t.fromId), index("task_links_to").on(t.toId)],
+);
+
+/**
+ * A thread's OpenTelemetry spans — the Trajectory panel's data (tracing.ts).
+ *
+ * One row per *finished* span; a span still open lives in the tracer's memory
+ * and is served from there. Two sources share the table: the harness's own
+ * spans, read off ACP for every runtime, and a runtime's own, sent up over
+ * `_daedalus/trace`. Not exported by backup, like the probe cache: it is a
+ * record of what happened, and a restored install starts recording afresh.
+ */
+export const traceSpans = pgTable(
+  "trace_spans",
+  {
+    spanId: text("span_id").primaryKey(),
+    traceId: text("trace_id").notNull(),
+    parentSpanId: text("parent_span_id"),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** `TraceSpanKind` — decided at write time so a list never parses attributes. */
+    kind: text("kind").notNull(),
+    /** "harness" | "agent". */
+    source: text("source").notNull(),
+    /** Epoch ms, fractional — `double precision`. */
+    start: doublePrecision("start").notNull(),
+    end: doublePrecision("end").notNull(),
+    status: text("status").notNull(),
+    statusMessage: text("status_message"),
+    attributes: jsonb("attributes").$type<Record<string, unknown>>().notNull(),
+    events: jsonb("events").$type<unknown[]>().notNull(),
+  },
+  (t) => [index("trace_spans_session").on(t.sessionId, t.start)],
 );

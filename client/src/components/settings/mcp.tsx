@@ -33,6 +33,7 @@ import {
   StoreIcon,
   TerminalIcon,
   UnplugIcon,
+  UsersIcon,
   WorkflowIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -57,7 +58,7 @@ import { PickerSkeleton } from "@/components/ui/skeletons"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 import type { McpTransportForm } from "./mcp-detail"
 
-type BuiltinKind = "web-search" | "knowledge" | "workflow"
+type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents"
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
    phrase the list needs to identify a row already there. They are different
@@ -73,6 +74,7 @@ const BUILTINS: {
   { kind: "web-search", label: "Web search", icon: GlobeIcon, detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
   { kind: "knowledge", label: "Knowledge base", icon: BookOpenIcon, detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
   { kind: "workflow", label: "Workflows", icon: WorkflowIcon, detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
+  { kind: "agents", label: "Ask agents", icon: UsersIcon, detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
 ]
 
 const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)

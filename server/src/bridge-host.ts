@@ -27,6 +27,13 @@ export interface BridgeHostOwner {
     the `session` closure is stable, the bridge inside it is not. */
 export function makeBridgeHost(session: Session, owner: BridgeHostOwner): BridgeHost {
   return {
+    threadId: session.id,
+    traceAttributes: () => ({
+      "daedalus.agent_id": session.agentId,
+      "daedalus.profile_id": session.profileId,
+      ...(session.model ? { "gen_ai.request.model": session.model } : {}),
+      ...(session.effort ? { "daedalus.effort": session.effort } : {}),
+    }),
     emit: (event, except) => owner.emit(session, event, except),
     peerCount: () => session.peers.size,
     markTurnStderr: () => markTurnStderr(session),

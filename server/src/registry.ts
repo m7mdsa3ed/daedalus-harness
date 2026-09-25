@@ -102,6 +102,28 @@ export interface AgentDef {
    */
   personaVia?: "acp-meta" | "env" | null;
   /**
+   * Whether threads may share one process of this runtime, and how a thread's
+   * own env reaches it when they do — or null/absent for one process per
+   * thread, which is what every runtime got before this existed.
+   *
+   * A process's env is fixed at spawn, and most of a thread's env is its own:
+   * the gateway URL names the thread (`gatewayUrlFor`), the model vars name its
+   * model. So sharing is only possible for a runtime that takes env per
+   * *session*:
+   *
+   *  - `"acp-meta"` (claude-code): `_meta.claudeCode.options.env` on
+   *    session/new|resume|load, merged over the process env for that session's
+   *    CLI child (verified against claude-agent-acp 0.81). The process itself is
+   *    spawned with none of the profile's env, so every thread in one cwd keys
+   *    the same process (`AcpPool`), and a draft's options probe leaves it warm.
+   *
+   * Not codex (its provider and instructions are per process — codex-acp 1.13
+   * takes only cwd and MCP servers per session), not opencode (its subagent
+   * feed is one port per process), not daedalus (config is `DAEDALUS_AGENT_*`
+   * env). Each shares nothing until it grows a per-session door.
+   */
+  sharedProcess?: "acp-meta" | null;
+  /**
    * Where this runtime's subagent transcripts come from when its ACP bridge
    * does not carry them, or null/absent when ACP is all there is.
    *
@@ -717,7 +739,7 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 23,
+    since: 24,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
@@ -737,11 +759,13 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seed 23 tells the quota probe where this login's token expiry is read
     // (`QuotaProbe.login`), so Refresh can run beside a live thread while the
     // token is nowhere near a refresh. Env untouched again.
+    // Seed 24 lets threads share one process (`sharedProcess`); env untouched.
     backfill: (existing) => ({
       env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
       quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
       liveConfig: existing.liveConfig ?? "acp",
       personaVia: existing.personaVia ?? "acp-meta",
+      sharedProcess: existing.sharedProcess ?? "acp-meta",
       rewindVia: existing.rewindVia ?? "acp-fork-point",
       workflowsVia: existing.workflowsVia ?? "native",
       ...backfill20(existing),
@@ -763,6 +787,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     quotaProbe: QUOTA_PROBES["claude-code"],
     liveConfig: "acp",
     personaVia: "acp-meta",
+    sharedProcess: "acp-meta",
     rewindVia: "acp-fork-point",
   },
   {
@@ -1000,6 +1025,7 @@ export async function seedAgents(): Promise<void> {
           quotaProbe: agent.quotaProbe ?? null,
           liveConfig: agent.liveConfig ?? null,
           personaVia: agent.personaVia ?? null,
+          sharedProcess: agent.sharedProcess ?? null,
           subagentFeed: agent.subagentFeed ?? null,
           rewindVia: agent.rewindVia ?? null,
           workflowsVia: agent.workflowsVia ?? null,
@@ -1027,6 +1053,7 @@ export async function seedAgents(): Promise<void> {
         quotaProbe: existing.quotaProbe ?? agent.quotaProbe ?? null,
         liveConfig: existing.liveConfig ?? agent.liveConfig ?? null,
         personaVia: existing.personaVia ?? agent.personaVia ?? null,
+        sharedProcess: existing.sharedProcess ?? agent.sharedProcess ?? null,
         subagentFeed: existing.subagentFeed ?? agent.subagentFeed ?? null,
         rewindVia: existing.rewindVia ?? agent.rewindVia ?? null,
         workflowsVia: existing.workflowsVia ?? agent.workflowsVia ?? null,
@@ -1136,6 +1163,7 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       liveConfig: seed.liveConfig ?? null,
       quotaProbe: seed.quotaProbe ?? null,
       personaVia: seed.personaVia ?? null,
+      sharedProcess: seed.sharedProcess ?? null,
       subagentFeed: seed.subagentFeed ?? null,
       rewindVia: seed.rewindVia ?? null,
       workflowsVia: seed.workflowsVia ?? null,

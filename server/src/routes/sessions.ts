@@ -8,7 +8,8 @@ import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js
 import { getProject } from "../projects.js";
 import { listAgentSessions } from "../session-list.js";
 import type { SessionManager } from "../sessions.js";
-import { TRACE_PAGE_LIMIT } from "../protocol.js";
+import type { SpansPage } from "../protocol.js";
+import { getSpan, listSpans } from "../tracing.js";
 import { listHelpers } from "../project-helpers.js";
 import { recordShellRun } from "../shell-history.js";
 import { runShellLine } from "../shell.js";
@@ -467,23 +468,18 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     return page ? c.json(page) : c.json({ error: "not found" }, 404);
   });
 
-  /* The journal as raw pages for the trace view: every journaled event with
-     the wall-clock stamp the replay path never carried, paged backwards from
-     the head of the log (`before` = the newest event's seq + 1; absent means
-     "the newest page"). The newest page first, because that is where a problem
-     usually is — an archive far longer than a screenful is opened at its tail,
-     not walked from the beginning. Live-only events (permissions, the queue,
-     quota) are deliberately not here: only the five journaled kinds are. */
-  app.get("/api/sessions/:id/trace", async (c) => {
-    const rawBefore = c.req.query("before");
-    const before = rawBefore === undefined ? 0 : Number(rawBefore);
-    if (!Number.isFinite(before)) return c.json({ error: "before must be a number" }, 400);
-    const rawLimit = Number(c.req.query("limit") ?? TRACE_PAGE_LIMIT);
-    const limit = Number.isFinite(rawLimit)
-      ? Math.min(Math.max(1, Math.round(rawLimit)), TRACE_PAGE_LIMIT)
-      : TRACE_PAGE_LIMIT;
-    const page = await sessions.trace(c.req.param("id"), before, limit);
-    return page ? c.json(page) : c.json({ error: "not found" }, 404);
+  /* The thread's trajectory: every OpenTelemetry span the harness and its
+     runtime recorded for it (tracing.ts), open ones included, long values
+     elided — and one span whole, for what the list elided. */
+  app.get("/api/sessions/:id/spans", async (c) => {
+    const id = c.req.param("id");
+    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
+    return c.json({ spans: await listSpans(id) } satisfies SpansPage);
+  });
+
+  app.get("/api/sessions/:id/spans/:spanId", async (c) => {
+    const span = await getSpan(c.req.param("id"), c.req.param("spanId"));
+    return span ? c.json(span) : c.json({ error: "not found" }, 404);
   });
 
   // What the agent process has been printing. The client shows this when a thread

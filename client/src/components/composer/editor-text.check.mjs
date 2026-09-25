@@ -1,7 +1,7 @@
 /* The one runnable check behind the composer's editor: a string loaded into
    the document comes back out as the same string, and every caret offset
-   survives the trip to an editor position and back (landing past a chip or a
-   quote card when it pointed inside one).
+   survives the trip to an editor position and back (landing past a chip when
+   it pointed inside one).
 
      ../server/node_modules/.bin/tsx src/components/composer/editor-text.check.mjs   (from client/)
 */
@@ -15,7 +15,8 @@ import { docToText, offsetToPos, posToOffset, textToContent } from "./editor-tex
 const schema = getSchema([
   StarterKit.configure({ blockquote: false, bulletList: false, codeBlock: false, hardBreak: false, heading: false, horizontalRule: false, listItem: false, orderedList: false }),
   Node.create({ name: "pasteToken", group: "inline", inline: true, atom: true, addAttributes: () => ({ n: { default: 0 } }) }),
-  Node.create({ name: "quote", group: "block", atom: true, addAttributes: () => ({ text: { default: "" } }) }),
+  Node.create({ name: "mention", group: "inline", inline: true, atom: true, addAttributes: () => ({ path: { default: "" } }) }),
+  Node.create({ name: "quote", group: "inline", inline: true, atom: true, addAttributes: () => ({ text: { default: "" } }) }),
 ])
 const load = (text, pastes = [1]) => schema.nodeFromJSON(textToContent(text, new Set(pastes)))
 
@@ -33,17 +34,33 @@ for (const text of [
   "/compact now",
   "!pnpm test",
   "snake_case and *stars* and [brackets]",
+  "look at @src/a.ts now",
+  "@/var/www/app",
+  "@src/ drilling",
+  "mail me@x.com, @channel, @a.ts, (@b/c)",
+  "typed\n\n> q\n\n",
+  "> a\n\n> b\n\n",
 ]) {
   assert.strictEqual(docToText(load(text)), text, JSON.stringify(text))
 }
 
-// Structure: tokens with a body are chips, quotes are cards.
+// Structure: tokens with a body, finished mentions and quotes are chips.
 {
-  const doc = load("a [pasted text #1] b\n\n> q")
+  const doc = load("a [pasted text #1] @src/x.ts b\n\n> q\n\nwhy?")
   assert.strictEqual(doc.child(0).child(1).type.name, "pasteToken")
-  assert.strictEqual(doc.child(2).type.name, "quote")
-  assert.strictEqual(doc.child(2).attrs.text, "q")
-  assert.strictEqual(doc.lastChild.type.name, "paragraph", "a paragraph after the last card")
+  assert.strictEqual(doc.child(0).child(3).type.name, "mention")
+  assert.strictEqual(doc.child(0).child(3).attrs.path, "src/x.ts")
+  assert.strictEqual(doc.child(2).child(0).type.name, "quote", "a quote leads the line after it")
+  assert.strictEqual(doc.child(2).child(0).attrs.text, "q")
+  assert.strictEqual(doc.child(2).child(1).text, "why?")
+  assert.strictEqual(load("@src/ and @a.ts,").child(0).childCount, 1, "open or punctuated: text")
+}
+
+// A quote typed after text on the same line goes out on a line of its own.
+{
+  const quote = schema.nodes.quote.create({ text: "q" })
+  const doc = schema.node("doc", null, [schema.node("paragraph", null, [schema.text("ask "), quote, schema.text("more")])])
+  assert.strictEqual(docToText(doc), "ask \n> q\n\nmore")
 }
 
 // A line straight after a quote is separated on the way out.
@@ -61,7 +78,7 @@ assert.strictEqual(docToText(load("> q\nnext")), "> q\n\nnext")
     const back = posToOffset(doc, offsetToPos(doc, offset))
     if (offset > tokenStart && offset < tokenStart + token.length) {
       assert.strictEqual(back, tokenStart + token.length, `inside the chip at ${offset}`)
-    } else if (offset >= quoteStart && offset < quoteEnd) {
+    } else if (offset > quoteStart && offset < quoteEnd) {
       assert.strictEqual(back, quoteEnd, `inside the quote at ${offset}`)
     } else {
       assert.strictEqual(back, offset, `offset ${offset}`)

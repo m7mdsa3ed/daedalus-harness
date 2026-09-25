@@ -37,6 +37,7 @@ import {
   InformationCircleIcon,
   Loading03Icon,
   MultiplicationSignCircleIcon,
+  Notification03Icon,
 } from "@hugeicons/core-free-icons"
 
 import { useIsMobile } from "@/hooks/use-device"
@@ -93,7 +94,10 @@ const TOAST_TOP = [
    from the top it is up, and sideways stays as it is. */
 const SWIPE_TOP: ToastPrimitive.Root.Props["swipeDirection"] = ["up", "right"]
 
+/* Every toast wears an icon, so an untyped `toast("…")` gets the neutral bell
+   rather than a bare title — the icon is what makes the header a header. */
 const TYPE_ICONS = {
+  default: { icon: Notification03Icon, className: "text-muted-foreground" },
   success: { icon: CheckmarkCircle02Icon, className: "text-emerald-600 dark:text-emerald-400" },
   info: { icon: InformationCircleIcon, className: "text-foreground" },
   warning: { icon: Alert02Icon, className: "text-amber-600 dark:text-amber-400" },
@@ -102,43 +106,43 @@ const TYPE_ICONS = {
 } as const
 
 function ToastIcon({ type }: { type: string | undefined }) {
-  const entry = type ? TYPE_ICONS[type as keyof typeof TYPE_ICONS] : undefined
-  if (!entry) return null
+  const entry = TYPE_ICONS[(type ?? "default") as keyof typeof TYPE_ICONS] ?? TYPE_ICONS.default
   return (
-    <span className="mt-px shrink-0 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4.5">
+    <span className="flex h-5 shrink-0 items-center [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4">
       <HugeiconsIcon icon={entry.icon} strokeWidth={2} className={entry.className} aria-hidden="true" />
     </span>
   )
 }
 
+/* One shape for every toast: a header (icon + title, close at the end), the
+   description under it aligned with the title, and an action row at the foot —
+   drawn only when the toast carries an action, so a plain "Copied" stays one
+   line and never grows an empty footer. */
 function ToastList({ top }: { top: boolean }) {
   const { toasts } = useToastManager()
 
-  return toasts.map((toastItem) => {
-    /* The registry's own rule, and it is about the content rather than the
-       card: an action beside a bare title reads as one thought, but next to a
-       wrapping description it would squeeze the text into a gutter. */
-    const stacked = Boolean(toastItem.description)
-    return (
-      <Toast
-        key={toastItem.id}
-        toast={toastItem}
-        className={cn(TOAST_TIGHT, TOAST_GLASS, top && TOAST_TOP)}
-        swipeDirection={top ? SWIPE_TOP : undefined}
-      >
-        <ToastContent className="gap-2.5 p-3">
+  return toasts.map((toastItem) => (
+    <Toast
+      key={toastItem.id}
+      toast={toastItem}
+      className={cn(TOAST_TIGHT, TOAST_GLASS, top && TOAST_TOP)}
+      swipeDirection={top ? SWIPE_TOP : undefined}
+    >
+      <ToastContent className="flex-col items-stretch gap-1 p-3">
+        <div className="flex items-start gap-2">
           <ToastIcon type={toastItem.type} />
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <ToastTitle />
-            <ToastDescription />
-            {stacked ? <ToastAction className="mt-1 self-start" /> : null}
+          <ToastTitle className="min-w-0 flex-1 leading-5" />
+          <ToastClose className="-my-1 -me-1" />
+        </div>
+        {toastItem.description ? <ToastDescription className="ps-6 text-xs" /> : null}
+        {toastItem.actionProps ? (
+          <div className="mt-1.5 flex justify-end gap-2">
+            <ToastAction />
           </div>
-          {stacked ? null : <ToastAction className="mt-px" />}
-          <ToastClose />
-        </ToastContent>
-      </Toast>
-    )
-  })
+        ) : null}
+      </ToastContent>
+    </Toast>
+  ))
 }
 
 export function AppToaster({

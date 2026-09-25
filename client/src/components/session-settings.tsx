@@ -61,18 +61,17 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { StreamEffectPicker } from "@/components/stream-effect-picker"
 import { Switch } from "@/components/ui/switch"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import {
   ANSWERS_ONLY_SUPPRESSES,
   CALM_MOTION_SUPPRESSES,
-  RECENT_SUBAGENT_STEP_COUNTS,
+  SUBAGENT_PEEKS,
   TOOL_LAYOUTS,
-  isRecentSubagentStepCount,
   resetViewOptions,
   setViewOption,
   useViewOptions,
   VIEW_DEFAULTS,
+  type SubagentPeek,
   type ToolLayout,
   type ViewOptions,
 } from "@/lib/view-options"
@@ -97,7 +96,13 @@ type Group = {
   hint: string
   options: Option[]
   /** Non-switch controls that belong to this group's question. */
-  pickers?: ("streamEffect" | "recentSubagentSteps" | "toolLayout")[]
+  pickers?: ("streamEffect" | "subagentPeek" | "toolLayout")[]
+}
+
+const SUBAGENT_PEEK_COPY: Record<SubagentPeek, { label: string; description: string }> = {
+  off: { label: "Off", description: "A subagent is one line until you open it." },
+  live: { label: "While running", description: "A working subagent shows its latest steps under its line." },
+  always: { label: "Always", description: "Every subagent shows its latest steps, finished or not." },
 }
 
 const GROUPS: Group[] = [
@@ -139,7 +144,7 @@ const GROUPS: Group[] = [
     label: "Detail",
     icon: ListTree,
     hint: "How much of each step is spelled out.",
-    pickers: ["recentSubagentSteps", "toolLayout"],
+    pickers: ["subagentPeek", "toolLayout"],
     options: [
       {
         key: "answersOnly",
@@ -424,7 +429,7 @@ export function SessionSettingsDialog({
       new Set(
         ([
           ...ALL_OPTIONS.map((o) => o.key),
-          "recentSubagentSteps",
+          "subagentPeek",
           "toolLayout",
           "streamEffect",
           "streamSpeed",
@@ -489,42 +494,46 @@ export function SessionSettingsDialog({
                     moot={mootKeys.has("streamEffect") ? CALM_NOTE : undefined}
                   />
                 )}
-                {group.pickers?.includes("recentSubagentSteps") && (
-                  <div className="flex items-center gap-3 px-3 py-3">
-                    <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
-                      <Bot className="size-3.5" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
-                        Recent subagent steps
-                        {changedKeys.has("recentSubagentSteps") && (
-                          <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />
-                        )}
+                {!options.answersOnly && group.pickers?.includes("subagentPeek") && (
+                  <div className="space-y-2.5 px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
+                        <Bot className="size-3.5" />
                       </span>
-                      <span className="block text-[11px] leading-4 text-muted-foreground">
-                        Preview steps under each worker without opening it.
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
+                          Subagent activity
+                          {changedKeys.has("subagentPeek") && (
+                            <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                          )}
+                        </span>
+                        <span className="block text-[11px] leading-4 text-muted-foreground">
+                          {SUBAGENT_PEEK_COPY[options.subagentPeek].description}
+                        </span>
                       </span>
-                    </span>
-                    <Select
-                      value={String(options.recentSubagentSteps)}
-                      onValueChange={(value) => {
-                        const count = value === null ? Number.NaN : Number(value)
-                        if (isRecentSubagentStepCount(count)) {
-                          setViewOption("recentSubagentSteps", count)
-                        }
-                      }}
-                    >
-                      <SelectTrigger aria-label="Recent subagent steps to show" size="sm" className="w-24">
-                        <SelectValue>{options.recentSubagentSteps === 0 ? "Off" : String(options.recentSubagentSteps)}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent align="end">
-                        {RECENT_SUBAGENT_STEP_COUNTS.map((count) => (
-                          <SelectItem key={count} value={String(count)}>
-                            {count === 0 ? "Off" : `${count} ${count === 1 ? "step" : "steps"}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    </div>
+                    {/* Segmented, full width: three short words fit a phone,
+                        where a select beside two lines of text squeezed both. */}
+                    <div role="radiogroup" aria-label="Subagent activity" className="flex gap-0.5 rounded-lg bg-muted/50 p-0.5">
+                      {SUBAGENT_PEEKS.map((peek) => {
+                        const selected = options.subagentPeek === peek
+                        return (
+                          <button
+                            key={peek}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            onClick={() => setViewOption("subagentPeek", peek)}
+                            className={cn(
+                              "min-h-8 flex-1 rounded-[7px] px-2 py-1 text-[11px] font-medium transition-colors",
+                              selected ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {SUBAGENT_PEEK_COPY[peek].label}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
                 {!options.answersOnly && group.pickers?.includes("toolLayout") && (

@@ -72,6 +72,7 @@ export function mcpHooks(
         stopSequences: params.stopSequences,
         abortSignal: AbortSignal.any([signal, ...(session.abort ? [session.abort.signal] : [])]),
         maxRetries: 0,
+        telemetry: { functionId: "daedalus.sampling", recordInputs: true, recordOutputs: true },
       });
       return {
         role: "assistant",

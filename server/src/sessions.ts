@@ -28,12 +28,13 @@ import { databaseUrl, getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, agentStream, spawnAgent, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
+import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
+import { AcpPool, pool } from "./acp-connection.js";
 import { makeBridgeHost } from "./bridge-host.js";
 import { enrichError, pushStderr, resetStderr } from "./stderr-ring.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
+import { AGENTS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -51,7 +52,6 @@ import {
   type PromptReply,
   type StagedConfig,
   type ThreadEvent,
-  type TracePage,
   type TpsStats,
   type WireError,
 } from "./protocol.js";
@@ -268,6 +268,15 @@ export interface Session {
       both journal and fan out through. Set for the length of one spawn; see
       `respawnNow`. */
   quietLoad: boolean;
+  /** The journal is this thread's conversation, whole: written live by a
+      handshake that succeeded in *this* server run, not pruned since, and not
+      forked from by a load that fell back to a fresh session. What lets a
+      revive `session/resume` (no replay) and keep the log instead of clearing
+      it for a `session/load` to refill. False at boot — an unclean stop may
+      have lost the tail — so the first revive after one still loads. */
+  journalClean: boolean;
+  /** Takes this session's listeners off the process it is on (`wire`). */
+  unwire: (() => void) | null;
   /** A config change waiting for the running turn to end — see `StagedConfig`.
       In memory, never a column: its whole lifetime is the turn it is held
       behind, and a server that restarted has killed that turn. Cleared by the
@@ -381,6 +390,9 @@ export async function mcpServersFor(
   /** The `workflow` server as this thread may have it — null for a thread
       that must not (a workflow step: one level, never a tree). */
   workflow: StdioMcpServer | null = null,
+  /** The `agents` server, on the same terms: null for a thread that is itself
+      a child, and for a caller with no thread behind it. */
+  agents: StdioMcpServer | null = null,
 ): Promise<{ servers: acp.McpServer[]; skipped: string[] }> {
   const linked = new Set(links.mcpServerIds);
   const servers: acp.McpServer[] = [];
@@ -397,7 +409,9 @@ export async function mcpServersFor(
           ? websearchServer(config)
           : s.builtin === "knowledge"
             ? knowledgeServer(project)
-            : workflow;
+            : s.builtin === "agents"
+              ? agents
+              : workflow;
       if (built) servers.push(built);
     } else if (s.type === "http") {
       /* An OAuth row is handed to the agent as the shim's loopback URL, never
@@ -491,6 +505,12 @@ export function workflowServer(session: Pick<Session, "id">, runner: WorkflowUrl
   return harnessMcpServer(WORKFLOW_SERVER_NAME, "workflow-mcp", [
     { name: "WORKFLOW_URL", value: runner.urlFor(session) },
   ]);
+}
+
+/** The harness's own `agents` MCP server: `ask_agent` and friends, over the
+    workflow runner's loopback — an ask is a one-step run on another pair. */
+export function agentsServer(session: Pick<Session, "id">, runner: WorkflowUrlSource): StdioMcpServer {
+  return harnessMcpServer(AGENTS_SERVER_NAME, "agents-mcp", [{ name: "AGENTS_URL", value: runner.urlFor(session) }]);
 }
 
 export interface SessionEvents {
@@ -704,6 +724,8 @@ export class SessionManager {
         exited: true,
         respawnChain: null,
         quietLoad: false,
+        journalClean: false,
+        unwire: null,
         stagedConfig: null,
         queueChain: null,
         /* Autonomy is not a column and never revives with a thread: a run a
@@ -767,6 +789,7 @@ export class SessionManager {
           "The server shut down, which stops every agent process with it. The conversation is kept — sending a message starts the agent again.",
         );
     }
+    pool.drain(); // the warm ones nobody is on
     this.log.flush();
   }
 
@@ -796,6 +819,11 @@ export class SessionManager {
    * What is NOT here is deliberate: the conversation lives in the agent's own
    * session store and comes back through ACP session/load on revive.
    */
+  /** Each session's row writes, in the order they were asked for. Callers do
+      not await `persist`, and two UPDATEs in flight on the pool are not
+      ordered — an older snapshot could land last and stay. */
+  private readonly writes = new Map<string, Promise<void>>();
+
   private async persist(session?: Session): Promise<void> {
     const rows = session ? [session] : [...this.sessions.values()];
     for (const s of rows) {
@@ -803,7 +831,16 @@ export class SessionManager {
       // gone and the update would match nothing anyway. Skipped rather than
       // sent, so a purge does not answer for every stale write behind it.
       if (this.sessions.get(s.id) !== s) continue;
-      await db.update(sessionsTable).set(rowValues(s)).where(eq(sessionsTable.id, s.id));
+      const write = (this.writes.get(s.id) ?? Promise.resolve())
+        .catch(() => {})
+        // Read when it runs, so a queued write carries the newest values.
+        .then(() => (this.sessions.get(s.id) === s ? db.update(sessionsTable).set(rowValues(s)).where(eq(sessionsTable.id, s.id)) : undefined))
+        .then(() => {});
+      this.writes.set(s.id, write);
+      void write.finally(() => {
+        if (this.writes.get(s.id) === write) this.writes.delete(s.id);
+      }).catch(() => {});
+      await write;
     }
   }
 
@@ -907,7 +944,10 @@ export class SessionManager {
     const live = [...this.sessions.values()].filter((s) => !s.exited).map((s) => s.id);
     for (const id of (await this.log.prune(cutoff, live))) {
       const session = this.sessions.get(id);
-      if (session) session.eventCount = 0;
+      if (session) {
+        session.eventCount = 0;
+        session.journalClean = false;
+      }
     }
     /* The web-search usage ledger ages out on the same clock: it is metadata
        about transcripts whose archives were just judged by this cutoff. */
@@ -929,20 +969,6 @@ export class SessionManager {
     const session = this.sessions.get(id);
     if (!session) return undefined;
     return { cursor: session.eventCount, events: await this.log.eventsFrom(session.id, 0) };
-  }
-
-  /** One page of the journal for the trace view — the newest `limit` events
-      before `before`, or the whole tail when `before` is 0/absent. Undefined
-      for a thread this server does not hold. The page's own `next` is the seq
-      to page older from, computed here where `eventCount` — the head of the
-      log — is known. */
-  async trace(id: string, before: number, limit: number): Promise<TracePage | undefined> {
-    const session = this.sessions.get(id);
-    if (!session) return undefined;
-    const from = Number.isFinite(before) && before > 0 ? before : session.eventCount;
-    const events = await this.log.trace(id, from, limit);
-    const next = events.length > 0 && events[0].seq > 0 ? events[0].seq : null;
-    return { events, next };
   }
 
   // ---- fan-out ----
@@ -1213,24 +1239,27 @@ export class SessionManager {
    * Note what is NOT here any more: stdout. The bridge's ndJsonStream owns it,
    * and a second reader would silently steal its bytes.
    */
-  private wire(session: Session, proc: ChildProcessWithoutNullStreams, bridge: AcpBridge, profileName: string): void {
-    proc.stderr.on("data", (chunk: Buffer) => {
+  private wire(session: Session, proc: ChildProcessWithoutNullStreams, bridge: AcpBridge, profileName: string, shared: boolean): void {
+    const onStderr = (chunk: Buffer) => {
       const text = chunk.toString().trimEnd();
-      console.error(`[${session.id.slice(0, 8)}:${profileName}]`, text);
+      // A shared process is logged once, by the pool, not once per thread on it.
+      if (!shared) console.error(`[${session.id.slice(0, 8)}:${profileName}]`, text);
       if (session.bridge !== bridge) return;
       pushStderr(session, text);
-    });
+    };
+    proc.stderr.on("data", onStderr);
     // spawn() reports a missing binary, a bad cwd or a permissions problem
     // asynchronously — and an unhandled 'error' on a ChildProcess takes the
     // whole server down with it. Treat it as an immediate exit and tell the
     // client what the OS said, which is the only useful thing anyone has.
-    proc.on("error", (error: NodeJS.ErrnoException) => {
+    const onError = (error: NodeJS.ErrnoException) => {
       if (session.bridge !== bridge) return;
       const reason = `agent failed to start: ${error.code ?? error.name} — ${error.message}`;
       console.error(`[${session.id.slice(0, 8)}:${profileName}]`, reason);
       pushStderr(session, reason);
       this.collapse(session, bridge, reason);
-    });
+    };
+    proc.on("error", onError);
     // 'exit' fires the moment the process is gone, but stderr written just
     // before it dies is often still in flight — and that last line is usually
     // the whole explanation. 'close' is the event that waits for the pipes, so
@@ -1243,12 +1272,23 @@ export class SessionManager {
       const how = code !== null ? `exit code ${code}` : `signal ${signal}`;
       this.collapse(session, bridge, `The agent process ended (${how}).`);
     };
-    proc.on("exit", (code, signal) => {
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
       if (session.bridge !== bridge) return;
       session.exited = true;
       setTimeout(() => finish(code, signal), EXIT_DRAIN_MS).unref();
-    });
+    };
+    proc.on("exit", onExit);
     proc.on("close", finish);
+    /* Taken off again when the session leaves the process: a shared one
+       outlives many threads, and each would otherwise leave four listeners
+       behind on it. */
+    session.unwire = () => {
+      proc.stderr.off("data", onStderr);
+      proc.off("error", onError);
+      proc.off("exit", onExit);
+      proc.off("close", finish);
+      if (session.unwire) session.unwire = null;
+    };
   }
 
   /**
@@ -1490,6 +1530,8 @@ export class SessionManager {
       exited: false,
       respawnChain: null,
       quietLoad: false,
+      journalClean: false,
+      unwire: null,
       stagedConfig: null,
       queueChain: null,
       parentSessionId: opts.parentSessionId ?? null,
@@ -1555,7 +1597,7 @@ export class SessionManager {
     model: string | undefined,
     effort: string | undefined,
     opts: {
-      load?: { acpSessionId: string };
+      load?: { acpSessionId: string; resume?: boolean };
       restore?: import("./protocol.js").RestoreState;
       configChoices?: Record<string, string | boolean>;
       modeId?: string;
@@ -1572,7 +1614,13 @@ export class SessionManager {
        once the session exists instead. */
     const ownsCatalog = (profile.models?.length ?? 0) > 0;
     this.materializeFor(session, profile, project);
-    const agent = await getAgent(session.agentId);
+    /* Independent reads, taken together: each is a query, and in series they
+       were the part of a spawn that happens before the process even exists. */
+    const [agent, rules, servers] = await Promise.all([
+      getAgent(session.agentId),
+      Promise.all([globalRules(), projectRules(project.id)]).then(([global, local]) => [...global, ...local]),
+      this.serversFor(session, profile, project),
+    ]);
     /* The allowlist an `"acp"`-live agent builds its model picker from. Written
        before the spawn because it is read once, at `session/new`, and it is the
        union across every profile that serves this agent rather than this one's
@@ -1596,7 +1644,6 @@ export class SessionManager {
        unconditionally — a thread that has just had its persona removed needs
        the stale prompt file cleared as much as one that gained a persona needs
        it written. */
-    const rules = [...(await globalRules()), ...(await projectRules(project.id))];
     /* Nobody in front of a workflow step or a scheduled run: `autonomy` is null
        exactly for the thread with a human at it (see `Session.autonomy`). */
     const unattended = !!session.parentSessionId || session.autonomy !== null;
@@ -1621,7 +1668,7 @@ export class SessionManager {
     const feedPort = wantsFeed ? this.ports.take() : undefined;
     const sidecar = feedPort ? { port: feedPort, password: randomBytes(24).toString("hex") } : undefined;
     if (wantsFeed && !sidecar) console.warn(`[${session.id.slice(0, 8)}] no port ready for the subagent feed; spawning without it`);
-    const proc = await spawnAgent(
+    const spec = await resolveAgentSpawn(
       profile,
       session.agentId,
       /* The agent runs where the thread does — its worktree, when it has one. */
@@ -1636,18 +1683,31 @@ export class SessionManager {
          is a run that never reports. */
       unattended,
     );
-    const feed = sidecar
-      ? new OpencodeSubagentFeed({
-          ...sidecar,
-          /* The bridge below fills this on `session/new`/`session/load`; the
-             feed holds a child seen before then and re-checks it after. Read
-             through the session so a respawn's stale feed sees null, not the
-             successor's id. */
-          rootSessionId: () => (session.proc === proc ? session.bridge?.acpSessionId ?? null : null),
-        })
-      : undefined;
-    if (feed) proc.on("close", () => feed.close());
-    const { mcpServers, websearchViaMcp, workflowViaMcp } = await this.serversFor(session, profile, project);
+    /* A runtime that takes env per session (`AgentDef.sharedProcess`) is
+       spawned with none of the thread's: all of it — gateway URL, key, model
+       vars — rides this session's `_meta` instead, so every thread in this cwd
+       keys the same process and a warm one is simply handed over. A sidecar is
+       one port per process, so a thread that has one never shares. */
+    const shared = agent?.sharedProcess === "acp-meta" && !sidecar;
+    const sessionEnv = shared ? spec.env : undefined;
+    if (shared) spec.env = {};
+    const conn = pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, () => {
+      const proc = spawnProcess(spec);
+      const feed = sidecar
+        ? new OpencodeSubagentFeed({
+            ...sidecar,
+            /* The bridge below fills this on `session/new`/`session/load`; the
+               feed holds a child seen before then and re-checks it after. Read
+               through the session so a respawn's stale feed sees null, not the
+               successor's id. */
+            rootSessionId: () => (session.proc === proc ? session.bridge?.acpSessionId ?? null : null),
+          })
+        : undefined;
+      if (feed) proc.on("close", () => feed.close());
+      return { proc, extra: feed?.stream };
+    });
+    const proc = conn.proc;
+    const { mcpServers, websearchViaMcp, workflowViaMcp } = servers;
     session.websearchViaMcp = websearchViaMcp;
     session.websearchCalls = new Set(); // in-flight calls went with the old process
     // Both belong to the process about to be replaced, and the handshake below
@@ -1655,9 +1715,10 @@ export class SessionManager {
     // load that failed and mark a thread that has just been restored fine.
     session.liveAcpSessionId = null;
     session.historyLost = null;
-    const bridge = new AcpBridge(this.hostFor(session), agentStream(proc, feed?.stream), {
+    const bridge = new AcpBridge(this.hostFor(session), conn, {
       cwd: threadCwd(session, project),
       mcpServers,
+      sessionEnv,
       ...opts,
       agentOwned: ownsCatalog ? undefined : { model, effort },
       websearchViaMcp,
@@ -1679,8 +1740,13 @@ export class SessionManager {
     // Not every caller awaits `ready` (create() hands the promise to its route,
     // respawn awaits it here). Attaching a handler now keeps a failed handshake
     // from surfacing as an unhandled rejection; the real awaiter still sees it.
-    bridge.ready.catch(() => {});
-    this.wire(session, proc, bridge, profile.name);
+    bridge.ready.then(
+      () => {
+        if (session.bridge === bridge && !session.historyLost) session.journalClean = true;
+      },
+      () => {},
+    );
+    this.wire(session, proc, bridge, profile.name, conn.shared);
     return bridge;
   }
 
@@ -1725,11 +1791,15 @@ export class SessionManager {
       this.workflowRunner && !session.parentSessionId && !ownsWorkflows
         ? workflowServer(session, this.workflowRunner)
         : null;
+    /* Asking another agent is one level too, but not the workflow engine's
+       rival: Claude Code keeps its own Workflow and still gets this. */
+    const agents = this.workflowRunner && !session.parentSessionId ? agentsServer(session, this.workflowRunner) : null;
     const { servers: mcpServers, skipped } = await mcpServersFor(
       this.effectiveLinks(session, profile),
       project,
       getConfig(),
       workflow,
+      agents,
     );
     if (skipped.length) {
       console.log(
@@ -2380,7 +2450,7 @@ export class SessionManager {
     project: Project,
     model?: string,
     effort?: string,
-    opts: { keepJournal?: boolean } = {},
+    opts: { keepJournal?: boolean; clear?: boolean } = {},
   ): Promise<Session> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(
@@ -2416,7 +2486,7 @@ export class SessionManager {
     project: Project,
     model?: string,
     effort?: string,
-    opts: { keepJournal?: boolean } = {},
+    opts: { keepJournal?: boolean; clear?: boolean } = {},
   ): Promise<Session> {
     // Re-checked once the queue lets us through: the thread may have been
     // deleted (or purged) while a first respawn was still in flight.
@@ -2493,11 +2563,12 @@ export class SessionManager {
     const live = session.bridge?.captureRestoreState();
     const restore = live ?? { modeId: session.modeId ?? undefined, configOptions: [] };
     const choices = live ? undefined : session.configChoices;
-    const oldProc = session.proc;
     const oldBridge = session.bridge;
     session.bridge = null; // stale generation from here on
+    session.unwire?.();
+    /* Closing the bridge is what ends the process — or, on a shared one, this
+       session on it (`AcpConnection.detach`). */
     oldBridge?.close(new Error("respawning"));
-    if (!session.exited) oldProc?.kill();
     session.profileId = spawnProfile.id;
     session.agentId = agentId;
     session.model = spawnModel || spawnProfile.defaultModel || "";
@@ -2523,12 +2594,18 @@ export class SessionManager {
        from zero — and it took the journaled `turn_started`/`turn_ended` rows
        with it, which are what `rewindPoint`, the turn table of contents and
        every window are read from and which the load never restates. */
-    if (opts.keepJournal) session.quietLoad = true;
+    /* A journal known to be the whole conversation is kept on a revive too,
+       not only on a live restart, and the agent is asked to `session/resume`
+       it — no narration at all. `clear` is the rewind's: truncating is what it
+       is for. */
+    const keep = !opts.clear && (opts.keepJournal || (session.journalClean && session.eventCount > 0));
+    session.journalClean = false; // until this spawn's handshake says otherwise
+    if (keep) session.quietLoad = true;
     else await this.log.clear(session);
     resetStderr(session);
     try {
       const bridge = await this.start(session, spawnProfile, project, spawnModel, spawnEffort, {
-        load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
+        load: session.acpSessionId ? { acpSessionId: session.acpSessionId, resume: keep } : undefined,
         restore,
         ...(choices && Object.keys(choices).length > 0 ? { configChoices: choices } : {}),
       });
@@ -2673,7 +2750,9 @@ export class SessionManager {
       // Configuration unchanged on every axis — only the conversation moved —
       // so the respawn gets the row's own values back, exactly as a revive of
       // an untouched thread would.
-      await this.respawn(session.id, profile, session.agentId, project, session.model || undefined, session.effort || undefined);
+      await this.respawn(session.id, profile, session.agentId, project, session.model || undefined, session.effort || undefined, {
+        clear: true,
+      });
       this.turnChanges.pruneFrom(session.id, turnId);
     }
 
@@ -3104,7 +3183,6 @@ export class SessionManager {
     session: Session,
     reason = "The agent process for this thread was stopped. The conversation is kept — sending a message starts it again.",
   ): void {
-    const proc = session.proc;
     const bridge = session.bridge;
     session.proc = null;
     session.bridge = null; // flips the generation guard
@@ -3126,10 +3204,10 @@ export class SessionManager {
        is the revive (`respawnNow`), which is the only moment the agent is about
        to re-narrate the conversation and the two accounts could otherwise be
        stitched together. */
-    bridge?.close(new Error(reason));
+    session.unwire?.();
+    bridge?.close(new Error(reason)); // ends the process too, unless it is shared
     this.log.flush();
     resetStderr(session);
-    proc?.kill();
     this.processGone(session, reason);
   }
 

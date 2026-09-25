@@ -517,6 +517,41 @@ beside Import in Settings › MCP.
   `pnpm test:workflow-schema` is the pure half; `pnpm test:workflow` drives the engine
   against the fake agent (`echo:` prompts).
 
+## Asking another agent
+
+- **`ask_agent` is how a normal thread works with the other agents and profiles.** A
+  thread's agent is fixed at draft time, because its conversation lives in its runtime's
+  store and a revive is always `session/load` there. Swapping the agent would lose the
+  conversation. So the other pairs are *called*, never switched to. The `agents` server
+  (`builtin:agents`, a library row like the others) offers `list_agents`, `ask_agent`,
+  `wait_agent` and `cancel_agent`, over the workflow runner's own loopback.
+- **An ask is a one-step workflow run** (`WorkflowRunner.ask` → `launch`), its step carrying
+  `profileId`/`agentId`/`label`. `runStep` reads the pair off the step and falls back to the
+  parent's. Everything else — the child thread with `parentSessionId`, the mirrored events,
+  `_daedalus/subagent_usage`, the clocks, cancel on the parent's process going — is the
+  workflow's. Waiting and cancelling are the `/runs/:id` routes. The spawn carries **no
+  `_meta.daedalus.workflow`**, so the client draws it as a plain subagent named
+  `<agent> · <profile>` rather than a one-row run card.
+- **Nothing that belongs to the parent's pair crosses to another one.** Model and effort are
+  inherited only when the pair is the parent's own; otherwise the profile's default model.
+  The permission mode is restored only when the *agent* is the same, because mode ids are a
+  runtime's; a child on another runtime starts in its default mode and its permission
+  requests land in the inbox. Persona, links, worktree and project are the parent's.
+- **Pairs are measured, not assumed**: every profile that is neither hidden nor disabled,
+  crossed with the agents it declares, with `installed` from `checkInstalled` against the
+  caller's project (a path check, never a handshake). Matched by id or case-insensitive name;
+  zero or two matches is an error naming what exists.
+- **The user picks the profile, not the caller.** `installed` is a path check, not a
+  credential check, so a pair can be listed and still fail on its first request — a Default
+  profile leans on the runtime's own login, and Defaults cannot be disabled. `ask_agent`'s
+  description tells the calling agent to ask the user which profile unless they named one,
+  and never to fall back to another after a failure. No setting: only the user knows which
+  keys are good.
+- **Offered to every runtime, including Claude Code.** Unlike the workflow server it
+  rivals nothing native, so `workflowsVia` does not gate it. One level: a child is never
+  handed it. Four asks per thread at once, counted apart from `MAX_RUNS_PER_PARENT` so
+  consulting two agents never locks a thread out of a workflow.
+
 ## Pausing a run
 
 - **A run pauses as a state of the run, never as a cancel-and-restart.** The Codex

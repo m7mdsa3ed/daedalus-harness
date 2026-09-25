@@ -214,7 +214,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   streamed `update`s: a frame is self-similar JSON that deflates five to ten times over, so
   this buys window back rather than trimming it, while a few hundred bytes of streamed text
   arriving thousands of times a turn would pay more for zlib than it saves. **The HTTP
-  document is compressed too** (`hono/compress`, on `/replay`, `/earlier` and `/trace` and
+  document is compressed too** (`hono/compress`, on `/replay`, `/earlier` and the trajectory's `/spans` and
   nowhere else): the read moved off the socket and left the socket's compression behind, on
   the most compressible bytes this server sends — 1.35MB of frames go out as 302KB, and on a
   phone that is the whole of the wait. Scoped to those three because everything else under
@@ -346,12 +346,44 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   three installs are separate. `test:acp-units` asserts the runtime surface and the
   method-name table, so an SDK release that moves a symbol fails there rather than in a
   spawn.
+- **A revive resumes when the journal is whole, and loads when it is not.** ACP
+  `session/resume` (stable 2026-04) reattaches a session **without replaying it**, which is
+  the whole cost a revive used to pay twice: the agent narrated the conversation and the
+  server cleared its journal to make room for the narration. `respawnNow` now keeps the log
+  and asks for a resume (`BridgeOptions.load.resume`) whenever `Session.journalClean` says
+  the journal *is* the conversation: written live by a handshake that succeeded in this
+  server run, not pruned since, and not left behind by a load that fell back to a fresh
+  session (`historyLost`). It is false at boot — an unclean stop may have lost the tail —
+  so the first revive after a restart still clears and loads, and that load is what makes it
+  true again. An agent that does not advertise `sessionCapabilities.resume`, or refuses one,
+  gets `session/load` with its narration dropped (`quietLoad`); only if that fails too does
+  the thread start fresh. A rewind passes `clear` — truncating is what it is for.
+- **A process is the pool's; a session is the thread's** (`acp-connection.ts`). An
+  `AcpConnection` owns the child, its stdio and the one `initialize`; each `AcpBridge` is one
+  session on it and routes by id (`ConnectionRoute.ownsSession`: its own id, the id a
+  load/resume is asking for, and its subagents' ids). A frame about a session nobody has an
+  id for yet — a `session/new` in flight — belongs to whoever is creating, so creations on a
+  shared connection are serialised (`AcpConnection.create`). **Sharing is the runtime's to
+  say** (`AgentDef.sharedProcess`): only one that takes a thread's env *per session* can
+  share, because a process's env is fixed and most of a thread's env is its own (the gateway
+  URL names the thread). claude-code does (`_meta.claudeCode.options.env`), so its process is
+  spawned with none of the profile's env and every thread in one cwd keys the same one
+  (`AcpPool.key` — command, args, cwd, env). Everything else gets a connection of its own and
+  behaves exactly as before: the bridge closing is the process dying. On a shared one, a
+  bridge closing is `session/close`, and the process is kept warm for `IDLE_TTL_MS` (5 min,
+  acpx's default) with nobody on it; the draft's options probe asks on that same pooled
+  process, so a thread's first message starts at `session/new` with `initialize` already
+  paid. A resume of an id waits for that id's close (`whenClosed`): claude-agent-acp answers
+  a resume of a live session from memory, without the new bridge's `_meta`. A crash takes
+  every session on the process down (Zed's behaviour); a handshake that cannot finish on a
+  shared process kills it, because the pool would hand the wedge to the next thread.
 - **A barrel is a rename shim, not an abstraction.** It makes swapping the *package* a
   three-file change; it does nothing for swapping the *shapes*. What a replacement must
   carry is the whole of `protocol.ts`'s vocabulary (`SessionUpdate`, `RequestPermissionRequest`,
   `CreateElicitationRequest`, `SessionConfigOption`, `SessionModeState`, `Usage`, …) plus
   the calls the bridge makes: `initialize` with our capability set (see "Capabilities we
-  advertise"), `session/new`, `session/load` (the one resume path), `session/list`,
+  advertise"), `session/new`, `session/resume` and `session/load` (the two resume paths — see "A revive
+  resumes"), `session/close`, `session/list`,
   `session/prompt` twice in flight for steering, `session/cancel`, `session/set_mode`,
   `session/set_config_option`, and the client side of `session/update`,
   `session/request_permission`, `elicitation/create` and `elicitation/complete`. An adapter
@@ -436,10 +468,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   process at all — `attach` serves the archive and marks it `archived`, `openThread` takes
   that path when `meta.cursor > 0`, and `actions.send` is what revives, because sending is
   the moment a reader becomes a user. But nothing ever reconstructs a thread's state *for the
-  agent* out of these rows: a revive is still `session/load`, and `respawnNow` either clears
-  the log before the load refills it or drops the load's narration and keeps the log
-  (`restart.kept`, above) — never both accounts at once, so they can never be stitched
-  together. That rule
+  agent* out of these rows: the agent restores from its own store, and `respawnNow` either
+  clears the log before a `session/load` refills it or keeps the log and has the agent say
+  nothing (`session/resume`, or a load whose narration is dropped — `restart.kept`, above) —
+  never both accounts at once, so they can never be stitched together. That rule
   used to be enforced by deleting the table at boot, which also made reading yesterday's work
   cost a spawn. Reconnect paths always revive (`ConnectOpts.revive`) — a socket that dropped
   because the process died must not come back silently read-only. Retention is
@@ -778,3 +810,37 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   multi-step workflow against a real provider. `_daedalus/subagent_usage` is listed in
   `SUBAGENT_UPDATE_KINDS` for that reason: the SDK's closed union would otherwise drop it
   before the bridge saw it.
+
+## Trajectory: OpenTelemetry spans
+
+A thread's trajectory is its OpenTelemetry spans, stored in `trace_spans` and drawn by the
+Trajectory panel (thread dock, and `/t/:id/trace`). It replaced a trace page that re-read the
+journal: the journal says what was *said*; a span says what *happened*, when, for how long and
+under what.
+
+- **One tracer, two sources.** `server/src/tracing.ts` owns a `BasicTracerProvider` whose store
+  processor keeps open spans in memory (served with `end: null`, so a running turn draws live)
+  and batches finished ones into the table. The harness's spans are read off ACP by
+  `server/src/bridge-trace.ts`, which the bridge *tells* at the moments it already knows about
+  and never asks. A runtime's own spans arrive finished over `_daedalus/trace` and are written by
+  `ingest` with `source: "agent"` — never re-started through the tracer, which would mint new ids
+  and break the tree.
+- **One trace per turn.** The turn is the root; `session/prompt` is under it and carries its
+  W3C `traceparent` in `_meta`. A runtime that advertises `daedalus/trace` in its `initialize`
+  `_meta` (ours) parents its spans under that request — the AI SDK's GenAI spans via
+  `@ai-sdk/otel`: `invoke_agent`, `step N`, `chat <model>` with time to first chunk, prompt and
+  answer, `execute_tool <name>` with arguments and result. **For every other runtime the bridge
+  derives them** from updates — a model span from the last boundary to the next tool call (its
+  duration is request *and* decode; `daedalus.ttft_ms` is the first chunk), a tool span from
+  `tool_call` to its terminal status, a subagent under the tool call that spawned it. Never both:
+  a self-tracing runtime's calls would be drawn twice and its tokens counted twice.
+- **For every runtime**: the handshake (`session/new|load|resume`), permission and elicitation
+  waits with their outcome, and `retry`/`paused`/`cancel`/`steer` as span events.
+- **`kind` is decided at write time** (`daedalus.kind`, else the GenAI operation), so the list
+  never parses attributes. A runtime's own `turn` is stored as `agent`: the turn is ours.
+- **The list elides, the span route does not.** A model span's input is the whole prompt every
+  step; `GET /api/sessions/:id/spans` cuts strings at `TRACE_LIST_VALUE_LIMIT` and names them in
+  `elided`, and `GET …/spans/:spanId` returns the span whole. Storage caps one value at 256KB.
+- **Export is standard OTLP** when `OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT` is set — the harness
+  exports its spans, the agent exports its own from the same env. Not backed up: a restored
+  install starts recording afresh. Deleting a thread cascades its spans.

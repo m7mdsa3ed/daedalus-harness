@@ -135,10 +135,6 @@ export interface WorkspaceDock {
   tabGroupsBeside: (id: string) => { groups: TabGroupRow[]; current?: string }
   /** Close every tab of a tab group through the guarded door, pins excepted. */
   closeTabGroup: (groupId: string, tabGroupId: string) => Promise<void>
-  /** Open these panels side by side, one column each, labelled as one set by a
-      shared tab-group colour (best-of-N). Asked for by name, so it may split;
-      on a phone it is one strip of tabs in one tab group. */
-  openSideBySide: (panels: PanelDescriptor[], label: string) => void
 
   /* ── The bottom panel ──
      A dockview edge group: a panel moved there leaves the grid for a strip

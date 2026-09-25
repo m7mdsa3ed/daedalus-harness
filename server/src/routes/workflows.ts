@@ -8,6 +8,14 @@ import { WorkflowError, type WorkflowRunner } from "../workflows.js";
 const MAX_WAIT_SEC = 55;
 
 const RunInput = z.object({ definition: z.unknown(), inputs: z.unknown().optional() });
+const AskInput = z.object({
+  profile: z.string().min(1),
+  agent: z.string().min(1),
+  prompt: z.string().min(1).max(20_000),
+  model: z.string().min(1).optional(),
+  effort: z.string().min(1).optional(),
+  timeoutSec: z.number().int().positive().optional(),
+});
 const ScriptInput = z.object({
   script: z.string().min(1),
   args: z.unknown().optional(),
@@ -15,7 +23,7 @@ const ScriptInput = z.object({
 });
 
 /**
- * The loopback the `workflow` MCP server drives — outside `/api`, so outside
+ * The loopback the `workflow` and `agents` MCP servers drive — outside `/api`, so outside
  * the bearer check: the per-boot key in the path is the credential (the
  * `/gw`/`/ide` rule), and the session id after it names the thread the call is
  * made for, which is the only thread it may start or read runs on.
@@ -34,6 +42,29 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     if (!body.success) return c.json({ error: body.error.issues }, 400);
     try {
       const view = await runner.startScript(parent, body.data.script, body.data.args, body.data.tokenBudget);
+      const wait = waitSec(c.req.query("wait"));
+      return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
+    } catch (error) {
+      if (error instanceof WorkflowError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
+  /* The `agents` server's two doors. Waiting on and cancelling an ask are the
+     `/runs/:id` routes below: an ask is a one-step run. */
+  app.get(`${base}/agents`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    return c.json({ pairs: await runner.pairs(parent) });
+  });
+
+  app.post(`${base}/asks`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = AskInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: body.error.issues }, 400);
+    try {
+      const view = await runner.ask(parent, body.data);
       const wait = waitSec(c.req.query("wait"));
       return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
     } catch (error) {

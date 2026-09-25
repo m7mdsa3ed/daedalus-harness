@@ -110,7 +110,7 @@ const spawns = (): number =>
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line) as { method: string })
-        .filter((e) => e.method === "session/new" || e.method === "session/load").length
+        .filter((e) => e.method === "session/new" || e.method === "session/load" || e.method === "session/resume").length
     : 0;
 
 const manager = new SessionManager({}, 1);

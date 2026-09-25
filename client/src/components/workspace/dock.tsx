@@ -272,7 +272,7 @@ export function useWorkspaceDock(): DockController {
          Every panel arrives the way a new thread does: a tab beside what you
          are looking at. The side a caller asked for is read as "and do not
          replace what is in front of me" and nothing more. Splitting is asked
-         for by name (`splitActive`, `openSideBySide`). */
+         for by name (`splitActive`). */
       const newTab = options?.newTab || !!options?.direction
 
       /* Replace-in-place: the panel you came from goes away unless you asked
@@ -602,61 +602,6 @@ export function useWorkspaceDock(): DockController {
     [closeEach]
   )
 
-  /* ── Side by side ──
-     Best-of-N's N threads: a column each, beside what you are looking at, and
-     one tab group per column wearing the same colour and label so the set
-     reads as one thing. This is a split, and it is the one open that may
-     make one — it is asked for by name, not a side effect of opening. On a
-     phone there are no columns, so it is one tab group in the one strip. */
-  const openSideBySide = React.useCallback(
-    (panels: PanelDescriptor[], label: string) => {
-      const api = apiRef.current
-      const home = api && gridGroupOf(api)
-      if (!api || !home || panels.length === 0) return
-      const colour = freeColour(api, api.groups)
-      const place = (panel: PanelDescriptor, group: DockviewGroupPanel) => {
-        const id = panelId(panel)
-        const existing = api.getPanel(id)
-        if (existing) {
-          if (existing.group !== group) existing.api.moveTo({ group, skipSetActive: true })
-        } else {
-          api.addPanel({
-            id,
-            component: panel.kind,
-            title: PANEL_SPECS[panel.kind].defaultTitle,
-            params: panel as unknown as Record<string, unknown>,
-            position: { referenceGroup: group.id, direction: "within" },
-          })
-        }
-        return id
-      }
-      silently(() => {
-        if (isNarrow()) {
-          const ids = panels.map((panel) => place(panel, home))
-          const tabGroup = api.createTabGroup({ groupId: home.id, label, color: colour })
-          for (const id of ids) api.addPanelToTabGroup({ groupId: home.id, tabGroupId: tabGroup.id, panelId: id })
-          api.getPanel(ids[0])?.api.setActive()
-          return
-        }
-        const columns: DockviewGroupPanel[] = []
-        let reference = home
-        for (const panel of panels) {
-          const column = api.addGroup({ referenceGroup: reference, direction: "right" })
-          const id = place(panel, column)
-          const tabGroup = api.createTabGroup({ groupId: column.id, label, color: colour })
-          api.addPanelToTabGroup({ groupId: column.id, tabGroupId: tabGroup.id, panelId: id })
-          columns.push(column)
-          reference = column
-        }
-        /* `addGroup` halves its reference each time; even columns are the
-           point of a comparison. */
-        const width = api.width / (columns.length + (home.panels.length > 0 ? 1 : 0))
-        for (const group of [home, ...columns]) if (group.panels.length > 0) group.api.setSize({ width })
-      })
-    },
-    [silently]
-  )
-
   /* ── The bottom panel ──
      `revealEdgeGroupWithData` is dockview's create-or-fill: the first move
      makes the edge group (flagged to go away with its last panel), later ones
@@ -953,7 +898,6 @@ export function useWorkspaceDock(): DockController {
       removeFromTabGroup,
       tabGroupsBeside,
       closeTabGroup,
-      openSideBySide,
       moveToBottom,
       moveToMain,
       isInBottom,
@@ -997,7 +941,6 @@ export function useWorkspaceDock(): DockController {
       removeFromTabGroup,
       tabGroupsBeside,
       closeTabGroup,
-      openSideBySide,
       moveToBottom,
       moveToMain,
       isInBottom,

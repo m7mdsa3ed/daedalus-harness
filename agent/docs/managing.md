@@ -130,6 +130,28 @@ context-window gauge is the parent's alone — a child's steps measure the
 child's own, smaller window, and writing them onto the parent made compaction
 threshold against a context the parent never had.
 
+## Tracing
+
+The agent advertises `daedalus/trace` in `initialize`'s `agentCapabilities._meta`
+and sends its OpenTelemetry spans up as the `_daedalus/trace` notification
+(`{ sessionId, spans }`, epoch-ms times, attributes flattened to OTel's value
+types, strings capped at 256 KB). A `session/prompt` (and `new`/`load`/`resume`)
+carrying `_meta.traceparent` runs inside that context, so the agent's spans are
+children of the harness's. The prompt answers only after its spans are flushed.
+
+What comes up (`src/tracing.ts`): an `agent turn` span per prompt
+(`daedalus.kind: "turn"`, carrying `retry` and `paused` events); the AI SDK's
+GenAI spans from `@ai-sdk/otel` — `invoke_agent <model>` (`gen_ai.agent.name` is
+`daedalus.turn`, `daedalus.subagent`, `daedalus.compaction` or
+`daedalus.sampling`), `step N`, `chat <model>` and `execute_tool <tool>`, with
+inputs and outputs recorded; a `compaction` span (`daedalus.kind: "step"`); and an
+`mcp connect <server>` span per MCP server (`daedalus.kind: "process"`). A
+subagent's run nests under its `execute_tool task` span. Every span carries
+`daedalus.acp_session_id`; one without it is not sent.
+
+Standard `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+(and the rest of the OTLP env) additionally export every span over OTLP/HTTP.
+
 ## What is still not editable
 
 **The base system prompt and the tool descriptions**, which live in the agent's

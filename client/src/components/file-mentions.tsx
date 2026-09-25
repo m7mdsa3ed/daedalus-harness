@@ -1,10 +1,12 @@
 import * as React from "react"
 import type { TextSurface } from "@/components/composer/composer-editor"
-import { AtSign, FileText, Folder, Plug } from "lucide-react"
+import { AtSign, Boxes, FileText, Folder, Plug } from "lucide-react"
 import { reportError } from "@/lib/errors"
 import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
 import type { ThreadMcpServer } from "@/lib/settings"
+import { useProjects } from "@/lib/queries/catalog"
+import { ProjectIcon } from "@/components/entity-icon"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
@@ -50,10 +52,22 @@ export interface McpResourceMatch {
   mimeType?: string
 }
 
-export type MentionMatch = WorkspaceEntry | McpResourceMatch
+/** Another project. Picking one inserts its cwd as an absolute `@path`, so it is
+    an ordinary mention from there on — `mentions.ts` links any path that exists. */
+export interface ProjectMatch {
+  type: "project"
+  id: string
+  name: string
+  cwd: string
+  logoUrl?: string
+}
+
+export type MentionMatch = WorkspaceEntry | McpResourceMatch | ProjectMatch
 
 /** How many MCP resources join the file matches — they are the second list. */
 const MCP_LIMIT = 8
+/** Projects lead the list, so they are kept few enough not to bury the files. */
+const PROJECT_LIMIT = 5
 
 interface MentionToken {
   /** What has been typed after the `@`. */
@@ -193,9 +207,19 @@ export function useFileMentions(opts: {
       .filter((r) => !q || `${r.server} ${r.name} ${r.uri}`.toLowerCase().includes(q))
       .slice(0, MCP_LIMIT)
   }, [query, mcpServers])
+  /* A query with a `/` in it is a path being typed, never a project's name. */
+  const projects = useProjects()
+  const projectMatches = React.useMemo((): ProjectMatch[] => {
+    if (query === null || query.includes("/")) return []
+    const q = query.toLowerCase()
+    return projects
+      .filter((p) => p.id !== projectId && `${p.name} ${p.cwd}`.toLowerCase().includes(q))
+      .slice(0, PROJECT_LIMIT)
+      .map((p) => ({ type: "project" as const, id: p.id, name: p.name, cwd: p.cwd, logoUrl: p.logoUrl }))
+  }, [query, projects, projectId])
   const matches = React.useMemo<MentionMatch[]>(
-    () => [...fileMatches, ...resourceMatches],
-    [fileMatches, resourceMatches],
+    () => [...projectMatches, ...fileMatches, ...resourceMatches],
+    [projectMatches, fileMatches, resourceMatches],
   )
 
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
@@ -211,8 +235,11 @@ export function useFileMentions(opts: {
       return
     }
     /* A directory completes to `@path/` and leaves the token open, so the next
-       keystroke keeps drilling; a file completes to `@path ` and is done. */
-    const insert = `@${entry.path}${entry.type === "dir" ? "/" : " "}`
+       keystroke keeps drilling; a file or a project completes to `@path ` and is done. */
+    const insert =
+      entry.type === "project"
+        ? `@${entry.cwd} `
+        : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
     pendingCaret.current = token.start + insert.length
     setText(text.slice(0, token.start) + insert + text.slice(caret))
     setSelected(0)
@@ -283,7 +310,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
           label: state.loading
             ? "Searching files…"
             : state.matches.length === 0
-              ? "No matching files"
+              ? "No matches"
               : `${state.matches.length} match${state.matches.length === 1 ? "" : "es"}`,
           urgent: true,
         }
@@ -297,7 +324,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
   if (state.matches.length === 0) {
     return (
       <CompleterNote icon={AtSign}>
-        {state.loading ? "Searching files…" : "No matching files"}
+        {state.loading ? "Searching files…" : "No matches"}
       </CompleterNote>
     )
   }
@@ -323,6 +350,21 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
               /* Attached, not inserted — the badge says the pick does something
                  other than complete the text. */
               badge="MCP"
+              selected={i === state.selected}
+              onPick={() => state.pick(entry)}
+              onHover={() => state.setSelected(i)}
+            />
+          )
+        }
+        if (entry.type === "project") {
+          return (
+            <CompleterRow
+              key={`project:${entry.id}`}
+              icon={Boxes}
+              mark={<ProjectIcon project={entry} className="size-3.5" />}
+              label={entry.name}
+              aside={entry.cwd}
+              badge="project"
               selected={i === state.selected}
               onPick={() => state.pick(entry)}
               onHover={() => state.setSelected(i)}

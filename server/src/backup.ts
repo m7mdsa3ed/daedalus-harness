@@ -128,6 +128,7 @@ const AgentRow = z.object({
      `seededVersion`, so nothing would ever backfill the door a persona reaches
      this agent through, and every thread's persona would silently do nothing. */
   personaVia: z.enum(["acp-meta", "env"]).nullish(),
+  sharedProcess: z.enum(["acp-meta"]).nullish(),
   seededVersion: int.default(0),
 });
 
@@ -183,7 +184,7 @@ const McpServerRow = z.object({
   id: str.min(1),
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
-  builtin: z.enum(["web-search", "knowledge", "workflow"]).nullish(),
+  builtin: z.enum(["web-search", "knowledge", "workflow", "agents"]).nullish(),
   /** Absent in a bundle written before OAuth existed, which read as "none". */
   auth: z.enum(["none", "oauth"]).default("none"),
   url: optStr,

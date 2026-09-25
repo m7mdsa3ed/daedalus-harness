@@ -9,7 +9,6 @@ import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import {
   DetailSection,
   PANE,
-  PANE_MAX_H,
   PANE_PAD,
   Prose,
   SmartBlock,
@@ -147,6 +146,18 @@ export function SubagentBrief({ item }: { item: ToolItem }) {
   const call = extractSubagent(item)
   const task = extractBackgroundTask(item)
   if (!call) return null
+  /* Not `description`: that is what the row is titled (`stepNameOf`), and a
+     line under a title that says the title again is the line a phone can
+     least afford. */
+  const facts = [
+    call.agentType,
+    call.model,
+    // Codex reports a lifecycle rather than a prompt — the activity IS the
+    // content of the call, so it is not optional chrome the way the rest is.
+    call.activity,
+    call.state,
+    call.elapsedSeconds !== undefined ? formatSeconds(call.elapsedSeconds) : undefined,
+  ].filter(Boolean)
 
   return (
     <div className="space-y-2">
@@ -155,33 +166,76 @@ export function SubagentBrief({ item }: { item: ToolItem }) {
           <TaskProgress task={task} />
         </DetailSection>
       )}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-        <BotIcon className="size-3 shrink-0 text-muted-foreground/60" />
-        {call.agentType && <span className="font-mono text-foreground">{call.agentType}</span>}
-        {call.model && <span className="text-muted-foreground/70">{call.model}</span>}
-        {/* Codex reports a subagent's lifecycle rather than its prompt — the
-            activity IS the whole content of the call, so it is not optional
-            chrome the way the rest of this row is. */}
-        {call.activity && <span className="text-muted-foreground/70">{call.activity}</span>}
-        {call.state && <span className="text-muted-foreground/70">{call.state}</span>}
-        {call.elapsedSeconds !== undefined && (
-          <span className="tabular-nums text-muted-foreground/70">{formatSeconds(call.elapsedSeconds)}</span>
-        )}
-        {call.description && <span className="text-muted-foreground">{call.description}</span>}
-        {call.sessionId && (
-          <span className="ml-auto font-mono text-muted-foreground/50" title="The child session the task ran in">
-            {call.sessionId}
-          </span>
+      {(facts.length > 0 || call.sessionId) && (
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/70">
+          <BotIcon className="size-3 shrink-0 text-muted-foreground/60" />
+          <span className="min-w-0 truncate">{facts.join(" · ")}</span>
+          {call.sessionId && (
+            <span
+              className="ml-auto max-w-[40%] shrink truncate font-mono text-muted-foreground/50"
+              title={`The child session the task ran in: ${call.sessionId}`}
+            >
+              {call.sessionId}
+            </span>
+          )}
+        </div>
+      )}
+      {call.prompt && <BriefSection text={call.prompt} />}
+    </div>
+  )
+}
+
+/** How tall a folded brief stands — a few lines, enough to know what was asked. */
+const BRIEF_FOLD = "max-h-24"
+
+/**
+ * What a worker was asked, folded to its first few lines with a fade and one
+ * button to read the rest. Not a scroll box: a brief sits inside the
+ * transcript's own scroller, and a scroller inside a scroller is where a
+ * thumb on a phone gets stuck — the page stops moving and the brief starts.
+ * Shared with the subagent rows that carry their brief on the session rather
+ * than on a call (`SubagentBody`).
+ */
+export function BriefSection({ text }: { text: string }) {
+  const [full, setFull] = React.useState(false)
+  const body = React.useRef<HTMLDivElement>(null)
+  const [overflows, setOverflows] = React.useState(false)
+  /* Watched, not measured once: prose can grow after it mounts (a highlighted
+     block, an image), and a fold that missed it clips with no way to open. */
+  React.useLayoutEffect(() => {
+    const el = body.current
+    if (!el) return
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el.firstElementChild ?? el)
+    return () => observer.disconnect()
+  }, [text, full])
+
+  return (
+    <DetailSection label="Brief">
+      <div className={cn(PANE_PAD, "min-w-0")}>
+        <div
+          ref={body}
+          className={cn(
+            "min-w-0 overflow-hidden",
+            !full && BRIEF_FOLD,
+            !full && overflows && "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]"
+          )}
+        >
+          <Prose text={text} />
+        </div>
+        {(overflows || full) && (
+          <button
+            type="button"
+            onClick={() => setFull((value) => !value)}
+            className="mt-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {full ? "Show less" : "Show full brief"}
+          </button>
         )}
       </div>
-      {call.prompt && (
-        <DetailSection label="Brief">
-          <div className={cn(PANE_MAX_H, PANE_PAD, "overflow-auto")}>
-            <Prose text={call.prompt} />
-          </div>
-        </DetailSection>
-      )}
-    </div>
+    </DetailSection>
   )
 }
 

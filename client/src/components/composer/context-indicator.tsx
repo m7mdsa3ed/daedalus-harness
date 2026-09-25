@@ -32,20 +32,55 @@ import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { addUsage, type ThreadState } from "@/lib/store"
-import { formatDuration, formatRate, formatTokens, formatTps, windowEstimated } from "@/lib/tokens"
+import {
+  formatDuration,
+  formatRate,
+  formatTokens,
+  formatTps,
+  promptBreakdown,
+  windowEstimated,
+} from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /** Above this the agent is about to compact, so the popover says so. */
 const COMPACTION_WARN = 85
 
-function Stat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+/** One figure on one line: the label at the start, the value at the end, so a
+    column of them reads down like a receipt rather than across like a grid. */
+function Row({
+  label,
+  value,
+  hint,
+  valueClass,
+  swatch,
+}: {
+  label: string
+  value: string
+  hint?: string
+  valueClass?: string
+  swatch?: string
+}) {
   return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={cn("font-medium tabular-nums", valueClass)}>{value}</dd>
+    <div className="flex items-baseline gap-2 text-xs">
+      {swatch && <span aria-hidden className={cn("size-2 shrink-0 translate-y-px rounded-[2px]", swatch)} />}
+      <dt className="min-w-0 flex-1 truncate text-muted-foreground">{label}</dt>
+      {hint && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{hint}</span>}
+      <dd className={cn("shrink-0 font-medium tabular-nums", valueClass)}>{value}</dd>
     </div>
   )
 }
+
+/** A captioned group of rows under a hairline — the popover's one unit. */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="border-t pt-2">
+      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+      <dl className="space-y-1">{children}</dl>
+    </section>
+  )
+}
+
+const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0)
 
 /** One window of a plan, at a glance's measure: the name, the amounts behind
     the percentage, the bar and when it rolls over. Shared by a flat reading and
@@ -136,7 +171,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
     if (!pending) return null
     return (
       <div className="border-t pt-2">
-        <p className="font-medium">Plan usage</p>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Plan</p>
         <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
           <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
           Reading plan usage…
@@ -157,7 +192,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
 
   return (
     <div className="border-t pt-2">
-      <p className="font-medium">Plan usage</p>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Plan</p>
       {quota.windows.length === 0 && accounts.length === 0 ? (
         <p className="mt-0.5 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
       ) : accounts.length > 0 ? (
@@ -283,6 +318,33 @@ export function ContextIndicator({
   const toolDurationMs = thread.tps?.toolDurationMs ??
     Object.values(thread.turnToolDuration).reduce((sum, duration) => sum + duration, 0)
 
+  const cacheTone =
+    cacheRate === null
+      ? undefined
+      : cacheRate >= 50
+        ? "text-emerald-600 dark:text-emerald-400"
+        : cacheRate >= 20
+          ? "text-amber-600 dark:text-amber-400"
+          : "text-destructive"
+  /* `turnUsage` is filled in turn order, so its last entry is the newest turn. */
+  const lastTurn = Object.values(thread.turnUsage).at(-1)
+  const split = promptBreakdown(context)
+  /* What fills the window. `used` can run past the prompt (it counts what the
+     last request wrote too), so the conversation takes the remainder rather
+     than the split's own figure — the segments then sum to `used` exactly. */
+  const segments = context
+    ? split
+      ? [
+          { label: "System prompt", tokens: split.system, value: `~${formatTokens(split.system)}`, swatch: "bg-chart-1" },
+          { label: "Tool definitions", tokens: split.tools, value: `~${formatTokens(split.tools)}`, swatch: "bg-chart-2" },
+          (() => {
+            const rest = Math.max(0, context.used - split.system - split.tools)
+            return { label: "Conversation", tokens: rest, value: formatTokens(rest), swatch: "bg-chart-3" }
+          })(),
+        ]
+      : [{ label: "Used", tokens: context.used, value: formatTokens(context.used), swatch: "bg-foreground/60" }]
+    : []
+
   return (
     <Popover>
       <PopoverTrigger
@@ -317,87 +379,101 @@ export function ContextIndicator({
           </Button>
         }
       />
-      <PopoverContent align="end" side={side} className="w-60 gap-2">
+      <PopoverContent align="end" side={side} className="w-72 gap-2.5">
+        {/* The window: one headline figure, and a bar that says what fills it
+            where our runtime measured the split (system and tools are its local
+            count, hence the tilde; the conversation is the provider's
+            remainder), a plain fill where no runtime did. */}
         <div>
-          <p className="font-medium">Context window</p>
-          <p className="text-xs text-muted-foreground">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="font-medium">Context window</p>
+            {context && (
+              <p className="text-lg font-semibold leading-none tabular-nums">
+                {about}
+                {percent}%
+              </p>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
             {context
-              ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} tokens`
+              ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
               : "Not reported by this agent"}
           </p>
-          {estimated && (
-            <p className="text-[11px] text-muted-foreground">
-              This model's window size isn't in the catalog, so the size is a default and every
-              figure below it is approximate.
-            </p>
-          )}
         </div>
         {context && (
           <div
-            className="h-1.5 w-full overflow-hidden rounded-pill bg-muted"
+            className="flex h-2 w-full gap-px overflow-hidden rounded-pill bg-muted"
             role="progressbar"
+            aria-label="Context window used"
             aria-valuenow={percent}
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <div className="h-full rounded-pill bg-foreground/60 transition-all" style={{ width: `${percent}%` }} />
+            {segments.map((segment) => (
+              <div
+                key={segment.label}
+                className={cn("h-full transition-all", segment.swatch)}
+                style={{ width: `${(segment.tokens / context.size) * 100}%` }}
+              />
+            ))}
           </div>
+        )}
+        {split && context && (
+          <dl className="space-y-1">
+            {segments.map((segment) => (
+              <Row
+                key={segment.label}
+                swatch={segment.swatch}
+                label={segment.label}
+                hint={`${pct(segment.tokens, context.size)}%`}
+                value={segment.value}
+              />
+            ))}
+          </dl>
+        )}
+        {estimated && (
+          <p className="text-[11px] text-muted-foreground">
+            This model's window size isn't in the catalog, so the size is a default and every
+            share is approximate.
+          </p>
         )}
         {context && !estimated && percent >= COMPACTION_WARN && (
           <Notice tone="warn" className="px-2 py-1.5 text-[11px]">
             Context is nearly full — the agent compacts the history soon to keep the turn going.
           </Notice>
         )}
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-          <Stat label="Requests" value={String(requests)} />
-          {context && (
-            <>
-              <Stat label="Used" value={`${about}${percent}%`} />
-              <Stat
-                label="Remaining"
-                value={`${about}${formatTokens(Math.max(0, context.size - context.used))}`}
-              />
-            </>
-          )}
-          {usage && (
-            <>
-              <Stat label="Prompt" value={formatTokens(prompt)} />
-              <Stat label="Output" value={formatTokens(usage.outputTokens)} />
-              <Stat label="New in" value={formatTokens(usage.inputTokens)} />
-            </>
-          )}
-          {usage?.thoughtTokens ? <Stat label="Thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
-          {usage?.cachedReadTokens ? <Stat label="Cached" value={formatTokens(usage.cachedReadTokens)} /> : null}
-          {usage?.cachedWriteTokens ? <Stat label="Cache write" value={formatTokens(usage.cachedWriteTokens)} /> : null}
-          {cacheRate !== null && (
-            <Stat
-              label="Cache avg"
-              value={`${cacheRate}%`}
-              valueClass={
-                cacheRate >= 50
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : cacheRate >= 20
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-destructive"
-              }
-            />
-          )}
-          {usage && <Stat label="Total" value={formatTokens(usage.totalTokens)} />}
-          {avgRate && <Stat label="Avg whole-turn TPS" value={avgRate} />}
-          {toolDurationMs > 0 && <Stat label="Tool-call time" value={formatDuration(toolDurationMs)} />}
-          {minRate && <Stat label="Min whole-turn TPS" value={minRate} />}
-          {maxRate && <Stat label="Peak TPS" value={maxRate} />}
-          {ttftMs !== null && <Stat label="TTFT" value={`${ttftMs}ms`} />}
-          {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
-          {context?.cost && (
-            <Stat label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
-          )}
-        </dl>
+
+        {/* Billed, not held: every request re-sends the context, so these run
+            far above the window. Totals over the session; a revive resets them. */}
         {usage && (
-          <p className="text-[11px] text-muted-foreground">
-            Billed across every model request this session, so totals run far above the
-            context size — a turn re-sends the context once per tool call. Revive resets them.
-          </p>
+          <Section title={`Session · ${requests} ${requests === 1 ? "request" : "requests"}`}>
+            <Row label="Prompt" value={formatTokens(prompt)} />
+            {cached > 0 && <Row label="↳ from cache" hint={cacheRate !== null ? `${cacheRate}%` : undefined} value={formatTokens(cached)} valueClass={cacheTone} />}
+            {usage.cachedWriteTokens ? <Row label="↳ cache write" value={formatTokens(usage.cachedWriteTokens)} /> : null}
+            <Row label="↳ fresh" value={formatTokens(usage.inputTokens)} />
+            <Row label="Output" value={formatTokens(usage.outputTokens)} />
+            {usage.thoughtTokens ? <Row label="↳ thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
+            <Row label="Total billed" value={formatTokens(usage.totalTokens)} />
+            {lastTurn && <Row label="Last turn" value={formatTokens(lastTurn.totalTokens)} />}
+            {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
+            {context?.cost && (
+              <Row label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
+            )}
+          </Section>
+        )}
+
+        {(avgRate || ttftMs !== null || toolDurationMs > 0) && (
+          <Section title="Speed">
+            {ttftMs !== null && <Row label="First token" value={`${ttftMs}ms`} />}
+            {avgRate && (
+              <Row
+                label="Output"
+                hint={minRate && maxRate ? `${minRate.replace(" tok/s", "")}–${maxRate}` : undefined}
+                value={avgRate}
+              />
+            )}
+            {toolDurationMs > 0 && <Row label="In tool calls" value={formatDuration(toolDurationMs)} />}
+          </Section>
         )}
         <PlanUsage thread={thread} meta={meta} actions={actions} />
       </PopoverContent>

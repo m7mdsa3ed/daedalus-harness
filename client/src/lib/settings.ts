@@ -463,7 +463,7 @@ export interface RegistryEntry {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge" | "workflow"
+  builtin: "web-search" | "knowledge" | "workflow" | "agents"
 }
 
 /** Library entries projects, profiles and threads link to by id. */
@@ -488,6 +488,7 @@ export function mcpSubtitle(s: McpServerDef): string {
   if (s.type === "builtin") {
     if (s.builtin === "web-search") return "built-in · web search + fetch"
     if (s.builtin === "workflow") return "built-in · workflows"
+    if (s.builtin === "agents") return "built-in · ask other agents"
     return "built-in · project knowledge base"
   }
   if (s.type !== "http") return [s.command, ...s.args].join(" ")

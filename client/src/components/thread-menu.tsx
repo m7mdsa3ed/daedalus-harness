@@ -506,7 +506,7 @@ export function ThreadHeaderMenu({
         onClick: () => void navigate(projectPath(thread.projectId)),
       },
       {
-        label: "Open the trace",
+        label: "Open the trajectory",
         icon: <Activity />,
         onClick: () => void navigate(threadTracePath(thread.id)),
       },

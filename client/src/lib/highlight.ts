@@ -47,6 +47,25 @@ import sql from "highlight.js/lib/languages/sql"
 import typescript from "highlight.js/lib/languages/typescript"
 import xml from "highlight.js/lib/languages/xml"
 import yaml from "highlight.js/lib/languages/yaml"
+import type { LanguageFn, Mode } from "highlight.js"
+
+/* highlight.js's js/ts grammars pair `{…}` inside a parameter list with a mode
+   that knows strings but not comments, so a doc comment saying "the server's"
+   inside `opts: {…}` opens a string at the apostrophe that runs to the end of
+   the file. The comment mode is the head of the exported `PARAMS_CONTAINS`;
+   hand it to the brace mode beside it. */
+const withBraceComments =
+  (grammar: LanguageFn): LanguageFn =>
+  (hljs) => {
+    const lang = grammar(hljs)
+    const params: Mode[] | undefined = lang.exports?.PARAMS_CONTAINS
+    const comment = params?.[0]
+    for (const mode of params ?? []) {
+      if (comment && String(mode.begin) === String(/\{/) && !mode.contains?.includes(comment))
+        mode.contains?.push(comment)
+    }
+    return lang
+  }
 
 const lowlight = createLowlight({
   bash,
@@ -59,7 +78,7 @@ const lowlight = createLowlight({
   graphql,
   ini,
   java,
-  javascript,
+  javascript: withBraceComments(javascript),
   json,
   markdown,
   php,
@@ -68,7 +87,7 @@ const lowlight = createLowlight({
   rust,
   shell,
   sql,
-  typescript,
+  typescript: withBraceComments(typescript),
   xml,
   yaml,
 })

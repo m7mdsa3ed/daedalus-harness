@@ -563,7 +563,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **The composer is one component, `components/composer/composer.tsx`, and one card of two rows** — the
   box and a toolbar — with the shelf above it. The box is a Tiptap editor over the same plain
   string a textarea held (`composer-editor.tsx`): long pastes are inline chips and quoted
-  excerpts ("Ask about this" on a transcript selection) are quote cards, *in* the box, and
+  excerpts ("Ask about this" on a transcript selection) are inline quote chips, *in* the box, and
   `editor-text.ts` maps string offsets to editor positions so every caret reader is unchanged
   (checked by `editor-text.check.mjs`).
 - **The shelf has a floor: `ComposerStrip`'s `footer`, the one row that is always there**
@@ -1782,16 +1782,6 @@ goes to it.
   else** — one message (a header, then per comment `@path (line N)`, the quoted lines and the
   words), so it queues behind a running turn and never steers, and `@path` is a mention the
   server links like a typed one. The drafts are cleared only when the send resolves.
-- **Best-of-N is N ordinary threads** (`composer/best-of-n.tsx`, the chevron beside Send,
-  drawn only inside the dock and only where a worktree can be made). "Send to several
-  threads…" mints 2–4 drafts through `actions.startThreadIn`, retunes each with
-  `configureDraft(…, remember=false)` — `isolate: true`, and the model picked for that copy out
-  of the profile the project's pair resolves to (a copy's model must not become the project's
-  next default) — opens them side by side (`dock.openSideBySide`: a column each to the right
-  of what you are looking at, widths evened out, and one tab group per column wearing one
-  colour and the label "Best of N", so the set reads as one; on a phone, one strip holding one
-  tab group — the one open that may split, because it is asked for by name) and sends the words through `actions.send` a task later, because `send` finds a draft in the
-  last-*committed* store. Attachments stay behind.
 - **A hunk is acted on where it is drawn, through doors that already existed.** On a
   comparison whose right side is the disk and whose left is the index or a scope's tree (and
   only when the opener named the `repo`) — or whose right is a scope's "after" tree that still

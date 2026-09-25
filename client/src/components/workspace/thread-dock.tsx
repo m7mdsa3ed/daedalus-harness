@@ -35,6 +35,7 @@ import {
   InfoIcon,
   ListChecksIcon,
   PlusIcon,
+  RouteIcon,
   SquareTerminalIcon,
   XIcon,
   type LucideIcon,
@@ -83,6 +84,10 @@ const WebPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/web-panel")).WebPanel as React.FC<IDockviewPanelProps>,
 }))
 
+const Trajectory = React.lazy(async () => ({
+  default: (await import("@/components/trajectory/trajectory")).Trajectory,
+}))
+
 const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }> = {
   transcript: { title: "Thread", icon: null },
   changes: { title: "Changes", icon: GitCompareIcon },
@@ -91,6 +96,7 @@ const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }>
   details: { title: "Details", icon: InfoIcon },
   terminal: { title: "Terminal", icon: SquareTerminalIcon },
   web: { title: "Preview", icon: AppWindowIcon },
+  trajectory: { title: "Trajectory", icon: RouteIcon },
 }
 
 /** The readings — one panel each, the id is the kind. */
@@ -107,6 +113,7 @@ const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   agents: "side",
   details: "side",
   web: "beside",
+  trajectory: "beside",
   terminal: "below",
 }
 
@@ -348,6 +355,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       )),
       terminal: contained(TerminalPanel),
       web: contained(WebPanel),
+      trajectory: contained(() => <Trajectory sessionId={sessionId} variant="panel" />),
     }
     for (const section of SECTIONS)
       map[section] = contained(() => <SectionPanel section={section} sessionId={sessionId} actions={actions} />)
@@ -529,6 +537,7 @@ function ThreadPanelsMenu() {
           <DropdownMenuSeparator />
           {row("terminal", "New terminal")}
           {row("web")}
+          {row("trajectory")}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

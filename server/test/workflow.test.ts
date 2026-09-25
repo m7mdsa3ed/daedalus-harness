@@ -12,6 +12,8 @@
 //   - the loopback key resolves the caller; a step may not start a workflow;
 //     a step is never handed the workflow server
 //   - the parent's process going away cancels its runs
+//   - ask: another (profile, agent) pair answers as a plain subagent child;
+//     pairs are listed, matched by name, refused when unknown or from a child
 // Run: pnpm test:workflow
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
@@ -32,9 +34,16 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
     args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
     env: {},
   },
+  {
+    id: "fake2",
+    name: "Fake Two",
+    command: "node",
+    args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
+    env: {},
+  },
 ]);
 
-const { SessionManager, mcpServersFor, workflowServer } = await import("../src/sessions.js");
+const { SessionManager, mcpServersFor, workflowServer, agentsServer } = await import("../src/sessions.js");
 const { WorkflowRunner, WorkflowError } = await import("../src/workflows.js");
 const { mcpServers } = await import("../src/library.js");
 const { getConfig } = await import("../src/config.js");
@@ -83,6 +92,9 @@ await db.insert(schema.profiles)
   .values({ id: "p1", name: "test", agents: { fake: {} }, baseUrl: "", apiKey: "", models: [], defaultModel: "", smallModel: "", logoUrl: "" } as never)
   .onConflictDoNothing()
   ;
+await db.insert(schema.profiles)
+  .values({ id: "p2", name: "Other", agents: { fake2: {} }, baseUrl: "", apiKey: "", models: [{ id: "m2", label: "M2", reasoningEfforts: [] }], defaultModel: "m2", smallModel: "", logoUrl: "" } as never)
+  .onConflictDoNothing();
 await db.insert(schema.projects).values({ id: "w1", name: "test-ws", cwd: project.cwd, description: null, logoUrl: "" } as never).onConflictDoNothing();
 
 let passed = 0;
@@ -536,6 +548,60 @@ await test("a script is refused what it may not do", async () => {
   const done = await runner.wait(clock.id, 20_000);
   assert.equal(done?.status, "failed");
   assert.match(done!.error ?? "", /unreplayable/);
+});
+
+console.log("ask");
+
+await test("pairs lists every profile × agent it declares, and marks the caller's", async () => {
+  const pairs = await runner.pairs(parent);
+  const other = pairs.find((p) => p.profileId === "p2");
+  assert.ok(other, "the second profile is listed");
+  assert.equal(other.agentId, "fake2");
+  assert.equal(other.installed, true);
+  assert.deepEqual(other.models, ["m2"]);
+  assert.equal(other.current, false);
+  assert.equal(pairs.find((p) => p.profileId === "p1" && p.agentId === "fake")?.current, true);
+});
+
+await test("ask runs another pair as a plain subagent child and answers its reply", async () => {
+  const before = updatesOf(ws, "subagent_spawned").length;
+  const view = await runner.ask(parent, { profile: "other", agent: "Fake Two", prompt: "echo:hello" });
+  const done = await runner.wait(view.id, 20_000);
+  assert.equal(done?.status, "completed", done?.error ?? "");
+  assert.equal(done!.steps[0].output, "hello");
+  const child = manager.get(done!.steps[0].sessionId!)!;
+  assert.equal(child.parentSessionId, parent.id);
+  assert.equal(child.agentId, "fake2", "the child runs the named agent");
+  assert.equal(child.profileId, "p2", "on the named profile");
+  assert.equal(child.model, "m2", "on that profile's default model, not the parent's");
+  const spawn = updatesOf(ws, "subagent_spawned").slice(before)[0]!.update as { name: string; _meta?: unknown };
+  assert.equal(spawn.name, "Fake Two · Other");
+  assert.equal(spawn._meta, undefined, "no workflow meta: it draws as a plain subagent");
+});
+
+await test("ask refuses an unknown pair, and a child may not ask", async () => {
+  await assert.rejects(async () => runner.ask(parent, { profile: "other", agent: "fake", prompt: "x" }), (e: unknown) => e instanceof WorkflowError && e.status === 404);
+  const child = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, { parentSessionId: parent.id, title: "step" });
+  await child.bridge!.ready;
+  await assert.rejects(async () => runner.ask(child, { profile: "other", agent: "fake2", prompt: "x" }), (e: unknown) => e instanceof WorkflowError && e.status === 409);
+  manager.retire(child);
+});
+
+await test("asks are capped apart from workflows", async () => {
+  const asks = await Promise.all([0, 1].map(() => runner.ask(parent, { profile: "p2", agent: "fake2", prompt: "needs permission" })));
+  const wf = await runner.start(parent, { name: "beside", steps: [{ name: "a", prompt: "echo:A" }] });
+  assert.equal((await runner.wait(wf.id, 20_000))?.status, "completed", "a workflow still starts beside two asks");
+  for (const a of asks) runner.cancel(a.id);
+});
+
+await test("the agents builtin resolves to the agents server, and to nothing for a child", async () => {
+  await mcpServers.ensureBuiltin("agents");
+  const links = { mcpServerIds: ["builtin:agents"] };
+  const { servers } = await mcpServersFor(links, project, getConfig(), null, agentsServer(parent, runner));
+  assert.equal(servers.length, 1);
+  assert.equal(servers[0].name, "agents");
+  assert.ok((servers[0] as { env: { name: string; value: string }[] }).env.some((e) => e.name === "AGENTS_URL" && e.value.endsWith(`/${parent.id}`)));
+  assert.equal((await mcpServersFor(links, project, getConfig(), null, null)).servers.length, 0);
 });
 
 for (const s of manager.list()) if (!s.exited) manager.retire(manager.get(s.id)!);

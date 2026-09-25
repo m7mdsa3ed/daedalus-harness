@@ -36,6 +36,8 @@ import { ComposerStripItem } from "../composer-strip"
 /** What a row says, whichever menu it came from. */
 export interface CompleterRowProps {
   icon: LucideIcon
+  /** A picture drawn in the icon's place — a project's logo. */
+  mark?: React.ReactNode
   /** Dimmed and said *before* the label, on the same line: the directory a file
       is in. It is the part that truncates first — what the eye needs is the end
       of the row, not the start of the path. */
@@ -68,6 +70,7 @@ export interface CompleterRowProps {
    and the body gets all the width that is left. */
 export function CompleterRow({
   icon: Icon,
+  mark,
   prefix,
   label,
   meta,
@@ -93,12 +96,14 @@ export function CompleterRow({
         selected && "bg-accent text-accent-foreground"
       )}
     >
-      <Icon
-        className={cn(
-          "size-3.5 shrink-0",
-          selected ? "text-accent-foreground" : "text-muted-foreground"
-        )}
-      />
+      {mark ?? (
+        <Icon
+          className={cn(
+            "size-3.5 shrink-0",
+            selected ? "text-accent-foreground" : "text-muted-foreground"
+          )}
+        />
+      )}
       <span className="col-start-2 flex min-w-0 flex-col">
         <span className="flex min-w-0 items-baseline gap-1 font-mono text-xs">
           {prefix && (

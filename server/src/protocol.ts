@@ -862,41 +862,82 @@ export const JOURNALED_EVENTS: readonly ThreadEventKind[] = [
   "turn_ended",
 ];
 
-/**
- * How many events one `GET /api/sessions/:id/trace` page returns.
- *
- * A trace is a raw log, not a transcript: message chunks dominate a journal, so
- * a page counts events rather than turns. The reader pages backwards from the
- * head (the newest page first), which is where a problem usually is. Summed,
- * the pages are bounded like the replay is — the browser asks for no more than
- * it can render, and an archive far longer than a screenful is opened at its
- * tail rather than walked from the beginning.
- */
-export const TRACE_PAGE_LIMIT = 500;
+/* ── Trajectory: a thread's OpenTelemetry spans ──
+   Every span the harness and its agents produced for one thread, as
+   `GET /api/sessions/:id/spans` serves it (server/src/tracing.ts). Two
+   sources share one tree: the harness's own spans (`source: "harness"`), which
+   exist for every runtime because they are read off ACP — a turn, the prompt
+   request, a permission wait, a spawn or load, and for a runtime that does not
+   trace itself, the tool calls and model generations the updates imply — and a
+   runtime's own spans (`source: "agent"`), sent up over `_daedalus/trace` and
+   parented under the harness's prompt span by the W3C `traceparent` the prompt
+   carries in `_meta`. Our own runtime sends the AI SDK's GenAI spans
+   (`@ai-sdk/otel`), which is where the model request, its time to first
+   chunk, its prompt and its answer come from. */
 
-/** One event as the trace view reads it — the journaled event plus the
-    wall-clock stamp the replay path deliberately never carried (`at` lives on
-    the row, not in the payload). Served by `GET /api/sessions/:id/trace`,
-    oldest first within a page, pages ordered newest → oldest. */
-export interface TraceEvent {
-  seq: number;
-  /** The `kind` column — the same discriminant as `payload.ev`, duplicated so
-      a page can colour a row without parsing its payload. */
-  ev: JournaledEvent["ev"];
-  /** Epoch ms when the server journaled the event. 0 on rows written before
-      the column existed. */
+/** What a span is, for drawing: the harness names it at write time
+    (`daedalus.kind` on its own, the GenAI operation on an agent's). */
+export type TraceSpanKind =
+  | "turn"
+  | "request"
+  | "agent"
+  | "step"
+  | "model"
+  | "tool"
+  | "permission"
+  | "process"
+  | "session"
+  | "shell"
+  | "other";
+
+export type TraceAttributeValue = string | number | boolean | string[] | number[] | boolean[];
+
+export interface TraceSpanEvent {
+  name: string;
+  /** Epoch ms. */
   at: number;
-  /** The event exactly as it was journaled. */
-  payload: JournaledEvent;
+  attributes?: Record<string, TraceAttributeValue>;
 }
 
-/** One page of `GET /api/sessions/:id/trace`. */
-export interface TracePage {
-  events: TraceEvent[];
-  /** The seq to ask for next — the page's oldest event, which is the first one
-      strictly older than it — or null when this page reached the head of the
-      log (seq 0 is on it) and nothing older exists. */
-  next: number | null;
+export interface TraceSpan {
+  traceId: string;
+  spanId: string;
+  parentSpanId: string | null;
+  /** The thread (harness session id), never an agent's ACP id. */
+  sessionId: string;
+  name: string;
+  kind: TraceSpanKind;
+  source: "harness" | "agent";
+  /** Epoch ms, fractional. */
+  start: number;
+  /** Epoch ms; null while the span is still open. */
+  end: number | null;
+  status: "unset" | "ok" | "error";
+  statusMessage?: string;
+  attributes: Record<string, TraceAttributeValue>;
+  events: TraceSpanEvent[];
+  /** Attribute keys whose value the list elided for size (`TRACE_LIST_VALUE_LIMIT`);
+      `GET /api/sessions/:id/spans/:spanId` returns them whole. */
+  elided?: string[];
+}
+
+/** `GET /api/sessions/:id/spans` — every span of the thread, oldest start first. */
+export interface SpansPage {
+  spans: TraceSpan[];
+}
+
+/** A string attribute longer than this is elided from the list and served by
+    the span's own route — a model span's `gen_ai.input.messages` is the whole
+    prompt, every step. */
+export const TRACE_LIST_VALUE_LIMIT = 2_000;
+
+/** `_daedalus/trace` — a runtime's finished spans, agent → client. Attributes
+    already flattened to OTel's value types; times in epoch ms. */
+export const TRACE_NOTIFICATION = "_daedalus/trace";
+export interface TraceNotificationParams {
+  /** The ACP session the spans belong to. */
+  sessionId: string;
+  spans: Omit<TraceSpan, "sessionId" | "kind" | "source" | "elided">[];
 }
 
 export type ThreadEvent =

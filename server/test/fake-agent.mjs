@@ -597,7 +597,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
              what a rewind's conversation half is built on — see
              `AcpBridge.forkAt`. The fork handler below answers a derived id
              that `session/load` accepts. */
-          sessionCapabilities: { fork: {} },
+          sessionCapabilities: { fork: {}, resume: {} },
           promptCapabilities: { image: true, audio: false, embeddedContext: true },
           /* The harness's pause pair (the daedalus agent's): answered below
              with a flag and nothing else — a parked turn here is parked on a
@@ -669,6 +669,23 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       send("acp-123", { sessionUpdate: "subagent_spawned", subagentSessionId: "sub-0", name: "explorer", task: "Earlier delegated work", capabilities: {} });
       send("sub-0", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "(replayed child prose)" } });
       send("acp-123", { sessionUpdate: "subagent_state_update", subagentSessionId: "sub-0", state: "disconnected" });
+    }
+    out({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        modes: { currentModeId, availableModes: [{ id: "default", name: "Always ask" }, { id: "acceptEdits", name: "Accept edits" }] },
+        configOptions,
+      },
+    });
+  } else if (msg.method === "session/resume") {
+    /* `session/load` without the narration: the same ids are known, the same
+       refusal for an unknown one, and not one update before the answer. */
+    recordSessionMeta("session/resume", msg.params);
+    const sid = msg.params?.sessionId;
+    if (sid !== "acp-123" && !(typeof sid === "string" && sid.startsWith("acp-123-fork-"))) {
+      out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { details: `no rollout found for thread id ${sid}` } } });
+      return;
     }
     out({
       jsonrpc: "2.0",

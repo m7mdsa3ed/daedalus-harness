@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
+import { shutdownTracing } from "./tracing.js";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -193,7 +194,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 /**
- * The three journal reads, compressed.
+ * The three journal reads and the trajectory, compressed.
  *
  * A transcript is opened over HTTP now (`GET /api/sessions/:id/replay`), and
  * that document is the most compressible thing this server sends: the same
@@ -210,7 +211,8 @@ app.use("/api/*", async (c, next) => {
  */
 app.use("/api/sessions/:id/replay", compress());
 app.use("/api/sessions/:id/earlier", compress());
-app.use("/api/sessions/:id/trace", compress());
+app.use("/api/sessions/:id/spans", compress());
+app.use("/api/sessions/:id/spans/:spanId", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
@@ -376,6 +378,9 @@ async function shutdown(code: number): Promise<never> {
   } catch (error) {
     console.error("[shutdown]", error);
   }
+  /* The retired bridges ended their spans; write them (and export them) inside
+     the drain rather than dropping the last turn's trajectory. */
+  await Promise.race([shutdownTracing(), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS))]);
   await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
   process.exit(code);
 }

@@ -26,6 +26,8 @@ import { z } from "zod";
     (`mcp__workflow__run_workflow` in Claude Code, `mcp.workflow.run_workflow`
     in Codex). */
 export const WORKFLOW_SERVER_NAME = "workflow";
+/** The `agents` MCP server: one thread asking another (profile, agent) pair. */
+export const AGENTS_SERVER_NAME = "agents";
 
 export const STEP_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/i;
 
@@ -131,6 +133,12 @@ export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & {
       parent does; a script may spend a cheaper model on a mechanical stage. */
   model?: string;
   effort?: string;
+  /* ── Set only by `WorkflowRunner.ask` ──
+     An ask is a one-step run on a pair of the caller's choosing rather than
+     the parent's own, drawn as a plain subagent named `label`. */
+  profileId?: string;
+  agentId?: string;
+  label?: string;
 };
 
 /** A validated definition, always in the engine's one shape: a flat step list

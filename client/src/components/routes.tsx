@@ -137,7 +137,7 @@ export function usePageHeading(): (path: string) => PageHeading | null {
     if (first === "projects")
       return { crumb: "Projects", title: projects.find((p) => p.id === seg)?.name ?? "Project" }
     if (first === "t" && pathname.endsWith("/trace"))
-      return { crumb: "Thread", title: sessions.find((s) => s.id === seg)?.title ?? "Trace" }
+      return { crumb: "Thread", title: sessions.find((s) => s.id === seg)?.title ?? "Trajectory" }
     if (!first) return { title: "New thread" }
     return null
   }
@@ -254,9 +254,9 @@ export function pageRoutes({
           </div>
         }
       />
-      {/* The trace is a thread's other view — the journal as a timeline
-          rather than a transcript — so it sits under the thread's own
-          path. */}
+      {/* The trajectory is a thread's other view — its spans as a
+          waterfall rather than a transcript — so it sits under the thread's
+          own path. */}
       <Route path="/t/:sessionId/trace" element={<TracePage />} />
       {/* The landing console — "New thread" — is the root and the catch-all. */}
       <Route

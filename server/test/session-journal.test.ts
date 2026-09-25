@@ -254,23 +254,6 @@ await test("earlierPage at the head of the log is empty, not an error", async ()
   assert.deepEqual(await journal.earlierPage(s.id, -1), { events: [], from: 0, earlier: 0 });
 });
 
-await test("trace pages newest-first with the journaled clock on each row", async () => {
-  const s = await owner();
-  for (let n = 0; n < 3; n += 1) turn(s, n, 2);
-  const head = s.eventCount;
-  const page = await journal.trace(s.id, head, 4);
-  // Four events, oldest first within the page, right up to the head.
-  assert.equal(page.length, 4);
-  assert.equal(page[0].seq, head - 4);
-  assert.equal((await page).at(-1)!.seq, head - 1);
-  for (const row of page) {
-    assert.equal(typeof row.at, "number");
-    assert.equal(row.ev, row.payload.ev, "the kind column duplicates the payload discriminant");
-  }
-  // A window of zero is empty rather than the head of the log.
-  assert.deepEqual(await journal.trace(s.id, 0, 4), []);
-});
-
 await test("replayFrames respects the `to` bound the attached event names", async () => {
   const s = await owner();
   for (let n = 0; n < 3; n += 1) turn(s, n);

@@ -47,7 +47,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   user's, and so are `install`/`icon` (descriptive, not protocol).
 - **What the harness believes about a runtime is a column on its row, never a comparison
   against its id.** `spawnCategories`, `liveConfig`, `quotaProbe`, `personaVia`,
-  `subagentFeed`, `rewindVia`, `workflowsVia`, `workspaceLayout`, `builtinTools`,
+  `subagentFeed`, `rewindVia`, `workflowsVia`, `workspaceLayout`, `builtinTools`, `sharedProcess`,
   `catalogProbe`, `discovery`, `install`, `icon` — a user who repoints `command` at a fork
   repoints these with it, and nothing outside `registry.ts` spells a vendor's tool name,
   config path, install line or id.
@@ -112,7 +112,22 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   re-minted before it runs (`lib/draft-sessions.ts`).
 - **An agent's session id is earned, not announced** (`acp_session_provisional`): only a
   *proven* id may replace a proven one. **The journal is a cache for reading, never a source
-  for resuming** — a revive is always `session/load`.
+  for resuming** — the agent restores from its own store: `session/resume` (no replay) when
+  the journal is whole (`Session.journalClean`, false at boot) and the agent offers it,
+  `session/load` otherwise. A rewind always clears and loads.
+- **A process is the pool's; a session is the thread's** (`acp-connection.ts`). One
+  `AcpConnection` per process, one `initialize`, frames routed by session id, creations
+  serialised. **Only a runtime that takes a thread's env per session shares**
+  (`sharedProcess`, claude-code via `_meta`); the rest get a process of their own and a
+  bridge closing kills it, as before. A shared bridge closing is `session/close`, and the
+  process stays warm 5 min — the draft's probe asks on it, so the first message skips
+  `initialize`. A crash takes every session on the process with it.
+- **The trajectory is OpenTelemetry spans, never a re-read of the journal** (`tracing.ts`,
+  `bridge-trace.ts`, `trace_spans`). One trace per turn, rooted at the turn; `session/prompt`
+  carries its `traceparent` in `_meta`. A runtime that advertises `daedalus/trace` sends its own
+  spans over `_daedalus/trace` and the bridge then **derives no model or tool spans for it** —
+  never both, or every call is drawn and counted twice. The bridge tells the tracer; it never
+  holds a span. → `docs/protocol.md` "Trajectory".
 - **Importing a thread writes a pointer, never a transcript.** Listing is ACP's
   `session/list`, never a runtime's files.
 - **A capability we don't advertise is a feature the agent turns off.** Questions arrive as
@@ -293,6 +308,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   effort, persona and links. One level, never a tree. Nothing survives a restart.
 - **A run pauses as a state, never as a cancel-and-restart**, and its clocks stand still. A
   restart ends a paused run as it ends a running one.
+- **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
+  `WorkflowRunner.ask`): a **one-step run** whose step names its own profile and agent, so
+  the child, the mirroring, the cost and the cancel are the workflow's. Drawn as a plain
+  subagent (no workflow `_meta`). The parent's model and mode ids never cross to another
+  pair — the child starts on its profile's default model and its runtime's default mode.
+  Offered to every runtime, Claude Code included (it rivals nothing), one level, and capped
+  apart from workflows. The asked agent sees only the brief.
 
 ## Client and UI → `docs/client.md`
 
@@ -450,9 +472,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **The pile is only what is about the message being typed** — attachments, the history
   notice, the two completers, the archive notice.
 - **The box is a Tiptap view of a plain string, never a markdown document**
-  (`composer/composer-editor.tsx`, `editor-text.ts`): `text` stays the exact message sent, a
-  `[pasted text #n]` token draws as an inline chip and a run of `> ` lines as a quote card, and
-  both serialise back to the same characters. The ref is a `TextSurface` (a textarea's
+  (`composer/composer-editor.tsx`, `editor-text.ts`): `text` stays the exact message sent, and a
+  `[pasted text #n]` token, a finished `@path` mention and a run of `> ` lines all draw as the
+  one inline chip (no card, no border) and serialise back to the same characters. The ref is a `TextSurface` (a textarea's
   `value`/`selectionStart`/`setSelectionRange`/`focus`), so the completers and the history walk
   never learn the editor exists. Markdown WYSIWYG escapes what was typed (`snake\_case`), which
   breaks `/`, `!`, `@` and history recall. Keys are taken in the capture phase and ProseMirror
@@ -770,10 +792,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`git.revertTurn`, `POST …/turn-changes/:turnId/revert`): written out of a scratch index,
   **never the real one**, never another path. It **refuses (409 with the paths) when any of
   them changed since the turn's end tree** unless `force`, and refuses while a turn runs.
-- **Best-of-N adds no concept**: N drafts from `startThreadIn`, each `isolate`d and retuned
-  with `remember=false`, opened side by side by `dock.openSideBySide` (a column each, one shared-colour tab group
-  per column; one strip on a phone), sent through
-  `actions.send` a task after the mint (it reads the committed store).
 - **The agents dashboard (`/agents`) fetches nothing of its own**: the session list and
   `agentState` over `threadStatus`. **A list's live state for a thread with no socket is the
   server's snapshot of its bridge** — `waiting`/`held`/`context` on `GET /api/sessions`,

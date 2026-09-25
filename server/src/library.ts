@@ -40,6 +40,12 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     description:
       "Run a declarative multi-step workflow: every step is a real thread on this server, mirrored into the calling thread as a subagent. Works on any agent; replaces Claude Code's built-in Workflow tool on threads that link it.",
   },
+  agents: {
+    id: "builtin:agents",
+    name: "Ask agents",
+    description:
+      "Ask another profile and agent pair — Codex, Claude Code, the Daedalus agent, on any provider — to do a task in a new thread of this project; its answer comes back to the caller, drawn as a subagent.",
+  },
 };
 
 /**
@@ -62,7 +68,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge", "workflow"]),
+    builtin: z.enum(["web-search", "knowledge", "workflow", "agents"]),
   }),
   z.object({
     type: z.literal("http"),

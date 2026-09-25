@@ -19,6 +19,7 @@ import * as React from "react"
 import {
   ArrowUpRightIcon,
   BotIcon,
+  EyeIcon,
   PlayIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -36,13 +37,11 @@ import {
   KIND_CHIPS,
   KIND_COLORS,
   KIND_ICONS,
-  PANE_MAX_H,
-  PANE_PAD,
-  Prose,
   SmartBlock,
   Timestamp,
 } from "@/components/tool-parts"
 import {
+  BriefSection,
   SubagentBrief,
   SubagentReport,
   ToolDetail,
@@ -105,6 +104,7 @@ import { cn, stagger } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import { threadPath } from "@/lib/router"
+import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 import { Link } from "react-router"
 
 export const ToolRun = React.memo(function ToolRun({
@@ -375,15 +375,20 @@ export const SubagentStep = React.memo(function SubagentStep({
   const captionOf = tool
     ? [call?.agentType, call?.model].filter(Boolean).join(" · ") || undefined
     : session!.name
-  // Never the same string twice: the name can be what the row is already titled.
-  const caption = captionOf === target ? undefined : captionOf
+  /* Who the worker is and what it has done so far share the second line, not
+     the trailing column: that column is `shrink-0` (it holds figures that must
+     not wrap), and a sentence parked in it took a narrow panel's whole width
+     and left the name nothing. The caption truncates; the figures stay. */
+  const who = captionOf === target ? undefined : captionOf
   const steps = collectTools(children)
   const prose = summarise(steps)
     .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
     .join(", ")
+  const caption = [who, prose].filter(Boolean).join(" · ") || undefined
   const stepThread = useStepThread(group)
   const hasBody = subagentHasBody(group, stepThread)
   const tokens = view.showTokens ? stepUsage(group) : undefined
+  const peek = view.subagentPeek === "always" || (view.subagentPeek === "live" && active)
 
   return (
     <StepRow
@@ -396,13 +401,7 @@ export const SubagentStep = React.memo(function SubagentStep({
       caption={caption}
       mono={false}
       startedAt={head.startedAt}
-      /* The popover form, the same one a tool step and a turn footer draw:
-         StepRow's trailing columns live OUTSIDE its disclosure button (they
-         have since a step's figure became a popover), so the "bare text, a
-         button may not hold a button" rule that made this row the one place
-         tokens wore no coin no longer applies to it. */
       metric={[
-        prose,
         tokens ? <TokenSummary usage={tokens} label="This step" /> : null,
         showTimestamps ? <Timestamp at={head.at} /> : null,
       ]}
@@ -415,35 +414,37 @@ export const SubagentStep = React.memo(function SubagentStep({
           />
         ) : undefined
       }
-      below={(open) => {
-        const limit = view.recentSubagentSteps
-        if (limit === 0 || open) return undefined
-        if (!session?.transcript && group.children.length === 0 && !active) return undefined
-        return session?.transcript ? (
-          <NativeStepTranscript
-            transcript={session.transcript}
-            active={active}
-            showTimestamps={showTimestamps}
-            limit={limit}
-          />
-        ) : (
-          <>
-            {group.children.length > limit && (
-              <div className="px-1.5 text-[11px] leading-5 text-muted-foreground/70">
-                {group.children.length - limit} earlier {group.children.length - limit === 1 ? "step" : "steps"}
-              </div>
-            )}
-            <SubagentTranscript
-              rows={group.children.slice(-limit)}
+      /* The latest few steps of a folded worker, on the same rail and with the
+         same "N earlier steps" head a peeking tool run has — which opens the
+         row, as it opens a run. Open, the body carries the whole rail, so the
+         peek steps aside rather than drawing its tail twice. Flush, because the
+         rail brings its own indent and hangs off the mark, not the title. */
+      belowFlush
+      below={(open, setOpen) => {
+        if (open || !peek) return undefined
+        if (session?.transcript)
+          return (
+            <NativeStepTranscript
+              transcript={session.transcript}
               active={active}
               showTimestamps={showTimestamps}
+              limit={PEEK}
+              onEarlier={() => setOpen(true)}
             />
-          </>
+          )
+        if (children.length === 0 && !active) return undefined
+        return (
+          <SubagentTranscript
+            rows={children}
+            active={active}
+            showTimestamps={showTimestamps}
+            limit={PEEK}
+            onEarlier={() => setOpen(true)}
+          />
         )
       }}
-      /* Subagent details remain independently expandable. The recent child
-         steps are a separate always-visible preview, not a reason to open this
-         row; "Expand tool output" continues to govern only the disclosure. */
+      /* Opening is the reader's and "Expand tool output"'s; the peek above is
+         its own option and never a reason to open the row. */
       defaultOpen={view.showToolDetails}
       openSetting={view.showToolDetails}
     />
@@ -481,13 +482,7 @@ function SubagentBody({
       {session?.activity && active && (
         <p className="text-[11px] text-muted-foreground/70 harness-shimmer">{session.activity}</p>
       )}
-      {session?.prompt && (
-        <DetailSection label="Brief">
-          <div className={cn(PANE_MAX_H, PANE_PAD, "overflow-auto")}>
-            <Prose text={session.prompt} />
-          </div>
-        </DetailSection>
-      )}
+      {session?.prompt && <BriefSection text={session.prompt} />}
       {stepThread && (
         <Link
           to={threadPath(stepThread)}
@@ -542,11 +537,13 @@ function NativeStepTranscript({
   active,
   showTimestamps,
   limit,
+  onEarlier,
 }: {
   transcript: { dir: string; agentId: string }
   active: boolean
   showTimestamps?: boolean
   limit?: number
+  onEarlier?: () => void
 }) {
   const events = useAgentTranscript(transcript.dir, transcript.agentId)
   const [failed, setFailed] = React.useState(false)
@@ -585,36 +582,37 @@ function NativeStepTranscript({
       </p>
     )
   }
-  const shown = limit ? rows.slice(-limit) : rows
   return (
-    <div>
-      {limit && rows.length > limit && (
-        <div className="px-1.5 text-[11px] leading-5 text-muted-foreground/70">
-          {rows.length - limit} earlier {rows.length - limit === 1 ? "step" : "steps"}
-        </div>
-      )}
-      <SubagentTranscript
-        rows={shown}
-        active={active}
-        showTimestamps={showTimestamps}
-      />
-    </div>
+    <SubagentTranscript
+      rows={rows}
+      active={active}
+      showTimestamps={showTimestamps}
+      limit={limit}
+      onEarlier={onEarlier}
+    />
   )
 }
 
-/** A subagent's rows, on a rail. Callers choose the full transcript or its
-    latest-step preview; this component only draws the rows it receives. */
+/** A subagent's rows, on a rail: all of them, or — given a `limit` — the
+    newest few under an "N earlier steps" head that `onEarlier` answers. */
 function SubagentTranscript({
-  rows,
+  rows: all,
   active,
   showTimestamps,
+  limit,
+  onEarlier,
 }: {
   rows: Row[]
   active: boolean
   showTimestamps?: boolean
+  limit?: number
+  onEarlier?: () => void
 }) {
+  const rows = limit ? all.slice(-limit) : all
+  const hidden = all.length - rows.length
   return (
     <div className={RAIL_CLASS}>
+      {hidden > 0 && onEarlier && <EarlierSteps count={hidden} onClick={onEarlier} />}
       {rows.map((row, i) => (
         <div key={row.id} className="harness-item-in">
           <RowView
@@ -912,6 +910,11 @@ const ToolStep = React.memo(function ToolStep({
       file={heading.file}
       filePath={heading.filePath}
       fileRange={fileRangeOf(item) ?? undefined}
+      control={
+        (kind === "read" || kind === "edit") && heading.filePath ? (
+          <PreviewFileButton path={heading.filePath} />
+        ) : undefined
+      }
       mono={!heading.prose}
       /* No outcome here. The header line is the title and the command that
          produced it; churn counts and echoed output lines competed with both
@@ -940,3 +943,26 @@ const ToolStep = React.memo(function ToolStep({
   )
 })
 ToolStep.displayName = "ToolStep"
+
+/* A read's or a write's file, opened in the Preview panel through the same
+   door a mention takes (`FilePreviewContext`). Beside the row, not on its
+   badge: the badge sits inside the disclosure button, and a button may not
+   hold a button. Nothing is drawn for a path outside the project or where no
+   dock is in reach (a popout). */
+function PreviewFileButton({ path }: { path: string }) {
+  const ctx = React.useContext(FilePreviewContext)
+  const target = ctx ? projectPath(path, ctx.scope) : null
+  if (!ctx || !target) return null
+  return (
+    <Button
+      size="icon-xs"
+      variant="ghost"
+      aria-label={`Preview ${target}`}
+      title={`Preview ${target}`}
+      onClick={() => ctx.open(target)}
+      className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/step:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+    >
+      <EyeIcon className="size-3.5" />
+    </Button>
+  )
+}

@@ -111,6 +111,7 @@ export const StepRow = React.memo(function StepRow({
   control,
   detail,
   below,
+  belowFlush = false,
   startedAt,
   mono = true,
   defaultOpen = false,
@@ -154,7 +155,11 @@ export const StepRow = React.memo(function StepRow({
       a fetch read). The detail is what you open to read; this is what you
       see without opening it. A render function can vary it with disclosure
       state when the detail contains the same content at greater depth. */
-  below?: React.ReactNode | ((open: boolean) => React.ReactNode)
+  below?: React.ReactNode | ((open: boolean, setOpen: (open: boolean) => void) => React.ReactNode)
+  /** Start `below` at the row's own edge rather than under its title: a strip
+      that hangs a rail off the mark (a subagent's latest steps) brings its own
+      indent, and the title's on top of it cost a nested worker 22px a level. */
+  belowFlush?: boolean
   startedAt?: number
   mono?: boolean
   /** Start expanded — edits show their diff without a click (see ToolStep). */
@@ -216,7 +221,7 @@ export const StepRow = React.memo(function StepRow({
     setChosen(null)
   }, [openSetting])
   const expandable = detail !== undefined && detail !== null && detail !== false
-  const belowContent = typeof below === "function" ? below(open) : below
+  const belowContent = typeof below === "function" ? below(open, setOpen) : below
   const active = status === "in_progress" || status === "pending"
   const failed = status === "failed"
   const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
@@ -384,7 +389,7 @@ export const StepRow = React.memo(function StepRow({
           documented there rather than a new one.
           It also covers the click: opening a row by hand used to pop too. */}
       {belowContent && (
-        <div className="harness-fade-in mb-1 min-w-0 pl-[1.375rem]">{belowContent}</div>
+        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && "pl-[1.375rem]")}>{belowContent}</div>
       )}
       {expandable && open && (
         <div

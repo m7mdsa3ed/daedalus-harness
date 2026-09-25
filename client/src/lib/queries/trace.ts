@@ -1,54 +1,80 @@
-/* The trace view's data — one thread's journaled events as raw pages, read
-   backwards from the head of the log (the newest page first), oldest first
-   within a page. Served by `GET /api/sessions/:id/trace`; the shapes are the
-   server's (`TracePage` in server/src/protocol.ts).
+/* The Trajectory's data — one thread's OpenTelemetry spans, as
+   `GET /api/sessions/:id/spans` serves them (`SpansPage` in
+   server/src/protocol.ts), and one span whole from `…/spans/:spanId` for the
+   attributes the list elided.
 
-   An infinite query, because a trace is paged: the first page is the newest
-   events, `next` is the seq to page older from, null when the log's head is
-   reached. The pages are near-static history, so they stay fresh for minutes
-   and are invalidated (never merged by hand) when a refresh is asked for. */
-import { useInfiniteQuery } from "@tanstack/react-query"
+   The list is re-read on a short interval while the thread's turn runs (open
+   spans close, new ones start) and invalidated once when it ends, so the last
+   spans a turn wrote land without a refresh. Idle, it is history. */
+import * as React from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { api, type ServerSettings } from "@/lib/settings"
+import { api } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
-import type { TracePage } from "@daedalus/protocol"
-import { threadTraceKey } from "./keys"
+import type { SpansPage, TraceSpan } from "@daedalus/protocol"
+import { spanDetailKey, threadSpansKey } from "./keys"
 
-const TRACE_STALE_MS = 5 * 60_000
+const LIVE_POLL_MS = 1500
+const IDLE_STALE_MS = 60_000
 
-export function fetchTracePage(
-  settings: ServerSettings,
-  sessionId: string,
-  before: number | null,
-  signal?: AbortSignal
-): Promise<TracePage> {
-  const query = before === null ? "" : `?before=${encodeURIComponent(String(before))}`
-  return api<TracePage>(settings, `/api/sessions/${encodeURIComponent(sessionId)}/trace${query}`, {
-    signal,
+const spansPath = (sessionId: string) => `/api/sessions/${encodeURIComponent(sessionId)}/spans`
+
+export function useThreadSpans(sessionId: string, { live }: { live: boolean }) {
+  const settings = useServer()
+  const qc = useQueryClient()
+  const key = threadSpansKey(settings, sessionId)
+
+  /* A turn ending is the one moment the list is certainly stale. */
+  const wasLive = React.useRef(live)
+  React.useEffect(() => {
+    if (wasLive.current && !live) void qc.invalidateQueries({ queryKey: threadSpansKey(settings, sessionId) })
+    wasLive.current = live
+  }, [live, qc, settings, sessionId])
+
+  return useQuery({
+    queryKey: key,
+    queryFn: ({ signal }) => api<SpansPage>(settings, spansPath(sessionId), { signal }),
+    enabled: Boolean(sessionId),
+    staleTime: live ? 0 : IDLE_STALE_MS,
+    refetchInterval: live ? LIVE_POLL_MS : false,
   })
 }
 
-/** Every page of the thread's trace, flattened oldest-last — the order the
-    server serves them in, newest page first. The component reverses for
-    display so the thread reads the same direction as the transcript. */
-export function useThreadTrace(sessionId: string) {
+/** One span whole — asked only for a span whose list copy elided something.
+    An open span is re-read with the list while the turn runs. */
+export function useSpanDetail(sessionId: string, span: TraceSpan | null, live: boolean) {
   const settings = useServer()
-  const query = useInfiniteQuery({
-    queryKey: threadTraceKey(settings, sessionId),
-    queryFn: ({ pageParam, signal }) => fetchTracePage(settings, sessionId, pageParam, signal),
-    initialPageParam: null as number | null,
-    getNextPageParam: (last) => last.next,
-    enabled: Boolean(sessionId),
-    staleTime: TRACE_STALE_MS,
+  const spanId = span?.spanId ?? ""
+  const open = span?.end === null
+  return useQuery({
+    queryKey: spanDetailKey(settings, sessionId, spanId),
+    queryFn: ({ signal }) =>
+      api<TraceSpan>(settings, `${spansPath(sessionId)}/${encodeURIComponent(spanId)}`, { signal }),
+    enabled: Boolean(sessionId && span?.elided?.length),
+    staleTime: open ? 0 : Infinity,
+    refetchInterval: live && open ? LIVE_POLL_MS : false,
   })
-  return {
-    pages: query.data?.pages ?? [],
-    loading: query.isPending,
-    error: query.error,
-    loadingOlder: query.isFetchingNextPage,
-    hasOlder: query.hasNextPage ?? false,
-    loadOlder: () => void query.fetchNextPage(),
-    refresh: () => void query.refetch(),
-    refreshing: query.isRefetching,
-  }
+}
+
+/** Every span of the thread, the elided ones fetched whole — what Export
+    downloads. */
+export function useFetchWholeSpans(sessionId: string) {
+  const settings = useServer()
+  const qc = useQueryClient()
+  return React.useCallback(
+    async (spans: TraceSpan[]): Promise<TraceSpan[]> =>
+      Promise.all(
+        spans.map((span) =>
+          span.elided?.length
+            ? qc.fetchQuery({
+                queryKey: spanDetailKey(settings, sessionId, span.spanId),
+                queryFn: () =>
+                  api<TraceSpan>(settings, `${spansPath(sessionId)}/${encodeURIComponent(span.spanId)}`),
+                staleTime: span.end === null ? 0 : Infinity,
+              })
+            : span
+        )
+      ),
+    [qc, settings, sessionId]
+  )
 }

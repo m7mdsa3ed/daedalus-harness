@@ -54,7 +54,8 @@ import { useViewOptionsContext } from "@/lib/view-options"
 import { writeClipboard } from "@/lib/clipboard"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
-import { FileLink, FileMention, remarkMentions } from "@/components/file-link"
+import { FileLink } from "@/components/file-link"
+import { USER_CHIP_COMPONENTS, remarkUserChips } from "@/components/thread-items/user-chips"
 
 export const KIND_LABELS: Record<string, string> = {
   read: "read",
@@ -282,12 +283,13 @@ export const MARKDOWN_COMPONENTS = {
   pre: MarkdownPre,
 } as never
 
-/* A user bubble's `@path` mentions, as links into the Preview panel. Constants,
-   for the same processor-identity reason as the rehype pair above. */
-const REMARK_MENTIONS = [remarkGfm, remarkMentions] as never
+/* A user bubble's quotes, pastes and `@path` mentions, as the composer's chips
+   (`thread-items/user-chips.tsx`). Constants, for the same processor-identity
+   reason as the rehype pair above. */
+const REMARK_MENTIONS = [remarkGfm, remarkUserChips] as never
 const MENTION_COMPONENTS = {
   ...(MARKDOWN_COMPONENTS as object),
-  "file-mention": FileMention,
+  ...USER_CHIP_COMPONENTS,
 } as never
 
 const INLINE_MARKDOWN_COMPONENTS = {
@@ -323,8 +325,8 @@ export const Prose = React.memo(function Prose({
       which is every settled row and every replayed one. The attribute is what
       the CSS matches, so it has to be on the element the spans are inside. */
   stream?: StreamEffect;
-  /** Draw `@path` mentions as links (`components/file-link.tsx`) — a user
-      bubble's, where the syntax is the person's. */
+  /** Draw quotes, pastes and `@path` mentions as the composer's chips — a
+      user bubble's, where the syntax is the person's. */
   mentions?: boolean;
 }) {
   return (
@@ -755,13 +757,15 @@ export function Highlighted({
   language?: string
   className?: string
 }) {
-  // A payload containing its own fence would break out of ours; leave it plain.
-  if (!language || code.includes("```")) {
+  if (!language) {
     return <pre className={cn("font-mono text-xs whitespace-pre-wrap", className)}>{code}</pre>
   }
+  /* A fence closes only on a run at least as long as the one that opened it,
+     so one longer than any run in the payload cannot be broken out of. */
+  const fence = "`".repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((run) => run.length + 1)))
   return (
     <div className={cn("harness-code-bare prose prose-sm max-w-none", className)}>
-      <Markdown rehypePlugins={REHYPE}>{"```" + language + "\n" + code.replace(/\n$/, "") + "\n```"}</Markdown>
+      <Markdown rehypePlugins={REHYPE}>{fence + language + "\n" + code.replace(/\n$/, "") + "\n" + fence}</Markdown>
     </div>
   )
 }

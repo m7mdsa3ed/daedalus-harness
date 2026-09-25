@@ -19,6 +19,8 @@ import {
 import type * as acp from "./acp.js";
 import type { CommandDef } from "./commands.js";
 import { dynamicTool, jsonSchema, type Tool } from "ai";
+import { SpanStatusCode } from "@opentelemetry/api";
+import { tracer } from "./tracing.js";
 
 /** An image or audio block a tool handed back. The provider's tool message is
     text only (`@ai-sdk/openai-compatible` JSON-stringifies anything else), so
@@ -182,6 +184,9 @@ export async function connectMcpServers(servers: acp.McpServer[], hooks: McpHook
       process.stderr.write(`[mcp ${name}] ${n.params.level}: ${data}\n`);
     });
 
+    const span = tracer.startSpan(`mcp connect ${name}`, {
+      attributes: { "daedalus.kind": "process", "daedalus.mcp.server": name },
+    });
     try {
       const transport = transportFor(server);
       /* Pushed before connect: a timed-out connect has already spawned the
@@ -205,11 +210,16 @@ export async function connectMcpServers(servers: acp.McpServer[], hooks: McpHook
       if (instructions) handle.instructions.push({ server: name, text: instructions });
       /* Warnings and up: a server at `debug` would fill stderr with noise. */
       if (caps?.logging) void client.setLoggingLevel("warning").catch(() => {});
+      span.setAttribute("daedalus.mcp.tools", owned.length);
+      span.setStatus({ code: SpanStatusCode.OK });
     } catch (err) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
       handle.failures.push(`${name}: ${(err as Error).message}`);
       const at = clients.indexOf(client);
       if (at >= 0) clients.splice(at, 1);
       void client.close().catch(() => {});
+    } finally {
+      span.end();
     }
   }
 

@@ -32,6 +32,7 @@ import {
 import type { Session } from "./session.js";
 import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
 import { prefixTokens, promptBreakdown, type PrefixTokens } from "./token-breakdown.js";
+import { spanEvent } from "./tracing.js";
 import { Emitter } from "./updates.js";
 
 export interface TurnDeps {
@@ -299,6 +300,7 @@ export async function handlePrompt(
             readFiles: session.readFiles,
           }),
           providerOptions: cacheAffinity(deps.env, session.id),
+          telemetry: { functionId: "daedalus.turn", recordInputs: true, recordOutputs: true },
           onError: () => {
             /* Surfaced through the fullStream 'error' part below; without this
                handler streamText also logs the error, which is fine on stderr. */
@@ -474,6 +476,7 @@ export async function handlePrompt(
            silence, and a notice that arrives when the next attempt starts
            explains a pause that has already happened. */
         retryAnnounced = true;
+        spanEvent("retry", { attempt, delay_ms: delayMs, "error.message": describeHold(failure).message });
         await notifyRetry(ctx, {
           sessionId: session.id,
           attempt,
@@ -553,6 +556,7 @@ async function holdForFailure(
   // Whole, for the same reason the retry's line is: stderr is the log, and it
   // is what gets spliced into an error on the way out.
   process.stderr.write(`turn held: ${errorText(unwrapRetry(failure)).trim() || hold.message}\n`);
+  spanEvent("paused", { reason: "error", "error.message": hold.message });
   await notifyPaused(ctx, { sessionId: session.id, paused: true, reason: "error", ...hold });
   const release = await session.holdError(hold, signal);
   /* Said again on the way out, whichever way it ended: the harness learns a
@@ -970,6 +974,7 @@ async function runSubagent(
       if (attempt > 0) {
         const delayMs = retryDelayMs(lastError, attempt);
         process.stderr.write(`subagent stream retry ${attempt}/${MAX_STREAM_RETRIES} in ${delayMs}ms\n`);
+        spanEvent("retry", { attempt, delay_ms: delayMs, "error.message": describeHold(lastError).message });
         await sleep(delayMs, undefined, { signal: session.abort?.signal }).catch(() => {});
         if (session.abort?.signal.aborted) throw lastError;
       }
@@ -987,6 +992,7 @@ async function runSubagent(
         maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
         repairToolCall: makeRepairToolCall({ readFiles: session.readFiles }),
         providerOptions: cacheAffinity(deps.env, session.id),
+        telemetry: { functionId: "daedalus.subagent", recordInputs: true, recordOutputs: true },
         onError: () => {},
         /* A subagent pauses with its parent: the Codex thread-tree issue's
            complaint is exactly a root held while its collaborators keep

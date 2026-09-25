@@ -111,7 +111,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the subagents note under Conventions).
   npx re-resolves the package on every spawn, and a thread spawns on create, on revive and
   on every profile/model change — measured here at ~3.2s per spawn versus ~0.4s for the
-  binary. A missing binary fails with ENOENT, which surfaces in the thread; the
+  binary. A runtime whose row sets `sharedProcess` (claude-code) spawns far less often than
+  that: its threads share one pooled process per cwd, kept warm for five minutes after the
+  last one leaves (`server/src/acp-connection.ts`, `docs/protocol.md` "A process is the
+  pool's"). A missing binary fails with ENOENT, which surfaces in the thread; the
   self-installing form is `command: "npx"`, `args: ["-y", "<package>"]`. Defaults live in
   `DEFAULT_AGENTS` (`server/src/registry.ts`); each carries **two** seed versions —
   `introduced`, the release that first shipped the agent, fixed forever, and `since`, the

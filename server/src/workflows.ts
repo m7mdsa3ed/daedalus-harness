@@ -28,8 +28,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { db, workflowRuns as runsTable, type WorkflowRunStatus, type WorkflowStepRecord } from "./db/index.js";
 import { safeKeyEqual } from "./gateway-shim.js";
-import { getProfile } from "./profiles.js";
+import { checkInstalled } from "./agent-status.js";
+import { getProfile, listProfiles } from "./profiles.js";
 import { getProject } from "./projects.js";
+import { listAgents } from "./registry.js";
 import type { ThreadEvent } from "./protocol.js";
 import type { Session, SessionManager, TurnOutcome } from "./sessions.js";
 import {
@@ -62,6 +64,9 @@ const MAX_LIVE_CHILDREN = 8;
 /** Runs one thread may have going at once — a model that calls `run_workflow`
     twice by mistake gets told, not a second fleet. */
 const MAX_RUNS_PER_PARENT = 2;
+/** Asks one thread may have going at once. Counted apart from workflows: two
+    agents consulted side by side must not lock the thread out of a workflow. */
+const MAX_ASKS_PER_PARENT = 4;
 
 export class WorkflowError extends HttpError {
   declare status: 400 | 404 | 409;
@@ -88,6 +93,19 @@ export interface RunView {
   result?: unknown;
 }
 
+/** A (profile, agent) pair a thread may `ask`, as `list_agents` reports it. */
+export interface AgentPair {
+  profileId: string;
+  profile: string;
+  agentId: string;
+  agent: string;
+  installed: boolean;
+  models: string[];
+  defaultModel: string | null;
+  /** The caller's own pair. */
+  current: boolean;
+}
+
 /** A run started from a script rather than a definition. The definition it
     carries is the one the engine builds *as it goes* — see `startScript`. */
 interface ScriptState {
@@ -103,6 +121,8 @@ interface ScriptState {
 interface Run {
   id: string;
   parent: Session;
+  /** A one-step run from `ask`: drawn as a plain subagent, capped apart. */
+  ask?: boolean;
   /** For a script run this grows: each `agent()` appends the step it spawned,
       so one runner, one card and one set of records serve both engines. */
   def: WorkflowDefinition;
@@ -210,21 +230,101 @@ export class WorkflowRunner {
     const inputs = inputsParsed.data;
     const missing = missingInputs(def, inputs);
     if (missing.length) throw new WorkflowError(`the definition reads inputs that were not given: ${missing.join(", ")}`);
-    const active = [...this.runs.values()].filter((r) => r.parent === parent && !terminal(r.status));
-    if (active.length >= MAX_RUNS_PER_PARENT) {
-      throw new WorkflowError(`this thread already has ${active.length} workflow(s) running — wait for or cancel one first`, 409);
-    }
     /* Every step runs as the parent runs — its profile, agent, model and
        effort. A step is the same actor working in another thread, never a
        second identity: the credentials, catalog and way of working the user
-       picked for the thread are the ones its workflow spends. */
+       picked for the thread are the ones its workflow spends. The one way to
+       reach a different pair is to name it, which is `ask`. */
     if (!await getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
+    return this.launch(parent, def, inputs);
+  }
+
+  /**
+   * The (profile, agent) pairs a thread may `ask`: every profile that is
+   * neither hidden nor disabled, crossed with the agents it declares. Whether
+   * the agent is installed is measured against the caller's project, the way a
+   * spawn there would find it — a path check, never a handshake.
+   */
+  async pairs(parent: Session): Promise<AgentPair[]> {
+    const project = await getProject(parent.projectId);
+    const agents = await listAgents();
+    const out: AgentPair[] = [];
+    for (const profile of await listProfiles(agents)) {
+      if (profile.hidden || profile.disabled) continue;
+      for (const agentId of Object.keys(profile.agents)) {
+        const agent = agents.find((a) => a.id === agentId);
+        if (!agent) continue;
+        out.push({
+          profileId: profile.id,
+          profile: profile.name,
+          agentId,
+          agent: agent.name,
+          installed: project ? checkInstalled(agent, project).installed : false,
+          models: profile.models.map((m) => m.id),
+          defaultModel: profile.defaultModel || null,
+          current: profile.id === parent.profileId && agentId === parent.agentId,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Put one prompt to another (profile, agent) pair as a child thread of this
+   * one, and answer with its reply — a one-step run, so the spawn, the
+   * mirroring into the parent, the cost, the clocks and the cancel are the
+   * workflow's own. Each side is matched by id or by name (case-insensitive);
+   * the pair must be exactly one of `pairs`. One level, like a step: a child
+   * cannot ask.
+   */
+  async ask(
+    parent: Session,
+    input: { profile: string; agent: string; prompt: string; model?: string; effort?: string; timeoutSec?: number },
+  ): Promise<RunView> {
+    if (parent.parentSessionId) throw new WorkflowError("a subagent cannot ask another agent", 409);
+    const prompt = input.prompt.trim();
+    if (!prompt) throw new WorkflowError("prompt must not be empty");
+    const is = (id: string, name: string, q: string) => id === q || name.toLowerCase() === q.trim().toLowerCase();
+    const all = await this.pairs(parent);
+    const matches = all.filter((p) => is(p.profileId, p.profile, input.profile) && is(p.agentId, p.agent, input.agent));
+    const known = () => all.map((p) => `${p.profile} / ${p.agent}`).join(", ") || "none";
+    if (matches.length === 0) throw new WorkflowError(`no profile "${input.profile}" with agent "${input.agent}" — available: ${known()}`, 404);
+    if (matches.length > 1) throw new WorkflowError(`"${input.profile}" / "${input.agent}" matches ${matches.length} pairs — name the profile by id`);
+    const pair = matches[0]!;
+    if (!pair.installed) throw new WorkflowError(`${pair.agent} is not installed on this server`, 409);
+    const step = {
+      name: "ask",
+      prompt,
+      dependsOn: [],
+      output: "text",
+      literal: true,
+      timeoutSec: input.timeoutSec ? Math.min(input.timeoutSec, LIMITS.stepTimeoutSec.max) : undefined,
+      profileId: pair.profileId,
+      agentId: pair.agentId,
+      model: input.model,
+      effort: input.effort,
+      label: `${pair.agent} · ${pair.profile}`,
+    } satisfies WorkflowStep;
+    return this.launch(parent, { name: `Ask ${pair.agent}`, steps: [step], phases: [], maxParallel: 1 }, {}, true);
+  }
+
+  private async launch(parent: Session, def: WorkflowDefinition, inputs: Record<string, unknown>, ask = false): Promise<RunView> {
+    const active = [...this.runs.values()].filter((r) => r.parent === parent && !!r.ask === ask && !terminal(r.status));
+    if (active.length >= (ask ? MAX_ASKS_PER_PARENT : MAX_RUNS_PER_PARENT)) {
+      throw new WorkflowError(
+        ask
+          ? `this thread already has ${active.length} asks running — wait for or cancel one first`
+          : `this thread already has ${active.length} workflow(s) running — wait for or cancel one first`,
+        409,
+      );
+    }
     if (!await getProject(parent.projectId)) throw new WorkflowError("this thread's project no longer exists", 409);
 
     const now = Date.now();
     const run: Run = {
       id: randomUUID(),
       parent,
+      ...(ask ? { ask } : {}),
       def,
       inputs,
       status: "running",
@@ -298,7 +398,7 @@ export class WorkflowRunner {
     } catch (error) {
       throw new WorkflowError(describe(error));
     }
-    const active = [...this.runs.values()].filter((r) => r.parent === parent && !terminal(r.status));
+    const active = [...this.runs.values()].filter((r) => r.parent === parent && !r.ask && !terminal(r.status));
     if (active.length >= MAX_RUNS_PER_PARENT) {
       throw new WorkflowError(`this thread already has ${active.length} workflow(s) running — wait for or cancel one first`, 409);
     }
@@ -684,19 +784,28 @@ export class WorkflowRunner {
       const prompt = step.literal
         ? step.prompt
         : renderTemplate(step.prompt, { inputs: run.inputs, steps: run.outputs });
-      const profile = await getProfile(run.parent.profileId);
-      if (!profile) throw new WorkflowError("this thread's profile no longer exists", 409);
+      const profile = await getProfile(step.profileId ?? run.parent.profileId);
+      if (!profile) throw new WorkflowError(step.profileId ? "that profile no longer exists" : "this thread's profile no longer exists", 409);
       const project = await getProject(run.parent.projectId);
       if (!project) throw new WorkflowError("this thread's project no longer exists", 409);
+      const agentId = step.agentId ?? run.parent.agentId;
+      /* An ask may name another pair. The parent's model belongs to the
+         parent's profile and its mode ids to the parent's runtime, so neither
+         crosses: the child starts on its own profile's default model and its
+         own runtime's default mode (whose permission requests reach the inbox). */
+      const sameAgent = agentId === run.parent.agentId;
+      const samePair = sameAgent && profile.id === run.parent.profileId;
       // A step inherits how its parent was configured — the permission mode
       // above all, so a step does not ask what the parent would not.
-      const restore = run.parent.bridge?.captureRestoreState() ?? {
-        modeId: run.parent.modeId ?? undefined,
-        configOptions: [],
-      };
-      child = await this.manager.create(profile, run.parent.agentId, project, step.model ?? run.parent.model, step.effort ?? run.parent.effort, undefined, undefined, run.parent.links, {
+      const restore = !sameAgent
+        ? { configOptions: [] }
+        : run.parent.bridge?.captureRestoreState() ?? {
+            modeId: run.parent.modeId ?? undefined,
+            configOptions: [],
+          };
+      child = await this.manager.create(profile, agentId, project, step.model ?? (samePair ? run.parent.model : undefined), step.effort ?? (samePair ? run.parent.effort : undefined), undefined, undefined, run.parent.links, {
         parentSessionId: run.parent.id,
-        title: `${run.def.name} · ${step.name}`,
+        title: run.ask ? `Ask · ${step.label ?? step.name}` : `${run.def.name} · ${step.name}`,
         restore,
         /* A step works where its parent does — in the parent's worktree, when
            the parent was isolated in one. */
@@ -719,7 +828,7 @@ export class WorkflowRunner {
         update: {
           sessionUpdate: "subagent_spawned",
           subagentSessionId: childId,
-          name: step.name,
+          name: step.label ?? step.name,
           task: firstLine(prompt),
           capabilities: { cancel: true },
           /* What tells the client this subagent is a workflow step — and of
@@ -731,7 +840,8 @@ export class WorkflowRunner {
              first step rather than growing a row every time one spawns. It is
              a dozen names, and repeating it is what keeps it journaled — an
              outline sent once would be an event kind of its own. */
-          _meta: {
+          /* An ask is no workflow: without this it draws as a plain subagent. */
+          ...(run.ask ? {} : { _meta: {
             daedalus: {
               workflow: {
                 runId: run.id,
@@ -747,7 +857,7 @@ export class WorkflowRunner {
                 plan: planOf(run.def),
               },
             },
-          },
+          } }),
         },
       });
       /* Everything the child journals is said again on the parent, addressed

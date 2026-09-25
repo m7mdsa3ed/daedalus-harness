@@ -10,7 +10,6 @@ import {
   type EarlierPage,
   type JournaledEvent,
   type ThreadEvent,
-  type TraceEvent,
   type TurnTick,
 } from "./protocol.js";
 
@@ -165,33 +164,6 @@ export class SessionJournal {
       .orderBy(asc(eventsTable.seq));
     const rows = limit === undefined ? await query : await query.limit(limit);
     return rows.map((row) => row.payload as JournaledEvent);
-  }
-
-  /** The newest `limit` events strictly before `before`, oldest first within the
-      page — the trace view's pages, read backwards so a long thread opens at
-      its tail. The replay path reads payloads only; the trace wants the `at`
-      column too, so it selects the row rather than the payload column. */
-  async trace(sessionId: string, before: number, limit: number): Promise<TraceEvent[]> {
-    await this.flush();
-    const rows = await this.db
-      .select({
-        seq: eventsTable.seq,
-        kind: eventsTable.kind,
-        at: eventsTable.at,
-        payload: eventsTable.payload,
-      })
-      .from(eventsTable)
-      .where(and(eq(eventsTable.sessionId, sessionId), lt(eventsTable.seq, before)))
-      .orderBy(desc(eventsTable.seq))
-      .limit(limit);
-    /* Read newest-first for the scan, reversed so the view reads the page the
-       way it reads the thread: oldest at the top. */
-    return rows.reverse().map((row) => ({
-      seq: row.seq,
-      ev: row.kind as TraceEvent["ev"],
-      at: row.at,
-      payload: row.payload as JournaledEvent,
-    }));
   }
 
   /* ---- coalescing ---- */

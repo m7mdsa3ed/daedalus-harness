@@ -3,6 +3,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { Readable, Writable } from "node:stream";
 import * as acp from "./acp.js";
+import { BridgeTrace } from "./bridge-trace.js";
+import { ingest } from "./tracing.js";
+import type { TraceNotificationParams } from "./protocol.js";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
@@ -28,6 +31,7 @@ import type { Peer } from "./sessions.js";
 import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
 import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import type { BuiltinToolOverrides } from "./db/schema.js";
+import type { AcpConnection, ConnectionRoute } from "./acp-connection.js";
 
 /**
  * The ACP client, server-side.
@@ -86,6 +90,40 @@ export async function spawnAgent(
       which reads none of these vars. */
   unattended?: boolean,
 ): Promise<ChildProcessWithoutNullStreams> {
+  return spawnProcess(await resolveAgentSpawn(profile, agentId, project, model, effort, sessionId, persona, sidecar, unattended));
+}
+
+/** A resolved spawn: what `spawn()` is called with. */
+export interface SpawnSpec {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string;
+}
+
+/** Spawn the process a spec describes — the one `spawn()` of an agent. */
+export function spawnProcess(spec: SpawnSpec): ChildProcessWithoutNullStreams {
+  return spawn(spec.command, spec.args, {
+    cwd: spec.cwd,
+    env: { ...process.env, ...spec.env },
+    stdio: ["pipe", "pipe", "pipe"],
+  }) as ChildProcessWithoutNullStreams;
+}
+
+/** `spawnAgent` without the spawn: the command, args, env and cwd it would
+    use. Split out so the pool can key a process on it (`AcpPool.key`) and a
+    shared runtime's env can be moved into the session instead. */
+export async function resolveAgentSpawn(
+  profile: Profile,
+  agentId: string,
+  project: Project,
+  model?: string,
+  effort?: string,
+  sessionId?: string,
+  persona?: PersonaSpawn,
+  sidecar?: { port: number; password: string },
+  unattended?: boolean,
+): Promise<SpawnSpec> {
   const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
   if (!profileSupports(profile, agentId)) {
@@ -108,16 +146,12 @@ export async function spawnAgent(
     env.OPENCODE_SERVER_PASSWORD = sidecar.password;
   }
   if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
-  return spawn(command, args, {
-    cwd,
-    env: { ...process.env, ...env },
-    stdio: ["pipe", "pipe", "pipe"],
-  }) as ChildProcessWithoutNullStreams;
+  return { command, args, env, cwd };
 }
 
 /** `acp.SessionNotification` widened to the updates the SDK does not know yet
     (protocol.ts `SessionUpdate`). */
-interface SessionNotification {
+export interface SessionNotification {
   sessionId: string;
   update: SessionUpdate;
   _meta?: Record<string, unknown> | null;
@@ -167,13 +201,13 @@ const PAUSE_CAPABILITY = "daedalus/pause";
    failed and is waiting to be told what model to try instead — so it can only
    arrive as a notification. Same capability, because the same runtimes can do
    both, and the same `paused` event out to the browser, carrying the reason. */
-const PAUSED_NOTIFICATION = "_daedalus/session/paused";
+export const PAUSED_NOTIFICATION = "_daedalus/session/paused";
 /* And the step before it: a turn that failed and is trying again on its own,
    which used to be a line on the agent's stderr and nothing else. The wait is
    seconds of a thread that looks alive and says nothing, and if the retries
    work the user never learns anything happened at all. Absolute and live-only
    for the same reasons the hold is — a retry that succeeded is not history. */
-const RETRY_NOTIFICATION = "_daedalus/session/retry";
+export const RETRY_NOTIFICATION = "_daedalus/session/retry";
 
 /* The harness's own compaction trigger, spelled the same in
    `agent/src/compaction.ts`. ACP *reports* compaction — `compaction_update`
@@ -184,9 +218,12 @@ const RETRY_NOTIFICATION = "_daedalus/session/retry";
    capability and offered through `session_config.canCompact`. */
 const COMPACT_METHOD = "_daedalus/session/compact";
 const COMPACT_CAPABILITY = "daedalus/compact";
+/* A runtime that traces itself: it takes the prompt's `traceparent` and sends
+   its finished spans back over `_daedalus/trace` (bridge-trace.ts). */
+const TRACE_CAPABILITY = "daedalus/trace";
 
 
-interface PausedParams {
+export interface PausedParams {
   sessionId?: string;
   paused?: boolean;
   reason?: "user" | "error";
@@ -194,9 +231,9 @@ interface PausedParams {
   detail?: string;
 }
 
-const parsePausedParams = (params: unknown): PausedParams => (params ?? {}) as PausedParams;
+export const parsePausedParams = (params: unknown): PausedParams => (params ?? {}) as PausedParams;
 
-interface RetryParams {
+export interface RetryParams {
   sessionId?: string;
   attempt?: number | null;
   of?: number;
@@ -205,7 +242,17 @@ interface RetryParams {
   detail?: string;
 }
 
-const parseRetryParams = (params: unknown): RetryParams => (params ?? {}) as RetryParams;
+export const parseTraceParams = (params: unknown): TraceNotificationParams =>
+  (params ?? { sessionId: "", spans: [] }) as TraceNotificationParams;
+
+/** How a parked question was answered, in one word for its span. */
+function outcomeOf(response: unknown): string {
+  const r = response as { outcome?: { outcome?: string; optionId?: string }; action?: string } | null;
+  if (r?.outcome?.outcome === "selected") return r.outcome.optionId ?? "selected";
+  return r?.outcome?.outcome ?? r?.action ?? "answered";
+}
+
+export const parseRetryParams = (params: unknown): RetryParams => (params ?? {}) as RetryParams;
 
 /**
  * The subagent RFD's two updates are ahead of the SDK, and the SDK is not
@@ -227,7 +274,7 @@ const parseRetryParams = (params: unknown): RetryParams => (params ?? {}) as Ret
  * somewhere to put it. The bridge forwards it whole either way, as it does
  * every other update.
  */
-const SUBAGENT_UPDATE_METHOD = "_daedalus/subagent_update";
+export const SUBAGENT_UPDATE_METHOD = "_daedalus/subagent_update";
 const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
   "subagent_spawned",
   "subagent_state_update",
@@ -248,7 +295,7 @@ const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
     protocol this bridge does not, and the SDK's own answer to that (a logged
     error, the frame dropped) is the right one, so this throws the same way
     its parser would. */
-function parseSessionNotification(params: unknown): SessionNotification {
+export function parseSessionNotification(params: unknown): SessionNotification {
   const p = params as Partial<SessionNotification> | null;
   const tag = (p?.update as { sessionUpdate?: unknown } | undefined)?.sessionUpdate;
   if (!p || typeof p.sessionId !== "string" || typeof tag !== "string") {
@@ -283,6 +330,54 @@ function isFallbackModelMetadataWarning(update: { sessionUpdate?: unknown; conte
   }
   return text.includes("not found. Defaulting to fallback metadata");
 }
+
+/**
+ * What this client tells every agent it can do, at `initialize`. One literal
+ * for every process, because a process is shared by every session on it
+ * (`AcpConnection`).
+ */
+export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
+  // The agent runs beside us with its own filesystem; there is nothing
+  // for this end to serve.
+  fs: { readTextFile: false, writeTextFile: false },
+  // The config menu already renders boolean options; without advertising
+  // this, agents are within spec to withhold `type: "boolean"` entries
+  // entirely — codex hides its fast-mode toggle on exactly this check.
+  // Same bargain, and the one whose absence is invisible: an agent that
+  // compacts its context is *required* to keep `compaction_update` and
+  // `compaction_summary_chunk` to itself unless the client claims this,
+  // so without it a long thread silently loses its history mid-turn and
+  // the transcript shows nothing at all. `{}` is the whole contract.
+  session: { compaction: {}, configOptions: { boolean: {} } },
+  // Same bargain for plans. ACP has two plan channels: the original
+  // `plan` notification, and `plan_update`/`plan_removed`, which carry
+  // markdown and file-backed plans as well as structured entries. An
+  // agent only sends the second pair if the client says it can take
+  // them, and `{}` means both — so without this a codex plan arrives as
+  // nothing at all rather than as a plan we render badly.
+  plan: {},
+  // Same bargain a third time, and the highest-stakes one: without
+  // form elicitation claude-agent-acp puts AskUserQuestion on the
+  // session's disallowedTools — the model can't ask at all, not even
+  // badly. Advertising it turns the tool back on and routes it (plus
+  // MCP elicitations and codex's question bridge) to `park`.
+  elicitation: { form: {}, url: {} },
+  // The fourth bargain, and the one that decides whether a subagent's
+  // work is visible at all. Nothing in ACP v1 nests; the draft subagent
+  // RFD (see protocol.ts `SubagentSpawned`) does, and an agent that
+  // implements it — codex-acp from 1.7 — sends a child's transcript as
+  // its own session only if the client claimed this. Unclaimed, the
+  // same runtime folds the child into one lifecycle tool call with no
+  // steps in it. `{}` is the whole contract here too. Spread from a
+  // typed constant because the key is not in the SDK's type yet.
+  ...SUBAGENT_CAPABILITY,
+  // claude-agent-acp's older, `_meta`-only version of the same thing: it
+  // stamps every update a subagent produces with
+  // `_meta.claudeCode.parentToolUseId`, but withholds the subagent's
+  // prose and thinking — the part that says what it concluded — unless
+  // the client says it can render a nested transcript.
+  _meta: { "subagent-transcript": true, ...AIR_ASYNC_TASKS_META },
+};
 
 /** The ndJSON stream over a spawned agent's stdio. From here on the SDK owns
     stdout — a stray 'data' listener anywhere else silently steals its bytes.
@@ -386,6 +481,10 @@ function steerRow({ id, createdAt, event }: HeldSteer): QueuedMessage {
 }
 
 export interface BridgeHost {
+  /** The thread — what every span this bridge records is filed under. */
+  readonly threadId: string;
+  /** Who and what a turn runs on, stamped on its span: agent, profile, model. */
+  traceAttributes(): Record<string, string>;
   /** Journal (when the event is journaled) and fan out to every peer but
       `except` — which is how a peer avoids being told about its own action. */
   emit(event: ThreadEvent, except?: Peer): void;
@@ -476,8 +575,10 @@ export interface BridgeHost {
 export interface BridgeOptions {
   cwd: string;
   mcpServers: acp.McpServer[];
-  /** Restore an existing conversation instead of starting one. */
-  load?: { acpSessionId: string };
+  /** Restore an existing conversation instead of starting one. `resume`: the
+      journal already holds it, so ask for `session/resume` (no replay) where
+      the agent offers it; `session/load` otherwise, and on a refusal. */
+  load?: { acpSessionId: string; resume?: boolean };
   /** Settings a respawn has to put back once the new session exists. */
   restore?: RestoreState;
   /** Settings chosen on a draft, against the option set the agent last
@@ -511,6 +612,10 @@ export interface BridgeOptions {
       runtime but claude-code today — means its built-ins stay on beside ours,
       which is all the harness can honestly do without a door to close them. */
   builtinTools?: BuiltinToolOverrides | null;
+  /** The thread's env, for a runtime whose process is shared
+      (`AgentDef.sharedProcess: "acp-meta"`): the process was spawned without
+      it, and it reaches this session's CLI through `_meta` (`sessionMeta`). */
+  sessionEnv?: Record<string, string>;
   /** The profile opted out of Codex's fallback-metadata notice. True means the
       bridge drops the matching warning from the stream before it can be
       journaled or rendered — the profile has already pinned the model's
@@ -519,7 +624,7 @@ export interface BridgeOptions {
   suppressModelMetadataWarning?: boolean;
 }
 
-export class AcpBridge {
+export class AcpBridge implements ConnectionRoute {
   /** Resolves when the session exists and its settings have been applied. */
   readonly ready: Promise<void>;
   acpSessionId: string | null = null;
@@ -550,7 +655,22 @@ export class AcpBridge {
   readonly pending = new Map<string, PendingRequest>();
 
   private readonly host: BridgeHost;
+  /** This thread's spans (bridge-trace.ts) — told, never asked. */
+  private readonly trace: BridgeTrace;
+  /** The process this session is on — its own, or one shared with other
+      threads (`AcpConnection`). */
+  private readonly conn: AcpConnection;
   private readonly connection: acp.ClientConnection;
+  /** Session ids that are this thread's without being its own: subagents
+      (RFD), learned from their `subagent_spawned`. How a shared connection
+      knows whose child a frame is. */
+  private readonly children = new Set<string>();
+  /** The id a `session/load`/`session/resume` is asking for, before the
+      answer makes it `acpSessionId` — the replay arrives under it first. */
+  private pendingSessionId: string | null = null;
+  /** Prompts sent and not yet answered, so a close on a process that stays up
+      (a shared one) can end their turns itself — nothing will reject them. */
+  private readonly outstanding = new Set<{ text: string; done: boolean }>();
   /** The session's working directory — kept because an `@mention` in a prompt
       is resolved against it (see `mentions.ts`). */
   private readonly cwd: string;
@@ -605,48 +725,15 @@ export class AcpBridge {
       for anything else — a socket to a sandboxed agent would plug in here
       without the protocol handling above knowing. The caller owns the process
       (stderr, exit, kill); the bridge owns only the conversation on it. */
-  constructor(host: BridgeHost, stream: acp.Stream, opts: BridgeOptions) {
+  constructor(host: BridgeHost, conn: AcpConnection, opts: BridgeOptions) {
     this.host = host;
+    this.trace = new BridgeTrace(host.threadId, () => this.selfTraced);
     this.cwd = opts.cwd;
     this.mcpServers = opts.mcpServers;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
-    this.connection = acp
-      .client({ name: "daedalus" })
-      .onNotification(acp.methods.client.session.update, (ctx) => this.onUpdate(ctx.params))
-      // The RFD's subagent updates, re-addressed by `agentStream` — see
-      // SUBAGENT_UPDATE_METHOD. Same handler: they are session updates.
-      .onNotification(SUBAGENT_UPDATE_METHOD, parseSessionNotification, (ctx) =>
-        this.onUpdate(ctx.params),
-      )
-      .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
-        this.park<acp.RequestPermissionResponse>(
-          "permission",
-          ctx.params,
-          ctx.params.toolCall?.toolCallId,
-        ),
-      )
-      .onRequest(acp.methods.client.elicitation.create, (ctx) =>
-        this.park<acp.CreateElicitationResponse>(
-          "elicitation",
-          ctx.params,
-          (ctx.params as { toolCallId?: string }).toolCallId,
-        ),
-      )
-      .onNotification(acp.methods.client.elicitation.complete, (ctx) =>
-        this.onElicitationComplete(ctx.params.elicitationId),
-      )
-      /* A hold the agent took on its own. Nothing is asked of us and nothing
-         is answered: the state is absolute, and saying it is the whole of the
-         contract. */
-      .onNotification(PAUSED_NOTIFICATION, parsePausedParams, (ctx) =>
-        this.onAgentPaused(ctx.params),
-      )
-      /* The same, one step earlier and with nothing to answer either: the turn
-         is retrying, or has stopped retrying. */
-      .onNotification(RETRY_NOTIFICATION, parseRetryParams, (ctx) =>
-        this.onAgentRetry(ctx.params),
-      )
-      .connect(stream);
+    this.conn = conn;
+    this.connection = conn.rpc;
+    conn.attach(this);
     this.ready = this.handshake(opts);
   }
 
@@ -678,58 +765,35 @@ export class AcpBridge {
         HANDSHAKE_TIMEOUT_MS,
       ).unref();
     });
-    await Promise.race([this.runHandshake(opts), deadline]);
+    const span = this.trace.standalone(
+      opts.load?.resume ? "session/resume" : opts.load ? "session/load" : "session/new",
+      "session",
+      { "rpc.system": "jsonrpc", ...this.host.traceAttributes(), ...(opts.load ? { "daedalus.acp_session_id": opts.load.acpSessionId } : {}) },
+    );
+    try {
+      await Promise.race([this.runHandshake(opts), deadline]);
+      span.end();
+    } catch (error) {
+      span.recordException(error instanceof Error ? error : String(error));
+      span.setStatus({ code: 2, message: error instanceof Error ? error.message : String(error) });
+      span.end();
+      /* A shared process that cannot finish a handshake in a minute is wedged,
+         and the pool would hand it to the next thread too. Its other sessions
+         go down with it — they were on a process that stopped answering. */
+      if (this.conn.shared && !this.closed) this.conn.kill();
+      throw error;
+    }
   }
 
   private async runHandshake(opts: BridgeOptions): Promise<void> {
-    const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {
-        // The agent runs beside us with its own filesystem; there is nothing
-        // for this end to serve.
-        fs: { readTextFile: false, writeTextFile: false },
-        // The config menu already renders boolean options; without advertising
-        // this, agents are within spec to withhold `type: "boolean"` entries
-        // entirely — codex hides its fast-mode toggle on exactly this check.
-        // Same bargain, and the one whose absence is invisible: an agent that
-        // compacts its context is *required* to keep `compaction_update` and
-        // `compaction_summary_chunk` to itself unless the client claims this,
-        // so without it a long thread silently loses its history mid-turn and
-        // the transcript shows nothing at all. `{}` is the whole contract.
-        session: { compaction: {}, configOptions: { boolean: {} } },
-        // Same bargain for plans. ACP has two plan channels: the original
-        // `plan` notification, and `plan_update`/`plan_removed`, which carry
-        // markdown and file-backed plans as well as structured entries. An
-        // agent only sends the second pair if the client says it can take
-        // them, and `{}` means both — so without this a codex plan arrives as
-        // nothing at all rather than as a plan we render badly.
-        plan: {},
-        // Same bargain a third time, and the highest-stakes one: without
-        // form elicitation claude-agent-acp puts AskUserQuestion on the
-        // session's disallowedTools — the model can't ask at all, not even
-        // badly. Advertising it turns the tool back on and routes it (plus
-        // MCP elicitations and codex's question bridge) to `park`.
-        elicitation: { form: {}, url: {} },
-        // The fourth bargain, and the one that decides whether a subagent's
-        // work is visible at all. Nothing in ACP v1 nests; the draft subagent
-        // RFD (see protocol.ts `SubagentSpawned`) does, and an agent that
-        // implements it — codex-acp from 1.7 — sends a child's transcript as
-        // its own session only if the client claimed this. Unclaimed, the
-        // same runtime folds the child into one lifecycle tool call with no
-        // steps in it. `{}` is the whole contract here too. Spread from a
-        // typed constant because the key is not in the SDK's type yet.
-        ...SUBAGENT_CAPABILITY,
-        // claude-agent-acp's older, `_meta`-only version of the same thing: it
-        // stamps every update a subagent produces with
-        // `_meta.claudeCode.parentToolUseId`, but withholds the subagent's
-        // prose and thinking — the part that says what it concluded — unless
-        // the client says it can render a nested transcript.
-        _meta: { "subagent-transcript": true, ...AIR_ASYNC_TASKS_META },
-      },
-    });
+    /* Said once per process, by the connection — every session on it shares
+       the answer (`AcpConnection.initialized`). */
+    const initialized = await this.conn.initialized;
     this.agentCapabilities = initialized.agentCapabilities ?? {};
 
-    if (opts.load) {
+    if (opts.load?.resume && this.agentCapabilities.sessionCapabilities?.resume) {
+      await this.resumeSession(opts);
+    } else if (opts.load) {
       await this.loadSession(opts);
     } else {
       await this.newSession(opts);
@@ -815,17 +879,56 @@ export class AcpBridge {
       }
     }
 
+    if (opts.sessionEnv && Object.keys(opts.sessionEnv).length > 0) options.env = opts.sessionEnv;
+
     if (Object.keys(options).length > 0) meta.claudeCode = { options };
     return meta;
   }
 
+  /** The `_meta` that carries a session's env to a shared process, and
+      nothing else — the probe's session, which has no persona or tools. */
+  static sessionEnvMeta(env: Record<string, string>): Record<string, unknown> {
+    return Object.keys(env).length > 0 ? { claudeCode: { options: { env } } } : {};
+  }
+
   private async newSession(opts: BridgeOptions): Promise<void> {
-    const response = await this.connection.agent.request(acp.methods.agent.session.new, {
-      cwd: opts.cwd,
-      mcpServers: opts.mcpServers,
-      _meta: this.sessionMeta(opts),
-    });
+    /* Through the connection's creation lane: until the answer names the id,
+       a frame about this session can only be routed by who is asking. */
+    const response = await this.conn.create(this, () =>
+      this.connection.agent.request(acp.methods.agent.session.new, {
+        cwd: opts.cwd,
+        mcpServers: opts.mcpServers,
+        _meta: this.sessionMeta(opts),
+      }),
+    );
     await this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
+  }
+
+  /**
+   * Existing conversation, and a journal that already holds it: `session/resume`
+   * reattaches without narrating a word (ACP, stable since 2026-04). A refusal
+   * is not a lost history yet — `session/load` is the older door to the same
+   * store, and its replay is dropped by the caller's `quietLoad`, because the
+   * journal it would restate is the one being kept. Only if that fails too is
+   * the thread started fresh (`loadSession`'s own fallback).
+   */
+  private async resumeSession(opts: BridgeOptions): Promise<void> {
+    const acpSessionId = opts.load!.acpSessionId;
+    this.pendingSessionId = acpSessionId;
+    await this.conn.whenClosed(acpSessionId);
+    try {
+      const response = await this.connection.agent.request(acp.methods.agent.session.resume, {
+        sessionId: acpSessionId,
+        cwd: opts.cwd,
+        mcpServers: opts.mcpServers,
+        _meta: this.sessionMeta(opts),
+      });
+      await this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
+    } catch (error) {
+      if (this.closed) throw error;
+      console.warn(`session/resume failed for ${acpSessionId}, trying session/load`, error);
+      await this.loadSession(opts);
+    }
   }
 
   /**
@@ -851,6 +954,8 @@ export class AcpBridge {
    */
   private async loadSession(opts: BridgeOptions): Promise<void> {
     const acpSessionId = opts.load!.acpSessionId;
+    this.pendingSessionId = acpSessionId;
+    await this.conn.whenClosed(acpSessionId);
     this.historyReplay = true;
     try {
       const response = await this.connection.agent.request(acp.methods.agent.session.load, {
@@ -884,6 +989,7 @@ export class AcpBridge {
     proven: boolean,
   ): Promise<void> {
     this.acpSessionId = acpSessionId;
+    this.pendingSessionId = null;
     this.modes = modes;
     this.configOptions = configOptions;
     /* What the agent says it is running as — `session/set_mode` (above)
@@ -1128,7 +1234,11 @@ export class AcpBridge {
 
   // ---- agent -> us ----
 
-  private onUpdate(notification: SessionNotification): void {
+  ownsSession(sessionId: string): boolean {
+    return sessionId === this.acpSessionId || sessionId === this.pendingSessionId || this.children.has(sessionId);
+  }
+
+  onUpdate(notification: SessionNotification): void {
     /* A profile that opted out of the nag never sees it: the model's numbers
        were already given in the profile, so what codex is warning about is
        something the harness could not put back (the catalog file not reaching
@@ -1145,6 +1255,10 @@ export class AcpBridge {
        `acpSessionId` is still null and every update is the thread's own. */
     const own = this.acpSessionId === null || notification.sessionId === this.acpSessionId;
     const update = notification.update;
+    if (own && update.sessionUpdate === "subagent_spawned") {
+      const child = (update as { subagentSessionId?: unknown }).subagentSessionId;
+      if (typeof child === "string") this.children.add(child);
+    }
     // Session-level updates change what `captureRestoreState` will report, so
     // they are tracked here as well as forwarded. Forwarded either way: the
     // reducer on the other end already handles both variants. A child's
@@ -1181,7 +1295,9 @@ export class AcpBridge {
     }
     if (this.turnStartedAt !== null && !this.ttftSent) {
       this.ttftSent = true;
-      this.host.emit({ ev: "ttft", ms: Math.round(performance.now() - this.turnStartedAt) });
+      const ms = Math.round(performance.now() - this.turnStartedAt);
+      this.host.emit({ ev: "ttft", ms });
+      this.trace.ttft(ms);
     }
     /* The step boundary a held steer is waiting for. ACP has no "step ended"
        event, and the closest honest reading of one is a tool call reaching a
@@ -1194,6 +1310,7 @@ export class AcpBridge {
        parent's step and are not what the parent's steer is waiting on. A
        replay is history and moves nothing. */
     const settled = own && !this.historyReplay ? this.trackToolCall(update) : false;
+    if (!this.historyReplay) this.trace.onUpdate(update, own ? undefined : notification.sessionId);
     /* The fork point a rewind to the NEXT turn will cut at (`turn_ended`'s
        `lastMessageId`) is the last messageId this turn actually produced —
        only the two content-chunk variants carry one, and a chunk that omits
@@ -1303,7 +1420,7 @@ export class AcpBridge {
    * A standing grant that leaves no trace is the one thing this feature must
    * not ship. So: nothing is silent, and there is one code path.
    */
-  private park<R>(
+  park<R>(
     kind: "permission" | "elicitation",
     request: acp.RequestPermissionRequest | acp.CreateElicitationRequest,
     toolCallId: string | undefined,
@@ -1321,6 +1438,7 @@ export class AcpBridge {
         settle: resolve as (response: never) => void,
       };
       this.pending.set(requestId, entry);
+      this.trace.startWait(requestId, kind, request, toolCallId);
       this.host.emit(
         kind === "permission"
           ? { ev: "permission", requestId, request: request as acp.RequestPermissionRequest }
@@ -1418,7 +1536,7 @@ export class AcpBridge {
    * complete, and if nobody is attached there is no browser to wait for — the
    * agent would block on a question that has been answered.
    */
-  private onElicitationComplete(elicitationId: string): void {
+  onElicitationComplete(elicitationId: string): void {
     for (const entry of this.pending.values()) {
       if (entry.kind !== "elicitation") continue;
       if (entry.requestId !== elicitationId && entry.toolCallId !== elicitationId) continue;
@@ -1478,6 +1596,9 @@ export class AcpBridge {
       this.pendingSteers.push({ id: randomUUID(), createdAt: Date.now(), event: started, origin: undefined });
       this.host.onHeldSteersChanged();
     } else this.host.emit(started, origin);
+    const opensTurn = this.inflight === 0;
+    if (opensTurn) this.trace.startTurn(turnId, text, this.host.traceAttributes());
+    else this.trace.steer(text);
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
@@ -1524,6 +1645,19 @@ export class AcpBridge {
     const outgoing = text + attach.textSuffix;
     const blocks = attach.blocks;
 
+    /* The turn's own request carries its span out, so a runtime that traces
+       itself parents its spans under it; a steer joins that request's turn. */
+    const traceMeta = opensTurn ? this.trace.startRequest(text) : undefined;
+    const sent = { text, done: false };
+    this.outstanding.add(sent);
+    /* Answered once: by the agent, or by `close()` on a process that stays up
+       — whichever comes first. */
+    const once = <A extends unknown[]>(fn: (...args: A) => unknown) => (...args: A) => {
+      if (sent.done) return;
+      sent.done = true;
+      this.outstanding.delete(sent);
+      return fn(...args);
+    };
     void this.connection.agent
       .request(acp.methods.agent.session.prompt, {
         sessionId,
@@ -1543,11 +1677,13 @@ export class AcpBridge {
            path, or `[attached: shot.png]`), for the reason mentions.ts states:
            the text is what every runtime reads without being taught anything. */
         prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, outgoing)],
+        ...(traceMeta ? { _meta: traceMeta } : {}),
       })
       .then(
-        async (response) =>
+        once(async (response: acp.PromptResponse) =>
           await this.settleTurn(response.usage ?? null, undefined, text, response.stopReason),
-        (error: unknown) => this.onPromptRejected(error, text),
+        ),
+        once((error: unknown) => this.onPromptRejected(error, text)),
       );
     return { deferred };
   }
@@ -1600,6 +1736,7 @@ export class AcpBridge {
     const toolDurationMs = durationMs !== undefined
       ? Math.min(durationMs, Math.round(this.turnToolDurationMs))
       : undefined;
+    this.trace.endTurn({ error: error?.message, usage, stopReason, durationMs, toolDurationMs });
     this.turnStartedAt = null;
     this.turnToolDurationMs = 0;
     /* The session has content now, so the agent has written it down and a later
@@ -1741,6 +1878,17 @@ export class AcpBridge {
     return Boolean(meta?.[PAUSE_CAPABILITY]);
   }
 
+  /** Whether the runtime sends spans of its own (bridge-trace.ts). */
+  get selfTraced(): boolean {
+    const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
+    return Boolean(meta?.[TRACE_CAPABILITY]);
+  }
+
+  /** A runtime's own finished spans, filed under this thread. */
+  onTrace(params: TraceNotificationParams): void {
+    ingest(this.host.threadId, params);
+  }
+
   /** Whether the runtime takes a compaction *request* — not whether it
       compacts, which any runtime may do on its own and report. */
   get canCompact(): boolean {
@@ -1844,7 +1992,7 @@ export class AcpBridge {
   /** A hold the agent took on its own — a turn that failed rather than ended.
       The turn is still open (`inflight` is unchanged), so nothing settles and
       nothing is journaled: this is state, like the pause it rides on. */
-  private onAgentPaused(params: PausedParams): void {
+  onAgentPaused(params: PausedParams): void {
     const paused = params.paused !== false;
     const error: WireError | null =
       paused && params.reason === "error"
@@ -1855,6 +2003,10 @@ export class AcpBridge {
           })
         : null;
     this.setHold(paused, params.reason ?? "user", error);
+    this.trace.event(paused ? "paused" : "resumed", {
+      reason: params.reason ?? "user",
+      ...(params.message ? { message: params.message } : {}),
+    });
   }
 
   /**
@@ -1865,8 +2017,16 @@ export class AcpBridge {
    * agent's stderr is spliced in here too and the sentence a reader sees while
    * the turn retries is the same one they would see if it ran out and held.
    */
-  private onAgentRetry(params: RetryParams): void {
+  onAgentRetry(params: RetryParams): void {
     const attempt = params.attempt ?? null;
+    if (attempt !== null) {
+      this.trace.event("retry", {
+        attempt,
+        ...(params.of ? { of: params.of } : {}),
+        ...(params.delayMs ? { delay_ms: params.delayMs } : {}),
+        ...(params.message ? { message: params.message } : {}),
+      });
+    }
     this.setRetry(
       attempt === null
         ? null
@@ -1947,6 +2107,7 @@ export class AcpBridge {
 
   async cancel(): Promise<void> {
     if (!this.acpSessionId) return;
+    this.trace.event("cancel");
     await this.connection.agent.notify(acp.methods.agent.session.cancel, {
       sessionId: this.acpSessionId,
     });
@@ -1999,6 +2160,7 @@ export class AcpBridge {
        because this is the one exit every one of those paths takes. */
     if (entry.timer) clearTimeout(entry.timer);
     entry.settle(response);
+    this.trace.endWait(entry.requestId, outcomeOf(response), auto?.answer);
     this.host.emit(
       {
         ev: "request_answered",
@@ -2076,6 +2238,15 @@ export class AcpBridge {
     this.openToolCalls.clear();
     this.flushSteers();
     this.settleAll();
+    /* On a shared process the connection outlives this session, so nothing
+       will reject a prompt still out: its turn ends here, like a held one. */
+    if (this.conn.shared) {
+      for (const sent of this.outstanding) {
+        sent.done = true;
+        this.held.push(sent.text);
+      }
+      this.outstanding.clear();
+    }
     // Whatever was held for want of an explanation now has one.
     if (this.held.length > 0) {
       const error = this.host.enrichError(
@@ -2092,8 +2263,9 @@ export class AcpBridge {
       );
       for (const text of this.held.splice(0)) void this.settleTurn(null, error, text);
     }
+    this.trace.close(reason);
     this.releaseIdle();
-    this.connection.close(reason);
+    this.conn.detach(this, this.acpSessionId ?? this.pendingSessionId, reason);
   }
 
   // ---- helpers ----
