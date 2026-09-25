@@ -8,6 +8,7 @@ import {
   parseTaskNotification,
   subagentItemId,
   toolNameOf,
+  vendorMeta,
   workflowInfoOf,
 } from "../tools"
 import { mintItemId } from "./items"
@@ -578,6 +579,12 @@ function markStepUsage(
   return { stepUsage: { ...thread.stepUsage, [tail.id]: update }, usageMark: tail.id }
 }
 
+/** Folds a step's own bill into the running turn's, when the runtime says it. */
+function liveStep(thread: ThreadState, update: acp.UsageUpdate): Pick<ThreadState, "liveUsage"> | null {
+  const step = vendorMeta(update._meta, "daedalus")?.step as acp.Usage | null | undefined
+  return step ? { liveUsage: addUsage(thread.liveUsage, step) } : null
+}
+
 /** Session-level (non-transcript) updates applied to ThreadState. */
 export function applyMetaUpdate(
   thread: ThreadState,
@@ -609,7 +616,7 @@ export function applyMetaUpdate(
     case "available_commands_update":
       return { ...thread, availableCommands: update.availableCommands }
     case "usage_update":
-      return { ...thread, context: update, ...markStepUsage(thread, update) }
+      return { ...thread, context: update, ...markStepUsage(thread, update), ...liveStep(thread, update) }
     default:
       return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
   }

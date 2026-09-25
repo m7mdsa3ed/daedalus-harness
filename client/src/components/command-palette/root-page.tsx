@@ -72,7 +72,9 @@ import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
 import { useSidebar } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-device"
+import { LAYOUT_PRESETS } from "@/components/workspace/panel-items"
 import { openTerminal } from "@/lib/workspace/open-terminal"
+import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
@@ -522,6 +524,8 @@ export function RootPage() {
       icon: <MonitorIcon />,
       onSelect: () => {
         const previewUrl = projects.find((candidate) => candidate.id === meta?.projectId)?.previewUrl ?? ""
+        const inThread = threadDock(meta?.id)
+        if (inThread) return palette.run(() => inThread.open("web", true))
         palette.run(() =>
           palette.dock.openPanel(
             {
@@ -543,7 +547,13 @@ export function RootPage() {
       keywords: "shell console command line",
       icon: <SquareTerminalIcon />,
       chord: binds.terminal.chords[0],
-      onSelect: () => palette.run(() => void openTerminal(palette.dock, meta?.projectId ?? HOME_PROJECT_ID)),
+      onSelect: () =>
+        palette.run(() => {
+          /* A thread in front gets the shell in its own dock, in its worktree. */
+          const inThread = threadDock(meta?.id)
+          if (inThread) inThread.open("terminal")
+          else void openTerminal(palette.dock, meta?.projectId ?? HOME_PROJECT_ID)
+        }),
     })
   }
   /* Outside the `meta` block above: a board is the server's, not a project's,
@@ -609,14 +619,24 @@ export function RootPage() {
       onSelect: () => palette.run(() => palette.dock.stackAll()),
     },
     {
-      id: "dock:layout-focus",
+      id: "dock:bottom",
       group: "Workspace",
-      title: "Layout: Focus",
-      keywords: "preset single maximized arrangement",
-      icon: <Square />,
-      subtitle: "One panel, maximised",
-      onSelect: () => palette.run(() => palette.dock.applyPreset("focus")),
-    }
+      title: "Show or hide the bottom panel",
+      keywords: "edge panel terminal collapse expand toggle",
+      icon: <PanelBottom />,
+      onSelect: () =>
+        palette.run(() => {
+          if (!palette.dock.toggleBottom()) toast.info("Nothing is in the bottom panel — move a tab there from its menu")
+        }),
+    },
+    ...LAYOUT_PRESETS.map(({ id, label, Icon }) => ({
+      id: `dock:layout-${id}`,
+      group: "Workspace",
+      title: `Layout: ${label}`,
+      keywords: "preset split arrangement columns rows grid maximized",
+      icon: <Icon />,
+      onSelect: () => palette.run(() => palette.dock.applyPreset(id)),
+    }))
   )
   if (palette.dock.hasClosedPanels()) {
     items.push({

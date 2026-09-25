@@ -121,6 +121,7 @@ const AgentRow = z.object({
       kind: z.enum(["claude-cli", "codex-app-server"]),
       command: str,
       args: z.array(str).default([]),
+      login: z.object({ dirEnv: str, dir: str, file: str, expiresAt: str }).nullish(),
     })
     .nullish(),
   /* Carried for the third time and the same reason: a restored row keeps its

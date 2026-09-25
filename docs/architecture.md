@@ -149,7 +149,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   it, and it does **not** evict the probe cache — nothing the agent advertises changed. At
   spawn (`SessionManager.start`) an agent that declares it is handed a loopback port from a
   pre-bound `PortPool` (`server/src/net.ts`, which is also where `freePort` now lives for
-  code-server and the dev server) and a fresh 24-byte password; `spawnAgent` appends
+  the dev server) and a fresh 24-byte password; `spawnAgent` appends
   `--port`/`--hostname` to the resolved args and `OPENCODE_SERVER_PASSWORD` to the env, so
   the registry row's own `args` are never edited and the probe, which passes no sidecar,
   spawns the plain process. The feed is closed on the process's `close`.

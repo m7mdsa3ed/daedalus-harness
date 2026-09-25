@@ -31,7 +31,7 @@ import {
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
-import type { ThreadState } from "@/lib/store"
+import { addUsage, type ThreadState } from "@/lib/store"
 import { formatDuration, formatRate, formatTokens, formatTps, windowEstimated } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -245,7 +245,10 @@ export function ContextIndicator({
       pill, which the composer's own toolbar wears too. */
   triggerClassName?: string
 }) {
-  const { context, usage, ttftMs } = thread
+  const { context, ttftMs } = thread
+  /* The finished turns plus the running one's steps so far, so every figure
+     below moves per step rather than jumping once at `turn_ended`. */
+  const usage = thread.liveUsage ? addUsage(thread.usage, thread.liveUsage) : thread.usage
   if (!context && !usage && ttftMs === null) return null
 
   const percent = context

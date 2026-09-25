@@ -46,6 +46,7 @@ import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import { useDock } from "@/components/workspace/dock-context"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
+import { FilePreview } from "@/components/workspace/file-preview"
 
 /**
  * A typed address → a URL this panel will open, or a throw.
@@ -96,7 +97,7 @@ const VIEWPORTS = [
 
 type ViewportId = (typeof VIEWPORTS)[number]["id"]
 
-type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string }
+type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string; file?: string }
 
 /** The stored preview answer: whether the project's dev server is up, probed
     from the server's own machine (a browser fetch would be CORS-blocked and a
@@ -196,8 +197,11 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   }
 
   React.useEffect(() => {
-    api.setTitle(url ? new URL(url).host : project ? `Preview — ${project.name}` : "Preview")
-  }, [api, url, project])
+    const file = params.file
+    api.setTitle(
+      file ? file.slice(file.lastIndexOf("/") + 1) : url ? new URL(url).host : project ? `Preview — ${project.name}` : "Preview"
+    )
+  }, [api, url, project, params.file])
 
   /* One panel follows successive sources. `openPanel` re-points an existing
      panel's params rather than opening a second tab per link (see dock.tsx),
@@ -210,7 +214,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
     const next = params.url ?? ""
     if (next === lastParamUrl.current) return
     lastParamUrl.current = next
-    if (next) go(next)
+    if (next) showPage(next)
     // `go` is re-made every render; the ref above is what makes this fire once
     // per genuinely new address.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -230,6 +234,14 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
     // keeps this to one shot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trust, previewUrl, url])
+
+  /* A file the thread named is shown *instead of* the page, and an address
+     arriving — typed, or handed in — is the way back. Not in `go`: the seed
+     above calls it too, and would undo a file the panel was opened on. */
+  const showPage = (next: string) => {
+    if (params.file) api.updateParameters({ file: undefined })
+    go(next)
+  }
 
   const go = (next: string) => {
     try {
@@ -314,6 +326,15 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
 
   const width = VIEWPORTS.find((entry) => entry.id === viewport)?.width ?? null
 
+  if (params.file && projectId)
+    return (
+      <FilePreview
+        projectId={projectId}
+        path={params.file}
+        onBack={() => api.updateParameters({ file: undefined })}
+      />
+    )
+
   return (
     <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
       <PanelToolbar>
@@ -351,7 +372,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           className="min-w-0 flex-1"
           onSubmit={(event) => {
             event.preventDefault()
-            go(typed)
+            showPage(typed)
           }}
         >
           <Input

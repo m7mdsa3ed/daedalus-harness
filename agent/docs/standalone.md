@@ -149,6 +149,31 @@ knows both are speakable). Their tools arrive as `mcp__<server>__<tool>`. A
 server that fails to start is reported to the model in the system prompt rather
 than killing the session.
 
+What the agent's MCP client does with each server (`src/mcp.ts`,
+`src/mcp-hooks.ts`, tested by `test/mcp-features.test.ts`):
+
+- **Tools** — text, `structuredContent` (when the blocks say nothing),
+  `resource_link` and embedded resources are read as text. **Images and audio**
+  are named in the tool result and attached to the *next* model step as a user
+  message, because an OpenAI-compatible tool message carries text only; a model
+  whose catalog entry lists modalities without `image` is not sent them.
+  Progress notifications show on the tool's row and restart its timeout; a
+  cancelled turn cancels the call.
+- **Prompts** are slash commands, `/<server>:<prompt>`.
+- **Resources** are three tools per server: `list_resources`,
+  `list_resource_templates` and `read_resource` (any URI, including a filled
+  template).
+- **Instructions** from the initialize answer go into the system prompt.
+- **`list_changed`** replaces that server's tools or prompts in place; a new
+  tool is offered from the next attempt, a new prompt is re-announced at once.
+- **Requests from the server**, answered only while a turn runs: elicitation is
+  forwarded as ACP `elicitation/create` (form, and url where the client claims
+  it); sampling runs on the session's model behind a permission ask (`mcp` group,
+  tool name `mcp__<server>__sampling`); roots is the session's cwd. Server log
+  lines (warning and up) go to stderr.
+- **Not done**: resource subscriptions (a turn-based agent has nobody to tell),
+  tool use inside a sampling request.
+
 **Project instructions are read from the session's `cwd` with no help from
 anyone**: `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md`, from the cwd up to the
 repo root, plus `~/.claude/CLAUDE.md` — so an editor that spawns this agent in a

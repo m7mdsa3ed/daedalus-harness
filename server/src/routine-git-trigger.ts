@@ -42,7 +42,9 @@
  */
 import { and, eq } from "drizzle-orm";
 import { db, routineTriggers as triggersTable } from "./db/index.js";
-import { repositories, type GitRepo } from "./git.js";
+import { currentBranch, repositories, type GitRepo } from "./git.js";
+import { join } from "node:path";
+import { projectRoot } from "./workspace-fs.js";
 import {
   getRoutine,
   getTrigger,
@@ -92,7 +94,7 @@ const PAYLOAD_PATHS = 20;
  * would fire on `git status`. `refs/remotes/…` is excluded for the same reason:
  * a fetch is not work landing in this project's tree.
  */
-const REF_WRITE = /(?:^|\/)\.git\/(HEAD|packed-refs|refs\/heads\/(.+))$/;
+const REF_WRITE = /(?:^|\/)\.git\/(HEAD|packed-refs|refs\/heads\/(.+?))(?<!\.lock)$/;
 
 /** Anything inside a repository's private directory. Never a "path changed". */
 const INSIDE_GIT = /(?:^|\/)\.git(?:\/|$)/;
@@ -192,15 +194,17 @@ export class RoutineGitTriggers {
     this.engine = deps.engine;
   }
 
-  /** Begin watching. Idempotent; one loop for the whole process. */
-  start(): void {
-    if (this.timer) return;
+  /** Begin watching. Idempotent; one loop for the whole process. Resolves
+      once the first reconcile has subscribed what the rows ask for. */
+  start(): Promise<void> {
+    if (this.timer) return Promise.resolve();
     this.stopped = false;
-    this.reconcile();
-    this.timer = setInterval(() => this.reconcile(), RECONCILE_MS);
+    const first = this.reconcile().catch(logFailure("reconcile"));
+    this.timer = setInterval(() => void this.reconcile().catch(logFailure("reconcile")), RECONCILE_MS);
     /* Unref'd like every other sweep here: a file watcher must never be the
        reason the process refuses to exit. */
     this.timer.unref();
+    return first;
   }
 
   /** Release every watcher and every open window. Called before
@@ -246,7 +250,7 @@ export class RoutineGitTriggers {
           projectId,
           await watchProject(
             projectId,
-            (batch) => this.onBatch(batch),
+            (batch) => void this.onBatch(batch).catch(logFailure("batch")),
             /* Torn down under us — an `fs.watch` error, or the project going
                away. Forget it rather than resubscribing here: an immediate
                retry against a watcher that just failed is a hot loop, and the
@@ -321,7 +325,13 @@ export class RoutineGitTriggers {
       }
       if (!INSIDE_GIT.test(event.path)) paths.push(event.path);
     }
-    if (refs.length === 0 && paths.length === 0 && !batch.overflow) return;
+    /* An overflowed batch named nothing, and a checkout or a pull that wrote
+       two hundred files wrote its ref in the same batch. Counted as a bare move
+       of the project's own HEAD, which the HEAD confirmation in `evaluate` then
+       filters — the other choice silently dropped the fire for every trigger
+       without a path filter. */
+    if (batch.overflow) refs.push({ repo: "", ref: null });
+    if (refs.length === 0 && paths.length === 0) return;
 
     for (const trigger of (await this.triggersForProject(batch.projectId))) {
       const wantsPaths = trigger.paths.length > 0;
@@ -348,7 +358,12 @@ export class RoutineGitTriggers {
     let window = this.windows.get(trigger.id);
     if (!window) {
       const wait = Math.max(MIN_DEBOUNCE_MS, trigger.debounceMs);
-      window = { timer: setTimeout(() => void this.evaluate(trigger.id), wait), refs: [], paths: new Set(), unknownPaths: false };
+      window = { timer: setTimeout(() => void this.evaluate(trigger.id).catch(async (error) => {
+        /* A rejected evaluation was an unhandled rejection and a window lost
+           with nothing on the trigger saying so. */
+        logFailure("evaluate")(error);
+        await markTriggerError(trigger.id, describe(error)).catch(logFailure("mark error"));
+      }), wait), refs: [], paths: new Set(), unknownPaths: false };
       window.timer.unref();
       this.windows.set(trigger.id, window);
     }
@@ -402,7 +417,12 @@ export class RoutineGitTriggers {
        commit already checked out. Applied only when the refs that moved are all
        the project's own repository (a sub-repository's oid is not this one, so
        equality here says nothing about it) and only when nothing else fired. */
-    const onlyRoot = refHit.every((r) => r.repo === "");
+    /* A *named* ref that is not the branch the project has checked out (an
+       isolated thread's `daedalus/<id>` committed in its worktree, a
+       `git branch -f`, a fetch into a local branch) moved without moving HEAD,
+       so HEAD staying put says nothing about it. */
+    const rootBranch = (await this.repositories(routine.projectId).catch(() => [])).find((r) => r.path === "")?.branch ?? null;
+    const onlyRoot = refHit.every((r) => r.repo === "" && (r.ref === null || r.ref === rootBranch));
     if (!pathHit && onlyRoot && headOid !== null && headOid === trigger.lastSeen) return;
 
     try {
@@ -446,7 +466,12 @@ export class RoutineGitTriggers {
     if (bare.length === 0) return named;
     const list = await this.repositories(projectId);
     const current = new Map(list.map((repo) => [repo.path, repo.branch]));
-    return [...named, ...bare.filter((r) => current.get(r.repo) === branch)];
+    /* Discovery stops at a depth and skips dot-directories; the watcher does
+       not. A repository it never listed is asked directly. */
+    const branchOf = async (repo: string) =>
+      current.has(repo) ? current.get(repo) : await currentBranch(join(await projectRoot(projectId), repo)).catch(() => null);
+    const hits = await Promise.all(bare.map(async (r) => ((await branchOf(r.repo)) === branch ? r : null)));
+    return [...named, ...hits.filter((r): r is RefMove => r !== null)];
   }
 
   /** `git.repositories()`, cached — see `REPOS_TTL_MS`. */
@@ -492,3 +517,6 @@ function describeFire(refs: RefMove[], window: Window): string {
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+const logFailure = (what: string) => (error: unknown) =>
+  console.error(`[git-trigger] ${what} failed:`, describe(error));

@@ -11,9 +11,7 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-import type { SerializedDockview } from "dockview-react"
-
-export type PanelKind = "chat" | "terminal" | "web" | "tasks" | "page" | "group"
+export type PanelKind = "chat" | "terminal" | "web" | "tasks" | "page"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -30,8 +28,19 @@ export type PanelDescriptor =
      that meant "run this", not "give me a shell", so a clean exit is the end of
      the errand and the panel goes with it. A non-zero exit keeps the panel —
      that output is the whole reason you ran it. */
-  | { kind: "terminal"; projectId: string; terminalId: string; closeOnExit?: boolean }
-  | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
+  | {
+      kind: "terminal"
+      projectId: string
+      terminalId: string
+      closeOnExit?: boolean
+      /** A thread dock's shell: the thread it belongs to and its worktree
+          (project-relative), so a restart is still that thread's. */
+      sessionId?: string
+      cwd?: string
+    }
+  /** `file` is a project-relative path the panel is showing instead of the
+      page (`workspace/file-preview.tsx`) — a project panel's only. */
+  | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string; file?: string }
   /** A board, beside the work it describes. One panel, not one per board: the
       board being read is a *place inside* it (`lib/tasks-location.ts`) the way
       a file is a place inside the IDE, so it travels in the params and moving
@@ -48,12 +57,6 @@ export type PanelDescriptor =
       unpinned one rather than adding another (`openPage` in dock.tsx), so its
       id says nothing about where it is pointed. */
   | { kind: "page"; path: string }
-  /** A dock inside a tab — its own strip of tabs standing beside the top-level
-      ones (`workspace/group-panel.tsx`, a second dockview instance). What it
-      holds is its `layout`, a whole serialized dock carried on the params so
-      the outer save carries it; the group writes it back on every nested
-      change. **One level**: a group never holds a group (`pruneLayout`). */
-  | { kind: "group"; groupId: string; layout?: SerializedDockview }
 
 export interface PanelSpec {
   /** One per resource *by default* — opening it again focuses what is there,
@@ -73,7 +76,6 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   web: { singleton: false, defaultTitle: "Preview", implemented: true },
   tasks: { singleton: true, defaultTitle: "Tasks", implemented: true },
   page: { singleton: false, defaultTitle: "Page", implemented: true },
-  group: { singleton: false, defaultTitle: "Group", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -102,8 +104,6 @@ export function panelId(panel: PanelDescriptor): string {
       /* Never looked up by — a page tab is found by `pageKey`, never by id
          (see `openPage`). This is only the *base* of a fresh tab's id. */
       return `page:${pageKey(panel.path)}`
-    case "group":
-      return `group:${panel.groupId}`
   }
 }
 
@@ -141,21 +141,19 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
     case "terminal": {
       const terminalId = str(p.terminalId)
       return projectId && terminalId
-        ? { kind: "terminal", projectId, terminalId, closeOnExit: p.closeOnExit === true }
+        ? {
+            kind: "terminal",
+            projectId,
+            terminalId,
+            closeOnExit: p.closeOnExit === true,
+            ...(str(p.sessionId) ? { sessionId: str(p.sessionId) } : {}),
+            ...(str(p.cwd) ? { cwd: str(p.cwd) } : {}),
+          }
         : null
     }
     case "page": {
       const path = str(p.path)
       return path?.startsWith("/") ? { kind: "page", path } : null
-    }
-    case "group": {
-      const groupId = str(p.groupId)
-      if (!groupId) return null
-      /* The nested layout is carried as-is: it is dockview's own JSON, and what
-         inside it can be restored is `pruneLayout`'s question, asked on the way
-         back in — this is only the shape check. */
-      const layout = p.layout && typeof p.layout === "object" ? (p.layout as SerializedDockview) : undefined
-      return { kind: "group", groupId, ...(layout ? { layout } : {}) }
     }
     case "tasks": {
       /* Both fields are optional and both are only ever *hints*: an unknown
@@ -182,6 +180,7 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         viewId,
         ...(trust === "project" && projectId ? { projectId } : {}),
         ...(str(p.url) ? { url: str(p.url) } : {}),
+        ...(trust === "project" && str(p.file) ? { file: str(p.file) } : {}),
       }
     }
   }

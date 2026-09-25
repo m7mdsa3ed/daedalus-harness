@@ -4,9 +4,10 @@
    state of its own here, only three edits and the one place the caret is
    re-applied from. */
 import type * as React from "react"
+import type { TextSurface } from "@/components/composer/composer-editor"
 
 /** Where the caret is, or the end of the text when the box is not mounted. */
-export function selectionOf(el: HTMLTextAreaElement | null, fallback: number): [number, number] {
+export function selectionOf(el: TextSurface | null, fallback: number): [number, number] {
   const start = el?.selectionStart ?? fallback
   const end = el?.selectionEnd ?? start
   return [start, end]
@@ -23,7 +24,7 @@ export function textInsertions({
   /** The `@` completer's caret slot — see `insert` below for why it is that
       hook's and not a second mechanism racing it. */
   requestCaret: (at: number) => void
-  inputRef: React.RefObject<HTMLTextAreaElement | null>
+  inputRef: React.RefObject<TextSurface | null>
 }) {
   /* Typing on the user's behalf. Every insertion the "+" menu makes goes
      through here so the caret lands where a typist's would — after the

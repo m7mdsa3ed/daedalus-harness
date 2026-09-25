@@ -27,10 +27,18 @@ import {
 } from "../mcp-oauth.js";
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
-import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
+import {
+  checkMcpServer,
+  completeMcp,
+  invokeMcp,
+  mcpCatalogFor,
+  type McpCompletion,
+  type McpInvocation,
+} from "../mcp-check.js";
+import type * as acp from "../acp.js";
 import { searchRegistry } from "../mcp-registry.js";
-import { mcpServersFor } from "../sessions.js";
-import { listProjects } from "../projects.js";
+import { mcpServersFor, type SessionManager } from "../sessions.js";
+import { getProject, listProjects, type Project } from "../projects.js";
 
 /** The library: MCP servers, skills, slash commands, personas and model
     prompts, shared across projects — plus the import scan over the agents' own
@@ -42,7 +50,7 @@ import { listProjects } from "../projects.js";
     that a thread names exactly one, where it links any number of the rest. Model
     prompts are here for the same "reusable row, no credentials" reason; nothing
     points at one — a row applies by matching the model id. */
-export function libraryRoutes(app: Hono): void {
+export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): void {
   for (const [base, reg, schema] of [
     ["mcp-servers", mcpServers, McpServerInputSchema],
     ["skills", skills, SkillInputSchema],
@@ -144,30 +152,126 @@ export function libraryRoutes(app: Hono): void {
    * navigated to, and nothing here is cached: the point is the live answer.
    */
   app.post("/api/mcp-servers/:id/invoke", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as {
-      kind?: string;
-      name?: string;
-      args?: unknown;
-      project?: string;
-    };
-    if (body.kind !== "tool" && body.kind !== "prompt" && body.kind !== "resource") {
-      return c.json({ error: "kind must be tool, prompt or resource" }, 400);
-    }
-    if (!body.name) return c.json({ error: "name is required" }, 400);
-    const args = body.args;
-    if (args !== undefined && (typeof args !== "object" || args === null || Array.isArray(args))) {
-      return c.json({ error: "arguments must be a JSON object" }, 400);
-    }
-    const resolved = await resolveMcpDef(c.req.param("id"), body.project);
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const call = invocationOf(body);
+    if (typeof call === "string") return c.json({ error: call }, 400);
+    const resolved = await resolveMcpDef(c.req.param("id"), body.project as string | undefined);
     if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
     if ("unavailable" in resolved) return c.json({ error: resolved.unavailable }, 400);
-    return c.json(
-      await invokeMcp(resolved.def, {
-        kind: body.kind,
-        name: body.name,
-        args: (args as Record<string, unknown>) ?? {},
+    return c.json(await invokeMcp(c.req.param("id"), resolved.def, call));
+  });
+
+  /** Suggestions for a prompt argument or a template variable, as the server
+      ranks them — the playground's inputs ask as they are typed. */
+  app.post("/api/mcp-servers/:id/complete", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as Partial<McpCompletion> & { project?: string };
+    const bad = completionError(body);
+    if (bad) return c.json({ error: bad }, 400);
+    const resolved = await resolveMcpDef(c.req.param("id"), body.project);
+    if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
+    if ("unavailable" in resolved) return c.json({ values: [] });
+    return c.json({ values: await completeMcp(c.req.param("id"), resolved.def, body as McpCompletion) });
+  });
+
+  /* ── The playground for a server that is not a row ──
+
+     The same three reads, handed a definition instead of an id: a server
+     being tried before it is saved, or one that never will be. Nothing is
+     stored — no catalog row, no library row — and the pool is keyed on the
+     definition itself, so every call with the same one shares a connection
+     and an edited one connects afresh (`playgroundDef`).
+
+     Stdio, streamable HTTP and legacy SSE — every transport the client speaks,
+     including the one the library cannot store yet. Not OAuth and not a
+     builtin: the first needs a row for its token to belong to, the second is
+     synthesized from a row. Behind the bearer token like everything else, and
+     no wider than what it already grants: a stdio row is a command too. */
+  app.post("/api/mcp-playground/:op", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const parsed = PlaygroundServerSchema.safeParse(body.server);
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const def = playgroundDef(parsed.data);
+    const poolId = `playground:${JSON.stringify(def)}`;
+    switch (c.req.param("op")) {
+      case "check":
+        return c.json({ ...(await checkMcpServer(def)), checkedAt: Date.now() });
+      case "invoke": {
+        const call = invocationOf(body);
+        if (typeof call === "string") return c.json({ error: call }, 400);
+        return c.json(await invokeMcp(poolId, def, call));
+      }
+      case "complete": {
+        const bad = completionError(body as Partial<McpCompletion>);
+        if (bad) return c.json({ error: bad }, 400);
+        return c.json({ values: await completeMcp(poolId, def, body as unknown as McpCompletion) });
+      }
+      default:
+        return c.json({ error: "op must be check, invoke or complete" }, 404);
+    }
+  });
+
+  /* ── A thread's MCP servers, for the composer ──
+
+     The harness's own client reads what a thread's servers offer, so every
+     runtime gets MCP prompts as `/` commands and resources as `@` attachments —
+     not only the runtimes whose own MCP client surfaces them. Scoped to the
+     thread and resolved through `mcpServersFor`, the function its spawn uses,
+     so the composer offers exactly the servers the agent was handed (a
+     workflow server is not among them: it has no prompts or resources). */
+  async function threadServers(sessionId: string) {
+    const session = deps.sessions.get(sessionId);
+    if (!session) return null;
+    const project: Project | undefined = session.project ?? (await getProject(session.projectId));
+    if (!project) return null;
+    const ids = deps.sessions.effectiveLinks(session).mcpServerIds;
+    const resolved = await Promise.all(
+      ids.map(async (id) => {
+        const { servers } = await mcpServersFor({ mcpServerIds: [id] }, project, getConfig(), null);
+        return servers[0] ? { id, def: servers[0] } : null;
       }),
     );
+    return resolved.filter((r) => r !== null);
+  }
+
+  app.get("/api/sessions/:id/mcp", async (c) => {
+    const servers = await threadServers(c.req.param("id"));
+    if (!servers) return c.json({ error: "no such thread" }, 404);
+    /* The stored listing where it is fresh — this is read when a composer
+       opens, and a connect per server per open would be the cost of typing. */
+    const listed = await Promise.all(
+      servers.map(async ({ id, def }) => {
+        const catalog = await mcpCatalogFor(id, def);
+        return {
+          id,
+          name: def.name,
+          ok: catalog.ok,
+          prompts: catalog.prompts,
+          resources: catalog.resources,
+          resourceTemplates: catalog.resourceTemplates ?? [],
+          completions: Boolean(catalog.capabilities?.completions),
+        };
+      }),
+    );
+    return c.json(listed);
+  });
+
+  /* Rendering a prompt or reading a resource for the composer. Tools are not
+     offered here: a tool call is the agent's, behind its permission gate. */
+  app.post("/api/sessions/:id/mcp/:serverId/invoke", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { kind?: string; name?: string; args?: unknown };
+    if (body.kind !== "prompt" && body.kind !== "resource") {
+      return c.json({ error: "kind must be prompt or resource" }, 400);
+    }
+    if (!body.name) return c.json({ error: "name is required" }, 400);
+    const servers = await threadServers(c.req.param("id"));
+    if (!servers) return c.json({ error: "no such thread" }, 404);
+    const server = servers.find((s) => s.id === c.req.param("serverId"));
+    if (!server) return c.json({ error: "that server is not linked to this thread" }, 404);
+    const args =
+      body.args && typeof body.args === "object" && !Array.isArray(body.args)
+        ? (body.args as Record<string, unknown>)
+        : {};
+    return c.json(await invokeMcp(server.id, server.def, { kind: body.kind, name: body.name, args }));
   });
 
   app.post("/api/mcp-servers/builtin/:kind", async (c) => {
@@ -397,4 +501,48 @@ function callbackPage({ ok, message }: { ok: boolean; message: string }): string
   try { window.opener && window.opener.postMessage({ source: "daedalus-mcp-oauth", ok: ${ok} }, "*") } catch (e) {}
   ${ok ? "setTimeout(function () { window.close() }, 1200)" : ""}
 </script></body></html>`;
+}
+
+const pairList = z.array(z.object({ name: z.string(), value: z.string() })).default([]);
+
+/** A server the playground is handed rather than looks up. */
+const PlaygroundServerSchema = z.union([
+  z.object({ type: z.enum(["http", "sse"]), url: z.string().url(), headers: pairList }),
+  z.object({
+    type: z.literal("stdio").default("stdio"),
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env: pairList,
+  }),
+]);
+
+/** As ACP spells it — the shape `mcpServersFor` hands a spawn, so the
+    playground connects exactly as a thread's agent would once it is saved. */
+function playgroundDef(input: z.infer<typeof PlaygroundServerSchema>): acp.McpServer {
+  const name = "playground";
+  return input.type === "stdio"
+    ? { name, command: input.command, args: input.args, env: input.env }
+    : { type: input.type, name, url: input.url, headers: input.headers };
+}
+
+/** A playground call from a request body, or what is wrong with it. */
+function invocationOf(body: Record<string, unknown>): McpInvocation | string {
+  const { kind, name, args } = body;
+  if (kind !== "tool" && kind !== "prompt" && kind !== "resource") return "kind must be tool, prompt or resource";
+  if (typeof name !== "string" || !name) return "name is required";
+  if (args !== undefined && (typeof args !== "object" || args === null || Array.isArray(args))) {
+    return "arguments must be a JSON object";
+  }
+  return { kind, name, args: (args as Record<string, unknown>) ?? {} };
+}
+
+function completionError(body: Partial<McpCompletion>): string | null {
+  const ref = body.ref as { type?: string; name?: unknown; uri?: unknown } | undefined;
+  if (!ref || (ref.type === "ref/prompt" ? typeof ref.name !== "string" : ref.type !== "ref/resource" || typeof ref.uri !== "string")) {
+    return "ref must be {type:'ref/prompt',name} or {type:'ref/resource',uri}";
+  }
+  if (typeof body.argument?.name !== "string" || typeof body.argument.value !== "string") {
+    return "argument must be {name, value}";
+  }
+  return null;
 }

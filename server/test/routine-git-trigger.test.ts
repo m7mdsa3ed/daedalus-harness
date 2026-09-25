@@ -98,9 +98,9 @@ const triggers = new RoutineGitTriggers({ engine });
 
 /** Rebuild the watcher, so the next ref write is the first this watch sees —
     see the platform caveat in the header. */
-const fresh = () => {
+const fresh = async () => {
   triggers.stop();
-  triggers.start();
+  await triggers.start();
 };
 
 let passed = 0;
@@ -126,10 +126,10 @@ const QUIET_MS = 2_600;
 
 console.log("routine-git-trigger");
 
-await test("start() watches exactly the projects that have a reason", () => {
-  triggers.start();
+await test("start() watches exactly the projects that have a reason", async () => {
+  await triggers.start();
   assert.deepEqual(triggers.watchedProjects(), ["w1"]);
-  triggers.start();
+  await triggers.start();
   assert.deepEqual(triggers.watchedProjects(), ["w1"], "idempotent — one handle, not two");
 });
 
@@ -144,8 +144,9 @@ await test("a commit fires once, with the branch parsed off the ref path and the
   assert.match(fire.opts.text ?? "", /Branches that moved: .*\bmain\b/);
   assert.doesNotMatch(fire.opts.text ?? "", / in /, "the project's own repo has no directory suffix");
   assert.equal(fire.opts.headOid, await head(), "the second opinion travels with the fire");
+  // The row is written after the fire resolves, not with it.
+  await waitFor(async () => !!(await getTrigger(trigger.id))?.lastFiredAt, "the row to remember it fired");
   const row = (await getTrigger(trigger.id))!;
-  assert.ok(row.lastFiredAt, "the row remembers it fired");
   assert.equal(row.lastSeen, fire.opts.headOid, "what the next churn is confirmed against");
   assert.equal(row.nextFireAt, null, "a git trigger has no clock for the scheduler to read");
   await settle(QUIET_MS);
@@ -155,7 +156,7 @@ await test("a commit fires once, with the branch parsed off the ref path and the
 await test("a burst is one fire per window, trailing edge, never reset per event", async () => {
   // Driven with worktree path signals — the delivery that stays reliable —
   // because the debounce is per trigger and knows nothing of what filled it.
-  updateTrigger(trigger.id, { paths: ["*.txt"] });
+  await updateTrigger(trigger.id, { paths: ["*.txt"] });
   const before = fires.length;
   const first = Date.now();
   // Three writes spread across ~900ms — all inside the 1s window that opened on
@@ -178,11 +179,11 @@ await test("a burst is one fire per window, trailing edge, never reset per event
   }
   await settle(QUIET_MS);
   assert.equal(fires.length, before + 1, "three writes, one fire");
-  updateTrigger(trigger.id, { paths: [] });
+  await updateTrigger(trigger.id, { paths: [] });
 });
 
 await test("a ref write that moved nothing is confirmed away by the head oid", async () => {
-  fresh();
+  await fresh();
   const before = fires.length;
   // Writes `.git/refs/heads/main` with the oid already there — the packed-refs/
   // gc shape of churn: a real ref path, no new history.
@@ -192,7 +193,7 @@ await test("a ref write that moved nothing is confirmed away by the head oid", a
   // The discriminator: an identical write with NEW history, on an equally
   // fresh watcher, does fire — so the silence above was the veto, not a
   // dropped event.
-  fresh();
+  await fresh();
   await git(["commit", "--allow-empty", "-m", "really new"]);
   await waitFor(() => fires.length > before, "the real commit's fire");
   assert.equal(fires[before].opts.headOid, await head());
@@ -201,9 +202,9 @@ await test("a ref write that moved nothing is confirmed away by the head oid", a
 });
 
 await test("a branch filter keeps the writes that named it and drops the rest", async () => {
-  updateTrigger(trigger.id, { branch: "main" });
+  await updateTrigger(trigger.id, { branch: "main" });
   await git(["checkout", "-q", "-b", "feature"]);
-  fresh();
+  await fresh();
   const before = fires.length;
   // The commit's `.git/refs/heads/feature` write is delivered (first ref event
   // on a fresh watcher) and must be dropped: it does not name `main`.
@@ -212,17 +213,17 @@ await test("a branch filter keeps the writes that named it and drops the rest", 
   assert.equal(fires.length, before, "work on another branch is not this trigger's");
 
   await git(["checkout", "-q", "main"]);
-  fresh();
+  await fresh();
   await git(["commit", "--allow-empty", "-m", "back on main"]);
   await waitFor(() => fires.length > before, "the main commit's fire");
   assert.match(fires[before].opts.text ?? "", /\bmain\b/);
   await settle(QUIET_MS);
   assert.equal(fires.length, before + 1);
-  updateTrigger(trigger.id, { branch: null });
+  await updateTrigger(trigger.id, { branch: null });
 });
 
 await test("a sub-repository's ref names its directory and skips the root oid veto", async () => {
-  fresh();
+  await fresh();
   const before = fires.length;
   const rootHead = await head();
   assert.equal((await getTrigger(trigger.id))!.lastSeen, rootHead, "the veto WOULD bite if it were consulted");
@@ -240,7 +241,7 @@ await test("a sub-repository's ref names its directory and skips the root oid ve
 });
 
 await test("a path glob fires with no ref moved; a non-matching write does not", async () => {
-  updateTrigger(trigger.id, { paths: ["src/**/*.ts"] });
+  await updateTrigger(trigger.id, { paths: ["src/**/*.ts"] });
   const before = fires.length;
   writeFileSync(join(repo, "notes.md"), "not code\n");
   await settle(QUIET_MS);
@@ -252,24 +253,24 @@ await test("a path glob fires with no ref moved; a non-matching write does not",
   const fire = fires[before];
   assert.match(fire.opts.text ?? "", /Files that changed: .*src\/a\.ts/);
   assert.doesNotMatch(fire.opts.text ?? "", /Branches that moved/, "no ref was part of this");
-  updateTrigger(trigger.id, { paths: [] });
+  await updateTrigger(trigger.id, { paths: [] });
   await settle(QUIET_MS);
 });
 
 await test("reconcile releases the handle when the trigger or its routine is disabled", async () => {
-  updateTrigger(trigger.id, { enabled: false });
-  triggers.reconcile();
+  await updateTrigger(trigger.id, { enabled: false });
+  await triggers.reconcile();
   assert.deepEqual(triggers.watchedProjects(), [], "a disabled trigger costs no inotify handle");
   const before = fires.length;
   await git(["commit", "--allow-empty", "-m", "unwatched"]);
   await settle(QUIET_MS);
   assert.equal(fires.length, before, "nothing was listening");
 
-  updateTrigger(trigger.id, { enabled: true });
-  triggers.reconcile();
+  await updateTrigger(trigger.id, { enabled: true });
+  await triggers.reconcile();
   assert.deepEqual(triggers.watchedProjects(), ["w1"], "re-enabling picks the project back up");
-  updateRoutine(routine.id, { enabled: false });
-  triggers.reconcile();
+  await updateRoutine(routine.id, { enabled: false });
+  await triggers.reconcile();
   assert.deepEqual(triggers.watchedProjects(), [], "a disabled routine keeps its triggers and costs nothing");
 });
 

@@ -78,9 +78,7 @@ function SelectContent({
         align={align}
         alignOffset={alignOffset}
         alignItemWithTrigger={alignItemWithTrigger}
-        /* No `isolate` — see popover.tsx: it empties the popup's backdrop
-           and the frosted blur draws nothing. */
-        className="z-50"
+        className="isolate z-50"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"

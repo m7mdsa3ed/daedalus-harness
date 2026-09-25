@@ -109,6 +109,21 @@ export interface QuotaProbe {
   kind: "claude-cli" | "codex-app-server";
   command: string;
   args: string[];
+  /** Where the login the probe spends keeps its token's expiry, so a probe can
+      run beside a live agent while that token is nowhere near a refresh (see
+      `probeHeldBack` in quota.ts). Absent = no way to tell, and the probe yields
+      to every live process as it always has. */
+  login?: QuotaLogin | null;
+}
+
+/** A login's credentials file: `${env[dirEnv] || ~/dir}/file`, with the expiry
+    (epoch ms) at the dotted path `expiresAt` inside it. Data, because the file
+    is a fact about the runtime behind `command`, not about the harness. */
+export interface QuotaLogin {
+  dirEnv: string;
+  dir: string;
+  file: string;
+  expiresAt: string;
 }
 
 /**
@@ -1501,9 +1516,10 @@ export const composerHistory = pgTable(
  * composer's `!` completer offers first (`shell-history.ts`).
  *
  * A tally, not a log: one row per (project, line), bumped on every run, so
- * "most used" is an ordering rather than a scan of a history. That is also
- * why it is not `composer_history` — a prompt history recalls *when* you said
- * something, this one answers *what you keep running here*.
+ * "most used" is an ordering rather than a scan of a history. Every distinct
+ * line is retained. That is also why it is not `composer_history` — a prompt
+ * history recalls *when* you said something, this one answers *what you keep
+ * running here*.
  *
  * Server-side and per project, unlike the drafts: the line you build with is
  * a property of the workspace, so the phone offers what the desktop ran. The
@@ -1519,7 +1535,7 @@ export const shellHistory = pgTable(
     /** The command as typed, after the `!` and trimmed. */
     line: text("line").notNull(),
     count: bigint("count", { mode: "number" }).notNull().default(1),
-    /** Epoch ms of the last run — the tie-break, and what the cap drops. */
+    /** Epoch ms of the last run, used to break ties in the suggestion order. */
     lastAt: bigint("last_at", { mode: "number" }).notNull(),
   },
   (t) => [
@@ -1712,6 +1728,10 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   binary: boolean;
+  /** Set only when another thread had a turn running in the same repository
+      while this path was written (turn-changes.ts, `annotate`): the window
+      cannot say which of them wrote it. Absent = nobody else was working. */
+  shared?: string[];
 }
 
 /**

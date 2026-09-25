@@ -38,6 +38,9 @@ export const mcpServersKey = (s: ServerSettings) => scope(s).concat(["mcp-server
 /** What one MCP server advertises. Under the servers key, so invalidating the
     library takes every listing with it. */
 export const mcpCatalogKey = (s: ServerSettings, id: string) => mcpServersKey(s).concat(["catalog", id])
+/* Under the MCP family, so a catalog refresh (Check) invalidates what every
+   composer offers from the same listing. */
+export const threadMcpKey = (s: ServerSettings, sessionId: string) => mcpServersKey(s).concat(["thread", sessionId])
 export const skillsKey = (s: ServerSettings) => scope(s).concat(["skills"])
 export const commandsKey = (s: ServerSettings) => scope(s).concat(["commands"])
 export const personasKey = (s: ServerSettings) => scope(s).concat(["personas"])

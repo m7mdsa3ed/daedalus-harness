@@ -104,9 +104,7 @@ function ComboboxContent({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        /* No `isolate` — see popover.tsx: it empties the popup's backdrop
-           and the frosted blur draws nothing. */
-        className="z-50"
+        className="isolate z-50"
       >
         <ComboboxPrimitive.Popup
           data-slot="combobox-content"

@@ -61,3 +61,7 @@ export const InspectorContext = React.createContext<((tab: InspectorTab) => void
 export function useOpenInspector(): ((tab: InspectorTab) => void) | null {
   return React.useContext(InspectorContext)
 }
+
+/** Where a thread dock's transcript panel publishes its scroll-to-row, so a
+    reading in another panel (Agents) can jump it. Null outside a thread dock. */
+export const ThreadJumpContext = React.createContext<React.MutableRefObject<((id: string) => void) | null> | null>(null)

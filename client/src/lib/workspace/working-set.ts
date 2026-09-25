@@ -21,7 +21,7 @@
    Conflicts stay marked but are not a separate list either — a conflicted file
    is a file in the working set that cannot be staged until it is resolved.
 
-   Pure and memoizable, like `lib/ide/tree-rows.ts` and for the same reason: the
+   Pure and memoizable, for the reason: the
    fold runs on every watch tick and must not be redone on every keystroke in
    the commit box. */
 import type { FileLayout } from "@/lib/ide/prefs"
@@ -136,8 +136,7 @@ export function countsOf(files: readonly WorkingFile[]): {
 }
 
 /* ── Drawing it ──
-   The list is flattened to rows before it is drawn, for the reason the
-   explorer's tree is (`lib/ide/tree-rows.ts`): a flat array of fixed-height
+   The list is flattened to rows before it is drawn: a flat array of fixed-height
    rows can be memoized and windowed, and a repository mid-rebase with two
    thousand changed paths is two thousand DOM nodes otherwise. */
 

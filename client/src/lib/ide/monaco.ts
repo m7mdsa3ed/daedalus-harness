@@ -44,7 +44,7 @@
 
    The module is loaded through `loadMonaco()` and never imported statically by
    anything a reader loads: it is a couple of megabytes, and the transcript must
-   not carry it. `lib/ide/open.ts` is the seam that keeps it that way. */
+   not carry it — only the lazy diff view (`diff-editor.tsx`) reaches it. */
 import type * as Monaco from "monaco-editor"
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker"
 import CssWorker from "monaco-editor/languages/features/css/css.worker.js?worker"

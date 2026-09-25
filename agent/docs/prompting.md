@@ -83,8 +83,9 @@ question. Knowing the layers is most of knowing where to put an instruction.
 7. **Skills index.** One line per `.claude/skills/<name>/SKILL.md` found in the
    cwd: name, description, path, and a standing instruction to read the SKILL.md
    before relying on one. The bodies are not inlined — that is the point.
-8. **MCP failures.** Any server that would not start, named, so the model knows
-   why a tool it expected is missing instead of inventing a reason.
+8. **MCP instructions and failures.** Each connected server's `instructions`
+   (how it wants its tools used), then any server that would not start, named, so
+   the model knows why a tool it expected is missing instead of inventing a reason.
 9. **Situation.** Working directory, platform and host, today's date. Written
    fresh each turn and pinned to the end so the volatile line is the one that
    breaks the prefix cache — everything above it is byte-identical across steps.

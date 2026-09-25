@@ -1,7 +1,7 @@
 /* ── Windowing a flat row list ──
    Draw the rows that are on screen and reserve the height of the ones that are
    not. The explorer's tree and source control's file lists are both flat arrays
-   of fixed-height rows once they have been derived (`lib/ide/tree-rows.ts`), and
+   of fixed-height rows once they have been derived (`flattenWorkingSet`), and
    a project with a few thousand files expanded is a few thousand DOM nodes
    otherwise — each one a context-menu wrapper around a button.
 

@@ -27,7 +27,9 @@ function server(): ServerSettings {
 
 export function createTerminal(
   projectId: string,
-  options: { title?: string; cols?: number; rows?: number } = {}
+  /* `cwd` (project-relative) and `sessionId` are a thread dock's: its shell
+     starts in the thread's worktree and dies with the thread. */
+  options: { title?: string; cols?: number; rows?: number; cwd?: string; sessionId?: string } = {}
 ): Promise<TerminalInfo> {
   return api<TerminalInfo>(server(), `/api/projects/${encodeURIComponent(projectId)}/terminals`, {
     method: "POST",

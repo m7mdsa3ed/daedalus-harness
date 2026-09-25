@@ -561,7 +561,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## Composer
 
 - **The composer is one component, `components/composer/composer.tsx`, and one card of two rows** — the
-  textarea and a toolbar — with the shelf above it.
+  box and a toolbar — with the shelf above it. The box is a Tiptap editor over the same plain
+  string a textarea held (`composer-editor.tsx`): long pastes are inline chips and quoted
+  excerpts ("Ask about this" on a transcript selection) are quote cards, *in* the box, and
+  `editor-text.ts` maps string offsets to editor positions so every caret reader is unchanged
+  (checked by `editor-text.check.mjs`).
 - **The shelf has a floor: `ComposerStrip`'s `footer`, the one row that is always there**
   (`DraftScopeRow` in `components/draft-config.tsx`): the project this thread runs in at the
   row's start, and at its **end** a cluster of readings — the tools it carries
@@ -606,7 +610,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   preference). A long-press on Send (touch) and a right-click (mouse) open that same menu, so
   the chevron is a hint, not the only door.
 - **The pile is only what is about the message being typed** (`components/composer-strip.tsx`):
-  attachments, parked pastes, the history notice, the three completers, the archive notice, and
+  attachments, the history notice, the three completers, the archive notice, and
   the count of subagents out working. It is a "which of these do you want in front" mechanism,
   and a fact that is *always* true is not a card in it — the project spent its life as a card
   nobody brought forward and then stopped being drawn at all. It stacks **above the footer**.
@@ -758,9 +762,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## `!` commands
 
-- **A `!` line is a shell command the user runs against the project, and the project's saved
-  ones and its package.json scripts are its suggestions.** `components/project-commands.tsx` is
-  the third completer — the same
+- **A `!` line is a shell command the user runs against the project, and every distinct line
+  remains saved in that project's history alongside its saved helpers and package.json scripts.**
+  `components/project-commands.tsx` is the third completer — the same
   strip row, the same start-anchored token and the same mousedown/key contract as
   `slash-commands.tsx`. It lists the project's helpers (the list the tab menu draws under
   **Project commands** and the project page under **Run**, matched on name *or* on command), and
@@ -876,22 +880,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 A phone is for attention, not deep work — approving, switching threads, reading what
 landed. Every rule here is gated on `useIsMobile()` (the device), never a panel's width.
 
-- **The bottom bar is in flow, not fixed** (`components/bottom-nav.tsx`, drawn by
-  `app-shell.tsx` as the last row of `SidebarInset`): Threads (opens the sidebar sheet),
-  Agents (`/agents`), New (`startThread` → the one `actions.startThreadIn` door), Inbox
-  (`/notifications`, badged with what is *waiting* — amber — over what is unread) and
-  Settings. Because the dock ends where the bar starts, everything anchored to a panel's
-  bottom — the composer, the terminal's key row — sits above it with no offset to keep in
-  sync; toasts are top-anchored on a phone already. The header's sidebar toggle is not drawn
-  on a phone: Threads is that toggle, within thumb reach.
-- **The bar owns the home-indicator inset**, and while it is drawn `data-bottom-nav` on the
-  root zeroes `--safe-bottom` (`index.css`), which is what a surface at the bottom of the
-  *shell* pads by (the composer, a board's views, a settings save bar) — padding for the
-  inset above the bar as well stacked it twice. A sheet or dialog drawn *over* the bar keeps
-  the raw `env()`.
-- **The bar is not drawn while the soft keyboard is open** (`useKeyboardInset() > 0`). The
-  keyboard covers the page's bottom and the composer rides it by `KEYBOARD_LIFT`; a bar
-  still in flow would sit between the two and push the composer up by its own height.
+- **There is no bottom navigation bar.** The header's sidebar trigger opens the thread
+  drawer on a phone, and is shown on every device. Bottom-anchored shell surfaces use
+  `--safe-bottom` for the home-indicator inset; no navigation element claims that space.
 - **A sideways swipe on the tab strip walks the group's tabs** (`useTabSwipe`,
   `dock-surface.tsx`) — left is next, right previous, wrapping, through the same
   `cycleTab` the chords call. Only the strip: on the transcript a sideways drag is a text
@@ -1142,49 +1133,51 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   two windows apart — a zero-height box keeps its last answer rather than reading a hidden tab
   as fully covered, and the constant survives only as the fallback: one frame before the first
   measurement, and the surfaces that are not in a dock at all.
-- **Nested tabs are a dock inside a tab.** The `group` panel kind
-  (`components/workspace/group-panel.tsx`, descriptor `{kind:"group", groupId, layout?}`)
-  renders a second `DockviewReact` where a panel's content goes — dockview's own "nested
-  instances" — through `DockSurface`, the one component in `dock-surface.tsx` that both levels are
-  drawn with, so a tab inside a group has the same tab, strip, `+`, list and theme it had
-  outside one. What the group holds is its serialized inner layout, kept on the panel's
-  params: dockview treats a panel's params change as a layout change of the outer, so the
-  inner dock writing `updateParameters` on every inner change is what puts nested tabs into
-  the outer's debounced save with no second store; `pruneLayout` prunes the inner layout by
-  the same rule one level down and drops a group nothing survived in. The doors between the
-  levels are the dock's: `attachNested` registers the inner api under the group panel's id
-  and wires the route sync, the "Opened" tier and the empty-group close (a group with no
-  tabs left closes itself, silently — the tab's own close was what landed on ⌘⇧T); every walk
-  of "the panels" (`allPanels`, `findPanel`, `ownerOf`) sees through the group, which is what
-  keeps a nested `thread:{id}` the one there is (`revealPanel` activates the group's tab first,
-  or the inner tab would switch behind a group you are not on); `activeApi` is the instance in
-  front of you — the top level, unless the tab you are on is a group — and it is what the
-  chords, the split, the maximize and a fresh panel's placement follow, so "beside what you
-  are looking at" means inside the group when that is where you are. Moving between levels is
-  a **close and an open of the same descriptor**: dockview's `moveTo` cannot cross instances,
-  and a panel *is* its descriptor, so nothing is lost — a terminal reattaches to its PTY by
-  id, a thread to its session, the IDE to its own tab store. Three doors do it, all silent:
-  the tab's "Move to group ▸" submenu (`moveToGroup`) — "New group" mints one in the tab's
-  place, or beside the group it is leaving, and fills it once the inner instance is ready
-  (`pendingNestRef`, because the inner dock mounts a React commit later than the panel; the
-  layout is persisted synchronously right after, because dockview's layout-change event is a
-  microtask and StrictMode disposes the first instance before it fires), and every open group
-  is a row, the current one greyed, with what it holds as the hint (`useDockGroups`, a
-  version-bumped store, because a tab inside one group cannot hear another group appear
-  through its own container's events); "Move out of the group" on a nested tab (beside the
-  group it was in); and a drag across the two strips (`dropForeign`, off `onDidDrop`, which
-  dockview raises for a drop it did not move itself; `onUnhandledDragOver` accepts the overlay
-  for it). The group panel restores from dockview's own live `params`, never from its props,
-  which lag a commit behind `updateParameters`. **One level, never a tree**: a group's own tab offers neither row, a group dropped
-  into a group is refused, and `pruneLayout` drops one on the way in. In CSS the inner dock is
-  `.dock-nested`: the header overlap is zeroed there (it is measured on the *outer* groups and
-  never reaches the overlay the inner strip lives in), the inner card gives up the frame's
-  right and bottom gutters it would otherwise owe twice, and the inner strip stands on
-  `--app-ground` so its active tab reads against something.
-- **The dock holds six panel kinds: chat, ide, terminal, web (the *Browser* panel), tasks
-  and page.** The IDE panel (`components/workspace/ide-panel.tsx`, descriptor
-  `{kind:"ide", projectId}`) holds four surfaces that are one product: the editor, the file
-  explorer, file search and source control. The page panel
+- **Tabs are grouped by dockview's own tab groups, in one instance.** A tab group is a chip
+  over a run of tabs in one strip (`api.createTabGroup`/`addPanelToTabGroup`, serialized in
+  each group's `tabGroups`, so the layout save carries it with nothing of ours). The tab's
+  menu has "Add to tab group ▸" (a new one, or any of *this strip's* — a tab group never spans
+  two strips), "Remove from tab group", and "Open with this tab ▸". Its first rows join the
+  new panel to this tab's tab group, right after it (made for the two of them if there is none,
+  and only once the panel exists); its second rows — "Terminal below", "Preview/Tasks to the
+  right" — are a **split** beside this tab's strip, because a tab group never shows two tabs at
+  once and seeing both is the point. The destination travels with the call
+  (`OpenPanelOptions.into`, through `openWorkspacePanel`'s `target` and `openTerminal`, across the
+  terminal's POST) and so does the tab's own project — it used to be a 2s module-level aim any
+  open could spend, and the project was whatever tab was in front. The timed aim
+  (`targetNext`) survives only for the strip's "+ ▸ New thread", whose tab arrives a
+  navigation later, and only a chat open spends it.
+  The rows come from `useTabNeighbours`, re-read on dockview's layout change, which is where
+  tab-group changes are folded in. The chip's menu (`getTabGroupChipContextMenuItems`,
+  `dock-surface.tsx`) is dockview's rename, colour picker and collapse plus two of ours:
+  Ungroup (`dissolveTabGroup`, the tabs stay) and Close group (`closeTabGroup`, through the
+  guarded door, pins stepped over — dockview's own `close` would remove the panels past both).
+  The palette is `TAB_GROUP_COLORS` in `dock-context.ts` — `--primary` and `--chart-1…5` — so a
+  chip follows the theme; dockview paints it white-on-colour, which the light chart greys
+  cannot carry, so `index.css` draws it as a 22% tint with the foreground and the full colour
+  as a dot. Chips are hidden below `md`, where the strip draws one tab.
+  **This replaced a dock inside a tab** (a `group` panel holding a second `DockviewReact`).
+  Everything about it was a second instance: two places to look for a panel, a close-and-open
+  to cross between them, a drag between strips dockview never accepted (a foreign panel needs
+  `onUnhandledDragOver` to `accept()`, and nothing did), and tab-menu rows that asked the outer
+  instance for a grouped tab and got nothing. A saved layout that still holds one is unpacked
+  by `pruneLayout` (`unpackGroupPanels`): the group tab's place in the strip becomes the tabs it
+  held, as one tab group, the first of them in front if the group was. `layout.check.mjs`
+  (`../server/node_modules/.bin/tsx src/lib/workspace/layout.check.mjs`) holds that and the
+  pruning of tab groups and the bottom panel.
+- **The bottom panel is dockview's edge group, and a tab is only ever *sent* there.** "Move to
+  the bottom panel" is `revealEdgeGroupWithData("bottom", …)` — dockview's create-or-fill, whose
+  group is flagged to go away with its last panel — then expanded with its strip on top, where
+  every other strip is. "Move to the main area" is the way back and is never withheld, phone
+  included; the palette's "Show or hide the bottom panel" collapses it to its tabs. It is not a
+  split and nothing opens into it, so "opening never splits" still holds. `pruneLayout` prunes
+  the serialized `edgeGroups` like a leaf and drops one left empty. A phone's fold
+  (`stackAll`) pulls its panels back into the grid with the floats. Auto-hide, dock-to-edge by
+  dragging and the peek are enterprise modules and inert here.
+- **The outer dock holds five panel kinds: chat, terminal, web (the *Browser* panel), tasks
+  and page.** There is no IDE: the editor, file explorer, file search, the source-control panel
+  and the server's code-server were removed — a thread's Preview is the project's window, and
+  its Changes panel is where a turn is reviewed. The page panel
   (`components/workspace/page-panel.tsx`, descriptor `{kind:"page", path}`) is every route
   that is not a thread, rendered through the app's own route table against the panel's path
   (`<Routes location>`), so the dock is the main area on every route and a settings page
@@ -1586,9 +1579,8 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   uses, so a file and a diff of that file read as the same language. Both themes are rebuilt
   on every theme change (`syncMonacoTheme`), which is what makes a *custom palette* move the
   editor and not just light↔dark.
-- **What stayed on the server.** `src/ide.ts` and `src/ide-proxy.ts` — the per-project
-  `code-server` spawn and its `/ide/<key>/` proxy — are still there and still routed, and
-  nothing in the client reaches them any more. The output and agents panels remain gone for
+- **Nothing of the IDE is left on the server**: the code-server spawn, its `/ide/<key>/`
+  proxy and `reverse-proxy.ts` were removed with the client's editor. The output and agents panels remain gone for
   the reasons they went: both were second copies of something already drawn where the work
   is.
 
@@ -1713,7 +1705,29 @@ goes to it.
 
 ## The thread inspector and the agents dashboard
 
-- **The inspector is a column of the chat panel, never a dock split**
+- **Wide, the readings are panels of the thread dock; the column below is the phone's sheet.**
+  A chat tab on a wide screen is `workspace/thread-dock.tsx`, a nested dockview: the
+  transcript (`ThreadView docked`, which draws no inspector of its own, and wears no strip —
+  `syncStrips` hides the header of a group holding only it) and, from the + floating over it
+  only, Changes/Plan/Agents/Details (`ThreadSection`), Terminal, Preview and Tasks — each at
+  its kind's own place (`SLOT`: readings a column at the right edge, preview and board beside
+  the transcript, a shell below it; later ones join that group as tabs). The panes are flush,
+  meeting at hairlines, and their strips are title bars with an underlined tab
+  (`.dock-nested`), so a pane never reads as another thread. A hidden chat tab is
+  `display: none` (`ChatPanel`): the inner dock's `always` overlays escape the outer's
+  `visibility`, and every thread drew over the others. It opens as the transcript alone; the arrangement is kept per thread on the device
+  (`lib/workspace/thread-docks.ts`, capped at 100). **Why nested again, when the group panel was
+  removed** (see the tab-groups section): that group was general-purpose, so the outer dock had
+  to see into it. A thread dock is closed — dockview refuses a drop from another instance unless
+  `onUnhandledDragOver` accepts it, and nothing does — so no outer code asks about an inner
+  panel. Its tab is its own (`ThreadTab`, the `.dock-tab` material, no outer menu), and it hands
+  its panels a `DockContext` whose `openPanel`/`closePanel`/`registerCloseGuard` act on the inner
+  instance, so `TerminalPanel` and `WebPanel` needed no change. The Agents panel jumps the
+  transcript through `ThreadJumpContext`, which the transcript publishes (`PublishJump`) because
+  the scroller's hook answers only inside `ThreadView`. A thread's shell is created with the
+  thread's worktree as `cwd` and its `sessionId`, carried on the descriptor so a restart stays
+  the thread's, and the server kills it when the thread is trashed or purged.
+- **On a phone, the inspector is a column of the chat panel, never a dock split**
   (`components/thread-view/thread-inspector.tsx`, rendered by `ThreadView` inside its own
   grid). Opening a panel never splits the dock, and a column that belongs to one thread has
   no business being a panel another thread could land beside. Four tabs, each the *full*
@@ -1773,9 +1787,10 @@ goes to it.
   threads…" mints 2–4 drafts through `actions.startThreadIn`, retunes each with
   `configureDraft(…, remember=false)` — `isolate: true`, and the model picked for that copy out
   of the profile the project's pair resolves to (a copy's model must not become the project's
-  next default) — opens them side by side in a new `group` panel (`dock.openGroup`: the
-  pending-nest list `moveToGroup` already fills, each entry placed to the right of the last)
-  and sends the words through `actions.send` a task later, because `send` finds a draft in the
+  next default) — opens them side by side (`dock.openSideBySide`: a column each to the right
+  of what you are looking at, widths evened out, and one tab group per column wearing one
+  colour and the label "Best of N", so the set reads as one; on a phone, one strip holding one
+  tab group — the one open that may split, because it is asked for by name) and sends the words through `actions.send` a task later, because `send` finds a draft in the
   last-*committed* store. Attachments stay behind.
 - **A hunk is acted on where it is drawn, through doors that already existed.** On a
   comparison whose right side is the disk and whose left is the index or a scope's tree (and

@@ -62,7 +62,7 @@ import {
 } from "@/components/item-context-menu"
 import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
-import { useDock, useDockGroups, useDockOpeners } from "@/components/workspace/dock-context"
+import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspace/dock-context"
 import { useIsMobile } from "@/hooks/use-device"
 import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
@@ -76,8 +76,8 @@ import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { PANEL_SPECS, isPanelKind, parsePanel } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
 
-/** What a tab can open beside itself in a group — everything the + offers but
-    a thread, which the composer's own doors open. */
+/** What a tab can open beside itself in its tab group — everything the +
+    offers but a thread, which the composer's own doors open. */
 const GROUPABLE = ["terminal", "web", "tasks"] as const
 
 type PanelApi = IDockviewPanelHeaderProps["api"]
@@ -134,15 +134,25 @@ function useTabActive(api: PanelApi): boolean {
  * Dragging a tab between groups changes the siblings without adding or
  * removing a panel, which is why the layout event is in here too.
  */
-function useTabNeighbours(
-  api: PanelApi,
-  containerApi: ContainerApi
-): { hasOthers: boolean; hasRightward: boolean; hasOtherGroups: boolean; maximized: boolean } {
-  const [state, setState] = React.useState({
+interface TabNeighbours {
+  hasOthers: boolean
+  hasRightward: boolean
+  hasOtherGroups: boolean
+  maximized: boolean
+  /** The tab groups of this strip, and the one holding this tab. */
+  tabGroups: { groups: TabGroupRow[]; current?: string }
+  inBottom: boolean
+}
+
+function useTabNeighbours(api: PanelApi, containerApi: ContainerApi): TabNeighbours {
+  const dock = useDock()
+  const [state, setState] = React.useState<TabNeighbours>({
     hasOthers: false,
     hasRightward: false,
     hasOtherGroups: false,
     maximized: false,
+    tabGroups: { groups: [] },
+    inBottom: false,
   })
   React.useEffect(() => {
     const sync = () => {
@@ -154,6 +164,10 @@ function useTabNeighbours(
         hasRightward: index >= 0 && index < siblings.length - 1,
         hasOtherGroups: containerApi.groups.length > 1,
         maximized: !!panel?.api.isMaximized(),
+        /* Tab-group changes are folded into dockview's layout change, which is
+           what keeps a menu opened after a rename from naming the old label. */
+        tabGroups: dock.tabGroupsBeside(api.id),
+        inBottom: dock.isInBottom(api.id),
       })
     }
     sync()
@@ -164,7 +178,7 @@ function useTabNeighbours(
       containerApi.onDidMaximizedGroupChange(sync),
     ]
     return () => disposables.forEach((disposable) => disposable.dispose())
-  }, [api, containerApi])
+  }, [api, containerApi, dock])
   return state
 }
 
@@ -256,7 +270,6 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
     descriptor,
     title,
     pinned,
-    groupId: dock.groupIdOf(containerApi),
     ...neighbours,
   })
 
@@ -455,23 +468,18 @@ function useTabMenuItems({
   descriptor,
   title,
   pinned,
-  groupId,
   hasOthers,
   hasRightward,
   hasOtherGroups,
   maximized,
-}: {
+  tabGroups,
+  inBottom,
+}: TabNeighbours & {
   api: PanelApi
   dock: ReturnType<typeof useDock>
   descriptor: Descriptor
   title: string
   pinned: boolean
-  /** The group this tab stands in, or undefined in the top-level strip. */
-  groupId: string | undefined
-  hasOthers: boolean
-  hasRightward: boolean
-  hasOtherGroups: boolean
-  maximized: boolean
 }): MenuItemSpec[] {
   const navigate = useNavigate()
   const runHelper = useRunHelper(dock)
@@ -486,10 +494,12 @@ function useTabMenuItems({
   const meta = useSessionMeta(descriptor?.kind === "chat" ? descriptor.sessionId : "")
   const projects = useProjects()
   const project = meta ? projects.find((candidate) => candidate.id === meta.projectId) : undefined
-  const groups = useDockGroups()
-  const nested = groupId !== undefined
-  /* The same opener the strip's + and the chords call, so "open it in a group"
-     and "open it" differ in where it lands and in nothing else. */
+  /* The project a panel opened *from this tab* acts on: its own, or its
+     thread's. A board or a page has none, and the opener falls back. */
+  const projectId =
+    descriptor && "projectId" in descriptor ? descriptor.projectId : (meta?.projectId ?? undefined)
+  /* The same opener the strip's + and the chords call, so "open it with this
+     tab" and "open it" differ in where it lands and in nothing else. */
   const { onOpenPanel } = useDockOpeners()
 
   return [
@@ -504,7 +514,7 @@ function useTabMenuItems({
       disabled: !hasRightward,
       onClick: () => void dock.closeToTheRight(api.id),
     },
-    { label: "Close group", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
+    { label: "Close all", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
     /* ── Side by side ──
        The dock's own rows, on a tab rather than in a menu behind the app's
        chrome, because a tab is the thing the reader is pointing at. On a phone a
@@ -517,12 +527,16 @@ function useTabMenuItems({
           {
             label: "Split right",
             shortcut: "splitRight",
-            onClick: () => dock.splitActive("right"),
+            /* A lone tab has nothing to leave behind — the move would make a
+               new group and empty this one. */
+            disabled: !hasOthers,
+            onClick: () => dock.splitActive("right", api.id),
           },
           {
             label: "Split down",
             shortcut: "splitDown",
-            onClick: () => dock.splitActive("below"),
+            disabled: !hasOthers,
+            onClick: () => dock.splitActive("below", api.id),
           },
           /* One row, and it says which way it will go: filling a pair takes the
              fill away, so "Fill the dock" on an already-filled group would name
@@ -532,7 +546,7 @@ function useTabMenuItems({
             label: maximized ? "Restore the columns" : "Fill the dock",
             shortcut: "fillPanel",
             disabled: !hasOtherGroups,
-            onClick: () => dock.toggleMaximize(),
+            onClick: () => dock.toggleMaximize(api.id),
           },
         ] satisfies MenuItemSpec[])),
     /* The strip's two walking keys are not about *this* tab, but the menu is
@@ -554,75 +568,84 @@ function useTabMenuItems({
     },
     { type: "separator" },
     { label: pinned ? "Unpin" : "Pin", onClick: () => dock.togglePin(api.id) },
-    /* ── Tabs inside a tab ──
-       A group is a dock of its own behind one top-level tab (`group-panel.tsx`),
-       and a tab goes in, across or out by its own menu: "Move to group" lists a
-       new group and every group that is open, the one this tab is already in
-       greyed; a grouped tab also has its way out, beside the group it was in.
-       One level, so a group's own tab offers neither. Dragging a tab across two
-       strips does the same move.
-
-       **The door in is not offered on a phone.** A group is a second strip
-       inside a tab, and below `md` each strip already draws only the tab you
-       are on — so a nested one is a second row of chrome over a 390px
-       transcript, with the tab you want one level further in. The same
-       judgement the float and the popout rows make below. */
-    ...(isMobile || descriptor?.kind === "group"
-      ? []
-      : ([
-          /* ── Open something *with* this tab ──
-             "Open a terminal" puts a tab beside the transcript; this puts both
-             into one group, which is the arrangement a reader who wants a shell
-             under the thread they are reading actually asked for. Two steps in
-             one row: this tab into a group (the one it is already in, if it is
-             in one), and the next open aimed at that group — which is why
-             `targetNext` takes the group's id rather than its instance, the
-             instance being one render away when the group is minted here. */
-          ...(onOpenPanel
-            ? ([
-                {
-                  type: "sub",
-                  label: nested ? "Open in this group" : "Open in a new group",
-                  items: GROUPABLE.map((kind) => ({
-                    label: PANEL_SPECS[kind].defaultTitle,
-                    onClick: () => {
-                      const group = nested ? groupId : dock.moveToGroup(api.id, null)
-                      if (!group) return
-                      dock.targetNext(group)
-                      onOpenPanel(kind)
-                    },
-                  })),
-                },
-              ] satisfies MenuItemSpec[])
-            : []),
+    /* ── Tab groups ──
+       Dockview's own: a coloured chip over a run of tabs in this strip, which
+       the chip renames, recolours and collapses. A tab joins one by its menu or
+       by being dragged into the run. The menu lists this strip's groups only —
+       a tab group never spans two strips. */
+    {
+      type: "sub",
+      label: "Add to tab group",
+      items: [
+        { label: "New tab group", onClick: () => dock.addToTabGroup(api.id, null) },
+        ...(tabGroups.groups.length > 0
+          ? ([
+              { type: "separator" },
+              ...tabGroups.groups.map(
+                (group): MenuItemSpec => ({
+                  label: group.label,
+                  hint: group.hint || undefined,
+                  disabled: group.id === tabGroups.current,
+                  onClick: () => dock.addToTabGroup(api.id, group.id),
+                })
+              ),
+            ] satisfies MenuItemSpec[])
+          : []),
+      ],
+    },
+    ...(tabGroups.current
+      ? ([{ label: "Remove from tab group", onClick: () => dock.removeFromTabGroup(api.id) }] satisfies MenuItemSpec[])
+      : []),
+    /* ── Open something *with* this tab ──
+       Two ways, and the difference is whether you see both. "Terminal" joins
+       this tab's tab group, right after it — one strip, one visible at a time.
+       "Terminal below" / "… to the right" is a split beside this tab's strip,
+       which is the only way to watch a shell and a transcript together; each
+       kind keeps the side it already opens toward. The project is this tab's,
+       not the one in front, and the destination travels with the call — the
+       terminal is a server round trip away. No splits on a phone. */
+    ...(onOpenPanel
+      ? ([
           {
             type: "sub",
-            label: "Move to group",
+            label: "Open with this tab",
             items: [
-              { label: "New group", onClick: () => dock.moveToGroup(api.id, null) },
-              ...(groups.length > 0
-                ? ([
+              ...GROUPABLE.map(
+                (kind): MenuItemSpec => ({
+                  label: PANEL_SPECS[kind].defaultTitle,
+                  onClick: () =>
+                    onOpenPanel(kind, false, { into: { group: api.group.id, beside: api.id }, projectId }),
+                })
+              ),
+              ...(isMobile
+                ? []
+                : ([
                     { type: "separator" },
-                    ...groups.map(
-                      (group): MenuItemSpec => ({
-                        label: group.title,
-                        hint: group.hint || undefined,
-                        disabled: group.id === groupId,
-                        onClick: () => dock.moveToGroup(api.id, group.id),
+                    ...GROUPABLE.map(
+                      (kind): MenuItemSpec => ({
+                        label: `${PANEL_SPECS[kind].defaultTitle} ${kind === "terminal" ? "below" : "to the right"}`,
+                        onClick: () =>
+                          onOpenPanel(kind, false, {
+                            into: { group: api.group.id, split: kind === "terminal" ? "below" : "right" },
+                            projectId,
+                          }),
                       })
                     ),
-                  ] satisfies MenuItemSpec[])
-                : []),
+                  ] satisfies MenuItemSpec[])),
             ],
           },
-        ] satisfies MenuItemSpec[])),
-    /* The way *out* is never withheld, phone included: a group made on a wide
-       window is still there when the window narrows, and a tab inside one with
-       no row to leave by is a tab you cannot reach except through a strip the
-       narrow rules have already reduced to a single tab. */
-    ...(nested && descriptor?.kind !== "group"
-      ? ([{ label: "Move out of the group", onClick: () => dock.unnestPanel(api.id) }] satisfies MenuItemSpec[])
+        ] satisfies MenuItemSpec[])
       : []),
+    /* ── The bottom panel ──
+       A strip along the bottom of the dock (dockview's edge group) that
+       collapses to its tabs — somewhere a terminal can sit under every column
+       at once. Sent there by name only; nothing opens there. The way back is
+       never withheld, phone included, because a narrow window folds it. */
+    ...(inBottom
+      ? ([{ label: "Move to the main area", onClick: () => dock.moveToMain(api.id) }] satisfies MenuItemSpec[])
+      : isMobile
+        ? []
+        : ([{ label: "Move to the bottom panel", onClick: () => dock.moveToBottom(api.id) }] satisfies MenuItemSpec[])),
     ...(isMobile
       ? []
       : ([

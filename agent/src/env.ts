@@ -23,6 +23,9 @@ export interface AgentEnv {
       until the provider refused the request. The whole map ships at spawn so
       nothing has to be pushed after one. */
   modelWindows: Record<string, [context: number, maxOutput: number]>;
+  /** Input modalities by model id (`["text","image"]`), off the same map's
+      third element. A model absent here is one the catalog says nothing about. */
+  modelModalities: Record<string, string[]>;
   personaFile: string | null;
   /** Path to the model-prompt library (`{version, entries:[{match, prompt}]}`),
       re-read every turn so a library edit or a live model change lands on the
@@ -77,6 +80,23 @@ function windows(v: string | undefined): AgentEnv["modelWindows"] {
   }
 }
 
+function modalities(v: string | undefined): AgentEnv["modelModalities"] {
+  const s = str(v);
+  if (s === null) return {};
+  try {
+    const raw: unknown = JSON.parse(s);
+    if (!raw || typeof raw !== "object") return {};
+    const out: AgentEnv["modelModalities"] = {};
+    for (const [id, entry] of Object.entries(raw as Record<string, unknown>)) {
+      const list = Array.isArray(entry) ? entry[2] : undefined;
+      if (Array.isArray(list)) out[id] = list.filter((m): m is string => typeof m === "string");
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
   const model = str(env.DAEDALUS_AGENT_MODEL) ?? "";
   const effortRaw = str(env.DAEDALUS_AGENT_EFFORT);
@@ -89,6 +109,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     contextWindow: num(env.DAEDALUS_AGENT_CONTEXT_WINDOW),
     maxOutputTokens: num(env.DAEDALUS_AGENT_MAX_OUTPUT_TOKENS),
     modelWindows: windows(env.DAEDALUS_AGENT_MODEL_WINDOWS),
+    modelModalities: modalities(env.DAEDALUS_AGENT_MODEL_WINDOWS),
     personaFile: str(env.DAEDALUS_AGENT_PERSONA_FILE),
     modelPromptsFile: str(env.DAEDALUS_AGENT_MODEL_PROMPTS_FILE),
     projectInstructions: !["0", "false", "off"].includes(

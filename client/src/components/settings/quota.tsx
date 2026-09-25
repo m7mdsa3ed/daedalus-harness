@@ -21,36 +21,24 @@
    are genuinely billed to, read from the provider's account API rather than
    from any runtime. It has no agent selector because it has no agent: one
    account, shared by every runtime the profile serves. Those come first, since
-   somebody configured them on purpose. Everything below the header is shared:
-   `QuotaBody` draws windows, credits and the raw report the same either way.
+   somebody configured them on purpose. Everything below the header is shared —
+   the card body draws windows, credits and the raw report the same either way.
 
-   A window is drawn as a **tile, not a line** (`WindowTile`), two up where the
-   panel has room. The extra room is spent on the fields the wire was already
-   carrying and the page was throwing away — `used`/`cap`/`unit` as a spent and a
-   remaining, `resetsAt` as an instant *and* a countdown — plus the one reading
-   that is derived rather than reported: pace. A percentage is half a fact (40%
-   is comfortable four hours into a week and alarming forty minutes in), so
-   `windowPace` divides the spend by the elapsed part of the window and the tile
-   says the difference twice — as a tick on the bar where an even spend would
-   stand, and as one line of words under it. Nothing new is asked of the server:
-   every adapter in `usage-api.ts` was already sending this.
+   The layout is 9Router's own: a grid of cards, two up where the column has
+   room, one per reading, and a gateway's accounts as sections of its one card. A
+   window is one line in its card (`WindowRow`): the name, spent of cap, a bar
+   and what is **left**, and when it rolls over — ten to a page, because a
+   gateway account can carry a dozen model windows. Pace is derived rather than
+   reported (`windowPace`) and survives where it changes the answer: a spend
+   that reaches the cap before the reset says so in the reset's place.
 
    Above the cards, `UsageOverview` answers the question no single card could:
    which limit on this machine is tightest, and when anything next rolls over. It
    reads the *list* route's snapshots only — the per-card queries belong to their
    cards, and a fourth reader of the same state is how two numbers start
-   disagreeing.
-
-   The sections are filed under one card per provider — the page's `Group`, the
-   same captioned card every other settings list is built out of: two
-   Z.AI keys share one Z.AI card, three Command Code seats one Command Code
-   card — which is what makes a machine with five accounts readable as
-   providers rather than five unrelated plans. Runtime logins are one card per
-   runtime, headed by the runtime's own name. The sidebar popover draws the
-   same shape at a glance's measure: one card per provider, each account a
-   named section with its fullest window beside it. */
+   disagreeing. */
 import * as React from "react"
-import { CoinsIcon, GaugeIcon, MinusIcon, RefreshCwIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react"
+import { CoinsIcon, GaugeIcon, RefreshCwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -66,12 +54,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { inlineFromQuery } from "@/lib/errors"
-import { profileAgentIds, type Profile } from "@/lib/settings"
+import type { Profile } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import {
   formatAmount,
   formatDuration,
-  formatRemaining,
   formatReset,
   formatResetIn,
   peakWindow,
@@ -81,6 +68,7 @@ import {
   quotaStatusText,
   quotaTone,
   windowTitle,
+  type QuotaAccount,
   type QuotaSnapshot,
   type QuotaWindow,
 } from "@/lib/quota"
@@ -90,7 +78,7 @@ import {
   useProfileQuota,
 } from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
-import { EmptyCard, Group, INSET, PageHeader } from "./primitives"
+import { EmptyCard, INSET, PageHeader } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** The id of an agent's virtual Default profile — the server mints the same
@@ -98,138 +86,162 @@ import { sectionMeta } from "./sections"
     when nobody has picked a profile. */
 const defaultProfileId = (agentId: string) => `default:${agentId}`
 
-/** One window's pace, in the words someone deciding whether to start a long turn
-    reads — and the only line on the tile that is a *judgement* rather than a
-    reading, so it is the only one that takes a colour of its own.
+/** Rows a card lists before it pages — a gateway account can carry a dozen
+    model windows, and a card that grows to fit them all pushes its neighbour in
+    the other column out of line. */
+const PAGE_SIZE = 10
 
-    Three things it can say, in order of how much they matter: the cap arrives
-    before the reset does, the spend is running fast enough to be worth knowing,
-    or it is not. `windowPace` returns null where the window carries no clock, and
-    then the tile simply has one line fewer. */
-function PaceLine({ window }: { window: QuotaWindow }) {
-  const pace = windowPace(window)
-  if (!pace) return null
+/** The one card every reading is drawn in: a header naming whose plan it is,
+    with its actions at the end, and the body under a hairline.
 
-  if (pace.exhaustsInMs !== null) {
-    const when = formatDuration(pace.exhaustsInMs)
-    return (
-      <p className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-        <TrendingUpIcon className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate">At this rate, the cap arrives in {when}</span>
-      </p>
-    )
-  }
-
-  const ahead = Math.round(pace.deltaPoints)
-  /* Under ten points either way is the ordinary wobble of a rolling window, and
-     narrating it would make every tile carry a line that never changes. */
-  if (Math.abs(ahead) < 10) {
-    return (
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <MinusIcon className="size-3.5 shrink-0" />
-        On pace · {Math.round(pace.projectedPercent)}% projected
-      </p>
-    )
-  }
-  const fast = ahead > 0
+    `@container` so the rows answer to the *card's* width — two cards side by
+    side are each half the column, and a row that asked the panel would lay out
+    for a width it does not have. */
+function UsageCard({
+  icon,
+  title,
+  subtitle,
+  badges,
+  actions,
+  busy,
+  className,
+  children,
+}: {
+  icon: React.ReactNode
+  title: React.ReactNode
+  subtitle?: React.ReactNode
+  badges?: React.ReactNode
+  actions?: React.ReactNode
+  busy?: boolean
+  className?: string
+  children: React.ReactNode
+}) {
   return (
-    <p
-      className={cn(
-        "flex items-center gap-1.5 text-xs",
-        fast ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
-      )}
+    <div
+      aria-busy={busy || undefined}
+      className={cn("@container flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm", className)}
     >
-      {fast ? <TrendingUpIcon className="size-3.5 shrink-0" /> : <TrendingDownIcon className="size-3.5 shrink-0" />}
-      <span className="min-w-0 truncate">
-        {fast ? `${ahead} pts ahead of pace` : `${-ahead} pts under pace`} · {Math.round(pace.projectedPercent)}%
-        projected
-      </span>
-    </p>
+      <div className="flex min-w-0 items-center gap-3 px-3.5 py-3">
+        {icon}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold">{title}</div>
+          {subtitle && <div className="truncate text-xs text-muted-foreground">{subtitle}</div>}
+          {badges && <div className="mt-1 flex flex-wrap gap-1">{badges}</div>}
+        </div>
+        {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
+      </div>
+      <div className="flex flex-1 flex-col gap-2.5 border-t border-border/60 p-3">{children}</div>
+    </div>
   )
 }
 
-/** One limit window, as a tile rather than a line.
+function RefreshAction({ busy, onClick, label }: { busy: boolean; onClick: () => void; label: string }) {
+  return (
+    <Button variant="ghost" size="icon-sm" disabled={busy} onClick={onClick} aria-label={label} title={label}>
+      <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
+    </Button>
+  )
+}
 
-    The bar carries a second mark: a tick where an evenly-paced spend would stand
-    right now. That is what turns a percentage into a reading — 40% is a
-    comfortable four hours into a week and alarming forty minutes in, and the
-    tick is the difference without a sentence. It is `windowPace`'s and is absent
-    on a window with no clock, which is also the only case the tile loses a line. */
-function WindowTile({ window }: { window: QuotaWindow }) {
-  const percent = Math.min(100, Math.max(0, Math.round(window.usedPercent)))
-  const tone = quotaTone(percent)
-  const reset = formatReset(window)
+/** A body with no rows says why in words, centred where the rows would be.
+    Never a zeroed bar: "no plan here" is a different statement from "0% used". */
+function EmptyNote({ children }: { children: React.ReactNode }) {
+  return <p className="py-5 text-center text-xs text-muted-foreground">{children}</p>
+}
+
+/** One limit window, as one line: dot, name, the amounts, a bar, what is left
+    and when it rolls over.
+
+    The figure is what is **left**, not what is spent — a full green bar is a
+    fresh window — while the tone still comes from the spend, so an exhausted
+    window is a red 0%. The pace survives only where it changes the answer: a
+    spend that reaches the cap before the reset takes the reset's column. What
+    the row cannot hold (the spent-of-cap on a narrow card, the bar under ~28rem)
+    is dropped by the card's own width, never by the viewport. */
+function WindowRow({ window }: { window: QuotaWindow }) {
+  const used = Math.min(100, Math.max(0, Math.round(window.usedPercent)))
+  const tone = quotaTone(used)
   const amount = formatAmount(window)
-  const remaining = formatRemaining(window)
-  const resetIn = formatResetIn(window)
   const pace = windowPace(window)
-  const marker = pace ? Math.min(100, Math.max(0, pace.expectedPercent)) : null
-
-  /* A window nothing is counted against — a free tier's metered-but-uncapped
-     allowance, a pay-as-you-go spend against no budget. It has a figure but no
-     wall: a full track under it would read as "there is a limit and you are
-     nowhere near it", which is the opposite of what it says. */
+  const exhausts = pace?.exhaustsInMs != null ? formatDuration(pace.exhaustsInMs) : null
+  const reset = formatResetIn(window) ?? formatReset(window)
+  /* A window nothing is counted against has a figure but no wall: a full track
+     would read as "there is a limit and you are nowhere near it". */
   const metered = window.unlimited === true
 
   return (
-    <div className={cn("min-w-0 p-3", INSET)}>
-      <div className="flex min-w-0 items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate text-xs font-medium">{window.label}</span>
-        {metered ? (
-          <Badge variant="secondary" className="shrink-0 m-0">
-            Unlimited
-          </Badge>
-        ) : (
-          <span className={cn("shrink-0 text-base leading-none font-semibold tabular-nums", tone.text)}>
-            {percent}%
-          </span>
-        )}
-      </div>
-
-      {/* `relative` so the pace tick can stand over the fill; the track itself is
-          the same 1.5 the page has always drawn, thickened a hair so a 1px tick
-          has something to sit in. */}
-      {!metered && (
-        <div className="relative mt-2 h-2 overflow-hidden rounded-pill bg-muted">
-          <div className={cn("h-full rounded-pill transition-[width]", tone.bar)} style={{ width: `${percent}%` }} />
-          {marker !== null && (
-            <span
-              aria-hidden
-              title="Where an evenly-paced spend would be now"
-              className="absolute inset-y-0 w-px bg-foreground/50"
-              style={{ left: `${marker}%` }}
-            />
-          )}
+    <li
+      className="flex min-w-0 items-center gap-2.5 px-3 py-1.5 text-xs"
+      title={`${windowTitle(window)} · ${used}% used${reset ? ` · resets ${reset}` : ""}`}
+    >
+      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", metered ? "bg-muted-foreground/50" : tone.bar)} />
+      <span className="min-w-0 flex-1 truncate font-medium @md:w-36 @md:flex-none">{window.label}</span>
+      {amount && <span className="hidden shrink-0 text-muted-foreground tabular-nums @sm:inline">{amount}</span>}
+      {metered ? (
+        <span className="hidden flex-1 @md:block" />
+      ) : (
+        <div className="hidden h-1 min-w-8 flex-1 overflow-hidden rounded-pill bg-muted @md:block">
+          <div className={cn("h-full rounded-pill transition-[width]", tone.bar)} style={{ width: `${100 - used}%` }} />
         </div>
       )}
+      <span
+        className={cn(
+          "w-10 shrink-0 text-right font-semibold tabular-nums",
+          metered ? "text-muted-foreground" : tone.text
+        )}
+      >
+        {metered ? "∞" : `${100 - used}%`}
+      </span>
+      <span
+        className={cn(
+          "w-24 shrink-0 truncate text-right tabular-nums",
+          exhausts ? "text-destructive" : "text-muted-foreground"
+        )}
+      >
+        {exhausts ? `cap in ${exhausts}` : (reset ?? "")}
+      </span>
+    </li>
+  )
+}
 
-      <dl className="mt-2 space-y-1 text-xs text-muted-foreground">
-        {amount && (
-          <div className="flex min-w-0 items-baseline justify-between gap-2">
-            <dt className="shrink-0">Spent</dt>
-            <dd className="min-w-0 truncate text-right tabular-nums text-foreground">{amount}</dd>
+/** A card's windows, ten to a page. The page resets to what still exists when a
+    refresh brings back fewer windows than the one being read. */
+function WindowList({ windows, bare }: { windows: QuotaWindow[]; bare?: boolean }) {
+  const [page, setPage] = React.useState(0)
+  const pages = Math.ceil(windows.length / PAGE_SIZE)
+  const current = Math.min(page, pages - 1)
+  const start = current * PAGE_SIZE
+  const shown = windows.slice(start, start + PAGE_SIZE)
+  return (
+    <div className="space-y-1.5">
+      <p className="px-0.5 text-[11px] text-muted-foreground">
+        {windows.length === 1 ? "1 quota" : `${windows.length} quotas`}
+      </p>
+      {/* `bare` inside a box that is already inset — a second frame on the
+          same ground is two identical frames one inside the other. */}
+      <ul className={cn("divide-y divide-border/60 overflow-hidden", !bare && INSET)}>
+        {shown.map((window) => (
+          <WindowRow key={window.id} window={window} />
+        ))}
+      </ul>
+      {pages > 1 && (
+        <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-muted-foreground">
+          <span className="tabular-nums">
+            Showing {start + 1}–{start + shown.length} of {windows.length}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="tabular-nums">
+              Page {current + 1} / {pages}
+            </span>
+            <Button variant="outline" size="xs" disabled={current === 0} onClick={() => setPage(current - 1)}>
+              Prev
+            </Button>
+            <Button variant="outline" size="xs" disabled={current >= pages - 1} onClick={() => setPage(current + 1)}>
+              Next
+            </Button>
           </div>
-        )}
-        {remaining && (
-          <div className="flex min-w-0 items-baseline justify-between gap-2">
-            <dt className="shrink-0">Remaining</dt>
-            <dd className="min-w-0 truncate text-right tabular-nums">{remaining}</dd>
-          </div>
-        )}
-        {reset && (
-          <div className="flex min-w-0 items-baseline justify-between gap-2">
-            <dt className="shrink-0">Resets</dt>
-            <dd className="min-w-0 truncate text-right">
-              {reset}
-              {resetIn && ` · ${resetIn}`}
-            </dd>
-          </div>
-        )}
-      </dl>
-
-      <div className="mt-2 empty:mt-0">
-        <PaceLine window={window} />
-      </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -243,7 +255,7 @@ function RawReport({ raw, label }: { raw: string; label: string }) {
     <Collapsible>
       <CollapsibleTrigger
         render={
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground">
+          <Button variant="ghost" size="xs" className="text-muted-foreground">
             {label}
           </Button>
         }
@@ -260,288 +272,13 @@ function RawReport({ raw, label }: { raw: string; label: string }) {
   )
 }
 
-/** One account's section header inside its kind's card, built the way every
-    other settings list builds a row (`profiles.tsx`, `Row` in `primitives.tsx`):
-    mark, name and a subtitle on the left, the controls on the right — stacked
-    under the name on a phone, back on the header's own line at `sm+`.
-
-    The one thing a settings row does not have is the fullest-window percentage,
-    which rides at the end of the name line: the limit hit first is what the
-    section is about, and it is the number the sidebar popover leads with too.
-
-    Shared by both section kinds for the reason `QuotaBody` is — the two differ
-    in what they name and whether they have a profile picker, not in how a
-    section reads. */
-function QuotaSectionHeader({
-  icon,
-  name,
-  quota,
-  meta,
-  control,
-  busy,
-  onRefresh,
-  refreshLabel,
-}: {
-  icon: React.ReactNode
-  name: string
-  quota: QuotaSnapshot
-  meta: React.ReactNode
-  /** The profile picker, on the section that has one. */
-  control?: React.ReactNode
-  busy: boolean
-  onRefresh: () => void
-  refreshLabel: string
-}) {
-  /* The fullest window — what the name line summarises, since the limit hit
-     first is the one that matters. Missing when the reading has no windows,
-     which draws no summary rather than a zero. */
-  const peak =
-    quota.windows.length > 0
-      ? quota.windows.reduce((worst, window) => (window.usedPercent > worst.usedPercent ? window : worst))
-      : null
-  const peakPercent = peak ? Math.min(100, Math.max(0, Math.round(peak.usedPercent))) : null
-  const peakTone = peakPercent !== null ? quotaTone(peakPercent) : null
-  return (
-    <div className="flex flex-col gap-3 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between">
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        {icon}
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-x-2">
-            <span className="truncate text-sm font-semibold">{name}</span>
-            {quota.planName && (
-              <Badge variant="secondary" className="shrink-0 capitalize">
-                {quota.planName}
-              </Badge>
-            )}
-            {peakPercent !== null && peakTone && (
-              <span className={cn("ml-auto shrink-0 text-sm font-medium tabular-nums", peakTone.text)}>
-                {peakPercent}%
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{meta}</p>
-        </div>
-      </div>
-      {/* The picker takes the width on a phone and the button stays its own
-          size: a truncated profile name says less than a narrower button does.
-          At `sm+` both shrink to content and sit at the row's end. */}
-      <div className="flex items-center gap-2 @panel-sm:shrink-0">
-        {control && <div className="min-w-0 flex-1 @panel-sm:flex-none">{control}</div>}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 shrink-0"
-          disabled={busy}
-          onClick={onRefresh}
-          aria-label={refreshLabel}
-        >
-          <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
-          Refresh
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** One card while its own reading is in flight: the shape a reading draws —
-    header line, window bars — rather than a sentence where a plan goes.
-
-    The mark and the name are the real ones, because every card is drawn from
-    the moment the page knows it exists: four providers on this machine means
-    four named cards, each waiting on its own reader, and which one is slow is
-    then something the page can show rather than something it hides behind a
-    single page-wide spinner. Only the numbers are missing.
-
-    It is a card *section* and not a `Group` of its own: the page draws one
-    card per kind, so a border here would be a card inside a card. */
-function QuotaSectionSkeleton({ icon, name }: { icon: React.ReactNode; name?: string }) {
-  return (
-    <div aria-busy="true" className="space-y-4 py-3.5">
-      {/* The header the reading will draw, stacking the same way: identity
-          first, the controls under it on a phone and beside it at `sm+`. */}
-      <div className="flex flex-col gap-3 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          {icon}
-          <div className="min-w-0 flex-1">
-            {name ? (
-              <p className="truncate text-sm font-semibold">{name}</p>
-            ) : (
-              <Skeleton className="h-4 w-40 max-w-full" />
-            )}
-            <Skeleton className="mt-1.5 h-3 w-56 max-w-full" />
-          </div>
-        </div>
-        <Skeleton className="h-9 w-24 shrink-0 rounded-lg @panel-sm:h-8" />
-      </div>
-      {[0, 1].map((bar) => (
-        <div key={bar}>
-          <div className="flex items-baseline justify-between gap-3">
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-4 w-10" />
-          </div>
-          <Skeleton className="mt-1.5 h-1.5 w-full rounded-pill" />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/** Before the catalog answers nobody can be named and neither kind is known, so
-    the wait is one anonymous group of two anonymous cards — the one moment the
-    page has no identity to show. */
-function QuotaCardsSkeleton() {
-  return (
-    <Group>
-      {[0, 1].map((card) => (
-        <QuotaSectionSkeleton key={card} icon={<Skeleton className="size-5 shrink-0 rounded-sm" />} />
-      ))}
-    </Group>
-  )
-}
-
-/** A reading's windows.
-
-    A grid, not a stack: a window is a tile of four facts, and two of them side
-    by side is how a five-hour and a weekly limit get compared at a glance. The
-    width asked is the *panel's* — settings squeezed beside a terminal is narrow
-    for the same reason a phone is.
-
-    **An account is drawn as the plan it is**: a heading with its own bars under
-    it, in the order the reader gave them, which for a gateway is the order it
-    will spend the accounts in. Four subscriptions behind one 9Router endpoint
-    are four sections in one card, each reading like the z.ai card next to it —
-    where the flat grid put eight tiles of `<account> · session (5h)` beside
-    each other and made none of them answerable.
-
-    The accounts come from `quota.accounts`, and each finds its own bars by
-    `group` — the string its windows carry, plan and all. Grouping the windows
-    by `group` would give sections in first-seen order, which is *nearly* right
-    and is wrong exactly where a gateway's first account has nothing to report.
-
-    **An account the reading names but has no windows for is drawn too**, off
-    `quota.accounts`: it is a real account the gateway holds — turned off, or
-    logged out, or a provider with no usage API — and a page that lists only the
-    accounts that happened to report is a page that never says the silent one
-    exists. It draws as its heading and its own state, and nothing else.
-
-    No component knows what a group *is*: this draws whatever the reading
-    grouped, in first-seen order, and an ordinary plan — every window ungrouped
-    — is the one flat grid it has always been. A reading that groups only some
-    of its windows draws the ungrouped ones first, under no heading, because
-    they belong to the reading itself and not to any account in it. */
-function WindowGrid({ quota }: { quota: QuotaSnapshot }) {
-  const { windows, accounts } = quota
-  /* Insertion-ordered: `Map` keeps first-seen order, which is the reader's. */
-  const sections = React.useMemo(() => {
-    const byGroup = new Map<string, QuotaWindow[]>()
-    for (const window of windows) {
-      const key = window.group?.trim() || ""
-      const held = byGroup.get(key)
-      if (held) held.push(window)
-      else byGroup.set(key, [window])
-    }
-    return [...byGroup.entries()]
-  }, [windows])
-
-  const grid = (group: QuotaWindow[]) => (
-    <div className="grid gap-3 @panel-sm:grid-cols-2">
-      {group.map((window) => (
-        <WindowTile key={window.id} window={window} />
-      ))}
-    </div>
-  )
-
-  /* The reading's own accounts, in its own order. Only the gateway names any;
-     everywhere else this is absent and the flat grid below is the whole body. */
-  if (accounts && accounts.length > 0) {
-    return (
-      <div className="space-y-5">
-        {accounts.map((account) => {
-          const group = sections.find(([name]) => name === account.group)?.[1] ?? []
-          const percent =
-            account.usedPercent === null || account.usedPercent === undefined
-              ? null
-              : Math.min(100, Math.max(0, Math.round(account.usedPercent)))
-          const tone = percent !== null ? quotaTone(percent) : null
-          /* The plan is what it is on, the provider is what kind of account it
-             is. Both are small, both are optional, and one line holds them. */
-          const sub = [account.plan, account.provider].filter(Boolean).join(" · ")
-          return (
-            <section key={account.id} className="space-y-2.5">
-              <div className="flex min-w-0 items-baseline gap-x-2">
-                <h4 className="min-w-0 truncate text-xs font-semibold text-muted-foreground">{account.name}</h4>
-                {sub && <span className="shrink-0 text-[11px] text-muted-foreground/70">{sub}</span>}
-                {percent !== null && tone && (
-                  <span className={cn("ml-auto shrink-0 text-xs font-medium tabular-nums", tone.text)}>{percent}%</span>
-                )}
-              </div>
-              {group.length > 0 ? (
-                grid(group)
-              ) : (
-                /* A named account with no bars says why in words — the gateway's
-                   own message, or that it is out of the rotation. Never an empty
-                   section, which reads as a bar that failed to load. */
-                <p className="text-xs text-muted-foreground">
-                  {account.disabled ? "Turned off in the gateway — not being spent" : (account.state ?? "No quota reported")}
-                </p>
-              )}
-            </section>
-          )
-        })}
-      </div>
-    )
-  }
-
-  /* One section with no name is the ordinary plan, and it must not grow a
-     wrapper that changes its spacing. */
-  if (sections.length === 1 && !sections[0][0]) return grid(sections[0][1])
-
-  return (
-    <div className="space-y-5">
-      {sections.map(([name, group]) => {
-        if (!name) return <React.Fragment key="__ungrouped">{grid(group)}</React.Fragment>
-        /* The account's own fullest window, beside its name — the same summary
-           the card header gives the whole reading, so a section reads like the
-           card it is modelled on and an exhausted account is visible without
-           reading its tiles. */
-        const peak = group.reduce((worst, window) => (window.usedPercent > worst.usedPercent ? window : worst))
-        const percent = Math.min(100, Math.max(0, Math.round(peak.usedPercent)))
-        const tone = quotaTone(percent)
-        return (
-          <section key={name} className="space-y-2.5">
-            <div className="flex min-w-0 items-baseline gap-x-2">
-              <h4 className="min-w-0 truncate text-xs font-semibold text-muted-foreground">{name}</h4>
-              <span className={cn("ml-auto shrink-0 text-xs font-medium tabular-nums", tone.text)}>{percent}%</span>
-            </div>
-            {grid(group)}
-          </section>
-        )
-      })}
-    </div>
-  )
-}
-
-/** Everything under a card's header, and the whole reason both cards can exist:
-    a reading is a reading, whichever reader took it. */
-function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string }) {
-  /* An account the gateway named but could not report on is still a body to
-     draw: "no plan here" is only the whole answer when there was nobody to ask. */
-  const filled = quota.windows.length > 0 || Boolean(quota.accounts?.length)
+/** What a reading carries besides its windows. Credits are a balance, not a
+    window — a pot that does not roll over — so they are a row of their own; on
+    a plan with no windows at all (DeepSeek, an uncapped OpenRouter key) this is
+    the whole reading. */
+function ReadingExtras({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string }) {
   return (
     <>
-      {filled ? (
-        <WindowGrid quota={quota} />
-      ) : (
-        /* Never a zeroed bar: "no plan here" is a different statement from
-           "0% used", and drawing the second for the first is a lie. */
-        <p className="text-sm text-muted-foreground">{quotaStatusText(quota)}</p>
-      )}
-
-      {/* Credits are a balance, not a window — a pot that does not roll over — so
-          it gets a row of its own rather than a bar that would imply one. On a
-          plan with no windows at all (DeepSeek, an OpenRouter key with no cap)
-          this is the whole reading, which is why it reads as a figure and not as
-          a footnote. */}
       {quota.credits && (
         <div className={cn("flex items-baseline justify-between gap-3 px-3 py-2", INSET)}>
           <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -553,8 +290,44 @@ function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string
           </span>
         </div>
       )}
-
       <RawReport raw={quota.raw} label={rawLabel} />
+    </>
+  )
+}
+
+const PlanBadge = ({ plan }: { plan?: string | null }) =>
+  plan ? (
+    <Badge variant="secondary" className="m-0 capitalize">
+      {plan}
+    </Badge>
+  ) : null
+
+/** A card while its own reading is in flight. The mark and the name are the
+    real ones — every card is drawn from the moment the page knows it exists, so
+    which provider is slow is something the page shows. Only the rows wait. */
+function UsageCardSkeleton({ icon, title }: { icon: React.ReactNode; title?: React.ReactNode }) {
+  return (
+    <UsageCard
+      busy
+      icon={icon}
+      title={title ?? <Skeleton className="h-4 w-32 max-w-full" />}
+      subtitle={<Skeleton className="mt-1 h-3 w-44 max-w-full" />}
+    >
+      {[0, 1, 2].map((row) => (
+        <Skeleton key={row} className="h-6 w-full rounded-md" />
+      ))}
+    </UsageCard>
+  )
+}
+
+/** Before the catalog answers nobody can be named, so the wait is two
+    anonymous cards. */
+function QuotaCardsSkeleton() {
+  return (
+    <>
+      {[0, 1].map((card) => (
+        <UsageCardSkeleton key={card} icon={<Skeleton className="size-7 shrink-0 rounded-md" />} />
+      ))}
     </>
   )
 }
@@ -563,52 +336,134 @@ function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string
     API. No agent selector: the account is the profile's, and every runtime it
     serves spends the same windows.
 
-    A card *section*: the border and the heading belong to the card the page
-    files it under, which is the kind of plan it is (the page's `Group`). */
-function ProfileQuotaSection({ profile, initial }: { profile: Profile; initial: QuotaSnapshot | null }) {
-  /* Seeded when the list route happened to read this profile too, in which case
-     the card is drawn at once; otherwise this query is the only reader, and the
-     card is the skeleton until it answers. Refresh goes back to the provider
-     either way (the `?refresh=1` bypass), rewriting this card's cache entry and
-     the list's. */
+    **A gateway is one card, the full width of the grid, with a section per
+    account** — two up where the card has room, each drawn the way 9Router draws
+    its own. One card, because the accounts are one endpoint's: one refresh, one
+    balance, one raw report, and windows no account claims sit above them.
+    Accounts are filed under their provider, one captioned group each. Accounts come from `quota.accounts`,
+    in the gateway's order (the order it will spend them in), and each finds its
+    rows by `group`; an account with no windows is drawn too, with its own state,
+    because a page listing only the accounts that reported never says the silent
+    one exists. */
+function ProfileQuotaCards({ profile, initial }: { profile: Profile; initial: QuotaSnapshot | null }) {
+  /* Seeded when the list route happened to read this profile too; otherwise
+     this query is the only reader. Refresh goes back to the provider either way. */
   const { quota: reading, error, refetch, busy, refresh } = useProfileQuota(profile.id, initial)
   const quota = reading ?? initial
+  const icon = <ProfileIcon profile={profile} className="size-7 shrink-0" />
+  const kind = profile.usage?.kind && profile.usage.kind !== "none" ? providerKindLabel(profile.usage.kind) : null
 
   if (!quota) {
-    const icon = <ProfileIcon profile={profile} className="size-5 shrink-0" />
-    /* A reading that failed is drawn, not sat on: there is no other section
-       that would have carried this provider's failure, and a skeleton is a
-       promise that something is still coming. */
+    /* A reading that failed is drawn, not sat on: a skeleton is a promise that
+       something is still coming. */
     const failure = inlineFromQuery(error, `Couldn't read ${profile.name}'s plan usage`)
     if (failure) {
       return (
-        <div className="p-3.5 @panel-sm:p-4">
+        <UsageCard icon={icon} title={profile.name} subtitle={kind}>
           <ErrorNote error={failure} onRetry={refetch} />
-        </div>
+        </UsageCard>
       )
     }
-    return <QuotaSectionSkeleton icon={icon} name={profile.name} />
+    return <UsageCardSkeleton icon={icon} title={profile.name} />
   }
 
-  return (
-    <div className="space-y-4 py-3.5">
-      <QuotaSectionHeader
-        icon={<ProfileIcon profile={profile} className="size-5 shrink-0" />}
-        name={profile.name}
-        quota={quota}
-        meta={`Read ${new Date(quota.fetchedAt).toLocaleTimeString()} · shared by ${
-          profileAgentIds(profile).length === 1 ? "1 agent" : `${profileAgentIds(profile).length} agents`
-        }`}
+  const actions = (
+    <RefreshAction busy={busy} onClick={() => refresh()} label={`Refresh ${profile.name}'s plan usage`} />
+  )
+  const read = `Read ${new Date(quota.fetchedAt).toLocaleTimeString()}`
+  const accounts = quota.accounts ?? []
+
+  if (accounts.length === 0) {
+    return (
+      <UsageCard
+        icon={icon}
+        title={profile.name}
+        subtitle={[kind, read].filter(Boolean).join(" · ")}
+        badges={quota.planName && <PlanBadge plan={quota.planName} />}
+        actions={actions}
         busy={busy}
-        onRefresh={() => refresh()}
-        refreshLabel={`Refresh ${profile.name}'s plan usage`}
-      />
-      <QuotaBody quota={quota} rawLabel="What the provider reported" />
-    </div>
+      >
+        {quota.windows.length > 0 ? (
+          <WindowList windows={quota.windows} />
+        ) : (
+          <EmptyNote>{quotaStatusText(quota)}</EmptyNote>
+        )}
+        <ReadingExtras quota={quota} rawLabel="What the provider reported" />
+      </UsageCard>
+    )
+  }
+
+  const groupOf = (window: QuotaWindow) => window.group?.trim() || ""
+  const ungrouped = quota.windows.filter((window) => !groupOf(window))
+  /* Accounts filed under their provider — every Antigravity login together,
+     every Command Code seat together — in first-seen order, which is the
+     gateway's. Keyed case-folded so `Codex` and `codex` are one group. */
+  const byProvider = [
+    ...accounts
+      .reduce((groups, account) => {
+        const key = account.provider?.trim() ?? ""
+        const held = groups.get(key.toLowerCase())
+        if (held) held[1].push(account)
+        else groups.set(key.toLowerCase(), [key, [account]])
+        return groups
+      }, new Map<string, [string, QuotaAccount[]]>())
+      .values(),
+  ]
+  return (
+    <UsageCard
+      icon={icon}
+      title={profile.name}
+      subtitle={`${accounts.length === 1 ? "1 account" : `${accounts.length} accounts`} · ${read}`}
+      actions={actions}
+      busy={busy}
+      className="@2xl:col-span-2"
+    >
+      {ungrouped.length > 0 && <WindowList windows={ungrouped} />}
+      {byProvider.map(([provider, members]) => (
+        <section key={provider || "__other"} className="space-y-2">
+          <h3 className="flex items-baseline gap-2 px-0.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+            {provider || "Other"}
+            <span className="font-normal tabular-nums normal-case">
+              {members.length === 1 ? "1 account" : `${members.length} accounts`}
+            </span>
+          </h3>
+          <div className="grid gap-3 @2xl:grid-cols-2">
+            {members.map((account) => {
+              const windows = quota.windows.filter((window) => groupOf(window) === account.group)
+              return (
+                <div key={account.id} className={cn("@container min-w-0 space-y-2 p-2.5", INSET)}>
+                  {/* The provider is the heading above, so a section is named
+                      by whose account it is. */}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h4 className="min-w-0 flex-1 truncate text-xs font-semibold">{account.name}</h4>
+                    <PlanBadge plan={account.plan} />
+                    {account.disabled && (
+                      <Badge variant="outline" className="m-0">
+                        Off
+                      </Badge>
+                    )}
+                  </div>
+                  {windows.length > 0 ? (
+                    <WindowList windows={windows} bare />
+                  ) : (
+                    <EmptyNote>
+                      {account.disabled
+                        ? "Turned off in the gateway — not being spent"
+                        : (account.state ?? "No quota reported")}
+                    </EmptyNote>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      ))}
+      <ReadingExtras quota={quota} rawLabel="What the gateway reported" />
+    </UsageCard>
   )
 }
 
-function AgentQuotaSection({
+function AgentQuotaCard({
   agentId,
   agentName,
   initial,
@@ -620,46 +475,39 @@ function AgentQuotaSection({
   /** The profiles that can spawn this agent, Default first. */
   profiles: { id: string; name: string }[]
 }) {
-  /* Seeded when the list route read this agent's Default profile too, which it
-     usually has; picking another profile is a different cache entry and takes
-     its own reading, and until either answers the card is its own skeleton. The
-     query is keyed by the pair, so switching profiles does not disturb the
-     reading the old one left in the cache. */
+  /* Keyed by the (agent, profile) pair, so switching profiles does not disturb
+     the reading the old one left in the cache. */
   const [profileId, setProfileId] = React.useState(defaultProfileId(agentId))
   const { quota: reading, error, refetch, busy, refresh } = useAgentQuota(agentId, profileId, initial)
   const quota = reading ?? initial
+  const icon = <AgentIcon agentId={agentId} className="size-7 shrink-0" />
 
   if (!quota) {
-    const icon = <AgentIcon agentId={agentId} className="size-5 shrink-0" />
-    // Same as the provider card: a failure here is this card's to draw.
     const failure = inlineFromQuery(error, `Couldn't read ${agentName}'s usage`)
     if (failure) {
       return (
-        <div className="p-3.5 @panel-sm:p-4">
+        <UsageCard icon={icon} title={agentName}>
           <ErrorNote error={failure} onRetry={refetch} />
-        </div>
+        </UsageCard>
       )
     }
-    return <QuotaSectionSkeleton icon={icon} name={agentName} />
+    return <UsageCardSkeleton icon={icon} title={agentName} />
   }
 
   const profileName = profiles.find((p) => p.id === profileId)?.name ?? profileId
-  const fetched = new Date(quota.fetchedAt)
 
   return (
-    <div className="space-y-4 py-3.5">
-      <QuotaSectionHeader
-        icon={<AgentIcon agentId={agentId} className="size-5 shrink-0" />}
-        name={agentName}
-        quota={quota}
-        meta={`Read ${fetched.toLocaleTimeString()} · ${profileName}`}
-        control={
-          profiles.length > 1 ? (
-            <Select
-              value={profileId}
-              onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}
-            >
-              <SelectTrigger className="h-9 w-full @panel-sm:w-44">
+    <UsageCard
+      icon={icon}
+      title={agentName}
+      subtitle={`${profileName} · Read ${new Date(quota.fetchedAt).toLocaleTimeString()}`}
+      badges={quota.planName && <PlanBadge plan={quota.planName} />}
+      busy={busy}
+      actions={
+        <>
+          {profiles.length > 1 && (
+            <Select value={profileId} onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}>
+              <SelectTrigger size="sm" className="w-28 text-xs" aria-label={`Profile ${agentName} is read through`}>
                 <SelectValue>{profileName}</SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -670,15 +518,18 @@ function AgentQuotaSection({
                 ))}
               </SelectContent>
             </Select>
-          ) : undefined
-        }
-        busy={busy}
-        onRefresh={() => refresh()}
-        refreshLabel={`Refresh ${agentName}'s usage`}
-      />
-
-      <QuotaBody quota={quota} rawLabel="What the runtime reported" />
-    </div>
+          )}
+          <RefreshAction busy={busy} onClick={() => refresh()} label={`Refresh ${agentName}'s usage`} />
+        </>
+      }
+    >
+      {quota.windows.length > 0 ? (
+        <WindowList windows={quota.windows} />
+      ) : (
+        <EmptyNote>{quotaStatusText(quota)}</EmptyNote>
+      )}
+      <ReadingExtras quota={quota} rawLabel="What the runtime reported" />
+    </UsageCard>
   )
 }
 
@@ -811,37 +662,6 @@ export function QuotaPage() {
   const probeAgents = agents.filter((agent) => agent.quotaProbe)
   const readingFor = (match: (quota: QuotaSnapshot) => boolean) => quotas?.find(match) ?? null
 
-  /* One card per provider, runtimes last: providers are what somebody
-     configured on purpose — two Z.AI keys share one Z.AI card, each still
-     naming its own account — and a runtime login is the login this machine
-     happens to have, headed by the runtime's own name. An account's `kind` is
-     its profile's `usage.kind`, so a profile the catalog has not caught up
-     with files under its own name rather than nowhere. */
-  const groups = React.useMemo(() => {
-    const byKind = new Map<string, { profiles: Profile[] }>()
-    for (const profile of providerProfiles) {
-      const kind = profile.usage?.kind && profile.usage.kind !== "none" ? profile.usage.kind : profile.id
-      const group = byKind.get(kind) ?? { profiles: [] }
-      group.profiles.push(profile)
-      byKind.set(kind, group)
-    }
-    const providerGroups = [...byKind.entries()].map(([kind, group]) => ({
-      key: `provider:${kind}`,
-      label: providerKindLabel(kind),
-      profiles: group.profiles,
-      agents: [] as typeof agents,
-    }))
-    const runtimeGroups = probeAgents.map((agent) => ({
-      key: `agent:${agent.id}`,
-      label: agent.name,
-      profiles: [] as typeof profiles,
-      agents: [agent],
-    }))
-    return [...providerGroups, ...runtimeGroups].filter(
-      (group) => group.profiles.length + group.agents.length > 0
-    )
-  }, [providerProfiles, probeAgents])
-
   return (
     <>
       <PageHeader
@@ -854,43 +674,42 @@ export function QuotaPage() {
         }
       />
       {quotas && <UsageOverview quotas={quotas} nameOf={nameOf} />}
-      {groups.length === 0 ? (
+      {providerProfiles.length + probeAgents.length === 0 && quotas !== null ? (
         /* Nothing to draw, and the list is the only thing that could still name
-           something the catalog has not caught up with — so it is a wait until
-           it answers, and an empty page after. */
-        quotas === null ? (
-          <QuotaCardsSkeleton />
-        ) : (
-          <EmptyCard
-            icon={GaugeIcon}
-            text="Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that sells a coding plan reports it when the profile names a usage provider in Settings › Profiles."
-          />
-        )
+           something the catalog has not caught up with — so a wait until it
+           answers, and an empty page after. */
+        <EmptyCard
+          icon={GaugeIcon}
+          text="Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that sells a coding plan reports it when the profile names a usage provider in Settings › Profiles."
+        />
       ) : (
-        groups.map((group) => (
-          <Group key={group.key} label={group.label}>
-            {group.profiles.map((profile) => (
-              <ProfileQuotaSection
+        /* Providers first — somebody configured them on purpose — then the
+           runtime logins. The grid asks its own width, not the panel's: the
+           settings column is narrower than the panel it sits in. */
+        <div className="@container">
+          <div className="grid gap-3 @2xl:grid-cols-2">
+            {providerProfiles.length + probeAgents.length === 0 && <QuotaCardsSkeleton />}
+            {providerProfiles.map((profile) => (
+              <ProfileQuotaCards
                 key={`profile:${profile.id}`}
                 profile={profile}
                 initial={readingFor((quota) => quota.source === "profile" && quota.profileId === profile.id)}
               />
             ))}
-            {group.agents.map((agent) => (
-              <AgentQuotaSection
+            {probeAgents.map((agent) => (
+              <AgentQuotaCard
                 key={`agent:${agent.id}`}
                 agentId={agent.id}
                 agentName={agent.name}
                 /* `source` decides which reading is the agent's, not the shape of
-                   what came back: an agent reading with no windows is still an
-                   agent's, and readings taken before providers existed have no
-                   `source` at all. */
+                   what came back: readings taken before providers existed have
+                   no `source` at all. */
                 initial={readingFor((quota) => quota.source !== "profile" && quota.agentId === agent.id)}
                 profiles={profilesFor(agent.id)}
               />
             ))}
-          </Group>
-        ))
+          </div>
+        </div>
       )}
     </>
   )

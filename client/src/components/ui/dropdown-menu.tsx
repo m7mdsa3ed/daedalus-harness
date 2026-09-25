@@ -31,9 +31,7 @@ function DropdownMenuContent({
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
-        /* No `isolate`: it makes this a backdrop root and empties the popup's
-           backdrop, so the frosted blur draws nothing. See popover.tsx. */
-        className="z-50 outline-none"
+        className="isolate z-50 outline-none"
         align={align}
         alignOffset={alignOffset}
         side={side}

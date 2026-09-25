@@ -52,8 +52,11 @@ type Listener = (batch: WatchBatch) => void;
  * overflows the batch. So the tree is walked here, skipping what the explorer
  * hides by default. `.git` is the exception: a ref moving under it is what the
  * git trigger reads, so it is watched — except `.git/objects`, which every
- * commit and turn snapshot fans new files into and which nothing reads. */
-const UNWATCHED = new Set(DEFAULT_IGNORES.filter((name) => name !== ".git"));
+ * commit and turn snapshot fans new files into and which nothing reads.
+ * `.daedalus` is skipped too: it holds whole checkouts (isolated threads'
+ * worktrees), each a second copy of the tree, and their commits land as ref
+ * writes in the main `.git`, which is watched. */
+const UNWATCHED = new Set([...DEFAULT_IGNORES.filter((name) => name !== ".git"), ".daedalus"]);
 
 const isGitDir = (relDir: string) => relDir === ".git" || relDir.endsWith("/.git");
 
@@ -91,8 +94,14 @@ function watchTree(
     try {
       handle = watch(dir, { persistent: false });
     } catch (err) {
+      /* Gone between the listing and the watch is not an error. Anything else
+         is — ENOSPC (the inotify limit) most of all: swallowed, it left a
+         directory deaf with nothing anywhere saying so, and a git trigger
+         whose `refs/heads` never got a handle never fires. */
       if (relDir === "") onError(err as Error);
-      return; // gone between the listing and the watch — not an error
+      else if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+        console.error(`[workspace] cannot watch ${relDir}:`, (err as Error).message);
+      return;
     }
     handles.set(dir, handle);
     handle.on("change", (kind, filename) => {

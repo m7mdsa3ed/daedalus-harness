@@ -14,10 +14,13 @@
    scroll bar with no landmarks on it — this is the table of contents, and the
    only landmarks that mean anything in a conversation are the times you spoke.
 
-   It is an absolute overlay along the card's right edge, bottom-anchored just
-   above the Send button and extending upward — so it adds no size to the
-   composer and sits where the thumb already is. `pointer-events-none` outside
-   the strip itself keeps it from eating textarea taps. It needs the
+   It is an absolute overlay on the transcript's edge, centred in the view, so
+   it adds no size to anything. A mouse gets the left edge; a finger gets the
+   right, because the left is the OS back-swipe on both phones and the right is
+   where the thumb already is. The marks hug that edge and grow inward, so a
+   resting mark stays inside the transcript's gutter and never over its text.
+   `pointer-events-none` outside the strip itself keeps it from eating
+   transcript taps. It needs the
    MessageScroller Provider above the composer for
    `scrollToMessage`/`currentAnchorId` — thread-view lifts the provider to the
    grid root for exactly that.
@@ -66,6 +69,13 @@ const SCRUB_SLOP = 3
     along with it, in px — and how fast, as a fraction of the overshoot. */
 const EDGE_BAND = 36
 const EDGE_SPEED = 0.35
+
+/** A resting mark's length, in px, from the prompt's length — a long ask
+    reads as a longer mark, which is what makes the column a map rather than a
+    ruler of identical lines. Bounded to stay inside the transcript's gutter. */
+function restWidth(text: string): number {
+  return 4 + Math.min(6, Math.round(text.length / 60))
+}
 
 interface Tick {
   /** Row id of the loaded user bubble — null until its messages are paged in. */
@@ -185,6 +195,9 @@ export function ThreadRail({
   const ticks = React.useMemo(() => buildTicks(turns ?? [], items), [turns, items])
   const coarse = useCoarsePointer()
   const pitch = coarse ? PITCH_COARSE : PITCH
+  /* The side the rail rides — see the header: a finger's rail is the right
+     edge, clear of the OS back-swipe. The preview opens toward the text. */
+  const edge = coarse ? "right" : "left"
   const { scrollToMessage } = useMessageScroller()
   const { currentAnchorId } = useMessageScrollerVisibility()
   const hostRef = React.useRef<HTMLDivElement>(null)
@@ -334,7 +347,10 @@ export function ThreadRail({
            long thread still fits and the strip's own overflow travel has a
            track to work. `pointer-events-none` keeps the band from eating
            transcript taps — only the strip itself takes the pointer. */
-        className="pointer-events-none absolute left-1 top-1/2 z-20 h-[min(70%,28rem)] w-5 -translate-y-1/2 flex flex-col items-center"
+        className={cn(
+          "pointer-events-none absolute top-1/2 z-20 flex h-[min(70%,28rem)] -translate-y-1/2 flex-col",
+          edge === "right" ? "right-0 w-7" : "left-0 w-6"
+        )}
       >
         {/* The popover's anchor — the Positioner measures this element's rect
             to place the card, and needs real DOM to anchor to (a controlled
@@ -359,13 +375,14 @@ export function ThreadRail({
            past the card is travelled by holding into the strip's ends, not
            by flicking it. */
         className={cn(
-          "no-scrollbar pointer-events-auto h-full min-h-0 w-full touch-none overflow-y-auto rounded-full py-2 transition-[opacity,background-color] duration-150",
+          "no-scrollbar pointer-events-auto h-full min-h-0 w-full touch-none overflow-y-auto py-2 transition-[opacity,background-color] duration-150",
+          edge === "right" ? "rounded-l-xl" : "rounded-r-xl",
           /* Idle the strip is quiet — dimmed with no chrome. A held scrub
              lights it to full opacity over a pill of card background, so the
              finger has a visible track to drag on. */
           scrub !== null
             ? "bg-background/80 opacity-100 shadow-sm backdrop-blur-sm"
-            : "bg-transparent opacity-75 hover:opacity-100"
+            : "bg-transparent opacity-60 hover:opacity-100"
         )}
         onPointerLeave={() => setHover(null)}
         onPointerDown={(event) => {
@@ -415,7 +432,10 @@ export function ThreadRail({
                 type="button"
                 aria-label={`Jump to message ${tick.n}`}
                 aria-current={active || undefined}
-                className="group/tick flex w-full items-center justify-center"
+                className={cn(
+                  "group/tick flex w-full items-center px-1.5",
+                  edge === "right" ? "justify-end" : "justify-start"
+                )}
                 style={{ height: pitch }}
                 onPointerEnter={() => setHover({ index })}
                 onClick={(event) => {
@@ -431,14 +451,14 @@ export function ThreadRail({
               >
                 <span
                   className={cn(
-                    "h-px rounded-full transition-colors duration-150",
+                    "h-0.5 rounded-full transition-[width,background-color] duration-150",
                     active
                       ? "bg-primary"
                       : selected
                         ? "bg-foreground"
                         : "bg-muted-foreground/40 group-hover/tick:bg-foreground/70"
                   )}
-                  style={{ width: active || selected ? 12 : 6 }}
+                  style={{ width: active || selected ? 14 : restWidth(tick.text) }}
                 />
               </button>
             )
@@ -455,10 +475,10 @@ export function ThreadRail({
           a tap must still reach the tick beneath. Content swaps as the
           selection walks the detents; the positioner tracks the band. */}
       <PopoverContent
-        side="right"
+        side={edge === "right" ? "left" : "right"}
         align="center"
-        sideOffset={8}
-        className="pointer-events-none w-64 max-w-[70vw] border-border/60 bg-popover/95 p-2 text-xs shadow-md backdrop-blur-sm"
+        sideOffset={coarse ? 16 : 8}
+        className="pointer-events-none w-64 max-w-[calc(100vw-4rem)] gap-1 rounded-xl bg-popover/95 p-2.5 text-xs shadow-lg backdrop-blur-sm"
       >
         {preview && (
           <>
@@ -466,15 +486,19 @@ export function ThreadRail({
                 (thread-items): the card quotes what was typed, so an Arabic turn
                 has to read right-to-left here as it does in the transcript — and
                 the two halves are decided separately, since a question in one
-                script is routinely answered in the other. The ordinal is a
-                neutral run, so it does not vote on the direction the text picks,
-                and `me-1` carries it to whichever side that turns out to be. */}
-            <p dir="auto" className="line-clamp-2 font-medium text-foreground">
-              <span className="me-1 text-muted-foreground/60">#{preview.n}</span>
+                script is routinely answered in the other. The ordinal is its
+                own row above both, so it votes on neither. */}
+            <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70 tabular-nums">
+              <span>
+                Turn {preview.n} of {ticks.length}
+              </span>
+              {preview.id === null && <span className="normal-case tracking-normal">loads on jump</span>}
+            </div>
+            <p dir="auto" className="line-clamp-3 font-medium text-foreground">
               {preview.text.trim() || <span className="italic text-muted-foreground">no text</span>}
             </p>
             {preview.reply.trim() && (
-              <p dir="auto" className="mt-1 line-clamp-3 text-muted-foreground">
+              <p dir="auto" className="line-clamp-3 border-s-2 border-border ps-2 text-muted-foreground">
                 {preview.reply}
               </p>
             )}

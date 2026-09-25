@@ -347,6 +347,7 @@ export function reducer(state: State, action: Action): State {
     case "turn-active": {
       const next = withThread(state, action.id, {
         turnActive: action.active,
+        liveUsage: null,
         ...(action.active || action.settle === false
           ? null
           : { items: settleTools(thread(state, action.id).items) }),

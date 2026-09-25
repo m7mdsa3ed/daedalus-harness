@@ -1047,8 +1047,7 @@ const CommandMenuList = forwardRef<HTMLDivElement, CommandMenuListProps>(
       // it; the bottom hairline stands while rows continue below and goes at
       // the end, which is why the footer draws no line of its own.
       <ScrollArea
-        className="scroll-divider flex min-h-0 flex-1 flex-col border-t border-border/60 [&::before]:!-top-px"
-        viewportClassName="min-h-0 flex-1 [&>div[style]]:!block [&>div[style]]:!min-w-0 [--scroll-fade-size:32px] scroll-fade"
+        className="scroll-divider flex min-h-0 flex-1 flex-col border-t border-border/60 [&::before]:!-top-px [&>[data-slot=scroll-area-viewport]]:min-h-0 [&>[data-slot=scroll-area-viewport]]:flex-1 [&>[data-slot=scroll-area-viewport]>div[style]]:!block [&>[data-slot=scroll-area-viewport]>div[style]]:!min-w-0 [&>[data-slot=scroll-area-viewport]]:[--scroll-fade-size:32px] [&>[data-slot=scroll-area-viewport]]:scroll-fade"
       >
         <div
           ref={(node) => {
@@ -1459,7 +1458,6 @@ function CommandMenuDialog({
   title = "Command menu",
   description = "Search for a command to run.",
   modal,
-  container,
   className,
   children,
 }: CommandMenuDialogProps) {
@@ -1522,16 +1520,13 @@ function CommandMenuDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen} modal={modal}>
       <DialogContent
-        size="lg"
-        container={container}
         showCloseButton={false}
         // Opens centered at its cap and keeps that top edge: the top is where
         // a panel at the cap height, min(440px, 76dvh), sits centered, so
         // the field stays put while the rows under it filter down. Below
         // 580px of height the cap is 76dvh and the top lands on 12dvh.
-        position="top"
         className={cn(
-          "top-[max(12dvh,calc(50dvh-220px))] flex max-h-[min(440px,76dvh)] flex-col overflow-hidden p-0",
+          "sm:max-w-[540px] translate-y-0 top-[max(12dvh,calc(50dvh-220px))] flex max-h-[min(440px,76dvh)] flex-col overflow-hidden p-0",
           className
         )}
       >

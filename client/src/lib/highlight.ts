@@ -32,6 +32,7 @@ import csharp from "highlight.js/lib/languages/csharp"
 import css from "highlight.js/lib/languages/css"
 import diff from "highlight.js/lib/languages/diff"
 import go from "highlight.js/lib/languages/go"
+import graphql from "highlight.js/lib/languages/graphql"
 import ini from "highlight.js/lib/languages/ini"
 import java from "highlight.js/lib/languages/java"
 import javascript from "highlight.js/lib/languages/javascript"
@@ -55,6 +56,7 @@ const lowlight = createLowlight({
   css,
   diff,
   go,
+  graphql,
   ini,
   java,
   javascript,

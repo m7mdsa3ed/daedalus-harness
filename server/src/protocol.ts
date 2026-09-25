@@ -547,6 +547,9 @@ export interface TurnChanges {
   /** Neither tree could be taken — the project is not a repository. */
   unavailable: boolean;
   startedAt: number;
+  /** The child thread (a workflow step, a subagent run as a thread) that ran
+      this turn, when it is not the thread being read. */
+  sessionId?: string;
 }
 
 export type SessionUpdate =

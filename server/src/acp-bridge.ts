@@ -45,8 +45,11 @@ import type { BuiltinToolOverrides } from "./db/schema.js";
 
 /** Long enough for a cold agent to boot and answer `session/new`; short enough
     that a wedged one does not hold an HTTP request open forever. Same ceiling
-    the probe uses, for the same reason. */
-export const HANDSHAKE_TIMEOUT_MS = 25_000;
+    the probe uses, for the same reason. 25 s was measured too short: a cold
+    claude-agent-acp on a loaded box takes ~5 s to answer `initialize` and
+    ~6-10 s more for `session/new` (its SDK init, plus a `claude auth status`
+    probe that alone can hit its own 5 s cap), before any restore requests. */
+export const HANDSHAKE_TIMEOUT_MS = 60_000;
 
 /**
  * Start an agent process. Both callers — a thread's bridge and the throwaway

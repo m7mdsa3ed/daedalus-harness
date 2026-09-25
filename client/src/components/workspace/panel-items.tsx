@@ -21,10 +21,13 @@
 import * as React from "react"
 import {
   AppWindowIcon,
+  Columns2,
+  Columns3,
   LayoutGrid,
   PanelsTopLeft,
   PlusIcon,
   SaveIcon,
+  Rows2,
   Square,
   Trash2,
 } from "lucide-react"
@@ -40,7 +43,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { usePrompt } from "@/components/prompt-dialog"
 import { toast } from "@/lib/toast"
-import type { WorkspaceDock } from "@/components/workspace/dock-context"
+import type { PresetId, WorkspaceDock } from "@/components/workspace/dock-context"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import type { ShortcutId } from "@/lib/shortcuts"
@@ -144,7 +147,16 @@ export function WorkspacePanelItems({
   )
 }
 
-/** The arrangements: the two presets, and the layouts the reader has saved.
+/** The arrangement presets, in the order every menu lists them. */
+export const LAYOUT_PRESETS: { id: PresetId; label: string; Icon: typeof Square }[] = [
+  { id: "focus", label: "Focus", Icon: Square },
+  { id: "columns", label: "Two columns", Icon: Columns2 },
+  { id: "columns3", label: "Three columns", Icon: Columns3 },
+  { id: "rows", label: "Two rows", Icon: Rows2 },
+  { id: "grid", label: "Grid", Icon: LayoutGrid },
+]
+
+/** The arrangements: the presets, and the layouts the reader has saved.
 
     A submenu rather than rows, and in this menu rather than in the tab strip,
     for the same reason the panels are: it is one list, it is read rarely, and
@@ -188,9 +200,11 @@ export function WorkspaceLayoutItems({ dock }: { dock: WorkspaceDock }) {
           />
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className={MENU_WIDTH}>
-          <DropdownMenuItem onClick={() => dock.applyPreset("focus")} className={MENU_ROW}>
-            <MenuRow icon={<Square />} label="Arrange: Focus" />
-          </DropdownMenuItem>
+          {LAYOUT_PRESETS.map(({ id, label, Icon }) => (
+            <DropdownMenuItem key={id} onClick={() => dock.applyPreset(id)} className={MENU_ROW}>
+              <MenuRow icon={<Icon />} label={`Arrange: ${label}`} />
+            </DropdownMenuItem>
+          ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={save} className={MENU_ROW}>
             <MenuRow icon={<SaveIcon />} label="Save this layout…" />

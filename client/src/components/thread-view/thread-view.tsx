@@ -21,6 +21,7 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from "@/components/ui/message-scroller"
 import type { Actions } from "@/lib/actions"
 import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/lib/keyboard-inset"
@@ -28,6 +29,10 @@ import { holdOf } from "@/lib/thread/hold"
 import { isOpening } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem } from "@/lib/store"
+import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
+import { DockContext } from "@/components/workspace/dock-context"
+import { useProjects } from "@/lib/queries/catalog"
+import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { useLocation } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
@@ -59,6 +64,7 @@ import { useChord } from "@/lib/keybindings"
 import { formatChord } from "@/lib/shortcuts"
 import {
   InspectorContext,
+  ThreadJumpContext,
   inspectorPrefs,
   setInspectorPref,
   type InspectorTab,
@@ -71,6 +77,7 @@ import { StartingLine, useWaitShown } from "@/components/thread-view/starting-li
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
 import { ThreadInspector } from "@/components/thread-view/thread-inspector"
+import { QuoteSelection } from "@/components/thread-view/quote-selection"
 
 /** How wide the *panel* must be for the inspector to dock beside the
     transcript (`--container-panel-lg`, 64rem); below it the column is a sheet. */
@@ -93,7 +100,18 @@ function rowContains(row: Row, id: string): boolean {
     the key down (see workspace/chat-panel): every store read, every action and
     every device-local draft below is keyed by it, because a bare session id is
     unique only on the server that minted it. */
-export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
+export function ThreadView({
+  sessionId,
+  actions,
+  docked = false,
+}: {
+  sessionId: string
+  actions: Actions
+  /** The transcript panel of a thread dock (`workspace/thread-dock.tsx`): the
+      readings are panels beside it there, so this view draws no inspector of
+      its own and answers "Open in inspector" with the dock's door. */
+  docked?: boolean
+}) {
   /* Narrow subscriptions, not the wide hook: the dock keeps every opened
      transcript mounted, and on `useStore()` a streamed token in ANY thread
      re-rendered every one of them and re-ran the derivations below. These two
@@ -344,16 +362,24 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   const [rewindBusy, setRewindBusy] = React.useState(false)
   const agents = useAgents()
   const meta = useSessionMeta(sessionId)
-  /* Reviewing a turn is the IDE's source-control view, narrowed to the files
-     that turn touched (`lib/ide/scm-filter.ts`). Not a surface of its own: what
-     you want after reading "7 files changed" is the working set — staging,
-     discarding and the commit box already around it — and a second list of the
-     same files that could do none of those is what the changes tab was.
-
-     The narrowing is by path against `git status`, so it shows the turn's
-     files *that are still uncommitted*. A turn whose work has been committed
-     since filters down to nothing, and the view says so rather than pretending
-     the turn changed nothing. */
+  /* A mention or file link opens in the project's Preview — inside this
+     thread's dock when it has one (its `openPanel` keeps a preview there), the
+     outer dock's otherwise. Null in a popout, which has no dock. */
+  const dock = React.useContext(DockContext)
+  const projectId = meta?.projectId ?? HOME_PROJECT_ID
+  const projectRoot = useProjects().find((project) => project.id === projectId)?.cwd
+  const worktree = meta?.worktree?.path
+  const filePreview = React.useMemo<FilePreviewValue | null>(
+    () =>
+      dock
+        ? {
+            scope: { projectId, root: projectRoot, worktree },
+            open: (file) =>
+              dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file }),
+          }
+        : null,
+    [dock, projectId, projectRoot, worktree]
+  )
   /* The agent's rewind door: absent/false = the conversation half is not
      offered on this thread, and files are restored on their own. Read off the
      catalog like every other agent capability — the server still refuses what
@@ -450,8 +476,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   }, [])
   const wide = panelWidth >= INSPECTOR_WIDE
   const [sheetOpen, setSheetOpen] = React.useState(false)
-  const docked = wide && inspector.open && !!meta
-  const sheet = !wide && sheetOpen && !!meta
+  const dockOpen = React.useContext(InspectorContext)
+  const inspectorDocked = !docked && wide && inspector.open && !!meta
+  const sheet = !docked && !wide && sheetOpen && !!meta
   const openInspector = React.useCallback(
     (tab?: InspectorTab) => {
       if (tab) setInspectorPref("tab", tab)
@@ -464,7 +491,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     if (wide) setInspectorPref("open", !inspector.open)
     else setSheetOpen((open) => !open)
   }
-  useShortcut("inspector", toggleInspector, { enabled: routed })
+  useShortcut("inspector", toggleInspector, { enabled: routed && !docked })
   /* The row a subagent is drawn in, for the Agents tab's jump: a nested group
      lives inside a run, a batch or a workflow, and only top-level rows are
      scroller items. */
@@ -507,16 +534,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
         the turn rail needs the scroller's `scrollToMessage`/`currentAnchorId`
         as much as the transcript does. The provider renders no DOM of its own
         — context only — so this changes nothing about the layout. */}
-    <InspectorContext.Provider value={meta ? openInspector : null}>
+    <FilePreviewContext.Provider value={filePreview}>
+    <InspectorContext.Provider value={docked ? dockOpen : meta ? openInspector : null}>
+    {docked && <PublishJump locate={locate} />}
     <div
       ref={rootRef}
       data-empty={empty || undefined}
       className={cn(
         "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
-        docked && "grid-cols-[minmax(0,1fr)_auto]"
+        inspectorDocked && "grid-cols-[minmax(0,1fr)_auto]"
       )}
     >
-      {(docked || sheet) && meta && (
+      {(inspectorDocked || sheet) && meta && (
         <>
           {sheet && (
             <button
@@ -532,14 +561,14 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
             meta={meta}
             changes={latestChanges}
             onSend={(text) => actions.send(sessionId, text)}
-            mode={docked ? "docked" : "sheet"}
-            onClose={() => (docked ? setInspectorPref("open", false) : setSheetOpen(false))}
+            mode={inspectorDocked ? "docked" : "sheet"}
+            onClose={() => (inspectorDocked ? setInspectorPref("open", false) : setSheetOpen(false))}
             locate={locate}
             maxWidth={panelWidth - INSPECTOR_TRANSCRIPT_MIN}
           />
         </>
       )}
-      {meta && !docked && !sheet && (
+      {meta && !docked && !inspectorDocked && !sheet && (
         <Button
           variant="ghost"
           size="icon-sm"
@@ -954,7 +983,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 /* Docked beside the inspector, the overlay stops at its edge —
                    the column publishes its live width (drag included) as
                    `--inspector-w` on this grid root. */
-                docked ? "left-0 right-[var(--inspector-w,20rem)]" : "inset-x-0"
+                inspectorDocked ? "left-0 right-[var(--inspector-w,20rem)]" : "inset-x-0"
               ),
         )}
       >
@@ -969,11 +998,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           changes={latestChanges}
         />
       </div>
+      <QuoteSelection rootRef={rootRef} onQuote={(text) => composerApiRef.current?.quote(text)} />
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
       <span aria-hidden className="col-start-1 row-start-3" />
     </div>
     </InspectorContext.Provider>
+    </FilePreviewContext.Provider>
     {rewindTarget && (
       <RewindDialog
         open={rewindTarget !== null}
@@ -1002,4 +1033,24 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     )}
     </MessageScrollerProvider>
   )
+}
+
+/** Hands the thread dock this transcript's scroll-to-row, so the Agents panel
+    can jump a transcript it is not inside. A component because the scroller's
+    hook only answers under `MessageScrollerProvider`, which `ThreadView`
+    itself renders. */
+function PublishJump({ locate }: { locate: (id: string) => string | undefined }) {
+  const target = React.useContext(ThreadJumpContext)
+  const { scrollToMessage } = useMessageScroller()
+  React.useEffect(() => {
+    if (!target) return
+    target.current = (id) => {
+      const row = locate(id)
+      if (row) scrollToMessage(row, { align: "start", behavior: "smooth" })
+    }
+    return () => {
+      target.current = null
+    }
+  }, [target, locate, scrollToMessage])
+  return null
 }

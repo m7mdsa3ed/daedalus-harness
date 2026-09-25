@@ -88,6 +88,11 @@ export interface ThreadState {
       tags it later, and a replay builds it from `turn_started`) and the usage
       arrives after everything else in the turn. Journaled, so it replays. */
   turnUsage: Record<string, acp.Usage>
+  /** The running turn's bill so far, summed from the per-step figures our
+      runtime rides on `usage_update` (`_meta.daedalus.step`). A preview only:
+      cleared at every turn boundary, where `turn_ended` folds the real total
+      into `usage`. Null for a runtime that reports no step figure. */
+  liveUsage: acp.Usage | null
   /** Server-measured wall clock per turn, ms, keyed by `turnId` — the same
       `turn_ended` the usage above is folded from. Kept beside it rather than
       inside it because `acp.Usage` is the SDK's shape and gains nothing by
@@ -187,6 +192,7 @@ export const emptyThread: ThreadState = {
   availableCommands: [],
   usage: null,
   turnUsage: {},
+  liveUsage: null,
   turnDuration: {},
   turnToolDuration: {},
   context: null,

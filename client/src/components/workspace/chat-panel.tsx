@@ -2,8 +2,9 @@ import * as React from "react"
 import type { IDockviewPanelProps } from "dockview-react"
 
 import { ErrorBoundary } from "@/components/error-boundary"
-import { ThreadView } from "@/components/thread-view/thread-view"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
+import { ThreadDock } from "@/components/workspace/thread-dock"
+import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { markFor, type ThreadActivity } from "@/lib/thread/phase"
@@ -86,6 +87,16 @@ export function ChatPanel({
   /* What makes a path or a source in a tool call clickable — shared with every
      other surface that renders a transcript (see lib/workspace/use-thread-links). */
   const links = useThreadLinksFor(params.sessionId)
+  /* Hidden outright while this tab is not the one in front. Dockview hides an
+     inactive panel with `visibility`, and the thread dock's own `always`
+     overlays escape it — every thread drew over the others, so only the last
+     one mounted showed. `display: none` has no inheritance to escape. */
+  const [visible, setVisible] = React.useState(api.isVisible)
+  React.useEffect(() => {
+    setVisible(api.isVisible)
+    const sub = api.onDidVisibilityChange((event) => setVisible(event.isVisible))
+    return () => sub.dispose()
+  }, [api])
 
   /* No row yet: the session list has not landed, so there is nothing to
      connect to and `ThreadView` cannot mount (every read below it is keyed by
@@ -102,10 +113,12 @@ export function ChatPanel({
     )
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={cn("flex h-full min-h-0 flex-col", !visible && "hidden")}>
       <ErrorBoundary name="this thread" resetKeys={[meta.id]}>
         <ThreadLinksProvider value={links}>
-          <ThreadView key={meta.id} sessionId={meta.id} actions={actions} />
+          {/* The tab is a dock of the thread's own panels (`thread-dock.tsx`) —
+              on a phone too, where it stacks them as tabs. */}
+          <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
         </ThreadLinksProvider>
       </ErrorBoundary>
     </div>

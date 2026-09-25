@@ -15,6 +15,7 @@ import {
   type AgentsStatus,
   type CommandDef,
   type McpCheckResult,
+  type ThreadMcpServer,
   type McpServerDef,
   type ModelPrompt,
   type Persona,
@@ -30,6 +31,7 @@ import {
   agentsStatusKey,
   commandsKey,
   mcpCatalogKey,
+  threadMcpKey,
   mcpServersKey,
   modelPromptsKey,
   personasKey,
@@ -170,6 +172,22 @@ export function useMcpCatalog(id: string) {
     refetchOnWindowFocus: false,
     retry: false,
   })
+}
+
+/**
+ * The MCP servers a thread's agent was handed, with the prompts and resources
+ * each offers — what the composer's `/` and `@` menus draw from. Read from the
+ * server's stored listings, so it costs no connect while they are fresh; off
+ * for a draft, which has no links the server knows of yet.
+ */
+export function useThreadMcp(sessionId: string, enabled: boolean): ThreadMcpServer[] {
+  const settings = useServer()
+  return list<ThreadMcpServer>(useApiQuery<ThreadMcpServer[]>(threadMcpKey(settings, sessionId), `/api/sessions/${sessionId}/mcp`, {
+    enabled,
+    staleTime: CATALOG_STALE_MS,
+    refetchOnWindowFocus: false,
+    retry: false,
+  }).data)
 }
 
 export function useSkills(): SkillDef[] {

@@ -1,7 +1,6 @@
 /* ── The dock, drawn ──
-   `DockSurface` is one dockview instance — the same components, tab and strip
-   at either level — and `WorkspaceDock` is the top-level one: the component
-   map every kind is registered in, the phone's one-stack rule, the header
+   `DockSurface` is the dockview instance and its options; `WorkspaceDock` is
+   what surrounds it: the component map every kind is registered in, the phone's one-stack rule, the header
    measurement's listeners and the contexts the panels read. What the dock
    *does* is `useWorkspaceDock` (`dock.tsx`); what it says to its panels is
    `dock-context.ts`. */
@@ -11,6 +10,7 @@ import {
   themeAbyss,
   themeLight,
   type DockviewApi,
+  type GetTabGroupChipContextMenuItemsParams,
   type IDockviewPanelProps,
 } from "dockview-react"
 import "dockview-react/dist/styles/dockview.css"
@@ -19,6 +19,8 @@ import { ChatPanel } from "@/components/workspace/chat-panel"
 import {
   DockContext,
   DockOpenersContext,
+  TAB_GROUP_COLORS,
+  useDock,
   type DockOpeners,
   type WorkspaceDock as WorkspaceDockApi,
 } from "@/components/workspace/dock-context"
@@ -33,7 +35,6 @@ import type { Actions } from "@/lib/actions"
 import { navigateTo } from "@/lib/router"
 import { MOBILE_BREAKPOINT, useIsMobile } from "@/hooks/use-device"
 import { useTheme } from "@/lib/theme"
-import { cn } from "@/lib/utils"
 import { PANEL_KINDS } from "@/lib/workspace/panels"
 
 /* The terminal and board carry libraries the rest of the app does not. The
@@ -47,34 +48,31 @@ const TasksPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/tasks-panel"))
     .TasksPanel as React.FC<IDockviewPanelProps>,
 }))
-/* The group panel is lazy for a second reason on top of the chunk: it imports
-   `DockSurface` from *this* file, so a static import would be a module cycle
-   evaluated at load. A dynamic one is resolved when a group is first drawn, by
-   which time this module is whole. */
-const GroupPanel = React.lazy(async () => ({
-  default: (await import("@/components/workspace/group-panel")).GroupPanel as React.FC<IDockviewPanelProps>,
-}))
-
-/* The component map, as a context: a nested dock is rendered from inside a
-   panel and cannot be handed props by the outer one, and it must draw the same
-   panels — a tab in a group is the same object it was outside one. Built once
-   in `WorkspaceDock` (it closes over `actions`) and read here. */
-const DockComponentsContext = React.createContext<Record<string, React.FC<IDockviewPanelProps>>>({})
-
 /**
- * One dockview surface — the same components, the same tab, the same strip, at
- * either level (`group-panel.tsx`). Everything that differs between the two is
- * CSS on the class the caller passes (`.dock-nested`, `index.css`).
+ * The dockview surface: the tab, the strip's actions, the tab-group chips and
+ * the options every strip shares. One instance — tabs are grouped by dockview's
+ * own tab groups, not by a second dock inside a tab.
  */
 export function DockSurface({
-  className,
+  components,
   onReady,
 }: {
-  className?: string
-  onReady: (api: DockviewApi) => void
+  components: Record<string, React.FC<IDockviewPanelProps>>
+  /** May answer its own teardown. `DockviewReact` drops whatever `onReady`
+      returns and never says when it disposes, so the surface keeps it: run on
+      the next ready (StrictMode mounts the instance twice) and on unmount. */
+  onReady: (api: DockviewApi) => void | (() => void)
 }) {
   const { resolved } = useTheme()
-  const components = React.useContext(DockComponentsContext)
+  const dock = useDock()
+  const teardownRef = React.useRef<(() => void) | void>(undefined)
+  React.useEffect(
+    () => () => {
+      teardownRef.current?.()
+      teardownRef.current = undefined
+    },
+    []
+  )
   /* ── Reordering a tab is a reorder, not a target picker ──
      Dockview's default is a half-width fill over every tab — a row of slabs
      the size of half a tab, which is what "multiple spots, wrong size" was.
@@ -94,10 +92,30 @@ export function DockSurface({
     [resolved]
   )
 
+  /* The chip's own menu is dockview's (rename, colour, collapse) except for
+     Close, which has to be ours: dockview's removes the panels outright, past
+     a terminal's guard and the reopen stack. "Ungroup" keeps the tabs. */
+  const chipMenu = React.useCallback(
+    ({ tabGroup, group, api }: GetTabGroupChipContextMenuItemsParams) => [
+      "rename" as const,
+      "colorPicker" as const,
+      "collapse" as const,
+      "separator" as const,
+      {
+        label: "Ungroup",
+        action: () => api.dissolveTabGroup({ groupId: group.id, tabGroupId: tabGroup.id }),
+      },
+      { label: "Close group", action: () => void dock.closeTabGroup(group.id, tabGroup.id) },
+    ],
+    [dock]
+  )
+
   return (
     <DockviewReact
-      className={cn("session-dock h-full min-h-0 flex-1", className)}
+      className="session-dock h-full min-h-0 flex-1"
       components={components}
+      tabGroupColors={TAB_GROUP_COLORS}
+      getTabGroupChipContextMenuItems={chipMenu}
       defaultRenderer="always"
       defaultTabComponent={PanelTab}
       /* Floating groups are on: a panel over the dock, and — through
@@ -105,7 +123,10 @@ export function DockSurface({
          keeps a float from being dragged off-screen, which on a laptop is a
          panel the user cannot get back without clearing the layout. */
       floatingGroupBounds="boundedWithinViewport"
-      onReady={(event) => onReady(event.api)}
+      onReady={(event) => {
+        teardownRef.current?.()
+        teardownRef.current = onReady(event.api)
+      }}
       /* Dockview draws its own overflow chevron once the tabs stop fitting,
          and `TabActions` already draws one at the same end of the same strip
          — two dropdowns side by side, answering the same question. Ours is
@@ -154,7 +175,8 @@ function useTabSwipe(enabled: boolean, cycle: (delta: number) => void) {
     const down = (e: PointerEvent) => {
       if (e.pointerType !== "touch" || !e.isPrimary) return
       const target = e.target as Element | null
-      if (!target?.closest(".dv-tabs-and-actions-container")) return
+      /* The thread dock's own strip scrolls sideways; a swipe there is not a tab switch. */
+      if (!target?.closest(".dv-tabs-and-actions-container") || target.closest(".dock-nested")) return
       start = { id: e.pointerId, x: e.clientX, y: e.clientY, axis: null }
     }
     const move = (e: PointerEvent) => {
@@ -246,7 +268,6 @@ export function WorkspaceDock({
     map.tasks = contained(TasksPanel)
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
     map.page = contained(PagePanel as React.FC<IDockviewPanelProps>)
-    map.group = contained(GroupPanel)
     return map
   }, [actions])
 
@@ -334,9 +355,7 @@ export function WorkspaceDock({
       }
       queueMicrotask(sync)
       onReady(api)
-      /* Dockview does not tell us when it tears the component down, and
-         `onReady` runs again on a theme remount — the dock's own cleanup path
-         disposes its listeners the same way. */
+      /* Run by `DockSurface` on the next ready and on unmount. */
       return () => {
         if (overlapFrame !== undefined) cancelAnimationFrame(overlapFrame)
         window.removeEventListener("resize", syncOverlap)
@@ -354,9 +373,7 @@ export function WorkspaceDock({
   return (
     <DockContext.Provider value={dock}>
       <DockOpenersContext.Provider value={openers}>
-        <DockComponentsContext.Provider value={components}>
-          <DockSurface onReady={handleReady} />
-        </DockComponentsContext.Provider>
+        <DockSurface components={components} onReady={handleReady} />
       </DockOpenersContext.Provider>
     </DockContext.Provider>
   )

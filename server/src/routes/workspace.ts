@@ -572,8 +572,24 @@ export function workspaceRoutes(app: Hono): void {
 
   app.post("/api/projects/:projectId/terminals", async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const { title, cols, rows } = body as { title?: string; cols?: number; rows?: number };
-    return workspace(c, async () => await createTerminal(c.req.param("projectId"), { title, cols, rows }));
+    /* `cwd` is a thread's worktree (project-relative, clamped inside the project
+       by `containedPath`) and `sessionId` ties the shell's life to that thread. */
+    const { title, cols, rows, cwd, sessionId } = body as {
+      title?: string;
+      cols?: number;
+      rows?: number;
+      cwd?: string;
+      sessionId?: string;
+    };
+    return workspace(c, async () =>
+      await createTerminal(c.req.param("projectId"), {
+        title,
+        cols,
+        rows,
+        cwd: typeof cwd === "string" ? cwd : null,
+        sessionId: typeof sessionId === "string" ? sessionId : null,
+      }),
+    );
   });
 
   app.delete("/api/projects/:projectId/terminals/:terminalId", (c) =>

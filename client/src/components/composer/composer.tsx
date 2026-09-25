@@ -68,7 +68,6 @@ import { ArrowUp, History, Mic, Pause, Play, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
 import {
   AgentsIndicator,
@@ -81,7 +80,9 @@ import {
   connectionNote,
   connectionTone,
 } from "@/components/composer-status"
-import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/components/composer-attachments"
+import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
+import { ComposerEditor, type TextSurface } from "@/components/composer/composer-editor"
+import { quoteLines } from "@/components/composer/editor-text"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { ComposerAddMenu } from "@/components/composer/add-menu"
@@ -107,10 +108,11 @@ import type { Actions } from "@/lib/actions"
 import { useComposerPrefs } from "@/lib/composer-prefs"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { reportError } from "@/lib/errors"
+import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
+import { useServer } from "@/lib/server-context"
 import { useChords } from "@/lib/keybindings"
 import {
   clearPastes,
-  dropPaste,
   expandPastes,
   isLongPaste,
   livePastes,
@@ -127,6 +129,7 @@ import {
   useProjects,
   useRecordComposerHistory,
   useShellHistory,
+  useThreadMcp,
 } from "@/lib/queries"
 import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
@@ -155,6 +158,9 @@ export interface ComposerHandle {
       the message it hands back has already left the queue by the time it
       arrives, so it must never land on top of something typed since. */
   isEmpty(): boolean
+  /** Add an excerpt under what is typed as `> ` lines — drawn in the box as a
+      quote card — caret on the line after it. The transcript's "Ask about this". */
+  quote(excerpt: string): void
 }
 
 export function Composer({
@@ -203,6 +209,7 @@ export function Composer({
      was written in: a send that fails asks whether the composer is still the
      empty one it left behind before putting the words back. */
   const textRef = React.useRef(text)
+  const composerRef = React.useRef<TextSurface>(null)
   textRef.current = text
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
@@ -244,6 +251,10 @@ export function Composer({
      thread is opening — which is what stops a second Enter on a draft from
      POSTing the same session id twice. */
   const draft = meta?.draft === true
+  /* The thread's MCP servers, read by the harness's own client: their prompts
+     join the `/` menu and their resources the `@` one, for every runtime. */
+  const server = useServer()
+  const mcpServers = useThreadMcp(sessionId, !draft)
   const lock = composerLock(thread.phase, draft)
   const disabled = !lock.typable
 
@@ -303,6 +314,19 @@ export function Composer({
        a second time — which the server answers with a 409 and the user sees as
        a failure to send the message that was already sending. */
     if (!lock.submittable) return
+    /* An MCP prompt is rendered by its server and put in the box, not sent:
+       the words are the server's, and the person reads them before the agent
+       does. The line stays if the server fails, so nothing typed is lost. */
+    const mcpPrompt = draft ? null : mcpPromptFor(value, mcpServers, thread.availableCommands)
+    if (mcpPrompt) {
+      void renderMcpPrompt(server, sessionId, mcpPrompt.server.id, mcpPrompt.prompt.name, mcpPrompt.args)
+        .then((rendered) => {
+          if (rendered) setText(rendered)
+          else reportError(new Error("the prompt came back empty"), `Couldn't render /${mcpPrompt.server.name}:${mcpPrompt.prompt.name}`)
+        })
+        .catch((err) => reportError(err, `Couldn't render /${mcpPrompt.server.name}:${mcpPrompt.prompt.name}`))
+      return
+    }
     const command = draft ? null : harnessCommandFor(value, thread.availableCommands)
     if (command?.name === "schedule") {
       openSchedule(command.args)
@@ -405,7 +429,7 @@ export function Composer({
   /* Up/Down walk what has already been sent — from anywhere, not just here.
      It goes after the slash menu in the key handler below: while that menu is
      open the arrows are its. */
-  const history = usePromptHistory(composerHistory.items, setText)
+  const history = usePromptHistory(composerHistory.items, setText, composerRef)
 
   /* Running an agent command is just sending `/name args` as the prompt — the
      agent resolves it — so the menu only completes the name. Drafts advertise
@@ -416,9 +440,16 @@ export function Composer({
      dropped again where the runtime does not take the request — offering a
      command that can only answer "this agent decides for itself" is worse than
      not offering it. */
-  const harnessCommands = draft
-    ? []
-    : HARNESS_COMMANDS.filter((c) => c.name !== "compact" || thread.canCompact)
+  const harnessCommands = React.useMemo(
+    () =>
+      draft
+        ? []
+        : [
+            ...HARNESS_COMMANDS.filter((c) => c.name !== "compact" || thread.canCompact),
+            ...mcpPromptCommands(mcpServers),
+          ],
+    [draft, thread.canCompact, mcpServers],
+  )
   const slash = useSlashCommands(text, thread.availableCommands, setText, harnessCommands)
   const hasCommands = thread.availableCommands.length > 0 || harnessCommands.length > 0
 
@@ -477,7 +508,6 @@ export function Composer({
      reason history does: whichever menu is open owns the arrows. The two cannot
      both be open (a `/name` token holds no `@`), but the order is stated rather
      than relied upon. */
-  const composerRef = React.useRef<HTMLTextAreaElement>(null)
 
   /* A new thread is a route change into an empty screen whose only purpose is
      the box, so the box takes the caret itself — "New thread" then typing,
@@ -506,6 +536,12 @@ export function Composer({
     setText,
     projectId: meta?.projectId,
     inputRef: composerRef,
+    mcpServers,
+    onResource: (resource) => {
+      readMcpResourceFile(server, sessionId, resource.serverId, resource.uri, resource.name)
+        .then((file) => files.add([file]))
+        .catch((err) => reportError(err, `Couldn't read ${resource.uri}`))
+    },
   })
 
   const { insertMention, insertCommand, insertProjectCommand, insertCodeBlock } = textInsertions({
@@ -545,7 +581,14 @@ export function Composer({
   )
   React.useImperativeHandle(
     ref,
-    () => ({ fill: applySuggestion, isEmpty: () => text.trim() === "" }),
+    () => ({
+      fill: applySuggestion,
+      isEmpty: () => text.trim() === "",
+      quote: (excerpt) => {
+        const typed = text.replace(/\s+$/, "")
+        applySuggestion(`${typed ? `${typed}\n\n` : ""}${quoteLines(excerpt.trim())}\n\n`)
+      },
+    }),
     [applySuggestion, text]
   )
 
@@ -558,33 +601,29 @@ export function Composer({
      `text` is a render, and the caret it wants has to be re-applied *after*
      that render and ahead of the sync from `selectionStart`. So it goes through
      that hook's own slot rather than a second mechanism racing it. */
-  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const onPaste = (event: ClipboardEvent): boolean => {
     /* Files BEFORE text: a screenshot on the clipboard usually carries a
        text/plain fallback too, and reading text first would turn every
        screenshot paste into an empty chip. */
-    const pastedFiles = [...event.clipboardData.files]
+    const pastedFiles = [...(event.clipboardData?.files ?? [])]
     if (pastedFiles.length > 0) {
       event.preventDefault()
       files.add(pastedFiles)
-      return
+      return true
     }
-    const plain = event.clipboardData.getData("text/plain")
-    if (!plain || !isLongPaste(plain)) return
+    const plain = event.clipboardData?.getData("text/plain")
+    if (!plain || !isLongPaste(plain)) return false
     event.preventDefault()
-    const el = event.currentTarget
+    const el = composerRef.current
     const [start, end] = selectionOf(el, text.length)
     const paste = mintPaste(pastes, plain)
     const token = pasteToken(paste.n)
     setPastes([...pastes, paste])
     mentions.requestCaret(start + token.length)
     setText(text.slice(0, start) + token + text.slice(end))
+    return true
   }
 
-  const removePaste = (n: number) => {
-    const next = dropPaste(text, pastes, n)
-    setText(next.text)
-    setPastes(next.pastes)
-  }
 
 
   /* What the row reads about the prompt. `lines` counts newlines rather than
@@ -694,10 +733,6 @@ export function Composer({
           onRemoveAttachment={files.remove}
           onRetryAttachment={files.retry}
         />
-        {/* Long pastes, parked as tokens in the textarea, shown as chips.
-            Moved from inside the card to the strip so pastes and files are
-            managed on the same shelf. */}
-        <ComposerPastes pastes={shownPastes} onRemove={removePaste} />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
         {history.browsing && (
@@ -776,12 +811,13 @@ export function Composer({
             Drop to attach
           </div>
         )}
-        <Textarea
+        <ComposerEditor
           ref={composerRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={setText}
           onSelect={mentions.onSelect}
           onPaste={onPaste}
+          pastes={shownPastes}
           onKeyDown={composerKeyDown({
             slash,
             commands,
@@ -792,7 +828,7 @@ export function Composer({
             steerChords,
             send,
           })}
-          aria-label="Message the agent"
+          ariaLabel="Message the agent"
           placeholder={
             lock.note ??
             (voice.listening && !text
@@ -804,18 +840,16 @@ export function Composer({
                   : (placeholder ?? "Message the agent…"))
           }
           disabled={disabled || gated}
-          rows={1}
           className={cn(
-            "min-h-9 w-full resize-none border-0 bg-transparent px-2 py-1.5 leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent",
             /* Same reading size as the transcript's messages: the card carries
                the `--text-xs` bump `.thread-transcript` sets, so `text-xs`
                here is 0.875rem and typing matches what is being answered. */
-            "text-xs md:text-xs",
+            "w-full text-xs md:text-xs",
             /* The box grows to ten lines and then scrolls. */
             "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons
                is how the row stays visually centred while the targets grow. */
-            coarse && "min-h-11"
+            coarse && "[&_.tiptap]:min-h-11"
           )}
         />
         {/* One control language across the row: every button is the same

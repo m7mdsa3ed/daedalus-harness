@@ -54,6 +54,7 @@ import { useViewOptionsContext } from "@/lib/view-options"
 import { writeClipboard } from "@/lib/clipboard"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
+import { FileLink, FileMention, remarkMentions } from "@/components/file-link"
 
 export const KIND_LABELS: Record<string, string> = {
   read: "read",
@@ -281,6 +282,14 @@ export const MARKDOWN_COMPONENTS = {
   pre: MarkdownPre,
 } as never
 
+/* A user bubble's `@path` mentions, as links into the Preview panel. Constants,
+   for the same processor-identity reason as the rehype pair above. */
+const REMARK_MENTIONS = [remarkGfm, remarkMentions] as never
+const MENTION_COMPONENTS = {
+  ...(MARKDOWN_COMPONENTS as object),
+  "file-mention": FileMention,
+} as never
+
 const INLINE_MARKDOWN_COMPONENTS = {
   p: ({ node: _node, ...props }: React.ComponentProps<"span"> & { node?: unknown }) => (
     <span {...props} />
@@ -305,6 +314,7 @@ export const Prose = React.memo(function Prose({
   text,
   className,
   stream,
+  mentions,
 }: {
   text: string;
   className?: string;
@@ -313,6 +323,9 @@ export const Prose = React.memo(function Prose({
       which is every settled row and every replayed one. The attribute is what
       the CSS matches, so it has to be on the element the spans are inside. */
   stream?: StreamEffect;
+  /** Draw `@path` mentions as links (`components/file-link.tsx`) — a user
+      bubble's, where the syntax is the person's. */
+  mentions?: boolean;
 }) {
   return (
     <div
@@ -320,9 +333,9 @@ export const Prose = React.memo(function Prose({
       data-stream={stream && stream !== "none" ? stream : undefined}
     >
       <Markdown
-        remarkPlugins={REMARK}
+        remarkPlugins={mentions ? REMARK_MENTIONS : REMARK}
         rehypePlugins={rehypeFor(stream)}
-        components={MARKDOWN_COMPONENTS}
+        components={mentions ? MENTION_COMPONENTS : MARKDOWN_COMPONENTS}
       >
         {text}
       </Markdown>
@@ -1380,6 +1393,17 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
         />
       )
     case "resource_link":
+      /* A file link the agent sent opens in the Preview panel; anything else —
+         a web address, a path outside the project — stays a plain link. */
+      if (block.uri.startsWith("file://"))
+        return (
+          <FileLink
+            path={block.uri}
+            className="block truncate text-start font-mono text-[11px]"
+          >
+            {block.name || block.uri}
+          </FileLink>
+        )
       return (
         <a
           href={block.uri}

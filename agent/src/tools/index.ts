@@ -2,6 +2,7 @@ import type { Tool, ToolSet } from "ai";
 import type { ToolMeta, ToolRuntime } from "./context.js";
 import { clampToolOutput, inputOf } from "./context.js";
 import { checkPermission } from "../permissions.js";
+import type { McpCallExtras } from "../mcp.js";
 import { makeReadTool, makeWriteTool, makeEditTool, readMeta, writeMeta, editMeta } from "./fs-tools.js";
 import { makeBashTool, bashMeta } from "./bash.js";
 import { makeGlobTool, makeGrepTool, globMeta, grepMeta } from "./search.js";
@@ -112,7 +113,19 @@ function withMcpGate(rt: ToolRuntime, name: string, t: Tool): Tool {
         kind: m.kind,
         rawInput: inputOf(input),
       });
-      return t.execute!(input, options);
+      /* Progress reports land on the call's own row, and the final result
+         replaces them — the row says where a long call is while it runs. */
+      const extras: McpCallExtras = {
+        onProgress: (text) =>
+          void rt.emit
+            .update({
+              sessionUpdate: "tool_call_update",
+              toolCallId: options.toolCallId,
+              content: [{ type: "content", content: { type: "text", text } }],
+            })
+            .catch(() => {}),
+      };
+      return t.execute!(input, { ...options, ...extras });
     },
   };
 }

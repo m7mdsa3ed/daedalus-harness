@@ -32,7 +32,101 @@ export function layoutKey(serverId: string): string {
 }
 
 type GridNode = { type: "leaf" | "branch"; data: unknown; size?: number; visible?: boolean }
-type LeafData = { views: string[]; activeView?: string; id: string }
+type LeafData = {
+  views: string[]
+  activeView?: string
+  id: string
+  tabGroups?: { id: string; panelIds: string[]; label?: string; collapsed?: boolean }[]
+}
+
+/** A leaf's own copy with only the panels in `kept`, its active view and its
+    tab groups following — or null when nothing in it survived. */
+function pruneLeaf(data: LeafData | undefined, kept: Record<string, unknown>): LeafData | null {
+  const views = Array.isArray(data?.views) ? data.views.filter((view) => view in kept) : []
+  if (!data || views.length === 0) return null
+  const activeView = data.activeView && views.includes(data.activeView) ? data.activeView : views[0]
+  const tabGroups = (Array.isArray(data.tabGroups) ? data.tabGroups : [])
+    .map((group) => ({
+      ...group,
+      panelIds: (Array.isArray(group.panelIds) ? group.panelIds : []).filter((id) => views.includes(id)),
+    }))
+    .filter((group) => group.panelIds.length > 0)
+  return { ...data, views, activeView, ...(tabGroups.length > 0 ? { tabGroups } : { tabGroups: undefined }) }
+}
+
+/** Rewrite every leaf (`{ views }`) anywhere in a serialized window — the
+    grid, a float, a popout or an edge group, whichever shape it was written
+    in. Substitution only: nothing here collapses a branch. */
+function mapLeaves(node: unknown, fn: (leaf: LeafData) => LeafData): unknown {
+  if (Array.isArray(node)) return node.map((child) => mapLeaves(child, fn))
+  if (!node || typeof node !== "object") return node
+  const record = node as Record<string, unknown>
+  if (Array.isArray(record.views)) return fn(record as unknown as LeafData)
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(record)) out[key] = mapLeaves(value, fn)
+  return out
+}
+
+/**
+ * ── The old dock-in-a-tab, unpacked ──
+ * A `group` panel was a second dockview inside a tab, carrying its whole
+ * layout on its params. Tabs are grouped natively now (dockview's tab groups,
+ * one strip), so a layout saved by that build has each group tab replaced by
+ * the tabs it held — in its place in the strip, as one tab group — rather than
+ * dropped with everything inside it, which is what an unknown kind gets.
+ */
+function unpackGroupPanels(layout: SerializedDockview): SerializedDockview {
+  const panels = layout?.panels
+  if (!panels || typeof panels !== "object") return layout
+  const unpacked = new Map<string, string[]>()
+  const next: Record<string, unknown> = {}
+  for (const [id, state] of Object.entries(panels)) {
+    if (state?.contentComponent !== "group") {
+      next[id] = state
+      continue
+    }
+    const inner = (state.params as { layout?: SerializedDockview } | undefined)?.layout
+    const innerPanels = (inner?.panels ?? {}) as Record<string, { contentComponent?: string }>
+    const views = [
+      ...viewsOf({ grid: inner?.grid }),
+      ...(inner?.floatingGroups ?? []).flatMap((entry) => viewsOf(entry as WindowEntry)),
+    ].filter(
+      (view, index, all) =>
+        all.indexOf(view) === index &&
+        view in innerPanels &&
+        innerPanels[view]?.contentComponent !== "group" &&
+        !(view in panels)
+    )
+    for (const view of views) next[view] = innerPanels[view]
+    unpacked.set(id, views)
+  }
+  if (unpacked.size === 0) return layout
+  const expand = (leaf: LeafData): LeafData => {
+    const hits = leaf.views.filter((view) => unpacked.has(view))
+    if (hits.length === 0) return leaf
+    const views = leaf.views.flatMap((view) => unpacked.get(view) ?? [view])
+    const activeView =
+      leaf.activeView && unpacked.has(leaf.activeView) ? unpacked.get(leaf.activeView)?.[0] : leaf.activeView
+    const tabGroups = [
+      ...(leaf.tabGroups ?? []),
+      ...hits
+        .filter((hit) => (unpacked.get(hit)?.length ?? 0) > 0)
+        .map((hit) => ({ id: `tg-${hit}`, label: "Group", collapsed: false, panelIds: unpacked.get(hit) ?? [] })),
+    ]
+    return { ...leaf, views, activeView, tabGroups }
+  }
+  return {
+    ...layout,
+    panels: next as SerializedDockview["panels"],
+    grid: mapLeaves(layout.grid, expand) as SerializedDockview["grid"],
+    ...(layout.floatingGroups
+      ? { floatingGroups: mapLeaves(layout.floatingGroups, expand) as SerializedDockview["floatingGroups"] }
+      : {}),
+    ...(layout.popoutGroups
+      ? { popoutGroups: mapLeaves(layout.popoutGroups, expand) as SerializedDockview["popoutGroups"] }
+      : {}),
+  }
+}
 /** Dockview writes a float or a popout either as one group (`data`) or as a
     whole grid of them (`grid`) — the same two shapes for both. */
 type WindowEntry = { data?: unknown; grid?: unknown; gridReferenceGroup?: string }
@@ -133,13 +227,13 @@ function dockPopouts(layout: SerializedDockview): SerializedDockview {
  * rather than from a grid describing groups with no panels in them, which
  * Dockview renders as an unclosable blank frame.
  */
-export function pruneLayout(layout: SerializedDockview, nested = false): SerializedDockview | null {
+export function pruneLayout(layout: SerializedDockview): SerializedDockview | null {
   /* A popped-out window cannot be reopened on a page load — `window.open`
      without a gesture is a popup, and a browser blocks it — so a restore never
      starts one. Its panels come home to the grid first, before anything is
      counted: dropping the entry on its own would leave them in `panels` with
      no leaf naming them, which is a panel the dock holds and cannot show. */
-  const source = dockPopouts(layout)
+  const source = dockPopouts(unpackGroupPanels(layout))
   const panels = source.panels
   if (!panels || typeof panels !== "object") return null
 
@@ -151,19 +245,7 @@ export function pruneLayout(layout: SerializedDockview, nested = false): Seriali
        the user can close it themselves. Deleting it would silently discard a
        panel that a newer build (or the next phase) would understand. */
     if (!isPanelKind(component)) continue
-    const descriptor = parsePanel(component, state.params)
-    if (!descriptor) continue
-    /* A group is a dock of its own, pruned by the same rule one level down —
-       and dropped whole when nothing inside it survives, because an empty group
-       is a tab with nothing to show. One level: a group inside a group is
-       dropped, which is also what keeps this recursion finite. */
-    if (descriptor.kind === "group") {
-      if (nested) continue
-      const inner = descriptor.layout ? pruneLayout(descriptor.layout, true) : null
-      if (!inner) continue
-      kept[id] = { ...state, params: { ...descriptor, layout: inner } }
-      continue
-    }
+    if (!parsePanel(component, state.params)) continue
     kept[id] = state
   }
   if (Object.keys(kept).length === 0) return null
@@ -187,11 +269,8 @@ export function pruneLayout(layout: SerializedDockview, nested = false): Seriali
       if (children.length === 1 && !isRoot) return { ...children[0], size: node.size }
       return { ...node, data: children }
     }
-    const data = node.data as LeafData | undefined
-    const views = Array.isArray(data?.views) ? data.views.filter((view) => view in kept) : []
-    if (views.length === 0) return null
-    const activeView = data?.activeView && views.includes(data.activeView) ? data.activeView : views[0]
-    return { ...node, data: { ...data, views, activeView } }
+    const data = pruneLeaf(node.data as LeafData | undefined, kept)
+    return data ? { ...node, data } : null
   }
 
   const root = walk(source.grid?.root as GridNode | undefined, true)
@@ -205,10 +284,21 @@ export function pruneLayout(layout: SerializedDockview, nested = false): Seriali
   const floatingGroups = (source.floatingGroups ?? []).filter((entry) =>
     viewsOf(entry).every((view) => view in kept)
   )
+  /* The bottom panel (an edge group) is a leaf of its own outside the grid:
+     pruned like one, and dropped when nothing in it survived — dockview removes
+     an emptied revealed edge group itself, so an empty entry is only ever a
+     stale one. */
+  const edgeGroups = Object.fromEntries(
+    Object.entries(source.edgeGroups ?? {}).flatMap(([position, entry]) => {
+      const group = entry?.group ? pruneLeaf(entry.group as LeafData, kept) : null
+      return group ? [[position, { ...entry, group }]] : []
+    })
+  ) as SerializedDockview["edgeGroups"]
   return {
     ...source,
     panels: kept,
     grid: { ...source.grid, root: root as SerializedDockview["grid"]["root"] },
+    edgeGroups: edgeGroups && Object.keys(edgeGroups).length > 0 ? edgeGroups : undefined,
     ...(activeGroup ? { activeGroup } : {}),
     ...(floatingGroups.length > 0 ? { floatingGroups } : { floatingGroups: undefined }),
     popoutGroups: undefined,

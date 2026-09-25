@@ -293,7 +293,7 @@ export async function repositories(projectId: string): Promise<GitRepo[]> {
   );
 }
 
-async function currentBranch(dir: string): Promise<string | null> {
+export async function currentBranch(dir: string): Promise<string | null> {
   try {
     const { stdout } = await run(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
     const name = stdout.trim();
@@ -840,7 +840,11 @@ export async function repoDirAt(cwd: string): Promise<string | null> {
  */
 export async function snapshotTree(dir: string): Promise<string> {
   const { stdout } = await run(dir, ["rev-parse", "--git-path", "index"]);
-  const realIndex = join(dir, stdout.trim());
+  /* `resolve`, not `join`: in a linked worktree git prints the index's
+     absolute path (`<main>/.git/worktrees/<id>/index`), and joining that onto
+     `dir` names a file that does not exist — every snapshot then re-hashed the
+     whole tree from an empty index. */
+  const realIndex = resolve(dir, stdout.trim());
   const scratch = join(tmpdir(), `daedalus-index-${randomBytes(6).toString("hex")}`);
   try {
     if (existsSync(realIndex)) await copyFile(realIndex, scratch);

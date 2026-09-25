@@ -903,6 +903,7 @@ const ToolStep = React.memo(function ToolStep({
       icon={KindIcon}
       iconAccent={KIND_COLORS[kind] ?? KIND_COLORS.other}
       iconChip={KIND_CHIPS[kind] ?? KIND_CHIPS.other}
+      toolLayout={view.toolLayout}
       target={heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
          typed is still in the body, which is where it is read once the line

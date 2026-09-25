@@ -11,8 +11,7 @@
    (and is serialized): a status is live, per-mount, and worthless across a
    reload. Keyed by panel id — the one name the panel and its tab share.
 
-   A module store rather than context for the same reason `lib/ide/editors.ts`
-   is one: a tab is rendered by Dockview outside the panel's own React tree, so
+   A module store rather than context: a tab is rendered by Dockview outside the panel's own React tree, so
    there is no provider that could sit above both. */
 import * as React from "react"
 

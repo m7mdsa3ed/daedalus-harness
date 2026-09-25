@@ -12,7 +12,6 @@ import * as React from "react"
 import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
-import { BottomNav } from "@/components/bottom-nav"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
 import { SidebarGroupsSkeleton } from "@/components/ui/skeletons"
@@ -42,10 +41,10 @@ import {
   SidebarUsage,
   ThreadSidebar,
 } from "@/components/thread-sidebar"
+import type { OpenerTarget } from "@/components/workspace/dock-context"
 import { useWorkspaceDock } from "@/components/workspace/dock"
 import { WorkspaceDock } from "@/components/workspace/dock-surface"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
-import { useIsMobile } from "@/hooks/use-device"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
@@ -66,6 +65,7 @@ import { formatChord } from "@/lib/shortcuts"
 import { useStoreHandle, useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { openTerminal } from "@/lib/workspace/open-terminal"
+import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, type PanelKind } from "@/lib/workspace/panels"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
@@ -135,7 +135,6 @@ export function AppShell({
   const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
   const headingFor = usePageHeading()
-  const isMobile = useIsMobile()
 
   const inSettings = location.pathname.startsWith("/settings")
   const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
@@ -232,6 +231,11 @@ export function AppShell({
      same path again, and it has to open it again. */
   const routed = sessions.find((session) => session.id === sessionId)
   const routedState = !routed ? "absent" : routed.draft ? "draft" : "known"
+  /* draft → known is the agent spawning, not a navigation: keyed on it, the
+     effect re-opened (focused) the thread seconds after the reader had moved
+     to another tab. Only absent ↔ present re-runs it; `routedState` is still
+     read fresh inside, since any run happens on a render that holds it. */
+  const routedKnown = routedState !== "absent"
   React.useEffect(() => {
     if (!sessionId) return
     if (location.search) void navigate(threadPath(sessionId), { replace: true }) // legacy ?session=
@@ -267,7 +271,7 @@ export function AppShell({
     // redirect above clears the search, and re-running on that would only
     // open the same tab a second time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, routedState, ready, dock, location.key])
+  }, [sessionId, routedKnown, ready, dock, location.key])
 
   /* Drop tabs whose thread or project is gone — but never against a session
      list that never arrived. `loading` alone is not that test: a failed
@@ -337,7 +341,16 @@ export function AppShell({
      the chords and the thread's own links pass: those mean "show me the IDE
      for this project", which is a different question. */
   const openWorkspacePanel = React.useCallback(
-    (kind: PanelKind, reuse?: boolean) => {
+    (kind: PanelKind, reuse?: boolean, target?: OpenerTarget) => {
+      const into = target?.into
+      /* A thread in front owns its terminal and preview: they open in
+         its own dock (`thread-dock.tsx`), rooted in its worktree. The outer
+         kinds below are what is left for a page in front — a $HOME shell. */
+      const inThread = threadDock(routeRef.current.sessionId)
+      if (inThread && (kind === "terminal" || kind === "web")) {
+        inThread.open(kind, reuse)
+        return
+      }
       /* Only ever the *second* panel's suffix. The first of a kind keeps the
          plain panel id every stored layout and
          every reusing caller already names, so nothing has to migrate and a
@@ -351,7 +364,7 @@ export function AppShell({
       if (kind === "tasks") {
         const existing = dock.listPanels().find((entry) => entry.panel.kind === "tasks")
         if (existing && reuse) dock.openPanel(existing.panel, { direction: "right" })
-        else dock.openPanel({ kind: "tasks", ...second(existing) }, { direction: "right" })
+        else dock.openPanel({ kind: "tasks", ...second(existing) }, { direction: "right", into })
         return
       }
       /* Which project the new panel acts on is the panel *in front of you*,
@@ -360,10 +373,13 @@ export function AppShell({
          a + pressed over project A's terminal used to open project B's. Chats
          and pages write the route themselves, which is what the fallback
          answers for. */
+      /* A caller that knows the project says so — a tab's own menu is about
+         *that* tab, which need not be the one in front. */
       const focused = dock.activeDescriptor()
       const focusedProject =
         focused && "projectId" in focused ? (focused.projectId as string | undefined) : undefined
       const projectId =
+        target?.projectId ??
         (focusedProject === HOME_PROJECT_ID
           ? HOME_PROJECT_ID
           : projects.find((candidate) => candidate.id === focusedProject)?.id) ??
@@ -376,7 +392,7 @@ export function AppShell({
           .listPanels()
           .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
         if (existing && reuse) dock.openPanel(existing.panel)
-        else void openTerminal(dock, projectId)
+        else void openTerminal(dock, projectId, into)
       } else if (kind === "web") {
         /* The stored preview URL rides on the descriptor, so a project panel
            opens on its dev server instead of an empty address bar — and an
@@ -394,7 +410,7 @@ export function AppShell({
             ...second(existing),
             ...(previewUrl ? { url: previewUrl } : {}),
           },
-          { direction: "right" }
+          { direction: "right", into }
         )
       }
     },
@@ -431,18 +447,8 @@ export function AppShell({
     onOpenSettings: openSettings,
   })
 
-  const sidebarLayout = useSidebarLayout()
-
   return (
-    <SidebarProvider
-      /* Controlled, so the open state is the device store's and survives a
-         reload. The primitive's own internal state — and the cookie it writes
-         beside it — is left unused, which is deliberate: the vendored
-         component is reinstallable and the memory belongs to the app. Mobile
-         is unaffected: the sheet toggles `openMobile`, which this does not
-         drive, so a phone never restores an open overlay. */
-      open={sidebarLayout.open}
-      onOpenChange={(open) => setSidebarLayout("open", open)}
+    <PersistedSidebarProvider
       style={{
         "--sidebar-width": sidebar.width,
         height: "100dvh",
@@ -659,9 +665,7 @@ export function AppShell({
               over). At `sm` it widened to 8px while the tab 2px away from it
               did not, which is the row reading as two different spacings. */}
           <div data-header-left className="flex min-w-0 items-center gap-1 md:gap-2">
-            {/* On a phone the bottom bar's Threads is this toggle, within
-                thumb reach, so the header row gives its width to the tab. */}
-            {!isMobile && <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />}
+            <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
             {/* How transcripts are drawn, on this device — beside the one other
                 control that is also this device's and not this route's.
                 Sliders, not a cog: a cog in this app means the *server's*
@@ -713,8 +717,6 @@ export function AppShell({
             />
           </PageRoutesProvider>
         </div>
-        {/* The phone's bar, in flow under the dock (see bottom-nav.tsx). */}
-        {isMobile && <BottomNav onNewThread={() => startRef.current.startThread()} />}
       </SidebarInset>
       <CommandPalette
         open={palette.open}
@@ -736,6 +738,26 @@ export function AppShell({
           button so it is not unmounted with a header some routes draw
           differently. */}
       <SessionSettingsDialog open={viewSettings} onOpenChange={setViewSettings} />
-    </SidebarProvider>
+    </PersistedSidebarProvider>
   )
 }
+
+/** The provider, controlled, so the open state is the device store's and
+    survives a reload. The primitive's own internal state — and the cookie it
+    writes beside it — is left unused, which is deliberate: the vendored
+    component is reinstallable and the memory belongs to the app. Mobile is
+    unaffected: the sheet toggles `openMobile`, which this does not drive, so a
+    phone never restores an open overlay.
+
+    Its own component, so the subscription is its own: read in `AppShell`, a
+    toggle re-rendered the whole shell — the dock, the sidebar, every panel.
+    Here `children` are the same elements the shell last made, and React skips
+    them; only what reads the sidebar's context re-renders. */
+function PersistedSidebarProvider(
+  props: Omit<React.ComponentProps<typeof SidebarProvider>, "open" | "onOpenChange">
+) {
+  const { open } = useSidebarLayout()
+  return <SidebarProvider {...props} open={open} onOpenChange={setSidebarOpen} />
+}
+
+const setSidebarOpen = (open: boolean) => setSidebarLayout("open", open)

@@ -126,6 +126,7 @@ export const SETTINGS_SECTIONS = [
       { path: "browse", page: lazyPage(() => import("./mcp"), "McpBrowsePage") },
       /* A chunk of its own: the playground and the schema rendering are a
          page somebody navigates to, and the library list must not carry them. */
+      { path: "playground", page: lazyPage(() => import("./mcp-detail"), "McpPlaygroundPage") },
       { path: ":entryId/tools", page: lazyPage(() => import("./mcp-detail"), "McpDetailPage") },
       { path: ":entryId", page: lazyPage(() => import("./mcp"), "McpFormPage") },
     ],

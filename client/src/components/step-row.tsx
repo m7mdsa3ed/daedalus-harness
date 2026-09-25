@@ -118,6 +118,7 @@ export const StepRow = React.memo(function StepRow({
   icon: Icon,
   iconAccent,
   iconChip,
+  toolLayout,
 }: {
   target: React.ReactNode
   /** A second, quieter line under the target — the literal thing invoked when
@@ -174,6 +175,8 @@ export const StepRow = React.memo(function StepRow({
   /** The accent's tinted tile behind the mark (`KIND_CHIPS`), so a coloured
       icon wears its own background; a failure tints the tile red instead. */
   iconChip?: string
+  /** Optional tool-specific layout; non-tool steps keep the transcript default. */
+  toolLayout?: "timeline" | "cards" | "compact" | "rail" | "console" | "outlined" | "minimal" | "spotlight"
 }) {
   /* The reader's own answer, or `null` while they have not given one. Whatever
      they last clicked outranks everything below until the view option moves. */
@@ -219,7 +222,17 @@ export const StepRow = React.memo(function StepRow({
   const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
 
   return (
-    <div>
+    <div
+      className={cn(
+        toolLayout === "cards" && "my-1 rounded-lg border border-border/60 bg-card/60 p-2 shadow-sm",
+        toolLayout === "compact" && "-my-0.5",
+        toolLayout === "rail" && "relative my-1 pl-3 before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-primary/35",
+        toolLayout === "console" && "my-1 rounded-lg border border-border/70 bg-muted/30 p-2 font-mono",
+        toolLayout === "outlined" && "my-1 rounded-md border border-primary/25 px-2 py-1",
+        toolLayout === "minimal" && "my-0",
+        toolLayout === "spotlight" && "my-2 rounded-lg border border-primary/25 bg-primary/5 p-2 shadow-sm"
+      )}
+    >
       {/* The row is the wrapper, not the button. The trailing columns — the
           metric and the label — sit OUTSIDE the disclosure control, because
           the metric is a popover trigger now (a step's tokens carry the same
@@ -241,7 +254,14 @@ export const StepRow = React.memo(function StepRow({
           // negative start margin, which left the row's content edge 12px shy
           // of the right edge that messages run to.
           "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-150",
-          expandable && "hover:bg-muted/40"
+          expandable && "hover:bg-muted/40",
+          toolLayout === "cards" && "mx-0 w-full rounded-md hover:bg-muted/60",
+          toolLayout === "compact" && "py-0",
+          toolLayout === "rail" && "mx-0 w-full hover:bg-muted/30",
+          toolLayout === "console" && "mx-0 w-full rounded-md hover:bg-muted/50",
+          toolLayout === "outlined" && "mx-0 w-full rounded-sm hover:bg-primary/5",
+          toolLayout === "minimal" && "py-0",
+          toolLayout === "spotlight" && "mx-0 w-full rounded-md hover:bg-primary/10"
         )}
       >
         <button
@@ -367,7 +387,20 @@ export const StepRow = React.memo(function StepRow({
         <div className="harness-fade-in mb-1 min-w-0 pl-[1.375rem]">{belowContent}</div>
       )}
       {expandable && open && (
-        <div className="harness-fade-in mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>
+        <div
+          className={cn(
+            "harness-fade-in mt-1 mb-2.5 min-w-0 space-y-2",
+            toolLayout === "cards" && "mt-2 border-t border-border/50 pt-2",
+            toolLayout === "compact" && "mt-0.5 mb-1 space-y-1",
+            toolLayout === "rail" && "mt-1 border-l border-border/60 pl-3",
+            toolLayout === "console" && "mt-2 rounded-md border border-border/60 bg-background/70 p-2 font-mono",
+            toolLayout === "outlined" && "border-t border-dashed border-border/60 pt-2",
+            toolLayout === "minimal" && "mt-0 mb-1 space-y-1",
+            toolLayout === "spotlight" && "mt-2 rounded-md bg-background/70 p-2 shadow-sm"
+          )}
+        >
+          {detail}
+        </div>
       )}
     </div>
   )

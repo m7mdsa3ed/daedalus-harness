@@ -10,10 +10,9 @@
    openers come down through the dock (`useDockOpeners`) because which project a
    panel belongs to is `app-shell`'s answer, not a strip's.
 
-   Split went the other way and simply left: the strip stands in the app
-   header's own band, where every pixel is shared with the app's controls, and
-   splitting is asked for by name in the palette (which says which group it
-   means) or by its chord.
+   The layout button is the + for arrangement: it deals the dock's tabs into a
+   preset (`LAYOUT_PRESETS`, the Layouts menu's own list). Not on a phone,
+   which folds every split back into one strip.
 
    The tab list is the opposite case, and belongs here for the same reason the +
    does not: it is *about this group*. Once tabs stop fitting, the strip scrolls
@@ -22,7 +21,7 @@
    one is doing (`panel-status`) rather than only what it is called. */
 import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
-import { ChevronDownIcon, PinIcon, PlusIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -34,10 +33,10 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useIsMobile } from "@/hooks/use-device"
 import { STRIP_GROUND } from "@/lib/header-chrome"
-import { MENU_WIDTH } from "@/components/menu-row"
+import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
-import { WorkspacePanelItems } from "@/components/workspace/panel-items"
+import { LAYOUT_PRESETS, WorkspacePanelItems } from "@/components/workspace/panel-items"
 import { useDock, useDockOpeners } from "@/components/workspace/dock-context"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
@@ -121,7 +120,7 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
   )
 }
 
-export function TabActions({ panels, containerApi }: IDockviewHeaderActionsProps) {
+export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
   const dock = useDock()
   const { onNewTab, onOpenPanel } = useDockOpeners()
   const isMobile = useIsMobile()
@@ -163,15 +162,48 @@ export function TabActions({ panels, containerApi }: IDockviewHeaderActionsProps
             <WorkspacePanelItems
               flat
               onNewTab={() => {
-                dock.targetNext(containerApi)
+                dock.targetNext(group.id)
                 onNewTab()
               }}
-              onOpen={(kind) => {
-                dock.targetNext(containerApi)
-                onOpenPanel?.(kind)
-              }}
+              /* Said, not aimed: the terminal behind this is a round trip away,
+                 and the strip goes along with it. */
+              onOpen={(kind) => onOpenPanel?.(kind, false, { into: { group: group.id } })}
               canOpenPanels={!!onOpenPanel}
             />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {!isMobile && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Arrange this dock"
+                      className={STRIP_CONTROL}
+                    >
+                      <LayoutGrid className="size-3.5" />
+                    </Button>
+                  }
+                />
+              }
+            />
+            <TooltipContent side="bottom">Layout</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end" className={MENU_WIDTH}>
+            {LAYOUT_PRESETS.map(({ id, label, Icon }) => (
+              <DropdownMenuItem
+                key={id}
+                onClick={() => dock.applyPreset(id)}
+                className={MENU_ROW}
+              >
+                <MenuRow icon={<Icon />} label={label} />
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { killSessionTerminals } from "./terminals.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -1145,6 +1146,7 @@ export class SessionManager {
       close itself ended is reported as that turn's error, not as this. */
   private processGone(session: Session, reason: string): void {
     this.events.onProcessGone?.(session);
+    setImmediate(() => this.turnChanges.processGone(session.id));
     setImmediate(() => {
       const list = this.turnWaiters.get(session.id);
       if (!list) return;
@@ -2995,7 +2997,16 @@ export class SessionManager {
       const session = this.sessions.get(id);
       if (!session) return;
       this.emit(session, { ev: "turn_changes", turn });
+      /* A child thread's turn is part of its parent's work, and the parent's
+         Changes list includes it (`TurnChangesRecorder.list`). */
+      const parent = session.parentSessionId ? this.sessions.get(session.parentSessionId) : undefined;
+      if (parent) this.emit(parent, { ev: "turn_changes", turn: { ...turn, sessionId: id } });
     },
+    projectOf: (id) => {
+      const s = this.sessions.get(id);
+      return s?.project ? { id: s.project.id, cwd: s.project.cwd } : null;
+    },
+    ownerOf: (id) => this.sessions.get(id)?.parentSessionId ?? id,
   });
 
   private queue = new SessionQueue({
@@ -3254,6 +3265,7 @@ export class SessionManager {
     if (!session || session.deletedAt !== null) return false;
     this.closePeers(session, 4000, "This thread was moved to Trash. Restoring it brings the conversation back.");
     session.deletedAt = Date.now();
+    killSessionTerminals(id);
     // Retiring fires onProcessGone, which is where the runner cancels the run
     // this thread was orchestrating; the steps then go to the trash with it.
     this.retire(
@@ -3285,6 +3297,7 @@ export class SessionManager {
        peers, its FTS rows, its slot in the map. */
     for (const child of this.childrenOf(id)) this.purge(child.id);
     this.closePeers(session, 4000, "This thread was deleted for good and cannot be restored.");
+    killSessionTerminals(id);
     this.retire(session, "This thread was deleted for good, so its agent process was stopped.");
     this.sessions.delete(id);
     // ON DELETE CASCADE takes the event rows with it; the FTS rows have no

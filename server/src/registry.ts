@@ -370,8 +370,24 @@ function withOpencodeModelPrefix(env: Record<string, string>): Record<string, st
  * session is not what has an account. So these name the plain CLI, and the
  * agent's own `command` is left alone.
  */
+/** The seeded probe for a row that has none, else the row's own with `login`
+    backfilled — the one field added after rows existed. Command and args are
+    the user's and are never touched; a probe of another kind gets no login,
+    because the file belongs to the seeded runtime and not to whatever the user
+    repointed it at. */
+function withProbeLogin(existing: QuotaProbe | null | undefined, seeded: QuotaProbe): QuotaProbe {
+  if (!existing) return seeded;
+  if (existing.login !== undefined || existing.kind !== seeded.kind) return existing;
+  return { ...existing, login: seeded.login ?? null };
+}
+
 const QUOTA_PROBES: Record<string, QuotaProbe> = {
-  "claude-code": { kind: "claude-cli", command: "claude", args: ["-p", "/usage", "--output-format", "json"] },
+  "claude-code": {
+    kind: "claude-cli",
+    command: "claude",
+    args: ["-p", "/usage", "--output-format", "json"],
+    login: { dirEnv: "CLAUDE_CONFIG_DIR", dir: ".claude", file: ".credentials.json", expiresAt: "claudeAiOauth.expiresAt" },
+  },
   codex: { kind: "codex-app-server", command: "codex", args: ["app-server"] },
 };
 
@@ -701,7 +717,7 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 20,
+    since: 23,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
@@ -718,9 +734,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // workflow tools, where its config is imported from, its install line and
     // its mark — plus `workflowsVia`, which is what `sessions.ts` compared an
     // agent id against. Nothing in the env changes, so the probe cache stands.
+    // Seed 23 tells the quota probe where this login's token expiry is read
+    // (`QuotaProbe.login`), so Refresh can run beside a live thread while the
+    // token is nowhere near a refresh. Env untouched again.
     backfill: (existing) => ({
       env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
-      quotaProbe: existing.quotaProbe ?? QUOTA_PROBES["claude-code"],
+      quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
       liveConfig: existing.liveConfig ?? "acp",
       personaVia: existing.personaVia ?? "acp-meta",
       rewindVia: existing.rewindVia ?? "acp-fork-point",
@@ -1299,9 +1318,18 @@ export function modelAllowlistFor(agent: AgentDef, spawning: Profile, profiles: 
  * so honestly.
  */
 function modelWindowMap(profile: Profile): string {
+  /* `[window, maxOutput, modalities?]` — the third element is read by the
+     agent to decide whether an MCP tool's image can be shown to the model; a
+     model with modalities and no window is `0` for the window, which the
+     agent's window reader skips. */
   const entries = (profile.models ?? [])
-    .filter((m) => m.contextWindow)
-    .map((m) => [m.id, [m.contextWindow, m.maxOutputTokens ?? 0]] as const);
+    .filter((m) => m.contextWindow || m.modalities?.length)
+    .map((m) => [
+      m.id,
+      m.modalities?.length
+        ? [m.contextWindow ?? 0, m.maxOutputTokens ?? 0, m.modalities]
+        : [m.contextWindow, m.maxOutputTokens ?? 0],
+    ] as const);
   return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : "";
 }
 

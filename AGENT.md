@@ -264,9 +264,22 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   anything the server offers, through one door**: `POST …/invoke {kind,name,args}` →
   `invokeMcp`, where the kind picks an SDK method (`tools/call`, `prompts/get`,
   `resources/read`) and nothing else, and the page draws all three with the one `EntryRow`.
-  It connects per call and hands the answer back verbatim. **Something that ran and failed is
+  It runs on a **pooled client per row** (the playground, completions and the composer all
+  share it; only Check connects fresh) and hands the answer back verbatim. **Something that ran and failed is
   an answer, not an error** — only a call that never happened is one. Arguments are typed as
   JSON beside the field list, never a generated form.
+  **A server that is not a row gets the same playground through a second door**
+  (`POST /api/mcp-playground/:op {server}`, `/settings/mcp/playground`, the form's "Try it"):
+  handed a definition — stdio, streamable HTTP or SSE — never an id, storing nothing, pooled
+  on the definition itself. Not OAuth and not a builtin: both need a row. `McpPlayground` is
+  given a listing and a `call` and knows neither door.
+- **A thread's MCP prompts and resources reach the composer through the harness's own client,
+  for every runtime**: `/server:prompt` is a harness command that *fills* the composer with the
+  rendered text, and a resource picked from `@` is read into a `File` and goes the attachment
+  path. The agent's own `server:prompt` wins the name collision. The Daedalus agent itself
+  speaks the rest — media, instructions, `list_changed`, elicitation, sampling (behind a
+  permission), roots, progress — and joins a tool's images to the next step as a user message,
+  because an OpenAI-compatible tool message is text only.
 - **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
   Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
   `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one
@@ -312,8 +325,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the drawing be forgiving, so the "came out empty" fallback is suspended while the row is
   still being written (a one-line program is legitimately an empty shell). A fence that will
   not parse falls back to the source, and the components are the harness's own (`Notice`, `Empty`,
-  `harness-table`, the `--chart-*` tokens) in `lib/openui/library.tsx` — the component table,
-  which is one file's edit. **The prompt is generated from that table, never hand-written**:
+  the `--chart-*` tokens) in `lib/openui/library.tsx` — the component table, which is one
+  file's edit. **Anything framed goes through its `Box`, which asks where it is** — a card on
+  the page, a recessed well inside another frame, a bare cell in a `StatRow` — so no generated
+  component picks its own ground, and one type scale (`TITLE`/`BODY`/`META`/`LABEL`) sizes all
+  of them. **The prompt is generated from that table, never hand-written**:
   `pnpm openui` in client/ runs `scripts/gen-openui.mjs` (the library's own prompt generator,
   under Node) into `server/src/openui-prompt.ts`, and `pnpm openui:check` is the drift gate —
   so the text the model is told and the components the reader gets cannot disagree. **The
@@ -431,8 +447,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   surfaces, and giving the floor the composer's ground made them one flat band.
   **The tuck is worn by whoever is last** — the footer when there is one, the cards when there
   is not, never both. **A tools menu's side is the caller's, never inferred from `editable`.**
-- **The pile is only what is about the message being typed** — attachments, parked pastes, the
-  history notice, the two completers, the archive notice.
+- **The pile is only what is about the message being typed** — attachments, the history
+  notice, the two completers, the archive notice.
+- **The box is a Tiptap view of a plain string, never a markdown document**
+  (`composer/composer-editor.tsx`, `editor-text.ts`): `text` stays the exact message sent, a
+  `[pasted text #n]` token draws as an inline chip and a run of `> ` lines as a quote card, and
+  both serialise back to the same characters. The ref is a `TextSurface` (a textarea's
+  `value`/`selectionStart`/`setSelectionRange`/`focus`), so the completers and the history walk
+  never learn the editor exists. Markdown WYSIWYG escapes what was typed (`snake\_case`), which
+  breaks `/`, `!`, `@` and history recall. Keys are taken in the capture phase and ProseMirror
+  honours their `preventDefault`. "Ask about this" on a transcript selection is `ComposerHandle.quote`.
 - **A reading of the thread is a 24px trigger over a popover, in the footer's end cluster** —
   the checklist's progress, the running-subagent count, what the last turn wrote, the context
   ring (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator`), **and the
@@ -491,12 +515,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   where the visual viewport did not already shrink, or a flyout rises by two keyboards. A
   field on an ordinary form is `lib/keyboard-caret.ts`'s, because the browser's own
   scroll-into-view is the thing `overlays-content` turned off.
-- **The phone's bottom bar is in flow, not fixed** (`components/bottom-nav.tsx`, gated on
-  `useIsMobile`): the dock ends where it starts, so panel-anchored surfaces need no offset.
-  It owns the home-indicator inset — while drawn, `data-bottom-nav` zeroes `--safe-bottom`,
-  which a surface at the bottom of the *shell* pads by instead of the raw `env()` — and it
-  is **not drawn while the soft keyboard is open**, or it would push the lifted composer up
-  by its own height. **A sideways swipe on the strip, never the transcript, is `cycleTab`**
+- **The phone has no bottom navigation bar**: the header's sidebar trigger opens the mobile
+  thread drawer, and every bottom-anchored surface pads by `--safe-bottom` for the home
+  indicator. **A sideways swipe on the strip, never the transcript, is `cycleTab`**
   (`useTabSwipe` in `dock-surface.tsx`). → `docs/client.md` "The phone".
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.** Layout
   uses the `@panel-*` container queries; touch targets and centred surfaces stay on media
@@ -531,21 +552,24 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   a toast: these sit *inside* the thing that failed, where a toast about a copy competes with
   the failure being read and on a dialog lands behind it. A failed **tool call** gets its copy
   from `CodeBlock`, the one place all four `SmartBlock tone="error"` call sites land.
-- **A `group` panel is a dock inside a tab** (`workspace/group-panel.tsx`): a second dockview
-  instance drawn as a panel's content, holding its own strip of tabs. **It is the same
-  surface** — `DockSurface`, one component map, one tab, one strip — and its layout rides on
-  the group panel's **params** (a params change is a layout change to dockview, so the outer's
-  own save carries it; `pruneLayout` recurses one level). **Every question about "the panels"
-  is asked across every instance** (`allPanels`/`findPanel`/`ownerOf` in `dock.tsx`), so a
-  nested `thread:{id}` is still the one there is; `activeApi` is the instance in front of you
-  and is what the strip's chords and a fresh panel's placement follow. **One level, never a
-  tree.** In, across and out are the tab's own rows — "Move to group ▸" lists a new group and
-  every open one (`useDockGroups`, a version-bumped store, because a tab in one group cannot
-  hear another appear), a grouped tab also has "Move out of the group" — and a drag across
-  two strips (`dropForeign` — dockview only moves within an instance); all are a close and an
-  open of the same descriptor, silently. An emptied group closes itself.
-- **The dock holds six panel kinds: chat, ide, terminal, web, tasks, page**, and **Monaco is the
-  text surface and the diff and nothing else** — the official `monaco-editor`, so there is no
+- **One dockview instance; tabs are grouped by dockview's own tab groups.** A tab group is a
+  coloured, labelled, collapsible chip over a run of tabs **in one strip** — never across two.
+  The chip's menu is dockview's (rename, colour, collapse) except **Close group, which is
+  ours** (`closeTabGroup`), because dockview's removes panels past the close guard and the
+  reopen stack. Colours are `TAB_GROUP_COLORS` (`--primary`, `--chart-*`), never dockview's
+  fixed hues, and the chip is a tint with the foreground on it, not white on a colour. A dock
+  inside a tab (`group` panels) was the first version: every question had to be asked of two
+  instances, a drag between them was never accepted, and half the tab menu did nothing on a
+  grouped tab. **A layout that still holds one is unpacked on load** (`unpackGroupPanels` in
+  `layout.ts`, checked by `layout.check.mjs`): each group tab becomes its tabs, in place, as
+  one tab group. **The bottom panel is dockview's edge group**, reached only by a tab's "Move
+  to the bottom panel" (`revealEdgeGroupWithData`, which removes it with its last panel) —
+  nothing *opens* there. Pinning, layout undo, keyboard docking, wrap/searchable overflow and
+  the drop compass are dockview **enterprise** modules, inert in this build: ours stay ours.
+- **The outer dock holds five panel kinds: chat, terminal, web, tasks, page** (a thread's own
+  terminal, preview and board live in its thread dock). **There is no IDE** — no editor panel,
+  no file explorer, no code-server; the preview is the project's window. **Monaco is the
+  diff and nothing else** — the official `monaco-editor`, so there is no
   workbench and no "initialize once per page" rule.
 - **Source control starts from `GET …/git/repos`, never from "the project's git"**, and every
   read and write names its `repo`. **Status paths are repository-relative** —
@@ -555,38 +579,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the log are read when asked for** — the branch list on the picker's open, the stash and
   history lists on their tab's first open — never with the status, which the watch stream
   re-reads.
-- **One repository is drawn at a time, picked in the toolbar** (`scm/view.tsx`). Stacked
-  sections in one scroller was the first version, and it is what forced the commit box to
-  scroll with the files: sections sharing a scroller can pin nothing.
-- **The panel is three zones and the outer two do not move** (`scm/repo-section.tsx`): a
-  header, a tabbed middle (Changes · Stashes · History, each with its own scroller and its own
-  git process, paid on first open), and **the commit box pinned to the bottom edge, outside
-  every scroller**. The old rule said the box sits *above* the files, because below them forty
-  changed files pushed it off a 320px column — pinning is what actually answers that, and it
-  gives the panel the shape the app's other write surface has, a transcript above and a
-  composer fixed beneath it. It is drawn over Changes only: a commit box under a list of old
-  commits points at the wrong thing.
 - **The working set is one list, not four groups** (`lib/workspace/working-set.ts`). Git
   reports staged/unstaged/untracked/conflicted, but a path that is staged *and* edited again
   was two rows in two groups with nothing saying they were one file. One entry per path with a
   staged tri-state — `yes`/`no`/`partial` — **and the tick is the verb**: staging was two
   hover-revealed icon buttons and is a checkbox, so a folder wears its children's folded
   answer and ticking it stages everything under it. A conflicted file is never "staged".
-- **The explorer's tree and the working set are both flattened before they are drawn**
-  (`lib/ide/tree-rows.ts`, `flattenWorkingSet`) and windowed off that array
-  (`hooks/use-windowed-rows.ts` — fixed line height, prefix sums, no dependency). **Selection
-  is never an input to the derivation**: it changes on every click, and folding it in
-  invalidates the memo the array exists to feed. The explorer recursed into JSX inside
-  `render`, so every keystroke in the filter box rebuilt every expanded node.
-- **One Monaco instance per IDE panel, not one per tab.** `FileTab` stays mounted for every
-  tab — its read, its draft and its conflict are cheap React state — and `active` decides
-  whether an editor exists. Nothing is lost: the model outlives the mount, unsaved text is in
-  `lib/workspace/buffers.ts` either way, and scroll and cursor are saved and restored by
-  `code-editor.tsx`'s `viewStates`. The panel prefetches the Monaco chunk on idle when it
-  opens, because opening it is the reliable signal a file is about to be.
-- **The editor tab strip wears `.dock-tab`**, the dock's own material — three weights of one
-  material, no colour, the active one carrying the card's ground and `shadow-sm`. The class,
-  never `panel-tab.tsx`, which is bound to dockview's API; what is shared is the look.
 - **Monaco's workers are wired by `?worker` import, never by path**, and
   `MonacoEnvironment.getWorker` answers for **every** label while `getWorkerUrl` is never
   defined — a `?worker` import makes a stale path a build error instead of a blank editor.
@@ -654,7 +652,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   row). **What separates two groups is the gutter between their cards**;
   `--dv-separator-border` is transparent, because dockview's line runs the full view height,
   through the band and down the gap.
-- **A tab strip carries what is about its own group** — the **+** and the tab list, **against
+- **A tab strip carries what is about its own group** — the **+**, the layout presets
+  (`LAYOUT_PRESETS`, applied to the strip's own instance, never on a phone) and the tab list, **against
   the last tab and not at the strip's end** (`.dv-void-container { order: 1 }`, which moves
   the one flex item that has to move and leaves dockview's tree alone). The + is the browser's
   affordance and opens into *this* group, which is what makes a per-group copy unambiguous; its rows are `WorkspacePanelItems`, the same array the header menu rendered,
@@ -717,12 +716,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   renders panel content outside the group element, where nothing the dock sets can reach it.
   The old constant reserved the header's height in every group, including the ones nowhere near
   it — twice, in the strip's margin and the panel's own padding.
-- **What is open inside the IDE is the IDE's state, never the dock's** (`lib/ide/editors.ts`,
-  a module store — persisted per server and project, so its tabs survive a reload). Only the
-  tabs and the focus are stored; a reveal is one-shot and a dirty flag is derived, rebuilt by
-  the editor re-reading its buffer. **`open.ts` and `editors.ts` name nothing from Monaco**, because every
-  reader loads the transcript that imports them; Monaco is a dynamic import, excluded by
-  chunk name from the service worker's precache.
 - **A turn's changes are measured by git, never read off the transcript** — tree snapshots at
   `turn_started`/`turn_ended` through a scratch index; **the real index is never touched**.
   **What git measures is a window, not an author**, so the *reading* is gated on the transcript
@@ -730,24 +723,39 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   fetched or thought draws nothing, because in a cwd shared with another thread, an editor or
   a build it would otherwise claim their diff. The gate is a **read-only allowlist** — an
   unrecognised kind still draws — and it decides only what is drawn, never what is recorded.
+  **Two threads in one repository are told apart while the window is open, never after**: the
+  recorder watches the project for as long as a turn runs, and a path written while another
+  *owner* (a child thread's owner is its parent) had a turn running is `shared`, naming them.
+  The server reads no transcript; the client clears `shared` for a path its own tool calls name
+  (`claimShared`). A child thread's turns are listed and nudged to its parent.
   **It is drawn in the footer's end cluster, not under the turn** (`ChangesIndicator`): it is
   the newest gated turn's, which is a reading of the thread and belongs where the other three
   are, and the file list a chip could never hold is what its popover is for. `ThreadView` picks
   the turn (the last value of `withTurnChanges`) — the composer holds no opinion about which.
-  **Reviewing a turn is source control narrowed to its paths** (`lib/ide/scm-filter.ts`), not a
-  surface of its own: the files are already where they can be staged, discarded and committed,
-  and a second list that could do none of that was the changes tab this replaced. The
-  narrowing is one derivation of the status, so every count and every "stage all" follows it.
-- **The thread inspector is the chat panel's, never a dock split**
-  (`thread-view/thread-inspector.tsx`, a grid column of `ThreadView`): Changes (a **turn
-  timeline** — `changesTimeline`, the chip's own `couldTouchFiles` gate per turn — or one flat
-  card for the `thread`/`uncommitted`/`branch` scopes, every diff **inline under its file row**,
-  never over the list), Plan (`threadTodos`), Agents (the subagent groups, a row jumps the
-  transcript), Details. **Docked or a sheet is the *panel's* width** (measured, 1024px); open,
-  width and tab are the device's (`lib/inspector.ts`), and **the sheet's open state is never
-  stored** — a restored overlay covers every narrow transcript. The footer readings stay the
-  readings; their popovers end in "Open in inspector" (`InspectorContext`, null outside a
-  transcript). Toggled by the `inspector` shortcut, which only the routed thread answers.
+  **Reviewing a turn is the Changes panel** (the turn timeline, below).
+- **A chat tab on a wide screen is a thread dock** (`workspace/thread-dock.tsx`): a nested
+  dockview holding the transcript and the panels about *that* thread — Changes, Plan, Agents,
+  Details (`ThreadSection`, the inspector's readings one panel each), Terminal, Preview —
+  **never the board**, which is the server's and not a thread's, so it always opens in the outer dock.
+  **It opens as the transcript alone, and the transcript wears no strip** (`syncStrips`: a
+  group holding only it has its header hidden); **every other panel comes from the + floating
+  over it, and lands at its kind's own place** (`SLOT`: readings a column at the right edge,
+  preview beside the transcript, a shell under it — later ones join that group).
+  **It is one surface, not a dock of cards**: panes are flush and meet at a hairline, and the
+  other panes' strips are title bars — bare tabs, an underline in front (`.dock-nested`).
+  Each thread keeps its arrangement on this device (`lib/workspace/thread-docks.ts`).
+  **A closed world**: nothing crosses between it and the outer dock (dockview refuses a
+  foreign drop by default), which is what the removed group panel lacked. **A hidden chat tab
+  is `display: none`** (`ChatPanel`), because the inner dock's `always` overlays escape the
+  outer's `visibility` and drew over every other tab. Its panels get a `DockContext` of the
+  thread dock's own, so a terminal's restart, close guard and a preview's helper land inside.
+  **A thread's shell starts in `threadCwd` and dies with the thread** (`sessionId` on the
+  terminal, `killSessionTerminals` on trash and purge). With a thread in front, every opener —
+  the outer +, ⌃`, the palette — routes terminal and preview into its dock
+  (`threadDock`); the outer kinds remain for a page in front. **On a phone
+  it is the same dock, stacked**: every panel is a tab in the transcript's group, nothing
+  splits or drags, and a wide layout folds on the way in (`stack`). "Open in inspector"
+  opens the reading's panel (`InspectorContext`).
 - **A review is drafts on this device, sent as ONE ordinary message through `actions.send`**
   (`lib/review-comments.ts`): it queues behind a running turn and never steers, and the drafts
   are cleared only once the send resolves. **Hunk actions reuse the existing doors** — stage
@@ -763,7 +771,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   **never the real one**, never another path. It **refuses (409 with the paths) when any of
   them changed since the turn's end tree** unless `force`, and refuses while a turn runs.
 - **Best-of-N adds no concept**: N drafts from `startThreadIn`, each `isolate`d and retuned
-  with `remember=false`, opened side by side by `dock.openGroup`, sent through
+  with `remember=false`, opened side by side by `dock.openSideBySide` (a column each, one shared-colour tab group
+  per column; one strip on a phone), sent through
   `actions.send` a task after the mint (it reads the committed store).
 - **The agents dashboard (`/agents`) fetches nothing of its own**: the session list and
   `agentState` over `threadStatus`. **A list's live state for a thread with no socket is the

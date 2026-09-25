@@ -222,13 +222,18 @@ export async function handlePrompt(
          this attempt's rollback — they are already on disk, so a failed attempt
          must put them back rather than truncate them away. */
       const drainSteers = (): ModelMessage[] => {
-        if (session.steerQueue.length === 0) return [];
-        const injected = session.steerQueue.flatMap((s) => s.messages);
+        const words = session.steerQueue.flatMap((s) => s.messages);
         session.steerQueue = [];
+        /* Media an MCP tool returned rides the same door, first — it belongs
+           to the tool results just before it — but is not the user's words, so
+           it is persisted and never journaled as a bubble. */
+        const media = mediaMessage(session, deps.env);
+        const injected = media ? [media, ...words] : words;
+        if (injected.length === 0) return [];
         session.messages.push(...injected);
         steered.push(...injected);
         deps.store.appendMessages(session.id, injected);
-        for (const m of injected) {
+        for (const m of words) {
           emit.record({
             sessionUpdate: "user_message_chunk",
             content: { type: "text", text: contentText(m) },
@@ -516,6 +521,8 @@ export async function handlePrompt(
     /* Whatever ended the turn — an answer, a throw, a cancel — it is not
        retrying any more. Fire-and-forget: this block must not become async. */
     void clearRetry();
+    /* Media from a tool the model never got another step to look at. */
+    session.mcp?.media.splice(0);
     /* Steering that arrived too late to join a step still becomes context the
        next turn sees, rather than words that vanish. */
     if (session.steerQueue.length) {
@@ -865,7 +872,10 @@ async function pumpStream(
           const usageMeta = {
             ...(cache ? { cache } : {}),
             ...(breakdown ? { breakdown } : {}),
-            ...(window.known ? {} : { daedalus: { windowEstimated: true } }),
+            /* The step's own bill in `acp.Usage` shape, so a reader can keep a
+               running total while the turn is still going instead of waiting
+               for `turn_ended` — which still carries the authoritative sum. */
+            daedalus: { step: toAcpUsage(part.usage), ...(window.known ? {} : { windowEstimated: true }) },
           };
           await emit.update({
             sessionUpdate: "usage_update",
@@ -1359,6 +1369,12 @@ Nothing is implemented in plan mode. End by asking the user to approve the plan 
       `Skills available in this workspace (read the SKILL.md before relying on one):\n${listing}`,
     );
   }
+  /* What each connected server says about how it wants to be used — the
+     spec's `instructions`, which a client is meant to put in front of the
+     model. Tool descriptions say what one tool does; this says how they fit. */
+  for (const { server, text } of session.mcp?.instructions ?? []) {
+    parts.push(`Instructions from the ${server} MCP server:\n${text}`);
+  }
   const failures = session.mcp?.failures ?? [];
   if (failures.length) {
     parts.push(`These MCP servers failed to start and their tools are unavailable:\n${failures.join("\n")}`);
@@ -1440,6 +1456,29 @@ function promptContent(blocks: acp.ContentBlock[], text: string): UserContent {
   const media = promptParts(blocks).filter((p): p is FilePart => typeof p !== "string");
   if (media.length === 0) return text;
   return [{ type: "text", text }, ...media];
+}
+
+/* The images and audio MCP tools returned since the last step, as one user
+   message — or null. A model whose catalog entry names its modalities and
+   leaves one out is not sent that kind (the tool's text already names what it
+   returned); a model with no entry is, which is `delivery.ts`'s rule too: a
+   catalog that lists modalities is a statement, and silence is not a no. */
+function mediaMessage(session: Session, env: AgentEnv): ModelMessage | null {
+  const pending = session.mcp?.media.splice(0) ?? [];
+  const accepts = env.modelModalities[session.modelId];
+  const shown = pending.filter((m) => !accepts || accepts.includes(m.mediaType.split("/")[0] ?? ""));
+  if (shown.length === 0) return null;
+  const tools = [...new Set(shown.map((m) => m.tool))].join(", ");
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `[Media returned by ${tools}. A tool result carries text only, so it is attached here — this is not a message from the user.]`,
+      },
+      ...shown.map((m): FilePart => ({ type: "file", mediaType: m.mediaType, data: m.data })),
+    ],
+  };
 }
 
 function contentText(message: ModelMessage): string {

@@ -1,8 +1,10 @@
 import * as React from "react"
-import { AtSign, FileText, Folder } from "lucide-react"
+import type { TextSurface } from "@/components/composer/composer-editor"
+import { AtSign, FileText, Folder, Plug } from "lucide-react"
 import { reportError } from "@/lib/errors"
 import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
+import type { ThreadMcpServer } from "@/lib/settings"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
@@ -36,6 +38,23 @@ import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer
 const DEBOUNCE_MS = 110
 const LIMIT = 20
 
+/** A resource one of the thread's MCP servers offers. Picking one does not
+    insert text: the token is removed and the resource is read and attached
+    (`onResource`), because what it names is not a path the agent can open. */
+export interface McpResourceMatch {
+  type: "mcp"
+  serverId: string
+  server: string
+  uri: string
+  name: string
+  mimeType?: string
+}
+
+export type MentionMatch = WorkspaceEntry | McpResourceMatch
+
+/** How many MCP resources join the file matches — they are the second list. */
+const MCP_LIMIT = 8
+
 interface MentionToken {
   /** What has been typed after the `@`. */
   query: string
@@ -44,18 +63,18 @@ interface MentionToken {
 }
 
 export interface FileMentionState {
-  matches: WorkspaceEntry[]
+  matches: MentionMatch[]
   selected: number
   /** A search is in flight and nothing is on screen for this query yet. */
   loading: boolean
   /** Non-null while the menu is open, even before results arrive. */
   query: string | null
-  pick: (entry: WorkspaceEntry) => void
+  pick: (entry: MentionMatch) => void
   setSelected: (index: number) => void
   /** Returns true when the key drove the menu and must not reach the send logic. */
   onKeyDown: (e: React.KeyboardEvent) => boolean
-  /** Attach to the textarea: caret moves are what open and close the menu. */
-  onSelect: (e: React.SyntheticEvent<HTMLTextAreaElement>) => void
+  /** Attach to the box: caret moves are what open and close the menu. */
+  onSelect: () => void
   /** Where the caret must land once the *next* text change has rendered.
       Exported because this hook already owns the caret after every edit (see
       the effect below) — anything else that rewrites `text` and wants a caret
@@ -68,13 +87,16 @@ export function useFileMentions(opts: {
   text: string
   setText: (text: string) => void
   projectId: string | undefined
-  inputRef: React.RefObject<HTMLTextAreaElement | null>
+  inputRef: React.RefObject<TextSurface | null>
+  /** The thread's MCP servers, whose resources are offered after the files. */
+  mcpServers?: ThreadMcpServer[]
+  onResource?: (resource: McpResourceMatch) => void
 }): FileMentionState {
-  const { text, setText, projectId, inputRef } = opts
+  const { text, setText, projectId, inputRef, mcpServers, onResource } = opts
   const [caret, setCaret] = React.useState(0)
   const [selected, setSelected] = React.useState(0)
   const [dismissed, setDismissed] = React.useState(false)
-  const [matches, setMatches] = React.useState<WorkspaceEntry[]>([])
+  const [fileMatches, setMatches] = React.useState<WorkspaceEntry[]>([])
   const [loading, setLoading] = React.useState(false)
   /* Results for queries already asked, so backspacing through a path does not
      re-walk the project. Dropped when the menu closes: a cache that outlives
@@ -152,11 +174,42 @@ export function useFileMentions(opts: {
     }
   }, [projectId, query])
 
+  /* Filtered here rather than asked for: the listing is already in the cache,
+     and a server's resource list is a handful of rows, not a tree to walk. */
+  const resourceMatches = React.useMemo((): McpResourceMatch[] => {
+    if (query === null || !mcpServers?.length) return []
+    const q = query.toLowerCase()
+    return mcpServers
+      .flatMap((server) =>
+        server.resources.map((r) => ({
+          type: "mcp" as const,
+          serverId: server.id,
+          server: server.name,
+          uri: r.uri ?? r.name,
+          name: r.description || r.uri || r.name,
+          mimeType: r.mimeType,
+        })),
+      )
+      .filter((r) => !q || `${r.server} ${r.name} ${r.uri}`.toLowerCase().includes(q))
+      .slice(0, MCP_LIMIT)
+  }, [query, mcpServers])
+  const matches = React.useMemo<MentionMatch[]>(
+    () => [...fileMatches, ...resourceMatches],
+    [fileMatches, resourceMatches],
+  )
+
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
   const index = Math.min(selected, Math.max(matches.length - 1, 0))
 
-  const pick = (entry: WorkspaceEntry) => {
+  const pick = (entry: MentionMatch) => {
     if (!token) return
+    if (entry.type === "mcp") {
+      pendingCaret.current = token.start
+      setText(text.slice(0, token.start) + text.slice(caret))
+      setSelected(0)
+      onResource?.(entry)
+      return
+    }
     /* A directory completes to `@path/` and leaves the token open, so the next
        keystroke keeps drilling; a file completes to `@path ` and is done. */
     const insert = `@${entry.path}${entry.type === "dir" ? "/" : " "}`
@@ -195,8 +248,7 @@ export function useFileMentions(opts: {
     }
   }
 
-  const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) =>
-    setCaret(e.currentTarget.selectionStart ?? 0)
+  const onSelect = () => setCaret(inputRef.current?.selectionStart ?? 0)
 
   const requestCaret = (position: number) => {
     pendingCaret.current = position
@@ -232,7 +284,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
             ? "Searching files…"
             : state.matches.length === 0
               ? "No matching files"
-              : `${state.matches.length} file${state.matches.length === 1 ? "" : "s"}`,
+              : `${state.matches.length} match${state.matches.length === 1 ? "" : "es"}`,
           urgent: true,
         }
       : null
@@ -260,6 +312,23 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
   return (
     <CompleterList selected={state.selected} count={state.matches.length} hint={scope}>
       {state.matches.map((entry, i) => {
+        if (entry.type === "mcp") {
+          return (
+            <CompleterRow
+              key={`mcp:${entry.serverId}:${entry.uri}`}
+              icon={Plug}
+              prefix={`${entry.server}: `}
+              label={entry.name}
+              aside={entry.mimeType}
+              /* Attached, not inserted — the badge says the pick does something
+                 other than complete the text. */
+              badge="MCP"
+              selected={i === state.selected}
+              onPick={() => state.pick(entry)}
+              onHover={() => state.setSelected(i)}
+            />
+          )
+        }
         /* The directory is what tells two same-named files apart. It leads the
            row, dimmed — a row then reads as the path it will insert, and the
            list is one line per file instead of two. It is also what gives up

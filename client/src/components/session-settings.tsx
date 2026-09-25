@@ -67,11 +67,13 @@ import {
   ANSWERS_ONLY_SUPPRESSES,
   CALM_MOTION_SUPPRESSES,
   RECENT_SUBAGENT_STEP_COUNTS,
+  TOOL_LAYOUTS,
   isRecentSubagentStepCount,
   resetViewOptions,
   setViewOption,
   useViewOptions,
   VIEW_DEFAULTS,
+  type ToolLayout,
   type ViewOptions,
 } from "@/lib/view-options"
 
@@ -95,7 +97,7 @@ type Group = {
   hint: string
   options: Option[]
   /** Non-switch controls that belong to this group's question. */
-  picker?: "streamEffect" | "recentSubagentSteps"
+  pickers?: ("streamEffect" | "recentSubagentSteps" | "toolLayout")[]
 }
 
 const GROUPS: Group[] = [
@@ -137,7 +139,7 @@ const GROUPS: Group[] = [
     label: "Detail",
     icon: ListTree,
     hint: "How much of each step is spelled out.",
-    picker: "recentSubagentSteps",
+    pickers: ["recentSubagentSteps", "toolLayout"],
     options: [
       {
         key: "answersOnly",
@@ -257,11 +259,70 @@ const GROUPS: Group[] = [
           "Drop the row entrance animation, the shimmer on a running turn and the streaming reveal. Colour still says what is live.",
       },
     ],
-    picker: "streamEffect",
+    pickers: ["streamEffect"],
   },
 ]
 
 const ALL_OPTIONS = GROUPS.flatMap((group) => group.options)
+
+function ToolLayoutPreview({ layout }: { layout: ToolLayout }) {
+  const line = "h-1 rounded-full bg-muted-foreground/35"
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex h-12 flex-col justify-center gap-1.5 overflow-hidden rounded-md p-1.5",
+        layout === "cards" ? "bg-muted/40" : layout === "console" ? "border border-border/70 bg-muted/30" : layout === "spotlight" ? "bg-primary/5" : "bg-background/70",
+        layout === "outlined" && "border border-border/60",
+        layout === "minimal" && "bg-transparent"
+      )}
+    >
+      {layout === "cards" ? (
+        <>
+          <span className="flex items-center gap-1 rounded-sm border border-border/60 bg-background/80 px-1 py-0.5">
+            <span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-2/3")} />
+          </span>
+          <span className="flex items-center gap-1 rounded-sm border border-border/60 bg-background/80 px-1 py-0.5">
+            <span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-1/2")} />
+          </span>
+        </>
+      ) : layout === "compact" ? (
+        <>
+          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-muted-foreground/40" /><span className={cn(line, "w-3/4")} /></span>
+          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-muted-foreground/40" /><span className={cn(line, "w-1/2")} /></span>
+          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-muted-foreground/40" /><span className={cn(line, "w-2/3")} /></span>
+        </>
+      ) : layout === "rail" ? (
+        <span className="flex flex-col gap-1 border-l-2 border-primary/40 pl-1.5">
+          <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2")} />
+        </span>
+      ) : layout === "console" ? (
+        <>
+          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-2/3")} /></span>
+          <span className="h-3 rounded-sm border border-border/60 bg-background/80" />
+        </>
+      ) : layout === "outlined" ? (
+        <span className="flex flex-col gap-1 rounded-sm border border-primary/30 px-1 py-1">
+          <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2")} />
+        </span>
+      ) : layout === "minimal" ? (
+        <span className="flex flex-col gap-1">
+          <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2 opacity-50")} />
+        </span>
+      ) : layout === "spotlight" ? (
+        <span className="flex flex-col gap-1 rounded-sm bg-primary/10 px-1 py-1">
+          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-primary" /><span className={cn(line, "w-3/4")} /></span>
+          <span className="h-2 rounded-sm bg-background/80" />
+        </span>
+      ) : (
+        <span className="flex flex-col gap-1 border-l border-border/70 pl-1.5">
+          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-3/4")} /></span>
+          <span className={cn(line, "ml-2 w-1/2")} />
+        </span>
+      )}
+    </span>
+  )
+}
 
 /** What a row says in place of its description while another option has
     already settled it. One sentence, and it names the option responsible —
@@ -364,6 +425,7 @@ export function SessionSettingsDialog({
         ([
           ...ALL_OPTIONS.map((o) => o.key),
           "recentSubagentSteps",
+          "toolLayout",
           "streamEffect",
           "streamSpeed",
         ] as (keyof ViewOptions)[]).filter(
@@ -418,7 +480,7 @@ export function SessionSettingsDialog({
                     moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
                   />
                 ))}
-                {group.picker === "streamEffect" && (
+                {group.pickers?.includes("streamEffect") && (
                   <StreamEffectPicker
                     effect={options.streamEffect}
                     onEffectChange={(effect) => setViewOption("streamEffect", effect)}
@@ -427,7 +489,7 @@ export function SessionSettingsDialog({
                     moot={mootKeys.has("streamEffect") ? CALM_NOTE : undefined}
                   />
                 )}
-                {group.picker === "recentSubagentSteps" && (
+                {group.pickers?.includes("recentSubagentSteps") && (
                   <div className="flex items-center gap-3 px-3 py-3">
                     <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
                       <Bot className="size-3.5" />
@@ -463,6 +525,49 @@ export function SessionSettingsDialog({
                         ))}
                       </SelectContent>
                     </Select>
+                  </div>
+                )}
+                {!options.answersOnly && group.pickers?.includes("toolLayout") && (
+                  <div className="space-y-3 px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
+                        <Wrench className="size-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
+                          Tool call layout
+                          {changedKeys.has("toolLayout") && (
+                            <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                          )}
+                        </span>
+                        <span className="block text-[11px] leading-4 text-muted-foreground">
+                          Pick the visual style for tool steps.
+                        </span>
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 @md:grid-cols-3">
+                      {TOOL_LAYOUTS.map((layout) => {
+                        const selected = options.toolLayout === layout
+                        const title = layout === "timeline" ? "Timeline" : layout === "cards" ? "Cards" : layout === "compact" ? "Compact" : layout === "rail" ? "Accent rail" : layout === "console" ? "Console" : layout === "outlined" ? "Outlined" : layout === "minimal" ? "Minimal" : "Spotlight"
+                        const description = layout === "timeline" ? "Flowing steps" : layout === "cards" ? "Separate panels" : layout === "compact" ? "Tighter list" : layout === "rail" ? "Indented sequence" : layout === "console" ? "Command-style" : layout === "outlined" ? "Fine borders" : layout === "minimal" ? "No framing" : "Live step focus"
+                        return (
+                          <button
+                            key={layout}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => setViewOption("toolLayout", layout)}
+                            className={cn(
+                              "min-w-0 rounded-lg border p-2 text-start transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              selected ? "border-primary/60 bg-primary/5 shadow-sm" : "border-border/60 bg-background/40"
+                            )}
+                          >
+                            <ToolLayoutPreview layout={layout} />
+                            <span className="mt-2 block truncate text-[11px] font-medium">{title}</span>
+                            <span className="block truncate text-[10px] text-muted-foreground">{description}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

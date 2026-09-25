@@ -26,7 +26,7 @@ import { CompleterList, CompleterRow, CompleterSection } from "./composer/comple
    **What this project keeps running** is the third list, and the one nobody
    writes: the server tallies every `!` line per project
    (`server/src/shell-history.ts`, bumped by the run route itself) and the menu
-   offers them most-used first, under "Recent". Server-side rather than
+   offers every recorded line most-used first, under "Recent". Server-side rather than
    device-local on purpose — the line you build with is a property of the
    workspace, so the phone offers what the desktop ran. The same tally *orders*
    the other two lists, so the helper you run daily stands at the top of its

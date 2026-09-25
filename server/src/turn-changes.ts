@@ -26,12 +26,14 @@
  * failure — see CLAUDE.md, "An error a surface could render as emptiness
  * must be rendered as an error".
  */
-import { and, asc, eq, gte, isNotNull } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { join, relative, sep } from "node:path";
 
-import { db, sessionTurnChanges } from "./db/index.js";
+import { db, sessionTurnChanges, sessions as sessionsTable } from "./db/index.js";
 import * as git from "./git.js";
 import { HttpError } from "./http-error.js";
 import type { ChangedFile, TurnChanges } from "./protocol.js";
+import { watchProject, type WatchBatch } from "./workspace-watch.js";
 
 /** What a review reads: one turn; the whole thread (its first measured
     turn's start tree → the worktree now); `uncommitted` (HEAD → now); or
@@ -47,12 +49,47 @@ export interface TurnChangesDeps {
   cwdOf: (sessionId: string) => string | null;
   /** Tell the thread's peers a row moved. */
   emit: (sessionId: string, turn: TurnChanges) => void;
+  /** The project the thread runs in (its id and root), for the watcher. */
+  projectOf: (sessionId: string) => { id: string; cwd: string } | null;
+  /** The thread a turn's work belongs to: a child thread's (a workflow step)
+      is its parent's, so a parent and its own subagents never count as two
+      authors. */
+  ownerOf: (sessionId: string) => string;
+}
+
+/**
+ * A turn that is running, as the attribution sees it.
+ *
+ * git measures a window, not an author: two threads with turns open in one
+ * repository both see each other's writes in their diff. The window cannot be
+ * narrowed after the fact, but *while* it is open the project watcher says
+ * when each path was written, and at that instant it is known which turns were
+ * running in that repository. A write with one owner running is that owner's;
+ * a write with several is `shared` among them and the file says so, naming the
+ * others. It is measured, never read off the transcript — the client, which
+ * does hold the transcript, is who may break the tie.
+ */
+interface LiveTurn {
+  sessionId: string;
+  owner: string;
+  projectId: string;
+  /** The repository the turn is measured in (absolute). */
+  dir: string;
+  /** Repo-relative path → the other owners that were running when it was written. */
+  shared: Map<string, Set<string>>;
+  /** Repo-relative paths written while this owner was the only one running. */
+  mine: Set<string>;
+  /** Every other owner whose turn overlapped this one in `dir`. */
+  peers: Set<string>;
 }
 
 export class TurnChangesRecorder {
   private readonly deps: TurnChangesDeps;
   /** Start snapshots in flight, so an end that arrives first can wait. */
   private readonly starting = new Map<string, Promise<string | null>>();
+  private readonly live = new Map<string, LiveTurn>();
+  /** One watcher subscription per project with a turn running in it. */
+  private readonly watching = new Map<string, Promise<(() => void) | null>>();
 
   constructor(deps: TurnChangesDeps) {
     this.deps = deps;
@@ -65,6 +102,7 @@ export class TurnChangesRecorder {
     const startedAt = Date.now();
     const work = (async () => {
       const dir = await this.repoDirOf(sessionId);
+      if (dir) this.track(key, sessionId, dir);
       const tree = dir ? await git.snapshotTree(dir).catch(warn("start snapshot")) ?? null : null;
       await db.insert(sessionTurnChanges)
         .values({ sessionId, turnId, startTree: tree, endTree: null, files: [], startedAt, endedAt: null })
@@ -96,7 +134,8 @@ export class TurnChangesRecorder {
       const startTree = started ? await started : (await this.row(sessionId, turnId))?.startTree ?? null;
       const dir = await this.repoDirOf(sessionId);
       const endTree = dir && startTree ? await git.snapshotTree(dir).catch(warn("end snapshot")) ?? null : null;
-      const files = dir && startTree && endTree ? await git.diffTrees(dir, startTree, endTree).catch(warn("diff")) ?? [] : [];
+      const measured = dir && startTree && endTree ? await git.diffTrees(dir, startTree, endTree).catch(warn("diff")) ?? [] : [];
+      const files = annotate(measured, this.untrack(key));
       const endedAt = Date.now();
       const existing = await this.row(sessionId, turnId);
       const startedAt = existing?.startedAt ?? endedAt;
@@ -118,19 +157,61 @@ export class TurnChangesRecorder {
 
   /** Every recorded turn of a thread, oldest first. */
   async list(sessionId: string): Promise<TurnChanges[]> {
-    return await (await db
+    return (await db
       .select()
       .from(sessionTurnChanges)
-      .where(eq(sessionTurnChanges.sessionId, sessionId))
+      .where(inArray(sessionTurnChanges.sessionId, await this.family(sessionId)))
       .orderBy(sessionTurnChanges.startedAt))
-      
       .map((row) => ({
         turnId: row.turnId,
         files: row.files,
         ended: row.endedAt !== null,
         unavailable: row.startTree === null || (row.endedAt !== null && row.endTree === null),
         startedAt: row.startedAt,
+        ...(row.sessionId !== sessionId ? { sessionId: row.sessionId } : {}),
       }));
+  }
+
+  /**
+   * Close the rows a dead process left open. A turn's end is only ever
+   * recorded off its `turn_ended`, and a server restart (or a bridge that
+   * died mid-turn) never sends one — so the row said "running" forever and
+   * `revert` refused it forever. Called once at boot, before any turn can
+   * start: nothing is running yet, so every open row is an orphan. The end
+   * tree stays null — nobody knows what the worktree looked like when it
+   * stopped — so the turn reads live (start → now) and cannot be reverted.
+   */
+  async closeOrphans(): Promise<void> {
+    await db.update(sessionTurnChanges)
+      .set({ endedAt: Date.now() })
+      .where(isNull(sessionTurnChanges.endedAt));
+  }
+
+  /** The same, for one thread whose process died without a `turn_ended`
+      (called a tick after the process is gone, so a turn the close itself
+      ended has already reached `end`, which took it out of `starting`). */
+  processGone(sessionId: string): void {
+    const prefix = `${sessionId}:`;
+    const keys = [...this.starting.keys()].filter((key) => key.startsWith(prefix));
+    if (keys.length === 0) return;
+    for (const key of keys) {
+      this.starting.delete(key);
+      this.untrack(key);
+    }
+    void db.update(sessionTurnChanges)
+      .set({ endedAt: Date.now() })
+      .where(and(eq(sessionTurnChanges.sessionId, sessionId), isNull(sessionTurnChanges.endedAt)))
+      .catch(warn("close open turns"));
+  }
+
+  /** The thread and its child threads: a subagent run as a thread (a
+      workflow step) is part of the parent's work. One level, never a tree. */
+  private async family(sessionId: string): Promise<string[]> {
+    const children = await db
+      .select({ id: sessionsTable.id })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.parentSessionId, sessionId));
+    return [sessionId, ...children.map((c) => c.id)];
   }
 
   /**
@@ -226,12 +307,91 @@ export class TurnChangesRecorder {
     return git.revertTurn(dir, row.startTree, row.endTree, force);
   }
 
+  /** A turn of this thread or of one of its child threads — turn ids are
+      minted uuids, so a parent reading its step's turn cannot collide. */
   private async row(sessionId: string, turnId: string) {
     return (await db
       .select()
       .from(sessionTurnChanges)
-      .where(and(eq(sessionTurnChanges.sessionId, sessionId), eq(sessionTurnChanges.turnId, turnId)))
+      .where(and(
+        eq(sessionTurnChanges.turnId, turnId),
+        or(
+          eq(sessionTurnChanges.sessionId, sessionId),
+          inArray(sessionTurnChanges.sessionId, db
+            .select({ id: sessionsTable.id })
+            .from(sessionsTable)
+            .where(eq(sessionsTable.parentSessionId, sessionId))),
+        ),
+      ))
       .limit(1))[0];
+  }
+
+  /** Start attributing writes to a turn — see `LiveTurn`. */
+  private track(key: string, sessionId: string, dir: string): void {
+    const project = this.deps.projectOf(sessionId);
+    if (!project) return;
+    const turn: LiveTurn = {
+      sessionId,
+      owner: this.deps.ownerOf(sessionId),
+      projectId: project.id,
+      dir,
+      shared: new Map(),
+      mine: new Set(),
+      peers: new Set(),
+    };
+    for (const other of this.live.values()) {
+      if (other.dir !== dir || other.owner === turn.owner) continue;
+      other.peers.add(turn.owner);
+      turn.peers.add(other.owner);
+    }
+    this.live.set(key, turn);
+    if (!this.watching.has(project.id)) {
+      const root = project.cwd;
+      this.watching.set(project.id, watchProject(
+        project.id,
+        (batch) => this.observe(root, batch),
+        () => this.watching.delete(project.id),
+      ).catch((err) => {
+        warn("watch")(err);
+        this.watching.delete(project.id);
+        return null;
+      }));
+    }
+  }
+
+  /** Stop attributing; hands back what was seen. Releases the project's
+      watcher when this was its last running turn. */
+  private untrack(key: string): LiveTurn | undefined {
+    const turn = this.live.get(key);
+    if (!turn) return undefined;
+    this.live.delete(key);
+    if ([...this.live.values()].some((t) => t.projectId === turn.projectId)) return turn;
+    const stop = this.watching.get(turn.projectId);
+    this.watching.delete(turn.projectId);
+    void stop?.then((unsubscribe) => unsubscribe?.());
+    return turn;
+  }
+
+  private observe(root: string, batch: WatchBatch): void {
+    for (const event of batch.events) {
+      const abs = join(root, event.path);
+      const running = [...this.live.values()].filter((t) => t.projectId === batch.projectId && abs.startsWith(t.dir + sep));
+      const owners = new Set(running.map((t) => t.owner));
+      for (const turn of running) {
+        const rel = relative(turn.dir, abs).split(sep).join("/");
+        if (owners.size === 1) {
+          turn.mine.add(rel);
+          continue;
+        }
+        const others = turn.shared.get(rel) ?? new Set<string>();
+        for (const owner of owners) if (owner !== turn.owner) others.add(owner);
+        turn.shared.set(rel, others);
+      }
+    }
+    /* Too much at once to enumerate: every running turn in the project had a
+       peer writing at the same moment, and nothing better is known. */
+    if (batch.overflow) for (const turn of this.live.values())
+      if (turn.projectId === batch.projectId && turn.peers.size > 0) turn.shared.set("*", new Set(turn.peers));
   }
 
   /** The tree the worktree was photographed as when `turnId` began — a
@@ -269,6 +429,28 @@ export class TurnChangesRecorder {
       return null;
     }
   }
+}
+
+/**
+ * Mark the files another thread may have written. A turn nobody overlapped is
+ * left alone. One that did: a path the watcher saw written while a peer ran is
+ * `shared` with the peers that were running; one seen only while this owner
+ * ran alone is its own; one never seen (ignored by the watcher, lost in an
+ * overflow, written before the watch was up) is shared with every peer,
+ * because not knowing is not the same as knowing it was ours.
+ */
+export function annotate(
+  files: ChangedFile[],
+  turn: Pick<LiveTurn, "shared" | "mine" | "peers"> | undefined,
+): ChangedFile[] {
+  if (!turn || turn.peers.size === 0) return files;
+  const everyone = turn.shared.get("*");
+  return files.map((file) => {
+    const others = everyone ?? turn.shared.get(file.path);
+    if (others) return { ...file, shared: [...others] };
+    if (turn.mine.has(file.path)) return file;
+    return { ...file, shared: [...turn.peers] };
+  });
 }
 
 /** git's well-known empty tree, the base an unborn branch diffs against. */

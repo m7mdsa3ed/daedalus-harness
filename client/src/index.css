@@ -469,12 +469,8 @@
      app's controls a step below the window's. */
   --app-frame-gap: 0.5rem;
   --keyboard-inset: 0px;
-  /* The home-indicator inset a surface at the bottom of the *shell* pads by
-     (the composer, a board's list, a settings save bar). The raw `env()`
-     everywhere but a phone showing its bottom bar (`bottom-nav.tsx`), which
-     owns that inset itself and zeroes this — padding for it above the bar as
-     well would stack it twice. A sheet or dialog drawn over the bar keeps the
-     raw `env()`: it covers the bar, so the inset is its again. */
+  /* The home-indicator inset a surface at the bottom of the shell pads by
+     (the composer, a board's list, a settings save bar). */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* ── The transcript's three work accents ──
@@ -508,10 +504,6 @@
   --destructive-light: #FEF2F2;
   --overlay: 0 0 0;
   --focus-ring: #6B97FF;
-}
-
-:root[data-bottom-nav] {
-  --safe-bottom: 0px;
 }
 
 :root:not(.dark) {
@@ -1488,6 +1480,31 @@ html[data-window-controls-overlay="true"] {
   /* The row is the titlebar here too, so nothing above it. */
   --app-frame-gap: 0px;
 }
+/* ── The desktop toggle moves the column, never the layout ──
+   The vendored primitive eases the gap's `width` and the column's `left` over
+   200ms. Every frame of the first re-laid-out the dock and every panel in it —
+   Monaco, xterm, each transcript's virtualizer — which is the toggle's lag. So
+   the gap *steps*, once: at once when opening, so the column slides into room
+   already made, and after the slide when closing (`200ms` delay), so the
+   transparent column never slides across content. The column rides
+   `translate`, which the compositor animates without a layout. Unlayered, so
+   it outranks the component's utilities without touching the reinstallable
+   file; the resize rule below still wins on specificity. Left side only —
+   the only side this app mounts. */
+[data-slot="sidebar"] [data-slot="sidebar-gap"] {
+  transition: width 0s;
+}
+[data-slot="sidebar"][data-collapsible="offcanvas"] [data-slot="sidebar-gap"] {
+  transition-delay: 200ms;
+}
+[data-slot="sidebar"] [data-slot="sidebar-container"][data-side="left"] {
+  left: 0;
+  transition: translate 200ms ease-out;
+}
+[data-slot="sidebar"][data-collapsible="offcanvas"] [data-slot="sidebar-container"][data-side="left"] {
+  translate: -100% 0;
+}
+
 /* Sidebar drag-resize (handle lives in sidebar/resizer.tsx): kill the width
    easing while dragging so the sidebar tracks the pointer, and drop the handle
    when the sidebar is collapsed to icons.
@@ -1532,8 +1549,8 @@ html[data-window-controls-overlay="true"] {
    --tw-prose-td-borders: var(--border);
  }
 
-/* TipTap placeholder inside the task editor — match input placeholder colour. */
-.task-editor .tiptap p.is-editor-empty:first-child::before {
+/* TipTap placeholder inside the task editor and the composer — match input placeholder colour. */
+:is(.task-editor, .composer-editor) .tiptap p.is-editor-empty:first-child::before {
   color: var(--muted-foreground);
   content: attr(data-placeholder);
   float: left;
@@ -2366,37 +2383,105 @@ html .dv-render-overlay {
   }
 }
 
-/* ── A dock inside a tab ──
-   A group panel's inner dockview (`workspace/group-panel.tsx`) inherits every
-   rule above — the same strip, the same tab, the same card — because it is the
-   same DockviewReact. Two things are the outer level's alone and have to be
-   said not to apply. The header overlap is set on the *outer* groups by
-   `dock-surface.tsx` and never on the inner ones, and an inner strip lives in the
-   outer's render overlay where the outer group's variable does not reach, so
-   without this it fell back to the constant and opened three rems of nothing
-   under the group's own tab. And the card's right and bottom gutters are the
-   window frame's air, which an inner card standing inside an outer card does
-   not owe twice: flush on those two sides, the outer card's rounded overlay
-   clips it, and only the air under the inner strip is kept.
+/* ── Tab groups ──
+   Dockview's own chip over a run of tabs (`dock.tsx`, `TAB_GROUP_COLORS`). It
+   paints the chip in the group's colour with white text, which is unreadable on
+   the palettes whose `--chart-*` steps are light — the default greys among them.
+   So the chip is a *tint* of its colour with the foreground on it, and the
+   colour itself is the dot in front of the label: the same "a state is a dot"
+   rule the tab's reading follows, and legible in every generated palette
+   without a foreground per chart token. The radius and height are a tab's, so
+   the chip sits on the strip's one line rather than as a pill beside it. */
+html .dv-tab-group-chip:not(.dv-tab-group-chip--accent-off) {
+  gap: 0.375rem;
+  height: calc(var(--dock-chip-h) - 0.5rem);
+  margin: 0 0.25rem;
+  padding: 0 0.5rem;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--foreground);
+  background-color: color-mix(in oklab, var(--dv-tab-group-color) 22%, transparent);
+}
 
-   The inner strip stands on the shell's ground (`--app-ground`), the same
-   ground the outer strip stands on — a strip and a card on `--background`
-   alike were one flat surface with an invisible active tab. */
+html .dv-tab-group-chip:not(.dv-tab-group-chip--accent-off)::before {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--dv-tab-group-color);
+}
+
+/* A phone's strip is the one tab you are on (below), so a chip labelling a run
+   of tabs that are not drawn is a label for nothing. */
+@media (width < 48rem) {
+  html .dv-tab-group-chip {
+    display: none;
+  }
+}
+
+/* ── A thread dock ──
+   A chat tab's own dockview (`workspace/thread-dock.tsx`). It is one surface
+   cut into panes, not a second dock of cards: the outer chat card already is
+   the card, so every pane inside is flush — no gutters, no corners, no shadow —
+   and two panes meet at a hairline, which is also the sash. The panes other
+   than the transcript keep a strip, and it is a title bar rather than the
+   outer strip's floating chips: the shorter row, a ground a step off the pane,
+   a rule under it, and an underline for the tab in front. The header overlap
+   is the outer groups' alone; an inner strip is never under the app header. */
+html .dock-nested {
+  --dv-separator-border: var(--border);
+  --dv-sash-color: transparent;
+  --dv-tabs-and-actions-container-height: 2rem;
+  background-color: var(--background);
+}
+
 html .dock-nested .dv-groupview {
   --dock-header-overlap: 0px;
   --dock-band-left: 0px;
   --dock-band-right: 0px;
 }
 
-html .dock-nested {
-  background-color: var(--app-ground);
+html .dock-nested .dv-groupview > .dv-tabs-and-actions-container {
+  margin-top: 0;
+  padding: 0 4px;
+  background-color: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  border-bottom: 1px solid var(--border);
+}
+
+html .dock-nested .dv-groupview > .dv-content-container,
+html .dock-nested .dv-render-overlay {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 @media (width >= 48rem) {
-  html .dock-nested .dv-groupview > .dv-content-container {
-    margin-right: 0;
-    margin-bottom: 0;
+  html .dock-nested .dv-groupview > .dv-content-container,
+  html .dock-nested .dv-horizontal > .dv-view-container > .dv-view:not(:first-child) .dv-content-container {
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
+  html .dock-nested .dv-render-overlay {
+    border-radius: 0;
+  }
+}
+
+/* A title bar's tabs: bare text, the one in front underlined — nothing like
+   the outer strip's slabs, so a pane never reads as another thread's tab. */
+html .dock-nested .dock-tab,
+html .dock-nested .dock-tab:not([data-active]),
+html .dock-nested .dock-tab:not([data-active]):hover,
+html .dock-nested .dock-tab[data-active] {
+  background-color: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+html .dock-nested .dock-tab[data-active] {
+  box-shadow: inset 0 -2px 0 var(--primary);
 }
 
 /* ── Dragging a tab over a target ──
@@ -2672,10 +2757,6 @@ html {
 html .dock-tab {
   border-radius: calc(var(--radius) - 2px);
   background-color: transparent;
-  transition:
-    background-color 200ms,
-    color 200ms,
-    box-shadow 200ms;
 }
 
 /* The title's box: one grid column of exactly the tab's width, so the inner
@@ -2896,6 +2977,28 @@ html .dock-tab [data-tab-action="pin"] {
   html .dock-tab,
   html .dock-tab:has([data-tab-action="pin"]) {
     --tab-fade-w: calc(var(--dock-control-h) + 1.25rem);
+  }
+}
+
+/* ── The thread dock on a phone ──
+   Stacked (`thread-dock.tsx`): every panel is a tab of the transcript's group,
+   so its strip is how you move between them. The phone rules above are the
+   outer strip's — one tab drawn, no ✕ — and here would strand every panel but
+   the one in front. The inner strip keeps all its tabs at their wide sizing,
+   scrolls sideways when they overflow, and each keeps its ✕ (there is no ⋮). */
+@media (width < 48rem) {
+  html .dock-nested .dv-tab.dv-inactive-tab {
+    display: flex;
+  }
+  html .dock-nested .dv-tab.dv-active-tab {
+    width: 16rem;
+    max-width: 16rem;
+  }
+  html .dock-nested .dv-tabs-and-actions-container {
+    touch-action: pan-x;
+  }
+  html .dock-nested .dock-tab [data-tab-action="close"] {
+    display: grid;
   }
 }
 

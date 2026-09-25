@@ -20,6 +20,7 @@ import type * as Monaco from "monaco-editor"
 import { baseEditorOptions, languageForPath, loadMonaco, syncMonacoTheme, type MonacoApi } from "@/lib/ide/monaco"
 import { useTheme } from "@/lib/theme"
 import { useCoarsePointer } from "@/hooks/use-device"
+import { cn } from "@/lib/utils"
 
 export interface ReviewAnchor {
   side: "original" | "modified"
@@ -43,6 +44,7 @@ export function DiffEditor({
   inline = false,
   onLineChanges,
   editorRef,
+  fit,
 }: {
   /** The left side: HEAD, the index, or a turn's starting tree. */
   original: string
@@ -55,11 +57,16 @@ export function DiffEditor({
   onLineChanges?: (changes: Monaco.editor.ILineChange[]) => void
   /** The live instance, for a caller that reveals a hunk. */
   editorRef?: React.RefObject<Monaco.editor.IStandaloneDiffEditor | null>
+  /** Grow to the diff's own height, up to this many px, instead of filling the
+      parent — for a diff inside a scrolling list, where a fixed box is a
+      scroller inside a scroller with the file's tail cut off or blank below. */
+  fit?: number
 }) {
   const host = React.useRef<HTMLDivElement>(null)
   const editor = React.useRef<Monaco.editor.IStandaloneDiffEditor | null>(null)
   const api = React.useRef<MonacoApi | null>(null)
   const [ready, setReady] = React.useState(false)
+  const [height, setHeight] = React.useState<number | null>(null)
   const { resolved } = useTheme()
   /* Two panes side by side need room; on a phone, and in a narrow panel, they
      are stacked into one inline diff instead. The pointer answers "phone", the
@@ -94,6 +101,19 @@ export function DiffEditor({
       if (editorRef) editorRef.current = instance
       const diff = instance
       diff.onDidUpdateDiff(() => changesRef.current?.(diff.getLineChanges() ?? []))
+      if (fit) {
+        /* Folded regions and a stacked diff's deleted lines are both in the
+           content height, so it is the height of what is drawn. */
+        const size = () =>
+          setHeight(
+            Math.min(
+              fit,
+              Math.max(diff.getModifiedEditor().getContentHeight(), diff.getOriginalEditor().getContentHeight())
+            )
+          )
+        diff.getModifiedEditor().onDidContentSizeChange(size)
+        diff.getOriginalEditor().onDidContentSizeChange(size)
+      }
       if (reviewing) {
         wireGutter(monaco, diff.getOriginalEditor(), "original")
         wireGutter(monaco, diff.getModifiedEditor(), "modified")
@@ -159,7 +179,13 @@ export function DiffEditor({
     if (monaco) syncMonacoTheme(monaco, resolved === "dark")
   }, [resolved, ready])
 
-  return <div ref={host} className="h-full min-h-0 w-full overflow-hidden" />
+  return (
+    <div
+      ref={host}
+      className={cn("min-h-0 w-full overflow-hidden", !fit && "h-full")}
+      style={fit ? { height: height ?? Math.min(fit, 160) } : undefined}
+    />
+  )
 
   /** The "+" that follows the pointer down the gutter, and the click on it. */
   function wireGutter(monaco: MonacoApi, target: Monaco.editor.ICodeEditor, side: ReviewAnchor["side"]) {

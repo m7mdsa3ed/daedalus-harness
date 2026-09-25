@@ -43,6 +43,13 @@ export function isRecentSubagentStepCount(value: unknown): value is RecentSubage
   return RECENT_SUBAGENT_STEP_COUNTS.some((count) => count === value)
 }
 
+export const TOOL_LAYOUTS = ["timeline", "cards", "compact", "rail", "console", "outlined", "minimal", "spotlight"] as const
+export type ToolLayout = (typeof TOOL_LAYOUTS)[number]
+
+export function isToolLayout(value: unknown): value is ToolLayout {
+  return TOOL_LAYOUTS.some((layout) => layout === value)
+}
+
 export interface ViewOptions {
   /** Wall-clock time beside each message and step. */
   showTimestamps: boolean
@@ -72,6 +79,8 @@ export interface ViewOptions {
   /** The command, path or pattern under a tool row's description. Off, a step
    *  row says what the call *did* and leaves what it typed to the body. */
   showToolCommand: boolean
+  /** The visual arrangement of tool-call rows in the transcript. */
+  toolLayout: ToolLayout
   /** Render file diffs side by side instead of unified. */
   splitDiffs: boolean
   /** Hairline rule above each user turn. */
@@ -120,6 +129,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   showToolDetails: false,
   recentSubagentSteps: 3,
   showToolCommand: true,
+  toolLayout: "timeline",
   splitDiffs: false,
   stepDividers: false,
   turnRail: true,
@@ -159,6 +169,7 @@ export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
   "showThinking",
   "showToolDetails",
   "showToolCommand",
+  "toolLayout",
   "groupTools",
   "codeWrap",
   "splitDiffs",
@@ -198,6 +209,8 @@ function pick(raw: unknown): Partial<ViewOptions> {
       }
     } else if (key === "streamEffect") {
       if (isStreamEffect(value)) out[key] = value
+    } else if (key === "toolLayout") {
+      if (isToolLayout(value)) out[key] = value
     } else if (key === "streamSpeed") {
       if (isStreamSpeed(value)) out[key] = value
     }

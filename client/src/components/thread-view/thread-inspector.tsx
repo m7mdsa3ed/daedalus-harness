@@ -379,8 +379,6 @@ export function ThreadInspector({
 }) {
   const prefs = inspectorPrefs.use()
   const comments = useReviewComments(meta.id)
-  /* A worktree thread's changes live in its own checkout, not the project's. */
-  const worktreeRepo = meta.worktree?.path
   /* Rendered inside `ThreadView`'s scroller provider, so a jump is the rail's
      own gesture; a sheet gets out of the way of what it jumped to. */
   const { scrollToMessage } = useMessageScroller()
@@ -395,10 +393,6 @@ export function ThreadInspector({
     [thread.items, thread.turnActive]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
-  const timeline = React.useMemo(
-    () => changesTimeline(thread.items, thread.turnChanges),
-    [thread.items, thread.turnChanges]
-  )
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
   const todos = React.useMemo(() => threadTodos(thread), [thread.items])
   const running = groups.filter((group) => group.active).length
@@ -508,43 +502,72 @@ export function ThreadInspector({
           </Button>
         </header>
 
-        <TabsContent value="changes" className="flex min-h-0 flex-1 flex-col">
-          {!meta.projectId ? (
-            <div className="p-3">
-              <Empty>This thread has no project, so there is no worktree to measure.</Empty>
-            </div>
-          ) : (
-            <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
-              <InspectorChanges
-                projectId={meta.projectId}
-                sessionId={meta.id}
-                turns={timeline}
-                turnActive={thread.turnActive}
-                repo={worktreeRepo}
-                onSend={onSend}
-              />
-            </React.Suspense>
-          )}
-        </TabsContent>
-
-        <TabsContent value="plan" className="min-h-0 flex-1 overflow-y-auto p-2.5">
-          {todos ? (
-            <TodoChecklist items={todos} />
-          ) : (
-            <Empty>The agent has not written a plan in this thread.</Empty>
-          )}
-        </TabsContent>
-
-        <TabsContent value="agents" className="flex min-h-0 flex-1 flex-col">
-          <AgentsTab groups={groups} onJump={onJump} />
-        </TabsContent>
-
-        <TabsContent value="details" className="flex min-h-0 flex-1 flex-col">
-          <DetailsTab thread={thread} meta={meta} rows={rows} />
-        </TabsContent>
+        {(["changes", "plan", "agents", "details"] as const).map((section) => (
+          <TabsContent key={section} value={section} className="flex min-h-0 flex-1 flex-col">
+            <ThreadSection section={section} thread={thread} meta={meta} onSend={onSend} onJump={onJump} />
+          </TabsContent>
+        ))}
       </Tabs>
     </aside>
   )
+}
+
+/** One of the inspector's readings on its own — a tab of the sheet here, a
+    panel of its own in the thread dock (`workspace/thread-dock.tsx`), where
+    each can be moved and resized beside the transcript. */
+export type ThreadSectionKind = "changes" | "plan" | "agents" | "details"
+
+export function ThreadSection({
+  section,
+  thread,
+  meta,
+  onSend,
+  onJump,
+}: {
+  section: ThreadSectionKind
+  thread: ThreadState
+  meta: SessionMeta
+  onSend: (text: string) => Promise<void>
+  /** Scroll the transcript to the row holding this item. */
+  onJump: (id: string) => void
+}) {
+  const rows = React.useMemo(
+    () => buildRows(thread.items, false, thread.turnActive),
+    [thread.items, thread.turnActive]
+  )
+  const groups = React.useMemo(() => activityGroups(rows), [rows])
+  const timeline = React.useMemo(
+    () => changesTimeline(thread.items, thread.turnChanges),
+    [thread.items, thread.turnChanges]
+  )
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
+  const todos = React.useMemo(() => threadTodos(thread), [thread.items])
+
+  if (section === "changes")
+    return !meta.projectId ? (
+      <div className="p-3">
+        <Empty>This thread has no project, so there is no worktree to measure.</Empty>
+      </div>
+    ) : (
+      <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
+        <InspectorChanges
+          projectId={meta.projectId}
+          sessionId={meta.id}
+          turns={timeline}
+          turnActive={thread.turnActive}
+          repo={meta.worktree?.path}
+          onSend={onSend}
+        />
+      </React.Suspense>
+    )
+  if (section === "plan")
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+        {todos ? <TodoChecklist items={todos} /> : <Empty>The agent has not written a plan in this thread.</Empty>}
+      </div>
+    )
+  if (section === "agents") return <AgentsTab groups={groups} onJump={onJump} />
+  return <DetailsTab thread={thread} meta={meta} rows={rows} />
 }
 
 function TabCount({ children }: { children: ReactNode }) {

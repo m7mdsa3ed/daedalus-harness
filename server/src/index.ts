@@ -21,8 +21,6 @@ import { RoutineEngine } from "./routines.js";
 import { TaskTailer } from "./tasks.js";
 import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
-import { adoptOrphans, stopAllIdes } from "./ide.js";
-import { parseIdePath, proxyIdeUpgrade } from "./ide-proxy.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
 import { Push } from "./push.js";
@@ -33,7 +31,6 @@ import { miscRoutes } from "./routes/misc.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { workspaceRoutes } from "./routes/workspace.js";
 import { attachmentRoutes } from "./routes/attachments.js";
-import { ideRoutes } from "./routes/ide.js";
 import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { taskRoutes } from "./routes/tasks.js";
@@ -50,9 +47,6 @@ configureGatewayShim({ port: config.port });
 /* The same bargain for an MCP server that demands OAuth: the child is handed
    `/mx/<key>/<serverId>` and the token is attached here, per request. */
 configureMcpShim({ port: config.port });
-// Editors a previous process left running: taken back under the same key so
-// browser frames survive a restart, or cleaned up. See adoptOrphans.
-await adoptOrphans();
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
@@ -128,6 +122,9 @@ const sessions = new SessionManager(
   config.sessionIdleMinutes,
   config.sessionJournalRetentionDays,
 );
+/* No turn survives a restart, so a turn row still open at boot is one the
+   old process never closed (turn-changes.ts, `closeOrphans`). */
+await sessions.turnChanges.closeOrphans();
 /* The workflow engine (workflows.ts). Wired both ways after construction: the
    manager hands every top-level thread the `workflow` MCP server pointed at
    the runner's loopback URL, and the runner drives the manager to run steps.
@@ -217,7 +214,7 @@ app.use("/api/sessions/:id/trace", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /ide/* + /gw/* + /mx/* + /wf/* + /rt/* are outside /api with the key-in-path
+   and /gw/* + /mx/* + /wf/* + /rt/* are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
@@ -229,8 +226,7 @@ miscRoutes(app, { config, sessions, push });
 profileRoutes(app, { sessions });
 workspaceRoutes(app);
 attachmentRoutes(app);
-ideRoutes(app);
-libraryRoutes(app);
+libraryRoutes(app, { sessions });
 sessionRoutes(app, { sessions });
 taskRoutes(app, { sessions, tasks });
 workflowRoutes(app, { runner: workflows, sessions });
@@ -314,15 +310,6 @@ const heartbeat = setInterval(() => {
 heartbeat.unref();
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  /* The editor's socket is not one of ours: VS Code's whole session — the
-     extension host, the file watcher, every keystroke — rides it, and this
-     server has nothing to say about the protocol. It is tunnelled to the
-     loopback code-server before the token check, because the key already in
-     its path is that request's credential (see ide.ts). */
-  if (parseIdePath(url.pathname)) {
-    proxyIdeUpgrade(req, socket, head);
-    return;
-  }
   if (url.pathname !== "/ws" && url.pathname !== "/terminal") {
     // Destroying the socket leaves the browser with a bare "connection failed".
     // An HTTP response at least names the problem in the network panel.
@@ -364,11 +351,11 @@ server.on("upgrade", (req, socket, head) => {
 
 /**
  * One exit path for signals and fatal errors. The order matters: the watchers,
- * terminals, editors and scheduler stop first, then the SessionManager retires
+ * terminals and scheduler stop first, then the SessionManager retires
  * every live agent child and flushes the journal rows still buffered for the
  * next tick — a bare `process.exit()` orphaned the children and dropped that
  * tick. The bounded drain afterwards is what lets the SIGTERM→SIGKILL
- * escalation timers in terminals/ide actually fire before the process goes.
+ * escalation timers in terminals actually fire before the process goes.
  */
 const SHUTDOWN_DRAIN_MS = 2_000;
 let shuttingDown = false;
@@ -381,7 +368,6 @@ async function shutdown(code: number): Promise<never> {
     routineGitTriggers?.stop();
     stopWatching();
     killProjectTerminals();
-    stopAllIdes();
     stopScheduler();
     clearInterval(heartbeat);
     workflows?.shutdown();

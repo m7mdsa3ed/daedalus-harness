@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button"
 import {
   BookOpenIcon,
   ChevronDownIcon,
+  FlaskConicalIcon,
   GlobeIcon,
   KeyRoundIcon,
   PlugIcon,
@@ -54,6 +55,7 @@ import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
+import type { McpTransportForm } from "./mcp-detail"
 
 type BuiltinKind = "web-search" | "knowledge" | "workflow"
 
@@ -142,6 +144,15 @@ export function McpPage() {
       <StoreIcon className="size-4" /> Browse
     </Button>
   )
+  const playground = (
+    <Button
+      variant="outline"
+      onClick={() => void navigate(settingsFormPath(meta.id, "playground"))}
+      title="Connect to any MCP server without saving it"
+    >
+      <FlaskConicalIcon className="size-4" /> Playground
+    </Button>
+  )
   const builtins = missing.length > 0 && (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -174,6 +185,7 @@ export function McpPage() {
       extraActions={
         <>
           {browse}
+          {playground}
           {builtins}
         </>
       }
@@ -593,6 +605,14 @@ function McpForm({
   }))
   const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
+  const navigate = useNavigate()
+  /* The fields as they stand, connected without saving — the playground holds
+     the same string shape, so the state goes over whole. An OAuth server is
+     the one it cannot try: its token needs the row. */
+  const tryIt = () => {
+    const prefill: McpTransportForm = { ...form }
+    void navigate(settingsFormPath("mcp", "playground"), { state: { prefill } })
+  }
 
   /* What the last probe said, so the form can report it in words rather than
      silently flipping a field the user cannot see. */
@@ -742,6 +762,11 @@ function McpForm({
             />
           </Field>
         </>
+      )}
+      {(form.type === "stdio" ? form.command : form.url) && form.auth !== "oauth" && (
+        <Button type="button" variant="outline" className="self-start" onClick={tryIt}>
+          <FlaskConicalIcon className="size-4" /> Try it in the playground
+        </Button>
       )}
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>

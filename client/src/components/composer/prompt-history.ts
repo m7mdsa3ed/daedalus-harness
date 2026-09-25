@@ -17,8 +17,13 @@ import * as React from "react"
 
 import type { ComposerHistoryEntry } from "@/lib/composer-history"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
+import type { TextSurface } from "@/components/composer/composer-editor"
 
-export function usePromptHistory(entries: ComposerHistoryEntry[], setText: (text: string) => void) {
+export function usePromptHistory(
+  entries: ComposerHistoryEntry[],
+  setText: (text: string) => void,
+  inputRef: React.RefObject<TextSurface | null>
+) {
   /* The server answers newest-first (the order the history page lists in) and
      the walk wants oldest-first, so Up from the bottom is the last thing sent.
      Keyed on the array identity the cache hands out, which only changes when
@@ -35,16 +40,17 @@ export function usePromptHistory(entries: ComposerHistoryEntry[], setText: (text
   // walk is over — the index would point at a different prompt than it did.
   React.useEffect(() => setIndex(null), [history.length])
 
-  const apply = (el: HTMLTextAreaElement, value: string) => {
+  const apply = (el: TextSurface, value: string) => {
     setText(value)
     // The caret belongs at the end of the recalled prompt — after React has put
     // it in the DOM, which is the next frame.
-    requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length))
+    requestAnimationFrame(() => el.setSelectionRange(value.length, value.length))
   }
 
   /** True when it consumed the event, matching the slash menu's contract. */
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    const el = event.currentTarget
+  const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): boolean => {
+    const el = inputRef.current
+    if (!el) return false
     if (matchesChord(event, KEYS.escape)) {
       if (index === null) return false
       setIndex(null)

@@ -50,6 +50,9 @@ export interface BranchChoice {
   track?: boolean
 }
 
+/** Rows drawn per group before the rest wait for the filter. */
+const SHOWN = 50
+
 export function BranchPicker({
   projectId,
   repo,
@@ -80,26 +83,42 @@ export function BranchPicker({
      name. */
   const { data } = useGitBranches(projectId, repo, open)
 
-  const locals = data?.branches ?? []
-  /* A remote whose local branch already exists is not an offer — switching to
-     `main` is what the local row above already does, and `checkout -b main
-     --track origin/main` would just fail. */
-  const remotes = (data?.remotes ?? []).filter(
-    (name) => !locals.includes(name.split("/").slice(1).join("/"))
-  )
+  /* Sets, built once per fetch: with thousands of refs the old
+     `locals.includes` inside a filter over the remotes was quadratic, and it
+     ran again on every keystroke. */
+  const { locals, remotes, known } = React.useMemo(() => {
+    const all = data?.branches ?? []
+    // The checked-out branch first, so the cap below never hides its tick.
+    const locals = branch && all.includes(branch) ? [branch, ...all.filter((b) => b !== branch)] : all
+    const localSet = new Set(locals)
+    const known = new Set(locals)
+    /* A remote whose local branch already exists is not an offer — switching to
+       `main` is what the local row above already does, and `checkout -b main
+       --track origin/main` would just fail. */
+    const remotes = (data?.remotes ?? []).filter((name) => {
+      const local = name.split("/").slice(1).join("/")
+      known.add(local)
+      return !localSet.has(local)
+    })
+    return { locals, remotes, known }
+  }, [data, branch])
 
   const needle = typed.trim().toLowerCase()
   const match = (name: string) => !needle || name.toLowerCase().includes(needle)
-  const shownLocals = unborn ? [] : locals.filter(match)
-  const shownRemotes = unborn ? [] : remotes.filter(match)
+  const matchedLocals = unborn ? [] : locals.filter(match)
+  const matchedRemotes = unborn ? [] : remotes.filter(match)
+  /* ponytail: a cap, not a virtualized list — nobody scrolls past fifty
+     branches, they type. Mounting every row is what made opening slow. */
+  const shownLocals = matchedLocals.slice(0, SHOWN)
+  const shownRemotes = matchedRemotes.slice(0, SHOWN)
+  const hidden = matchedLocals.length + matchedRemotes.length - shownLocals.length - shownRemotes.length
 
   /* The create row, which is the whole point of this being a combobox: it
      appears exactly when what you typed is not already a branch — local or
      remote — so the same keystrokes that filter a list are the ones that name a
      new branch when the list runs out. */
   const typedName = typed.trim()
-  const exists =
-    locals.includes(typedName) || remotes.some((r) => r.split("/").slice(1).join("/") === typedName)
+  const exists = known.has(typedName)
   const offerCreate = typedName.length > 0 && !exists && !typedName.startsWith("-")
 
   const pick = (choice: BranchChoice) => {
@@ -181,6 +200,9 @@ export function BranchPicker({
         if (!next) setTyped("")
       }}
       items={[...shownLocals, ...shownRemotes]}
+      /* Ours already filtered by the same needle; Base UI's pass was a second
+         walk over the same list. */
+      filter={null}
       inputValue={typed}
       onInputValueChange={(value: unknown) => setTyped(typeof value === "string" ? value : "")}
       disabled={disabled}
@@ -193,9 +215,8 @@ export function BranchPicker({
         <ComboboxInput
           placeholder={unborn ? "Name a branch" : "Switch or create…"}
           showTrigger={false}
-          /* Base UI filters its own `items`; the lists below are already
-             filtered by the same needle, so the two agree — and the create row,
-             which is not an item, is ours to decide about. */
+          /* Filtering is ours alone (`filter={null}` on the root) — and the
+             create row, which is not an item, is ours to decide about. */
           className="w-full"
         />
         <ComboboxList>
@@ -232,6 +253,12 @@ export function BranchPicker({
                 </ComboboxItem>
               ))}
             </ComboboxGroup>
+          )}
+
+          {hidden > 0 && (
+            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              {hidden} more — type to narrow
+            </p>
           )}
 
           {offerCreate && (

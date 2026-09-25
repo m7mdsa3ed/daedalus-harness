@@ -1,10 +1,12 @@
 /* ── The inspector's Changes tab ──
-   A turn timeline: every measured turn that could have written a file
-   (`changesTimeline`, the chip's own gate) as a card on a rail, newest first
-   and open, each file's diff drawn inline under its row. Three other scopes
-   read one flat card — the whole thread (first measured turn's start → now),
-   what is uncommitted (HEAD → now) and the branch against its base — all read
-   by git on the server (`turn-changes.ts`), never off the transcript.
+   Drawn as VS Code's source control view: a toolbar, then collapsible
+   sections of dense file rows. "Turns" is a section per measured turn that
+   could have written a file (`changesTimeline`, the chip's own gate), newest
+   first and the newest open, each file's diff drawn inline under its row.
+   Three other scopes read one section — the whole thread (first measured
+   turn's start → now), what is uncommitted (HEAD → now) and the branch
+   against its base — all read by git on the server (`turn-changes.ts`),
+   never off the transcript.
 
    The bar on top says the scope's size, how much of it has been read (viewed
    marks, `lib/changes-marks.ts`), and holds the two messages this tab can
@@ -16,7 +18,7 @@
    a chunk a reader who never opens this tab never pays for. */
 import * as React from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { MoreHorizontalIcon } from "lucide-react"
+import { CheckCheckIcon, ChevronDownIcon, FlagIcon, MoreHorizontalIcon, RefreshCwIcon, SparklesIcon } from "lucide-react"
 
 import { Empty } from "@/components/empty"
 import { Notice } from "@/components/notice"
@@ -26,9 +28,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import type { ReviewAnchor } from "@/components/workspace/diff-editor"
 import {
@@ -51,17 +54,19 @@ import {
 } from "@/lib/review-comments"
 import { useServer } from "@/lib/server-context"
 import { scopeFiles, type ChangedFile } from "@/lib/workspace/git-api"
-import { FileList, Stat, type FileListContext } from "./changes/file-list"
+import { CountBadge, FileList, RowAction, Stat, type FileListContext } from "./changes/file-list"
 import { CommentForm, ReviewDrafts } from "./changes/review-drafts"
-import { totals, TurnCard } from "./changes/turn-card"
+import { SectionHeader, totals, TurnCard } from "./changes/turn-card"
 import type { TimelineTurn } from "./turn-footers"
 
-const SCOPE_LABEL: Record<ChangesScope, string> = {
-  turns: "By turn",
-  thread: "Whole thread",
-  uncommitted: "Uncommitted",
-  branch: "Branch vs base",
-}
+/* The label is the toolbar's, the title the menu row's and the flat
+   scope's section header. */
+const SCOPES: { value: ChangesScope; label: string; title: string }[] = [
+  { value: "turns", label: "Turns", title: "Each turn's changes, newest first" },
+  { value: "thread", label: "Thread", title: "Everything this thread changed" },
+  { value: "uncommitted", label: "Uncommitted", title: "The working tree against HEAD" },
+  { value: "branch", label: "Branch", title: "This branch against its base" },
+]
 
 /** What "Ask to review" calls the scope, in the message. */
 const SCOPE_ASK: Record<ChangesScope, string> = {
@@ -135,6 +140,7 @@ export default function InspectorChanges({
   const flagged = marks.flagged ?? []
 
   const [openTurns, setOpenTurns] = React.useState<Record<string, boolean>>({})
+  const [flatOpen, setFlatOpen] = React.useState(true)
   const [sending, setSending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -174,7 +180,7 @@ export default function InspectorChanges({
           <Empty>No turn has written to the worktree yet.</Empty>
         </div>
       ) : (
-        <ol className="ml-3 space-y-2 border-l border-border/60 py-2 pr-2 @panel-sm:ml-4">
+        <ol className="py-0.5">
           {turns.map((turn, index) => {
             const id = turn.changes.turnId
             return (
@@ -207,68 +213,112 @@ export default function InspectorChanges({
       </div>
     )
   } else {
+    const files = flat.data?.files ?? []
     body = (
-      <div className="m-2 rounded-lg border border-border/60 bg-card shadow-sm">
-        <FileList ctx={ctx} files={flat.data?.files ?? []} scopeKey={scope} scope={scope} live />
+      <div className="py-0.5">
+        <SectionHeader
+          open={flatOpen}
+          onToggle={() => setFlatOpen((value) => !value)}
+          title={SCOPES.find((item) => item.value === scope)?.title}
+        >
+          <CountBadge>{files.length}</CountBadge>
+        </SectionHeader>
+        {flatOpen && <FileList ctx={ctx} files={files} scopeKey={scope} scope={scope} live />}
       </div>
     )
   }
 
   return (
     <div className="@container flex min-h-0 flex-1 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 px-2 py-1.5">
-        <NativeSelect
-          size="sm"
-          value={scope}
-          aria-label="What to show"
-          className="w-36 shrink-0"
-          onChange={(event) => setChangesScope(sessionId, event.target.value as ChangesScope)}
-        >
-          {(Object.keys(SCOPE_LABEL) as ChangesScope[]).map((value) => (
-            <NativeSelectOption key={value} value={value}>
-              {SCOPE_LABEL[value]}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+      {/* VS Code's view toolbar: what is shown on the left, icon actions on
+          the right, and the viewed progress as a hairline along its foot. */}
+      <header className="relative flex h-8 shrink-0 items-center gap-1 border-b border-border/60 pr-1.5 pl-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                className="min-w-0 gap-1 px-1.5 text-[11px] font-semibold tracking-wide uppercase"
+                title="What to show"
+              />
+            }
+          >
+            <span className="truncate">{SCOPES.find((item) => item.value === scope)?.label}</span>
+            <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-52">
+            <DropdownMenuRadioGroup value={scope} onValueChange={(next) => setChangesScope(sessionId, next as ChangesScope)}>
+              {SCOPES.map((item) => (
+                <DropdownMenuRadioItem key={item.value} value={item.value}>
+                  {item.title}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <span className="hidden min-w-0 truncate text-[10px] text-muted-foreground @panel-sm:inline">
           <Stat {...stats} />
-          <span className="truncate">
-            · {entries.length} {entries.length === 1 ? "file" : "files"} · Viewed {viewed}/{entries.length}
-          </span>
         </span>
-        <span className="flex shrink-0 items-center gap-1">
-          {flagged.length > 0 && (
-            <Button size="xs" variant="outline" disabled={sending} onClick={fixFlagged}>
-              Fix flagged ({flagged.length})
-            </Button>
-          )}
-          <Button size="xs" variant="ghost" disabled={sending || reviewPaths.length === 0} onClick={askReview}>
-            Ask to review
+        <span className="flex-1" />
+        {flagged.length > 0 && (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="gap-1 px-1.5 text-destructive hover:text-destructive"
+            disabled={sending}
+            onClick={fixFlagged}
+            title={`Ask the agent to fix ${flagged.length} flagged ${flagged.length === 1 ? "file" : "files"}`}
+          >
+            <FlagIcon aria-hidden className="size-3.5 fill-current" />
+            <span className="font-mono text-[10px] tabular-nums">{flagged.length}</span>
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button variant="ghost" size="icon-xs" aria-label="More" title="More" />}
-            >
-              <MoreHorizontalIcon aria-hidden />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-44">
-              <DropdownMenuItem disabled={entries.length === 0} onClick={() => markAll(true)}>
-                Mark all viewed
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={viewed === 0} onClick={() => markAll(false)}>
-                Clear viewed
-              </DropdownMenuItem>
-              {flagged.length > 0 && (
-                <DropdownMenuItem onClick={() => setFlagged(sessionId, flagged, false)}>Clear flags</DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                onClick={() => void queryClient.invalidateQueries({ queryKey: sessionChangesKey(settings, sessionId) })}
-              >
-                Refresh
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </span>
+        )}
+        <RowAction
+          icon={SparklesIcon}
+          label="Ask the agent to review"
+          disabled={sending || reviewPaths.length === 0}
+          onClick={askReview}
+        />
+        <RowAction
+          icon={CheckCheckIcon}
+          label="Mark all viewed"
+          disabled={entries.length === 0 || viewed === entries.length}
+          onClick={() => markAll(true)}
+        />
+        <RowAction
+          icon={RefreshCwIcon}
+          label="Refresh"
+          onClick={() => void queryClient.invalidateQueries({ queryKey: sessionChangesKey(settings, sessionId) })}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<button type="button" aria-label="More" title="More" className="grid size-5 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground" />}
+          >
+            <MoreHorizontalIcon aria-hidden className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-44">
+            <DropdownMenuItem disabled={viewed === 0} onClick={() => markAll(false)}>
+              Clear viewed
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={flagged.length === 0} onClick={() => setFlagged(sessionId, flagged, false)}>
+              Clear flags
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {entries.length > 0 && (
+          <div
+            className="absolute inset-x-0 -bottom-px h-0.5"
+            role="progressbar"
+            aria-label="Files viewed"
+            aria-valuenow={viewed}
+            aria-valuemin={0}
+            aria-valuemax={entries.length}
+            title={`${viewed}/${entries.length} viewed`}
+          >
+            <div className="h-full bg-primary/70 transition-[width]" style={{ width: `${(viewed / entries.length) * 100}%` }} />
+          </div>
+        )}
       </header>
       {error && (
         <Notice tone="error" className="mx-2 mt-1.5" action={<CopyButton text={error} size="icon-xs" />}>

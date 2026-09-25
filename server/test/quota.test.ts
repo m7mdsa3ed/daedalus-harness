@@ -22,6 +22,9 @@
 // Run: pnpm test:quota
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const { parseClaudeUsage, foldCodexQuota, probeHeldBack, setRuntimeLiveCheck } = await import("../src/quota.js");
 const {
@@ -42,9 +45,9 @@ const {
 
 let passed = 0;
 const failures: string[] = [];
-function test(name: string, fn: () => void) {
+async function test(name: string, fn: () => void | Promise<void>) {
   try {
-    fn();
+    await fn();
     passed += 1;
     console.log(`  ✓ ${name}`);
   } catch (error) {
@@ -946,19 +949,62 @@ test("foldNineRouterQuota reads a gateway with nothing linked as no plan, never 
    cache. A profile provider's reading is an HTTP call and never yields. */
 const defaultProfile = { id: "default:claude-code", name: "Default", agents: {}, baseUrl: "", apiKey: "", models: [], defaultModel: "", smallModel: "", logoUrl: "" } as never;
 
-test("the agent probe is held back while that runtime has a live process", () => {
+/* A login file in a scratch dir, pointed at through the row's own `dirEnv` —
+   the same door a profile's CLAUDE_CONFIG_DIR opens. */
+const loginDir = mkdtempSync(join(tmpdir(), "daedalus-login-"));
+const writeLogin = (expiresAt: number) =>
+  writeFileSync(join(loginDir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { expiresAt } }));
+const probeAgent = (id: string, login = true) =>
+  ({
+    id,
+    name: id,
+    command: id,
+    args: [],
+    env: { TEST_LOGIN_DIR: loginDir },
+    quotaProbe: {
+      kind: "claude-cli",
+      command: "claude",
+      args: [],
+      login: login ? { dirEnv: "TEST_LOGIN_DIR", dir: ".nowhere", file: ".credentials.json", expiresAt: "claudeAiOauth.expiresAt" } : null,
+    },
+  }) as never;
+
+await test("the agent probe is held back while that runtime is live and its login may refresh", async () => {
+  writeLogin(Date.now() + 60_000);
   setRuntimeLiveCheck(() => false);
-  assert.equal(probeHeldBack(defaultProfile, "claude-code"), false);
+  assert.equal(await probeHeldBack(defaultProfile, probeAgent("claude-code")), false);
   setRuntimeLiveCheck((id) => id === "claude-code");
-  assert.equal(probeHeldBack(defaultProfile, "claude-code"), true);
+  assert.equal(await probeHeldBack(defaultProfile, probeAgent("claude-code")), true);
   // Another runtime's login is another file; it is not what is at risk.
-  assert.equal(probeHeldBack(defaultProfile, "codex"), false);
+  assert.equal(await probeHeldBack(defaultProfile, probeAgent("codex")), false);
+  setRuntimeLiveCheck(() => false);
 });
 
-test("a profile provider's reading is never held back — it races nothing", () => {
+await test("a live runtime does not hold the probe back while its token has hours left", async () => {
   setRuntimeLiveCheck(() => true);
-  assert.equal(probeHeldBack({ ...(zaiProfile() as object), usage: { kind: "zai" } } as never, "claude-code"), false);
+  writeLogin(Date.now() + 6 * 3_600_000);
+  assert.equal(await probeHeldBack(defaultProfile, probeAgent("claude-code")), false);
+  // No `login` on the row means no way to tell, and the old caution stands.
+  assert.equal(await probeHeldBack(defaultProfile, probeAgent("claude-code", false)), true);
   setRuntimeLiveCheck(() => false);
+});
+
+await test("a profile provider's reading is never held back — it races nothing", async () => {
+  setRuntimeLiveCheck(() => true);
+  assert.equal(
+    await probeHeldBack({ ...(zaiProfile() as object), usage: { kind: "zai" } } as never, probeAgent("claude-code")),
+    false,
+  );
+  setRuntimeLiveCheck(() => false);
+});
+
+test("parseClaudeUsage reads a subscription report with no limit lines as a failure", () => {
+  const snap = parseClaudeUsage(
+    claudeEnvelope("You are currently using your subscription to power your Claude Code usage\n\nLast 24h · 2281 requests"),
+  );
+  assert.equal(snap.status, "error");
+  assert.deepEqual(snap.windows, []);
+  assert.match(snap.error ?? "", /without its limits/);
 });
 
 console.log(`\n${passed} passed${failures.length ? `, ${failures.length} failed: ${failures.join(", ")}` : ""}`);

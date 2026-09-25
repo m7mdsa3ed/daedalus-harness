@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { agentQuota as agentQuotaTable, db, type QuotaProbe } from "./db/index.js";
 import { resolveSpawn, type AgentDef } from "./registry.js";
@@ -47,8 +50,10 @@ export type { QuotaSnapshot, QuotaStatus, QuotaWindow };
  */
 
 /** Long enough for a cold CLI to boot and answer, short enough that a wedged one
-    does not hold a settings page open. `claude -p /usage` measures ~2.3s. */
-const PROBE_TIMEOUT_MS = 30_000;
+    does not hold a settings page open forever. `claude -p /usage` measured ~2.3s
+    once; it now also tallies the machine's local sessions before it prints, and
+    measures 25–40s — past the old 30s, which failed every reading. */
+const PROBE_TIMEOUT_MS = 90_000;
 
 /** Cap on collected output, per stream — git.ts's MAX_BUFFER. A usage report is
     a screenful, so a child past this is looping, and the timeout alone would
@@ -100,10 +105,17 @@ export const quotaCwd = (): Project => ({ id: "", name: "", cwd: process.cwd(), 
  * with, and the window is opened by exactly the thing that makes the reading
  * useful: `refreshQuota` asks at *turn end*, when the child is certainly alive.
  *
- * So the probe yields. While any process of that runtime is live, the stored
- * reading is served however old it is, and no CLI is spawned. A percentage that
- * is a few minutes stale is a smaller harm than an account that has to log in
- * again, and the reading catches up the moment the thread retires.
+ * So the probe yields — but only while the race is possible. The refresh is
+ * the race, and nobody refreshes a token with hours left on it: where the probe
+ * row says where the login keeps its expiry (`QuotaProbe.login`), a token with
+ * more than `LOGIN_MARGIN_MS` to live is safe to probe beside a live agent. It
+ * used to yield to *every* live process, and on a machine that always has a
+ * Claude Code thread open that froze the card on its first reading for good,
+ * Refresh included.
+ *
+ * Near expiry, or with no way to tell, the stored reading is served however old
+ * it is, and no CLI is spawned. A percentage that is a few minutes stale is a
+ * smaller harm than an account that has to log in again.
  *
  * Deliberately by **agent id and not by (agent, profile)**: a login is a file on
  * this machine, and two profiles that set no config-dir of their own share it.
@@ -117,14 +129,43 @@ export function setRuntimeLiveCheck(fn: (agentId: string) => boolean): void {
   runtimeIsLive = fn;
 }
 
+/** How long a login's token must still have to live for a probe to run beside
+    a live agent: the probe's own worst case, plus the few minutes before expiry
+    in which a CLI refreshes early. */
+const LOGIN_MARGIN_MS = PROBE_TIMEOUT_MS + 10 * 60_000;
+
+/** Is the login this probe spends far enough from a refresh that no process
+    will attempt one while the probe runs? False whenever it cannot tell — no
+    `login` on the row, no file, no number where the row says the expiry is. */
+async function loginFarFromRefresh(agent: AgentDef, env: Record<string, string>): Promise<boolean> {
+  const login = agent.quotaProbe?.login;
+  if (!login) return false;
+  const dir = env[login.dirEnv] || process.env[login.dirEnv] || join(homedir(), login.dir);
+  try {
+    const data: unknown = JSON.parse(await readFile(join(dir, login.file), "utf8"));
+    const expiresAt = login.expiresAt
+      .split(".")
+      .reduce<unknown>((value, key) => (value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined), data);
+    return typeof expiresAt === "number" && expiresAt - Date.now() > LOGIN_MARGIN_MS;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Must this reading be taken from the cache rather than by spawning?
  *
  * Only ever true of the **agent probe**: a profile provider's reading is an
- * HTTP call against a stored key, which races nothing and is always taken.
+ * HTTP call against a stored key, which races nothing and is always taken. And
+ * only while that runtime is live *and* its login might refresh (see above).
  */
-export function probeHeldBack(profile: Profile, agentId: string): boolean {
-  return !profileUsage(profile) && runtimeIsLive(agentId);
+export async function probeHeldBack(
+  profile: Profile,
+  agent: AgentDef,
+  project: Project = quotaCwd(),
+): Promise<boolean> {
+  if (profileUsage(profile) || !runtimeIsLive(agent.id)) return false;
+  return !(await loginFarFromRefresh(agent, resolveSpawn(agent, profile, project).env));
 }
 
 /** The last thing this pair was known to be, with no probe spawned. `error` when
@@ -265,7 +306,9 @@ const weekWindowId = (scope: string) => {
  * wherever the agent itself works, and the whole report is kept as `raw` so an
  * unparsed line is still readable.
  */
-export function parseClaudeUsage(stdout: string): Pick<QuotaSnapshot, "status" | "windows" | "raw" | "planName"> {
+export function parseClaudeUsage(
+  stdout: string,
+): Pick<QuotaSnapshot, "status" | "windows" | "raw" | "planName" | "error"> {
   /* `--output-format json` wraps the command's text in `.result`. A plain-text
      run (someone editing the args) still parses: fall back to the whole stream. */
   let text = stdout.trim();
@@ -303,11 +346,22 @@ export function parseClaudeUsage(stdout: string): Pick<QuotaSnapshot, "status" |
   /* The first line states which it is, and it is the only place that does. A
      window that parsed outranks it: numbers in hand mean a plan, whatever the
      prose called itself. */
+  if (!windows.length && /subscription/i.test(text)) {
+    /* A plan with no limit lines is the CLI failing to fetch them — it prints
+       the rest of the report without them — and never a plan with no limits.
+       Drawn as "no limits reported" it looked like a working card, so it is a
+       failure with the report kept, and Refresh asks again. */
+    return {
+      status: "error",
+      windows,
+      raw: text,
+      planName: null,
+      error: "Claude Code's report came back without its limits — try Refresh.",
+    };
+  }
   const status: QuotaStatus = windows.length
     ? "subscription"
-    : /subscription/i.test(text)
-      ? "subscription"
-      : /\bapi\b|credit|console\.anthropic/i.test(text)
+    : /\bapi\b|credit|console\.anthropic/i.test(text)
         ? "api-key"
         : /log ?in|not authenticated|\/login/i.test(text)
           ? "unauthenticated"
@@ -571,21 +625,19 @@ export function planReadable(profile: Profile, agent: Pick<AgentDef, "quotaProbe
  * the page that shows the failure, which is the one situation where retrying
  * hardest helps least.
  */
-export function getQuota(
+export async function getQuota(
   agent: AgentDef,
   profile: Profile,
   project: Project,
   { refresh = false } = {},
 ): Promise<QuotaSnapshot> {
-  if (!profileUsage(profile) && !agent.quotaProbe) {
-    return Promise.resolve(unsupported(agent.id, profile.id));
-  }
+  if (!profileUsage(profile) && !agent.quotaProbe) return unsupported(agent.id, profile.id);
   /* The profile's own provider is an HTTP call against a stored key and races
      nothing, so it is never held back; only the probe, which is a process. See
      the header above `runtimeIsLive`. `refresh` does not override this — the
      Refresh button is the *worst* moment to spawn a second CLI, because it is
      pressed while watching a turn run. */
-  if (probeHeldBack(profile, agent.id)) return lastKnown(agent.id, profile.id);
+  if (await probeHeldBack(profile, agent, project)) return lastKnown(agent.id, profile.id);
   return cached(keyFor(profile, agent.id), refresh, () => runProbe(agent, profile, project));
 }
 

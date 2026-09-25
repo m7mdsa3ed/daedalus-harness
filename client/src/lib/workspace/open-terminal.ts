@@ -11,7 +11,7 @@
 
    `useDock`'s return type is imported for its shape only — a `type` import, so
    it is erased and this module does not pull the dock in either. */
-import type { useDock } from "@/components/workspace/dock-context"
+import type { PanelTarget, useDock } from "@/components/workspace/dock-context"
 import { describeError, reportError } from "@/lib/errors"
 import { queuePanel } from "@/lib/workspace/pending-panels"
 import { createTerminal, startHelperTerminal } from "@/lib/workspace/terminals"
@@ -20,13 +20,15 @@ import { createTerminal, startHelperTerminal } from "@/lib/workspace/terminals"
     the palette and the shell's ⌃` both want it and neither owns a panel. */
 export async function openTerminal(
   dock: ReturnType<typeof useDock>,
-  projectId: string
+  projectId: string,
+  /** Where it lands — carried across the round trip rather than remembered. */
+  into?: PanelTarget
 ): Promise<void> {
   try {
     const created = await createTerminal(projectId)
     dock.openPanel(
       { kind: "terminal", projectId, terminalId: created.id },
-      { direction: "below" }
+      { direction: "below", into }
     )
   } catch (err) {
     const { title } = describeError(err)

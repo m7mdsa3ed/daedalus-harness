@@ -47,7 +47,7 @@ const LABEL: Record<string, string> = {
   "?": "Untracked",
 }
 
-const MARK_CLASS: Record<string, string> = {
+export const MARK_CLASS: Record<string, string> = {
   A: "text-emerald-600 dark:text-emerald-400",
   "?": "text-emerald-600 dark:text-emerald-400",
   M: "text-amber-600 dark:text-amber-400",

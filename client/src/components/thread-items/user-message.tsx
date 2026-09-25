@@ -17,13 +17,13 @@ import { cn } from "@/lib/utils"
 export function UserMessageText({ text }: { text: string }) {
   const parts = React.useMemo(() => parseUserMessageParts(text), [text])
   if (parts.length === 1 && parts[0].type === "prose") {
-    return <Prose text={parts[0].text} />
+    return <Prose text={parts[0].text} mentions />
   }
   return (
     <div className="space-y-2">
       {parts.map((part, index) =>
         part.type === "prose" ? (
-          <Prose key={index} text={part.text} />
+          <Prose key={index} text={part.text} mentions />
         ) : (
           <PastedTextItem key={index} n={part.n} content={part.content} />
         )

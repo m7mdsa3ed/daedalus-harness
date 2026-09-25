@@ -5,11 +5,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
-      /* `overscroll-x-contain`: a sideways swipe that reaches the last column
-         must not become the browser's back-gesture — on a phone that navigates
-         out of the page, which is an expensive way to read one more column.
-         Same bargain `.harness-table` makes in `index.css`. */
-      className="relative w-full overflow-x-auto overscroll-x-contain"
+      className="relative w-full overflow-x-auto"
     >
       <table
         data-slot="table"

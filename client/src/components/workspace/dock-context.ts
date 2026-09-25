@@ -1,10 +1,10 @@
 /* ── What the dock says to everything inside it ──
    The dock's public shape (`WorkspaceDock`, what `useDock` answers), the
-   contexts it is handed down through, and the module store of open groups.
+   contexts it is handed down through.
    Split from `dock.tsx` so a panel, a tab or a menu can ask for the dock
    without importing the controller that implements it. */
 import * as React from "react"
-import type { DockviewApi, IDockviewPanel } from "dockview-react"
+import type { IDockviewPanel } from "dockview-react"
 
 import type { SavedLayout } from "@/lib/workspace/layout"
 import { parsePanel, type PanelDescriptor, type PanelKind } from "@/lib/workspace/panels"
@@ -34,9 +34,27 @@ export interface OpenPanelOptions {
   direction?: "left" | "right" | "above" | "below"
   /** Open it without taking focus. */
   background?: boolean
+  /** Exactly where it lands, said by the caller rather than remembered: a
+      strip's + and a tab's own menu know the strip, and the open behind them
+      can be a server round trip away. */
+  into?: PanelTarget
 }
 
-export type PresetId = "focus"
+/** A strip (dockview group id), and optionally the tab to land beside. */
+export interface PanelTarget {
+  group: string
+  /** Right after this tab. Without `split`, in its tab group — made for the
+      two of them if it has none, once the new panel exists, so a failed open
+      leaves nothing behind. */
+  beside?: string
+  /** A new column or row beside the strip instead: the way to *see* both at
+      once, which a tab group never does. Asked for by name, so it may split. */
+  split?: "right" | "below"
+}
+
+/** `focus` is one group, maximised; the rest deal the open tabs round-robin
+    across that many groups (never more groups than tabs). */
+export type PresetId = "focus" | "columns" | "rows" | "columns3" | "grid"
 
 /** Asked before a panel closes. `false` cancels the close. */
 export type CloseGuard = () => boolean | Promise<boolean>
@@ -54,13 +72,15 @@ export interface WorkspaceDock {
   closeOthers: (id: string) => Promise<void>
   closeToTheRight: (id: string) => Promise<void>
   closeGroup: (id: string) => Promise<void>
-  splitActive: (direction: "right" | "below") => void
-  /** Lands the next panel opened in `api` rather than the outer dock — a nested
-      strip's +. A group panel's *id* aims at that group whether or not its
-      instance has mounted yet, which is what lets a tab group itself with the
-      panel it is about to open. */
-  targetNext: (api: DockviewApi | string) => void
-  toggleMaximize: () => void
+  /** Move a panel (`id`, or the one in front of you) into a new column or row
+      beside its own. */
+  splitActive: (direction: "right" | "below", id?: string) => void
+  /** Aim the next *thread* opened at a strip — the strip's "+ ▸ New thread",
+      whose tab arrives a navigation later, so it cannot be passed along the
+      way a panel's `into` is. Spent by the next chat open, within 2s. */
+  targetNext: (group: string) => void
+  toggleMaximize: (id?: string) => void
+  /** Every panel into one strip — the phone's rule and Reset layout. */
   stackAll: () => void
   resetLayout: () => void
   reopenClosed: () => void
@@ -87,16 +107,15 @@ export interface WorkspaceDock {
   listPanels: () => { id: string; panel: PanelDescriptor; title: string }[]
   isPanelOpen: (id: string) => boolean
   hasClosedPanels: () => boolean
-  /** The descriptor of the panel in front of you — a nested group's own when a
-      group tab is active. The route only follows chats and pages, so this is
+  /** The descriptor of the panel in front of you. The route only follows
+      chats and pages, so this is
       the one thing that can answer "which project am I looking at" while a
       terminal or a preview has the focus. */
   activeDescriptor: () => PanelDescriptor | undefined
 
   /* ── The strip you are looking at ──
-     All three act on the *active* instance — the nested dock when a group tab
-     is in front, the top level otherwise — because following the strip in
-     front of you beats following a global order the reader cannot see. */
+     All three act on the strip in front of you, because following it beats
+     following a global order the reader cannot see. */
   /** Jump to the nth tab (0-based) of the group in front of you. */
   setTabIndex: (index: number) => void
   /** Walk that group's tabs, wrapping at both ends. */
@@ -104,65 +123,40 @@ export interface WorkspaceDock {
   /** Close the tab in front of you, through the same guarded door its ✕ uses. */
   closeActiveTab: () => Promise<void>
 
-  /* ── A dock inside a tab ──
-     One level, never a tree (`group-panel.tsx`). */
-  /** Register a nested instance against its group panel; returns its detach. */
-  attachNested: (groupPanelId: string, api: DockviewApi) => () => void
-  /** The group panel a tab's own instance stands in, or undefined at the top
-      level — which is what tells a tab menu whether it has a way out. */
-  groupIdOf: (api: DockviewApi) => string | undefined
-  /** Move a panel into a group — an existing one, or `null` for a new one.
-      Answers the group panel's id, so a caller can aim the next open at it. */
-  moveToGroup: (id: string, groupPanelId: string | null) => string | null
-  /** Open these panels in a new group, side by side (best-of-N). Answers the
-      group panel's id. */
-  openGroup: (panels: PanelDescriptor[]) => string | null
-  /** Move a panel out of its group, back beside the group's own tab. */
-  unnestPanel: (id: string) => void
+  /* ── Tab groups ──
+     Dockview's own: a coloured, labelled, collapsible run of tabs inside one
+     strip. The chip carries rename, colour and collapse (dockview's menu); the
+     dock owns what has to go through a guarded close. */
+  /** Put a tab in a tab group of its strip — an existing one by id, or `null`
+      for a new one. Answers the tab group's id. */
+  addToTabGroup: (id: string, tabGroupId: string | null) => string | null
+  removeFromTabGroup: (id: string) => void
+  /** The tab groups of the strip a tab stands in, and which one holds it. */
+  tabGroupsBeside: (id: string) => { groups: TabGroupRow[]; current?: string }
+  /** Close every tab of a tab group through the guarded door, pins excepted. */
+  closeTabGroup: (groupId: string, tabGroupId: string) => Promise<void>
+  /** Open these panels side by side, one column each, labelled as one set by a
+      shared tab-group colour (best-of-N). Asked for by name, so it may split;
+      on a phone it is one strip of tabs in one tab group. */
+  openSideBySide: (panels: PanelDescriptor[], label: string) => void
+
+  /* ── The bottom panel ──
+     A dockview edge group: a panel moved there leaves the grid for a strip
+     along the bottom that collapses to its tabs, and goes away with its last
+     panel. Never where anything *opens* — only where a tab is sent. */
+  moveToBottom: (id: string) => void
+  /** Back into the grid, beside the panel in front of you. */
+  moveToMain: (id: string) => void
+  isInBottom: (id: string) => boolean
+  /** Collapse or expand the bottom panel. False when there is none. */
+  toggleBottom: () => boolean
 }
 
-/* ── The groups that are open, as a store ──
-   A tab in one group cannot hear another group appear — they are separate
-   dockview instances and separate React trees — so "Move to group ▸" reads a
-   version-bumped module store rather than a walk it would have to re-run on
-   every render. Bumped from the dock's own layout listeners.
-
-   The snapshot is replaced only when it *differs*, because `useSyncExternalStore`
-   compares by identity: a fresh array per layout change would re-render every
-   tab in the app on every sash drag. */
-export interface DockGroupRow {
+export interface TabGroupRow {
   id: string
-  title: string
-  /** What it holds, for a menu row that would otherwise be three identical
-      "Group" lines. */
+  label: string
+  /** Its tabs' titles, for a row that would otherwise be three "Group" lines. */
   hint: string
-}
-
-let groupRows: DockGroupRow[] = []
-const groupSubscribers = new Set<() => void>()
-
-export function setDockGroups(rows: DockGroupRow[]): void {
-  if (
-    rows.length === groupRows.length &&
-    rows.every((row, index) => {
-      const previous = groupRows[index]
-      return previous.id === row.id && previous.title === row.title && previous.hint === row.hint
-    })
-  )
-    return
-  groupRows = rows
-  for (const notify of groupSubscribers) notify()
-}
-
-export function useDockGroups(): DockGroupRow[] {
-  return React.useSyncExternalStore(
-    React.useCallback((notify: () => void) => {
-      groupSubscribers.add(notify)
-      return () => groupSubscribers.delete(notify)
-    }, []),
-    () => groupRows,
-    () => groupRows
-  )
 }
 
 export const DockContext = React.createContext<WorkspaceDock | null>(null)
@@ -187,7 +181,16 @@ export function useDock(): WorkspaceDock {
    side a panel docks on. */
 export interface DockOpeners {
   onNewTab?: () => void
-  onOpenPanel?: (kind: PanelKind) => void
+  /** `reuse` shows the one you have (the chords); `target` says where a new
+      one lands and whose project it acts on (a tab's menu, a strip's +). */
+  onOpenPanel?: (kind: PanelKind, reuse?: boolean, target?: OpenerTarget) => void
+}
+
+export interface OpenerTarget {
+  into?: PanelTarget
+  /** The project the panel acts on — the tab it was asked from, not whatever
+      happens to be in front. */
+  projectId?: string
 }
 
 export const DockOpenersContext = React.createContext<DockOpeners>({})
@@ -200,3 +203,13 @@ export function useDockOpeners(): DockOpeners {
 export function descriptorOf(panel: IDockviewPanel): PanelDescriptor | null {
   return parsePanel(panel.api.component, panel.params)
 }
+
+/** The tab-group palette, from the theme's own tokens rather than dockview's
+    fixed hues, so a group's colour follows every built-in and generated theme
+    (`pnpm themes` already gates `--chart-*` for contrast). The id is what a
+    layout stores; the value is resolved live, so a theme switch recolours
+    every chip without touching a saved layout. */
+export const TAB_GROUP_COLORS = [
+  { id: "accent", value: "var(--primary)", label: "Accent" },
+  ...[1, 2, 3, 4, 5].map((n) => ({ id: `chart-${n}`, value: `var(--chart-${n})`, label: `Chart ${n}` })),
+]

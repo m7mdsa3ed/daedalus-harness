@@ -12,8 +12,8 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar"
+import { useIsMobile } from "@/hooks/use-device"
 import { Badge } from "@/components/ui/badge"
 import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
@@ -85,7 +85,9 @@ export const ThreadRow = React.memo(function ThreadRow({
           }),
     [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree]
   )
-  const { isMobile } = useSidebar()
+  /* The device hook, not `useSidebar()`: a context read re-renders past
+     `memo`, so every row in the list re-rendered on each sidebar toggle. */
+  const isMobile = useIsMobile()
   /* The second line's first half. A project the catalog has not landed yet reads
      "Other", the same word the orphan folder uses. */
   const project = useProjects().find((p) => p.id === session.projectId)?.name ?? "Other"

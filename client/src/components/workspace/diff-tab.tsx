@@ -22,7 +22,6 @@ import * as React from "react"
 import { RefreshIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
-import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
@@ -39,6 +38,7 @@ import { isConflict, readFile, writeFile } from "@/lib/workspace/fs-api"
 import { gitFileAt, gitWrite, scopeFileSide, type Comparison } from "@/lib/workspace/git-api"
 import { hunkPatch, revertHunk, type LineChange } from "@/lib/workspace/hunks"
 import { watchProject } from "@/lib/workspace/watch"
+import { cn } from "@/lib/utils"
 
 type MonacoDiff = Monaco.editor.IStandaloneDiffEditor
 
@@ -127,6 +127,7 @@ export function DiffTab({
   repo,
   review,
   inline,
+  fit,
 }: {
   projectId: string
   path: string
@@ -147,6 +148,8 @@ export function DiffTab({
   /** One stacked diff with no toolbar, for a caller that already names the
       file (the inspector's inline rows). */
   inline?: boolean
+  /** Size to the diff, up to this many px — see `DiffEditor`. */
+  fit?: number
 }) {
   const [generation, setGeneration] = React.useState(0)
   const original = useSide(projectId, path, left, generation)
@@ -178,15 +181,16 @@ export function DiffTab({
   }, [projectId, path, live])
 
   const error = original.error ?? modified.error
+  /* A side that could not be read is a failure, not an empty diff. */
   if (error)
     return (
-      <div className="p-2">
-        <Empty>{error}</Empty>
-      </div>
+      <Notice tone="error" className="m-2" action={<CopyButton text={error} size="icon-xs" />}>
+        {error}
+      </Notice>
     )
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={cn("flex min-h-0 flex-col", !fit && "h-full")}>
       {!inline && <PanelToolbar>
         <span
           className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
@@ -227,9 +231,9 @@ export function DiffTab({
           onDone={() => setGeneration((current) => current + 1)}
         />
       )}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className={cn("min-h-0 overflow-hidden", !fit && "flex-1")}>
         {original.text === null || modified.text === null ? (
-          <DiffRowsSkeleton className="h-full overflow-y-auto" />
+          <DiffRowsSkeleton hunks={fit ? 1 : 3} className={cn(!fit && "h-full overflow-y-auto")} />
         ) : (
           active && (
             <DiffEditor
@@ -240,6 +244,7 @@ export function DiffTab({
               inline={inline}
               onLineChanges={hunks ? setChanges : undefined}
               editorRef={editorRef}
+              fit={fit}
             />
           )
         )}

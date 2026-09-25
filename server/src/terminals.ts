@@ -56,6 +56,9 @@ export interface TerminalInfo {
 interface Terminal {
   id: string;
   projectId: string;
+  /** The thread this shell belongs to, when it was opened in a thread's dock:
+      it dies with the thread (`killSessionTerminals`), not with a tab. */
+  sessionId: string | null;
   title: string | null;
   proc: pty.IPty | null;
   peer: WebSocket | null;
@@ -138,6 +141,8 @@ export interface CreateTerminalOptions {
   command?: string;
   /** Extra environment for the process. */
   env?: Record<string, string>;
+  /** Tag it as this thread's — see `Terminal.sessionId`. */
+  sessionId?: string | null;
   /** A directory *inside* the project to start in; empty = the project root.
       Clamped rather than refused (`containedPath`), because this arrives from
       a stored row — a helper's own working directory — and not from a request. */
@@ -177,6 +182,7 @@ export async function createTerminal(projectId: string, options: CreateTerminalO
   const terminal: Terminal = {
     id,
     projectId,
+    sessionId: options.sessionId || null,
     title: options.title?.trim() || null,
     proc,
     peer: null,
@@ -317,6 +323,15 @@ export function killTerminal(terminalId: string): boolean {
     /* already gone */
   }
   return true;
+}
+
+/** Every shell a thread's dock opened — the thread went to Trash or was purged. */
+export function killSessionTerminals(sessionId: string): number {
+  let killed = 0;
+  for (const terminal of [...terminals.values()]) {
+    if (terminal.sessionId === sessionId && killTerminal(terminal.id)) killed += 1;
+  }
+  return killed;
 }
 
 /** Every terminal in a project — project deleted, or the server is going down. */

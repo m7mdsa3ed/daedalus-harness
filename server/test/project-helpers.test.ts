@@ -21,6 +21,7 @@ const {
 } = await import("../src/project-helpers.js");
 const { containedPath } = await import("../src/workspace-fs.js");
 const { listProjectScripts } = await import("../src/project-scripts.js");
+const { listShellHistory, recordShellRun } = await import("../src/shell-history.js");
 
 try {
   mkdirSync(join(dir, "sub"));
@@ -151,7 +152,18 @@ try {
   // directory is what's read, never the project's own rows.
   assert.deepEqual(await listProjectScripts(p2.id), scripts);
 
-  // 10. Order: creation order to start with, then whatever the user drags it
+  // 10. Every distinct shell line and its full contents are retained.
+  for (let i = 0; i < 55; i++) await recordShellRun(p1.id, `custom-${i}`);
+  const longCommand = `echo ${"x".repeat(2_100)}`;
+  await recordShellRun(p1.id, longCommand);
+  await recordShellRun(p1.id, "custom-0");
+  const shellHistory = await listShellHistory(p1.id);
+  assert.equal(shellHistory.length, 56);
+  assert.equal(shellHistory.find((use) => use.line === longCommand)?.line, longCommand);
+  assert.equal(shellHistory.find((use) => use.line === "custom-0")?.count, 2);
+  assert.deepEqual(await listShellHistory(p2.id), []);
+
+  // 11. Order: creation order to start with, then whatever the user drags it
   // to — and a caller naming only some of the ids leaves the rest behind them.
   const p3 = await createProject({ name: "P3", cwd: dir, description: null });
   const named = async () => (await listProjects()).map((p) => p.name);
@@ -207,7 +219,7 @@ try {
   // And an unknown project is a miss, not a silent no-op row.
   assert.equal(await setProjectDefaults("nope", { model: "x" }), undefined);
 
-  console.log("project-helpers: 11 passed, 0 failed");
+  console.log("project-helpers: 12 passed, 0 failed");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

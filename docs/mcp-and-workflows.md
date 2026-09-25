@@ -97,6 +97,53 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `pnpm test:mcp-oauth` drives the whole of it against a stand-in authorization server and a
   stand-in protected MCP server.
 
+## The harness's own MCP client
+
+The server connects to MCP servers itself for four things: the listing
+(`checkMcpServer`, cached as `mcp_catalog`), the playground, completions, and the
+composer. Everything but the Check button goes through **one pooled client per
+row** (`pooledClient` in `mcp-check.ts`): a stdio server is a process, and once
+completions existed, connecting per call was a spawn per keystroke. An entry
+closes after 5 idle minutes, drops itself when its transport closes, and is keyed
+on the resolved def, so an edited row or a builtin resolved for another project
+connects afresh. A pooled client that hears `list_changed` deletes the row's
+`mcp_catalog` entry, so the next read connects. **Check still connects fresh** —
+that is what it means.
+
+The listing carries `instructions`, the declared `capabilities` and
+`resourceTemplates` beside tools, prompts and resources. The detail page draws
+all of them: instructions as a group, capabilities as badges, templates as a
+fourth section whose Run fills the RFC 6570 template and reads it as a resource.
+Where the server declares `completions`, prompts and templates get
+**Suggest values** (`POST /api/mcp-servers/:id/complete`). Images in any answer
+are drawn as images above the raw JSON.
+
+**A thread's servers reach the composer through the harness, for every
+runtime** — Claude Code and Codex included, whatever their own MCP client does:
+
+- `GET /api/sessions/:id/mcp` lists the thread's linked servers (resolved through
+  `mcpServersFor`, the spawn's own function) with their prompts, resources and
+  templates, from the stored listing.
+- **Prompts are `/server:prompt` harness commands** (`lib/mcp-composer.ts`).
+  Sending one renders it (`POST /api/sessions/:id/mcp/:serverId/invoke`) and
+  **fills the composer** with the text rather than sending it. The name is the
+  one the Daedalus agent advertises its own copy under, so where the agent
+  offers it, the agent's command wins the collision as for every harness
+  command.
+- **Resources join the `@` menu** after the files. A pick reads the resource and
+  hands it to the attachment path as a `File`, so `resolveDelivery` decides
+  image / embedded resource / link per runtime and model, and nothing downstream
+  knows it came from MCP.
+- Tools are never offered here: a tool call is the agent's, behind its gate.
+
+Not done on the harness side: template variables in the `@` menu (the
+playground fills them; our agent has `list_resource_templates`) and completions
+in the composer (the playground has them).
+
+`pnpm test:mcp-check` (server) and `pnpm test:mcp-features` (agent) both run
+against `agent/test/helpers/mcp-full-server.mjs`, a fixture exercising every
+feature.
+
 ## The marketplace: browsing an MCP Registry
 
 `server/src/mcp-registry.ts`, `GET /api/mcp-registry?q=&cursor=`, and the Browse destination

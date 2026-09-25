@@ -1,5 +1,13 @@
 import * as React from "react"
-import { ClipboardListIcon, FileIcon, FileTextIcon, ImageIcon, PaperclipIcon, XIcon } from "lucide-react"
+import {
+  ClipboardListIcon,
+  FileIcon,
+  FileTextIcon,
+  ImageIcon,
+  MessageSquareQuoteIcon,
+  PaperclipIcon,
+  XIcon,
+} from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
 import {
@@ -217,80 +225,6 @@ function FileChip({
         </AttachmentAction>
       </AttachmentActions>
     </Attachment>
-  )
-}
-
-/** The token's face. Clicking it shows what is parked behind it; the ✕ takes
-    both the chip and its token, because a chip is a *view* of a token and one
-    without the other is a claim the composer cannot honour. */
-export function PasteChip({ paste, onRemove }: { paste: Paste; onRemove: () => void }) {
-  const [open, setOpen] = React.useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <Attachment size="sm" className="min-w-0">
-        <AttachmentMedia>
-          <ClipboardListIcon />
-        </AttachmentMedia>
-        <AttachmentContent>
-          <AttachmentTitle>Pasted text #{paste.n}</AttachmentTitle>
-          <AttachmentDescription>
-            {paste.lines.toLocaleString()} line{paste.lines === 1 ? "" : "s"} ·{" "}
-            {paste.chars.toLocaleString()} chars
-          </AttachmentDescription>
-        </AttachmentContent>
-        {/* The whole card opens the preview; the ✕ sits above it (`z-20` on
-            AttachmentActions) so the two do not fight over one click. */}
-        <PopoverTrigger render={<AttachmentTrigger aria-label={`Preview ${pasteToken(paste.n)}`} />} />
-        <AttachmentActions>
-          <AttachmentAction aria-label={`Remove ${pasteToken(paste.n)}`} onClick={onRemove}>
-            <XIcon />
-          </AttachmentAction>
-        </AttachmentActions>
-      </Attachment>
-      <PopoverContent className="w-[min(32rem,calc(100vw-2rem))] p-0">
-        <div className="border-b px-3 py-2 text-xs text-muted-foreground">
-          {pasteToken(paste.n)} — sent in place of the token, fenced.
-        </div>
-        <pre className="max-h-72 overflow-auto p-3 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
-          {paste.text}
-        </pre>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/* ── Paste chips on the strip ──
-   Long pastes are parked as tokens in the textarea and shown as chips. They
-   used to live inside the composer card (above the textarea), but that put
-   them outside the shelf's pile. Moving them into the strip means pastes and
-   files are managed in one place: when both are present they are two cards on
-   the pile, and when only pastes exist theirs is the one card and the shelf is
-   just that row — exactly the same model as everything else on the shelf. */
-export function ComposerPastes({
-  pastes,
-  onRemove,
-}: {
-  pastes: Paste[]
-  onRemove: (n: number) => void
-}) {
-  if (pastes.length === 0) return null
-  const label = `${pastes.length} paste${pastes.length === 1 ? "" : "s"}`
-  return (
-    <ComposerStripItem
-      summary={{
-        id: "pastes",
-        icon: ClipboardListIcon,
-        label,
-        badge: pastes.length,
-      }}
-      className="px-2 py-1.5"
-    >
-      <AttachmentGroup className="gap-2 py-0">
-        {pastes.map((paste) => (
-          <PasteChip key={paste.n} paste={paste} onRemove={() => onRemove(paste.n)} />
-        ))}
-      </AttachmentGroup>
-    </ComposerStripItem>
   )
 }
 

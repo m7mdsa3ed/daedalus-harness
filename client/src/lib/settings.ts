@@ -413,11 +413,32 @@ export interface McpCheckResult {
   tools: McpCheckEntry[]
   prompts: McpCheckEntry[]
   resources: McpCheckEntry[]
+  /** URI templates (RFC 6570); `uri` holds the template. */
+  resourceTemplates?: McpCheckEntry[]
+  /** The server's own word on how it wants to be used. */
+  instructions?: string
+  /** The capability keys the server declared, with their sub-flags. */
+  capabilities?: Record<string, unknown>
   error?: string
   /** Unix ms of the connection this listing came from — absent on the two
       answers the server gives without connecting at all. */
   checkedAt?: number
 }
+
+/** One of a thread's MCP servers as the composer reads it
+    (`GET /api/sessions/:id/mcp`): what it offers a person, not the agent. */
+export interface ThreadMcpServer {
+  id: string
+  name: string
+  ok: boolean
+  prompts: McpCheckEntry[]
+  resources: McpCheckEntry[]
+  resourceTemplates: McpCheckEntry[]
+  completions: boolean
+}
+
+/** What `completion/complete` is asked about. */
+export type McpCompletionRef = { type: "ref/prompt"; name: string } | { type: "ref/resource"; uri: string }
 
 /** One row of the marketplace (`GET /api/mcp-registry`): a server published to
     an MCP Registry, already mapped to what this library stores. `server` is

@@ -13,6 +13,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { couldTouchFiles } from "@/lib/tools"
+import { extractEdits } from "@/lib/tools/edits"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { turnSuggestions } from "@/lib/suggestions"
 import { isAnswerItem } from "@/lib/transcript-rows"
@@ -247,14 +248,17 @@ export function changesTimeline(
   items: ThreadItem[],
   turnChanges: Record<string, TurnChanges>
 ): TimelineTurn[] {
-  const seen = new Map<string, { prompt: string; touches: boolean }>()
-  let current: { prompt: string; touches: boolean } | undefined
+  const seen = new Map<string, { prompt: string; touches: boolean; named: string[] }>()
+  let current: { prompt: string; touches: boolean; named: string[] } | undefined
   for (const item of items) {
     if (item.kind === "user") {
       /* A steer joins the turn it lands in; a replayed bubble has no id. */
-      current = item.turnId ? (seen.get(item.turnId) ?? { prompt: item.text, touches: false }) : undefined
+      current = item.turnId ? (seen.get(item.turnId) ?? { prompt: item.text, touches: false, named: [] }) : undefined
       if (item.turnId && current) seen.set(item.turnId, current)
-    } else if (current && item.kind === "tool" && couldTouchFiles(item)) current.touches = true
+    } else if (current && item.kind === "tool" && couldTouchFiles(item)) {
+      current.touches = true
+      current.named.push(...namedPaths(item))
+    }
   }
   return Object.values(turnChanges)
     .filter((changes) => {
@@ -263,7 +267,33 @@ export function changesTimeline(
       return changes.ended && changes.files.length > 0
     })
     .sort((a, b) => b.startedAt - a.startedAt)
-    .map((changes) => ({ changes, prompt: seen.get(changes.turnId)?.prompt }))
+    .map((changes) => {
+      const turn = seen.get(changes.turnId)
+      return { changes: turn ? claimShared(changes, turn.named) : changes, prompt: turn?.prompt }
+    })
+}
+
+/** The paths a tool call says it wrote — its edits and its locations. */
+function namedPaths(item: Extract<ThreadItem, { kind: "tool" }>): string[] {
+  return [...extractEdits(item).map((edit) => edit.path), ...item.locations.map((l) => l.path)].filter(
+    (path): path is string => !!path
+  )
+}
+
+/**
+ * Break the server's tie with the transcript. A `shared` file is one written
+ * while another thread's turn ran in the same repository — git and the
+ * watcher cannot say which wrote it. This thread's own tool calls can: a path
+ * one of them named is this thread's. A shell edit names nothing and stays
+ * shared, which is the honest answer.
+ */
+function claimShared(changes: TurnChanges, named: string[]): TurnChanges {
+  if (named.length === 0 || !changes.files.some((file) => file.shared)) return changes
+  const ours = (path: string) => named.some((n) => n === path || n.endsWith(`/${path}`))
+  return {
+    ...changes,
+    files: changes.files.map((file) => (file.shared && ours(file.path) ? { ...file, shared: undefined } : file)),
+  }
 }
 
 /** Each finished turn's suggestion card, keyed by the id of the answer that

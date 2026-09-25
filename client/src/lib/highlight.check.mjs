@@ -60,6 +60,10 @@ assert(highlighted(run("yml", "a: 1")), "yml resolves to yaml")
 // Aliases registered by hand — the ones that break silently.
 assert(highlighted(run("tsx", "const x = 1")), "tsx resolves to typescript")
 assert(highlighted(run("html", "<b>hi</b>")), "html resolves to xml")
+assert(
+  highlighted(run("graphql", "query Users { users { id name } }")),
+  "graphql fences are highlighted"
+)
 
 // A language we did not register: the block still gets its `hljs` ground, the
 // text inside it is left alone, and nothing throws.

@@ -94,14 +94,6 @@ export function livePastes(text: string, pastes: Paste[]): Paste[] {
   return pastes.filter((paste) => text.includes(pasteToken(paste.n)))
 }
 
-/** Remove a paste and its token in one move: the two are one thing. */
-export function dropPaste(text: string, pastes: Paste[], n: number): { text: string; pastes: Paste[] } {
-  return {
-    text: text.split(pasteToken(n)).join(""),
-    pastes: pastes.filter((paste) => paste.n !== n),
-  }
-}
-
 // ---- storage ----
 
 /* Read-through buffer and debounce, exactly as drafts.ts: the composer writes

@@ -18,6 +18,7 @@ import { toast } from "@/lib/toast"
 import type { Board, BoardStatus, Sprint } from "@/lib/boards"
 import { PRIORITY_LABEL, TYPE_LABEL, taskKey, type Task, type TaskInput } from "@/lib/tasks-board"
 import { dueLabel } from "@/lib/tasks-view"
+import { clearNewTaskDraft, loadNewTaskDraft, saveNewTaskDraft } from "@/lib/task-drafts"
 import {
   AssigneeAvatar,
   AssigneePicker,
@@ -52,12 +53,14 @@ export function NewTaskDialog({
   allTasks,
   facets,
   defaults,
+  serverId,
   onCreate,
   onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   board: Board
+  serverId: string
   statuses: BoardStatus[]
   sprints: Sprint[]
   allTasks: Task[]
@@ -91,13 +94,17 @@ export function NewTaskDialog({
 
   React.useEffect(() => {
     if (open) {
-      setDraft(blank())
+      setDraft(loadNewTaskDraft(serverId, board.id) ?? blank())
       setError(null)
       setEditorKey((k) => k + 1)
     }
-  }, [open, blank])
+  }, [open, blank, board.id, serverId])
 
-  const patch = (p: Partial<TaskInput>) => setDraft((d) => ({ ...d, ...p }))
+  const patch = (p: Partial<TaskInput>) => {
+    const next = { ...draft, ...p }
+    setDraft(next)
+    saveNewTaskDraft(serverId, board.id, next)
+  }
   const parent = draft.parentId ? allTasks.find((t) => t.id === draft.parentId) : undefined
 
   const submit = async (event: React.FormEvent, another = false) => {
@@ -108,9 +115,11 @@ export function NewTaskDialog({
     setError(null)
     try {
       const task = await onCreate({ ...draft, title, description: draft.description || null })
+      clearNewTaskDraft(serverId, board.id)
       toast.success(`${taskKey(task, board.key)} created`)
       if (another) {
-        setDraft({ ...blank(), statusId: draft.statusId, type: draft.type, sprintId: draft.sprintId, parentId: draft.parentId })
+        const nextDraft = { ...blank(), statusId: draft.statusId, type: draft.type, sprintId: draft.sprintId, parentId: draft.parentId }
+        setDraft(nextDraft)
         setEditorKey((k) => k + 1)
       } else {
         onOpenChange(false)

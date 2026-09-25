@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 import { inlineFromQuery, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { boardPath } from "@/lib/router"
+import { useServer } from "@/lib/server-context"
+import { loadNewTaskDraft } from "@/lib/task-drafts"
 import type { BoardLocation } from "@/lib/tasks-location"
 import { useProjects } from "@/lib/queries/catalog"
 import {
@@ -337,6 +339,7 @@ function BoardRowsSkeleton() {
 
 /** One board, however it is being hosted. */
 export function BoardWorkspace({ location }: { location: BoardLocation }) {
+  const server = useServer()
   const projects = useProjects()
 
   const tasksQuery = useTasksQuery()
@@ -505,7 +508,13 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
   }
 
   /* ── dialogs ── */
-  const [newTask, setNewTask] = React.useState<{ open: boolean; defaults: Partial<TaskInput> }>({ open: false, defaults: {} })
+  const [newTask, setNewTask] = React.useState<{ open: boolean; defaults: Partial<TaskInput> }>(() => ({
+    open: !!loadNewTaskDraft(server.id, boardId),
+    defaults: {},
+  }))
+  React.useEffect(() => {
+    if (loadNewTaskDraft(server.id, boardId)) setNewTask((state) => ({ ...state, open: true }))
+  }, [server.id, boardId])
   const [boardDialog, setBoardDialog] = React.useState<{ open: boolean; board: Board | null }>({ open: false, board: null })
   const [deletingBoard, setDeletingBoard] = React.useState(false)
   const [columnDialog, setColumnDialog] = React.useState(false)
@@ -767,6 +776,7 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
         open={newTask.open}
         onOpenChange={(open) => setNewTask((s) => ({ ...s, open }))}
         board={board}
+        serverId={server.id}
         statuses={statuses}
         sprints={sprints}
         allTasks={boardTasks}

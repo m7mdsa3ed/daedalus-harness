@@ -112,7 +112,10 @@ export function BestOfNMenu({
             reportError(new Error("There is no project to start a thread in."), "Couldn't send to several threads")
             return
           }
-          dock.openGroup(ids.map((sessionId) => ({ kind: "chat" as const, sessionId })))
+          dock.openSideBySide(
+            ids.map((sessionId) => ({ kind: "chat" as const, sessionId })),
+            `Best of ${ids.length}`
+          )
           onSent()
           /* A task later, not now: `send` finds a draft by reading the
              last-*committed* store, and the drafts minted above commit when

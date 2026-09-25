@@ -14,7 +14,7 @@ import { matchesChord } from "@/lib/shortcuts"
 
 /** A menu that may swallow the keystroke. True when it consumed the event. */
 interface KeyConsumer {
-  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
+  onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => boolean
 }
 
 export function composerKeyDown({
@@ -37,7 +37,7 @@ export function composerKeyDown({
   steerChords: string[]
   send: (opts?: { steer?: boolean }) => void | Promise<void>
 }) {
-  return (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  return (e: React.KeyboardEvent<HTMLElement>) => {
     // The command menu owns navigation keys (and Enter) while open.
     if (slash.onKeyDown(e)) return
     // Then the `!` project menu — the other start-anchored completers. The two

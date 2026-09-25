@@ -195,7 +195,13 @@ function isTransparent(color: string): boolean {
 export function TerminalPanel({
   api,
   params,
-}: IDockviewPanelProps<{ projectId: string; terminalId: string; closeOnExit?: boolean }>) {
+}: IDockviewPanelProps<{
+  projectId: string
+  terminalId: string
+  closeOnExit?: boolean
+  sessionId?: string
+  cwd?: string
+}>) {
   const { projectId, terminalId } = params
   const dock = useDock()
   const confirm = useConfirm()
@@ -579,8 +585,9 @@ export function TerminalPanel({
      one keeps its scrollback until it is closed. */
   const restart = async () => {
     try {
-      const created = await createTerminal(projectId)
-      dock.openPanel({ kind: "terminal", projectId, terminalId: created.id })
+      const { sessionId, cwd } = params
+      const created = await createTerminal(projectId, { cwd, sessionId })
+      dock.openPanel({ kind: "terminal", projectId, terminalId: created.id, sessionId, cwd })
       void dock.closePanel(panelId({ kind: "terminal", projectId, terminalId }))
     } catch (err) {
       reportError(err, "Couldn't start a new shell")

@@ -9,6 +9,7 @@ import {
 } from "./compaction.js";
 import type { AgentEnv } from "./env.js";
 import { connectMcpServers } from "./mcp.js";
+import { mcpHooks } from "./mcp-hooks.js";
 import { SessionStore } from "./persistence.js";
 import { makeModel as defaultMakeModel, type ModelFactory } from "./provider.js";
 import {
@@ -71,7 +72,12 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     return session;
   };
 
-  const openSession = async (sessionId: string, cwd: string, mcpServers: acp.McpServer[]) => {
+  const openSession = async (
+    sessionId: string,
+    cwd: string,
+    mcpServers: acp.McpServer[],
+    client: acp.AgentContext,
+  ) => {
     /* A re-load of a live id replaces the session: the old handle's MCP
        children must die before fresh ones connect, or every reload leaks a
        process per server. */
@@ -83,11 +89,23 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     }
     const session = new Session(sessionId, cwd, env);
     session.skills = scanSkills(cwd);
-    session.mcp = await connectMcpServers(mcpServers);
+    const fileCommands = scanCommands(cwd);
+    session.mcp = await connectMcpServers(
+      mcpServers,
+      mcpHooks(session, client, {
+        env,
+        makeModel: deps.makeModel,
+        caps: clientCaps,
+        onPromptsChanged: () => {
+          session.commands = [...fileCommands, ...(session.mcp?.prompts ?? [])];
+          announceCommands(client, session);
+        },
+      }),
+    );
     /* File commands first: `expandCommand` takes the first match, so a command
        the user wrote shadows a server prompt of the same name — the same
        bargain the agent's commands make with the harness's. */
-    session.commands = [...scanCommands(cwd), ...session.mcp.prompts];
+    session.commands = [...fileCommands, ...session.mcp.prompts];
     sessions.set(sessionId, session);
     return session;
   };
@@ -151,7 +169,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     })
     .onRequest("session/new", async ({ params, client }) => {
       const sessionId = randomUUID();
-      const session = await openSession(sessionId, params.cwd, params.mcpServers);
+      const session = await openSession(sessionId, params.cwd, params.mcpServers, client);
       store.create(sessionId, params.cwd);
       announceCommands(client, session);
       return {
@@ -169,6 +187,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
         params.sessionId,
         params.cwd || history.cwd,
         params.mcpServers,
+        client,
       );
       session.messages = history.messages;
       session.lastTokens = history.lastTokens;

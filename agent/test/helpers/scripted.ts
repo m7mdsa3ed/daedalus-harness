@@ -24,6 +24,7 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
     contextWindow: null,
     maxOutputTokens: null,
     modelWindows: {},
+    modelModalities: {},
     personaFile: null,
     /* Off by default in tests: the scan walks to the filesystem root and reads
        the *real* ~/.claude/CLAUDE.md, so leaving it on would make every prompt
