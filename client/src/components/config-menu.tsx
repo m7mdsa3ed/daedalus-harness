@@ -188,7 +188,7 @@ export function MenuRow({
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
-        <DropdownMenuSubContent className="max-w-80">
+        <DropdownMenuSubContent className="max-w-80 no-scrollbar">
           {searchable && <MenuSearchInput label={label} value={query} onChange={setQuery} />}
           <DropdownMenuRadioGroup
             value={value}

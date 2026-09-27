@@ -163,16 +163,16 @@ export function miscRoutes(
     (await deleteTheme(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
   )
 
-  /* Full-text search over every thread's journaled transcript (see search.ts).
-     Behind the same bearer middleware as the rest of /api. The query is
-     sanitized server-side (ftsQuery) so raw FTS5 operators cannot 500, and the
-     snippet brackets matches with private-use codepoints the client styles —
-     never markup. */
+  /* Full-text search over journaled transcripts (see search.ts). Optional
+     `session` scopes it to one thread for the command palette's in-thread
+     search. Query syntax is sanitized server-side; snippets use private-use
+     markers, never markup. */
   app.get("/api/search", async (c) => {
     const q = c.req.query("q")?.trim() ?? "";
     if (!q) return c.json({ results: [] });
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10) || SEARCH_LIMIT;
-    return c.json({ results: await searchEvents(q, limit) });
+    const sessionId = c.req.query("session")?.trim() || undefined;
+    return c.json({ results: await searchEvents(q, limit, sessionId) });
   });
 
   /* Knowledge base. The same table the `knowledge` MCP server reads, exposed as a

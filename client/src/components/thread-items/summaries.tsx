@@ -4,8 +4,10 @@
    apart from the mutually recursive cluster in `rows.tsx`, which imports from
    here — never the reverse. */
 import * as React from "react"
-import { BrainIcon, SquareTerminalIcon, WrenchIcon } from "lucide-react"
-import { toolKindOf, webInput } from "@/lib/tools"
+import { BrainIcon, WrenchIcon } from "lucide-react"
+import { AvatarGroup } from "@/components/ui/avatar"
+import { KIND_CHIPS, KIND_COLORS, KIND_ICONS } from "@/components/tool-parts"
+import { toolKindOf, toolViewOf, webInput } from "@/lib/tools"
 import { cn } from "@/lib/utils"
 import type { TextItem, ToolItem } from "@/lib/store"
 
@@ -70,85 +72,56 @@ export function summarise(items: ToolItem[]): { verb: string; noun: string; coun
   }))
 }
 
-/** The three acts a folded run can hold, as the avatar stack below draws them:
-    shell commands, thoughts, and everything else a tool call does. Each avatar
-    is one act that is in the run, not one call — "12 reads" is one wrench, the
-    way a people stack is one face per person rather than a face per message.
-    Each carries the app's accent for that act — a thought is the same blue a
-    thinking step row shimmers with, a failed shell command the same red the
-    row would claim — so a glance at the stack reads the run's shape. */
-const RUN_BUCKETS = {
-  command: {
-    icon: SquareTerminalIcon,
-    noun: "shell command",
-    className: "text-step-command",
-    chip: "bg-step-command/25",
-  },
-  thought: {
-    icon: BrainIcon,
-    noun: "thought",
-    className: "text-step-think",
-    chip: "bg-step-think/25",
-  },
-  tool: {
-    icon: WrenchIcon,
-    noun: "tool",
-    className: "text-step-tool",
-    chip: "bg-step-tool/25",
-  },
-} as const
-type RunBucket = keyof typeof RUN_BUCKETS
+/** What the source strip does for pages, this does for calls: one small mark
+    per tool in arrival order, overlapped like avatars, with overflow folded
+    into a count. The tool's kind and tint match its step row. */
+const RUN_AVATARS = 6
 
-function bucketOf(item: ToolItem | TextItem): RunBucket {
-  if (item.kind === "thought") return "thought"
-  if (item.kind === "tool") {
-    /* A `think` call is a thought in this vocabulary everywhere else — the
-       summary line counts it as "thinking N thoughts" — so it stacks with the
-       thoughts rather than with the tools. */
-    if (toolKindOf(item) === "think") return "thought"
-    if (toolKindOf(item) === "execute") return "command"
-  }
-  return "tool"
-}
-
-/** What a folded run contains, as a stack of overlapping marks: one avatar per
-    act present — commands, thoughts, tools — in the order they first happened,
-    each telling its count on hover. The at-a-glance reading of the run; the
-    sentence next to it is the same fact in words ("running 8 shell commands"). */
+/** One circular tool mark per call, in arrival order, like the web source
+    stack. Remaining calls collapse into a `+N` avatar. */
 export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> }) {
-  const slots = React.useMemo(() => {
-    const order: RunBucket[] = []
-    const counts = new Map<RunBucket, number>()
-    for (const item of items) {
-      const bucket = bucketOf(item)
-      if (!counts.has(bucket)) order.push(bucket)
-      counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
+  const tools = items.filter((item): item is ToolItem => item.kind === "tool")
+  const marks = items.flatMap((item) => {
+    if (item.kind === "tool") {
+      const kind = toolKindOf(item)
+      const webSearch = toolViewOf(item) === "websearch"
+      return [{ id: item.id, title: item.title, kind, colorKind: webSearch ? "search" : kind }]
     }
-    return order.map((bucket) => ({ bucket, count: counts.get(bucket)! }))
-  }, [items])
-  if (slots.length === 0) return null
+    if (item.kind === "thought") return [{ id: item.id, title: "Thinking", kind: "think", colorKind: "think" }]
+    return []
+  })
+  const shown = marks.slice(0, RUN_AVATARS)
+  const hidden = marks.length - shown.length
+  if (shown.length === 0) return null
   return (
-    /* Decorative on purpose: the sentence beside it says the same thing for a
-       screen reader, so the marks are not read twice. Hover still tells each
-       count, because the sentence groups by kind only for the tools. */
-    <span aria-hidden className="flex shrink-0 items-center -space-x-1.5">
-      {slots.map(({ bucket, count }) => {
-        const { icon: Icon, noun, className, chip } = RUN_BUCKETS[bucket]
-        return (
-          <span
-            key={bucket}
-            title={`${count} ${count === 1 ? noun : `${noun}s`}`}
-            className={cn(
-              "grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-background",
-              chip,
-              className
-            )}
-          >
-            <Icon className="size-2.5" />
+    <div aria-hidden className="flex min-w-0 items-center gap-2">
+      <AvatarGroup className="-space-x-1.5">
+        {shown.map((item, index) => {
+          const Icon = KIND_ICONS[item.kind] ?? WrenchIcon
+          return (
+            <span
+              key={`${item.id}-${index}`}
+              title={item.title}
+              className={cn(
+                "grid size-5 shrink-0 place-items-center rounded-full ring-2 ring-background",
+                KIND_CHIPS[item.colorKind] ?? KIND_CHIPS.other,
+                KIND_COLORS[item.colorKind] ?? KIND_COLORS.other
+              )}
+            >
+              <Icon className="size-3" />
+            </span>
+          )
+        })}
+        {hidden > 0 && (
+          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted/80 text-[10px] font-medium text-foreground ring-2 ring-background">
+            +{hidden}
           </span>
-        )
-      })}
-    </span>
+        )}
+      </AvatarGroup>
+      <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60">
+        {tools.length} {tools.length === 1 ? "tool" : "tools"}
+      </span>
+    </div>
   )
 }
 

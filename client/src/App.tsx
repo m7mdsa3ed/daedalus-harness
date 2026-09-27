@@ -4,6 +4,7 @@ import { AppShell } from "@/components/app-shell"
 import { PopoutThread } from "@/components/popout-thread"
 import { IS_POPOUT } from "@/lib/popout"
 import { AppToaster } from "@/components/app-toaster"
+import { TitleTooltips } from "@/components/title-tooltips"
 import { ConfirmProvider } from "@/components/confirm-dialog"
 import { PromptProvider } from "@/components/prompt-dialog"
 import { CatalogFormProvider } from "@/lib/catalog-add"
@@ -72,6 +73,7 @@ function App() {
                 OS's the way sonner's hardcoded per-theme colours had to be talked
                 out of. */}
             <AppToaster />
+            <TitleTooltips />
           </StoreProvider>
         </PromptProvider>
       </ConfirmProvider>

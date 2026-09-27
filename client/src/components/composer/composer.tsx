@@ -106,6 +106,7 @@ import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
 import { useComposerPrefs } from "@/lib/composer-prefs"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
+import { consumeComposerFocusRequest, useComposerFocusRequest } from "@/lib/composer-focus"
 import { reportError } from "@/lib/errors"
 import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
 import { useServer } from "@/lib/server-context"
@@ -501,13 +502,15 @@ export function Composer({
       })
   }
 
-  /* `@` completes a path in the project. It reads the token at the caret — a
-     file is named mid-sentence, unlike a command — so the textarea has to be
-     reachable. It goes after the command menu in the key handler for the same
-     reason history does: whichever menu is open owns the arrows. The two cannot
-     both be open (a `/name` token holds no `@`), but the order is stated rather
-     than relied upon. */
+  /* `@` offers paths and thread resources alongside draft MCP servers and
+     persona picks. It reads the token at the caret — a file is named mid-sentence,
+     unlike a command — so the textarea has to be reachable. It goes after the
+     command menu in the key handler: whichever menu is open owns the arrows. */
 
+  /* Draft threads take the caret when routed, and explicit palette requests
+     can take it for an existing thread the user chose to open. Scoped to the
+     routed thread so a background dock tab never grabs the caret. After a frame,
+     dockview has finished activating its panel. */
   /* A new thread is a route change into an empty screen whose only purpose is
      the box, so the box takes the caret itself — "New thread" then typing,
      with nothing to click in between. Scoped tightly, because focus taken
@@ -524,11 +527,20 @@ export function Composer({
      After a frame: dockview moves focus itself as it activates a new panel,
      and the later mover wins. */
   const routed = currentThreadId(location.pathname, location.search) === sessionId
+  const focusRequest = useComposerFocusRequest(sessionId)
   React.useEffect(() => {
-    if (!draft || isMobile || !(routed || autoFocus)) return
-    const frame = requestAnimationFrame(() => composerRef.current?.focus())
+    if (!(routed || autoFocus)) return
+    if (focusRequest !== 0 && isMobile) {
+      consumeComposerFocusRequest(sessionId, focusRequest)
+      return
+    }
+    if (isMobile || (!draft && focusRequest === 0)) return
+    const frame = requestAnimationFrame(() => {
+      if (focusRequest !== 0) consumeComposerFocusRequest(sessionId, focusRequest)
+      composerRef.current?.focus()
+    })
     return () => cancelAnimationFrame(frame)
-  }, [sessionId, draft, routed, autoFocus, isMobile])
+  }, [sessionId, draft, routed, autoFocus, isMobile, focusRequest])
 
   const mentions = useFileMentions({
     text,
@@ -536,10 +548,30 @@ export function Composer({
     projectId: meta?.projectId,
     inputRef: composerRef,
     mcpServers,
+    draft,
+    linkedMcpServerIds: meta?.mcpServerIds,
+    currentPersonaId: meta?.personaId,
     onResource: (resource) => {
       readMcpResourceFile(server, sessionId, resource.serverId, resource.uri, resource.name)
         .then((file) => files.add([file]))
         .catch((err) => reportError(err, `Couldn't read ${resource.uri}`))
+    },
+    onMcpServer: (picked) => {
+      if (!meta?.draft) return
+      const selected = new Set(meta.mcpServerIds ?? [])
+      selected.add(picked.id)
+      actions.configureDraft(meta.id, { mcpServerIds: [...selected] })
+    },
+    onPersona: (persona) => {
+      if (!meta) return
+      if (meta.draft) {
+        actions.configureDraft(meta.id, {
+          personaId: persona.id,
+          ...(persona.effort ? { effort: persona.effort } : {}),
+        })
+      } else {
+        actions.changeThreadPersona(meta, persona.id)
+      }
     },
   })
 

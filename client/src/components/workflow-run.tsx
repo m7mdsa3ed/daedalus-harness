@@ -59,6 +59,7 @@ export function collectTools(rows: Row[]): ToolItem[] {
        not a step the count line means. */
     else if (row.kind === "run")
       out.push(...row.items.filter((item): item is ToolItem => item.kind === "tool"))
+    else if (row.kind === "tool-group") out.push(...collectTools(row.children))
     else if (row.kind === "subagent-group") {
       if (row.head.kind === "tool") out.push(row.head)
       out.push(...collectTools(row.children))
@@ -153,10 +154,12 @@ export function stepNameOf(group: SubagentGroup, fallback?: string): string {
     has finished: an item carries the time it arrived, and nothing records when
     a step *ended* — the store has no such field, and inventing one would mean
     the reducer marking steps done, which it never does. */
-function lastActivityAt(rows: Row[]): number {
+export function lastActivityAt(rows: Row[]): number {
   let last = 0
   for (const row of rows) {
     if (row.kind === "run") for (const item of row.items) last = Math.max(last, item.at ?? 0)
+    else if (row.kind === "tool-group")
+      for (const item of row.items) last = Math.max(last, item.at ?? 0)
     else if (row.kind === "subagent-group")
       last = Math.max(last, row.head.at ?? 0, lastActivityAt(row.children))
     else if (row.kind === "workflow-group" || row.kind === "subagent-batch")

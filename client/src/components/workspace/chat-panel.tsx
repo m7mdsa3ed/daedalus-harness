@@ -4,7 +4,6 @@ import type { IDockviewPanelProps } from "dockview-react"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadDock } from "@/components/workspace/thread-dock"
-import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { markFor, type ThreadActivity } from "@/lib/thread/phase"
@@ -113,14 +112,16 @@ export function ChatPanel({
     )
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col", !visible && "hidden")}>
-      <ErrorBoundary name="this thread" resetKeys={[meta.id]}>
-        <ThreadLinksProvider value={links}>
-          {/* The tab is a dock of the thread's own panels (`thread-dock.tsx`) —
-              on a phone too, where it stacks them as tabs. */}
-          <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
-        </ThreadLinksProvider>
-      </ErrorBoundary>
+    <div className="flex h-full min-h-0 flex-col">
+      {visible && (
+        <ErrorBoundary name="this thread" resetKeys={[meta.id]}>
+          <ThreadLinksProvider value={links}>
+            {/* The tab is a dock of the thread's own panels (`thread-dock.tsx`) —
+                on a phone too, where it stacks them as tabs. */}
+            <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
+          </ThreadLinksProvider>
+        </ErrorBoundary>
+      )}
     </div>
   )
 }

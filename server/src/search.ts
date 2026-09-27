@@ -159,14 +159,22 @@ export interface SearchResult {
   projectId: string;
   projectName: string;
   at: number;
+  /** Turn containing the event, for jumping from a search hit into the transcript. */
+  turnId: string | null;
+  turnSeq: number | null;
 }
 
 /**
- * Search every live (non-trashed) thread's transcript, newest hits first.
- * Title and project are resolved here — the client's session list may not hold
- * a thread whose journal still does.
+ * Search live (non-trashed) transcript prose, optionally scoped to one thread,
+ * newest hits first. Each event is paired with its containing turn so a client
+ * can jump into a windowed transcript. Title and project are resolved here —
+ * the client's session list may not hold a thread whose journal still does.
  */
-export async function searchEvents(raw: string, limit = SEARCH_LIMIT): Promise<SearchResult[]> {
+export async function searchEvents(
+  raw: string,
+  limit = SEARCH_LIMIT,
+  sessionId?: string,
+): Promise<SearchResult[]> {
   const match = ftsQuery(raw);
   if (!match) return [];
   const capped = Math.max(1, Math.min(limit, SEARCH_LIMIT));
@@ -186,6 +194,8 @@ export async function searchEvents(raw: string, limit = SEARCH_LIMIT): Promise<S
     seq: number;
     snippet: string;
     at: number;
+    turnId: string | null;
+    turnSeq: number | null;
     title: string;
     projectId: string;
     projectName: string | null;
@@ -195,13 +205,39 @@ export async function searchEvents(raw: string, limit = SEARCH_LIMIT): Promise<S
              ts_headline('simple', f.text, query, ${headline}) as snippet
       from session_events_fts f, to_tsquery('simple', ${match}) query
       where f.tsv @@ query
+        and (${sessionId ?? null}::text is null or f.session_id = ${sessionId ?? null})
+        and (
+          ${sessionId ?? null}::text is null
+          or exists (
+            select 1 from session_events turn
+            where turn.session_id = f.session_id
+              and turn.kind = 'turn_started'
+              and turn.seq <= f.seq
+          )
+        )
+    ),
+    located as (
+      select hits.*,
+             boundary.payload->>'turnId' as "turnId",
+             boundary.seq as "turnSeq"
+      from hits
+      left join lateral (
+        select e.seq, e.payload
+        from session_events e
+        where e.session_id = hits."sessionId"
+          and e.kind = 'turn_started'
+          and e.seq <= hits.seq
+        order by e.seq desc
+        limit 1
+      ) boundary on true
     ),
     ranked as (
-      select hits.*,
+      select located.*,
              row_number() over (partition by "sessionId" order by at desc, seq desc) as rn
-      from hits
+      from located
     )
     select f."sessionId" as "sessionId", f.seq as "seq", f.snippet as "snippet", f.at as "at",
+           f."turnId" as "turnId", f."turnSeq" as "turnSeq",
            s.title as "title", s.project_id as "projectId", p.name as "projectName"
     from ranked f
     join sessions s on s.id = f."sessionId" and s.deleted_at is null

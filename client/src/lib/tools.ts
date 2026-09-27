@@ -29,6 +29,9 @@ export {
   parseMcpToolName,
   toolDisplayName,
   toolIdentity,
+  toolSelectorIncludes,
+  isWebToolSelector,
+  formatMcpName,
   couldTouchFiles,
 } from "./tools/naming"
 

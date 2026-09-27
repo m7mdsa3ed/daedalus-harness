@@ -52,7 +52,7 @@ export function runningAgents(thread: Pick<ThreadState, "items" | "turnActive">)
 }
 
 /** Ticks once a second while `active`, so an elapsed time can be drawn live. */
-function useNow(active: boolean): number {
+export function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!active) return

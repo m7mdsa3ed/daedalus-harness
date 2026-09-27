@@ -23,6 +23,8 @@ export interface SearchResult {
   /** Resolved server-side — the project may not be in this client's store. */
   projectName: string
   at: number
+  turnId: string | null
+  turnSeq: number | null
 }
 
 /** Search every thread's transcript on the given server. Throws ApiError like
@@ -30,11 +32,13 @@ export interface SearchResult {
 export async function searchThreads(
   settings: ServerSettings,
   query: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  sessionId?: string
 ): Promise<SearchResult[]> {
+  const scope = sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""
   const { results } = await api<{ results: SearchResult[] }>(
     settings,
-    `/api/search?q=${encodeURIComponent(query)}&limit=30`,
+    `/api/search?q=${encodeURIComponent(query)}&limit=30${scope}`,
     { signal },
   )
   return results

@@ -13,17 +13,24 @@
    that draw the top level (thread-items), and thread-view already imports
    those — the types have to live somewhere both can reach without a cycle. */
 import type { AsyncTaskItem, ShellItem, SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
-import { extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId, toolKindOf } from "./tools"
+import { extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId, toolKindOf, toolViewOf } from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
 import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
-/** A run of consecutive steps, folded into one row (view-options). The
- *  thoughts woven between the calls ride inside it: the reasoning belongs to
- *  the steps around it, so folding the run folds the thinking with it. */
+/** A run of consecutive calls with the same resolved tool view, folded into
+ *  one row (view-options). Interleaved thinking stays alongside its calls. */
 export interface ToolRunGroup {
   kind: "run"
   id: string
   items: (ToolItem | TextItem)[]
+}
+
+/** Consecutive tool calls collected under one parent, split into layout runs. */
+export interface ToolGroup {
+  kind: "tool-group"
+  id: string
+  items: (ToolItem | TextItem)[]
+  children: Array<ToolItem | TextItem | ToolRunGroup>
 }
 
 /**
@@ -110,6 +117,7 @@ export interface ShellRun {
 export type Row =
   | ThreadItem
   | ToolRunGroup
+  | ToolGroup
   | SubagentGroup
   | WorkflowGroup
   | SubagentBatch
@@ -122,6 +130,7 @@ export type Row =
     command's, which is the one that just finished. */
 export function rowTailId(row: Row): string {
   if (row.kind === "run" || row.kind === "shell-run") return row.items[row.items.length - 1].id
+  if (row.kind === "tool-group") return rowTailId(row.children[row.children.length - 1])
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return rowTailId(row.steps[row.steps.length - 1])
   return row.id
@@ -706,32 +715,81 @@ function groupCodexLifecycle(
 }
 
 /**
- * Runs of at least two consecutive tool calls — and the thoughts woven between
- * them — become one `ToolRunGroup`; everything else passes through untouched.
- * A thought is the reasoning behind the calls around it, so it belongs inside
- * the group: toggling it shut hides the thinking too. A single call stays
- * ungrouped, since a lone step wrapped in a disclosure is strictly worse than
- * the step. An edit is not one of the calls:
- * a change is the thing the reader comes to read, so it stands as its own row
- * and breaks a run like any other non-tool row. A subagent group breaks a run
- * too: its rail inside a run's rail would be two rails for one thing.
+ * Runs of at least two non-edit tool calls, with any thinking between them,
+ * become one parent group. Its children split at specialized-view changes,
+ * with repeated same-view calls folded into expandable subgroups. Other content
+ * stays outside these groups. A leading or trailing thought joins only if the
+ * run it borders has at least two calls.
  */
 export function groupToolRuns(rows: Row[]): Row[] {
   const out: Row[] = []
+  let items: (ToolItem | TextItem)[] = []
+  let thoughts: TextItem[] = []
+
+  const flush = () => {
+    const tools = items.filter((item): item is ToolItem => item.kind === "tool")
+    const views = new Set(tools.map(toolViewOf))
+    if (tools.length > 1 && views.size === 1) {
+      out.push({ kind: "run", id: `tools-${items[0].id}`, items })
+    } else if (tools.length > 1) {
+      out.push({
+        kind: "tool-group",
+        id: `tool-group-${items[0].id}`,
+        items,
+        children: groupSameViewRuns(items),
+      })
+    } else out.push(...items)
+    items = []
+  }
+
+  for (const row of rows) {
+    if (row.kind === "tool" && toolViewOf(row) !== "edit") {
+      items.push(...thoughts, row)
+      thoughts = []
+    } else if (row.kind === "thought") {
+      thoughts.push(row)
+    } else {
+      if (items.some((item) => item.kind === "tool") && thoughts.length > 0) {
+        const toolCount = items.filter((item) => item.kind === "tool").length
+        if (toolCount > 1) items.push(...thoughts)
+        thoughts = []
+      }
+      flush()
+      out.push(...thoughts, row)
+      thoughts = []
+    }
+  }
+  if (items.filter((item) => item.kind === "tool").length > 1) {
+    items.push(...thoughts)
+    thoughts = []
+  }
+  flush()
+  out.push(...thoughts)
+  return out
+}
+
+/** Split one consecutive sequence into same-view expandable subgroups. */
+function groupSameViewRuns(items: (ToolItem | TextItem)[]): Array<ToolItem | TextItem | ToolRunGroup> {
+  const out: Array<ToolItem | TextItem | ToolRunGroup> = []
   let run: (ToolItem | TextItem)[] = []
+  let runView: ReturnType<typeof toolViewOf> | null = null
 
   const flush = () => {
     if (run.filter((item) => item.kind === "tool").length > 1)
       out.push({ kind: "run", id: `tools-${run[0].id}`, items: run })
     else out.push(...run)
     run = []
+    runView = null
   }
 
-  for (const row of rows) {
-    if ((row.kind === "tool" && toolKindOf(row) !== "edit") || row.kind === "thought") run.push(row)
-    else {
-      flush()
-      out.push(row)
+  for (const item of items) {
+    if (item.kind === "tool") {
+      const view = toolViewOf(item)
+      if (runView !== null && runView !== view) flush()
+      run.push(item)
+      runView = view
+    } else {
+      run.push(item)
     }
   }
   flush()

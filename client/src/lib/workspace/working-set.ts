@@ -46,6 +46,16 @@ export interface WorkingFile {
     then what is not. Conflicts first because nothing else can proceed past
     them, and untracked last because it is the noisiest and least urgent. */
 const RANK: Record<string, number> = { conflict: 0, partial: 1, staged: 2, changed: 3, untracked: 4 }
+const MARK_OF: Record<string, string> = {
+  added: "A",
+  modified: "M",
+  deleted: "D",
+  renamed: "R",
+  copied: "C",
+  conflicted: "U",
+  untracked: "?",
+}
+const markOf = (state: string): string => MARK_OF[state] ?? state
 
 const rankOf = (file: WorkingFile): number =>
   file.conflicted
@@ -105,7 +115,7 @@ export function workingSet(status: GitStatus): WorkingFile[] {
         ? "U"
         : untracked.has(path)
           ? "?"
-          : (disk?.worktree ?? index?.index ?? "M"),
+          : markOf(disk?.worktree ?? index?.index ?? "modified"),
     })
   }
 
@@ -209,5 +219,99 @@ export function flattenWorkingSet(
   }
 
   walk(tree, 0)
+  return rows
+}
+
+/* ── The groups the list is drawn in ──
+   VS Code's shape, chosen over the one list above for the panel: what is going
+   into the commit and what is not, each under its own header, with the verb on
+   the row (+ / −) rather than a tick. The cost the one-list model was written
+   to avoid is accepted deliberately — a file staged and edited again is a row
+   in each group, and each row opens its own half of the diff (HEAD ↔ index
+   above, index ↔ disk below), which is what makes the two rows two different
+   things rather than one file said twice. `workingSet` still answers the
+   counts, where a path is one path. */
+
+export type GroupId = "merge" | "staged" | "changes"
+
+export interface WorkGroup {
+  id: GroupId
+  title: string
+  files: WorkingFile[]
+}
+
+export function scmGroups(status: GitStatus): WorkGroup[] {
+  const conflicted = new Set(status.conflicted.map((file) => file.path))
+  const file = (
+    source: GitFileState,
+    staged: Staged,
+    mark: string,
+    flags: { untracked?: boolean; conflicted?: boolean } = {}
+  ): WorkingFile => ({
+    path: source.path,
+    from: source.from,
+    staged,
+    mark,
+    untracked: flags.untracked ?? false,
+    conflicted: flags.conflicted ?? false,
+  })
+  const byPath = (a: WorkingFile, b: WorkingFile) => a.path.localeCompare(b.path)
+  const groups: WorkGroup[] = [
+    {
+      id: "merge",
+      title: "Merge Changes",
+      files: status.conflicted.map((f) => file(f, "no", "U", { conflicted: true })).sort(byPath),
+    },
+    {
+      id: "staged",
+      title: "Staged Changes",
+      files: status.staged
+        .filter((f) => !conflicted.has(f.path))
+        .map((f) => file(f, "yes", markOf(f.index || "modified")))
+        .sort(byPath),
+    },
+    {
+      id: "changes",
+      title: "Changes",
+      files: [
+        ...status.unstaged.filter((f) => !conflicted.has(f.path)).map((f) => file(f, "no", markOf(f.worktree || "modified"))),
+        ...status.untracked.map((f) => file(f, "no", "?", { untracked: true })),
+      ].sort(byPath),
+    },
+  ]
+  return groups.filter((group) => group.files.length > 0)
+}
+
+export type ScmRow =
+  | { kind: "group"; key: string; group: GroupId; title: string; count: number; paths: string[]; untracked: boolean }
+  | (WorkRow & { group: GroupId })
+
+/** Every group's header, then its rows (tree or list), as one flat array — so
+    the three groups are one windowed scroller, not three. A folder's collapse
+    is keyed per group (`group:path`): the same folder can be open above and
+    shut below. */
+export function flattenGroups(
+  groups: readonly WorkGroup[],
+  options: { layout: FileLayout; collapsedDirs: ReadonlySet<string>; collapsedGroups: ReadonlySet<GroupId> }
+): ScmRow[] {
+  const rows: ScmRow[] = []
+  for (const group of groups) {
+    rows.push({
+      kind: "group",
+      key: `group:${group.id}`,
+      group: group.id,
+      title: group.title,
+      count: group.files.length,
+      paths: group.files.map((file) => file.path),
+      untracked: group.files.every((file) => file.untracked),
+    })
+    if (options.collapsedGroups.has(group.id)) continue
+    const prefix = `${group.id}:`
+    const collapsed = new Set(
+      [...options.collapsedDirs].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length))
+    )
+    for (const row of flattenWorkingSet(group.files, { layout: options.layout, collapsed }))
+      rows.push({ ...row, key: `${prefix}${row.key}`, group: group.id })
+  }
   return rows
 }

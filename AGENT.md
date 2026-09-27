@@ -564,6 +564,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and a headline plus a paragraph that appears and vanishes is flicker announcing a wait
   nobody waited for. The gate is the caller's, because a scroller item that renders nothing
   still reserves its size.
+- **No native tooltip is ever drawn**: `components/title-tooltips.tsx` lifts every `title`
+  attribute on hover/focus-visible (dockview's and xterm's included) and draws it as the app's
+  tooltip, moving it to `aria-label`/`aria-description`. Write `title="…"`; never wrap a
+  control in a `Tooltip` just to label it.
 - **Errors are never `String(err)`** — normalize through `lib/errors.ts`. A failure belonging
   to a thread goes IN that thread; a surface with the user's attention holds its own; toasts
   are for failures with no surface to go back to. **An error a surface could render as
@@ -601,12 +605,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the log are read when asked for** — the branch list on the picker's open, the stash and
   history lists on their tab's first open — never with the status, which the watch stream
   re-reads.
-- **The working set is one list, not four groups** (`lib/workspace/working-set.ts`). Git
-  reports staged/unstaged/untracked/conflicted, but a path that is staged *and* edited again
-  was two rows in two groups with nothing saying they were one file. One entry per path with a
-  staged tri-state — `yes`/`no`/`partial` — **and the tick is the verb**: staging was two
-  hover-revealed icon buttons and is a checkbox, so a folder wears its children's folded
-  answer and ticking it stages everything under it. A conflicted file is never "staged".
+- **The working set is drawn as VS Code draws it: Merge Changes, Staged Changes, Changes**
+  (`scmGroups` in `lib/workspace/working-set.ts`), the verb on the row (+ / − / ↺) and on
+  each header and folder for everything under it; the commit box above the scroller, stashes
+  and history folded and capped at the foot. A path staged *and* edited again is a row in each
+  group — accepted on purpose, because each row opens its own half (HEAD ↔ index above, index
+  ↔ disk below). It replaced one ticked list with a tri-state (`workingSet`), which still
+  answers the **counts**, where a path is one path. A conflicted file is never "staged"; its
+  + is "mark resolved".
 - **Monaco's workers are wired by `?worker` import, never by path**, and
   `MonacoEnvironment.getWorker` answers for **every** label while `getWorkerUrl` is never
   defined — a `?worker` import makes a stale path a build error instead of a blank editor.
@@ -754,9 +760,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the newest gated turn's, which is a reading of the thread and belongs where the other three
   are, and the file list a chip could never hold is what its popover is for. `ThreadView` picks
   the turn (the last value of `withTurnChanges`) — the composer holds no opinion about which.
-  **Reviewing a turn is the Changes panel** (the turn timeline, below).
+  **Reviewing a turn is the Source Control panel's Review half** (the turn timeline, below); its Git half is the IDE's old `workspace/scm/` view — stage, commit, branch, pull/push, stashes, history.
 - **A chat tab on a wide screen is a thread dock** (`workspace/thread-dock.tsx`): a nested
-  dockview holding the transcript and the panels about *that* thread — Changes, Plan, Agents,
+  dockview holding the transcript and the panels about *that* thread — Source Control, Plan, Agents,
   Details (`ThreadSection`, the inspector's readings one panel each), Terminal, Preview —
   **never the board**, which is the server's and not a thread's, so it always opens in the outer dock.
   **It opens as the transcript alone, and the transcript wears no strip** (`syncStrips`: a

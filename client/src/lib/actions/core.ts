@@ -121,8 +121,19 @@ export function createCore(deps: CoreDeps) {
 
   /** Bring a draft into existence: tell the server (which spawns the agent
       and handshakes), adopt its row, then attach. The id travelled from the
-      client, so the route the user is already looking at needs no correction. */
-  const createSession = async (meta: SessionMeta) => {
+      client, so the route the user is already looking at needs no correction.
+
+      `first` is the message that created it, and it rides the POST: the
+      server starts the turn before answering, so the words are on the server
+      the moment the thread is. They used to follow over a socket opened
+      afterwards — a reload in that window lost a message the composer had
+      already cleared. Answers the turn it started, or why it could not; a
+      failure after the POST landed is not thrown, because the thread exists
+      and its message went. */
+  const createSession = async (
+    meta: SessionMeta,
+    first?: { text: string; attachmentIds: string[] }
+  ): Promise<{ turnId?: string; promptError?: string }> => {
     /* The catalog is the query cache's now, read the same way `getState`
        is read here: inside the callback, last-committed, no subscription. */
     const project = catalog.projects().find((p) => p.id === meta.projectId)
@@ -163,7 +174,7 @@ export function createCore(deps: CoreDeps) {
         new Set(known.modes?.availableModes.map((m) => m.id) ?? [])
       ).rest.map((o) => [o.id, o.currentValue])
     )
-    await api<{ id: string }>(settings, "/api/sessions", {
+    const reply = await api<{ id: string; turnId?: string; promptError?: string }>(settings, "/api/sessions", {
       method: "POST",
       body: JSON.stringify({
         id: meta.id,
@@ -210,6 +221,7 @@ export function createCore(deps: CoreDeps) {
            it alone. Left out when nobody has named it, so the sniff still
            titles the thread from what was typed. */
         title: meta.title && meta.title !== "New thread" ? meta.title : undefined,
+        prompt: first,
       }),
     })
     // Swaps the draft row for the server's own — see the `sessions` reducer.
@@ -236,7 +248,29 @@ export function createCore(deps: CoreDeps) {
        thread is not a draft any more. */
     const created =
       listed.find((session) => session.id === meta.id) ?? ({ ...meta, draft: false } as SessionMeta)
-    await threads.for(meta.id).open(created)
+    if (!reply.turnId) {
+      await threads.for(meta.id).open(created)
+      return reply
+    }
+    /* The bubble this device drew is the turn the server just journaled, and
+       tagged it is no longer carried across the attach below (carry.ts): the
+       replay's own `turn_started` redraws it, so it is drawn once — `seamless`,
+       so the swap is one commit and not a flicker. Tagged before the attach,
+       or the carry and the replay would both draw it. */
+    dispatch({ type: "tag-user-turn", id: meta.id, turnId: reply.turnId })
+    try {
+      /* `fresh`: nothing on the server is news to this device, so no HTTP read
+         in front of the socket — the turn's answer arrives on a socket or not
+         at all. */
+      await threads.for(meta.id).open(created, { revive: true, fresh: true, seamless: true })
+    } catch (error) {
+      /* The thread exists and its turn is running — only this device is not
+         watching it. Said in the thread; the next send's `ready` opens it. */
+      threads.for(meta.id).markIdle()
+      dispatch({ type: "turn-active", id: meta.id, active: false })
+      recordError(meta.id, error, "Couldn't connect to this thread")
+    }
+    return reply
   }
 
   /* Point the window-level watchers — `online`, `visibilitychange`, the

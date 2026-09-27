@@ -70,7 +70,7 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
   subagent: { Detail: SubagentDetail, opensByDefault: false },
   websearch: { Detail: WebSearchDetail, opensByDefault: false },
   webfetch: { Detail: WebFetchDetail, opensByDefault: false },
-  questions: { Detail: QuestionsDetail, opensByDefault: false },
+  questions: { Detail: QuestionsDetail, opensByDefault: true },
   findings: { Detail: FindingsDetail, opensByDefault: false },
   plan: { Detail: PlanProposalDetail, opensByDefault: true },
   skill: { Detail: SkillDetail, opensByDefault: false },

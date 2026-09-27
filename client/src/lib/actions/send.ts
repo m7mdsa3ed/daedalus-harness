@@ -14,6 +14,7 @@
 
 import type { AttachmentRef } from "@daedalus/protocol"
 import { errorText } from "../errors"
+import { ApiError } from "../settings"
 import { toast } from "../toast"
 import { uuid } from "../uuid"
 import { postJson, type ActionsCore } from "./core"
@@ -25,8 +26,17 @@ export function sendActions(
      has to be on the wire before the message it was made for. */
   config: Pick<ReturnType<typeof configActions>, "flushThreadConfig">
 ) {
-  const { settings, dispatch, getState, threads, recordError, known, requireLive, createSession } =
-    core
+  const {
+    settings,
+    dispatch,
+    getState,
+    threads,
+    recordError,
+    known,
+    requireLive,
+    createSession,
+    refreshSessions,
+  } = core
   const { flushThreadConfig } = config
 
   return {
@@ -78,10 +88,11 @@ export function sendActions(
         )
       }
       /* First message on a draft: show the message instantly, then create the
-         thread on the server. A failure leaves the draft a draft and lands the
-         text in a Retry row like any other send failure — and retrying re-runs
-         this, which is correct: if the POST is what failed, the id is still
-         free. */
+         thread on the server with the message in the same request. A failure
+         leaves the draft a draft and lands the text in a Retry row like any
+         other send failure — and retrying re-runs this, which is correct: if
+         the POST never landed the id is still free, and if only its answer was
+         lost the server hands the same answer back for the same id. */
       const draft = getState().sessions.find((s) => s.id === sessionId && s.draft)
       if (draft) {
         /* Show the message and connecting state instantly rather than waiting
@@ -94,22 +105,33 @@ export function sendActions(
            an empty one too — a thread called "" is worse than "New thread". */
         if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         dispatch({ type: "turn-active", id: sessionId, active: true })
+        /* The message rides the create (`createSession`), which is the whole
+           of the send: nothing goes over a socket after it. A pick made just
+           before Enter is already on the draft row the create reads. */
+        let created
         try {
-          await createSession(draft)
+          created = await createSession(draft, { text, attachmentIds })
         } catch (error) {
           threads.for(sessionId).markIdle()
           dispatch({ type: "drop-user-message", id: sessionId })
           dispatch({ type: "turn-active", id: sessionId, active: false })
+          /* A 409 is this id already taken on the server — a create that
+             landed on another tab, or long enough ago that the server no
+             longer answers the retry for it. The refresh adopts the server's
+             row, so this stops being a draft that 409s on every retry. */
+          if (error instanceof ApiError && error.status === 409) await refreshSessions().catch(() => {})
           recordUnsent(error, "Couldn't start this thread")
           throw error
         }
-        /* The optimistic bubble survives the attach on its own now: a
-           non-resumed attach carries this device's own rows across the reset
-           and puts them back with the replay (lib/thread/carry.ts). This used
-           to be a re-dispatch guarded by a heuristic — "if no untagged user
-           item is left, the reset must have eaten it" — which held for this
-           one path and for nothing else, which is why an error row recorded
-           just before an attach vanished with no restoration at all. */
+        if (created.promptError) {
+          /* The thread exists; its first message did not start. Nothing of it
+             reached the agent, so the bubble comes off and the words go back. */
+          dispatch({ type: "drop-user-message", id: sessionId })
+          dispatch({ type: "turn-active", id: sessionId, active: false })
+          recordUnsent(new Error(created.promptError), "The agent couldn't take this message")
+          throw new Error(created.promptError)
+        }
+        return
       }
       const conn = threads.for(sessionId)
       /* Steering — a prompt sent while a turn is already running — is why this
@@ -133,7 +155,7 @@ export function sendActions(
          as a `turn_started` with no origin — so this device draws the bubble
          then, exactly like every other peer. If the turn ended before this
          server saw this, `queue_add` drains at once and the same holds. */
-      const queueing = !draft && alreadyRunning && !opts.steer
+      const queueing = alreadyRunning && !opts.steer
       /* Drawn BEFORE `ready`, for the same reason a draft's is drawn before
          its create: `ready` is not a lookup, it is however long it takes to
          get a process and a socket under this thread — a retired agent is
@@ -148,7 +170,7 @@ export function sendActions(
          reset and puts them back with the replay (lib/thread/carry.ts). That
          is what a draft has relied on since it started drawing early, and it
          was the only thing keeping this send behind the round trip. */
-      if (!draft && !queueing) {
+      if (!queueing) {
         dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
         if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         dispatch({ type: "turn-active", id: sessionId, active: true })
@@ -183,12 +205,7 @@ export function sendActions(
       try {
         thread = await conn.ready()
       } catch (error) {
-        /* A draft lit its own indicator before the create above, and the
-           prompt never went out — so take it back here, exactly as the
-           prompt-failure branch below does. Left on, it spins forever on a
-           thread that is not working on anything. */
-        if (draft) dispatch({ type: "turn-active", id: sessionId, active: false })
-        else if (!queueing) {
+        if (!queueing) {
           /* Nothing reached the server, so the optimism above comes back off
              — the draft's own create-failure branch, one thread older. A
              bubble left standing here is a message that was never sent,
@@ -209,13 +226,10 @@ export function sendActions(
         }
         return
       }
-      /* Re-asserted for a draft rather than skipped, like the indicator
-         below: the create's refresh swapped the draft row — the one carrying
-         the optimistic title dispatched above — for the server's, whose
-         title is still "New thread" until the server's own first-prompt
-         sniff persists it, and that sniff reaches every peer but this one
-         (`turn_started` fans out minus the origin). The reducer's guard
-         ("New thread" only) keeps a name the user chose safe from this. */
+      /* Re-asserted, like the indicator below: a revive inside `ready`
+         refreshed the list, swapping the row carrying the optimistic title for
+         the server's. The reducer's guard ("New thread" only) keeps a name the
+         user chose safe from this. */
       if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
       /* This device is the one peer that does not get a `turn_started` — it
          already put the message on screen — so it lights its own indicator.
@@ -225,8 +239,8 @@ export function sendActions(
          already lit it: `ready` has just opened the thread, and a non-resumed
          attach replaces the transcript with `emptyThread`, whose `turnActive`
          is false. The bubble survives that (carry.ts) and this does not, so
-         the first message of a new thread — and every message that had to
-         revive one — ran its whole turn with no working indicator at all.
+         every message that had to revive a thread ran its whole turn with no
+         working indicator at all.
          `caught_up` cannot cover it either: it only relights the indicator
          when the SERVER says `promptActive`, and the prompt below has not
          been sent yet. Idempotent, so the ordinary path pays nothing for it. */
@@ -261,11 +275,9 @@ export function sendActions(
         }
         dispatch({ type: "tag-user-turn", id: sessionId, turnId: reply.turnId })
       } catch (error) {
-        /* For a draft we set turn-active ourselves above, so clear it on
-           failure — the prompt never reached the agent. For a non-draft
-           where alreadyRunning was true, another turn is genuinely active
+        /* Where alreadyRunning was true, another turn is genuinely active
            and must not be disturbed. */
-        if (!alreadyRunning || draft) dispatch({ type: "turn-active", id: sessionId, active: false })
+        if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })
         recordError(sessionId, error, "The agent couldn't answer this message", {
           text,
           attachments,

@@ -1,4 +1,4 @@
-import { CheckCircle2Icon, CircleDashedIcon, LoaderCircleIcon } from "lucide-react"
+import { CheckCircle2Icon, CircleDotIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -10,39 +10,42 @@ export interface ChecklistItem {
 
 export function TodoChecklist({ items, className }: { items: ChecklistItem[]; className?: string }) {
   return (
-    <ul className={cn("space-y-1", className)}>
+    <ul className={cn("space-y-0.5", className)}>
       {items.map((item, index) => (
         <li
           key={`${item.content}-${index}`}
           className={cn(
-            "flex min-w-0 items-start gap-2 rounded-md border px-2 py-1.5 text-xs",
-            item.status === "in_progress"
-              ? "border-primary/25 bg-primary/5"
-              : "border-border/40 bg-background/40"
+            "group flex min-w-0 items-start gap-2.5 rounded-md px-2 py-1.5 text-xs transition-colors",
+            item.status === "in_progress" && "bg-primary/5"
           )}
         >
-          <span className="grid size-5 shrink-0 place-items-center">
+          <span
+            className={cn(
+              "mt-0.5 grid size-4 shrink-0 place-items-center",
+              item.status === "in_progress" ? "text-primary" : "text-muted-foreground/60"
+            )}
+          >
             {item.status === "completed" ? (
               <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
             ) : item.status === "in_progress" ? (
-              <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
+              <CircleDotIcon aria-hidden className="size-3.5" />
             ) : (
-              <CircleDashedIcon aria-hidden className="size-3.5 text-muted-foreground/60" />
+              <CircleIcon aria-hidden className="size-3" />
             )}
           </span>
           <span
             className={cn(
               "min-w-0 flex-1 break-words leading-5",
               item.status === "completed"
-                ? "text-muted-foreground line-through opacity-70"
+                ? "text-muted-foreground line-through decoration-muted-foreground/40"
                 : item.status === "in_progress"
-                  ? "text-foreground"
+                  ? "font-medium text-foreground"
                   : "text-muted-foreground"
             )}
           >
             {item.content}
             {item.priority === "high" && item.status !== "completed" && (
-              <span className="ml-1.5 rounded-pill bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium tracking-wide uppercase text-primary">
+              <span className="ml-1.5 inline-flex rounded-sm bg-destructive/10 px-1.5 py-0.5 align-middle text-[9px] font-semibold tracking-wide uppercase text-destructive">
                 high
               </span>
             )}

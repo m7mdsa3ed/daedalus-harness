@@ -380,6 +380,8 @@ const PageBody = React.memo(function PageBody({ page }: { page: PageId }) {
       return <RootPage />
     case "search":
       return <SearchPage />
+    case "thread-search":
+      return <SearchPage threadScoped />
     case "projects":
       return <ProjectsPage />
     case "project":

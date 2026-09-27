@@ -175,34 +175,45 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
   const answered = questions.filter((question) => (question.answer?.length ?? 0) > 0 || question.notes)
   if (answered.length === 0) return null
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-2">
       {answered.map((question, index) => (
-        <div key={index} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-          {/* The header, not the question: a question is a sentence and this is
-              a strip. With no header the chips stand alone — which reads fine,
-              because the row above them is the question. */}
-          {question.header && (
-            <span className={cn(LABEL, "shrink-0")}>
-              {question.header}
-            </span>
+        <div
+          key={index}
+          className="min-w-0 space-y-1.5 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-2"
+        >
+          <div className="flex min-w-0 items-start gap-1.5">
+            <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 text-primary/80" />
+            <div className="min-w-0 flex-1">
+              {question.header && <div className={cn(LABEL, "mb-0.5")}>{question.header}</div>}
+              <div className="text-[11.5px] leading-4 text-foreground/80">
+                <ProsePreview text={question.question} />
+              </div>
+            </div>
+          </div>
+          {(question.answer?.length ?? 0) > 0 && (
+            <div className="flex min-w-0 flex-wrap gap-1.5 ps-5">
+              {(question.answer ?? []).map((picked, pickedIndex) => (
+                <span
+                  key={pickedIndex}
+                  title={picked}
+                  className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] leading-4 text-primary ring-1 ring-inset ring-primary/15"
+                >
+                  <CheckIcon className="size-3 shrink-0" />
+                  <span className="min-w-0 max-w-[22rem] truncate">{picked}</span>
+                </span>
+              ))}
+            </div>
           )}
-          {(question.answer ?? []).map((picked, pickedIndex) => (
-            <span
-              key={pickedIndex}
-              title={picked}
-              className="flex min-w-0 items-center gap-1 rounded-pill bg-primary/10 px-1.5 py-0.5 text-[11px] leading-4 text-primary"
-            >
-              <CheckIcon className="size-2.5 shrink-0" />
-              <span className="min-w-0 max-w-[16rem] truncate">{picked}</span>
-            </span>
-          ))}
           {question.notes && (
-            <span
-              title={question.notes}
-              className="min-w-0 max-w-[20rem] truncate text-[11px] leading-4 text-muted-foreground/70"
+            <div
+              className={cn(
+                "rounded-md bg-background/60 px-2 py-1.5 text-[11px] leading-4 text-muted-foreground",
+                (question.answer?.length ?? 0) > 0 && "ms-5"
+              )}
             >
-              {question.notes}
-            </span>
+              <span className="me-1 font-medium text-foreground/70">Note</span>
+              <span className="break-words">{question.notes}</span>
+            </div>
           )}
         </div>
       ))}

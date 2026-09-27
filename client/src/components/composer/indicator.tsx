@@ -15,7 +15,15 @@ import { cn } from "@/lib/utils"
 /** The last row of a reading's popover: the same reading, full height, in the
     thread's inspector. Draws nothing where there is no inspector to open (the
     landing console's composer). `onOpen` closes the popover first. */
-export function OpenInInspector({ tab, onOpen }: { tab: InspectorTab; onOpen?: () => void }) {
+export function OpenInInspector({
+  tab,
+  onOpen,
+  label = "Open in inspector",
+}: {
+  tab: InspectorTab
+  onOpen?: () => void
+  label?: string
+}) {
   const open = useOpenInspector()
   if (!open) return null
   return (
@@ -29,7 +37,7 @@ export function OpenInInspector({ tab, onOpen }: { tab: InspectorTab; onOpen?: (
       }}
     >
       <PanelRightOpenIcon aria-hidden data-icon="inline-start" />
-      Open in inspector
+      {label}
     </Button>
   )
 }

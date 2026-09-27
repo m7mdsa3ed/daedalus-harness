@@ -2,7 +2,7 @@
    of the repo. */
 import type { ToolItem } from "../store"
 import { asRecord, str, vendorMeta } from "./helpers"
-import { isOneOf, toolKindOf } from "./naming"
+import { isOneOf, isWebToolSelector, toolKindOf, toolSelectorIncludes } from "./naming"
 import { stringifyOutput, toolOutputText } from "./output"
 
 /**
@@ -137,7 +137,11 @@ export function webInput(
   const input = webArgs(item)
   const action = asRecord(input?.action)
   const codex = str(input?.type) === "webSearch" || action !== null
-  if (codex || isOneOf(item, WEB_SEARCH_NAMES)) {
+  const selector = isWebToolSelector(item)
+  const query = str(action?.query) ?? str(input?.query) ?? strList(action?.queries)?.join(", ")
+  const selectorUrl = str(action?.url) ?? str(input?.url)
+  if (selector && !query && isHttp(selectorUrl)) return { url: selectorUrl }
+  if (codex || isOneOf(item, WEB_SEARCH_NAMES) || toolSelectorIncludes(item, WEB_SEARCH_NAMES)) {
     const queries = strList(action?.queries)
     const query =
       str(action?.query) ?? (queries ? queries.join(", ") : null) ?? str(input?.query) ?? undefined
@@ -341,7 +345,11 @@ export function extractWebSearch(item: ToolItem): WebSearchCall | null {
   const input = webArgs(item)
   const action = asRecord(input?.action)
   const codex = str(input?.type) === "webSearch" || action !== null
-  if (!codex && !isOneOf(item, WEB_SEARCH_NAMES)) return null
+  if (!codex && !isOneOf(item, WEB_SEARCH_NAMES) && !toolSelectorIncludes(item, WEB_SEARCH_NAMES)) return null
+  const selector = isWebToolSelector(item)
+  const hasQuery = str(action?.query) ?? str(input?.query) ?? strList(action?.queries)?.join(", ")
+  const selectorUrl = str(action?.url ?? input?.url)
+  if (selector && !hasQuery && isHttp(selectorUrl)) return null
 
   const queries = strList(action?.queries)
   const results = webResults(item)

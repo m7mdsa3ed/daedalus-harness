@@ -199,6 +199,7 @@ export type ShortcutId =
   | "terminal"
   | "changeModel"
   | "changeProject"
+  | "threadSearch"
   | "inspector"
   | "sendReview"
   | "viewOptions"
@@ -288,6 +289,7 @@ export const KEYS = {
       spoken for here, and ⌥M/⌥P/⌥V are claimed by no browser and no OS. */
   changeModel: "alt+m",
   changeProject: "alt+p",
+  threadSearch: "mod+f",
   viewOptions: "alt+v",
   /** The thread inspector. ⌥/Alt is the well the choosers came out of; the
       ⌘/Ctrl beside it keeps a bare ⌥I (a dead key on a Mac layout) out of it.
@@ -398,6 +400,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.changeProject],
     rebindable: true,
     note: "Only until the first message: a started thread's project is the agent's cwd, so the page reads it out instead of offering it.",
+  },
+  {
+    id: "threadSearch",
+    scope: "Thread",
+    label: "Search this thread",
+    chords: [KEYS.threadSearch],
+    rebindable: true,
+    note: "Search the current thread's full transcript from the command palette.",
   },
   {
     id: "inspector",

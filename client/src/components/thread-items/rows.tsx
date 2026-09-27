@@ -20,6 +20,7 @@ import {
   ArrowUpRightIcon,
   BotIcon,
   EyeIcon,
+  ListTodoIcon,
   PlayIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -45,7 +46,6 @@ import {
   SubagentBrief,
   SubagentReport,
   ToolDetail,
-  ToolAnswers,
   ToolSources,
   toolHasDetail,
   toolOpensByDefault,
@@ -94,10 +94,11 @@ import {
   parseTaskNotification,
   toolHeading,
   toolKindOf,
+  toolViewOf,
   workflowAgentItems,
 } from "@/lib/tools"
 import { buildRows } from "@/lib/transcript-rows"
-import type { Row, SubagentGroup } from "@/lib/transcript-rows"
+import type { Row, SubagentGroup, ToolGroup, ToolRunGroup } from "@/lib/transcript-rows"
 import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
@@ -109,28 +110,31 @@ import { Link } from "react-router"
 
 export const ToolRun = React.memo(function ToolRun({
   items,
+  nestedRows,
   showTimestamps,
   tail,
 }: {
   items: Array<ToolItem | TextItem>
+  nestedRows?: ToolGroup["children"]
   showTimestamps?: boolean
   /** This group is the transcript's last row and the turn is still open — the
       agent has said nothing since, so the run is not finished being written
       even in the gaps between its calls. */
   tail?: boolean
 }) {
-  /* The run's own acting is its tool calls — the thoughts between them are
-     folded in so toggling the group hides the thinking too, but they are not
-     what the counting line is about. Failed and live are tool states; a
-     thought has no status of its own. */
+  /* Thoughts travel inside the group with the calls they explain, but only
+     tool calls contribute to its summary and status. */
   const tools = items.filter((item): item is ToolItem => item.kind === "tool")
   const failed = tools.filter((item) => item.status === "failed").length
   const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
   const summary = summarise(tools)
-  /* Open while it runs, folded once it has. A group is the tool calls of one
-     act with the thoughts woven between them — `groupToolRuns` breaks the run
-     on anything else — so the summary line is a heading for steps that belong
-     together; while they are happening that heading is a number that ticks,
+  const displayItems: Array<ToolItem | TextItem | ToolRunGroup> = nestedRows ?? items
+  const displayLength = displayItems.length
+  const view = useViewOptionsContext()
+  /* Open while it runs, folded once it has. A group is a sequence of tool calls
+     with their interleaved thoughts — `groupToolRuns` breaks on other content —
+     so the summary line heads the steps that belong together; while they are happening that
+     heading is a number that ticks,
      and the work belongs on screen. Finished, the counting line IS the
      reading ("read 12 files"), and a scrolled-back transcript should be the
      prose with its work folded beside it rather than every step the agent
@@ -171,8 +175,8 @@ export const ToolRun = React.memo(function ToolRun({
      is not re-expanding itself behind your back. A finished run shows nothing,
      which is what the counting line is for — so the peek closes on its own
      when the run ends. */
-  const showing = open ? items : active ? items.slice(-PEEK) : []
-  const hidden = active && !open ? items.length - showing.length : 0
+  const showing = open ? displayItems : active ? displayItems.slice(-PEEK) : []
+  const hidden = active && !open ? displayLength - showing.length : 0
 
   /* How many of `showing` were already on screen at the last commit, which is
      what the entrance staggers off (`--item-i`, index.css). The steps' place
@@ -238,13 +242,11 @@ export const ToolRun = React.memo(function ToolRun({
                 index < showing.length - 1 && RAIL_TAIL
               )}
             >
-              {/* A thought rides the same rail as the steps around it — it is
-                  the reasoning that led to them. `ThreadItemView` draws it
-                  exactly as it would out in the open: its own StepRow, folded
-                  to the preview line or opened by "Show thinking". Only the
-                  run's tail can still be streaming, so that is the only item
-                  handed the flag. */}
-              {item.kind === "tool" ? (
+              {/* Nested rows retain their own same-view fold; direct items use
+                  the ordinary step renderer and preserve a live thought tail. */}
+              {item.kind === "run" ? (
+                <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} />
+              ) : item.kind === "tool" ? (
                 <ToolStep item={item} showTimestamp={showTimestamps} />
               ) : (
                 <ThreadItemView
@@ -298,6 +300,8 @@ export const RowView = React.memo(function RowView({
 }) {
   if (row.kind === "run")
     return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
+  if (row.kind === "tool-group")
+    return <ToolRun items={row.items} nestedRows={row.children} showTimestamps={showTimestamps} tail={streaming} />
   if (row.kind === "shell-run")
     return <ShellRun items={row.items} showTimestamps={showTimestamps} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
@@ -876,7 +880,10 @@ const ToolStep = React.memo(function ToolStep({
 }) {
   const active = item.status === "in_progress" || item.status === "pending"
   const kind = toolKindOf(item)
-  const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
+  const toolView = toolViewOf(item)
+  const webSearch = toolView === "websearch"
+  const isTodoTool = toolView === "todos"
+  const KindIcon = isTodoTool ? ListTodoIcon : KIND_ICONS[kind] ?? WrenchIcon
   const view = useViewOptionsContext()
   /* Both of these are `tool-views`' to answer, not this row's: whether an
      expansion would hold anything, and whether it should start open, both
@@ -899,8 +906,8 @@ const ToolStep = React.memo(function ToolStep({
     <StepRow
       status={item.status}
       icon={KindIcon}
-      iconAccent={KIND_COLORS[kind] ?? KIND_COLORS.other}
-      iconChip={KIND_CHIPS[kind] ?? KIND_CHIPS.other}
+      iconAccent={isTodoTool ? "text-primary" : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other}
+      iconChip={isTodoTool ? "bg-primary/12" : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other}
       toolLayout={view.toolLayout}
       target={heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
@@ -928,15 +935,8 @@ const ToolStep = React.memo(function ToolStep({
       ]}
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
-      /* Two strips can sit under a row and they answer different questions —
-         which sites a search saw, and what you told the agent when it asked.
-         Neither applies to the other's kind of call, so they never both draw. */
-      below={
-        <>
-          <ToolAnswers item={item} />
-          <ToolSources item={item} />
-        </>
-      }
+      firstRow={view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
+      below={!view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
       defaultOpen={view.showToolDetails || toolOpensByDefault(item)}
       openSetting={view.showToolDetails}
     />

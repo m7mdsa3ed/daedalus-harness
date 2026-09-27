@@ -4,7 +4,7 @@ import type { ToolItem } from "../store"
 import { describeCommand } from "./describe"
 import { asRecord, str, vendorMeta } from "./helpers"
 import { extractMcpCall } from "./mcp"
-import { NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
+import { formatMcpName, NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
 import { displayUrl, webInput } from "./web"
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
@@ -82,7 +82,11 @@ export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | 
   // arguments are the server's business — `{"server":"crm","tool":"search"}`
   // is not a target, it is the address of one.
   const mcp = extractMcpCall(item)
-  if (mcp) return mcp.tool ? `${mcp.server} · ${mcp.tool}` : mcp.server
+  if (mcp) {
+    const server = formatMcpName(mcp.server)
+    const tool = formatMcpName(mcp.tool)
+    return tool ? `${server} · ${tool}` : server
+  }
   const input = asRecord(item.rawInput)
   if (input) {
     /* A search is about its pattern, not about the directory it ran in:
@@ -105,7 +109,7 @@ export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | 
      one. The name is the answer only when the title IS the name, which is what
      NAME_RE is testing. */
   const name = toolIdentity(item)
-  if (!name || !NAME_RE.test(item.title.trim())) {
+  if (!name || (!NAME_RE.test(item.title.trim()) && !/^select:/i.test(name))) {
     return item.title.trim() ? firstLine(item.title) : (name ? toolDisplayName(name) : item.title)
   }
   return toolDisplayName(name)

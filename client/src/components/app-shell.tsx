@@ -429,6 +429,10 @@ export function AppShell({
      nothing, which is the same answer its row's absence gives. */
   useShortcut("changeModel", () => palette.openAt("model"))
   useShortcut("changeProject", () => palette.openAt("project"))
+  useShortcut("threadSearch", () => {
+    if (!sessionId) return false
+    palette.openAt("thread-search")
+  }, { enabled: !!sessionId })
   useShortcut("viewOptions", () => setViewSettings(true))
   // The desktop shell's tray, native menu and quick-entry hotkey (lib/desktop.ts).
   useDesktopBridge()

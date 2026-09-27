@@ -188,12 +188,15 @@ function useTabNeighbours(api: PanelApi, containerApi: ContainerApi): TabNeighbo
     label on its own `setTitle`. */
 function useTabLabel(
   ref: React.RefObject<HTMLElement | null>,
+  title: string,
   parts: Array<string | undefined | false>
 ): void {
   const label = parts.filter(Boolean).join(", ")
   React.useEffect(() => {
-    tabElementOf(ref.current)?.setAttribute("aria-label", label)
-  }, [ref, label])
+    const tab = tabElementOf(ref.current)
+    tab?.setAttribute("aria-label", label)
+    tab?.setAttribute("title", title)
+  }, [ref, label, title])
 }
 
 /**
@@ -261,7 +264,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
 
   const close = React.useCallback(() => void dock.closePanel(api.id), [dock, api.id])
 
-  useTabLabel(ref, [title, status?.label, pinned && "pinned"])
+  useTabLabel(ref, title, [title, status?.label, pinned && "pinned"])
   useTabKeys(ref, { onClose: close, onMenu: () => setMenuOpen(true) })
 
   const items = useTabMenuItems({

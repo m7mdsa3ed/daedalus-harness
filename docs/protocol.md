@@ -417,7 +417,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `SessionMeta` in the store and navigates. `POST /api/sessions` (which accepts that id,
   rejecting non-UUIDs and collisions) is not called — and no agent process is spawned —
   until the first message, in `actions.send` — and that POST does not answer until the
-  handshake is done, so a 201 means the thread is genuinely ready. Everything that treats the server's list as
+  handshake is done, so a 201 means the thread is genuinely ready. **The first message rides
+  that POST** (`prompt: {text, attachmentIds}`): the server starts the turn with no origin
+  peer before answering `{id, turnId}`, the client tags its bubble with the turn and attaches
+  `fresh` — no HTTP read in front, and the replay's journaled `turn_started` redraws the
+  bubble (`seamless`). It used to follow over a socket opened afterwards, and a reload in
+  that window lost words the composer had already cleared. A prompt that fails after the
+  create is answered (`promptError`), not thrown — the thread exists. **A retry of the same
+  id gets the first POST's answer** for ten minutes (the route's `creating` map), so a lost
+  201 never becomes a 409 loop or a second prompt; past that a 409 makes the client adopt
+  the server's row. **A handshake that fails collapses the thread in `start`, for every
+  caller** — create used to leave it `exited:false` on a dead bridge with its child alive
+  until the idle sweep. Everything that treats the server's list as
   the authority has to let drafts through: the `sessions` reducer **merges** instead of
   replacing, `refreshSessions` prunes against server ids **plus** draft ids, and
   `connectThread` returns early for a draft since there is nothing to connect to. A route

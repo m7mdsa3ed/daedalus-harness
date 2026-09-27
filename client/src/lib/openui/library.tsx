@@ -77,7 +77,7 @@ const LABEL = "break-words text-[10.5px] leading-tight font-medium tracking-[0.0
 const PAD = "px-3 py-2.5 @panel-sm:px-3.5 @panel-sm:py-3"
 const PAD_ROW = "px-3 py-2 @panel-sm:px-3.5"
 /** Between siblings, everywhere: a stack, a card's body, a tab's panel. */
-const FLOW = "flex min-w-0 flex-col gap-2.5 @panel-sm:gap-3"
+const FLOW = "flex w-full min-w-0 flex-col gap-2.5 @panel-sm:gap-3"
 const HAIRLINE = "border-border/60"
 
 const FRAME = "rounded-xl border border-border/70 bg-card shadow-xs"
@@ -95,7 +95,7 @@ function Box({ className, children }: { className?: string; children: ReactNode 
     <SurfaceContext.Provider value="frame">
       <div
         className={cn(
-          "min-w-0 overflow-hidden",
+          "w-full min-w-0 overflow-hidden",
           surface === "page" ? FRAME : surface === "frame" ? INSET : "bg-card",
           className
         )}
@@ -140,7 +140,7 @@ const Stack = defineComponent({
   component: ({ props, renderNode }) => (
     <div
       className={cn(
-        "min-w-0",
+        "w-full min-w-0",
         props.direction === "row"
           ? "grid grid-cols-1 items-start gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] @panel-sm:gap-3"
           : FLOW,
@@ -181,7 +181,7 @@ const Section = defineComponent({
     text: z.string().optional(),
   }),
   component: ({ props }) => (
-    <div className="min-w-0 space-y-1 pt-0.5">
+    <div className="w-full min-w-0 space-y-1 pt-0.5">
       <h3 className="break-words text-[15px] leading-snug font-semibold tracking-tight text-balance text-foreground">
         {props.title}
       </h3>
@@ -236,7 +236,7 @@ const Tabs = defineComponent({
     tabs: z.array(z.object({ label: z.string(), children: z.array(z.any()) })),
   }),
   component: ({ props, renderNode }) => (
-    <UiTabs defaultValue={0} className="min-w-0 gap-3">
+    <UiTabs defaultValue={0} className="w-full min-w-0 gap-3">
       {/* Scrolls sideways rather than wrapping; `scrollbar-none` keeps a
           classic scrollbar from eating the fixed-height strip's content box,
           which clipped every label against it. */}
@@ -268,7 +268,7 @@ const Accordion = defineComponent({
   }),
   component: ({ props, renderNode }) => (
     <Box>
-      <UiAccordion className="min-w-0">
+      <UiAccordion className="w-full min-w-0">
         {props.items.map((item, index) => (
           <AccordionItem key={index} value={index} className={cn("border-b last:border-b-0", HAIRLINE)}>
             <AccordionTrigger
@@ -305,7 +305,7 @@ const List = defineComponent({
   component: ({ props }) => {
     const Tag = props.numbered ? "ol" : "ul"
     return (
-      <Tag className="min-w-0 space-y-1.5">
+      <Tag className="w-full min-w-0 space-y-1.5">
         {props.items.map((item, index) => (
           <li key={index} className="flex min-w-0 gap-2.5">
             <span className="flex h-[1.625em] w-5 shrink-0 items-center justify-center text-[13px]">
@@ -358,7 +358,7 @@ const Table = defineComponent({
     const cell = "px-3 py-2 align-top first:ps-3 last:pe-3 @panel-sm:first:ps-3.5 @panel-sm:last:pe-3.5"
     return (
       <Box>
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto">
           <table className="w-full border-collapse text-[13px]">
             {props.header !== false && (
               <thead className="bg-muted/40">
@@ -412,7 +412,7 @@ const Callout = defineComponent({
   }),
   component: ({ props }) => (
     <Notice
-      className="min-w-0 [&_p]:break-words [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:break-words"
+      className="w-full min-w-0 [&_p]:break-words [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:break-words"
       tone={props.tone ?? "neutral"}
       size="sm"
     >
@@ -460,7 +460,7 @@ const KeyValue = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <dl className="divide-y divide-border/50">
+      <dl className="w-full divide-y divide-border/50">
         {props.items.map((item, index) => (
           <div
             key={index}
@@ -485,7 +485,7 @@ const EmptyState = defineComponent({
     text: z.string(),
   }),
   component: ({ props }) => (
-    <Empty className="min-w-0 max-w-full [&_p]:break-words" size="sm">
+    <Empty className="w-full min-w-0 [&_p]:break-words" size="sm">
       {props.text}
     </Empty>
   ),
@@ -566,7 +566,7 @@ const Badges = defineComponent({
     ),
   }),
   component: ({ props }) => (
-    <div className="flex min-w-0 flex-wrap gap-1.5">
+    <div className="flex w-full min-w-0 flex-wrap gap-1.5">
       {props.items.map((item, index) => (
         <span
           key={index}
@@ -596,7 +596,7 @@ const Timeline = defineComponent({
     ),
   }),
   component: ({ props }) => (
-    <ol className="min-w-0">
+    <ol className="w-full min-w-0">
       {props.items.map((item, index) => {
         const status = item.status ?? "pending"
         return (
@@ -651,7 +651,7 @@ const Compare = defineComponent({
     ),
   }),
   component: ({ props }) => (
-    <div className="grid min-w-0 gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] @panel-sm:gap-3">
+    <div className="grid w-full min-w-0 gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] @panel-sm:gap-3">
       {props.options.map((option, index) => (
         <Box key={index}>
           <BoxHeader title={option.name} meta={option.verdict} />
@@ -684,7 +684,7 @@ const Diff = defineComponent({
     after: z.string(),
     path: z.string().optional(),
   }),
-  component: ({ props }) => <DiffView oldText={props.before} newText={props.after} path={props.path} />,
+  component: ({ props }) => <DiffView className="w-full" oldText={props.before} newText={props.after} path={props.path} />,
 })
 
 /** Keyboard chords: the action at the start, the keycaps at the end. */
@@ -696,7 +696,7 @@ const Keys = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <div className="divide-y divide-border/50">
+      <div className="w-full divide-y divide-border/50">
         {props.items.map((item, index) => (
           <div
             key={index}
@@ -724,7 +724,7 @@ const People = defineComponent({
     items: z.array(z.object({ name: z.string(), role: z.string().optional() })),
   }),
   component: ({ props }) => (
-    <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,11rem),1fr))] gap-x-4 gap-y-3">
+    <div className="grid w-full min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,11rem),1fr))] gap-x-4 gap-y-3">
       {props.items.map((person, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2.5">
           <Avatar>
@@ -756,7 +756,7 @@ const Gallery = defineComponent({
     images: z.array(z.object({ src: z.string(), alt: z.string(), caption: z.string().optional() })),
   }),
   component: ({ props }) => (
-    <Carousel className="min-w-0">
+    <Carousel className="w-full min-w-0">
       <CarouselContent>
         {props.images.map((image, index) => (
           <CarouselItem key={index}>
@@ -890,7 +890,7 @@ const Progress = defineComponent({
     hint: z.string().optional(),
   }),
   component: ({ props }) => (
-    <div className="min-w-0 space-y-1.5">
+    <div className="w-full min-w-0 space-y-1.5">
       <div className="flex min-w-0 items-baseline justify-between gap-x-3">
         <span className={cn(BODY, "min-w-0 truncate")}>{props.label}</span>
         <span className="shrink-0 text-xs font-medium text-foreground tabular-nums">

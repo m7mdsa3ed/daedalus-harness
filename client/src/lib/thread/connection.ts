@@ -47,6 +47,14 @@ export interface ConnectOpts {
    * the swap is invisible.
    */
   seamless?: boolean
+  /**
+   * This device created the thread a moment ago, so there is nothing on the
+   * server it has not just been told — skip the HTTP read and attach. The read
+   * exists so a view-open paints without a socket; a create is already asking
+   * for one, and reading first cost the first message a round trip and a
+   * `read` → `live` hop.
+   */
+  fresh?: boolean
 }
 
 /**
@@ -615,7 +623,7 @@ export class ThreadConnection {
       await this.socket.connect({ cursor: this.state.cursor })
       return
     }
-    await this.start(this.resumeCursor(meta), opts.revive ?? false)
+    await this.start(this.resumeCursor(meta), opts.revive ?? false, opts.fresh ?? false)
   }
 
   /** Where a reattach picks up. 0 when this device has never folded this
@@ -654,7 +662,7 @@ export class ThreadConnection {
    * socket or not at all. `caught_up` says so (`promptActive`), so a read that
    * lands mid-turn attaches on the strength of it.
    */
-  private async start(cursor: number, live: boolean): Promise<void> {
+  private async start(cursor: number, live: boolean, fresh = false): Promise<void> {
     /* The HTTP read starts here. `open-begin` deliberately leaves a ladder's
        phase alone (see `reduceConn`): a reconnect attempt *is* an open, and
        while one runs the thread is still recovering rather than merely loading
@@ -671,8 +679,10 @@ export class ThreadConnection {
     let archived = false
     let read = false
     try {
-      ;({ archived } = await socket.load({ cursor }))
-      read = true
+      if (!fresh) {
+        ;({ archived } = await socket.load({ cursor }))
+        read = true
+      }
     } catch (error) {
       /* The thread is genuinely unreadable this way (deleted, or no archive to
          read), or the server predates the route. Either way the socket is the

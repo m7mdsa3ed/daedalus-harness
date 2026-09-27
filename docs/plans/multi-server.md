@@ -1,7 +1,5 @@
 # Daedalus Harness — Unified multi-server view (threads and projects merged across servers)
 
-> **Superseded by `ssh-hosts.md`** — one server reaching many machines replaces the server list. Never built.
-
 ## Context
 
 The client already stores **several servers** — `daedalus.servers` in localStorage,

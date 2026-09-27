@@ -11,6 +11,7 @@ import { projectPath, settingsPath } from "@/lib/router"
 import { activityAt, isListed } from "@/lib/settings"
 import { usePersonas, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
+import { requestComposerFocus } from "@/lib/composer-focus"
 import { customThemeValue } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
 import { loadThreadDefaults, saveThreadDefaults } from "@/lib/thread-defaults"
@@ -200,6 +201,7 @@ export function ProjectPage() {
         palette.run(() => {
           palette.actions.configureDraft(meta.id, { projectId: project.id })
           saveThreadDefaults({ projectId: project.id })
+          requestComposerFocus(meta.id)
         }),
     })
   )

@@ -110,8 +110,10 @@ const journal = async (sessionId: string, seq: number, payload: object, at: numb
 
 await journal("s-alpha", 0, { ev: "turn_started", seq: 0, turnId: "t1", text: "investigate the flaky login redirect" }, now - 3000);
 await journal("s-alpha", 1, chunk("agent_message_chunk", "the login redirect loops because the cookie is stale"), now - 2500);
-await journal("s-beta", 0, chunk("agent_message_chunk", "deploy went fine, no login issues at all"), now - 1000);
-await journal("s-gone", 0, chunk("agent_message_chunk", "login secrets of a trashed thread"), now - 500);
+await journal("s-beta", 0, { ev: "turn_started", seq: 0, turnId: "t2", text: "deploy notes" }, now - 1500);
+await journal("s-beta", 1, chunk("agent_message_chunk", "deploy went fine, no login issues at all"), now - 1000);
+await journal("s-gone", 0, { ev: "turn_started", seq: 0, turnId: "t3", text: "trashed prompt" }, now - 600);
+await journal("s-gone", 1, chunk("agent_message_chunk", "login secrets of a trashed thread"), now - 500);
 
 await test("searchEvents: shape, markers, resolution, order, trash filter", async () => {
   const results = await searchEvents("login");
@@ -124,8 +126,18 @@ await test("searchEvents: shape, markers, resolution, order, trash filter", asyn
   assert.equal(alpha!.title, "Login fixes");
   assert.equal(alpha!.projectId, "proj-1");
   assert.equal(alpha!.projectName, "Harness");
+  assert.equal(alpha!.turnId, "t1");
+  assert.equal(alpha!.turnSeq, 0);
   assert.ok(alpha!.snippet.includes(`${SNIPPET_START}login${SNIPPET_END}`), `marked snippet, got: ${alpha!.snippet}`);
   assert.ok(!(await results).some((r) => r.sessionId === "s-gone"), "trashed threads are not searched");
+});
+
+await test("session-scoped search only returns that thread and its turn", async () => {
+  const results = await searchEvents("login", 30, "s-alpha");
+  assert.ok(results.length > 0);
+  assert.ok(results.every((result) => result.sessionId === "s-alpha"));
+  assert.ok(results.every((result) => result.turnId === "t1" && result.turnSeq === 0));
+  assert.deepEqual(await searchEvents("login", 30, "missing-session"), []);
 });
 
 await test("prefix search and operator input", async () => {

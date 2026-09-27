@@ -86,10 +86,12 @@ const INSPECTOR_WIDE = 1024
 const INSPECTOR_TRANSCRIPT_MIN = 480
 
 /** Whether an item is drawn inside this row — the row itself, or a group any
-    level down (a subagent in a run of steps, a workflow, a batch). */
+    level down (a subagent, tool group, workflow, or batch). */
 function rowContains(row: Row, id: string): boolean {
   if (row.id === id) return true
   if (row.kind === "subagent-group") return row.children.some((child) => rowContains(child, id))
+  if (row.kind === "tool-group")
+    return row.items.some((item) => item.id === id) || row.children.some((child) => rowContains(child, id))
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return row.steps.some((step) => rowContains(step, id))
   if (row.kind === "run") return row.items.some((item) => item.id === id)
@@ -536,7 +538,7 @@ export function ThreadView({
         — context only — so this changes nothing about the layout. */}
     <FilePreviewContext.Provider value={filePreview}>
     <InspectorContext.Provider value={docked ? dockOpen : meta ? openInspector : null}>
-    {docked && <PublishJump locate={locate} />}
+    {docked && <PublishJump locate={locate} sessionId={sessionId} actions={actions} />}
     <div
       ref={rootRef}
       data-empty={empty || undefined}
@@ -1039,18 +1041,36 @@ export function ThreadView({
     can jump a transcript it is not inside. A component because the scroller's
     hook only answers under `MessageScrollerProvider`, which `ThreadView`
     itself renders. */
-function PublishJump({ locate }: { locate: (id: string) => string | undefined }) {
+function PublishJump({
+  locate,
+  sessionId,
+  actions,
+}: {
+  locate: (id: string) => string | undefined
+  sessionId: string
+  actions: Actions
+}) {
   const target = React.useContext(ThreadJumpContext)
   const { scrollToMessage } = useMessageScroller()
   React.useEffect(() => {
     if (!target) return
-    target.current = (id) => {
-      const row = locate(id)
-      if (row) scrollToMessage(row, { align: "start", behavior: "smooth" })
+    target.current = (id, turn) => {
+      const jump = (targetId: string) => {
+        const row = locate(targetId)
+        if (row) scrollToMessage(row, { align: "start", behavior: "smooth" })
+      }
+      if (turn) {
+        void actions.jumpToTurn(sessionId, turn.turnId, turn.seq).then((loadedId) => {
+          if (!loadedId) return
+          requestAnimationFrame(() => requestAnimationFrame(() => jump(loadedId)))
+        })
+        return
+      }
+      if (id) jump(id)
     }
     return () => {
       target.current = null
     }
-  }, [target, locate, scrollToMessage])
+  }, [target, locate, scrollToMessage, actions, sessionId])
   return null
 }

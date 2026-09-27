@@ -27,8 +27,11 @@ import { searchThreads, type SearchResult } from "@/lib/search"
 import { useServer } from "@/lib/server-context"
 import { activityAt, isListed } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
-import { threadPath } from "@/lib/router"
+import { currentThreadId, threadPath } from "@/lib/router"
+import { requestComposerFocus } from "@/lib/composer-focus"
+import { threadDock } from "@/lib/workspace/thread-docks"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
+import { useLocation } from "react-router"
 import { usePalette } from "./context"
 import { OrderedList, type PaletteGroup, type PaletteItem } from "./list"
 import { messageItem, threadItem } from "./rows"
@@ -41,7 +44,7 @@ const DEBOUNCE_MS = 200
 const THREAD_LIMIT = 12
 const RECENT_LIMIT = 8
 
-export function SearchPage() {
+export function SearchPage({ threadScoped = false }: { threadScoped?: boolean }) {
   const palette = usePalette()
   const settings = useServer()
   const sessions = useStoreSelect((store) => store.sessions)
@@ -51,7 +54,9 @@ export function SearchPage() {
      every token of every thread. */
   const liveTurnActive = useLiveTurnActive()
   const navigate = useNavigate()
+  const location = useLocation()
   const { setOpenMobile } = useSidebar()
+  const sessionId = threadScoped ? currentThreadId(location.pathname, location.search) : null
   const query = palette.query.trim()
 
   const [hits, setHits] = React.useState<SearchResult[]>([])
@@ -59,7 +64,7 @@ export function SearchPage() {
   const [failed, setFailed] = React.useState(false)
 
   React.useEffect(() => {
-    if (query.length < MIN_QUERY) {
+    if ((threadScoped && !sessionId) || query.length < MIN_QUERY) {
       setHits([])
       setLoading(false)
       setFailed(false)
@@ -68,7 +73,7 @@ export function SearchPage() {
     setLoading(true)
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      searchThreads(settings, query, controller.signal)
+      searchThreads(settings, query, controller.signal, sessionId ?? undefined)
         .then((results) => {
           if (controller.signal.aborted) return
           setHits(results)
@@ -88,11 +93,12 @@ export function SearchPage() {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [query, settings])
+  }, [query, settings, sessionId])
 
   const open = (sessionId: string) =>
     palette.run(() => {
       setOpenMobile(false)
+      requestComposerFocus(sessionId)
       void navigate(threadPath(sessionId))
     })
 
@@ -129,13 +135,29 @@ export function SearchPage() {
     })
   )
 
-  const messageRows = hits.map((hit) => messageItem(hit, () => open(hit.sessionId)))
+  const messageRows = hits.map((hit) =>
+    messageItem(hit, () => {
+      if (threadScoped && sessionId && hit.sessionId === sessionId && hit.turnId && hit.turnSeq !== null) {
+        palette.run(() => {
+          const dock = threadDock(sessionId)
+          if (!dock) {
+            void navigate(threadPath(sessionId))
+            return
+          }
+          dock.jump(undefined, { turnId: hit.turnId!, seq: hit.turnSeq! })
+        })
+      } else {
+        open(hit.sessionId)
+      }
+    })
+  )
 
   /* The state of the request, always said in words: a group that is silently
      empty for 200ms reads as "nothing found", which is a different answer from
      "still asking". */
   const messageNote = (): PaletteItem | null => {
     if (messageRows.length === 0) {
+      if (threadScoped && !sessionId) return note("none", "This search is only available in a thread.")
       if (query.length < MIN_QUERY)
         return note("min", `Type ${MIN_QUERY} characters or more to search inside transcripts.`)
       if (loading)
@@ -150,21 +172,28 @@ export function SearchPage() {
 
   const messageTail = messageNote()
 
-  const groups: PaletteGroup[] = [
-    {
-      name: query ? "Threads" : "Recent threads",
-      items:
-        threadRows.length > 0
-          ? threadRows
-          : [note("no-threads", `No thread title matches “${query}”.`)],
-    },
-    {
-      name: "Messages",
-      items: messageTail ? [...messageRows, messageTail] : messageRows,
-    },
-  ]
+  const groups: PaletteGroup[] = threadScoped
+    ? [
+        {
+          name: "Messages in this thread",
+          items: messageTail ? [...messageRows, messageTail] : messageRows,
+        },
+      ]
+    : [
+        {
+          name: query ? "Threads" : "Recent threads",
+          items:
+            threadRows.length > 0
+              ? threadRows
+              : [note("no-threads", `No thread title matches “${query}”.`)],
+        },
+        {
+          name: "Messages",
+          items: messageTail ? [...messageRows, messageTail] : messageRows,
+        },
+      ]
 
-  if (query.length > 0) {
+  if (query.length > 0 && !threadScoped) {
     groups.push({
       name: "",
       items: [

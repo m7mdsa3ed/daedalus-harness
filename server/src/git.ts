@@ -1317,7 +1317,8 @@ export async function stashDrop(projectId: string, index: number, repo?: string)
 
 /* ── A thread's own worktree ──
    An isolated thread runs in `git worktree add <project>/.daedalus/worktrees/
-   <short-id> -b daedalus/<short-id>`: a second checkout of the project's
+   <id> -b daedalus/<id>` (the whole id, dashes dropped — a short prefix
+   collides, and a branch outlives its worktree): a second checkout of the project's
    repository on a branch of its own, so two agents (or an agent and a person)
    never write the same files. Inside the project on purpose — every file and
    git route already addresses it as a project-relative path, and source control
@@ -1338,8 +1339,7 @@ export async function createWorktree(cwd: string, sessionId: string): Promise<st
   if (!top) throw fail(400, "this project is not a git repository, so it has no worktree to isolate in");
   if (realpathSync(top) !== realpathSync(cwd))
     throw fail(400, "isolating needs the project directory to be the repository's root");
-  const short = sessionId.replace(/-/g, "").slice(0, 8);
-  const rel = `${WORKTREES_DIR}/${short}`;
+  const rel = `${WORKTREES_DIR}/${sessionId.replace(/-/g, "")}`;
   const { stdout } = await run(cwd, ["rev-parse", "--git-common-dir"]);
   const exclude = join(resolve(cwd, stdout.trim()), "info", "exclude");
   const held = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";

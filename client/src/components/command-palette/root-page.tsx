@@ -78,6 +78,7 @@ import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
+import { requestComposerFocus } from "@/lib/composer-focus"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
 import { agentsPath, boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
@@ -172,6 +173,7 @@ export function RootPage() {
   const openThread = (id: string) =>
     palette.run(() => {
       setOpenMobile(false)
+      requestComposerFocus(id)
       void navigate(threadPath(id))
     })
 
@@ -198,6 +200,17 @@ export function RootPage() {
     subtitle: "Titles instantly, full transcripts from the index",
     onSelect: () => palette.descend("search"),
   })
+  if (sessionId) {
+    items.push({
+      id: "jump:thread-search",
+      group: "Jump",
+      title: "Search in this thread…",
+      keywords: "find message transcript this conversation",
+      icon: <SearchIcon />,
+      subtitle: meta?.title ?? "Only search the thread in front of you",
+      onSelect: () => palette.descend("thread-search"),
+    })
+  }
   items.push({
     id: "jump:agents",
     group: "Jump",

@@ -25,6 +25,7 @@ import { useNavigate } from "react-router"
 
 import { RUN_STATUS } from "@/components/routines/status"
 import { useSidebar } from "@/components/ui/sidebar"
+import { requestComposerFocus } from "@/lib/composer-focus"
 import { reportError } from "@/lib/errors"
 import { routinePath, routinesPath, threadPath } from "@/lib/router"
 import { useRunRoutine, useRoutines } from "@/lib/queries/routines"
@@ -211,6 +212,7 @@ export function RoutineActivityPage() {
   const open = (run: RoutineRun) =>
     palette.run(() => {
       setOpenMobile(false)
+      if (run.sessionId) requestComposerFocus(run.sessionId)
       void navigate(run.sessionId ? threadPath(run.sessionId) : routinePath(run.routineId))
     })
 

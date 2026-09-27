@@ -64,4 +64,11 @@ export function useOpenInspector(): ((tab: InspectorTab) => void) | null {
 
 /** Where a thread dock's transcript panel publishes its scroll-to-row, so a
     reading in another panel (Agents) can jump it. Null outside a thread dock. */
-export const ThreadJumpContext = React.createContext<React.MutableRefObject<((id: string) => void) | null> | null>(null)
+export interface ThreadJumpTarget {
+  turnId: string
+  seq: number
+}
+
+export const ThreadJumpContext = React.createContext<
+  React.MutableRefObject<((id?: string, turn?: ThreadJumpTarget) => void) | null> | null
+>(null)

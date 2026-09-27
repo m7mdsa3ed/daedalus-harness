@@ -39,9 +39,9 @@ async function refusal(fn: () => Promise<unknown>): Promise<InstanceType<typeof 
 
 const id = "0123abcd-0000-4000-8000-000000000000";
 const rel = await git.createWorktree(repo, id);
-assert.equal(rel, ".daedalus/worktrees/0123abcd");
+assert.equal(rel, ".daedalus/worktrees/0123abcd000040008000000000000000");
 assert.ok(existsSync(join(repo, rel, "a.txt")), "the worktree is a checkout");
-assert.equal(sh(join(repo, rel), "branch", "--show-current").trim(), "daedalus/0123abcd");
+assert.equal(sh(join(repo, rel), "branch", "--show-current").trim(), "daedalus/0123abcd000040008000000000000000");
 assert.ok(readFileSync(join(repo, ".git", "info", "exclude"), "utf8").split("\n").includes(".daedalus/"));
 assert.ok(!existsSync(join(repo, ".gitignore")), "the user's .gitignore is never written");
 assert.equal(sh(repo, "status", "--porcelain", "--untracked-files=all"), "", "the project's status does not see it");
@@ -63,7 +63,7 @@ assert.match(dirty.message, /new\.txt/);
 assert.ok(existsSync(join(repo, rel)), "a refused remove removes nothing");
 await git.removeWorktree(repo, rel, true);
 assert.ok(!existsSync(join(repo, rel)));
-assert.match(sh(repo, "branch", "--list", "daedalus/0123abcd"), /daedalus\/0123abcd/, "the branch is kept");
+assert.match(sh(repo, "branch", "--list", "daedalus/0123abcd000040008000000000000000"), /daedalus\/0123abcd000040008000000000000000/, "the branch is kept");
 
 // Clean: removed without force; removing again is a no-op.
 await git.removeWorktree(repo, rel2, false);

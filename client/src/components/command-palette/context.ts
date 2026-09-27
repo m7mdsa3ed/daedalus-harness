@@ -12,6 +12,7 @@ import type { WorkspaceDock } from "@/components/workspace/dock-context"
 export type PageId =
   | "root"
   | "search"
+  | "thread-search"
   | "projects"
   /** Which project the draft in front of you runs in. Not `projects`, which is
       a list of places to *go*: this one answers a question about the thread. */
@@ -63,6 +64,7 @@ export function usePalette(): Palette {
 export const PAGE_LABEL: Record<PageId, string> = {
   root: "",
   search: "Search",
+  "thread-search": "Search this thread",
   projects: "Projects",
   project: "Project",
   start: "New thread",
@@ -78,6 +80,7 @@ export const PAGE_LABEL: Record<PageId, string> = {
 export const PAGE_PLACEHOLDER: Record<PageId, string> = {
   root: "Type a command…",
   search: "Search threads and messages…",
+  "thread-search": "Search this thread…",
   projects: "Search projects…",
   project: "Search projects…",
   start: "Search projects…",

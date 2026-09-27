@@ -228,7 +228,7 @@ export function AgentText({
       <ProseWithOpenui key={cut} text={painted.slice(cut)} stream={stream} streaming={streaming} />
     )
 
-  return <div className="space-y-3">{parts}</div>
+  return <div className="flex min-w-0 flex-col gap-3">{parts}</div>
 }
 
 const compactTokens = (n: number): string =>

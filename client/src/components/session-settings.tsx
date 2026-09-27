@@ -175,9 +175,9 @@ const GROUPS: Group[] = [
       {
         key: "groupTools",
         icon: Wrench,
-        title: "Group parallel tool calls",
+        title: "Group tool calls and thinking",
         description:
-          "Fold consecutive tool calls, with the thoughts between them, into one expandable group.",
+          "Fold consecutive tool calls and the thinking between them into one expandable group.",
       },
       {
         key: "showShellCommands",
@@ -198,7 +198,14 @@ const GROUPS: Group[] = [
         icon: Globe,
         title: "Show sources",
         description:
-          "Site favicons under a web step, and the pages an answer cited under the finished turn.",
+          "Site favicons under a web step, and the pages an answer cited under the finished turn. Their row placement is controlled below.",
+      },
+      {
+        key: "showToolSourcesOnFirstRow",
+        icon: Rows3,
+        title: "Show tool sources on first row",
+        description:
+          "Place grouped-tool icons and web-search favicons beside the title instead of on a second row.",
       },
       {
         key: "showTokens",

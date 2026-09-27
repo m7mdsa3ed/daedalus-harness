@@ -1,11 +1,11 @@
 import * as React from "react"
 import type { TextSurface } from "@/components/composer/composer-editor"
-import { AtSign, Boxes, FileText, Folder, Plug } from "lucide-react"
+import { AtSign, Bot, Boxes, FileText, Folder, Plug } from "lucide-react"
 import { reportError } from "@/lib/errors"
 import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
-import type { ThreadMcpServer } from "@/lib/settings"
-import { useProjects } from "@/lib/queries/catalog"
+import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type Persona, type ThreadMcpServer } from "@/lib/settings"
+import { useMcpServers, usePersonas, useProjects } from "@/lib/queries/catalog"
 import { ProjectIcon } from "@/components/entity-icon"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
@@ -44,12 +44,22 @@ const LIMIT = 20
     insert text: the token is removed and the resource is read and attached
     (`onResource`), because what it names is not a path the agent can open. */
 export interface McpResourceMatch {
-  type: "mcp"
+  type: "mcp-resource"
   serverId: string
   server: string
   uri: string
   name: string
   mimeType?: string
+}
+
+export interface McpServerMatch {
+  type: "mcp-server"
+  server: McpServerDef
+}
+
+export interface PersonaMatch {
+  type: "persona"
+  persona: Persona
 }
 
 /** Another project. Picking one inserts its cwd as an absolute `@path`, so it is
@@ -62,10 +72,11 @@ export interface ProjectMatch {
   logoUrl?: string
 }
 
-export type MentionMatch = WorkspaceEntry | McpResourceMatch | ProjectMatch
+export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | PersonaMatch | ProjectMatch
 
-/** How many MCP resources join the file matches — they are the second list. */
+/** How many entries of each catalog join the file matches. */
 const MCP_LIMIT = 8
+const CATALOG_LIMIT = 8
 /** Projects lead the list, so they are kept few enough not to bury the files. */
 const PROJECT_LIMIT = 5
 
@@ -104,9 +115,30 @@ export function useFileMentions(opts: {
   inputRef: React.RefObject<TextSurface | null>
   /** The thread's MCP servers, whose resources are offered after the files. */
   mcpServers?: ThreadMcpServer[]
+  /** Draft-only MCP server choices; spawned threads cannot change their links. */
+  draft?: boolean
+  linkedMcpServerIds?: string[]
+  currentPersonaId?: string
   onResource?: (resource: McpResourceMatch) => void
+  onMcpServer?: (server: McpServerDef) => void
+  onPersona?: (persona: Persona) => void
 }): FileMentionState {
-  const { text, setText, projectId, inputRef, mcpServers, onResource } = opts
+  const {
+    text,
+    setText,
+    projectId,
+    inputRef,
+    mcpServers,
+    draft = false,
+    linkedMcpServerIds = [],
+    currentPersonaId,
+    onResource,
+    onMcpServer,
+    onPersona,
+  } = opts
+  const libraryServers = useMcpServers()
+  const personas = usePersonas()
+  const linked = React.useMemo(() => new Set(linkedMcpServerIds), [linkedMcpServerIds])
   const [caret, setCaret] = React.useState(0)
   const [selected, setSelected] = React.useState(0)
   const [dismissed, setDismissed] = React.useState(false)
@@ -141,13 +173,30 @@ export function useFileMentions(opts: {
   /* The token under the caret: `@` at a word boundary, then a run of non-space.
      The boundary is what keeps an email address from opening a file menu. */
   const token: MentionToken | null = React.useMemo(() => {
-    if (!projectId || dismissed) return null
+    if (dismissed) return null
     const match = /(?:^|[\s(])@([^\s@]*)$/.exec(text.slice(0, caret))
     if (!match) return null
     return { query: match[1], start: caret - match[1].length - 1 }
-  }, [text, caret, projectId, dismissed])
+  }, [text, caret, dismissed])
 
   const query = token?.query ?? null
+  const queryText = (query ?? "").toLowerCase()
+  const serverMatches = React.useMemo((): McpServerMatch[] => {
+    if (!draft || query === null || query.includes("/")) return []
+    return libraryServers
+      .filter((server) => !linked.has(server.id))
+      .filter((server) => `${server.name} ${mcpSubtitle(server)}`.toLowerCase().includes(queryText))
+      .slice(0, CATALOG_LIMIT)
+      .map((server) => ({ type: "mcp-server", server }))
+  }, [draft, libraryServers, linked, query, queryText])
+  const personaMatches = React.useMemo((): PersonaMatch[] => {
+    if (query === null) return []
+    return personas
+      .filter((persona) => persona.id !== currentPersonaId)
+      .filter((persona) => `${persona.name} ${persona.description}`.toLowerCase().includes(queryText))
+      .slice(0, CATALOG_LIMIT)
+      .map((persona) => ({ type: "persona", persona }))
+  }, [personas, query, queryText, currentPersonaId])
 
   React.useEffect(() => {
     if (!projectId || query === null) {
@@ -196,7 +245,7 @@ export function useFileMentions(opts: {
     return mcpServers
       .flatMap((server) =>
         server.resources.map((r) => ({
-          type: "mcp" as const,
+          type: "mcp-resource" as const,
           serverId: server.id,
           server: server.name,
           uri: r.uri ?? r.name,
@@ -218,8 +267,8 @@ export function useFileMentions(opts: {
       .map((p) => ({ type: "project" as const, id: p.id, name: p.name, cwd: p.cwd, logoUrl: p.logoUrl }))
   }, [query, projects, projectId])
   const matches = React.useMemo<MentionMatch[]>(
-    () => [...projectMatches, ...fileMatches, ...resourceMatches],
-    [projectMatches, fileMatches, resourceMatches],
+    () => [...personaMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
+    [personaMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
   )
 
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
@@ -227,11 +276,19 @@ export function useFileMentions(opts: {
 
   const pick = (entry: MentionMatch) => {
     if (!token) return
-    if (entry.type === "mcp") {
+    if (entry.type === "mcp-resource") {
       pendingCaret.current = token.start
       setText(text.slice(0, token.start) + text.slice(caret))
       setSelected(0)
       onResource?.(entry)
+      return
+    }
+    if (entry.type === "mcp-server" || entry.type === "persona") {
+      pendingCaret.current = token.start
+      setText(text.slice(0, token.start) + text.slice(caret))
+      setSelected(0)
+      if (entry.type === "mcp-server") onMcpServer?.(entry.server)
+      else onPersona?.(entry.persona)
       return
     }
     /* A directory completes to `@path/` and leaves the token open, so the next
@@ -307,7 +364,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
       ? {
           id: "mention",
           icon: AtSign,
-          label: state.loading
+          label: state.loading && state.matches.length === 0
             ? "Searching files…"
             : state.matches.length === 0
               ? "No matches"
@@ -339,7 +396,35 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
   return (
     <CompleterList selected={state.selected} count={state.matches.length} hint={scope}>
       {state.matches.map((entry, i) => {
-        if (entry.type === "mcp") {
+        if (entry.type === "persona") {
+          return (
+            <CompleterRow
+              key={`persona:${entry.persona.id}`}
+              icon={Bot}
+              label={entry.persona.name}
+              description={entry.persona.description || undefined}
+              badge="persona"
+              selected={i === state.selected}
+              onPick={() => state.pick(entry)}
+              onHover={() => state.setSelected(i)}
+            />
+          )
+        }
+        if (entry.type === "mcp-server") {
+          return (
+            <CompleterRow
+              key={`mcp-server:${entry.server.id}`}
+              icon={Plug}
+              label={entry.server.name}
+              description={mcpSubtitle(entry.server)}
+              badge={mcpNeedsAuth(entry.server) ? "needs auth" : "enable MCP"}
+              selected={i === state.selected}
+              onPick={() => state.pick(entry)}
+              onHover={() => state.setSelected(i)}
+            />
+          )
+        }
+        if (entry.type === "mcp-resource") {
           return (
             <CompleterRow
               key={`mcp:${entry.serverId}:${entry.uri}`}
@@ -347,9 +432,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
               prefix={`${entry.server}: `}
               label={entry.name}
               aside={entry.mimeType}
-              /* Attached, not inserted — the badge says the pick does something
-                 other than complete the text. */
-              badge="MCP"
+              badge="MCP resource"
               selected={i === state.selected}
               onPick={() => state.pick(entry)}
               onHover={() => state.setSelected(i)}

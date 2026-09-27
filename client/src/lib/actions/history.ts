@@ -65,5 +65,28 @@ export function historyActions(core: ActionsCore) {
       )
       return item?.id ?? null
     },
+
+    /** Search-result counterpart to the turn rail's unloaded-history jump. */
+    async jumpToTurn(sessionId: string, turnId: string | null, seq: number | null): Promise<string | null> {
+      if (!turnId || seq === null) return null
+      const thread = known(sessionId)?.live
+      if (!thread) return null
+      const existing = getState().threads[sessionId]?.items.find(
+        (entry) => entry.kind === "user" && entry.turnId === turnId
+      )
+      if (existing) return existing.id
+      if (getState().threads[sessionId]?.loadingEarlier) return null
+      dispatch({ type: "thread-window", id: sessionId, loadingEarlier: true })
+      try {
+        await thread.loadUntil(seq)
+      } catch (error) {
+        dispatch({ type: "thread-window", id: sessionId, loadingEarlier: false })
+        reportError(error, "Couldn't load the matching message")
+        return null
+      }
+      return getState().threads[sessionId]?.items.find(
+        (entry) => entry.kind === "user" && entry.turnId === turnId
+      )?.id ?? null
+    },
   }
 }

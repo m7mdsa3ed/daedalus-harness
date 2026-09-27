@@ -111,6 +111,7 @@ export const StepRow = React.memo(function StepRow({
   control,
   detail,
   below,
+  firstRow,
   belowFlush = false,
   startedAt,
   mono = true,
@@ -150,6 +151,8 @@ export const StepRow = React.memo(function StepRow({
       takes the row's gap instead of a separator dot in front of it. */
   control?: React.ReactNode
   detail?: React.ReactNode
+  /** Content beside the title, on its first row rather than underneath. */
+  firstRow?: React.ReactNode
   /** A strip under the header that stays whether or not the row is open —
       the step's outcome in chips (the pages a web search returned, the page
       a fetch read). The detail is what you open to read; this is what you
@@ -231,7 +234,17 @@ export const StepRow = React.memo(function StepRow({
       className={cn(
         toolLayout === "cards" && "my-1 rounded-lg border border-border/60 bg-card/60 p-2 shadow-sm",
         toolLayout === "compact" && "-my-0.5",
-        toolLayout === "rail" && "relative my-1 pl-3 before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-primary/35",
+        toolLayout === "rail" &&
+          cn(
+            "my-1 border-s-2 pl-3",
+            failed
+              ? "border-destructive"
+              : active
+                ? "border-primary"
+                : status === "completed"
+                  ? "border-emerald-500"
+                  : "border-border/50"
+          ),
         toolLayout === "console" && "my-1 rounded-lg border border-border/70 bg-muted/30 p-2 font-mono",
         toolLayout === "outlined" && "my-1 rounded-md border border-primary/25 px-2 py-1",
         toolLayout === "minimal" && "my-0",
@@ -282,7 +295,7 @@ export const StepRow = React.memo(function StepRow({
                 // `items-start` would hang it off the top of the text it marks.
                 // The row assembles mark → title → command (`harness-part-in`,
                 // index.css); the mark is part 0 and states no `--part-i`.
-                "harness-part-in relative flex h-6 w-3.5 shrink-0 items-center justify-center",
+                "harness-part-in relative flex h-6 w-5 shrink-0 items-center justify-center",
                 failed
                   ? "text-destructive"
                   : (iconAccent ?? (active ? "text-primary" : "text-muted-foreground/60"))
@@ -296,14 +309,14 @@ export const StepRow = React.memo(function StepRow({
                 <span
                   aria-hidden
                   className={cn(
-                    "absolute size-3.5 rounded-sm",
-                    failed ? "bg-destructive/10" : iconChip
+                    "absolute size-5 rounded-full",
+                    failed ? "bg-destructive/10" : (iconChip ?? "bg-muted/50")
                   )}
                 />
               )}
               <Icon
                 className={cn(
-                  "relative size-3.5 transition-opacity duration-100",
+                  "relative size-3 transition-opacity duration-100",
                   expandable && (open ? "opacity-0" : "group-hover/step:opacity-0")
                 )}
               />
@@ -362,6 +375,7 @@ export const StepRow = React.memo(function StepRow({
           </span>
 
         </button>
+        {firstRow}
         {/* Every reading the row has, in one line box. The clock leads (it is
             the one that ticks), the caller's own readings follow, and the
             outcome word ends the line — a failure still claims the column, in
@@ -389,7 +403,7 @@ export const StepRow = React.memo(function StepRow({
           documented there rather than a new one.
           It also covers the click: opening a row by hand used to pop too. */}
       {belowContent && (
-        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && "pl-[1.375rem]")}>{belowContent}</div>
+        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && "pl-7")}>{belowContent}</div>
       )}
       {expandable && open && (
         <div
@@ -397,7 +411,7 @@ export const StepRow = React.memo(function StepRow({
             "harness-fade-in mt-1 mb-2.5 min-w-0 space-y-2",
             toolLayout === "cards" && "mt-2 border-t border-border/50 pt-2",
             toolLayout === "compact" && "mt-0.5 mb-1 space-y-1",
-            toolLayout === "rail" && "mt-1 border-l border-border/60 pl-3",
+            toolLayout === "rail" && "mt-1 pl-3",
             toolLayout === "console" && "mt-2 rounded-md border border-border/60 bg-background/70 p-2 font-mono",
             toolLayout === "outlined" && "border-t border-dashed border-border/60 pt-2",
             toolLayout === "minimal" && "mt-0 mb-1 space-y-1",

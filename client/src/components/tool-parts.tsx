@@ -54,6 +54,7 @@ import { useViewOptionsContext } from "@/lib/view-options"
 import { writeClipboard } from "@/lib/clipboard"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
+import { splitOpenuiFences } from "@/lib/openui/fences"
 import { FileLink } from "@/components/file-link"
 import { USER_CHIP_COMPONENTS, remarkUserChips } from "@/components/thread-items/user-chips"
 
@@ -82,26 +83,33 @@ export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string
   switch_mode: ToggleLeftIcon,
 }
 
-/* One colour language for the transcript's work marks, shared by the step-row
-   icons and the group-row avatar stack: a shell command is the quiet terminal
-   grey, a thought the thinking blue, and everything else a tool does the
-   violet of work on the files. Keyed by the same kinds KIND_ICONS is, so a
-   row and its icon never disagree. The hues come from the `--step-*` tokens
-   in index.css, so a custom theme can move all three at once. */
+/* One accent per tool kind, shared by the step rows and grouped avatars. Keep
+   each hue distinct so a mixed group can be scanned by icon color alone. */
 export const KIND_COLORS: Record<string, string> = {
-  think: "text-step-think",
-  execute: "text-step-command",
-  other: "text-step-tool",
+  read: "text-cyan-600 dark:text-cyan-400",
+  edit: "text-orange-600 dark:text-orange-400",
+  delete: "text-red-600 dark:text-red-400",
+  move: "text-amber-600 dark:text-amber-400",
+  search: "text-blue-600 dark:text-blue-400",
+  execute: "text-emerald-600 dark:text-emerald-400",
+  think: "text-violet-600 dark:text-violet-400",
+  fetch: "text-teal-600 dark:text-teal-400",
+  switch_mode: "text-indigo-600 dark:text-indigo-400",
+  other: "text-slate-600 dark:text-slate-400",
 }
 
-/* The same map as the tinted tile a step row's mark sits on — the `/15` of
-   the avatar stack, so a coloured icon wears its own background instead of
-   floating transparent. Keyed by the same kinds, so a row's mark and its
-   tile never disagree. */
+/* The matching tinted avatar tile for each kind's foreground accent. */
 export const KIND_CHIPS: Record<string, string> = {
-  think: "bg-step-think/15",
-  execute: "bg-step-command/15",
-  other: "bg-step-tool/15",
+  read: "bg-cyan-500/12",
+  edit: "bg-orange-500/12",
+  delete: "bg-red-500/12",
+  move: "bg-amber-500/12",
+  search: "bg-blue-500/12",
+  execute: "bg-emerald-500/12",
+  think: "bg-violet-500/12",
+  fetch: "bg-teal-500/12",
+  switch_mode: "bg-indigo-500/12",
+  other: "bg-slate-500/12",
 }
 
 /* Prose palette + code/table styling live in index.css, so both themes come
@@ -575,60 +583,6 @@ export function ToolLocations({ item }: { item: ToolItem }) {
    in the program has no tool to reach and is dropped — which is the boundary
    this feature is built on (see the library's header comment). */
 
-/* The fence tag the generated prompt tells the model to write. `openui` alone
-   is accepted too — it is the shorter name a model reaches for unprompted, and
-   a fence that means this should draw rather than fall through to the source. */
-const OPENUI_LANG = "openui-lang"
-
-/** An openui fenced block found in a message, and the text around it. */
-interface OpenuiFence {
-  start: number
-  end: number
-  code: string
-  /** The closing ``` has not arrived yet — the model is still writing this
-      program. Only ever true for the last fence in a live row. */
-  open: boolean
-}
-
-/* Two patterns, because the two cases are genuinely different and a single one
-   gets one of them wrong. Closed first: a completed fence is paired with its own
-   terminator, and that matters when a message holds more than one. */
-const OPENUI_FENCE_CLOSED_RE =
-  /(^|\n)[ \t]*```+[ \t]*openui(?:-lang)?[ \t]*\r?\n([\s\S]*?)```+[ \t]*(?=\n|$)/g
-
-/* A fence still being written: the info string and its newline have arrived, the
-   closing run has not. Requires the newline, so the partial *info string* itself
-   (` ```openui-lan `) stays prose until the model finishes typing it. */
-const OPENUI_FENCE_OPEN_RE = /(^|\n)[ \t]*```+[ \t]*openui(?:-lang)?[ \t]*\r?\n([\s\S]*)$/
-
-/**
- * Split a message into prose runs and openui fences.
- *
- * `streaming` is what allows a trailing, unclosed fence to be drawn; a settled
- * row never has one, since a fence the model never closed is not a program.
- */
-function splitOpenuiFences(text: string, streaming: boolean): (string | OpenuiFence)[] {
-  const parts: (string | OpenuiFence)[] = []
-  let cut = 0
-  for (const match of text.matchAll(OPENUI_FENCE_CLOSED_RE)) {
-    const start = match.index + match[1].length
-    const end = start + match[0].length - match[1].length
-    if (start > cut) parts.push(text.slice(cut, start))
-    parts.push({ start, end, code: match[2], open: false })
-    cut = end
-  }
-  const rest = text.slice(cut)
-  const pending = streaming ? OPENUI_FENCE_OPEN_RE.exec(rest) : null
-  if (pending) {
-    const start = cut + pending.index + pending[1].length
-    if (start > cut) parts.push(text.slice(cut, start))
-    parts.push({ start, end: text.length, code: pending[2], open: true })
-  } else if (rest) {
-    parts.push(rest)
-  }
-  return parts
-}
-
 /**
  * One generated view, drawn from the program in `code`.
  *
@@ -648,7 +602,7 @@ function OpenuiFenceView({ code, open }: { code: string; open: boolean }) {
   /* The imports are one shared chunk, so a second fence on the same screen is
      the same lazy component — no per-view identity games there. */
   return (
-    <React.Suspense fallback={<Prose text={"```" + OPENUI_LANG + "\n" + code + "\n```"} />}>
+    <React.Suspense fallback={<Prose text={"```openui-lang\n" + code + "\n```"} />}>
       <ErrorBoundary name="openui view" resetKeys={[code]} key={code}>
         <OpenuiView code={code} streaming={open} />
       </ErrorBoundary>
@@ -697,7 +651,7 @@ export function ProseWithOpenui({
   if (!parts) return <Prose text={text} stream={stream} className={className} />
   if (parts.kind === "recovered") {
     return (
-      <div className={cn("min-w-0 space-y-2", className)}>
+      <div className={cn("flex min-w-0 flex-col gap-2", className)}>
         <Notice tone="info" size="sm" title="Recovered OpenUI view">
           This reply looked like an unfenced OpenUI program. It was recovered for display; the original reply is unchanged.
         </Notice>

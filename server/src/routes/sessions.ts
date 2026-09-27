@@ -20,8 +20,18 @@ import { workspace } from "./helpers.js";
 const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Threads: list, create, respawn/revive, stderr, delete/restore. */
+/** What `POST /api/sessions` answers: the thread, and — when the create carried
+    the first message — the turn it started, or why it could not. */
+type Created = { id: string; turnId?: string; promptError?: string };
+
+/* A lost 201 is retried with the same client-minted id. Held a while past
+   settling so the retry — or a second POST racing the first — gets the first
+   one's answer rather than a 409 on a thread its own message created. */
+const CREATE_MEMORY_MS = 10 * 60_000;
+
 export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): void {
   const { sessions } = deps;
+  const creating = new Map<string, Promise<Created>>();
 
   /* Live threads by default; `?deleted=1` includes the trash (what the client's
      sidebar asks for, since its Trash section renders from the same list). */
@@ -62,7 +72,12 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       skillIds,
       commandIds,
       worktree,
+      prompt,
     } = await c.req.json();
+    // The thread's own picks, on top of the project's and the profile's. Stale
+    // ids link nothing (db/links.ts), so nothing here has to be validated.
+    const ids = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
     const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     // The thread is a (profile, agent) pair. `agentId` may be left out only when
@@ -82,47 +97,71 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       if (typeof id !== "string" || !UUID_RE.test(id)) {
         return c.json({ error: "id must be a UUID" }, 400);
       }
+      const pending = creating.get(id);
+      if (pending) return c.json(await pending, 201);
       if (sessions.get(id)) return c.json({ error: "session already exists" }, 409);
     }
-    // The thread's own picks, on top of the project's and the profile's. Stale
-    // ids link nothing (db/links.ts), so nothing here has to be validated.
-    const ids = (v: unknown): string[] =>
-      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-    const session = await sessions.create(profile, agentId, project, model, effort, id, configChoices, {
-      mcpServerIds: ids(mcpServerIds),
-      skillIds: ids(skillIds),
-      commandIds: ids(commandIds),
-    }, {
-      // Not validated: a persona id naming a row that is gone resolves to no
-      // persona at spawn, which is what "gone" should mean — see
-      // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
-      personaId: typeof personaId === "string" ? personaId : undefined,
-      // Omitted reads as off — a draft that never asked is a thread that
-      // never asked, the same default the row carries.
-      suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
-      // The drawn-UI lane, the same draft-picked spawn input: omitted reads as
-      // on, which is what the row's default says.
-      uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
-      // The draft's permission mode, picked against the agent's probed `modes`.
-      // Best-effort like the config choices: a mode the agent does not offer
-      // costs the pick, not the thread. The bridge guards on the agent's own
-      // mode list, so this needs no per-agent knowledge here.
-      modeId: typeof modeId === "string" && modeId ? modeId : undefined,
-      /* A draft can be renamed before it has ever been sent to, and that name
-         has to survive becoming a real thread — `create` keeps it and the
-         first-prompt sniff then leaves it alone. */
-      title: typeof title === "string" && title.trim() ? title.trim() : undefined,
-      /* "Isolate in a git worktree", picked on the draft: the server makes the
-         checkout before the thread exists, and refuses in git's words when
-         the project cannot have one. */
-      worktree: worktree === true,
-    });
-    /* Wait for the handshake. A 201 therefore means the agent has answered
-       session/new, its settings have been applied, and the first `session_config`
-       is already in the log — so the socket the client opens next inherits a
-       thread that is genuinely ready rather than one still booting. */
-    await session.bridge!.ready;
-    return c.json({ id: session.id }, 201);
+    const first =
+      prompt && typeof prompt === "object" && typeof prompt.text === "string"
+        ? { text: prompt.text as string, attachmentIds: ids(prompt.attachmentIds) }
+        : null;
+    const run = async (): Promise<Created> => {
+      const session = await sessions.create(profile, agentId, project, model, effort, id, configChoices, {
+        mcpServerIds: ids(mcpServerIds),
+        skillIds: ids(skillIds),
+        commandIds: ids(commandIds),
+      }, {
+        // Not validated: a persona id naming a row that is gone resolves to no
+        // persona at spawn, which is what "gone" should mean — see
+        // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
+        personaId: typeof personaId === "string" ? personaId : undefined,
+        // Omitted reads as off — a draft that never asked is a thread that
+        // never asked, the same default the row carries.
+        suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
+        // The drawn-UI lane, the same draft-picked spawn input: omitted reads as
+        // on, which is what the row's default says.
+        uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
+        // The draft's permission mode, picked against the agent's probed `modes`.
+        // Best-effort like the config choices: a mode the agent does not offer
+        // costs the pick, not the thread. The bridge guards on the agent's own
+        // mode list, so this needs no per-agent knowledge here.
+        modeId: typeof modeId === "string" && modeId ? modeId : undefined,
+        /* A draft can be renamed before it has ever been sent to, and that name
+           has to survive becoming a real thread — `create` keeps it and the
+           first-prompt sniff then leaves it alone. */
+        title: typeof title === "string" && title.trim() ? title.trim() : undefined,
+        /* "Isolate in a git worktree", picked on the draft: the server makes the
+           checkout before the thread exists, and refuses in git's words when
+           the project cannot have one. */
+        worktree: worktree === true,
+      });
+      /* Wait for the handshake. A 201 therefore means the agent has answered
+         session/new, its settings have been applied, and the first `session_config`
+         is already in the log — so the socket the client opens next inherits a
+         thread that is genuinely ready rather than one still booting. */
+      await session.bridge!.ready;
+      /* The first message rides the create, so it is on the server the moment
+         the draft is: it used to follow over a socket opened afterwards, and a
+         reload in between lost words the composer had already cleared. No origin
+         peer — `turn_started` is journaled, and the socket the client opens next
+         draws the bubble from it. A failure here is the prompt's, not the
+         thread's: the thread exists, so it is answered, not thrown. */
+      if (!first) return { id: session.id };
+      try {
+        const reply = await sessions.prompt(session.id, first.text, undefined, { attachmentIds: first.attachmentIds });
+        return "turnId" in reply ? { id: session.id, turnId: reply.turnId } : { id: session.id };
+      } catch (error) {
+        return { id: session.id, promptError: error instanceof Error ? error.message : String(error) };
+      }
+    };
+    const result = run();
+    if (typeof id === "string") {
+      creating.set(id, result);
+      const forget = () => setTimeout(() => creating.delete(id), CREATE_MEMORY_MS).unref();
+      // A failed create is forgotten at once: its id may be tried again.
+      result.then(forget, () => creating.delete(id));
+    }
+    return c.json(await result, 201);
   });
 
   /**

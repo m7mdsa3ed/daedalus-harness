@@ -28,6 +28,7 @@ export interface ThreadDockHandle {
   /** Show the one there is (`reuse`) or open one — a fresh shell for a
       terminal, the only kind a thread holds more than one of. */
   open: (kind: ThreadPanelKind, reuse?: boolean) => void
+  jump: (id?: string, turn?: { turnId: string; seq: number }) => void
 }
 
 const docks = new Map<string, ThreadDockHandle>()

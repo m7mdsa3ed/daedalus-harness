@@ -13,7 +13,7 @@ import type { ThreadItem } from "../store"
  *   peer that never receives a `turn_started` for its own words (the
  *   origin-peer exclusion), so
  *   there is nothing in the replay to redraw it from. On the first message of a
- *   new thread that is guaranteed: the attach happens *before* the prompt is
+ *   new thread that was guaranteed while the attach happened *before* the prompt was
  *   dispatched, so the replay is empty and the message simply vanished. It was
  *   patched by re-dispatching the bubble afterwards if a heuristic could tell it
  *   had gone — which worked for the one path that ran the heuristic, and for no

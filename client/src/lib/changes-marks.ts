@@ -15,7 +15,11 @@ import type { ChangedFile } from "@/lib/workspace/git-api"
 export type ChangesScope = "turns" | "thread" | "uncommitted" | "branch"
 export const CHANGES_SCOPES: readonly ChangesScope[] = ["turns", "thread", "uncommitted", "branch"]
 
+/** The Source Control panel's two halves: git itself, or the turn review. */
+export type ScmPanelView = "git" | "review"
+
 interface ThreadMarks {
+  view?: ScmPanelView
   scope?: ChangesScope
   /** `${scopeKey}\0${path}` → fingerprint when marked. */
   viewed?: Record<string, string>
@@ -77,4 +81,8 @@ export function setFlagged(sessionId: string, paths: string[], flagged: boolean)
 
 export function setChangesScope(sessionId: string, scope: ChangesScope): void {
   write(sessionId, (current) => ({ ...current, scope }))
+}
+
+export function setScmPanelView(sessionId: string, view: ScmPanelView): void {
+  write(sessionId, (current) => ({ ...current, view }))
 }

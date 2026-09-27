@@ -90,6 +90,7 @@ export function toolKindOf(item: Pick<ToolItem, "title" | "toolKind" | "meta">):
   if (item.toolKind && item.toolKind !== "other") return item.toolKind
   const name = bareIdentity(item)
   if (!name) return item.toolKind ?? "other"
+  if (/^select:/i.test(name)) return item.toolKind ?? "other"
   return NAME_KINDS[name] ?? item.toolKind ?? "other"
 }
 
@@ -109,22 +110,31 @@ export function toolLeafName(name: string): string {
   return sep === -1 ? rest : rest.slice(sep + 2)
 }
 
-/**
- * Split the `mcp__<server>__<tool>` naming convention every harness uses for
- * MCP-provided tools. Null for ordinary tool names.
- */
+/** Present a server or tool identifier as a readable label. */
+export function formatMcpName(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/websearch/gi, "web search")
+    .replace(/webfetch/gi, "web fetch")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => (word.length > 1 && word === word.toUpperCase() ? word : word[0].toUpperCase() + word.slice(1)))
+    .join(" ")
+}
+
 export function parseMcpToolName(name: string): { server: string; tool: string } | null {
-  const words = (value: string) => value.replace(/_/g, " ").trim()
   // Codex's form. Its separator is a dot and a server name may not contain
   // one, so the first two segments are the whole answer and the rest of the
   // tool name (which may itself contain dots) is kept intact.
   const dotted = /^mcp\.([^.]+)\.(.+)$/.exec(name)
-  if (dotted) return { server: words(dotted[1]), tool: words(dotted[2]) }
+  if (dotted) return { server: dotted[1], tool: dotted[2] }
   if (!name.startsWith("mcp__")) return null
   const rest = name.slice("mcp__".length)
   const sep = rest.indexOf("__")
-  if (sep <= 0) return { server: words(rest), tool: "" }
-  return { server: words(rest.slice(0, sep)), tool: words(rest.slice(sep + 2)) }
+  if (sep <= 0) return { server: rest, tool: "" }
+  return { server: rest.slice(0, sep), tool: rest.slice(sep + 2) }
 }
 
 /**
@@ -132,9 +142,34 @@ export function parseMcpToolName(name: string): { server: string; tool: string }
  * row says which integration acted, not just `mcp__crm_kb__search_docs`.
  */
 export function toolDisplayName(name: string): string {
+  const selector = /^select:(.+)$/i.exec(name)
+  if (selector) {
+    const choices = selector[1].split(",").map((choice) => formatMcpName(choice.trim())).filter(Boolean)
+    return choices.length ? `Select ${choices.join(" / ")}` : "Select tool"
+  }
   const mcp = parseMcpToolName(name)
   if (!mcp) return name
-  return mcp.tool ? `${mcp.server} · ${mcp.tool}` : mcp.server
+  const server = formatMcpName(mcp.server)
+  const tool = formatMcpName(mcp.tool)
+  return tool ? `${server} · ${tool}` : server
+}
+
+/** Whether a selector-style tool identity includes one of the named tools. */
+export function toolSelectorIncludes(
+  item: Pick<ToolItem, "title" | "meta" | "name">,
+  names: string[]
+): boolean {
+  const identity = toolIdentity(item)
+  if (!identity) return false
+  const selector = /^select:(.+)$/i.exec(identity)
+  if (!selector) return false
+  const selected = selector[1].split(",").map((choice) => choice.trim().toLowerCase())
+  return names.some((name) => selected.includes(name.toLowerCase()))
+}
+
+/** Does the call use a multi-tool selector that includes both web actions? */
+export function isWebToolSelector(item: Pick<ToolItem, "title" | "meta" | "name">): boolean {
+  return toolSelectorIncludes(item, ["websearch"]) && toolSelectorIncludes(item, ["webfetch"])
 }
 
 /* ACP's kinds that cannot have written to the worktree: they read, they look

@@ -90,7 +90,7 @@ const Trajectory = React.lazy(async () => ({
 
 const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }> = {
   transcript: { title: "Thread", icon: null },
-  changes: { title: "Changes", icon: GitCompareIcon },
+  changes: { title: "Source Control", icon: GitCompareIcon },
   plan: { title: "Plan", icon: ListChecksIcon },
   agents: { title: "Agents", icon: BotIcon },
   details: { title: "Details", icon: InfoIcon },
@@ -195,7 +195,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
   stackedRef.current = stacked
   const apiRef = React.useRef<DockviewApi | null>(null)
   const guardsRef = React.useRef(new Map<string, CloseGuard>())
-  const jumpRef = React.useRef<((id: string) => void) | null>(null)
+  const jumpRef = React.useRef<((id?: string, turn?: { turnId: string; seq: number }) => void) | null>(null)
 
   /* Read through refs by the handle, which has to stay one object: it is
      registered once and captured by every panel's context. */
@@ -209,6 +209,10 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       if (apiRef.current) place(apiRef.current, id, kind, params, stackedRef.current)
     }
     return {
+      jump(id, turn) {
+        apiRef.current?.getPanel("transcript")?.api.setActive()
+        jumpRef.current?.(id, turn)
+      },
       open(kind, reuse) {
         const api = apiRef.current
         const current = metaRef.current
@@ -329,6 +333,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       ]
       return () => {
         clearTimeout(timer)
+        saveThreadLayout(sessionId, api.toJSON())
         disposables.forEach((disposable) => disposable.dispose())
         if (apiRef.current === api) apiRef.current = null
       }

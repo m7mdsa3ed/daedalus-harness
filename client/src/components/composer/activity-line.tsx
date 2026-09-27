@@ -4,6 +4,7 @@
    `ActivityIndicator` is the turn's own caller. Not a reading in the footer's
    cluster — this one lives in the transcript, where the turn is. */
 import { Logo } from "@/components/ui/logo"
+import { CopyButton } from "@/components/ui/copy-button"
 import { runningAgents } from "@/components/composer/agents-indicator"
 import { toolHeading } from "@/lib/tools"
 import { type ThreadState } from "@/lib/store"
@@ -39,6 +40,11 @@ function retryWhy(error: unknown): string {
   const info = describeError(error)
   const first = info.detail?.split("\n")[0]?.trim()
   return first || info.title
+}
+
+function retryErrorText(error: unknown): string {
+  const info = describeError(error)
+  return [info.title, info.detail].filter(Boolean).join("\n\n")
 }
 
 export function workingMessage(thread: ThreadState): string {
@@ -170,11 +176,22 @@ export function ActivityIndicator({ thread }: { thread: ThreadState }) {
   /* A held turn is stopped. The line stays in the same slot, which is the
      point — the turn is still open and the composer still belongs to it. */
   const held = thread.paused
+  const retryError = thread.retry?.error ? retryErrorText(thread.retry.error) : null
   return (
-    <PhaseLine
-      text={held ? message : `${message}…`}
-      still={held}
-      label={held ? "Turn held" : "Agent working"}
-    />
+    <div className="min-w-0 max-w-full">
+      <PhaseLine
+        text={held ? message : `${message}…`}
+        still={held}
+        label={held ? "Turn held" : "Agent working"}
+      />
+      {thread.retry && retryError && (
+        <div className="ml-6 mt-1 flex min-w-0 items-start gap-1 rounded-sm border border-destructive/20 bg-background/50 p-2 text-[11px] text-muted-foreground">
+          <pre className="max-h-28 min-w-0 flex-1 overflow-auto font-mono whitespace-pre-wrap break-words">
+            {retryError}
+          </pre>
+          <CopyButton text={retryError} size="icon-xs" className="shrink-0" label="Copy error" />
+        </div>
+      )}
+    </div>
   )
 }

@@ -321,7 +321,7 @@ export function TerminalPanel({
     /* Copy and paste, on the chords every terminal emulator uses. xterm sends
        Ctrl+C to the PTY, which is correct — it is SIGINT — *except* when there
        is a selection, which is the one case where the user means copy and no
-       shell will ever see the keystroke as anything else. Ctrl+V is
+       shell will ever see the keystroke as anything else — once. Ctrl+V is
        unambiguous: nothing reads it, so it is ours. ⌘ on a Mac takes both
        outright, since ⌘C was never a control byte. Returning false is what
        stops xterm from also writing the key to the PTY. */
@@ -334,6 +334,10 @@ export function TerminalPanel({
         const selection = terminal.getSelection()
         if (!selection) return true
         void writeClipboard(selection)
+        /* A copy spends the selection, as in Windows Terminal and VS Code: left
+           standing, every later Ctrl+C copies it again and ^C never reaches
+           the shell. */
+        terminal.clearSelection()
         return false
       }
       if (key === "v") {

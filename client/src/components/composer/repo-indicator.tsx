@@ -43,11 +43,13 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { BranchPicker, type BranchChoice } from "@/components/workspace/scm/branch-picker"
 import { Notice } from "@/components/notice"
 import {
+  OpenInInspector,
   READING_MARK,
   READING_TRIGGER,
   ReadingFace,
 } from "@/components/composer/indicator"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
+import { setScmPanelView } from "@/lib/changes-marks"
 import { errorText } from "@/lib/errors"
 import { useProfiles } from "@/lib/queries/catalog"
 import {
@@ -102,6 +104,16 @@ export function RepoIndicator({ meta }: { meta: SessionMeta }) {
         {/* Mounted with the popover, so a thread nobody opens this on never asks
             the server for a status. */}
         <RepoPanel meta={meta} repos={repos} />
+        {/* The panel this popover is the glance of — opened at its Git half,
+            since what brought you here was the repository, not a turn. */}
+        <OpenInInspector
+          tab="changes"
+          label="Open Source Control"
+          onOpen={() => {
+            setOpen(false)
+            setScmPanelView(meta.id, "git")
+          }}
+        />
       </PopoverContent>
     </Popover>
   )

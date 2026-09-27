@@ -759,11 +759,9 @@ export class AcpBridge implements ConnectionRoute {
   // ---- handshake ----
 
   private async handshake(opts: BridgeOptions): Promise<void> {
+    const timeout = new Error("the agent did not finish the handshake in time");
     const deadline = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("the agent did not finish the handshake in time")),
-        HANDSHAKE_TIMEOUT_MS,
-      ).unref();
+      setTimeout(() => reject(timeout), HANDSHAKE_TIMEOUT_MS).unref();
     });
     const span = this.trace.standalone(
       opts.load?.resume ? "session/resume" : opts.load ? "session/load" : "session/new",
@@ -779,8 +777,16 @@ export class AcpBridge implements ConnectionRoute {
       span.end();
       /* A shared process that cannot finish a handshake in a minute is wedged,
          and the pool would hand it to the next thread too. Its other sessions
-         go down with it — they were on a process that stopped answering. */
-      if (this.conn.shared && !this.closed) this.conn.kill();
+         go down with it — they were on a process that stopped answering. Only
+         the timeout, or an `initialize` that failed (the process is useless to
+         every session): an agent that *answered* this session with an error is
+         not wedged, and killing it took every other thread on the process down
+         for one session's refusal. That session alone is closed (`collapse` →
+         detach). */
+      if (this.conn.shared && !this.closed) {
+        const initFailed = await this.conn.initialized.then(() => false, () => true);
+        if (error === timeout || initFailed) this.conn.kill();
+      }
       throw error;
     }
   }

@@ -35,10 +35,11 @@ import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 import { changesTimeline } from "./turn-footers"
 import { ProjectIcon } from "@/components/entity-icon"
-import { stepNameOf, stepStateOf } from "@/components/workflow-run"
+import { collectTools, lastActivityAt, stepNameOf, stepStateOf } from "@/components/workflow-run"
+import { useNow } from "@/components/composer/agents-indicator"
 import type { SessionMeta } from "@/lib/settings"
-import type { ThreadItem, ThreadState } from "@/lib/store"
-import { formatDuration, formatRate, formatTokens, promptTokens } from "@/lib/tokens"
+import type { ThreadItem, ThreadState, ToolItem } from "@/lib/store"
+import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
 import { extractSubagent, toolHeading } from "@/lib/tools"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -56,12 +57,9 @@ function recentStepText(group: SubagentGroup): string {
   if (head.kind === "subagent") {
     if (head.activity || head.report || head.task) return head.activity || head.report || head.task
   } else if (group.active) {
-    const latest = [...group.children].reverse().find((row) => row.kind === "tool" || row.kind === "run")
-    if (latest?.kind === "tool") return toolHeading(latest).title
-    if (latest?.kind === "run") {
-      const tool = [...latest.items].reverse().find((item) => item.kind === "tool")
-      if (tool) return toolHeading(tool).title
-    }
+    const latest = [...group.children].reverse().find((row) => row.kind === "tool" || row.kind === "run" || row.kind === "tool-group")
+    const tool = latest ? collectTools([latest]).at(-1) : undefined
+    if (tool) return toolHeading(tool).title
   }
   return head.kind === "subagent" ? head.name : extractSubagent(head)?.description || head.title
 }
@@ -123,32 +121,210 @@ function AgentsTab({ groups, onJump }: { groups: SubagentGroup[]; onJump: (id: s
       </div>
     )
 
+  return <AgentsList groups={sorted} onJump={onJump} />
+}
+
+/** Split out so the clock ticks only while the tab is drawn and a worker is out. */
+function AgentsList({ groups, onJump }: { groups: SubagentGroup[]; onJump: (id: string) => void }) {
+  const now = useNow(groups.some((group) => group.active))
+  const [filter, setFilter] = React.useState<AgentFilter>("all")
+  const tokens = sumUsage(groups.map((group) => (group.head.kind === "subagent" ? group.head.usage : null)))
+  const shown = groups.filter((group) => AGENT_FILTERS[filter](group))
+
   return (
-    <ul className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto px-1.5 py-1">
-      {sorted.map((group) => (
-        <li key={group.id}>
-          <button
-            type="button"
-            onClick={() => onJump(group.id)}
-            className="flex w-full min-w-0 gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none"
-            title="Show in the transcript"
-          >
-            <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${group.active ? "animate-pulse bg-primary" : "bg-border"}`} />
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center justify-between gap-2 text-xs">
-                <span className="min-w-0 truncate font-medium">{stepNameOf(group)}</span>
-                <span className={group.active ? "shrink-0 text-[11px] text-primary" : "shrink-0 text-[11px] text-muted-foreground"}>
-                  {group.active ? "Working" : stepStateOf(group)}
-                </span>
-              </span>
-              <span className="mt-0.5 block truncate text-[11px] leading-4 text-muted-foreground">
-                {recentStepText(group)}
-              </span>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border/40 px-2 py-1.5 text-[11px] tabular-nums">
+        {(Object.keys(AGENT_FILTERS) as AgentFilter[]).map((key) => {
+          const count = groups.filter(AGENT_FILTERS[key]).length
+          if (key !== "all" && count === 0 && filter !== key) return null
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={filter === key}
+              onClick={() => setFilter(key)}
+              className={cn(
+                "rounded px-1.5 py-0.5 capitalize text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                filter === key && "bg-accent text-foreground"
+              )}
+            >
+              {key} {count}
+            </button>
+          )
+        })}
+        {tokens && <span className="ml-auto text-muted-foreground">{formatTokens(tokens.totalTokens)} tokens</span>}
+      </div>
+      <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-1.5">
+        {shown.length === 0 && <li><Empty>No {filter} agents.</Empty></li>}
+        {shown.map((group) => (
+          <AgentCard key={group.id} group={group} now={now} onJump={onJump} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+type AgentFilter = "all" | "running" | "done" | "failed"
+const AGENT_FILTERS: Record<AgentFilter, (group: SubagentGroup) => boolean> = {
+  all: () => true,
+  running: (group) => group.active,
+  done: (group) => !group.active && stepStateOf(group) === "completed",
+  failed: (group) => !group.active && stepStateOf(group) !== "completed",
+}
+
+/** The tool calls a group made itself, oldest first — a nested agent's are its own card's. */
+function ownTools(rows: Row[]): ToolItem[] {
+  return rows.flatMap((row) =>
+    row.kind === "tool"
+      ? [row]
+      : row.kind === "run"
+        ? row.items.filter((item): item is ToolItem => item.kind === "tool")
+        : row.kind === "tool-group"
+          ? row.items.filter((item): item is ToolItem => item.kind === "tool")
+          : []
+  )
+}
+
+/** What a group did underneath it: tool calls, and subagents of its own. */
+function childCounts(rows: Row[]): { tools: number; agents: number } {
+  let tools = 0
+  let agents = 0
+  for (const row of rows) {
+    if (row.kind === "tool") tools++
+    else if (row.kind === "run") tools += row.items.filter((item) => item.kind === "tool").length
+    else if (row.kind === "tool-group") tools += row.items.filter((item) => item.kind === "tool").length
+    else if (row.kind === "subagent-group") {
+      const inner = childCounts(row.children)
+      agents += 1 + inner.agents
+      tools += inner.tools
+    } else if (row.kind === "workflow-group" || row.kind === "subagent-batch") {
+      const inner = childCounts(row.steps)
+      agents += inner.agents
+      tools += inner.tools
+    }
+  }
+  return { tools, agents }
+}
+
+const STATE_TONE: Record<string, string> = {
+  running: "bg-primary/10 text-primary",
+  failed: "bg-destructive/10 text-destructive",
+  cancelled: "bg-muted text-muted-foreground",
+  disconnected: "bg-muted text-muted-foreground",
+  completed: "bg-foreground/5 text-foreground/70",
+}
+
+/** One subagent in full: who, on what, for how long, what it did and said. */
+function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; onJump: (id: string) => void }) {
+  const head = group.head
+  const state = stepStateOf(group)
+  const call = head.kind === "tool" ? extractSubagent(head) : null
+  const type = head.kind === "subagent" ? (head.name !== stepNameOf(group) ? head.name : undefined) : call?.agentType
+  const brief = head.kind === "subagent" ? head.prompt || head.task : call?.prompt || call?.description
+  const report =
+    head.kind === "subagent"
+      ? head.report
+      : (call?.result ?? (head.status !== "pending" && head.status !== "in_progress" && typeof head.rawOutput === "string" ? head.rawOutput : undefined))
+  const usage = head.kind === "subagent" ? head.usage : undefined
+  const counts = childCounts(group.children)
+  const steps = ownTools(group.children)
+  /* Claude Code says how long its child ran; everyone else is read off the
+     transcript — now while it runs, else the last thing that arrived under it. */
+  const elapsedMs = call?.elapsedSeconds
+    ? call.elapsedSeconds * 1000
+    : (group.active ? now : Math.max(head.at ?? 0, lastActivityAt(group.children))) - head.startedAt
+
+  const facts = [
+    type,
+    call?.model,
+    call?.background && "background",
+    head.kind === "subagent" && head.workflow && "workflow step",
+    elapsedMs > 0 && formatDuration(elapsedMs),
+    counts.tools > 0 && `${counts.tools} ${counts.tools === 1 ? "tool call" : "tool calls"}`,
+    counts.agents > 0 && `${counts.agents} nested`,
+    usage && `${formatTokens(usage.totalTokens)} tok (${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens)} out)`,
+    head.kind === "subagent" && head.context && `ctx ${formatTokens(head.context.used)}/${formatTokens(head.context.size)}`,
+  ].filter((fact): fact is string => typeof fact === "string" && fact.length > 0)
+
+  return (
+    <li className={cn("rounded-md border border-border/50 bg-card/55", group.active && "border-primary/40")}>
+      <button
+        type="button"
+        onClick={() => onJump(group.id)}
+        className="flex w-full min-w-0 gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none"
+        title="Show in the transcript"
+      >
+        <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${group.active ? "animate-pulse bg-primary" : state === "failed" ? "bg-destructive" : "bg-border"}`} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center justify-between gap-2 text-xs">
+            <span className="min-w-0 truncate font-medium">{stepNameOf(group)}</span>
+            <span className={cn("shrink-0 rounded px-1.5 py-px text-[10px] font-medium capitalize", STATE_TONE[state])}>
+              {group.active ? "working" : state}
             </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+          </span>
+          {facts.length > 0 && (
+            <span className="mt-0.5 block truncate text-[10px] tabular-nums text-muted-foreground" title={facts.join(" · ")}>
+              {facts.join(" · ")}
+            </span>
+          )}
+          {group.active && (
+            <span className="mt-0.5 block truncate text-[11px] leading-4 text-foreground/80">{recentStepText(group)}</span>
+          )}
+        </span>
+      </button>
+      {(brief || report || steps.length > 0) && (
+        <div className="space-y-1 px-2 pb-1.5 pl-5.5 text-[11px]">
+          {brief && <AgentFold summary="Brief" text={brief} />}
+          {steps.length > 0 && <AgentSteps steps={steps} open={group.active} />}
+          {report && <AgentFold summary={state === "failed" ? "Error" : "Report"} text={report} />}
+        </div>
+      )}
+    </li>
+  )
+}
+
+const STEP_SHOWN = 8
+
+/** Its newest tool calls, each a line — open while it runs, so the panel is a live feed. */
+function AgentSteps({ steps, open }: { steps: ToolItem[]; open: boolean }) {
+  const recent = steps.slice(-STEP_SHOWN)
+  return (
+    <details className="group" open={open}>
+      <summary className="cursor-pointer list-none truncate text-muted-foreground hover:text-foreground">
+        <span className="font-medium">Steps</span> <span className="tabular-nums">{steps.length}</span>
+      </summary>
+      <ol className="mt-1 space-y-0.5 rounded bg-muted/40 p-1.5">
+        {steps.length > STEP_SHOWN && (
+          <li className="text-[10px] text-muted-foreground">{steps.length - STEP_SHOWN} earlier</li>
+        )}
+        {recent.map((step) => {
+          const heading = toolHeading(step)
+          const text = heading.detail ? `${heading.title} ${heading.detail}` : heading.title
+          return (
+            <li key={step.id} className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  step.status === "failed" ? "bg-destructive" : step.status === "completed" ? "bg-foreground/40" : "animate-pulse bg-primary"
+                )}
+              />
+              <span className={cn("min-w-0 truncate", !heading.prose && "font-mono text-[10px]")} title={text}>{text}</span>
+            </li>
+          )
+        })}
+      </ol>
+    </details>
+  )
+}
+
+function AgentFold({ summary, text }: { summary: string; text: string }) {
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none truncate text-muted-foreground hover:text-foreground">
+        <span className="font-medium">{summary}</span> <span className="group-open:hidden">— {text.split("\n")[0]}</span>
+      </summary>
+      <p className="mt-1 max-h-60 overflow-y-auto rounded bg-muted/40 p-1.5 leading-4 break-words whitespace-pre-wrap">{text}</p>
+    </details>
   )
 }
 
@@ -337,7 +513,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
 
 /* Source control and the Monaco diff are a chunk of their own: a reader who
    never opens Changes never downloads either. */
-const InspectorChanges = React.lazy(() => import("@/components/thread-view/inspector-changes"))
+const SourceControl = React.lazy(() => import("@/components/thread-view/source-control"))
 
 /**
  * The thread inspector — the column beside the transcript that reads the thread
@@ -466,7 +642,7 @@ export function ThreadInspector({
         <header className="flex shrink-0 items-center gap-1 border-b border-border/60 pt-[var(--dock-content-overlap,0px)] pr-1.5 pl-1">
           <TabsList variant="line" className="my-1 min-w-0 flex-1 justify-start overflow-x-auto">
             <TabsTrigger value="changes" className="text-xs">
-              Changes
+              Source Control
               {changes && changes.files.length > 0 && <TabCount>{changes.files.length}</TabCount>}
               {comments.length > 0 && (
                 <span
@@ -550,7 +726,7 @@ export function ThreadSection({
       </div>
     ) : (
       <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
-        <InspectorChanges
+        <SourceControl
           projectId={meta.projectId}
           sessionId={meta.id}
           turns={timeline}

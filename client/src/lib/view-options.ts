@@ -94,6 +94,8 @@ export interface ViewOptions {
   turnRail: boolean
   /** Favicon strips: the pages a step saw and the ones the answer cited. */
   showSources: boolean
+  /** Place grouped-tool and web-source strips on their heading row. */
+  showToolSourcesOnFirstRow: boolean
   /** The setting-change rows (`Mode: Plan → Build`) — mode, model, effort,
       profile, persona, agent, follow-ups, wherever in the thread they were
       changed. Off, a change still takes effect: the row is silent, not the
@@ -139,6 +141,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   stepDividers: false,
   turnRail: true,
   showSources: true,
+  showToolSourcesOnFirstRow: false,
   showConfigNotices: true,
   showTokens: false,
   calmMotion: false,

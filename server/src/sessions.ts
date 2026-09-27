@@ -1388,6 +1388,11 @@ export class SessionManager {
       parentSessionId: opts.parentSessionId,
       autonomy: opts.autonomy,
     });
+    /* Re-checked after the awaits above, and synchronously with the set: a
+       caller's "is it free" was asked before them, and two creates for one id
+       both passing it used to overwrite the map — leaking the first thread's
+       process where nothing could reach it again. */
+    if (this.sessions.has(session.id)) throw new HttpError("session already exists", 409);
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
     // to exist by the time the agent's first update arrives.
@@ -1737,14 +1742,19 @@ export class SessionManager {
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
     session.exited = false;
-    // Not every caller awaits `ready` (create() hands the promise to its route,
-    // respawn awaits it here). Attaching a handler now keeps a failed handshake
-    // from surfacing as an unhandled rejection; the real awaiter still sees it.
+    /* A failed handshake is collapsed HERE, for every caller — create, respawn,
+       fork. Only respawn and fork used to, so a `session/new` that errored or
+       timed out on a new thread left it `exited:false` on a dead bridge: every
+       send failed on it and its child lived until the idle sweep. The real
+       awaiter still sees the rejection; this handler also keeps it from
+       surfacing as an unhandled one. */
     bridge.ready.then(
       () => {
         if (session.bridge === bridge && !session.historyLost) session.journalClean = true;
       },
-      () => {},
+      (error: unknown) => {
+        if (session.bridge === bridge && !session.exited) this.collapse(session, bridge, describe(error));
+      },
     );
     this.wire(session, proc, bridge, profile.name, conn.shared);
     return bridge;
@@ -2610,14 +2620,9 @@ export class SessionManager {
         ...(choices && Object.keys(choices).length > 0 ? { configChoices: choices } : {}),
       });
       this.persist(session);
-      try {
-        await bridge.ready;
-      } catch (error) {
-        // A handshake that never finished leaves a thread that needs reviving —
-        // the caller turns this into an {error} the client can read.
-        if (session.bridge === bridge) this.collapse(session, bridge, describe(error));
-        throw error;
-      }
+      // A handshake that never finished leaves a thread that needs reviving —
+      // `start` has collapsed it, and the caller turns this into an {error}.
+      await bridge.ready;
     } finally {
       /* The load is over either way it went, and a flag left standing would
          silence the next turn's updates. */
@@ -2872,12 +2877,7 @@ export class SessionManager {
       modeId: child.modeId ?? undefined,
     });
     this.armDeadline(child);
-    try {
-      await childBridge.ready;
-    } catch (error) {
-      if (child.bridge === childBridge) this.collapse(child, childBridge, describe(error));
-      throw error;
-    }
+    await childBridge.ready; // collapsed by `start` if it fails
     /* Drawn, not followed: the only thing the transcript needs to say about a
        branch is where it came from, said once, above the prefix it carries. */
     this.emit(child, {

@@ -15,6 +15,7 @@ import { TaskProgress } from "@/components/tool-views/subagent"
 import {
   extractBackgroundTask,
   extractMcpCall,
+  formatMcpName,
   toolLanguage,
   toolOutputText,
 } from "@/lib/tools"
@@ -42,11 +43,11 @@ export function McpDetail({ item, active }: { item: ToolItem; active: boolean })
     <div className="space-y-2">
       <div className="flex items-center gap-1.5 text-[11px]">
         <PlugZapIcon className="size-3 shrink-0 text-muted-foreground/60" />
-        <span className="font-mono text-foreground">{call.server}</span>
+        <span className="font-mono text-foreground">{formatMcpName(call.server)}</span>
         {call.tool && (
           <>
             <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40" />
-            <span className="font-mono text-muted-foreground">{call.tool}</span>
+            <span className="font-mono text-muted-foreground">{formatMcpName(call.tool)}</span>
           </>
         )}
       </div>

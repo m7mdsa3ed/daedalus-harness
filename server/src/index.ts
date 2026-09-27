@@ -4,7 +4,7 @@ import { compress } from "hono/compress";
 import { shutdownTracing } from "./tracing.js";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { seedPersonas } from "./personas.js";
@@ -345,9 +345,17 @@ server.on("upgrade", (req, socket, head) => {
     // a transcript that begins in the middle, and a client that cannot ask for
     // the rest (`load_earlier`) must never be handed one.
     const window = Number(url.searchParams.get("window") ?? 0) || 0;
-    void sessions.attach(sessionId, ws, cursor, batch, { window }).then((refused) => {
-      if (refused) ws.close(4004, refused);
-    });
+    void sessions.attach(sessionId, ws, cursor, batch, { window }).then(
+      (refused) => {
+        if (refused) ws.close(4004, refused);
+      },
+      (error: unknown) => {
+        console.error(`[ws] attach failed for thread ${sessionId}:`, error);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(1011, "Thread attach failed; see server logs");
+        }
+      },
+    );
   });
 });
 
