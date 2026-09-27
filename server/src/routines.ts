@@ -868,13 +868,14 @@ export class RoutineEngine {
        run that had not been written. */
     await this.insert(run);
 
+    this.runs.set(run.id, run);
     const refusal = (await this.preflight(run)) ?? (await this.quotaFloor(run));
     if (refusal) {
       await this.close(run, "skipped", refusal);
+      this.runs.delete(run.id);
       return (await getRun(run.id))!;
     }
 
-    this.runs.set(run.id, run);
     /* `overlap: "queue"` waits for the routine's live run before it takes a
        slot. It waits in the driver rather than here so a queued fire is a row
        on the list immediately — with no `session_id` yet, which is exactly what
@@ -1229,7 +1230,7 @@ export class RoutineEngine {
     run.status = status;
     run.error = error;
     run.endedAt = Date.now();
-    this.persist(run);
+    await this.persist(run);
     if (opts.retire) this.manager.retire(opts.retire);
     /* One run completed is what opens the blanket-`allow` gate. Written for a
        dry run too — that is the whole point of the dry run — but never for a

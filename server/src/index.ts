@@ -132,7 +132,7 @@ await sessions.turnChanges.closeOrphans();
    Runs the last process left "running" are closed first — nothing survived it. */
 workflows = new WorkflowRunner(sessions, { port: config.port });
 sessions.setWorkflowRunner(workflows);
-workflows.recoverAtBoot();
+await workflows.recoverAtBoot();
 /* The routine engine (routines.ts) — a saved thread-start that fires on its
    own. After the workflow runner because a workflow-bodied routine hands its
    run's thread to it, and neither can be given the other at its own
@@ -145,7 +145,7 @@ routines = new RoutineEngine(sessions, {
   workflows,
   notify: (title, body, data) => push.send(title, body, data).catch(console.error),
 });
-routines.recoverAtBoot();
+await routines.recoverAtBoot();
 /* The `git` trigger kind (routine-git-trigger.ts): a project watcher that fires
    a routine when the repository under it moves. Separate from the scheduler
    because it has no clock — it is woken by the filesystem, not by a sweep — and

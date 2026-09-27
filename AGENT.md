@@ -36,8 +36,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - `tsconfig` uses `erasableSyntaxOnly` — no TS constructor parameter properties.
 - eslint crashes at startup (typescript-eslint vs typescript 7 — pre-existing).
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** No migration files
-  exist. **A table push does not know about is a table push drops** — anything the server
-  reads must be declared there. The FTS5 index is the one exception.
+  exist. The wrapper writes a full `pg_dump` to `server/data/backups/` before Drizzle's
+  interactive push; it refuses to change schema if backup fails. Restore with
+  `pnpm db:import <dump.sql>` (replacement). **A table push does not know about is a table
+  push drops** — anything the server reads must be declared there. The FTS index is maintained
+  outside Drizzle.
 - **Agents spawn by their globally installed binary, never `npx`** (~0.4s vs ~3.2s, and a
   thread spawns on create, revive and every profile/model change). codex-acp **≥ 1.12.0**,
   claude-agent-acp **≥ 0.78.0** — the release both adapters put the tool's own name on the

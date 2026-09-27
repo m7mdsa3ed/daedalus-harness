@@ -452,7 +452,7 @@ await test("recoverAtBoot closes what the last process left running", async () =
     } as never)
     ;
   const fresh = new RoutineEngine(manager, { port: 4998 });
-  fresh.recoverAtBoot();
+  await fresh.recoverAtBoot();
   fresh.shutdown();
   const row = (await getRun("stale"))!;
   // Failed and dated, not left running: a row that says running with no

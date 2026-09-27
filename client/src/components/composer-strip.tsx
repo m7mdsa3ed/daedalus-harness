@@ -41,36 +41,16 @@
    into one table — so the vocabulary is the connection's and this file stays as
    generic as it was.
 
-   ── The shelf is a pile of cards, one in front ──
-   Left to itself the shelf grew a row per concern — archive notice, draft
-   scope, todo list, history notice, command menu — and stacked rows push the
-   composer up the screen and turn a glance into a read. One collapsed line of
-   middot-joined labels traded that for a sentence nobody could click a *part*
-   of; a rail of chips over one open row fixed the clicking and cost a flat
-   34px of chrome whether the shelf held two rows or six, spent on naming rows
-   that were already sitting right there.
+   ── The shelf is a selector rail and one reading panel ──
+   Several transient concerns used to overlap as a stack of cards, with inactive
+   cards reduced to icon-only slivers. The rail now names every active concern
+   and its count; selecting a tab replaces the single panel below it. That makes
+   the choices discoverable, gives each one a proper touch target, and keeps the
+   shelf's height independent of how many rows are waiting.
 
-   So the shelf is a **pile**: every row is a card, they all share one box, and
-   the one in front is open. The cards behind are lifted by a **peek** and show
-   nothing but their own icon in that sliver — which is the chip, lying down.
-   Clicking a sliver brings that card to the front. Two rows cost one peek, and
-   the pile stops growing at three behind, so the chrome is 14–42px where the
-   rail was always 35 and the "what else is on the shelf" question is answered
-   by looking rather than by reading labels.
-
-   The peek is icon-only because 14px is what a pile can afford and a 12px icon
-   is the largest thing that fits under a 16.5px line box — so every sliver
-   carries `title` and `aria-label`, which is the rule for any icon-only
-   control. On a coarse pointer it is 20px, because the sliver is the tap
-   target.
-
-   Cards are **height-normalised to the front one** (the trick the toast pile
-   uses, `ui/toast.tsx`): a card shorter than the front card would be swallowed
-   whole and no amount of lifting would expose it. So every card is the front
-   card's height, its own body `hidden` until it is the front — hidden, never
-   unmounted, because the children are what register the slivers the pile is
-   made of and a row that unmounted when it was not in front would delete its
-   own sliver, and `hidden` keeps a card behind out of the tab order too.
+   Panels stay mounted because their children register the summaries that fill
+   the rail. Only the selected panel is visible or in the tab order. A lone row
+   skips the selector entirely and keeps its direct, familiar presentation.
 
    ── Slots ──
    The strip does not know what its children are — that is the point of it — but
@@ -81,52 +61,13 @@
 
    ── Motion ──
    The shelf sits under the composer in the layout, so every height change here
-   moves the transcript above it. They are all one measured transition: the
-   front card's height is observed and animated on the box, which covers
-   opening, closing, switching between cards of different heights, and a card
-   that grows under you (a checklist gaining a step). The cards themselves ride
-   one transform each, so bringing one forward is the pile settling rather than
-   four rows redrawing. Everything is off under `prefers-reduced-motion` (see
+   moves the transcript above it. The selected panel is measured and the box
+   animates to its height; switching rows or growing content moves the composer
+   as one unit. Everything is off under `prefers-reduced-motion` (see
    `.harness-strip-*` in index.css). */
 import * as React from "react"
 
-import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
-
-/* ── Chip badge ──
-   A small count or indicator that sits at the end of a chip label, or — on a
-   sliver, where there is no label — the chip itself, with the row's own mark
-   inside it. Used to surface live counts (queued messages, attachments,
-   subagents) without requiring the row to be open. Renders as a tiny pill with
-   the mark and a number inside. */
-function ChipBadge({
-  count,
-  icon: Icon,
-  className,
-}: {
-  count?: number
-  /** The row's mark, drawn inside the pill. Absent for a row that names none,
-      which still gets the capsule so the pile stays a column of chips. */
-  icon?: React.ComponentType<{ className?: string }>
-  className?: string
-}) {
-  if (!Icon && (count == null || count <= 0)) return null
-  return (
-    <span
-      className={cn(
-        "inline-flex h-3.5 min-w-3.5 items-center justify-center gap-0.5 rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums leading-none text-primary",
-        className
-      )}
-    >
-      {Icon ? (
-        <Icon className="size-2.5" />
-      ) : (
-        <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/60" />
-      )}
-      {count != null && count > 0 && (count > 99 ? "99+" : count)}
-    </span>
-  )
-}
 
 /** What a row tells the strip about itself, so the strip can speak for it. */
 type StripSummary = {
@@ -276,17 +217,9 @@ const TONE_GROUND: Record<StripTone, string> = {
   error: "bg-shelf-error",
 }
 
-/* How tall a sliver is. Fine pointer: 14px, the largest peek that still beats
-   the rail's flat 35px at three rows, and just enough for the 12px icon.
-   Coarse: 20px, because on a touch device the sliver is the tap target. */
-const PEEK_FINE = 14
-const PEEK_COARSE = 20
-
-/* How deep the pile draws. Past this the cards sit at the same offset — a
-   fourth sliver is 14px that says "and more", a seventh is the composer
-   halfway up the screen. Base UI's toast pile stops at three for the same
-   reason. */
-const MAX_DEPTH = 3
+/* The narrow layout's horizontal selector rail and the gap before its panel. */
+const RAIL_HEIGHT = 32
+const RAIL_GAP = 6
 
 /* The shelf's own bottom edge, hidden behind the composer. Must stay in step
    with the `pb-4` it is spelled on: the box has to reserve it, and the pile's
@@ -294,12 +227,7 @@ const MAX_DEPTH = 3
    when there is one, the cards when there is not. Two things wearing it would
    reserve it twice. */
 const TUCK = 16
-
-/* How long the shelf takes to fold away before it is taken out of the layout.
-   A little longer than the box's own transition (`.harness-strip-panel`,
-   280ms) — the stow is what keeps a 0-height shelf from leaving its ring and
-   its tucked padding behind the composer, and taking it away early cuts the
-   fold off halfway. */
+/* Keep an empty shelf mounted until its measured height has folded away. */
 const STOW_MS = 320
 
 export function ComposerStrip({
@@ -322,12 +250,12 @@ export function ComposerStrip({
   tone?: StripTone
 }) {
   const [entries, setEntries] = React.useState<StripEntry[]>([])
+  const stripRef = React.useRef<HTMLDivElement>(null)
+  const [wideLayout, setWideLayout] = React.useState(false)
   /** The card the user last brought forward. Urgency outranks it; it is
       remembered underneath, so a command menu that comes and goes gives the
       shelf back. */
   const [picked, setPicked] = React.useState<string | null>(null)
-  const coarse = useCoarsePointer()
-  const peek = coarse ? PEEK_COARSE : PEEK_FINE
   /* The surface, once, for the three places a card is seen: the front card, a
      card behind's sliver, and the box itself on the way down. The footer spells
      it inline — it is the one that must stay put when there is no signal to
@@ -361,6 +289,16 @@ export function ComposerStrip({
   }, [])
 
   const context = React.useMemo(() => ({ register, unregister }), [register, unregister])
+
+  React.useEffect(() => {
+    const el = stripRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => {
+      setWideLayout(entry.contentRect.width >= 560)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   /* One card is already its own best summary: folding a single checklist behind
      a sliver adds a click to what was a glance. So a shelf holding one row is
@@ -452,152 +390,55 @@ export function ComposerStrip({
     return () => clearTimeout(timer)
   }, [empty])
 
-  /* Where each card sits. The front one is at depth 0 and the rest keep their
-     rank order behind it — `sort` is stable, so moving one card to the front is
-     the only thing this comparator does. `z` is the raw position, not the
-     clamped depth: past MAX_DEPTH the cards share an offset, and two cards at
-     the same offset still have to paint in an order. */
-  const pile = React.useMemo(() => {
-    const order = [...entries].sort(
-      (a, b) => Number(b.id === activeId) - Number(a.id === activeId)
-    )
-    return new Map(
-      order.map((entry, index) => [
-        entry.id,
-        { depth: Math.min(index, MAX_DEPTH), z: order.length - index },
-      ])
-    )
-  }, [entries, activeId])
-
-  const behind = Math.min(Math.max(entries.length - 1, 0), MAX_DEPTH)
+  /* The selector is horizontal in a narrow panel and becomes a vertical rail
+     in a wider panel. The measurement follows the panel, not the viewport. */
+  const railHeight = many && !wideLayout ? RAIL_HEIGHT + RAIL_GAP : 0
   /* The tuck belongs to whatever is last. With a footer the cards stand ON it
      rather than on the composer, so they stop reserving a bottom edge nothing
      covers — and the footer takes the `pb-4` instead. */
   const tuck = footer ? 0 : TUCK
-  const cardHeight = bodyHeight + tuck
-  const height = (entries.length === 0 ? 0 : cardHeight + behind * peek) + footerHeight
+  const height = (entries.length === 0 ? 0 : railHeight + bodyHeight + tuck) + footerHeight
 
-  /* Arrow keys walk the slivers, the way they walk any stack. Sorted by where
-     they actually are rather than by DOM order — the cards are drawn in pile
-     order and mounted in child order, and an Up that went to the sliver *below*
-     is a control that lies. Focus only: moving through the pile should not
-     bring four cards forward on the way past. */
-  const onSliverKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return
-    const box = event.currentTarget
-    const slivers = [...box.querySelectorAll<HTMLElement>("[data-chip]")].sort(
-      (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top
-    )
-    const index = slivers.indexOf(document.activeElement as HTMLElement)
+  const onRailKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+    const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=tab]")]
+    const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
     if (index === -1) return
     event.preventDefault()
-    const step = event.key === "ArrowDown" ? 1 : -1
-    slivers[(index + step + slivers.length) % slivers.length]?.focus()
+    const step = event.key === "ArrowRight" ? 1 : -1
+    const next = tabs[(index + step + tabs.length) % tabs.length]
+    next?.focus()
+    next?.click()
   }
 
-  /* One card per child, in the order they were written — position is a
-     transform, never a reorder of the DOM, so bringing a card forward does not
-     remount the row inside it. The key is the one `Children.toArray` assigns,
-     which counts the conditional children that render nothing, so a notice
-     appearing above the scope row shifts nobody's identity. A child that
-     registered nothing has no card: it is a row that returned null. */
+  /* Keep every row mounted so it can keep reporting its summary, but show only
+     the selected panel. Unlike the old overlapping pile, every panel starts at
+     the same place under the selector rail. */
   const cards = React.Children.toArray(children).map((child, index) => {
     const entry = entries.find((item) => item.slot === index)
-    const place = entry ? pile.get(entry.id) : undefined
     const front = entry != null && entry.id === activeId
-    const scale = place ? 1 - place.depth * 0.02 : 1
-    /* The lift is the peek *plus* what the scale took off the top: scaling from
-       the bottom edge pulls the top edge down by `(1-scale) * height`, and a
-       pile that did not add it back would show a sliver thinner than the one
-       above it. Same compensation the toast pile spells as `--shrink`. */
-    const lift = place ? place.depth * peek + (1 - scale) * cardHeight : 0
-    const Icon = entry?.icon
     return (
       <div
         key={React.isValidElement(child) ? (child.key ?? index) : index}
+        id={entry ? `composer-strip-panel-${entry.id}` : undefined}
+        role={many && entry ? "tabpanel" : undefined}
+        aria-labelledby={many && entry ? `composer-strip-tab-${entry.id}` : undefined}
         data-strip-slot=""
         data-front={front ? "" : undefined}
+        hidden={!front}
         className={cn(
-          "harness-strip-card absolute inset-x-0 origin-bottom overflow-hidden rounded-t-xl",
-          !footer && "pb-4",
-          /* Only the front card wears the surface. A card behind is covered by
-             it everywhere except its own sliver, so tinting the whole box would
-             stack three 70% washes into a 97% slab — an opaque one, in an app
-             where every raised surface is frosted. The sliver carries the
-             surface for the card it belongs to; the rest of that card is a
-             transparent box holding a mounted row. */
-          front && cn("backdrop-blur-sm", ground),
-          !place && "hidden"
+          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-xl",
+          front && cn("backdrop-blur-sm", ground)
         )}
-        style={
-          place
-            ? {
-                // The pile stands on the footer, not on the box's floor.
-                bottom: footerHeight,
-                height: cardHeight,
-                zIndex: place.z,
-                transform: `translate3d(0, ${-lift}px, 0) scale(${scale})`,
-              }
-            : undefined
-        }
+        style={{ top: railHeight, bottom: footerHeight + tuck }}
       >
-        {/* The sliver. Absolutely placed rather than a header in the flow, so a
-            card coming forward does not shove its own contents down by 14px on
-            the way. Only a card behind draws one — the front card is the open
-            one, and a button to bring forward the card that is already forward
-            is a button that does nothing. */}
-        {entry && !front && (
-          <button
-            type="button"
-            data-chip={entry.id}
-            aria-label={entry.label}
-            title={entry.label}
-            onClick={() => setPicked(entry.id)}
-            style={{ height: peek }}
-            className={cn(
-              "absolute inset-x-0 top-0 flex items-center gap-1.5 rounded-t-xl px-2.5 text-muted-foreground",
-              /* The sliver is the card's surface, since it is the only part of
-                 the card anyone sees, and it draws no ring: the seam to the
-                 card in front is the two grounds meeting, not a hairline. */
-              "backdrop-blur-sm",
-              ground,
-              "transition-colors hover:bg-accent/40 hover:text-foreground",
-              "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-            )}
-          >
-            {/* The mark rides inside the pill, the same face every reading on
-                the shelf's floor wears — a 12px mark inside a grey capsule. A
-                row that names no icon still gets the capsule, so the pile is a
-                column of chips rather than an icon and a bare number beside it.
-                A count reads at this size and the label does not, which is what
-                `title` is for; the badge is deliberately smaller than the
-                floor's, since the whole sliver is 14px. */}
-            <ChipBadge count={entry.badge} icon={Icon} className="h-3 min-w-3 text-[8px]" />
-          </button>
-        )}
-        {/* The shelf may not eat the screen. An expanded queue of ten messages,
-            or a forty-step checklist, is taller than the panel — and the strip
-            sits *under* the composer in the layout, so what a too-tall shelf
-            pushes off the bottom is the thing you were typing into. Capped as a
-            fraction of the panel (`--panel-h`, falling back to the viewport
-            outside the dock), the overflow scrolls inside the card instead.
-            `overscroll-contain` keeps that scroll off the transcript. The
-            *fraction* is still the device's: a soft keyboard takes half the
-            screen with it. This is also the element the height above is read
-            from, so what is animated is the capped height and not the
-            content's.
-
-            `hidden` on a card that is not in front: it keeps the child mounted
-            (it is what registers the sliver) while taking its buttons out of
-            the tab order and its scroll out of reach — everything below the
-            sliver is behind the front card anyway. */}
         <div
           ref={front ? bodyRef : undefined}
           data-strip-body=""
           data-front={front ? "" : undefined}
           className={cn(
             "max-h-[calc(var(--panel-h,100svh)*0.45)] overflow-y-auto overscroll-contain sm:max-h-[calc(var(--panel-h,100svh)*0.6)]",
-            !front && "hidden"
+            entry && !front && "hidden"
           )}
         >
           <SlotContext.Provider value={index}>{child}</SlotContext.Provider>
@@ -609,27 +450,22 @@ export function ComposerStrip({
   return (
     <StripContext.Provider value={context}>
       <div
+        ref={stripRef}
         data-slot="composer-strip"
-        role={many ? "group" : undefined}
-        aria-label={many ? "Composer shelf" : undefined}
-        onKeyDown={many ? onSliverKeyDown : undefined}
+        data-wide={wideLayout ? "" : undefined}
         style={{ height }}
         className={cn(
-          // harness-strip-panel: the box's height, which is the front card's
-          // plus one peek per card behind it. Everything above the shelf moves
-          // with it, so it is one transition rather than four.
+          // The selector rail and selected panel share one measured height
+          // transition, so changing rows does not jump the composer or transcript.
           "harness-strip-panel relative",
-          // isolate: the cards carry a z-index and the composer is `relative
-          // z-10` beside this box. Without a stacking context of its own the
-          // pile would paint over the thing it is attached to.
+          many && wideLayout && "pl-36",
+          // isolate: the composer is `relative z-10` beside this box. Without a
+          // stacking context, the shelf could paint over the thing it attaches to.
           "isolate",
           // -mb-4: the shelf's own bottom four units (the `pb-4` on the footer,
-          // or on the cards when there is none — TUCK above) sit behind the
-          // composer, which is what makes the seam disappear. Keep the three in
-          // step.
-          // The shelf wears the `--surface` token against the composer's
-          // `--composer`, so the two read as separate objects with a visible
-          // seam rather than one flat band.
+          // or on the panel when there is none — TUCK above) sit behind the composer.
+          // The shelf wears its own tone surface against the composer, preserving
+          // the tuck and distinguishing the strip from the input card.
           // Width follows the composer: minus whatever the composer actually is
           // (capped when there is room, 100% of the container when there is not)
           // the strip stays narrower, so it reads as tucked behind rather than
@@ -653,9 +489,52 @@ export function ComposerStrip({
         )}
         {...props}
       >
-        {/* -1 while the shelf is one card: a lone row keeps its own default,
-            which is closed, because nobody brought it forward and there is no
-            sliver saying what it holds. */}
+        {many && (
+          <div
+            role="tablist"
+            aria-label="Composer shelf"
+            onKeyDown={onRailKeyDown}
+            className={cn(
+              "absolute z-20 flex min-w-0 gap-1",
+              wideLayout
+                ? "inset-y-0 left-0 w-32 flex-col items-stretch overflow-y-auto rounded-tl-xl px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                : "inset-x-0 top-0 h-8 flex-row items-center overflow-x-auto rounded-t-xl px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            )}
+          >
+            {entries.map((entry) => {
+              const Icon = entry.icon
+              const selected = entry.id === activeId
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  id={`composer-strip-tab-${entry.id}`}
+                  role="tab"
+                  aria-selected={selected}
+                  aria-controls={`composer-strip-panel-${entry.id}`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => setPicked(entry.id)}
+                  className={cn(
+                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-2 text-left text-[11px] font-medium transition-colors",
+                    wideLayout && "w-full justify-start",
+                    selected
+                      ? "bg-composer text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                    "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  )}
+                >
+                  {Icon && <Icon className="size-3.5 shrink-0" />}
+                  <span className="max-w-36 truncate">{entry.label}</span>
+                  {entry.badge != null && entry.badge > 0 && (
+                    <span className="rounded-full bg-primary/15 px-1.5 text-[9px] tabular-nums text-primary">
+                      {entry.badge > 99 ? "99+" : entry.badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <OpenSlotContext.Provider value={many ? activeSlot : -1}>{cards}</OpenSlotContext.Provider>
         {/* The floor of the shelf. It wears the surface the way a card does,
             and squares its top off the moment a card stands on it — a rounded
@@ -693,8 +572,6 @@ export function ComposerStrip({
     </StripContext.Provider>
   )
 }
-
-export { ChipBadge }
 
 /** One card in the pile. Rows divide themselves so the strip stays layout-only.
  *

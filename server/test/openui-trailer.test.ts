@@ -72,7 +72,9 @@ const persona = { id: "p1", prompt: "PERSONA TEXT", thinking: null };
   assert.ok(OPENUI_INSTRUCTIONS.includes("exactly one fenced code block tagged `openui-lang`"), "requires the client-recognized fence");
   assert.ok(OPENUI_INSTRUCTIONS.includes("never emit OpenUI statements as unfenced prose"), "prevents raw OpenUI output");
   assert.ok(
-    OPENUI_INSTRUCTIONS.includes("StatRow(") && OPENUI_INSTRUCTIONS.includes("Chart("),
+    OPENUI_INSTRUCTIONS.includes("StatRow(") &&
+      OPENUI_INSTRUCTIONS.includes("Chart(") &&
+      OPENUI_INSTRUCTIONS.includes("Flowchart("),
     "and carries the generated component table, so every runtime gets the same one",
   );
   console.log("openui-trailer: instructions ok");

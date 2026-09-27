@@ -322,8 +322,17 @@ export function reducer(state: State, action: Action): State {
             : s
         ),
       }
-    case "thread-reset":
-      return { ...state, threads: { ...state.threads, [action.id]: action.thread } }
+    case "thread-reset": {
+      /* A replay buffers this reset until `caught_up`, while the socket can
+         become live before that batch commits. Keep the phase the connection
+         reducer has since written rather than restoring the stale phase that
+         was captured when the replay began. */
+      const phase = thread(state, action.id).phase
+      return {
+        ...state,
+        threads: { ...state.threads, [action.id]: { ...action.thread, phase } },
+      }
+    }
     case "thread-window":
       return withThread(state, action.id, {
         ...(action.archived !== undefined ? { archived: action.archived } : {}),

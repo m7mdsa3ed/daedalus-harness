@@ -19,18 +19,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   bearer-token auth, the event log (reconnect/replay), and FCM push.
   `data/` holds secrets — gitignored, never commit.
 
-## Storage: SQLite via Drizzle
+## Storage: PostgreSQL via Drizzle
 
-- **Storage is SQLite via Drizzle** (`server/src/db/`), not JSON files.
-  `data/daedalus.db`, opened with better-sqlite3 — chosen over `node:sqlite`/libsql because
-  it is what Drizzle's Node driver binds to *and* it is synchronous, and `getProfile`/
-  `getAgent`/`listProjects` are called from sync paths (`spawnAgent` builds a child's env from
-  all three). Every query goes through the `db` exported by `db/index.ts`, so the driver is
-  swappable in one file. **The schema is `db/schema.ts`, pushed — there are no migration
-  files.** `pnpm db:push` after a schema change; a database that has never been opened gets
-  the whole schema at boot (`ensureSchema` in `db/index.ts` runs `drizzle-kit push` once), so
-  a first install and every test run need nothing by hand. A pre-SQLite install is imported once on first boot
-  and its files kept as `*.json.imported` (`importLegacyJson`). Two things the JSON could not
+- **Storage is PostgreSQL via Drizzle** (`server/src/db/`), not JSON files.
+  `data/config.json` (or `DATABASE_URL`) selects the database. Every query goes through the
+  `db` exported by `db/index.ts`, and database work is asynchronous. **The schema is
+  `db/schema.ts`, pushed — there are no migration files.** `pnpm db:push` first writes a
+  complete `pg_dump` to `server/data/backups/pre-push-<timestamp>.sql`, then runs Drizzle's
+  schema diff. If `pg_dump` is unavailable or fails, no schema change is attempted. A fresh
+  database gets the whole schema at boot (`ensureSchema` in `db/index.ts`); an existing one
+  is never pushed silently by the server. A pre-Postgres install's SQLite database is
+  imported once on first boot and retained as `daedalus.db.migrated`. Two things the JSON could not
   express: a profile's and a session's MCP/skill/command links are **join tables with
   `ON DELETE CASCADE`** (`profile_*`, `session_*`), so a dangling id cannot exist and nothing
   filters for one any more; and the **event log is a
@@ -41,8 +40,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   streaming turn is thousands of events, and the serialization belongs off the emit path);
   every read and every delete flushes first, so nothing can observe a log missing its
   newest events. `data/config.json`
-  is the deliberate holdout — bootstrap (host/port/token/FCM path), hand-editable, and needed
-  before any database exists.
+  is the deliberate holdout — bootstrap (host/port/token/FCM path/database URL), hand-editable,
+  and needed before any database exists.
 
 ## The agent runtime (`agent/`)
 
@@ -198,7 +197,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   lets the env win for `host`/`port` and *only* those — token, FCM and idle timeout stay the
   file's, and the token-seeding write puts the file's own port back rather than persisting
   the override. One instance, fork mode: the agent child processes, the WebSocket peers and
-  the SQLite handle are owned by this process, and a cluster fork could not see another
+  the Postgres pool belongs to this process, and a cluster fork could not see another
   fork's bridges.
 
 - **The client deploys on Vercel as `vite build`, never `tsc -b`** (`client/vercel.json`).
@@ -213,19 +212,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## Schema changes
 
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** That is the whole
-  path — no migration files are generated or committed, and nothing applies SQL at boot to a
-  database that already has a schema (`ensureSchema` pushes only into a database that has
-  none). Push diffs `schema.ts` against the live database and asks before anything
-  destructive, which is why a booting server does not run it on its own. Two objects sit
-  outside it: the FTS5 search index is a virtual table drizzle-kit can neither model nor
-  survive meeting (it read the shadow tables as unknown, dropped the index with them and then
-  crashed on a shadow it had already taken), so `drizzle.config.ts` hides
-  `session_events_fts*` from push (`tablesFilter`) and `db/index.ts` creates it on every boot
-  with `IF NOT EXISTS`; and a table push does not know about is a table push **drops**
-  (`search_meta` was lost that way before it moved into `schema.ts`), so anything the server
-  reads must be declared there. Custom migration files are for the day a change cannot be
-  expressed as a schema diff — a data rewrite, a rename push would see as drop-and-add — and
-  none exists today. `pnpm db:studio` browses the database.
+  path — no migration files are generated or committed, and nothing applies SQL at boot to an
+  existing database (`ensureSchema` creates the initial schema only). The `db:push` wrapper
+  (`server/scripts/db-push.mjs`) first writes a complete `pg_dump` under
+  `server/data/backups/pre-push-<timestamp>.sql`; it refuses to push if the backup fails, then
+  invokes Drizzle's interactive diff. Restore with `pnpm db:import <dump.sql>` (replacement,
+  not merge). Two objects sit outside the schema: the full-text search index is maintained in
+  `db/index.ts`/`search.ts` and hidden from Drizzle's push, and the table push does not know
+  about may be **dropped**, so every table the server reads must be declared in `schema.ts`.
+  Custom migration files are for changes that cannot be expressed as a schema diff — a data
+  rewrite or a rename Drizzle would see as drop-and-add. `pnpm db:studio` browses the database.
 
 ## The PWA dev tunnel
 

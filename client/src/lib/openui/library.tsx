@@ -788,40 +788,54 @@ function Figure({ code, narrowCode, caption }: { code: string; narrowCode?: stri
 
 /** A graph written as what it is — nodes and edges — rather than as mermaid
     source: mermaid's syntax is one more thing to get wrong. */
-const Diagram = defineComponent({
-  name: "Diagram",
-  description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
-  props: z.object({
-    nodes: z.array(
-      z.object({
-        id: z.string(),
-        label: z.string().optional(),
-        shape: z.enum(["box", "round", "diamond", "circle"]).optional(),
-      })
-    ),
-    edges: z.array(
-      z.object({
-        from: z.string(),
-        to: z.string(),
-        label: z.string().optional(),
-        dashed: z.boolean().optional(),
-      })
-    ),
-    direction: z.enum(["down", "right"]).optional(),
-    caption: z.string().optional(),
-  }),
-  /* A pipeline drawn sideways on a phone is a strip of 6px text; below
-     `@panel-sm` it is drawn top-down, which is the one shape a column keeps. */
-  component: ({ props }) => (
+const graphProps = z.object({
+  nodes: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string().optional(),
+      shape: z.enum(["box", "round", "diamond", "circle"]).optional(),
+    })
+  ),
+  edges: z.array(
+    z.object({
+      from: z.string(),
+      to: z.string(),
+      label: z.string().optional(),
+      dashed: z.boolean().optional(),
+    })
+  ),
+  direction: z.enum(["down", "right"]).optional(),
+  caption: z.string().optional(),
+})
+
+/* A pipeline drawn sideways on a phone is a strip of 6px text; below
+   `@panel-sm` it is drawn top-down, which is the one shape a column keeps. */
+function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
+  return (
     <Figure
       code={diagramToMermaid(props.nodes, props.edges, props.direction ?? "down")}
       narrowCode={props.direction === "right" ? diagramToMermaid(props.nodes, props.edges, "down") : undefined}
       caption={props.caption}
     />
-  ),
+  )
+}
+
+const Flowchart = defineComponent({
+  name: "Flowchart",
+  description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
+  props: graphProps,
+  component: GraphFigure,
 })
 
-/** Mermaid source, drawn. The escape hatch for what `Diagram` cannot spell. */
+/** Backwards-compatible name for Flowchart. */
+const Diagram = defineComponent({
+  name: "Diagram",
+  description: "An alias for Flowchart: give nodes and edges, with each edge joining two node ids.",
+  props: graphProps,
+  component: GraphFigure,
+})
+
+/** Mermaid source, drawn. The escape hatch for what `Flowchart` cannot spell. */
 const Mermaid = defineComponent({
   name: "Mermaid",
   description: "A diagram written in Mermaid syntax (sequence, state, class, gantt, flowchart).",
@@ -1113,10 +1127,10 @@ export const openuiLibrary = createLibrary({
     },
     {
       name: "Diagrams",
-      components: ["Diagram", "Mermaid"],
+      components: ["Flowchart", "Diagram", "Mermaid"],
       notes: [
-        "- Diagram is the default: give nodes and edges, never Mermaid syntax. Every edge's `from`/`to` must be a node's `id`.",
-        "- Mermaid only for what Diagram cannot spell — a sequence, a state machine, a gantt. Write the diagram type on the first line.",
+        "- Flowchart is the default: give nodes and edges, never Mermaid syntax. Every edge's `from`/`to` must be a node's `id`; Diagram is a backwards-compatible alias.",
+        "- Mermaid only for what Flowchart cannot spell — a sequence, a state machine, a gantt. Write the diagram type on the first line.",
         '- Keep a diagram under ~12 nodes and use direction "right" for a pipeline, "down" for a hierarchy; a wide graph does not survive a narrow panel.',
       ],
     },

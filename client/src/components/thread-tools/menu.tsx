@@ -213,7 +213,18 @@ export function ThreadToolsMenu({
             {...common}
             title="MCP servers"
             icon={<ServerIcon className={iconClass} />}
-            items={mcpServers}
+            items={mcpServers.filter((server) => server.type !== "builtin")}
+            hint={mcpSubtitle}
+            inherited={inherited.mcpServerIds}
+            own={own.mcpServerIds}
+            unreadable={unreadable("mcpServerIds")}
+            onToggle={(id, on) => toggle("mcpServerIds", id, on)}
+          />
+          <ToolSection
+            {...common}
+            title="Built-in tools"
+            icon={<WrenchIcon className={iconClass} />}
+            items={mcpServers.filter((server) => server.type === "builtin")}
             hint={mcpSubtitle}
             inherited={inherited.mcpServerIds}
             own={own.mcpServerIds}

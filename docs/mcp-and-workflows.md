@@ -511,9 +511,11 @@ beside Import in Settings › MCP.
   a phone told "turn finished" per step is told it five times for one workflow), and the
   idle sweep in the constructor now skips a session mid-turn (`bridge.promptActive`) and
   every child — a parent blocked inside a workflow call with no browser open was being
-  retired under it. Nothing survives a restart (every step thread was this process's child):
-  `recoverAtBoot` marks the running rows failed and journals `disconnected` on each parent,
-  so a reopened thread shows the steps as disconnected rather than forever running.
+  retired under it. Child threads and queues are stored durably, but their live drivers are
+  process-local. On restart, `recoverAtBoot` marks in-flight runs failed and journals
+  `disconnected` on each parent instead of replaying prompts whose side effects may already
+  have happened. Boot awaits this recovery before starting schedulers, so a due fire cannot
+  race an unfinished recovery.
   `pnpm test:workflow-schema` is the pure half; `pnpm test:workflow` drives the engine
   against the fake agent (`echo:` prompts).
 

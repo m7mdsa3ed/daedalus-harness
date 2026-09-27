@@ -128,13 +128,10 @@ export async function closeDb(): Promise<void> {
  * The schema is `schema.ts`, pushed — there are no migration files.
  *
  * A database that has never been pushed to (a first install, every test run)
- * is given the whole schema here by running `drizzle-kit push` once, so
- * nothing has to be done by hand before the first boot. A database that
- * already has one is left alone: after a `schema.ts` change the operator runs
- * `pnpm db:push` (`pm2:start` does it before restarting), which shows what it
- * is about to change and asks before anything destructive — a step a server
- * booting under a process manager must not take on its own, silently, on
- * whatever schema it was started with.
+ * is given the whole schema here by running `drizzle-kit push` once. Existing
+ * databases are left alone at boot. For a schema change, `pnpm db:push` first
+ * captures a full `pg_dump` under `data/backups/`, then runs Drizzle's diff;
+ * the server never pushes a new schema silently on boot.
  *
  * The full-text index over the journal is the one object push does not manage
  * (drizzle.config.ts hides it), so it is created here, idempotently, on every

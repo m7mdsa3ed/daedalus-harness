@@ -1181,20 +1181,10 @@
   transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* A card in the pile. `transform` is the whole of where it sits — lift and
-   scale, both set inline — so bringing one forward is one compositor move and
-   never a reflow of the rows around it. `height` rides along because every
-   card is normalised to the front one's, so a checklist gaining a step grows
-   the cards behind it in step with the box.
-
-   Nothing else here may write `transform` on this element: the pile's position
-   lives there, and an animation that set it would drop the card to the bottom
-   of the stack for its duration. */
+/* The active panel changes without moving the selector rail. The shelf itself
+   animates its measured height; panel opacity signals the selected content. */
 .harness-strip-card {
-  transition:
-    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* The row arriving in front. Attribute-driven, not mount-driven: the bodies

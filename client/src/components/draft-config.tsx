@@ -1,7 +1,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { useQuery } from "@tanstack/react-query"
-import { BotIcon, GitBranchIcon, Loader2, RefreshCwIcon } from "lucide-react"
+import { BotIcon, GitBranchIcon, GlobeIcon, Loader2, PlugIcon, RefreshCwIcon, TerminalIcon } from "lucide-react"
 import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -38,8 +38,9 @@ import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions, useProbeStatus } from "@/lib/agent-options"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
-import { profileSupports, type SessionMeta } from "@/lib/settings"
-import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { mcpSubtitle, profileSupports, type SessionMeta } from "@/lib/settings"
+import { useAgents, useMcpServers, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { chipClass, ChipBody } from "@/components/inline-chip"
 import { gitReposKey } from "@/lib/queries/keys"
 import { useServer } from "@/lib/server-context"
 import { gitRepos } from "@/lib/workspace/git-api"
@@ -141,6 +142,7 @@ export function DraftScopeRow({
   trailing?: React.ReactNode
 }) {
   const { projects, project, configure } = useDraft(meta, actions, remember)
+  const mcpServers = useMcpServers()
   const newProject = useNewProject()
   /* Asked here rather than left to the menu: it decides whether that menu is on
      the row at all — a draft always draws it (it is the picker), a started
@@ -155,6 +157,12 @@ export function DraftScopeRow({
      that can go. A `leading` that draws takes that room — the connection is a
      state, and a state that has gone quiet cannot be read at all. */
   const shared = leading != null
+  const selectedMcps = (meta.mcpServerIds ?? []).map((id) => ({
+    id,
+    server: mcpServers.find((server) => server.id === id),
+  }))
+  const mcpIcon = (server: (typeof selectedMcps)[number]["server"]) =>
+    server?.type === "builtin" ? PlugIcon : server?.type === "http" ? GlobeIcon : TerminalIcon
 
   return (
     /* py-1, not the shelf's py-1.5: every control in here is already h-6, so
@@ -213,6 +221,18 @@ export function DraftScopeRow({
       )}
       {/* Where in the project: its own checkout, when the thread is isolated. */}
       <WorktreeChip meta={meta} editable={editable && remember} onToggle={(isolate) => configure({ isolate })} />
+      {selectedMcps.length > 0 && (
+        <span className="flex min-w-0 items-center gap-0.5 overflow-hidden" aria-label="Selected MCP servers">
+          {selectedMcps.map(({ id, server }) => {
+            const Icon = mcpIcon(server)
+            return (
+              <span key={id} className={chipClass()} title={server ? mcpSubtitle(server) : "MCP server unavailable"}>
+                <ChipBody icon={Icon} label={server?.name ?? "Unavailable MCP"} />
+              </span>
+            )
+          })}
+        </span>
+      )}
       {/* Before the `ms-auto` cluster, so `leading` is the row's start whatever
           the row grows into. */}
       {leading}
