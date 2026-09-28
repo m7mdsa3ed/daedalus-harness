@@ -7,6 +7,7 @@ import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
 import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type Persona, type ThreadMcpServer } from "@/lib/settings"
 import { useMcpServers, usePersonas, useProjects } from "@/lib/queries/catalog"
 import { ProjectIcon } from "@/components/entity-icon"
+import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
 /* `@` mentions for the composer — the file half of the slash menu.
@@ -358,11 +359,25 @@ export function useFileMentions(opts: {
  */
 export function FileMentionMenu({ state }: { state: FileMentionState }) {
   const open = state.query !== null
+  useStripSummary(
+    open
+      ? {
+          id: "mention",
+          icon: AtSign,
+          label: state.loading && state.matches.length === 0
+            ? "Searching files…"
+            : state.matches.length === 0
+              ? "No matches"
+              : `${state.matches.length} match${state.matches.length === 1 ? "" : "es"}`,
+          urgent: true,
+        }
+      : null
+  )
   if (!open) return null
 
-  /* Empty is a state worth drawing, not nothing: a row that vanishes while the
-     query is still being typed reads as the feature breaking rather than as
-     "no file is called that". */
+  /* Empty is a state worth drawing, not nothing: the summary line says the menu
+     is up, and a row that vanishes while the query is still being typed reads
+     as the feature breaking rather than as "no file is called that". */
   if (state.matches.length === 0) {
     return (
       <CompleterNote icon={AtSign}>

@@ -103,7 +103,17 @@ export function RepoIndicator({ meta }: { meta: SessionMeta }) {
       <PopoverContent align="end" side="top" className="w-88 gap-3">
         {/* Mounted with the popover, so a thread nobody opens this on never asks
             the server for a status. */}
-        <RepoPanel meta={meta} onDone={() => setOpen(false)} />
+        <RepoPanel meta={meta} repos={repos} />
+        {/* The panel this popover is the glance of — opened at its Git half,
+            since what brought you here was the repository, not a turn. */}
+        <OpenInInspector
+          tab="changes"
+          label="Open Source Control"
+          onOpen={() => {
+            setOpen(false)
+            setScmPanelView(meta.id, "git")
+          }}
+        />
       </PopoverContent>
     </Popover>
   )
@@ -113,34 +123,7 @@ export function RepoIndicator({ meta }: { meta: SessionMeta }) {
     history is. */
 const RECENT_COMMITS = 5
 
-/**
- * The repositories and the four things you do to them — the popover's body,
- * and the same body wherever the reading is drawn inline. It reads the repo
- * list itself (the indicator's own query, so the two share one cache entry)
- * and draws nothing when the project has no repository.
- */
-export function RepoPanel({ meta, onDone }: { meta: SessionMeta; onDone?: () => void }) {
-  const { data } = useProjectRepos(meta.projectId)
-  const repos = data ?? []
-  if (repos.length === 0) return null
-  return (
-    <div className="flex flex-col gap-3">
-      <RepoBody meta={meta} repos={repos} />
-      {/* The panel this reading is the glance of — opened at its Git half,
-          since what brought you here was the repository, not a turn. */}
-      <OpenInInspector
-        tab="changes"
-        label="Open Source Control"
-        onOpen={() => {
-          onDone?.()
-          setScmPanelView(meta.id, "git")
-        }}
-      />
-    </div>
-  )
-}
-
-function RepoBody({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
+function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
   const settings = useServer()
   const qc = useQueryClient()
   const [selected, setSelected] = useState(repos[0].path)

@@ -67,46 +67,6 @@ const formatElapsed = (ms: number): string =>
   ms < 60_000 ? `${Math.max(0, Math.round(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 
 /**
- * The workers by name, with their elapsed times — the popover's body, and the
- * same body wherever the reading is drawn inline. Nothing when none are out.
- *
- * The clock ticks only while this is mounted AND workers are out: an elapsed
- * time nobody is looking at is a re-render a second for nothing, and the
- * popover mounts it only while open.
- */
-export function AgentsPanel({ thread, onDone }: { thread: ThreadState; onDone?: () => void }) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the two fields it reads
-  const agents = useMemo(() => runningAgents(thread), [thread.items, thread.turnActive])
-  const count = agents.length
-  const now = useNow(count > 0)
-  if (count === 0) return null
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="harness-shimmer font-medium text-primary">{agentsLabel(count)}</p>
-      <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
-        {agents.map((agent) => (
-          <li key={agent.id} className="flex items-start gap-2 text-xs">
-            <span className="grid size-5 shrink-0 place-items-center">
-              <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
-            </span>
-            <span className="min-w-0 flex-1 leading-5 break-words text-foreground">
-              {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
-              {agent.task}
-            </span>
-            <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground/60">
-              {formatElapsed(now - agent.startedAt)}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <OpenInInspector tab="agents" onOpen={onDone} />
-    </div>
-  )
-}
-
-const agentsLabel = (count: number) => `${count} ${count === 1 ? "agent" : "agents"} running`
-
-/**
  * How many subagents are out working, beside the checklist and the context
  * ring — a count, and their names and elapsed times in a popover.
  *
@@ -119,9 +79,12 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the two fields it reads
   const agents = useMemo(() => runningAgents(thread), [thread.items, thread.turnActive])
   const count = agents.length
+  /* The clock ticks only while the popover is open AND workers are out: an
+     elapsed time nobody is looking at is a re-render a second for nothing. */
   const [open, setOpen] = useState(false)
+  const now = useNow(open && count > 0)
   if (count === 0) return null
-  const label = agentsLabel(count)
+  const label = `${count} ${count === 1 ? "agent" : "agents"} running`
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -149,7 +112,24 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
         }
       />
       <PopoverContent align="end" side="top" className="w-72 gap-2">
-        <AgentsPanel thread={thread} onDone={() => setOpen(false)} />
+        <p className="harness-shimmer font-medium text-primary">{label}</p>
+        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+          {agents.map((agent) => (
+            <li key={agent.id} className="flex items-start gap-2 text-xs">
+              <span className="grid size-5 shrink-0 place-items-center">
+                <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
+              </span>
+              <span className="min-w-0 flex-1 leading-5 break-words text-foreground">
+                {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
+                {agent.task}
+              </span>
+              <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground/60">
+                {formatElapsed(now - agent.startedAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <OpenInInspector tab="agents" onOpen={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

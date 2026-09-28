@@ -2,6 +2,7 @@ import * as React from "react"
 import { FileCode, History, SquareTerminal, TriangleAlert } from "lucide-react"
 import type { HelperCommand } from "@/lib/settings"
 import type { ProjectScript, ShellUse } from "@/lib/workspace/project-helpers"
+import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterRow, CompleterSection } from "./composer/completer"
 
 /* `!` commands for the composer — a shell line, with the project's saved ones
@@ -215,6 +216,18 @@ export function useProjectCommands(opts: {
  */
 export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
   const showing = state.matches.length > 0
+  /* Urgent: a menu you are arrow-keying through has to be visible to be a menu,
+     so while it is up the shelf is open whatever the summary line would say. */
+  useStripSummary(
+    showing
+      ? {
+          id: "project-command",
+          icon: SquareTerminal,
+          label: `${state.matches.length} project command${state.matches.length === 1 ? "" : "s"}`,
+          urgent: true,
+        }
+      : null
+  )
   if (!showing) return null
 
   return (

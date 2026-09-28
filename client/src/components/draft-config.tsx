@@ -21,6 +21,7 @@ import { AvatarGroup } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   MenuAddItem,
+  MenuRow,
   MenuSearchInput,
   menuFilter,
   selectChoices,
@@ -44,7 +46,6 @@ import {
   READING_TRIGGER_ALWAYS,
   ReadingFace,
 } from "@/components/composer/indicator";
-import { INLINE_KIT, MenuKitContext, useMenuKit } from "@/components/menu-kit";
 import { ThreadToolsMenu } from "@/components/thread-tools/menu";
 import { useThreadToolCount } from "@/components/thread-tools/use-thread-tool-count";
 import { cn } from "@/lib/utils";
@@ -77,7 +78,7 @@ const NO_PERSONA = "__none__";
 
 /** The shared read of a draft's current configuration — both controls below
     need the same lookups, and they must not disagree about what is selected. */
-export function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
+function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
   /* The four catalogs this menu lists, each on its own subscription rather
      than the whole state: these controls sit on the composer strip of a live
      pane, and a catalog is replaced only by its own action. */
@@ -313,7 +314,7 @@ const SEGMENTS =
  * nested in a larger checkout. A started thread's chip is a read-out, like the
  * project beside it: where the work lands is fixed once the agent runs there.
  */
-export function WorktreeChip({
+function WorktreeChip({
   meta,
   editable,
   onToggle,
@@ -501,16 +502,33 @@ export function PickerMenu({
 }
 
 /**
- * What a draft's settings resolve to — the one derivation the popover, the
- * inline panel and the composer's face all read, so the chip and the rows
- * under it name the model identically. It also asks the agent what it offers
- * (once per page-load, see below), which is why it takes `actions`.
+ * Who answers and how: agent, profile, persona, model, effort, and — from the
+ * agent's remembered `modes` — the permission mode it will start in.
+ *
+ * The agent leads the list because it decides what every row under it even
+ * means (the profiles, models and efforts on offer are a different set per
+ * agent) — merged into this one popover rather than a picker of its own on
+ * the strip, since picking who answers and picking how it answers are one
+ * decision on a draft, not two.
+ *
+ * Model and effort are placeholders in the agent's env template, filled at
+ * spawn — so before the process exists they are ours to set freely, and the
+ * profile catalog is the only place that knows what the choices are. The
+ * moment the first message creates the session this control is replaced by
+ * SessionConfigPopover and the agent's own ACP selectors take over — the
+ * agent itself is fixed by then (it is the process that is running), so that
+ * later popover has no agent row.
  */
-export function useDraftConfigView(
-  meta: SessionMeta,
-  actions: Actions,
+export function DraftConfigPopover({
+  meta,
+  actions,
   remember = true,
-) {
+}: {
+  meta: SessionMeta;
+  actions: Actions;
+  /** See `DraftScopeRow`. */
+  remember?: boolean;
+}) {
   const {
     agents,
     profiles,
@@ -544,6 +562,8 @@ export function useDraftConfigView(
   const resolvedModel = models.find(
     (m) => m.id === (meta.model || profile?.defaultModel),
   );
+  const newProfile = useNewProfile();
+  const addModel = useAddModel();
 
   /* What this profile's agent offered the last time one ran. A draft has no
      process to ask, so this is the only way its settings can be picked before
@@ -625,529 +645,6 @@ export function useDraftConfigView(
      sentence that reads like a design decision. */
   const probeStatus = useProbeStatus(optionKey(meta.profileId, meta.agentId));
 
-  /* The settings as one sentence — the trigger's title, and the accessible
-     name of whatever control the face is put inside. */
-  const triggerLabel = [persona?.name, modelLabel, effortLabel, modeLabel]
-    .filter(Boolean)
-    .join(" · ");
-
-  return {
-    agents,
-    personas,
-    profile,
-    agent,
-    agentProfiles,
-    configure,
-    chooseAgent,
-    models,
-    resolvedModel,
-    agentOptions,
-    modes,
-    modeLabel,
-    overridden,
-    spawnEfforts,
-    profileEffort,
-    liveEffort,
-    optionValue,
-    persona,
-    modelLabel,
-    effortLabel,
-    choose,
-    nothingYet,
-    probeStatus,
-    triggerLabel,
-  };
-}
-
-type DraftConfigView = ReturnType<typeof useDraftConfigView>;
-
-/** `DraftConfigFace`'s accessible name: the settings as one sentence. */
-export function useDraftConfigLabel(
-  meta: SessionMeta,
-  actions: Actions,
-  remember = true,
-): string {
-  return useDraftConfigView(meta, actions, remember).triggerLabel;
-}
-
-function DraftFaceContents({
-  meta,
-  view,
-}: {
-  meta: SessionMeta;
-  view: DraftConfigView;
-}) {
-  const {
-    resolvedModel,
-    agent,
-    profile,
-    persona,
-    modelLabel,
-    effortLabel,
-    modeLabel,
-  } = view;
-  return (
-    <>
-      {/* The model's own icon replaces the profile's logo in the pair —
-          the two marks stay, it is only the second one that changes. A
-          broken model icon falls back to the profile logo, which is what
-          would have shown anyway. */}
-      {resolvedModel?.iconUrl ? (
-        <AvatarGroup className="-space-x-1">
-          <AgentIcon
-            agentId={agent?.id ?? meta.agentId}
-            className="size-4 ring-2 ring-surface"
-          />
-          <EntityIcon
-            src={resolvedModel.iconUrl}
-            fallback={
-              <ProfileIcon
-                profile={profile}
-                agentId={agent?.id ?? meta.agentId}
-                className="size-4 ring-2 ring-surface"
-              />
-            }
-            className="size-4 ring-2 ring-surface"
-          />
-        </AvatarGroup>
-      ) : profile?.logoUrl ? (
-        <AvatarGroup className="-space-x-1">
-          <AgentIcon
-            agentId={agent?.id ?? meta.agentId}
-            className="size-4 ring-2 ring-surface"
-          />
-          <ProfileIcon
-            profile={profile}
-            agentId={agent?.id ?? meta.agentId}
-            className="size-4 ring-2 ring-surface"
-          />
-        </AvatarGroup>
-      ) : (
-        <ProfileIcon
-          profile={profile}
-          agentId={agent?.id ?? meta.agentId}
-          className="size-4"
-        />
-      )}
-      {/* Same words the started thread's trigger (SessionConfigPopover)
-         reads — the agent is named by its mark above, and naming it here
-         too made the label change the moment the thread started. */}
-      <span className="max-w-40 truncate">
-        {persona && <span>{persona.name} · </span>}
-        {modelLabel}
-        {effortLabel && (
-          <span className="capitalize"> · {effortLabel}</span>
-        )}
-        {modeLabel && ` · ${modeLabel}`}
-      </span>
-    </>
-  );
-}
-
-/**
- * The composer's face for a draft's settings — the popover trigger's
- * contents, as a fragment, for a caller that draws its own button. Its
- * accessible name is `useDraftConfigLabel`'s: put it on that button's
- * `title`/`aria-label`.
- */
-export function DraftConfigFace({
-  meta,
-  actions,
-  remember = true,
-}: {
-  meta: SessionMeta;
-  actions: Actions;
-  /** See `DraftScopeRow`. */
-  remember?: boolean;
-}) {
-  const view = useDraftConfigView(meta, actions, remember);
-  return <DraftFaceContents meta={meta} view={view} />;
-}
-
-/**
- * The menu's rows, drawn with whatever kit the context supplies — the
- * dropdown's parts behind the popover, flat ones in the inline panel.
- */
-function DraftConfigBody({
-  meta,
-  actions,
-  view,
-}: {
-  meta: SessionMeta;
-  actions: Actions;
-  view: DraftConfigView;
-}) {
-  const kit = useMenuKit();
-  const newProfile = useNewProfile();
-  const addModel = useAddModel();
-  const {
-    agents,
-    personas,
-    profile,
-    agent,
-    agentProfiles,
-    configure,
-    chooseAgent,
-    models,
-    agentOptions,
-    modes,
-    overridden,
-    spawnEfforts,
-    profileEffort,
-    liveEffort,
-    optionValue,
-    choose,
-    nothingYet,
-    probeStatus,
-  } = view;
-  return (
-    <>
-      <kit.Group>
-        <kit.Label>Start this thread with</kit.Label>
-        {/* First, because it decides what every row below it even means —
-            switching it resets model and effort (`chooseAgent`) the same
-            way switching profile does. */}
-        <kit.Row
-          label="Agent"
-          value={agent?.id ?? ""}
-          choices={agents.map((a) => ({
-            value: a.id,
-            name: a.name,
-            icon: <AgentIcon agentId={a.id} className="size-4" />,
-          }))}
-          onSelect={chooseAgent}
-        />
-        {/* Above Profile, because it is the only row here that does not
-            depend on one — and free on a draft, where the rest of this menu
-            is a set of placeholders and nothing has been spawned yet. A
-            persona that names an effort applies it on the spot; the row
-            below still shows it, and still overrides it. */}
-        {personas.length > 0 && (
-          <kit.Row
-            label="Persona"
-            value={meta.personaId || NO_PERSONA}
-            choices={[
-              { value: NO_PERSONA, name: "None" },
-              ...personas.map((p) => ({ value: p.id, name: p.name })),
-            ]}
-            onSelect={(value) => {
-              const picked =
-                value === NO_PERSONA
-                  ? null
-                  : personas.find((p) => p.id === value);
-              configure({
-                personaId: picked?.id ?? "",
-                /* Only when the persona has an opinion: dropping to "" here
-                   would make picking "General chat" silently clear an effort
-                   the user chose on purpose. The server applies the same rule
-                   for a started thread. */
-                ...(picked?.effort ? { effort: picked.effort } : {}),
-              });
-            }}
-          />
-        )}
-        {/* Drawn even on a single profile now, which it was not: the row is
-            also the door to making another, and a menu that hides the list
-            whenever there is one entry is a menu with nowhere to add the
-            second. */}
-        <kit.Row
-          label="Profile"
-          value={profile?.id ?? ""}
-          choices={agentProfiles.map((p) => ({
-            value: p.id,
-            name: p.name,
-            icon: (
-              <ProfileIcon
-                profile={p}
-                agentId={meta.agentId}
-                className="size-4"
-              />
-            ),
-          }))}
-          onSelect={(id) =>
-            configure({ profileId: id, model: "", effort: "" })
-          }
-          add={{
-            /* Adding one selects it, as the project picker does: the model
-               and effort are the old profile's, so they are cleared. */
-            label: "New profile…",
-            onSelect: () =>
-              newProfile((id) =>
-                configure({ profileId: id, model: "", effort: "" }),
-              ),
-          }}
-        />
-        {overridden ? (
-          <kit.Row
-            label="Model"
-            value={meta.model || DEFAULT_CHOICE}
-            choices={[
-              { value: DEFAULT_CHOICE, name: "Profile default" },
-              ...models.map((m) => ({
-                value: m.id,
-                name: m.label,
-                /* Every row carries a mark: the model's own icon when it
-                   has one, a neutral glyph otherwise, so rows without art
-                   align with those that have it. */
-                icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
-                group: m.group || undefined,
-              })),
-            ]}
-            onSelect={(value) =>
-              configure({
-                model: value === DEFAULT_CHOICE ? "" : value,
-                effort: "",
-              })
-            }
-            /* Only on the overridden branch: a profile with no catalog is
-               deferring to the agent's own list, and appending one row there
-               would silently flip it into overriding the agent — a decision
-               that belongs in the editor, not in a menu. */
-            add={
-              profile && !profile.virtual
-                ? {
-                    label: "Add model…",
-                    onSelect: () =>
-                      addModel(profile.id, (id) =>
-                        configure({ model: id, effort: "" }),
-                      ),
-                  }
-                : undefined
-            }
-          />
-        ) : (
-          agentOptions.model && (
-            <kit.Row
-              label="Model"
-              value={optionValue(agentOptions.model)}
-              /* Agent-driven options carry no art — every row gets the
-                 neutral glyph so the submenu reads like the catalog one. */
-              choices={selectChoices(agentOptions.model).map((c) => ({
-                ...c,
-                icon: <BotIcon className="size-4 text-muted-foreground" />,
-              }))}
-              /* The row's own `model`, not a config choice: the agent's model
-                 and effort have a channel of their own at spawn
-                 (`agentOwned`) and are never replayed from `configChoices`,
-                 so a pick left in there would be dropped and the thread would
-                 come up on the agent's default. Same field the profile
-                 catalog writes — one record either way. */
-              onSelect={(value) => configure({ model: value })}
-            />
-          )
-        )}
-        {profileEffort ? (
-          <kit.Row
-            label="Effort"
-            value={meta.effort || DEFAULT_CHOICE}
-            choices={[
-              { value: DEFAULT_CHOICE, name: "Default" },
-              ...spawnEfforts.map((effort) => ({
-                value: effort,
-                name: effort,
-              })),
-            ]}
-            onSelect={(value) =>
-              configure({ effort: value === DEFAULT_CHOICE ? "" : value })
-            }
-          />
-        ) : (
-          liveEffort && (
-            <kit.Row
-              label="Effort"
-              value={optionValue(liveEffort)}
-              choices={selectChoices(liveEffort)}
-              /* Effort travels the same channel as the model — see above. */
-              onSelect={(value) => configure({ effort: value })}
-            />
-          )
-        )}
-        {nothingYet &&
-          (!profile ? (
-            <kit.Item disabled className="whitespace-normal text-xs">
-              Pick a profile to start this thread.
-            </kit.Item>
-          ) : probeStatus === "failed" ? (
-            /* The one row here that is not disabled: a failed probe is the
-               only one of the three states the reader can do something
-               about, and `force` is what lets it step over the
-               once-per-page-load guard. */
-            <kit.Item
-              className="whitespace-normal text-xs"
-              closeOnClick={false}
-              onClick={() => {
-                void actions.learnAgentOptions(
-                  meta.profileId,
-                  meta.agentId,
-                  meta.projectId,
-                  true,
-                );
-              }}
-            >
-              <RefreshCwIcon className="size-4 text-muted-foreground" />
-              Couldn't reach {agent?.name ?? "this agent"} — try again
-            </kit.Item>
-          ) : probeStatus === "asking" ? (
-            <kit.Item disabled className="whitespace-normal text-xs">
-              <Loader2 className="size-4 animate-spin" />
-              Asking {agent?.name ?? "the agent"} what it supports…
-            </kit.Item>
-          ) : (
-            <kit.Item disabled className="whitespace-normal text-xs">
-              {agent?.name ?? "This agent"} offers nothing to configure before
-              the thread starts.
-            </kit.Item>
-          ))}
-      </kit.Group>
-      {/* Its own group, mirroring the started thread's menu: suggestions are
-          how the thread's answers should behave, not who answers — and with
-          nothing running yet there is no restart to warn about. */}
-      <kit.Separator />
-      <kit.Group>
-        <kit.Label>Session settings</kit.Label>
-        <kit.CheckboxItem
-          checked={meta.suggestFollowups !== false}
-          onCheckedChange={(checked) =>
-            configure({ suggestFollowups: checked === true })
-          }
-        >
-          Suggest follow-ups
-        </kit.CheckboxItem>
-        <kit.CheckboxItem
-          checked={meta.uiBlocks !== false}
-          onCheckedChange={(checked) =>
-            configure({ uiBlocks: checked === true })
-          }
-        >
-          Draw answers as UI
-        </kit.CheckboxItem>
-      </kit.Group>
-      {/* Never touched by the profile: mode and the rest are the agent's, and
-          they stay exactly where they are whichever profile is selected. */}
-      {(modes || agentOptions.rest.length > 0) && (
-        <>
-          <kit.Separator />
-          <kit.Group>
-            <kit.Label>Agent options</kit.Label>
-            {/* First, like the started thread's menu — and remembered on the
-                draft rather than replayed as a config choice, because a mode
-                travels over `session/set_mode`, not `set_config_option`. The
-                server applies it the moment session/new answers. */}
-            {modes && (
-              <kit.Row
-                label="Mode"
-                value={meta.modeId || modes.currentModeId}
-                choices={modes.availableModes.map((mode) => ({
-                  value: mode.id,
-                  name: mode.name,
-                }))}
-                onSelect={(modeId) => configure({ modeId })}
-              />
-            )}
-            {agentOptions.rest.map((option) =>
-              option.type === "select" ? (
-                <kit.Row
-                  key={option.id}
-                  label={option.name}
-                  value={option.currentValue}
-                  choices={selectChoices(option)}
-                  onSelect={(value) => choose(option.id, value)}
-                />
-              ) : (
-                <kit.CheckboxItem
-                  key={option.id}
-                  checked={option.currentValue}
-                  onCheckedChange={(checked) =>
-                    choose(option.id, checked === true)
-                  }
-                >
-                  {option.name}
-                </kit.CheckboxItem>
-              ),
-            )}
-            {/* The probe is cached on both ends, keyed on what the harness can
-                see — an upgraded binary or a new login is not in the key. */}
-            <kit.Item
-              className="text-xs text-muted-foreground"
-              disabled={probeStatus === "asking"}
-              closeOnClick={false}
-              onClick={() => {
-                void actions.learnAgentOptions(
-                  meta.profileId,
-                  meta.agentId,
-                  meta.projectId,
-                  true,
-                );
-              }}
-            >
-              {probeStatus === "asking" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCwIcon className="size-4" />
-              )}
-              Refresh options
-            </kit.Item>
-          </kit.Group>
-        </>
-      )}
-    </>
-  );
-}
-
-/**
- * The same rows, in flow and with no popup — the composer's panel. A draft's
- * picks land on the draft as they are made, so there is nothing to flush when
- * it closes.
- */
-export function DraftConfigPanel({
-  meta,
-  actions,
-  remember = true,
-}: {
-  meta: SessionMeta;
-  actions: Actions;
-  /** See `DraftScopeRow`. */
-  remember?: boolean;
-}) {
-  const view = useDraftConfigView(meta, actions, remember);
-  return (
-    <MenuKitContext value={INLINE_KIT}>
-      <div className="flex flex-col gap-0.5 text-sm">
-        <DraftConfigBody meta={meta} actions={actions} view={view} />
-      </div>
-    </MenuKitContext>
-  );
-}
-
-/**
- * Who answers and how: agent, profile, persona, model, effort, and — from the
- * agent's remembered `modes` — the permission mode it will start in.
- *
- * The agent leads the list because it decides what every row under it even
- * means (the profiles, models and efforts on offer are a different set per
- * agent) — merged into this one popover rather than a picker of its own on
- * the strip, since picking who answers and picking how it answers are one
- * decision on a draft, not two.
- *
- * Model and effort are placeholders in the agent's env template, filled at
- * spawn — so before the process exists they are ours to set freely, and the
- * profile catalog is the only place that knows what the choices are. The
- * moment the first message creates the session this control is replaced by
- * SessionConfigPopover and the agent's own ACP selectors take over — the
- * agent itself is fixed by then (it is the process that is running), so that
- * later popover has no agent row.
- */
-export function DraftConfigPopover({
-  meta,
-  actions,
-  remember = true,
-}: {
-  meta: SessionMeta;
-  actions: Actions;
-  /** See `DraftScopeRow`. */
-  remember?: boolean;
-}) {
-  const view = useDraftConfigView(meta, actions, remember);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -1158,14 +655,354 @@ export function DraftConfigPopover({
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
             className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
-            title={view.triggerLabel}
+            title={[persona?.name, modelLabel, effortLabel, modeLabel]
+              .filter(Boolean)
+              .join(" · ")}
           >
-            <DraftFaceContents meta={meta} view={view} />
+            {/* The model's own icon replaces the profile's logo in the pair —
+                the two marks stay, it is only the second one that changes. A
+                broken model icon falls back to the profile logo, which is what
+                would have shown anyway. */}
+            {resolvedModel?.iconUrl ? (
+              <AvatarGroup className="-space-x-1">
+                <AgentIcon
+                  agentId={agent?.id ?? meta.agentId}
+                  className="size-4 ring-2 ring-surface"
+                />
+                <EntityIcon
+                  src={resolvedModel.iconUrl}
+                  fallback={
+                    <ProfileIcon
+                      profile={profile}
+                      agentId={agent?.id ?? meta.agentId}
+                      className="size-4 ring-2 ring-surface"
+                    />
+                  }
+                  className="size-4 ring-2 ring-surface"
+                />
+              </AvatarGroup>
+            ) : profile?.logoUrl ? (
+              <AvatarGroup className="-space-x-1">
+                <AgentIcon
+                  agentId={agent?.id ?? meta.agentId}
+                  className="size-4 ring-2 ring-surface"
+                />
+                <ProfileIcon
+                  profile={profile}
+                  agentId={agent?.id ?? meta.agentId}
+                  className="size-4 ring-2 ring-surface"
+                />
+              </AvatarGroup>
+            ) : (
+              <ProfileIcon
+                profile={profile}
+                agentId={agent?.id ?? meta.agentId}
+                className="size-4"
+              />
+            )}
+            {/* Same words the started thread's trigger (SessionConfigPopover)
+               reads — the agent is named by its mark above, and naming it here
+               too made the label change the moment the thread started. */}
+            <span className="max-w-40 truncate">
+              {persona && <span>{persona.name} · </span>}
+              {modelLabel}
+              {effortLabel && (
+                <span className="capitalize"> · {effortLabel}</span>
+              )}
+              {modeLabel && ` · ${modeLabel}`}
+            </span>
           </Button>
         }
       />
       <DropdownMenuContent align="start" className="w-60">
-        <DraftConfigBody meta={meta} actions={actions} view={view} />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Start this thread with</DropdownMenuLabel>
+          {/* First, because it decides what every row below it even means —
+              switching it resets model and effort (`chooseAgent`) the same
+              way switching profile does. */}
+          <MenuRow
+            label="Agent"
+            value={agent?.id ?? ""}
+            choices={agents.map((a) => ({
+              value: a.id,
+              name: a.name,
+              icon: <AgentIcon agentId={a.id} className="size-4" />,
+            }))}
+            onSelect={chooseAgent}
+          />
+          {/* Above Profile, because it is the only row here that does not
+              depend on one — and free on a draft, where the rest of this menu
+              is a set of placeholders and nothing has been spawned yet. A
+              persona that names an effort applies it on the spot; the row
+              below still shows it, and still overrides it. */}
+          {personas.length > 0 && (
+            <MenuRow
+              label="Persona"
+              value={meta.personaId || NO_PERSONA}
+              choices={[
+                { value: NO_PERSONA, name: "None" },
+                ...personas.map((p) => ({ value: p.id, name: p.name })),
+              ]}
+              onSelect={(value) => {
+                const picked =
+                  value === NO_PERSONA
+                    ? null
+                    : personas.find((p) => p.id === value);
+                configure({
+                  personaId: picked?.id ?? "",
+                  /* Only when the persona has an opinion: dropping to "" here
+                     would make picking "General chat" silently clear an effort
+                     the user chose on purpose. The server applies the same rule
+                     for a started thread. */
+                  ...(picked?.effort ? { effort: picked.effort } : {}),
+                });
+              }}
+            />
+          )}
+          {/* Drawn even on a single profile now, which it was not: the row is
+              also the door to making another, and a menu that hides the list
+              whenever there is one entry is a menu with nowhere to add the
+              second. */}
+          <MenuRow
+            label="Profile"
+            value={profile?.id ?? ""}
+            choices={agentProfiles.map((p) => ({
+              value: p.id,
+              name: p.name,
+              icon: (
+                <ProfileIcon
+                  profile={p}
+                  agentId={meta.agentId}
+                  className="size-4"
+                />
+              ),
+            }))}
+            onSelect={(id) =>
+              configure({ profileId: id, model: "", effort: "" })
+            }
+            add={{
+              /* Adding one selects it, as the project picker does: the model
+                 and effort are the old profile's, so they are cleared. */
+              label: "New profile…",
+              onSelect: () =>
+                newProfile((id) =>
+                  configure({ profileId: id, model: "", effort: "" }),
+                ),
+            }}
+          />
+          {overridden ? (
+            <MenuRow
+              label="Model"
+              value={meta.model || DEFAULT_CHOICE}
+              choices={[
+                { value: DEFAULT_CHOICE, name: "Profile default" },
+                ...models.map((m) => ({
+                  value: m.id,
+                  name: m.label,
+                  /* Every row carries a mark: the model's own icon when it
+                     has one, a neutral glyph otherwise, so rows without art
+                     align with those that have it. */
+                  icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
+                  group: m.group || undefined,
+                })),
+              ]}
+              onSelect={(value) =>
+                configure({
+                  model: value === DEFAULT_CHOICE ? "" : value,
+                  effort: "",
+                })
+              }
+              /* Only on the overridden branch: a profile with no catalog is
+                 deferring to the agent's own list, and appending one row there
+                 would silently flip it into overriding the agent — a decision
+                 that belongs in the editor, not in a menu. */
+              add={
+                profile && !profile.virtual
+                  ? {
+                      label: "Add model…",
+                      onSelect: () =>
+                        addModel(profile.id, (id) =>
+                          configure({ model: id, effort: "" }),
+                        ),
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            agentOptions.model && (
+              <MenuRow
+                label="Model"
+                value={optionValue(agentOptions.model)}
+                /* Agent-driven options carry no art — every row gets the
+                   neutral glyph so the submenu reads like the catalog one. */
+                choices={selectChoices(agentOptions.model).map((c) => ({
+                  ...c,
+                  icon: <BotIcon className="size-4 text-muted-foreground" />,
+                }))}
+                /* The row's own `model`, not a config choice: the agent's model
+                   and effort have a channel of their own at spawn
+                   (`agentOwned`) and are never replayed from `configChoices`,
+                   so a pick left in there would be dropped and the thread would
+                   come up on the agent's default. Same field the profile
+                   catalog writes — one record either way. */
+                onSelect={(value) => configure({ model: value })}
+              />
+            )
+          )}
+          {profileEffort ? (
+            <MenuRow
+              label="Effort"
+              value={meta.effort || DEFAULT_CHOICE}
+              choices={[
+                { value: DEFAULT_CHOICE, name: "Default" },
+                ...spawnEfforts.map((effort) => ({
+                  value: effort,
+                  name: effort,
+                })),
+              ]}
+              onSelect={(value) =>
+                configure({ effort: value === DEFAULT_CHOICE ? "" : value })
+              }
+            />
+          ) : (
+            liveEffort && (
+              <MenuRow
+                label="Effort"
+                value={optionValue(liveEffort)}
+                choices={selectChoices(liveEffort)}
+                /* Effort travels the same channel as the model — see above. */
+                onSelect={(value) => configure({ effort: value })}
+              />
+            )
+          )}
+          {nothingYet &&
+            (!profile ? (
+              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+                Pick a profile to start this thread.
+              </DropdownMenuItem>
+            ) : probeStatus === "failed" ? (
+              /* The one row here that is not disabled: a failed probe is the
+                 only one of the three states the reader can do something
+                 about, and `force` is what lets it step over the
+                 once-per-page-load guard. */
+              <DropdownMenuItem
+                className="whitespace-normal text-xs"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void actions.learnAgentOptions(
+                    meta.profileId,
+                    meta.agentId,
+                    meta.projectId,
+                    true,
+                  );
+                }}
+              >
+                <RefreshCwIcon className="size-4 text-muted-foreground" />
+                Couldn't reach {agent?.name ?? "this agent"} — try again
+              </DropdownMenuItem>
+            ) : probeStatus === "asking" ? (
+              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+                <Loader2 className="size-4 animate-spin" />
+                Asking {agent?.name ?? "the agent"} what it supports…
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+                {agent?.name ?? "This agent"} offers nothing to configure before
+                the thread starts.
+              </DropdownMenuItem>
+            ))}
+        </DropdownMenuGroup>
+        {/* Its own group, mirroring the started thread's menu: suggestions are
+            how the thread's answers should behave, not who answers — and with
+            nothing running yet there is no restart to warn about. */}
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Session settings</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            checked={meta.suggestFollowups !== false}
+            onCheckedChange={(checked) =>
+              configure({ suggestFollowups: checked === true })
+            }
+          >
+            Suggest follow-ups
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={meta.uiBlocks !== false}
+            onCheckedChange={(checked) =>
+              configure({ uiBlocks: checked === true })
+            }
+          >
+            Draw answers as UI
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuGroup>
+        {/* Never touched by the profile: mode and the rest are the agent's, and
+            they stay exactly where they are whichever profile is selected. */}
+        {(modes || agentOptions.rest.length > 0) && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Agent options</DropdownMenuLabel>
+              {/* First, like the started thread's menu — and remembered on the
+                  draft rather than replayed as a config choice, because a mode
+                  travels over `session/set_mode`, not `set_config_option`. The
+                  server applies it the moment session/new answers. */}
+              {modes && (
+                <MenuRow
+                  label="Mode"
+                  value={meta.modeId || modes.currentModeId}
+                  choices={modes.availableModes.map((mode) => ({
+                    value: mode.id,
+                    name: mode.name,
+                  }))}
+                  onSelect={(modeId) => configure({ modeId })}
+                />
+              )}
+              {agentOptions.rest.map((option) =>
+                option.type === "select" ? (
+                  <MenuRow
+                    key={option.id}
+                    label={option.name}
+                    value={option.currentValue}
+                    choices={selectChoices(option)}
+                    onSelect={(value) => choose(option.id, value)}
+                  />
+                ) : (
+                  <DropdownMenuCheckboxItem
+                    key={option.id}
+                    checked={option.currentValue}
+                    onCheckedChange={(checked) =>
+                      choose(option.id, checked === true)
+                    }
+                  >
+                    {option.name}
+                  </DropdownMenuCheckboxItem>
+                ),
+              )}
+              {/* The probe is cached on both ends, keyed on what the harness can
+                  see — an upgraded binary or a new login is not in the key. */}
+              <DropdownMenuItem
+                className="text-xs text-muted-foreground"
+                disabled={probeStatus === "asking"}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void actions.learnAgentOptions(
+                    meta.profileId,
+                    meta.agentId,
+                    meta.projectId,
+                    true,
+                  );
+                }}
+              >
+                {probeStatus === "asking" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCwIcon className="size-4" />
+                )}
+                Refresh options
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

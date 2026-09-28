@@ -253,15 +253,39 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
   )
 }
 
-/** What the ring shows, read once for the trigger and the panel: the window,
-    the usage so far, how full, and whether the size is a guess. Null when
-    there is nothing to report — the one condition both draw nothing on. */
-function contextReading(thread: ThreadState) {
+/**
+ * The single home for per-turn telemetry: context occupancy on the ring, and
+ * tokens / cache rate / TTFT inside its popover. The header carries none of it.
+ */
+export function ContextIndicator({
+  thread,
+  meta,
+  actions,
+  side = "top",
+  size = "icon-xs",
+  triggerClassName,
+}: {
+  thread: ThreadState
+  /** The thread's row, for the (profile, agent) pair the quota is read under.
+      Absent for a draft, which has no server-side thread to ask about yet. */
+  meta?: SessionMeta
+  actions: Actions
+  /** Where the popover opens. The composer's ring opens upward; the header's
+      rides at the top of the screen, so it opens downward. */
+  side?: "top" | "bottom"
+  /** The trigger's scale: 24px on the composer's toolbar, 32px in the header
+      beside the bell, which is the header's other silent-size control. */
+  size?: "icon-xs" | "icon-sm"
+  /** Extra trigger classes. The header rounds its controls like the bell's
+      pill, which the composer's own toolbar wears too. */
+  triggerClassName?: string
+}) {
   const { context, ttftMs } = thread
   /* The finished turns plus the running one's steps so far, so every figure
-     moves per step rather than jumping once at `turn_ended`. */
+     below moves per step rather than jumping once at `turn_ended`. */
   const usage = thread.liveUsage ? addUsage(thread.usage, thread.liveUsage) : thread.usage
   if (!context && !usage && ttftMs === null) return null
+
   const percent = context
     ? Math.min(100, Math.max(0, Math.round((context.used / context.size) * 100)))
     : 0
@@ -270,28 +294,7 @@ function contextReading(thread: ThreadState) {
      compaction warning is withheld — a warning about a threshold nobody can
      locate is worse than silence. */
   const estimated = windowEstimated(context)
-  return { context, usage, ttftMs, percent, estimated, about: estimated ? "~" : "" }
-}
-
-/**
- * The window, the session's figures, the speed and the plan — the popover's
- * body, and the same body wherever the reading is drawn inline. Nothing when
- * the thread has reported none of it.
- */
-export function ContextPanel({
-  thread,
-  meta,
-  actions,
-}: {
-  thread: ThreadState
-  meta?: SessionMeta
-  actions: Actions
-  /* Accepted for the panels' one shape; nothing in this body closes it. */
-  onDone?: () => void
-}) {
-  const reading = contextReading(thread)
-  if (!reading) return null
-  const { context, usage, ttftMs, percent, estimated, about } = reading
+  const about = estimated ? "~" : ""
   // thread.usage is the store's running total over the session's turns (agents
   // report Usage per turn), so the rate below is a genuine average.
   // `inputTokens` counts only tokens NOT served from cache — the rest of the
@@ -343,139 +346,6 @@ export function ContextPanel({
     : []
 
   return (
-    <div className="flex flex-col gap-2.5">
-      {/* The window: one headline figure, and a bar that says what fills it
-          where our runtime measured the split (system and tools are its local
-          count, hence the tilde; the conversation is the provider's
-          remainder), a plain fill where no runtime did. */}
-      <div>
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="font-medium">Context window</p>
-          {context && (
-            <p className="text-lg font-semibold leading-none tabular-nums">
-              {about}
-              {percent}%
-            </p>
-          )}
-        </div>
-        <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-          {context
-            ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
-            : "Not reported by this agent"}
-        </p>
-      </div>
-      {context && (
-        <div
-          className="flex h-2 w-full gap-px overflow-hidden rounded-pill bg-muted"
-          role="progressbar"
-          aria-label="Context window used"
-          aria-valuenow={percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          {segments.map((segment) => (
-            <div
-              key={segment.label}
-              className={cn("h-full transition-all", segment.swatch)}
-              style={{ width: `${(segment.tokens / context.size) * 100}%` }}
-            />
-          ))}
-        </div>
-      )}
-      {split && context && (
-        <dl className="space-y-1">
-          {segments.map((segment) => (
-            <Row
-              key={segment.label}
-              swatch={segment.swatch}
-              label={segment.label}
-              hint={`${pct(segment.tokens, context.size)}%`}
-              value={segment.value}
-            />
-          ))}
-        </dl>
-      )}
-      {estimated && (
-        <p className="text-[11px] text-muted-foreground">
-          This model's window size isn't in the catalog, so the size is a default and every
-          share is approximate.
-        </p>
-      )}
-      {context && !estimated && percent >= COMPACTION_WARN && (
-        <Notice tone="warn" className="px-2 py-1.5 text-[11px]">
-          Context is nearly full — the agent compacts the history soon to keep the turn going.
-        </Notice>
-      )}
-
-      {/* Billed, not held: every request re-sends the context, so these run
-          far above the window. Totals over the session; a revive resets them. */}
-      {usage && (
-        <Section title={`Session · ${requests} ${requests === 1 ? "request" : "requests"}`}>
-          <Row label="Prompt" value={formatTokens(prompt)} />
-          {cached > 0 && <Row label="↳ from cache" hint={cacheRate !== null ? `${cacheRate}%` : undefined} value={formatTokens(cached)} valueClass={cacheTone} />}
-          {usage.cachedWriteTokens ? <Row label="↳ cache write" value={formatTokens(usage.cachedWriteTokens)} /> : null}
-          <Row label="↳ fresh" value={formatTokens(usage.inputTokens)} />
-          <Row label="Output" value={formatTokens(usage.outputTokens)} />
-          {usage.thoughtTokens ? <Row label="↳ thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
-          <Row label="Total billed" value={formatTokens(usage.totalTokens)} />
-          {lastTurn && <Row label="Last turn" value={formatTokens(lastTurn.totalTokens)} />}
-          {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
-          {context?.cost && (
-            <Row label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
-          )}
-        </Section>
-      )}
-
-      {(avgRate || ttftMs !== null || toolDurationMs > 0) && (
-        <Section title="Speed">
-          {ttftMs !== null && <Row label="First token" value={`${ttftMs}ms`} />}
-          {avgRate && (
-            <Row
-              label="Output"
-              hint={minRate && maxRate ? `${minRate.replace(" tok/s", "")}–${maxRate}` : undefined}
-              value={avgRate}
-            />
-          )}
-          {toolDurationMs > 0 && <Row label="In tool calls" value={formatDuration(toolDurationMs)} />}
-        </Section>
-      )}
-      <PlanUsage thread={thread} meta={meta} actions={actions} />
-    </div>
-  )
-}
-
-/**
- * The single home for per-turn telemetry: context occupancy on the ring, and
- * tokens / cache rate / TTFT inside its popover. The header carries none of it.
- */
-export function ContextIndicator({
-  thread,
-  meta,
-  actions,
-  side = "top",
-  size = "icon-xs",
-  triggerClassName,
-}: {
-  thread: ThreadState
-  /** The thread's row, for the (profile, agent) pair the quota is read under.
-      Absent for a draft, which has no server-side thread to ask about yet. */
-  meta?: SessionMeta
-  actions: Actions
-  /** Where the popover opens. The composer's ring opens upward; the header's
-      rides at the top of the screen, so it opens downward. */
-  side?: "top" | "bottom"
-  /** The trigger's scale: 24px on the composer's toolbar, 32px in the header
-      beside the bell, which is the header's other silent-size control. */
-  size?: "icon-xs" | "icon-sm"
-  /** Extra trigger classes. The header rounds its controls like the bell's
-      pill, which the composer's own toolbar wears too. */
-  triggerClassName?: string
-}) {
-  const reading = contextReading(thread)
-  if (!reading) return null
-  const { context, percent, estimated, about } = reading
-
-  return (
     <Popover>
       <PopoverTrigger
         render={
@@ -510,7 +380,102 @@ export function ContextIndicator({
         }
       />
       <PopoverContent align="end" side={side} className="w-72 gap-2.5">
-        <ContextPanel thread={thread} meta={meta} actions={actions} />
+        {/* The window: one headline figure, and a bar that says what fills it
+            where our runtime measured the split (system and tools are its local
+            count, hence the tilde; the conversation is the provider's
+            remainder), a plain fill where no runtime did. */}
+        <div>
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="font-medium">Context window</p>
+            {context && (
+              <p className="text-lg font-semibold leading-none tabular-nums">
+                {about}
+                {percent}%
+              </p>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+            {context
+              ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
+              : "Not reported by this agent"}
+          </p>
+        </div>
+        {context && (
+          <div
+            className="flex h-2 w-full gap-px overflow-hidden rounded-pill bg-muted"
+            role="progressbar"
+            aria-label="Context window used"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            {segments.map((segment) => (
+              <div
+                key={segment.label}
+                className={cn("h-full transition-all", segment.swatch)}
+                style={{ width: `${(segment.tokens / context.size) * 100}%` }}
+              />
+            ))}
+          </div>
+        )}
+        {split && context && (
+          <dl className="space-y-1">
+            {segments.map((segment) => (
+              <Row
+                key={segment.label}
+                swatch={segment.swatch}
+                label={segment.label}
+                hint={`${pct(segment.tokens, context.size)}%`}
+                value={segment.value}
+              />
+            ))}
+          </dl>
+        )}
+        {estimated && (
+          <p className="text-[11px] text-muted-foreground">
+            This model's window size isn't in the catalog, so the size is a default and every
+            share is approximate.
+          </p>
+        )}
+        {context && !estimated && percent >= COMPACTION_WARN && (
+          <Notice tone="warn" className="px-2 py-1.5 text-[11px]">
+            Context is nearly full — the agent compacts the history soon to keep the turn going.
+          </Notice>
+        )}
+
+        {/* Billed, not held: every request re-sends the context, so these run
+            far above the window. Totals over the session; a revive resets them. */}
+        {usage && (
+          <Section title={`Session · ${requests} ${requests === 1 ? "request" : "requests"}`}>
+            <Row label="Prompt" value={formatTokens(prompt)} />
+            {cached > 0 && <Row label="↳ from cache" hint={cacheRate !== null ? `${cacheRate}%` : undefined} value={formatTokens(cached)} valueClass={cacheTone} />}
+            {usage.cachedWriteTokens ? <Row label="↳ cache write" value={formatTokens(usage.cachedWriteTokens)} /> : null}
+            <Row label="↳ fresh" value={formatTokens(usage.inputTokens)} />
+            <Row label="Output" value={formatTokens(usage.outputTokens)} />
+            {usage.thoughtTokens ? <Row label="↳ thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
+            <Row label="Total billed" value={formatTokens(usage.totalTokens)} />
+            {lastTurn && <Row label="Last turn" value={formatTokens(lastTurn.totalTokens)} />}
+            {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
+            {context?.cost && (
+              <Row label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
+            )}
+          </Section>
+        )}
+
+        {(avgRate || ttftMs !== null || toolDurationMs > 0) && (
+          <Section title="Speed">
+            {ttftMs !== null && <Row label="First token" value={`${ttftMs}ms`} />}
+            {avgRate && (
+              <Row
+                label="Output"
+                hint={minRate && maxRate ? `${minRate.replace(" tok/s", "")}–${maxRate}` : undefined}
+                value={avgRate}
+              />
+            )}
+            {toolDurationMs > 0 && <Row label="In tool calls" value={formatDuration(toolDurationMs)} />}
+          </Section>
+        )}
+        <PlanUsage thread={thread} meta={meta} actions={actions} />
       </PopoverContent>
     </Popover>
   )

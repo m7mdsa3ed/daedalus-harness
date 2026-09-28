@@ -453,12 +453,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   kind's glyph (`PANEL_ICONS`, for the menu that opens one); an **open panel** wears
   `PanelIcon`, and a chat's is its thread's agent — four threads used to be four identical
   speech bubbles.
-- **Nothing on the composer opens a popover or a menu.** `components/composer/composer.tsx`
-  only assembles: the words are `use-draft-text.ts`, what a send is is `use-send.ts`, the keys
-  are `keys.ts`. The card is the box and one toolbar — a button per way of adding to the message
-  (`add-buttons.tsx`), the model pill, then the actions ending on Send. Every other picker and
-  reading opens **in flow**, in the strip's panel (below). Touch targets follow
-  `useCoarsePointer` (the device); what Enter means follows `useIsMobile` (the width).
+- **The composer is `components/composer/composer.tsx`: one card, two rows** — what *adds to* the
+  message behind "+", what governs *how it sends* behind the chevron beside Send. Touch
+  targets follow `useCoarsePointer` (the device); what Enter means follows `useIsMobile`
+  (the width).
 - **The composer is one width, and it does not move.** Narrowing it while unfocused and
   giving the width back on `:focus-within` was tried and removed: every box in the unit —
   the shelf, the card, the notices, the scope row — measures against
@@ -474,17 +472,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   Derived, never picked, so every generated palette gets it for nothing. **Neither the composer
   nor the shelf draws a hairline ring** — the two grounds meeting is the seam, and the
   composer's only ring is the destructive one while voice is listening.
-- **The strip is one shelf of three bands: the pile, the panel, the scope bar**
-  (`composer-strip.tsx`, `composer/scope.tsx`), tucked under the card. **The scope bar is
-  permanently true** — project, worktree, tools and every reading as tinted segments, drawn on
-  **both** sides of the first message: a started thread's project stops being *editable*, never
-  being *said*. **Picking a segment (or the model pill) expands its detail as the panel, in
-  flow above the bar** — it pushes the card down instead of floating over it. One section at a
-  time; picking it again, its ✕, or its reading going quiet folds it. The panels are the
-  readings' own bodies (`TodoPanel`, `ContextPanel`, …) and the pickers' own bodies drawn
-  through `INLINE_KIT` (`menu-kit.tsx`), so the dropdown and the panel cannot drift.
+- **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
+  tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
+  never a card, on **both** sides of the first message: a started thread's project only stops
+  being *editable*, it never stops being *said*, and the tab does not repeat it. It wears the
+  shelf's `--shelf`, never the composer's `--composer`: the strip and the box below it are two
+  surfaces, and giving the floor the composer's ground made them one flat band.
+  **The tuck is worn by whoever is last** — the footer when there is one, the cards when there
+  is not, never both. **A tools menu's side is the caller's, never inferred from `editable`.**
 - **The pile is only what is about the message being typed** — attachments, the history
-  notice, the three completers. Drawn flat, one row each, and only while there is something.
+  notice, the two completers, the archive notice.
 - **The box is a Tiptap view of a plain string, never a markdown document**
   (`composer/composer-editor.tsx`, `editor-text.ts`): `text` stays the exact message sent, and a
   `[pasted text #n]` token, a finished `@path` mention and a run of `> ` lines all draw as the
@@ -493,11 +490,26 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   never learn the editor exists. Markdown WYSIWYG escapes what was typed (`snake\_case`), which
   breaks `/`, `!`, `@` and history recall. Keys are taken in the capture phase and ProseMirror
   honours their `preventDefault`. "Ask about this" on a transcript selection is `ComposerHandle.quote`.
-- **A reading is a segment on the bar and a panel under it — and a trigger over a popover
-  everywhere else.** Each reading exports its body (`XPanel`) and its indicator renders that body
-  in a popover for the surfaces that still use one (the tab's context ring, the routine form's
-  scope row). One body per reading, whichever way it is opened; each renders nothing when it
-  has nothing to say, and the bar draws no segment for it.
+- **A reading of the thread is a 24px trigger over a popover, in the footer's end cluster** —
+  the checklist's progress, the running-subagent count, what the last turn wrote, the context
+  ring (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator`), **and the
+  tools the thread carries** (`ThreadToolsMenu`). One kind of question, one shape, one place;
+  each draws nothing when it has nothing to say. **The tools menu belongs in the cluster, not
+  on the row's start** — what a thread carries is the same kind of fact as how full its window
+  is, and a picker with a divider in front of it was the one thing in the row pretending not to
+  be a reading. A popover is a fixed surface, so those lists scroll
+  without taking room from the transcript. **A floating summary pill over the composer was
+  tried and removed** — see `docs/client.md`.
+- **A reading's words are its own dress, and which dress is named once** — from
+  `components/composer/indicator.tsx`, never per component: `ReadingBadge` is the value in words
+  where the *panel* has room (`@panel-sm`, never the viewport — a chat squeezed beside a terminal
+  is narrow for the same reason a phone is) and `ReadingBubble` is the same number riding the
+  mark where it does not, **never both**. The tools menu is a reading too: a **menu** where the
+  others have a popover, and the count in the same two dresses. **The project is the one control
+  that keeps its words on every width** — it names where the work lands, so its badge is
+  `always` and it truncates rather than going quiet. Whether a reading draws at all stays each
+  one's own answer (`total === 0` renders nothing on a started thread; a draft still draws the
+  picker, its bubble withheld at zero).
 - **The queue is drawn as the user messages it is**, dashed, at the very **end** of the flow —
   after the approval and the question, because a queued message is the conversation's future.
   **Editing one takes it back to the composer** (`queueRemove`, then `fill`, and only on
@@ -818,9 +830,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **The composer's two surfaces split by subject.** A note above the strip
   (`components/composer/notices.tsx`) is about *sending*; everything about the *turn* — the wait,
   the working line, a held turn, an approval, a question, the queue — is at the foot of the
-  transcript (`thread-view.tsx`), where the next thing happens. **A scope segment is a mark and
-  its value** — icon and count (or short label) together, on every width; the bar scrolls
-  sideways before it drops a word.
+  transcript (`thread-view.tsx`), where the next thing happens. **A footer reading is a mark that
+  grows words**: icon always, label `@panel-sm` only, and its count as a text badge where the
+  label shows and a bubble on the mark where it does not.
 
 ## Tasks → `docs/tasks.md`
 

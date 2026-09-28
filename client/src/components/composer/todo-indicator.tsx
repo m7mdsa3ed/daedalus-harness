@@ -52,43 +52,6 @@ export function threadTodos(thread: Pick<ThreadState, "items">) {
   return todos && todos.length > 0 ? todos : null
 }
 
-/** The counts both the trigger and the panel print, read once. */
-function tally(todos: NonNullable<ReturnType<typeof threadTodos>>) {
-  const total = todos.length
-  const completed = todos.filter((todo) => todo.status === "completed").length
-  const current =
-    todos.find((todo) => todo.status === "in_progress") ??
-    todos.find((todo) => todo.status !== "completed")
-  return { total, completed, current, percent: Math.round((completed / total) * 100) }
-}
-
-/**
- * The checklist in full — the popover's body, and the same body wherever the
- * reading is drawn inline. Nothing when the thread has no checklist.
- */
-export function TodoPanel({ thread, onDone }: { thread: ThreadState; onDone?: () => void }) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
-  const todos = useMemo(() => threadTodos(thread), [thread.items])
-  if (!todos) return null
-  const { total, completed } = tally(todos)
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="font-medium">Checklist</p>
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {completed}/{total}
-        </span>
-      </div>
-      {/* The list owns the scroll; long checklists never take room from the
-          transcript, and the same row design appears in plan details. */}
-      <div className="-mx-1 max-h-[min(50svh,20rem)] overflow-y-auto overscroll-contain px-1">
-        <TodoChecklist items={todos} />
-      </div>
-      <OpenInInspector tab="plan" onOpen={onDone} />
-    </div>
-  )
-}
-
 /**
  * How far the agent's checklist has got, beside the context ring.
  *
@@ -111,7 +74,12 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
   const [open, setOpen] = useState(false)
   if (!todos) return null
 
-  const { total, completed, current, percent } = tally(todos)
+  const total = todos.length
+  const completed = todos.filter((todo) => todo.status === "completed").length
+  const current =
+    todos.find((todo) => todo.status === "in_progress") ??
+    todos.find((todo) => todo.status !== "completed")
+  const percent = Math.round((completed / total) * 100)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -138,7 +106,18 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
         }
       />
       <PopoverContent align="end" side="top" className="w-72 gap-2">
-        <TodoPanel thread={thread} onDone={() => setOpen(false)} />
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="font-medium">Checklist</p>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {completed}/{total}
+          </span>
+        </div>
+        {/* The fixed popover owns the scroll; long checklists never take room
+            from the transcript, and the same row design appears in plan details. */}
+        <div className="-mx-1 max-h-[min(50svh,20rem)] overflow-y-auto overscroll-contain px-1">
+          <TodoChecklist items={todos} />
+        </div>
+        <OpenInInspector tab="plan" onOpen={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

@@ -26,7 +26,7 @@ import * as React from "react"
 import { Archive, InfoIcon, RotateCw, TriangleAlertIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { READING_MARK, ReadingPanel, StripIndicator } from "@/components/composer/indicator"
+import { READING_MARK, StripIndicator } from "@/components/composer/indicator"
 import type { StripTone } from "@/components/composer-strip"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
@@ -122,11 +122,15 @@ export function connectionTone(thread: ThreadState): StripTone | null {
 }
 
 /**
- * The connection's sentence and the recovery to try — the popover's body, and
- * the same body wherever the reading is drawn inline. Nothing on a healthy
- * thread (`connectionNote` null).
+ * The connection, on the scope row's head — beside the project.
+ *
+ * Those two are the questions every other control on the floor is read
+ * against: where the work lands, and whether this device can get a message out
+ * about it. It also designs its own absence — nothing on a healthy thread —
+ * which is what lets a reading that is usually a failure live on a row that is
+ * otherwise permanently true.
  */
-export function ConnectionPanel({
+export function ConnectionIndicator({
   thread,
   sessionId,
   actions,
@@ -134,9 +138,6 @@ export function ConnectionPanel({
   thread: ThreadState
   sessionId: string
   actions: Actions
-  /* Accepted for the panels' one shape; a recovery never closed the popover —
-     a thread that comes back takes the reading with it. */
-  onDone?: () => void
 }) {
   /** The recovery in flight, so the button says so and cannot be pressed twice. */
   const [busy, setBusy] = React.useState(false)
@@ -160,47 +161,10 @@ export function ConnectionPanel({
   }
 
   return (
-    <ReadingPanel
-      heading={note.title}
-      action={
-        note.action && (
-          <Button size="xs" variant="outline" className="w-full" onClick={recover} disabled={busy}>
-            <RotateCw className={cn("size-3.5", busy && "animate-spin")} />
-            {busy ? note.action.busyLabel : note.action.label}
-          </Button>
-        )
-      }
-    >
-      <p className="text-xs text-muted-foreground">{note.message}</p>
-    </ReadingPanel>
-  )
-}
-
-/**
- * The connection, on the scope row's head — beside the project.
- *
- * Those two are the questions every other control on the floor is read
- * against: where the work lands, and whether this device can get a message out
- * about it. It also designs its own absence — nothing on a healthy thread —
- * which is what lets a reading that is usually a failure live on a row that is
- * otherwise permanently true.
- */
-export function ConnectionIndicator({
-  thread,
-  sessionId,
-  actions,
-}: {
-  thread: ThreadState
-  sessionId: string
-  actions: Actions
-}) {
-  const note = connectionNote(thread)
-  if (!note) return null
-
-  return (
     <StripIndicator
       icon={note.icon}
       label={note.label}
+      heading={note.title}
       title={note.title}
       tone={TONE_TRIGGER[note.tone]}
       /* `always` and not the pill's default: this is the one reading whose
@@ -211,8 +175,16 @@ export function ConnectionIndicator({
          reading that yields nothing; the project yields its name instead
          (`DraftScopeRow`'s `reading`). */
       labelAlways
+      action={
+        note.action && (
+          <Button size="xs" variant="outline" className="w-full" onClick={recover} disabled={busy}>
+            <RotateCw className={cn("size-3.5", busy && "animate-spin")} />
+            {busy ? note.action.busyLabel : note.action.label}
+          </Button>
+        )
+      }
     >
-      {(close) => <ConnectionPanel thread={thread} sessionId={sessionId} actions={actions} onDone={close} />}
+      <p className="text-xs text-muted-foreground">{note.message}</p>
     </StripIndicator>
   )
 }
