@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   BotIcon,
   ChevronRightIcon,
-  ChevronsUpDownIcon,
   GitBranchIcon,
   GlobeIcon,
   Loader2,
@@ -733,7 +732,6 @@ export function DraftConfigPopover({
               )}
               {modeLabel && ` · ${modeLabel}`}
             </span>
-            <ChevronsUpDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           </Button>
         }
       />

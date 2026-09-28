@@ -63,7 +63,7 @@
    `prompt-history.ts` (the Up walk). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowUp, Check, ChevronRight, Copy, History, Link, Mic, Pause, Play, Sparkles, Square, Upload, X } from "lucide-react"
+import { ArrowUp, Check, FileText, History, Image as ImageIcon, Link, Mic, Pause, Play, Square, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -138,7 +138,6 @@ import type { ThreadState } from "@/lib/store"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 import { holdOf } from "@/lib/thread/hold"
 import { formatTokens } from "@/lib/tokens"
-import { turnSuggestions } from "@/lib/suggestions"
 import { cn } from "@/lib/utils"
 
 /* Past this the prompt is long enough that its size is worth a reading, and
@@ -675,28 +674,6 @@ export function Composer({
   const iconSize = "icon-sm"
   /* What the box held when dictation started, so Cancel can put it back. */
   const beforeVoice = React.useRef("")
-  /* The recording card is open from the mic to Cancel or done — wider than
-     `voice.listening`, which a pause (or the browser's own silence timeout)
-     turns off while the card stays. */
-  const [recording, setRecording] = React.useState(false)
-  /* The last finished answer's suggested follow-ups, drawn as chips on the row
-     while the box is empty — the transcript's card, one tap nearer. The X
-     dismisses that answer's set; the next answer brings its own. */
-  const [dismissedFollowUps, setDismissedFollowUps] = React.useState<string | null>(null)
-  const followUps = React.useMemo(() => {
-    if (thread.turnActive) return undefined
-    let start = 0
-    for (let i = thread.items.length - 1; i >= 0; i--) {
-      const item = thread.items[i]
-      if (item.kind === "user" && !item.parentId) {
-        start = i
-        break
-      }
-    }
-    return turnSuggestions(thread.items.slice(start))
-  }, [thread.items, thread.turnActive])
-  const showFollowUps = Boolean(followUps) && followUps?.itemId !== dismissedFollowUps && !hasContent
-  const followUpScroller = React.useRef<HTMLDivElement>(null)
   const steerChord = formatChord(steerChords[0] ?? "")
 
   const sendTitle = gated
@@ -832,8 +809,7 @@ export function Composer({
       <div
         data-slot="composer-card"
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-[1.75rem] bg-composer/70 px-3 pt-3 pb-2.5 shadow-glass-lg backdrop-blur-xl backdrop-saturate-150",
-          dragging && "min-h-32"
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-[1.75rem] bg-composer/70 px-3 pt-3 pb-2.5 shadow-glass-lg backdrop-blur-xl backdrop-saturate-150"
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return
@@ -863,21 +839,16 @@ export function Composer({
              card's edge, saying what it takes. The discs are a legend of what
              can be dropped, not controls — nothing is clickable mid-drag. */
           <div className="pointer-events-none absolute inset-1.5 z-20 flex flex-col items-center justify-center gap-1 rounded-[1.4rem] border-2 border-dotted border-primary/50 bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_10%,var(--composer)),color-mix(in_oklch,var(--primary)_4%,var(--composer)))] text-center">
-            <span className="text-sm font-medium text-primary">Drop anything here or browse</span>
-            <span className="text-[11px] text-primary/70">Docs, images, videos, audio files, links & more</span>
+            <span className="text-sm font-medium text-primary">Drop anything here</span>
+            <span className="text-[11px] text-primary/70">Files, images, documents & more</span>
             <span aria-hidden className="mt-1.5 flex gap-2">
-              {[Upload, Mic, Link, Copy].map((Icon, i) => (
+              {[Upload, FileText, ImageIcon, Link].map((Icon, i) => (
                 <span key={i} className="grid size-7 place-items-center rounded-full bg-primary text-primary-foreground">
                   <Icon className="size-3.5" />
                 </span>
               ))}
             </span>
           </div>
-        )}
-        {recording && (
-          <p className="pb-1 text-center text-[11px] text-muted-foreground">
-            {voice.listening ? "Go ahead, record a quick note" : "Paused"}
-          </p>
         )}
         <ComposerEditor
           ref={composerRef}
@@ -899,7 +870,9 @@ export function Composer({
           ariaLabel="Message the agent"
           placeholder={
             lock.note ??
-            (hold.paused
+            (voice.listening && !text
+              ? "Go ahead, record a quick note…"
+              : hold.paused
                 ? `${hold.sendHint}…`
                 : thread.turnActive
                   ? "Queue a message for when the agent finishes…"
@@ -915,10 +888,7 @@ export function Composer({
             "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons
                is how the row stays visually centred while the targets grow. */
-            coarse && "[&_.tiptap]:min-h-11",
-            /* Hidden, not unmounted: the words land in `text` while it
-               listens, and the ref has to survive for the box to come back. */
-            recording && "hidden"
+            coarse && "[&_.tiptap]:min-h-11"
           )}
         />
         {/* One control language across the row: every button is the same
@@ -928,70 +898,16 @@ export function Composer({
             disc, Send a primary one, Stop a destructive one. The row sits
             INSIDE the composer card, so a bordered button there would be a box
             inside a box; the ground and the colour carry the meaning instead. */}
-        {recording ? (
+        {voice.listening ? (
           <RecordingRow
-            listening={voice.listening}
-            onPause={voice.stop}
-            onResume={voice.start}
             onCancel={() => {
               voice.cancel()
               setText(beforeVoice.current)
-              setRecording(false)
             }}
-            onDone={() => {
-              voice.stop()
-              setRecording(false)
-            }}
+            onDone={voice.stop}
           />
         ) : (
         <div data-slot="composer-toolbar" className="flex items-center gap-1.5 pt-2">
-          {showFollowUps && followUps ? (
-            <>
-              <Button
-                variant="outline"
-                size={iconSize}
-                className="shrink-0 rounded-pill bg-transparent text-muted-foreground hover:text-foreground [&_svg]:size-4"
-                onClick={() => setDismissedFollowUps(followUps.itemId)}
-                title="Hide the suggestions"
-              >
-                <X />
-              </Button>
-              <div className="relative flex min-w-0 flex-1 items-center">
-                <div
-                  ref={followUpScroller}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pe-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                >
-                  {followUps.prompts.map((prompt) => (
-                    <Button
-                      key={prompt}
-                      variant="outline"
-                      size="sm"
-                      className="h-8 max-w-56 shrink-0 gap-1.5 rounded-pill bg-transparent px-3 text-xs font-medium"
-                      onClick={() => applySuggestion(prompt)}
-                      title={prompt}
-                    >
-                      <Sparkles className="size-3.5 text-primary" />
-                      <span className="truncate">{prompt}</span>
-                    </Button>
-                  ))}
-                </div>
-                {/* The row's end fades out under a "›" that pages it along —
-                    a scroller whose overflow is not said is one nobody scrolls. */}
-                <div className="pointer-events-none absolute inset-y-0 end-0 flex w-12 items-center justify-end bg-gradient-to-l from-composer to-transparent">
-                  <Button
-                    variant="outline"
-                    size="icon-xs"
-                    className="pointer-events-auto rounded-pill bg-composer shadow-sm"
-                    onClick={() => followUpScroller.current?.scrollBy({ left: 180, behavior: "smooth" })}
-                    title="More suggestions"
-                  >
-                    <ChevronRight />
-                  </Button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
           <ComposerAddMenu
             disabled={disabled || gated}
             size={iconSize}
@@ -1021,8 +937,6 @@ export function Composer({
               <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
             )}
           </div>
-            </>
-          )}
           {/* How long the prompt is, once that is worth knowing. The token
               figure is an estimate and is printed as one (the tilde); it is
               there so a pasted document reads as "about 3k tokens" before it
@@ -1059,7 +973,6 @@ export function Composer({
               className="shrink-0 rounded-pill bg-transparent text-muted-foreground hover:text-foreground [&_svg]:size-4"
               onClick={() => {
                 beforeVoice.current = text
-                setRecording(true)
                 voice.start()
               }}
               disabled={disabled}
@@ -1164,48 +1077,29 @@ export function Composer({
   )
 }
 
-/* Dictation's own row: the toolbar steps aside while the card records,
-   because nothing on it is what you want mid-sentence. Cancel puts the box back
-   as it was, pause stops listening without closing the card, and the tick keeps
-   what was heard. The clock counts only while it listens. */
-function RecordingRow({
-  listening,
-  onCancel,
-  onPause,
-  onResume,
-  onDone,
-}: {
-  listening: boolean
-  onCancel: () => void
-  onPause: () => void
-  onResume: () => void
-  onDone: () => void
-}) {
+/* Dictation's own row: the toolbar steps aside while the mic is open, because
+   nothing on it is what you want mid-sentence. Cancel puts the box back as it
+   was; the tick keeps what was heard. The clock is this row's alone — it
+   starts when the row mounts, which is when listening started. */
+function RecordingRow({ onCancel, onDone }: { onCancel: () => void; onDone: () => void }) {
   const [seconds, setSeconds] = React.useState(0)
   React.useEffect(() => {
-    if (!listening) return
-    const timer = setInterval(() => setSeconds((s) => s + 1), 1000)
+    const started = Date.now()
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 500)
     return () => clearInterval(timer)
-  }, [listening])
-  const clock = `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
+  }, [])
+  const clock = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+    .map((n) => String(n).padStart(2, "0"))
+    .join(":")
   return (
-    <div data-slot="composer-toolbar" className="flex items-center gap-1.5 pt-1">
-      <Button variant="secondary" size="sm" className="h-8 shrink-0 rounded-pill px-4" onClick={onCancel}>
+    <div data-slot="composer-toolbar" className="flex items-center gap-1.5 pt-2">
+      <Button variant="secondary" size="sm" className="shrink-0 rounded-pill px-4" onClick={onCancel}>
         Cancel
       </Button>
-      <span className="flex flex-1 items-center justify-center gap-2 text-base font-semibold tabular-nums" role="timer" aria-live="off">
-        <span aria-hidden className={cn("size-2 rounded-full bg-destructive", listening ? "animate-pulse" : "opacity-40")} />
+      <span className="flex flex-1 items-center justify-center gap-2 text-sm font-semibold tabular-nums" role="timer" aria-live="off">
+        <span aria-hidden className="size-2 animate-pulse rounded-full bg-destructive" />
         {clock}
       </span>
-      <Button
-        variant="outline"
-        size="icon-sm"
-        className="shrink-0 rounded-pill bg-transparent text-muted-foreground hover:text-foreground [&_svg]:size-4"
-        onClick={listening ? onPause : onResume}
-        title={listening ? "Pause" : "Resume"}
-      >
-        {listening ? <Pause /> : <Play />}
-      </Button>
       <Button variant="default" size="icon-sm" className="shrink-0 rounded-pill" onClick={onDone} title="Done — keep what was heard">
         <Check className="size-4" strokeWidth={2.5} />
       </Button>

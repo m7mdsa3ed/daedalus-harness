@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { BotIcon, ChevronsUpDownIcon, ClockIcon, Loader2Icon, XIcon } from "lucide-react"
+import { BotIcon, ClockIcon, Loader2Icon, XIcon } from "lucide-react"
 import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -312,7 +312,6 @@ export function SessionConfigPopover({
             ) : meta.configStaged ? (
               <ClockIcon className="size-3 shrink-0" />
             ) : null}
-            <ChevronsUpDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           </Button>
           )
         }
