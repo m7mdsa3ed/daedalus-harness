@@ -472,14 +472,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   Derived, never picked, so every generated palette gets it for nothing. **Neither the composer
   nor the shelf draws a hairline ring** — the two grounds meeting is the seam, and the
   composer's only ring is the destructive one while voice is listening.
-- **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
-  tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
-  never a card, on **both** sides of the first message: a started thread's project only stops
-  being *editable*, it never stops being *said*, and the tab does not repeat it. It wears the
-  shelf's `--shelf`, never the composer's `--composer`: the strip and the box below it are two
-  surfaces, and giving the floor the composer's ground made them one flat band.
-  **The tuck is worn by whoever is last** — the footer when there is one, the cards when there
-  is not, never both. **A tools menu's side is the caller's, never inferred from `editable`.**
+- **The scope is a chip, not a floor.** Project, worktree, MCP servers and every reading
+  (`DraftScopeRow`) live in the popover of one chip above the card (`ScopeChip` in
+  `composer.tsx`) — on **both** sides of the first message: a started thread's project only
+  stops being *editable*, it never stops being *said*. The chip names the project and wears a
+  dot in the shelf's tone only while the connection has something to say. `ComposerStrip` is
+  given no `footer` by the composer, so the cards wear the tuck. **A tools menu's side is the
+  caller's, never inferred from `editable`.**
 - **The pile is only what is about the message being typed** — attachments, the history
   notice, the two completers, the archive notice.
 - **The box is a Tiptap view of a plain string, never a markdown document**

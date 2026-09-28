@@ -91,6 +91,9 @@ import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
 import { selectionOf, textInsertions } from "@/components/composer/text-insertions"
 import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
+import { ProjectIcon } from "@/components/entity-icon"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import type { StripTone } from "@/components/composer-strip"
 import { SessionConfigPopover } from "@/components/session-config"
 import { FileMentionMenu, useFileMentions } from "@/components/file-mentions"
 import {
@@ -692,67 +695,64 @@ export function Composer({
 
   return (
     <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,var(--safe-bottom))]">
-      <ComposerStrip
-        tone={shelfTone}
-        /* ── The scope row ──
-           Where this thread runs, what it carries, how full it is — the shelf's
-           floor, under whatever the turn has put on it. It survives the first
-           message: the row is the same either side of it, only the project
-           stops being a choice. The ring is here rather than on the send row
-           because context occupancy is a fact about the thread, not a control.
-           Nothing without a `meta`, which is a thread the server has not
-           answered for yet. */
-        footer={
-          meta && (
-            <DraftScopeRow
-              meta={meta}
-              actions={actions}
-              editable={draft}
-              /* The row's head, immediately after the project: where the work
-                 lands and whether this device can get a message out about it
-                 are the two facts the rest of the floor is read against, so
-                 they sit together rather than at opposite ends of the row. The
-                 connection is also the one whose answer the shelf's own ground
-                 wears (`tone` above) — a thread that cannot send is not a
-                 thread whose other readings are the news.
-
-                 Passed only when there is something to say. The reading itself
-                 draws nothing on a healthy thread, but its *presence* is what
-                 tells the project to give up its name — and there is no reason
-                 for that on the ordinary thread whose state is "fine". */
-              leading={
-                connectionNote(thread) ? (
-                  <ConnectionIndicator thread={thread} sessionId={sessionId} actions={actions} />
-                ) : undefined
-              }
-              /* The readings, in one cluster at the row's end: how far the
-                 checklist has got, how many workers are out, what the last turn
-                 wrote, how full the window is. Four answers of the same *kind*
-                 — one number that is true of the thread right now, glanced at
-                 constantly and read in full rarely — so they are one shape (a
-                 24px trigger over a popover) in one place, rather than a card on
-                 a shelf each. Every one of them draws nothing when it has
-                 nothing to say, so an idle thread's cluster is the ring alone. */
-              trailing={
-                <>
-                  <ConfigIndicator thread={thread} sessionId={sessionId} actions={actions} />
-                  <TodoIndicator thread={thread} />
-                  <AgentsIndicator thread={thread} />
-                  <ChangesIndicator changes={changes} />
-                  <RepoIndicator meta={meta} />
-                  <ContextIndicator
-                    thread={thread}
-                    meta={meta}
-                    actions={actions}
-                    side="top"
-                    size="icon-xs"
-                  />
-                </>
-              }
-            />
-          )
-        }
-      >
+      {/* ── The scope chip ──
+          The scope row used to be the shelf's floor, drawn on every thread
+          whether or not anything in it was news. Collapsed to one chip: the
+          project, and a dot in the shelf's tone when the connection has
+          something to say. The whole row — project, worktree, MCP servers and
+          every reading — is one click away, unchanged. Nothing without a
+          `meta`, which is a thread the server has not answered for yet. */}
+      {meta && (
+        <ScopeChip project={project} tone={connectionNote(thread) ? shelfTone : null}>
+          <DraftScopeRow
+            meta={meta}
+            actions={actions}
+            editable={draft}
+            /* The row's head, immediately after the project: where the work
+               lands and whether this device can get a message out about it
+               are the two facts the rest of the floor is read against, so
+               they sit together rather than at opposite ends of the row. The
+               connection is also the one whose answer the shelf's own ground
+               wears (`tone` above) — a thread that cannot send is not a
+               thread whose other readings are the news.
+    
+               Passed only when there is something to say. The reading itself
+               draws nothing on a healthy thread, but its *presence* is what
+               tells the project to give up its name — and there is no reason
+               for that on the ordinary thread whose state is "fine". */
+            leading={
+              connectionNote(thread) ? (
+                <ConnectionIndicator thread={thread} sessionId={sessionId} actions={actions} />
+              ) : undefined
+            }
+            /* The readings, in one cluster at the row's end: how far the
+               checklist has got, how many workers are out, what the last turn
+               wrote, how full the window is. Four answers of the same *kind*
+               — one number that is true of the thread right now, glanced at
+               constantly and read in full rarely — so they are one shape (a
+               24px trigger over a popover) in one place, rather than a card on
+               a shelf each. Every one of them draws nothing when it has
+               nothing to say, so an idle thread's cluster is the ring alone. */
+            trailing={
+              <>
+                <ConfigIndicator thread={thread} sessionId={sessionId} actions={actions} />
+                <TodoIndicator thread={thread} />
+                <AgentsIndicator thread={thread} />
+                <ChangesIndicator changes={changes} />
+                <RepoIndicator meta={meta} />
+                <ContextIndicator
+                  thread={thread}
+                  meta={meta}
+                  actions={actions}
+                  side="top"
+                  size="icon-xs"
+                />
+              </>
+            }
+          />
+        </ScopeChip>
+      )}
+      <ComposerStrip tone={shelfTone}>
         {/* The shelf is only what is about the message being typed. The
             checklist and the running-agent count are readings of the *thread*
             and live in the footer's cluster; the queue is the user's own
@@ -1060,6 +1060,54 @@ export function Composer({
           })
         }}
       />
+    </div>
+  )
+}
+
+const TONE_DOT: Record<StripTone, string> = {
+  neutral: "bg-muted-foreground",
+  info: "bg-sky-500",
+  warn: "bg-amber-500",
+  error: "bg-destructive",
+}
+
+/* The scope row, folded: a chip naming the project, which opens on the row
+   itself. The popover is wide enough for the row's one line; its pickers are
+   menus of their own and open over it. */
+function ScopeChip({
+  project,
+  tone,
+  children,
+}: {
+  project?: ReturnType<typeof useProjects>[number]
+  tone: StripTone | null
+  children: React.ReactNode
+}) {
+  return (
+    <div className="mx-auto mb-1 flex w-full max-w-[var(--harness-composer-width)] px-1">
+      <Popover>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              className="flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-pill bg-foreground/[0.04] px-2 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground data-popup-open:bg-foreground/[0.08] data-popup-open:text-foreground"
+              title="Project, tools and readings"
+            />
+          }
+        >
+          <ProjectIcon project={project} className="size-3.5 shrink-0" />
+          <span className="truncate">{project?.name ?? "No project"}</span>
+          {tone && <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone])} />}
+        </PopoverTrigger>
+        <PopoverContent
+          side="top"
+          align="start"
+          sideOffset={6}
+          className="w-[min(40rem,calc(100vw-2rem))] gap-0 p-1"
+        >
+          {children}
+        </PopoverContent>
+      </Popover>
     </div>
   )
 }
