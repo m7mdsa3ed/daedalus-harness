@@ -64,7 +64,7 @@
    `prompt-history.ts` (the Up walk). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowUp, History, Mic, Pause, Play, Square } from "lucide-react"
+import { ArrowUp, Bot, FileDiff, Gauge, GitBranch, History, ListChecks, Mic, Pause, Play, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -94,6 +94,9 @@ import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
 import { ProjectIcon } from "@/components/entity-icon"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import type { StripTone } from "@/components/composer-strip"
+import { threadTodos } from "@/components/composer/todo-indicator"
+import { runningAgents } from "@/components/composer/agents-indicator"
+import { useProjectRepos } from "@/lib/queries/surfaces"
 import { SessionConfigPopover } from "@/components/session-config"
 import { FileMentionMenu, useFileMentions } from "@/components/file-mentions"
 import {
@@ -703,7 +706,13 @@ export function Composer({
           every reading — is one click away, unchanged. Nothing without a
           `meta`, which is a thread the server has not answered for yet. */}
       {meta && (
-        <ScopeChip project={project} tone={connectionNote(thread) ? shelfTone : null}>
+        <ScopeChip
+          project={project}
+          meta={meta}
+          thread={thread}
+          changes={changes}
+          tone={connectionNote(thread) ? shelfTone : null}
+        >
           <DraftScopeRow
             meta={meta}
             actions={actions}
@@ -1071,18 +1080,35 @@ const TONE_DOT: Record<StripTone, string> = {
   error: "bg-destructive",
 }
 
-/* The scope row, folded: a chip naming the project, which opens on the row
-   itself. The popover is wide enough for the row's one line; its pickers are
-   menus of their own and open over it. */
+/* The scope row, folded: a chip of small tinted segments — the project, its
+   branch, and each reading that has something to say (checklist progress,
+   running subagents, files the last turn wrote, how full the window is). A
+   segment with nothing to say is not drawn, so an idle thread's chip is the
+   project and its branch. The chip opens on the row itself, which keeps every
+   control; its pickers are menus of their own and open over it. */
 function ScopeChip({
   project,
+  meta,
+  thread,
+  changes,
   tone,
   children,
 }: {
   project?: ReturnType<typeof useProjects>[number]
+  meta: SessionMeta
+  thread: ThreadState
+  changes?: TurnChanges
   tone: StripTone | null
   children: React.ReactNode
 }) {
+  const branch = useProjectRepos(meta.projectId ?? "").data?.[0]?.branch
+  const todos = threadTodos(thread)
+  const done = todos?.filter((todo) => todo.status === "completed").length ?? 0
+  const agents = runningAgents(thread).length
+  const changed = changes?.files.length ?? 0
+  const context = thread.context
+  const percent = context && context.size > 0 ? Math.min(100, Math.round((context.used / context.size) * 100)) : null
+  const segment = "flex h-5 min-w-0 shrink-0 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 tabular-nums"
   return (
     <div className="mx-auto mb-1 flex w-full max-w-[var(--harness-composer-width)] px-1">
       <Popover>
@@ -1090,14 +1116,49 @@ function ScopeChip({
           render={
             <button
               type="button"
-              className="flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-pill bg-foreground/[0.04] px-2 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground data-popup-open:bg-foreground/[0.08] data-popup-open:text-foreground"
+              className="group/scope flex max-w-full min-w-0 items-center gap-1 overflow-hidden rounded-lg p-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground data-popup-open:text-foreground [&>span]:transition-colors hover:[&>span]:bg-foreground/[0.09] data-popup-open:[&>span]:bg-foreground/[0.09]"
               title="Project, tools and readings"
             />
           }
         >
-          <ProjectIcon project={project} className="size-3.5 shrink-0" />
-          <span className="truncate">{project?.name ?? "No project"}</span>
-          {tone && <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone])} />}
+          <span className={cn(segment, "shrink")}>
+            <ProjectIcon project={project} className="size-3.5 shrink-0" />
+            <span className="truncate font-medium">{project?.name ?? "No project"}</span>
+            {tone && <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone])} />}
+          </span>
+          {branch && (
+            <span className={cn(segment, "shrink")}>
+              <GitBranch className="size-3 shrink-0" />
+              <span className="max-w-28 truncate">{branch}</span>
+            </span>
+          )}
+          {todos && (
+            <span className={segment} title={`Checklist — ${done} of ${todos.length} done`}>
+              <ListChecks className="size-3 shrink-0" />
+              {done}/{todos.length}
+            </span>
+          )}
+          {agents > 0 && (
+            <span className={cn(segment, "text-primary")} title={`${agents} subagent${agents === 1 ? "" : "s"} running`}>
+              <Bot className="size-3 shrink-0" />
+              {agents}
+            </span>
+          )}
+          {changed > 0 && (
+            <span className={segment} title={`The last turn changed ${changed} file${changed === 1 ? "" : "s"}`}>
+              <FileDiff className="size-3 shrink-0" />
+              {changed}
+            </span>
+          )}
+          {percent !== null && (
+            <span
+              className={cn(segment, percent >= 90 ? "text-destructive" : percent >= 75 && "text-amber-600 dark:text-amber-400")}
+              title={`Context window ${percent}% full`}
+            >
+              <Gauge className="size-3 shrink-0" />
+              {percent}%
+            </span>
+          )}
         </PopoverTrigger>
         <PopoverContent
           side="top"
