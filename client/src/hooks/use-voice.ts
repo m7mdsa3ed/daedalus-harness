@@ -6,7 +6,6 @@ interface SpeechRecognitionLike {
   interimResults: boolean
   start(): void
   stop(): void
-  abort(): void
   onresult: ((event: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null
   onend: (() => void) | null
   onerror: (() => void) | null
@@ -25,16 +24,6 @@ export function useVoice(onText: (text: string) => void) {
 
   const stop = React.useCallback(() => {
     recognitionRef.current?.stop()
-    recognitionRef.current = null
-    setListening(false)
-  }, [])
-
-  /* Stop and drop: a result still in flight after `stop()` would land in the
-     box, so the handler goes first and `abort()` discards the rest. */
-  const cancel = React.useCallback(() => {
-    const recognition = recognitionRef.current
-    if (recognition) recognition.onresult = null
-    recognition?.abort()
     recognitionRef.current = null
     setListening(false)
   }, [])
@@ -63,5 +52,5 @@ export function useVoice(onText: (text: string) => void) {
 
   React.useEffect(() => stop, [stop])
 
-  return { supported: SpeechRecognitionCtor !== undefined, listening, start, stop, cancel }
+  return { supported: SpeechRecognitionCtor !== undefined, listening, start, stop }
 }

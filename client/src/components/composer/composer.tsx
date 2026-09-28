@@ -20,11 +20,12 @@
    **The textarea.** **Then one toolbar** that reads left to right as *what goes
    in → who answers → what happens*: the "+" menu (attach, photo, mention,
    command, code block), the model/config cluster, then the counters and the
-   actions, ending on a filled Send. Every control is one 32px circle
-   (`icon-sm`): the model a bordered pill, the mic an outlined disc, Send and
-   Stop filled primary. While dictation listens the row gives way to a
-   recording row (Cancel · clock · done), and a drag turns the card into a
-   tinted drop well.
+   actions, ending on a filled Send. Every control on the row is the same shape,
+   and the three that act on the whole message wear a filled ground instead of a
+   border: the "+" muted, Send primary, Stop destructive. The scale follows the
+   pointer — 24px (`icon-xs`) under a
+   mouse, 32px (`icon-sm`) under a finger, where the same row had to double as a
+   touch target (`useCoarsePointer`, see below).
 
    Nothing else is in the card. The shelf above it (`ComposerStrip`) holds every
    *state you consult while typing* — the queue, the checklist, the running
@@ -36,7 +37,7 @@
    and the actions on the right. The "+" holds everything that *adds to* the
    message; Send is always drawn — a muted disabled chip while the box is empty,
    a filled primary disc the moment there is something to send — with the mic
-   beside it, and Stop in its place while a turn runs on an empty box. Queue
+   beside it while the box is empty and Stop beside it while a turn runs. Queue
    and steer are still the two sends (⏎ and the steer chord), said in Send's
    tooltip rather than in a menu.
 
@@ -63,7 +64,7 @@
    `prompt-history.ts` (the Up walk). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowUp, Check, FileText, History, Image as ImageIcon, Link, Mic, Pause, Play, Square, Upload } from "lucide-react"
+import { ArrowUp, History, Mic, Pause, Play, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -669,11 +670,11 @@ export function Composer({
     lock.submittable &&
     !files.uploading &&
     (text.trim().length > 0 || files.ready.length > 0)
-  /* One 32px scale for the whole row, mouse and finger alike: the row is the
-     card's only chrome, so it can afford real targets. */
-  const iconSize = "icon-sm"
-  /* What the box held when dictation started, so Cancel can put it back. */
-  const beforeVoice = React.useRef("")
+  /* Touch targets: the row was written at the 24px xs scale, which is a small
+     target to hold a thumb on. Under a coarse pointer every control grows to
+     the 32px icon-sm scale — still one language across the row, still inside
+     the composer card where the filled Send keeps the eye. */
+  const iconSize = coarse ? "icon-sm" : "icon-xs"
   const steerChord = formatChord(steerChords[0] ?? "")
 
   const sendTitle = gated
@@ -809,7 +810,9 @@ export function Composer({
       <div
         data-slot="composer-card"
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-[1.75rem] bg-composer/70 px-3 pt-3 pb-2.5 shadow-glass-lg backdrop-blur-xl backdrop-saturate-150"
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer/70 p-2 shadow-glass-lg backdrop-blur-xl backdrop-saturate-150",
+          "transition-[ring-color] duration-200",
+          voice.listening && "ring-1 ring-destructive/40"
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return
@@ -835,19 +838,8 @@ export function Composer({
         }}
       >
         {dragging && (
-          /* The whole card becomes the target: a tinted well inset from the
-             card's edge, saying what it takes. The discs are a legend of what
-             can be dropped, not controls — nothing is clickable mid-drag. */
-          <div className="pointer-events-none absolute inset-1.5 z-20 flex flex-col items-center justify-center gap-1 rounded-[1.4rem] border-2 border-dotted border-primary/50 bg-[linear-gradient(135deg,color-mix(in_oklch,var(--primary)_10%,var(--composer)),color-mix(in_oklch,var(--primary)_4%,var(--composer)))] text-center">
-            <span className="text-sm font-medium text-primary">Drop anything here</span>
-            <span className="text-[11px] text-primary/70">Files, images, documents & more</span>
-            <span aria-hidden className="mt-1.5 flex gap-2">
-              {[Upload, FileText, ImageIcon, Link].map((Icon, i) => (
-                <span key={i} className="grid size-7 place-items-center rounded-full bg-primary text-primary-foreground">
-                  <Icon className="size-3.5" />
-                </span>
-              ))}
-            </span>
+          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-composer/80 text-xs font-medium text-primary">
+            Drop to attach
           </div>
         )}
         <ComposerEditor
@@ -871,7 +863,7 @@ export function Composer({
           placeholder={
             lock.note ??
             (voice.listening && !text
-              ? "Go ahead, record a quick note…"
+              ? "Listening…"
               : hold.paused
                 ? `${hold.sendHint}…`
                 : thread.turnActive
@@ -898,16 +890,10 @@ export function Composer({
             disc, Send a primary one, Stop a destructive one. The row sits
             INSIDE the composer card, so a bordered button there would be a box
             inside a box; the ground and the colour carry the meaning instead. */}
-        {voice.listening ? (
-          <RecordingRow
-            onCancel={() => {
-              voice.cancel()
-              setText(beforeVoice.current)
-            }}
-            onDone={voice.stop}
-          />
-        ) : (
-        <div data-slot="composer-toolbar" className="flex items-center gap-1.5 pt-2">
+        <div
+          data-slot="composer-toolbar"
+          className={cn("flex items-center gap-1 pt-1", coarse && "gap-1.5 pt-1.5")}
+        >
           <ComposerAddMenu
             disabled={disabled || gated}
             size={iconSize}
@@ -964,19 +950,20 @@ export function Composer({
             size={iconSize}
             onEnhanced={applySuggestion}
           />
-          {/* Dictation appends, so it is offered whatever the box holds; while
-              it listens the whole row becomes the recording row above. */}
-          {voice.supported && !gated && (
+          {voice.supported && (voice.listening || (!hasContent && !gated)) && (
             <Button
-              variant="outline"
+              variant="ghost"
               size={iconSize}
-              className="shrink-0 rounded-pill bg-transparent text-muted-foreground hover:text-foreground [&_svg]:size-4"
-              onClick={() => {
-                beforeVoice.current = text
-                voice.start()
-              }}
+              className={cn(
+                "shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
+                // Listening is a live state, so it stays coloured — but as text,
+                // not as a filled chip that reintroduces the chrome.
+                voice.listening && "animate-pulse text-destructive hover:text-destructive"
+              )}
+              onClick={() => (voice.listening ? voice.stop() : voice.start())}
               disabled={disabled}
-              title="Voice input"
+              title={voice.listening ? "Stop listening" : "Voice input"}
+              aria-pressed={voice.listening}
             >
               <Mic />
             </Button>
@@ -1017,7 +1004,7 @@ export function Composer({
           )}
           {thread.turnActive && (
             <Button
-              variant="default"
+              variant="destructive"
               size={iconSize}
               className="shrink-0 rounded-pill shadow-sm"
               /* Stop and Escape are the same gesture, so they answer the same
@@ -1036,25 +1023,25 @@ export function Composer({
               <Square className="size-3.5 fill-current" />
             </Button>
           )}
-          {/* Drawn in the same place before and after you type — a muted chip
-              while there is nothing to send, primary the moment there is. While
-              a turn runs on an empty box Stop stands in that spot instead; typing
-              brings Send back beside it, as the queue. */}
-          {!(thread.turnActive && !hasContent) && (
-            <Button
-              variant="default"
-              size={iconSize}
-              className="shrink-0 rounded-pill disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
-              onClick={() => void send()}
-              disabled={!canSend}
-              title={sendTitle}
-              aria-label={sendTitle}
-            >
-              {gated ? <Spinner className="size-4" /> : <ArrowUp className="size-4" strokeWidth={2.5} />}
-            </Button>
-          )}
+          {/* Always drawn, even on an empty box: the affordance you aim at
+              stays in the same place before and after you type, rather than
+              appearing the moment the first character lands. When there is
+              nothing to send `canSend` is false, so it wears the disabled
+              ground — a muted chip — and fills primary the moment it becomes
+              sendable. Wears the row's own corner (`rounded-pill`, like the
+              "+"), so the cluster is one shape. */}
+          <Button
+            variant="default"
+            size={iconSize}
+            className="shrink-0 rounded-pill disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+            onClick={() => void send()}
+            disabled={!canSend}
+            title={sendTitle}
+            aria-label={sendTitle}
+          >
+            {gated ? <Spinner className="size-3.5" /> : <ArrowUp className="size-3.5" strokeWidth={2.5} />}
+          </Button>
         </div>
-        )}
       </div>
       {/* Outside the card so the dialog is not inside the element it writes
           into. Picking replaces the box rather than appending: this is
@@ -1073,36 +1060,6 @@ export function Composer({
           })
         }}
       />
-    </div>
-  )
-}
-
-/* Dictation's own row: the toolbar steps aside while the mic is open, because
-   nothing on it is what you want mid-sentence. Cancel puts the box back as it
-   was; the tick keeps what was heard. The clock is this row's alone — it
-   starts when the row mounts, which is when listening started. */
-function RecordingRow({ onCancel, onDone }: { onCancel: () => void; onDone: () => void }) {
-  const [seconds, setSeconds] = React.useState(0)
-  React.useEffect(() => {
-    const started = Date.now()
-    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 500)
-    return () => clearInterval(timer)
-  }, [])
-  const clock = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
-    .map((n) => String(n).padStart(2, "0"))
-    .join(":")
-  return (
-    <div data-slot="composer-toolbar" className="flex items-center gap-1.5 pt-2">
-      <Button variant="secondary" size="sm" className="shrink-0 rounded-pill px-4" onClick={onCancel}>
-        Cancel
-      </Button>
-      <span className="flex flex-1 items-center justify-center gap-2 text-sm font-semibold tabular-nums" role="timer" aria-live="off">
-        <span aria-hidden className="size-2 animate-pulse rounded-full bg-destructive" />
-        {clock}
-      </span>
-      <Button variant="default" size="icon-sm" className="shrink-0 rounded-pill" onClick={onDone} title="Done — keep what was heard">
-        <Check className="size-4" strokeWidth={2.5} />
-      </Button>
     </div>
   )
 }

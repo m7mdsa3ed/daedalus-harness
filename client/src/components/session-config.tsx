@@ -255,7 +255,7 @@ export function SessionConfigPopover({
                what will not fit scrolls with the rest of the control cluster,
                which is already `overflow-x-auto`. The title still carries the
                settings whole. */
-            className="h-8 gap-1.5 rounded-pill border border-border bg-transparent px-3 text-xs font-medium text-foreground shadow-none hover:bg-muted aria-expanded:bg-muted data-popup-open:bg-muted"
+            className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={triggerLabel}
           >
             {/* The model's own icon replaces the profile's logo in the pair —

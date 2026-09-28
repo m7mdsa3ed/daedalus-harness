@@ -70,7 +70,7 @@ export function ComposerAddMenu({
             <Button
               variant="ghost"
               size={size}
-              className="shrink-0 rounded-pill text-muted-foreground hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground [&_svg]:size-4.5"
+              className="shrink-0 rounded-pill bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground [&_svg]:size-3.5"
               disabled={disabled}
               title="Add to the message"
             />
