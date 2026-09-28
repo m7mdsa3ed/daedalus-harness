@@ -332,6 +332,7 @@ export interface AgentDef {
 export interface McpServerStdio {
   type: "stdio"
   name: string
+  logoUrl?: string
   command: string
   args: string[]
   env: { name: string; value: string }[]
@@ -340,6 +341,7 @@ export interface McpServerStdio {
 export interface McpServerHttp {
   type: "http"
   name: string
+  logoUrl?: string
   url: string
   headers: { name: string; value: string }[]
   /** How the row authenticates. `"none"` is a plain URL, possibly with static
@@ -450,6 +452,7 @@ export interface RegistryEntry {
   description: string
   version: string
   repositoryUrl: string | null
+  logoUrl: string | null
   via: string
   server: McpServerStdio | McpServerHttp
   /** Placeholders and required variables the publisher left for the user. */

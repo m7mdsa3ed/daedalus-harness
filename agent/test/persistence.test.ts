@@ -235,9 +235,24 @@ let sessionId = "";
      as the parent's. */
   store.appendUpdate(id, usageUpdate(child, 4_000));
   store.appendUpdate(id, usageUpdate(id, 150_000));
+  store.createSubagent(id, {
+    id: child,
+    name: "reviewer",
+    task: "Inspect the API",
+    status: "running",
+  });
+  store.appendSubagentMessages(id, child, [{ role: "user", content: "Inspect the API" }]);
+  store.setSubagentStatus(id, child, "stopped");
 
   const read = store.read(id);
   assert.equal(read?.lastTokens, 150_000, "the last root usage_update is the reading");
+  assert.deepEqual(store.subagent(id, "reviewer"), {
+    id: child,
+    name: "reviewer",
+    task: "Inspect the API",
+    status: "stopped",
+    messages: [{ role: "user", content: "Inspect the API" }],
+  });
 
   assert.ok(store.delete(id), "delete reports a session it removed");
   assert.equal(store.read(id), null, "the log is gone");

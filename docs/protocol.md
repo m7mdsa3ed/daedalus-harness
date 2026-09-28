@@ -685,6 +685,25 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   carrier and by the same rules as `promptCapabilities`. The fake agent takes the pair with
   a flag and nothing else, which is what `test:workflow` exercises the bridge path with;
   the gate itself is `agent/test/turn.test.ts`.
+- **A runtime that owns no loop we reach is held from inside its own hooks** — same API, a
+  different mechanism, picked by the agent row (`pauseVia`), never by the agent's id. For
+  `"acp-meta"` (Claude Code) the bridge puts
+  `_meta.claudeCode.options.settings.hooks` on session/new|load|resume: an HTTP hook on
+  `PostToolBatch` (every step's tools are back, the next model call not yet made — the same
+  boundary `Session.gate` holds at, subagents included) and on `UserPromptSubmit` (a pause
+  with no turn open holds the next prompt), both calling `POST /ph/<key>/<threadId>`. That
+  route answers `{}` at once, or — while the thread is paused — when it is resumed. **Late,
+  never "no"**: a `block` on `PostToolBatch` ends the turn, which is a cancel. The gate
+  follows `setHold` and nothing else, so resume, cancel and a dying process all open it. The
+  hook's `timeout` is a week, because a timed-out hook is discarded and the loop goes on — a
+  pause lifted by nobody; `HELD_TURN_MAX_MS` is still what gives up on a hold. It fails open
+  (a harness that is down is a failed hook, and the turn continues), and a user
+  `allowedHttpHookUrls` that misses 127.0.0.1 skips it — ours is not added, because defining
+  that key at any tier blocks every other HTTP hook. The runtime's own pair wins where both
+  exist: it holds inside a step, the hooks only between. Verified against the CLI
+  claude-agent-acp 0.81.0 launches (2.1.280): a hook held 6s held the loop 6s and the turn
+  finished normally. Codex is the next door (`"env"`, its `[hooks]` in `CODEX_CONFIG`),
+  pending a way past its per-hash hook trust review.
 
 ## Held turns — a failure waits at the same boundary
 

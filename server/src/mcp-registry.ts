@@ -38,6 +38,8 @@ export interface RegistryEntry {
   version: string;
   /** Where the code lives — the one provenance signal worth drawing. */
   repositoryUrl: string | null;
+  /** Publisher-supplied server icon, when present. */
+  logoUrl: string | null;
   /** npm / pypi / oci / remote — what the reader is about to run. */
   via: string;
   /** Ready for `POST /api/mcp-servers`, placeholders and all. */
@@ -81,11 +83,16 @@ interface RegistryRemote {
   url?: string;
   headers?: RegistryArgument[];
 }
+interface RegistryIcon {
+  src?: string;
+  theme?: "light" | "dark";
+}
 interface RegistryServer {
   name?: string;
   description?: string;
   version?: string;
   repository?: { url?: string };
+  icons?: RegistryIcon[];
   packages?: RegistryPackage[];
   remotes?: RegistryRemote[];
 }
@@ -149,7 +156,7 @@ function needsOf(server: McpServerInput, env: RegistryArgument[] | undefined): s
   return [...new Set([...placeholders, ...required])];
 }
 
-function fromPackage(name: string, pkg: RegistryPackage): McpServerInput | null {
+function fromPackage(name: string, pkg: RegistryPackage): Extract<McpServerInput, { type: "stdio" }> | null {
   // Only stdio packages become a library row: a package declaring an http
   // transport is reached through its `remotes` entry, not by us spawning it.
   if (pkg.transport?.type && pkg.transport.type !== "stdio") return null;
@@ -169,7 +176,7 @@ function fromPackage(name: string, pkg: RegistryPackage): McpServerInput | null 
   return { type: "stdio", name, command, args, env };
 }
 
-function fromRemote(name: string, remote: RegistryRemote): McpServerInput | null {
+function fromRemote(name: string, remote: RegistryRemote): Extract<McpServerInput, { type: "http" }> | null {
   if (!remote.url) return null;
   return {
     type: "http",
@@ -184,6 +191,25 @@ function fromRemote(name: string, remote: RegistryRemote): McpServerInput | null
 /** One `server.json` -> the rows the browse page draws. Exported for the
     self-check: this mapping is the whole feature, and it is the half that
     cannot be verified by looking at it. */
+function logoOf(icons: RegistryIcon[] | undefined): string | null {
+  const candidates = icons ?? [];
+  const preferred = [
+    ...candidates.filter((icon) => !icon.theme),
+    ...candidates.filter((icon) => icon.theme === "light"),
+    ...candidates.filter((icon) => icon.theme === "dark"),
+  ];
+  for (const icon of preferred) {
+    if (!icon.src) continue;
+    try {
+      const url = new URL(icon.src);
+      if (url.protocol === "https:") return url.toString();
+    } catch {
+      // Try the next published variant.
+    }
+  }
+  return null;
+}
+
 export function entriesOf(raw: RegistryServer): RegistryEntry[] {
   const qualifiedName = raw.name ?? "";
   if (!qualifiedName) return [];
@@ -193,6 +219,7 @@ export function entriesOf(raw: RegistryServer): RegistryEntry[] {
     description: raw.description ?? "",
     version: raw.version ?? "",
     repositoryUrl: raw.repository?.url ?? null,
+    logoUrl: logoOf(raw.icons),
   };
   const out: RegistryEntry[] = [];
   for (const [i, pkg] of (raw.packages ?? []).entries()) {
@@ -202,7 +229,7 @@ export function entriesOf(raw: RegistryServer): RegistryEntry[] {
         ...common,
         id: `${qualifiedName}#pkg${i}`,
         via: pkg.registryType ?? "package",
-        server,
+        server: { ...server, logoUrl: common.logoUrl ?? undefined },
         needs: needsOf(server, pkg.environmentVariables),
       });
     }
@@ -214,7 +241,7 @@ export function entriesOf(raw: RegistryServer): RegistryEntry[] {
         ...common,
         id: `${qualifiedName}#remote${i}`,
         via: "remote",
-        server,
+        server: { ...server, logoUrl: common.logoUrl ?? undefined },
         needs: needsOf(server, remote.headers),
       });
     }

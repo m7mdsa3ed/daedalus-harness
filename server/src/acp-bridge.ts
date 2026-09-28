@@ -5,6 +5,7 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "./acp.js";
 import { BridgeTrace } from "./bridge-trace.js";
 import { ingest } from "./tracing.js";
+import { claudePauseSettings, setPauseGate } from "./pause-hooks.js";
 import type { TraceNotificationParams } from "./protocol.js";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
@@ -622,6 +623,11 @@ export interface BridgeOptions {
       numbers, and the nag (which only appears when the written catalog did not
       reach the running codex build) is noise the user chose not to see. */
   suppressModelMetadataWarning?: boolean;
+  /** Where this thread's step hooks call, for a runtime whose pause is the
+      harness's hooks (`AgentDef.pauseVia: "acp-meta"`, pause-hooks.ts). Its
+      presence is what makes such a runtime pausable; absent, only a runtime
+      that advertises its own pause is. */
+  pauseHookUrl?: string;
 }
 
 export class AcpBridge implements ConnectionRoute {
@@ -719,6 +725,9 @@ export class AcpBridge implements ConnectionRoute {
   /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
   private idleWaiters: (() => void)[] = [];
   private readonly suppressModelMetadataWarning: boolean;
+  /** This thread is held through the harness's hooks rather than the
+      runtime's own pause (`BridgeOptions.pauseHookUrl`). */
+  private readonly pauseViaHooks: boolean;
 
   /** `stream` is the transport, not the process: `agentStream(proc)` for a
       child on stdio (the only kind today), and whatever carries ndJSON frames
@@ -731,6 +740,7 @@ export class AcpBridge implements ConnectionRoute {
     this.cwd = opts.cwd;
     this.mcpServers = opts.mcpServers;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
+    this.pauseViaHooks = !!opts.pauseHookUrl;
     this.conn = conn;
     this.connection = conn.rpc;
     conn.attach(this);
@@ -886,6 +896,9 @@ export class AcpBridge implements ConnectionRoute {
     }
 
     if (opts.sessionEnv && Object.keys(opts.sessionEnv).length > 0) options.env = opts.sessionEnv;
+    /* The adapter takes one `settings` object and nothing else sets it, so it
+       is ours outright; a second writer would have to merge into it. */
+    if (opts.pauseHookUrl) options.settings = claudePauseSettings(opts.pauseHookUrl);
 
     if (Object.keys(options).length > 0) meta.claudeCode = { options };
     return meta;
@@ -1878,8 +1891,15 @@ export class AcpBridge implements ConnectionRoute {
     return this.configOptions;
   }
 
-  /** Whether the runtime answers `pause`/`resume` at all. */
+  /** Whether this thread can be paused at all — by the runtime's own pair,
+      or by the harness's hooks. One answer for the UI either way. */
   get canPause(): boolean {
+    return this.nativePause || this.pauseViaHooks;
+  }
+
+  /** The runtime advertised `_daedalus/session/pause` at the handshake. Wins
+      over the hooks: it holds inside the step, where they only can between. */
+  private get nativePause(): boolean {
     const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
     return Boolean(meta?.[PAUSE_CAPABILITY]);
   }
@@ -1986,6 +2006,12 @@ export class AcpBridge implements ConnectionRoute {
 
   private async setPaused(paused: boolean): Promise<{ paused: boolean }> {
     if (!this.canPause) throw new Error("this agent cannot be paused — only cancelled");
+    if (!this.nativePause) {
+      /* The hooks need nothing said to the agent: the hold is the gate, and
+         `setHold` is what shuts and opens it. */
+      this.setHold(paused, this.pausedReason ?? "user", this.pausedError);
+      return { paused: this.paused };
+    }
     const sessionId = this.requireSession();
     const reply = await this.connection.agent.request<{ paused?: boolean }>(paused ? PAUSE_METHOD : RESUME_METHOD, { sessionId });
     /* A resume lets go of both reasons, so it clears the error with the hold;
@@ -2077,6 +2103,10 @@ export class AcpBridge implements ConnectionRoute {
     }
     if (paused && !was) this.heldSince = Date.now();
     if (!paused) this.heldSince = null;
+    /* Every way a hold changes comes through here — the toggle, a cancel, a
+       dying process — so the gate a hooks-paused thread waits on follows it
+       from here and from nowhere else. */
+    if (this.pauseViaHooks) setPauseGate(this.host.threadId, paused);
     this.host.emit(this.pausedEvent());
     /* A hold taken on a failure IS a step boundary: the step that failed was
        rolled back, and the first thing the released turn does is read its

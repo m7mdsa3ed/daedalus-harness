@@ -113,4 +113,66 @@ const SCRIPTS = () => [
   console.log("subagents: fallback ok");
 }
 
+// --- send_message resumes the same saved child after a process restart ---
+{
+  const env = testEnv();
+  const agent = buildAgentApp({
+    env,
+    makeModel: scriptedModel([
+      toolCallScript("task", { description: "inspect source", prompt: "Inspect the source" }),
+      textScript("Initial child notes. "),
+      textScript("Initial parent summary. "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  let sessionId = "";
+  let childId = "";
+  await connectPair(agent, client, async (ctx) => {
+    await initialize(ctx);
+    ({ sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] }));
+    await ctx.request("session/prompt", { sessionId, prompt: promptOf("delegate") });
+    const spawned = harness.updatesOf("subagent_spawned").at(-1)?.update as
+      | { subagentSessionId?: string }
+      | undefined;
+    assert.ok(spawned?.subagentSessionId);
+    childId = spawned.subagentSessionId;
+  });
+
+  const resumedAgent = buildAgentApp({
+    env,
+    makeModel: scriptedModel([
+      toolCallScript("send_message", { agent: childId, message: "Continue and report the remaining findings." }),
+      textScript("Follow-up child findings. "),
+      textScript("Combined parent summary. "),
+    ]),
+  });
+  const { app: resumedClient, harness: resumedHarness } = makeClient();
+  await connectPair(resumedAgent, resumedClient, async (ctx) => {
+    await initialize(ctx);
+    await ctx.request("session/load", { sessionId, cwd, mcpServers: [] });
+    const response = await ctx.request("session/prompt", {
+      sessionId,
+      prompt: promptOf("continue the child"),
+    });
+    assert.equal(response.stopReason, "end_turn");
+    const spawnedAgain = resumedHarness.updatesOf("subagent_spawned").at(-1)?.update as
+      | { subagentSessionId?: string }
+      | undefined;
+    assert.equal(spawnedAgain?.subagentSessionId, childId, "follow-up reuses the child identity");
+    const continued = resumedHarness
+      .updatesOf("agent_message_chunk")
+      .filter((u) => u.sessionId === childId)
+      .map((u) => (u.update as { content?: { text?: string } }).content?.text ?? "")
+      .join("");
+    assert.ok(continued.includes("Follow-up child findings."), `child continued: ${continued}`);
+    const store = new (await import("../src/persistence.js")).SessionStore(env.home);
+    const child = store.subagent(sessionId, childId);
+    assert.equal(child?.status, "completed");
+    assert.ok(child?.messages.some((message) => message.role === "user" && JSON.stringify(message).includes("Continue and report")));
+    assert.ok(child?.messages.some((message) => message.role === "assistant" && JSON.stringify(message).includes("Initial child notes")));
+    assert.ok(child?.messages.some((message) => message.role === "assistant" && JSON.stringify(message).includes("Follow-up child findings")));
+  });
+  console.log("subagents: send_message resume after restart ok");
+}
+
 console.log("subagents.test.ts passed");

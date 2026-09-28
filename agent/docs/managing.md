@@ -22,6 +22,7 @@ prompt and its tool descriptions.
 | **Who answers permission prompts** | the autonomy policy | live |
 | **Pause / resume the turn** | the composer's pause toggle (beside Stop), a workflow's hold toggle | live (`_daedalus/session/pause`) |
 | **Continue a turn that failed** | the same toggle, after changing the model | live (`_daedalus/session/resume`) |
+| **Continue a stopped subagent** | the parent agent uses `list_agents`, then `send_message` with the child ID or name | saved child conversation, resumed at a complete step |
 
 Three of those are worth expanding.
 

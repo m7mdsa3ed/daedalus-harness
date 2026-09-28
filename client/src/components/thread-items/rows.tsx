@@ -163,7 +163,8 @@ export const ToolRun = React.memo(function ToolRun({
      show. The run's own fold is about counting finished work; the steps inside
      a run opened this way keep their own defaultOpen (reads and searches stay
      one-line rows), and the reader's hand still wins over all of it. */
-  const open = choice ?? (active || tail === true || tools.some(toolOpensByDefault))
+  const live = active || tail === true
+  const open = choice ?? ((view.openRunningGroup && live) || tools.some(toolOpensByDefault))
   const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
     setChoice(typeof value === "function" ? value(open) : value)
 
@@ -175,8 +176,10 @@ export const ToolRun = React.memo(function ToolRun({
      is not re-expanding itself behind your back. A finished run shows nothing,
      which is what the counting line is for — so the peek closes on its own
      when the run ends. */
-  const showing = open ? displayItems : active ? displayItems.slice(-PEEK) : []
-  const hidden = active && !open ? displayLength - showing.length : 0
+  /* `live`, not `active`: folded by the option, a peek keyed on `active` would
+     blink out in every gap between two calls — the flicker `tail` exists for. */
+  const showing = open ? displayItems : live ? displayItems.slice(-PEEK) : []
+  const hidden = live && !open ? displayLength - showing.length : 0
 
   /* How many of `showing` were already on screen at the last commit, which is
      what the entrance staggers off (`--item-i`, index.css). The steps' place

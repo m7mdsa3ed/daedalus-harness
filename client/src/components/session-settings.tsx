@@ -180,6 +180,13 @@ const GROUPS: Group[] = [
           "Fold consecutive tool calls and the thinking between them into one expandable group.",
       },
       {
+        key: "openRunningGroup",
+        icon: Wrench,
+        title: "Keep the running group open",
+        description:
+          "The group the agent is working in stays expanded until it moves on. Off, it folds like the rest and shows only its last few steps.",
+      },
+      {
         key: "showShellCommands",
         icon: TerminalIcon,
         title: "Show `!` commands",

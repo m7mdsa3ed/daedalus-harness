@@ -184,6 +184,7 @@ const McpServerRow = z.object({
   id: str.min(1),
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
+  logoUrl: optStr,
   builtin: z.enum(["web-search", "knowledge", "workflow", "agents"]).nullish(),
   /** Absent in a bundle written before OAuth existed, which read as "none". */
   auth: z.enum(["none", "oauth"]).default("none"),

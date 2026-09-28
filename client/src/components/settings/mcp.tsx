@@ -37,6 +37,7 @@ import {
   WorkflowIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { EntityIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import {
   DropdownMenu,
@@ -82,9 +83,17 @@ const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
 /** This row's mark. A library of MCP servers is not one kind of thing: two
     transports and the harness's own tools share the list, and the plug every
     row used to wear said none of that. */
-function mcpIcon(s: McpServerDef) {
-  if (s.type === "builtin") return builtinOf(s.builtin)?.icon ?? PlugIcon
-  return s.type === "http" ? GlobeIcon : TerminalIcon
+function mcpIcon(s: McpServerDef): React.ReactNode {
+  const Icon = s.type === "builtin" ? builtinOf(s.builtin)?.icon ?? PlugIcon : s.type === "http" ? GlobeIcon : TerminalIcon
+  return s.type !== "builtin" && s.logoUrl ? (
+    <EntityIcon
+      src={s.logoUrl}
+      className="size-4"
+      fallback={<Icon className="size-4 shrink-0 text-muted-foreground" />}
+    />
+  ) : (
+    <Icon className="size-4 shrink-0 text-muted-foreground" />
+  )
 }
 
 /**
@@ -597,6 +606,7 @@ function McpForm({
 }) {
   const [form, setForm] = React.useState(() => ({
     name: server?.name ?? "",
+    logoUrl: server && server.type !== "builtin" ? server.logoUrl ?? "" : "",
     type: (server?.type === "http" ? "http" : "stdio") as "stdio" | "http",
     command: server?.type === "stdio" ? server.command : "",
     args: server?.type === "stdio" ? server.args.join("\n") : "",
@@ -656,10 +666,11 @@ function McpForm({
       }
       const payload =
         form.type === "http"
-          ? { type: "http", name: form.name, url: form.url, headers: pairs(form.headers, ":"), auth }
+          ? { type: "http", name: form.name, logoUrl: form.logoUrl.trim() || undefined, url: form.url, headers: pairs(form.headers, ":"), auth }
           : {
               type: "stdio",
               name: form.name,
+              logoUrl: form.logoUrl.trim() || undefined,
               command: form.command,
               args: lines(form.args),
               env: pairs(form.env, "="),
@@ -680,6 +691,15 @@ function McpForm({
       <div className="grid gap-4 @panel-sm:grid-cols-2">
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
+        </Field>
+        <Field label="Logo URL" hint="Optional HTTPS image URL. Registry logos are filled in automatically.">
+          <Input
+            type="url"
+            value={form.logoUrl}
+            onChange={(e) => set({ logoUrl: e.target.value })}
+            placeholder="https://example.com/logo.png"
+            className="font-mono text-xs"
+          />
         </Field>
         <Field label="Transport">
           <Select value={form.type} onValueChange={(type) => set({ type: (type as "stdio" | "http") ?? "stdio" })}>

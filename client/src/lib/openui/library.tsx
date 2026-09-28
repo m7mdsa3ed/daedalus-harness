@@ -823,7 +823,10 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
 const Flowchart = defineComponent({
   name: "Flowchart",
   description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
-  props: graphProps,
+  /* A copy, not `graphProps` itself: the library names a component by its
+     props schema object, so two components sharing one keep only the last —
+     `Diagram` — and every Flowchart parsed as an unknown component. */
+  props: graphProps.extend({}),
   component: GraphFigure,
 })
 
@@ -1101,6 +1104,7 @@ export const openuiLibrary = createLibrary({
     Keys,
     People,
     Gallery,
+    Flowchart,
     Diagram,
     Mermaid,
   ],

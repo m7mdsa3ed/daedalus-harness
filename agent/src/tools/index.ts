@@ -9,6 +9,7 @@ import { makeGlobTool, makeGrepTool, globMeta, grepMeta } from "./search.js";
 import { makeAskUserTool, askUserMeta } from "./ask-user.js";
 import { makePlanTool, planMeta } from "./plan.js";
 import { makeTaskTool, taskMeta } from "./task.js";
+import { makeAgentMessageTools } from "./agent-messages.js";
 
 export type { ToolMeta, ToolRuntime } from "./context.js";
 
@@ -51,6 +52,11 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
     ask_user: askUserMeta,
     write_todos: planMeta,
     task: taskMeta,
+    list_agents: { kind: "other", title: () => "List subagents" },
+    send_message: {
+      kind: "other",
+      title: (input) => `Message subagent: ${String(inputOf(input).agent ?? "agent")}`,
+    },
   };
 
   const planOnly = rt.session.mode === "plan";
@@ -75,6 +81,7 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
   }
   if (!opts.subagent && !planOnly) {
     tools.task = makeTaskTool(rt);
+    Object.assign(tools, makeAgentMessageTools(rt));
   }
   /* Last, over everything — built-ins, MCP, the subagent's own set — because
      what reaches the model is the request's size and no single tool is the

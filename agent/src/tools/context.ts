@@ -10,6 +10,10 @@ export interface ToolRuntime {
   clientCaps: acp.ClientCapabilities | null;
   /** Runs a nested subagent loop and returns its final report (task tool). */
   runSubagent(name: string, prompt: string, toolCallId?: string): Promise<string>;
+  /** Lists this session's persisted subagents. */
+  listSubagents(): Array<{ id: string; name: string; task: string; status: string }>;
+  /** Sends a follow-up to a subagent, resuming its saved conversation if needed. */
+  sendMessage(agent: string, message: string): Promise<string>;
 }
 
 /* How the transcript should draw a call of this tool: the ACP `kind` picks

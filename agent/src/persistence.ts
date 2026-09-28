@@ -49,7 +49,40 @@ interface ModeRecord {
 interface CompactRecord {
   t: "compact";
 }
-type Record_ = MetaRecord | MsgRecord | UpdateRecord | CompactRecord | ModeRecord;
+export type SubagentStatus = "running" | "completed" | "stopped" | "failed";
+export interface SubagentEntry {
+  id: string;
+  name: string;
+  task: string;
+  status: SubagentStatus;
+  messages: ModelMessage[];
+}
+interface SubagentRecord {
+  t: "subagent";
+  id: string;
+  name: string;
+  task: string;
+  status: SubagentStatus;
+}
+interface SubagentMessagesRecord {
+  t: "subagent_messages";
+  id: string;
+  messages: ModelMessage[];
+}
+interface SubagentStatusRecord {
+  t: "subagent_status";
+  id: string;
+  status: SubagentStatus;
+}
+type Record_ =
+  | MetaRecord
+  | MsgRecord
+  | UpdateRecord
+  | CompactRecord
+  | ModeRecord
+  | SubagentRecord
+  | SubagentMessagesRecord
+  | SubagentStatusRecord;
 
 export interface SessionHistory {
   cwd: string;
@@ -63,6 +96,7 @@ export interface SessionHistory {
       window has to compact on its first turn, and `lastTokens` starting at
       zero is what let it skip straight past that. */
   lastTokens: number;
+  subagents: SubagentEntry[];
 }
 
 const LIST_PAGE = 100;
@@ -90,6 +124,7 @@ export class SessionStore {
   home: string;
   index: Map<string, IndexEntry>;
   private flushTimer: NodeJS.Timeout | null = null;
+  private activeSubagents = new Set<string>();
 
   constructor(home: string) {
     this.home = home;
@@ -202,7 +237,15 @@ export class SessionStore {
 
   read(sessionId: string): SessionHistory | null {
     const path = this.file(sessionId);
-    const history: SessionHistory = { cwd: "", messages: [], updates: [], mode: null, lastTokens: 0 };
+    const history: SessionHistory = {
+      cwd: "",
+      messages: [],
+      updates: [],
+      mode: null,
+      lastTokens: 0,
+      subagents: [],
+    };
+    const subagents = new Map<string, SubagentEntry>();
     const applyLine = (line: string): void => {
       if (!line.trim()) return;
       let record: Record_;
@@ -215,7 +258,21 @@ export class SessionStore {
       else if (record.t === "msg") history.messages.push(record.m);
       else if (record.t === "compact") history.messages = [];
       else if (record.t === "mode") history.mode = record.mode;
-      else {
+      else if (record.t === "subagent") {
+        subagents.set(record.id, {
+          id: record.id,
+          name: record.name,
+          task: record.task,
+          status: record.status,
+          messages: [],
+        });
+      } else if (record.t === "subagent_messages") {
+        const entry = subagents.get(record.id);
+        if (entry) entry.messages.push(...record.messages);
+      } else if (record.t === "subagent_status") {
+        const entry = subagents.get(record.id);
+        if (entry) entry.status = record.status;
+      } else {
         history.updates.push(record.u);
         /* The provider's own reading of the last step, cache included — the
            figure compaction thresholds against. Only the session's own updates
@@ -256,7 +313,44 @@ export class SessionStore {
     } finally {
       closeSync(fd);
     }
+    history.subagents = [...subagents.values()];
     return history;
+  }
+
+  createSubagent(sessionId: string, entry: Omit<SubagentEntry, "messages">): void {
+    this.append(sessionId, { t: "subagent", ...entry });
+    this.activeSubagents.add(`${sessionId}:${entry.id}`);
+  }
+
+  claimSubagent(sessionId: string, id: string): boolean {
+    const key = `${sessionId}:${id}`;
+    if (this.activeSubagents.has(key)) return false;
+    this.activeSubagents.add(key);
+    return true;
+  }
+
+  releaseSubagent(sessionId: string, id: string): void {
+    this.activeSubagents.delete(`${sessionId}:${id}`);
+  }
+
+  appendSubagentMessages(sessionId: string, id: string, messages: ModelMessage[]): void {
+    if (messages.length > 0) this.append(sessionId, { t: "subagent_messages", id, messages });
+  }
+
+  setSubagentStatus(sessionId: string, id: string, status: SubagentStatus): void {
+    this.append(sessionId, { t: "subagent_status", id, status });
+  }
+
+  listSubagents(sessionId: string): SubagentEntry[] {
+    return (this.read(sessionId)?.subagents ?? []).map((entry) => {
+      if (entry.status !== "running" || this.activeSubagents.has(`${sessionId}:${entry.id}`)) return entry;
+      this.setSubagentStatus(sessionId, entry.id, "stopped");
+      return { ...entry, status: "stopped" };
+    });
+  }
+
+  subagent(sessionId: string, id: string): SubagentEntry | null {
+    return this.listSubagents(sessionId).find((entry) => entry.id === id || entry.name === id) ?? null;
   }
 
   list(cwd: string | null | undefined, cursor: string | null | undefined): {

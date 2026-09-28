@@ -265,6 +265,12 @@ export async function handlePrompt(
                  same accumulator every retry of the root adds to. */
               if (usage) turnUsage = addUsage(turnUsage, usage);
             }),
+          listSubagents: () =>
+            deps.store.listSubagents(session.id).map(({ id, name, task, status }) => ({ id, name, task, status })),
+          sendMessage: (agent, message) =>
+            runSubagent(deps, session, ctx, emit, `message-${randomUUID()}`, agent, message, (usage) => {
+              if (usage) turnUsage = addUsage(turnUsage, usage);
+            }, agent),
         };
         const { tools, meta } = buildTools(rt);
 
@@ -941,15 +947,28 @@ async function runSubagent(
       parent turn's answer is the one figure a reader sees, and a turn that
       spent most of its budget in three children reported only the root's. */
   reportUsage: (usage: LanguageModelUsage | null) => void,
+  existingId?: string,
 ): Promise<string> {
-  const childId = randomUUID();
+  const existing = existingId ? deps.store.subagent(session.id, existingId) : null;
+  if (existingId && !existing) throw new Error(`No saved subagent named or identified by '${existingId}'.`);
+  const childId = existing?.id ?? randomUUID();
+  if (!deps.store.claimSubagent(session.id, childId)) {
+    throw new Error(`Subagent '${existing?.name ?? name}' is already running; wait for it to stop before messaging it.`);
+  }
   const rfd = subagentsNegotiated(deps);
+  const childName = existing?.name ?? name;
+  const task = existing?.task ?? prompt;
+  if (!existing) {
+    deps.store.createSubagent(session.id, { id: childId, name: childName, task, status: "running" });
+  } else {
+    deps.store.setSubagentStatus(session.id, childId, "running");
+  }
   if (rfd) {
     await parentEmit.update({
       sessionUpdate: "subagent_spawned",
       subagentSessionId: childId,
-      name,
-      task: prompt.length > 500 ? `${prompt.slice(0, 500)}…` : prompt,
+      name: childName,
+      task: task.length > 500 ? `${task.slice(0, 500)}…` : task,
       _meta: { daedalus: { parentToolUseId: toolCallId } },
     });
   }
@@ -960,13 +979,20 @@ async function runSubagent(
     emit: childEmit,
     clientCaps: deps.clientCaps(),
     runSubagent: () => Promise.reject(new Error("subagents cannot launch subagents")),
+    listSubagents: () => [],
+    sendMessage: () => Promise.reject(new Error("subagents cannot message sibling agents")),
   };
-        const { tools, meta } = buildTools(rt, { subagent: true });
+  const { tools, meta } = buildTools(rt, { subagent: true });
+  let messages: ModelMessage[] = existing?.messages.length
+    ? [...existing.messages, { role: "user", content: prompt }]
+    : [{ role: "user", content: prompt }];
   childEmit.record({
     sessionUpdate: "user_message_chunk",
     content: { type: "text", text: prompt },
     messageId: randomUUID(),
   });
+  if (!existing) deps.store.appendSubagentMessages(session.id, childId, messages);
+  else deps.store.appendSubagentMessages(session.id, childId, [{ role: "user", content: prompt }]);
 
   try {
     let lastError: unknown;
@@ -980,10 +1006,11 @@ async function runSubagent(
       }
 
       const system = systemPrompt(session, deps.env, { subagent: true, toolNames: Object.keys(tools) });
+      let settled: ModelMessage[] = [];
       const result = streamText({
         model: deps.makeModel(deps.env, session.modelId),
         system,
-        messages: [{ role: "user", content: prompt }],
+        messages,
         tools,
         abortSignal: session.abort?.signal,
         maxRetries: 0,
@@ -994,6 +1021,14 @@ async function runSubagent(
         providerOptions: cacheAffinity(deps.env, session.id),
         telemetry: { functionId: "daedalus.subagent", recordInputs: true, recordOutputs: true },
         onError: () => {},
+        onStepEnd: async (step) => {
+          const candidate = [...settled, ...(step.response.messages as ModelMessage[])];
+          const safe = settledPrefix(candidate);
+          if (safe.length !== candidate.length) return;
+          const delta = candidate.slice(settled.length);
+          settled = candidate;
+          deps.store.appendSubagentMessages(session.id, childId, delta);
+        },
         /* A subagent pauses with its parent: the Codex thread-tree issue's
            complaint is exactly a root held while its collaborators keep
            spending, so the child's steps pass the same gate. */
@@ -1019,20 +1054,24 @@ async function runSubagent(
         if (outcome.error !== undefined) {
           if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
             lastError = outcome.error;
+            messages = [...messages, ...settled];
+            if (settled.length > 0) deps.store.appendSubagentMessages(session.id, childId, settled);
+            settled = [];
             continue;
           }
           throw outcome.error;
         }
-        if (outcome.aborted) {
-          if (rfd) {
-            await parentEmit.update({
-              sessionUpdate: "subagent_state_update",
-              subagentSessionId: childId,
-              state: "cancelled",
-            });
-          }
-          throw new Error("subagent cancelled");
+        if (outcome.aborted) throw new Error("subagent cancelled");
+        const generated = (await result.responseMessages) as ModelMessage[];
+        const complete = settledPrefix(generated);
+        if (complete.length > settled.length) {
+          const delta = complete.slice(settled.length);
+          settled = complete;
+          deps.store.appendSubagentMessages(session.id, childId, delta);
         }
+        messages = [...messages, ...settled];
+        const report = outcome.text.trim() || "(the subagent produced no report)";
+        deps.store.setSubagentStatus(session.id, childId, "completed");
         if (rfd) {
           await parentEmit.update({
             sessionUpdate: "subagent_state_update",
@@ -1040,11 +1079,13 @@ async function runSubagent(
             state: "completed",
           });
         }
-        const report = outcome.text.trim() || "(the subagent produced no report)";
         return report.length > SUBAGENT_REPORT_LIMIT ? `${report.slice(0, SUBAGENT_REPORT_LIMIT)}…` : report;
       } catch (err) {
         if (isRetriableStreamError(err) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
           lastError = err;
+          messages = [...messages, ...settled];
+          if (settled.length > 0) deps.store.appendSubagentMessages(session.id, childId, settled);
+          settled = [];
           continue;
         }
         throw err;
@@ -1052,14 +1093,18 @@ async function runSubagent(
     }
     throw lastError;
   } catch (err) {
+    const status = session.abort?.signal.aborted ? "stopped" : "failed";
+    deps.store.setSubagentStatus(session.id, childId, status);
     if (rfd) {
       await parentEmit.update({
         sessionUpdate: "subagent_state_update",
         subagentSessionId: childId,
-        state: "failed",
+        state: status === "stopped" ? "cancelled" : "failed",
       });
     }
     throw err;
+  } finally {
+    deps.store.releaseSubagent(session.id, childId);
   }
 }
 

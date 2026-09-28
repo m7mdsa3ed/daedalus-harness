@@ -17,6 +17,11 @@ const [pkg] = entriesOf({
   description: "MCP server for remote filesystem operations on cloud storage.",
   repository: { url: "https://github.com/pulsemcp/mcp-servers" },
   version: "0.1.5",
+  icons: [
+    { src: "http://insecure.example/logo.png", theme: "light" },
+    { src: "https://cdn.example/logo.png", theme: "light" },
+    { src: "https://cdn.example/logo-dark.png", theme: "dark" },
+  ],
   packages: [
     {
       registryType: "npm",
@@ -35,6 +40,8 @@ const [pkg] = entriesOf({
 
 assert.equal(pkg.via, "npm");
 assert.equal(pkg.qualifiedName, "com.pulsemcp/remote-filesystem");
+assert.equal(pkg.logoUrl, "https://cdn.example/logo.png");
+assert.equal(pkg.server.logoUrl, pkg.logoUrl);
 assert.equal(pkg.server.type, "stdio");
 assert.equal(pkg.server.name, "remote-filesystem", "the agent gets the tail, not the reverse-DNS name");
 if (pkg.server.type !== "stdio") throw new Error("unreachable");
@@ -93,5 +100,14 @@ assert.deepEqual(oci.server.env, [{ name: "API_KEY", value: "" }]);
 /* A server with neither a package we can run nor a remote contributes no rows
    rather than a broken one. */
 assert.deepEqual(entriesOf({ name: "io.github.acme/nothing", packages: [{ registryType: "mcpb" }] }), []);
+assert.equal(
+  entriesOf({
+    name: "io.github.acme/data-icon",
+    icons: [{ src: "data:image/png;base64,AAAA" }],
+    remotes: [{ url: "https://example.com/mcp" }],
+  })[0]?.logoUrl,
+  null,
+  "data icons are not rendered as external registry URLs",
+);
 
 console.log("mcp-registry: ok");

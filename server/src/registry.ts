@@ -179,6 +179,21 @@ export interface AgentDef {
    */
   workflowsVia?: "native" | null;
   /**
+   * How a pause reaches a runtime that has none of its own. The API is one —
+   * `AcpBridge.pause()/resume()`, `session_config.canPause`, the `paused`
+   * event — and this names the mechanism behind it for one runtime.
+   *
+   *  - `"acp-meta"` (claude-code): the harness's step hooks go in through
+   *    `_meta.claudeCode.options.settings`, and a paused thread's hook does not
+   *    answer until it is resumed (`pause-hooks.ts`).
+   *
+   * Null means the runtime's own `_daedalus/session/pause` if it advertises
+   * one at the handshake (daedalus, the fake agent), and no pause otherwise —
+   * the UI draws no control for it. Codex's hooks are the obvious next door
+   * (`"env"`, through its config template), once their trust review is solved.
+   */
+  pauseVia?: "acp-meta" | null;
+  /**
    * Where this runtime reads the skills, commands and model allowlist the
    * harness projects into the project's cwd (`materialize.ts`).
    *
@@ -739,7 +754,7 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 24,
+    since: 25,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
@@ -760,6 +775,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // (`QuotaProbe.login`), so Refresh can run beside a live thread while the
     // token is nowhere near a refresh. Env untouched again.
     // Seed 24 lets threads share one process (`sharedProcess`); env untouched.
+    // Seed 25 says a pause reaches it through the harness's hooks (`pauseVia`).
     backfill: (existing) => ({
       env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
       quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
@@ -768,6 +784,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       sharedProcess: existing.sharedProcess ?? "acp-meta",
       rewindVia: existing.rewindVia ?? "acp-fork-point",
       workflowsVia: existing.workflowsVia ?? "native",
+      pauseVia: existing.pauseVia ?? "acp-meta",
       ...backfill20(existing),
     }),
     id: "claude-code",
@@ -789,6 +806,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     personaVia: "acp-meta",
     sharedProcess: "acp-meta",
     rewindVia: "acp-fork-point",
+    pauseVia: "acp-meta",
   },
   {
     // Official ACP adapter for OpenAI Codex. Auth: CODEX_API_KEY, or ChatGPT
@@ -1029,6 +1047,7 @@ export async function seedAgents(): Promise<void> {
           subagentFeed: agent.subagentFeed ?? null,
           rewindVia: agent.rewindVia ?? null,
           workflowsVia: agent.workflowsVia ?? null,
+          pauseVia: agent.pauseVia ?? null,
           workspaceLayout: agent.workspaceLayout ?? null,
           builtinTools: agent.builtinTools ?? null,
           catalogProbe: agent.catalogProbe ?? null,
@@ -1057,6 +1076,7 @@ export async function seedAgents(): Promise<void> {
         subagentFeed: existing.subagentFeed ?? agent.subagentFeed ?? null,
         rewindVia: existing.rewindVia ?? agent.rewindVia ?? null,
         workflowsVia: existing.workflowsVia ?? agent.workflowsVia ?? null,
+        pauseVia: existing.pauseVia ?? agent.pauseVia ?? null,
         workspaceLayout: existing.workspaceLayout ?? agent.workspaceLayout ?? null,
         builtinTools: existing.builtinTools ?? agent.builtinTools ?? null,
         catalogProbe: existing.catalogProbe ?? agent.catalogProbe ?? null,
@@ -1167,6 +1187,7 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       subagentFeed: seed.subagentFeed ?? null,
       rewindVia: seed.rewindVia ?? null,
       workflowsVia: seed.workflowsVia ?? null,
+      pauseVia: seed.pauseVia ?? null,
       workspaceLayout: seed.workspaceLayout ?? null,
       builtinTools: seed.builtinTools ?? null,
       catalogProbe: seed.catalogProbe ?? null,

@@ -60,6 +60,9 @@ export interface ViewOptions {
   showTimestamps: boolean
   /** Fold runs of consecutive tool calls and interleaved thoughts into one expandable block. */
   groupTools: boolean
+  /** Keep the group the agent is still working in open. Off, it folds like a
+   *  finished one and peeks its last few steps under the counting line. */
+  openRunningGroup: boolean
   /** Fold a run of consecutive `!` commands into one line you can open. */
   groupShellCommands: boolean
   /** The `!` commands you ran, and what they printed. Off, the rows are hidden —
@@ -126,6 +129,7 @@ export interface ViewOptions {
 export const VIEW_DEFAULTS: ViewOptions = {
   showTimestamps: false,
   groupTools: false,
+  openRunningGroup: true,
   groupShellCommands: false,
   showShellCommands: true,
   compactDensity: false,
@@ -180,6 +184,7 @@ export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
   "toolLayout",
   "subagentPeek",
   "groupTools",
+  "openRunningGroup",
   "codeWrap",
   "splitDiffs",
 ]

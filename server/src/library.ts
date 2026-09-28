@@ -73,6 +73,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("http"),
     name: z.string().min(1),
+    logoUrl: z.string().url().optional(),
     url: z.string().url(),
     headers: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
     /* How the row authenticates. A stored answer, not a typed one: the client
@@ -86,6 +87,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("stdio").default("stdio"),
     name: z.string().min(1),
+    logoUrl: z.string().url().optional(),
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
     env: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
@@ -124,11 +126,20 @@ function toDef(row: McpRow): McpServerDef {
     return { id: row.id, type: "builtin", name: row.name, builtin: row.builtin ?? "web-search" };
   }
   return row.type === "http"
-    ? { id: row.id, type: "http", name: row.name, url: row.url ?? "", headers: row.headers ?? [], auth: row.auth }
+    ? {
+        id: row.id,
+        type: "http",
+        name: row.name,
+        logoUrl: row.logoUrl ?? undefined,
+        url: row.url ?? "",
+        headers: row.headers ?? [],
+        auth: row.auth,
+      }
     : {
         id: row.id,
         type: "stdio",
         name: row.name,
+        logoUrl: row.logoUrl ?? undefined,
         command: row.command ?? "",
         args: row.args ?? [],
         env: row.env ?? [],
@@ -136,17 +147,27 @@ function toDef(row: McpRow): McpServerDef {
 }
 
 function toRow(id: string, input: McpServerInput): typeof mcpServersTable.$inferInsert {
-  const blank = { url: null, headers: null, command: null, args: null, env: null, builtin: null, auth: "none" as const };
+  const blank = { logoUrl: null, url: null, headers: null, command: null, args: null, env: null, builtin: null, auth: "none" as const };
   if (input.type === "builtin") {
     return { ...blank, id, type: "builtin", name: input.name, builtin: input.builtin };
   }
   return input.type === "http"
-    ? { ...blank, id, type: "http", name: input.name, url: input.url, headers: input.headers, auth: input.auth }
+    ? {
+        ...blank,
+        id,
+        type: "http",
+        name: input.name,
+        logoUrl: input.logoUrl ?? null,
+        url: input.url,
+        headers: input.headers,
+        auth: input.auth,
+      }
     : {
         ...blank,
         id,
         type: "stdio",
         name: input.name,
+        logoUrl: input.logoUrl ?? null,
         command: input.command,
         args: input.args,
         env: input.env,

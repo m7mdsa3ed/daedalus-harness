@@ -21,6 +21,7 @@ import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./pro
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
+import { pauseHookUrlFor } from "./pause-hooks.js";
 import { HttpError } from "./http-error.js";
 import * as git from "./git.js";
 import { getProject } from "./projects.js";
@@ -1734,6 +1735,10 @@ export class SessionManager {
          no entry keeps its built-ins and one that grows a switch can say so. */
       builtinTools: agent?.builtinTools ?? null,
       persona: agent?.personaVia === "acp-meta" ? persona : undefined,
+      /* A runtime with no pause of its own is held by the harness's hooks when
+         its row names the door; the URL names the thread, not the process, so
+         a shared process's sessions are held one at a time. */
+      pauseHookUrl: agent?.pauseVia === "acp-meta" ? pauseHookUrlFor(session.id) || undefined : undefined,
       /* The profile may opt out of Codex's fallback-metadata notice; the
          bridge is where it is dropped, so this is where the flag lands (see
          acp-bridge.ts). */

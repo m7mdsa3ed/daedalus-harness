@@ -344,7 +344,7 @@ export function applySessionUpdate(
         workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
         usage: existing?.usage,
         context: existing?.context,
-        state: existing?.state ?? "running",
+        state: "running",
         startedAt: existing?.startedAt ?? Date.now(),
         at: existing?.at ?? at,
         parentId: owner ?? existing?.parentId,

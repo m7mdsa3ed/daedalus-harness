@@ -136,9 +136,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A capability we don't advertise is a feature the agent turns off.** Questions arrive as
   `elicitation/create`, not permission requests; narrow with
   `isFormElicitation`/`isUrlElicitation`, never `mode === "form"`.
-- **ACP has no pause, so pause is the harness's own pair** (`_daedalus/session/pause`), taken
-  only by our runtime, which holds at its next model step with nothing lost. A cancel clears
-  the pause on both ends.
+- **ACP has no pause, so pause is the harness's own — one API, a mechanism per runtime.**
+  `bridge.pause()/resume()`, `session_config.canPause` and the `paused` event are the same for
+  every agent; what holds the loop is our runtime's `_daedalus/session/pause` where it is
+  advertised, else the row's `pauseVia` (`"acp-meta"`: Claude Code's `PostToolBatch` /
+  `UserPromptSubmit` HTTP hooks, `pause-hooks.ts`, whose answer is **late, never "no"** — a
+  blocked step hook ends the turn). No mechanism, no `canPause`, no control drawn. Either way
+  it holds at the next step boundary with nothing lost, and a cancel clears it.
 - **A failed turn is held at that same boundary, not ended** — the second reason the loop
   waits, and the same wait. **Any** failure holds, not a chosen list: an error part, a thrown
   call, and the finish reasons that mean the step did not do what was asked (`error`,
@@ -163,7 +167,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Subagents: the store is flat, the transcript is a tree.** Ownership is resolved in one
   place and lands as `parentId`; consumers reading `thread.items` must ignore `parentId`
   items where the thread's own are meant. OpenCode's children are read off the side of the
-  process, server-side — nothing downstream learns a fourth shape.
+  process, server-side — nothing downstream learns a fourth shape. The Daedalus agent's
+  `task` children have stable ids and saved conversation state: use `list_agents` to find a
+  child and `send_message` to follow up. A stopped or failed child resumes from its last
+  complete model/tool step; a running child rejects a message instead of racing. This resumes
+  the conversation, not an in-flight model request or unfinished tool call.
 - Agent stderr is spliced into errors on the way out; every route throw becomes the
   `{ error }` shape the client parses.
 - **Test agent** `server/test/fake-agent.mjs` (`fake-echo`) drives the UI without credentials

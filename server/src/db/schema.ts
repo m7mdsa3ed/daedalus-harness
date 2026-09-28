@@ -257,6 +257,11 @@ export const agents = pgTable("agents", {
       handing it the lesser engine costs the better one (`sessions.ts`). Null =
       it has none, and the harness's is linked when the profile links it. */
   workflowsVia: text("workflows_via").$type<"native">(),
+  /** How a pause reaches a runtime with none of its own (`AgentDef.pauseVia`).
+      `"acp-meta"` = the harness's step hooks through `_meta.claudeCode.options
+      .settings` (`pause-hooks.ts`). Null = the runtime's own advertised pause,
+      or none, and the UI offers no control. */
+  pauseVia: text("pause_via").$type<"acp-meta">(),
   /** Where this runtime reads harness-projected skills, commands and the model
       allowlist from, inside the project's cwd. Null = nothing is projected. */
   workspaceLayout: jsonb("workspace_layout").$type<WorkspaceLayout>(),
@@ -500,6 +505,8 @@ export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
   type: text("type", { enum: ["http", "stdio", "builtin"] }).notNull(),
   name: text("name").notNull(),
+  /** Optional registry-provided logo for the library list. */
+  logoUrl: text("logo_url"),
   // builtin
   builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents"] }).$type<BuiltinMcp>(),
   // http

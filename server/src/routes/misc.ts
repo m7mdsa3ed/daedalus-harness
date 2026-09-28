@@ -6,6 +6,7 @@ import { SEARCH_LIMIT, searchEvents } from "../search.js";
 import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listAllKnowledge, listKnowledge } from "../knowledge.js";
 import { BundleSchema, exportBundle, importBundle } from "../backup.js";
 import { proxyGatewayRequest } from "../gateway-shim.js";
+import { handlePauseHook } from "../pause-hooks.js";
 import { proxyMcpRequest } from "../mcp-shim.js";
 import { getProfileQuota, getQuota, quotaCwd } from "../quota.js";
 import { profileUsage } from "../usage-api.js";
@@ -239,6 +240,11 @@ export function miscRoutes(
      `x-api-key` for the gateway itself), and a key the shim did not mint is a
      404. See gateway-shim.ts for the one repair it makes on the way back. */
   app.all("/gw/*", (c) => proxyGatewayRequest(c.req.raw));
+
+  /* A paused thread's step hooks, mounted the same way: the per-boot key in
+     the path is the credential, and the answer is only ever late, never "no"
+     (pause-hooks.ts). */
+  app.post("/ph/*", (c) => handlePauseHook(c.req.raw));
 
   /* The MCP OAuth shim, mounted the same way and for the same reason: the
      credential is in the path, the route is outside /api, and what it fronts

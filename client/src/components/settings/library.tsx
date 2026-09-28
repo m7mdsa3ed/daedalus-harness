@@ -45,9 +45,9 @@ export function LibrarySection<T extends { id: string; name: string }>({
       status pill, which are about a row rather than about the library. */
   rowExtra?: (item: T) => React.ReactNode
   /** This row's own mark, where the rows of a library are not all the same
-      kind of thing — MCP's built-ins, which are the harness's own tools and
-      not a server somebody configured. Defaults to the section's icon. */
-  rowIcon?: (item: T) => React.ComponentType<{ className?: string }>
+      kind of thing — MCP servers can carry registry logos or transport marks.
+      Defaults to the section's icon. */
+  rowIcon?: (item: T) => React.ReactNode
   /** The detail line, drawn. `subtitle` stays the *string* — it is what search
       matches on, and a node cannot be searched — so a page that wants badges
       and prose supplies both: the words to match, and the shape to draw.
@@ -123,10 +123,10 @@ export function LibrarySection<T extends { id: string; name: string }>({
             id: "name",
             header: noun,
             cell: (item) => {
-              const Icon = rowIcon?.(item) ?? meta.icon
+              const mark = rowIcon?.(item) ?? <meta.icon className="size-4 shrink-0 text-muted-foreground" />
               return (
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  {mark}
                   <span className="truncate font-medium">{item.name}</span>
                 </div>
               )
@@ -173,11 +173,11 @@ export function LibrarySection<T extends { id: string; name: string }>({
           },
         ]}
         renderCard={(item) => {
-          const Icon = rowIcon?.(item) ?? meta.icon
+          const mark = rowIcon?.(item) ?? <meta.icon className="size-4 shrink-0 text-muted-foreground" />
           return (
             <>
               <div className="flex min-w-0 items-center gap-2.5">
-                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                {mark}
                 <span className="truncate text-sm font-medium">{item.name}</span>
               </div>
               <div className="mt-1 text-[11px] break-all text-muted-foreground">

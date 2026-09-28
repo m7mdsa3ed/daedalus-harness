@@ -24,6 +24,7 @@ import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
+import { configurePauseHooks } from "./pause-hooks.js";
 import { Push } from "./push.js";
 import { addNotification } from "./notifications.js";
 import { backfillSearchIndex } from "./search.js";
@@ -48,6 +49,9 @@ configureGatewayShim({ port: config.port });
 /* The same bargain for an MCP server that demands OAuth: the child is handed
    `/mx/<key>/<serverId>` and the token is attached here, per request. */
 configureMcpShim({ port: config.port });
+/* And for a runtime paused through its own hooks: they call `/ph/<key>/<id>`,
+   which answers only while the thread is not paused (pause-hooks.ts). */
+configurePauseHooks({ port: config.port });
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
