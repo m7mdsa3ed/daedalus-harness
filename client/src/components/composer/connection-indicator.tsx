@@ -26,7 +26,7 @@ import * as React from "react"
 import { Archive, InfoIcon, RotateCw, TriangleAlertIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { READING_MARK, StripIndicator } from "@/components/composer/indicator"
+import { READING_MARK, ReadingPanel, StripIndicator } from "@/components/composer/indicator"
 import type { StripTone } from "@/components/composer-strip"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
@@ -122,15 +122,11 @@ export function connectionTone(thread: ThreadState): StripTone | null {
 }
 
 /**
- * The connection, on the scope row's head — beside the project.
- *
- * Those two are the questions every other control on the floor is read
- * against: where the work lands, and whether this device can get a message out
- * about it. It also designs its own absence — nothing on a healthy thread —
- * which is what lets a reading that is usually a failure live on a row that is
- * otherwise permanently true.
+ * The connection's sentence and the recovery to try — the popover's body, and
+ * the same body wherever the reading is drawn inline. Nothing on a healthy
+ * thread (`connectionNote` null).
  */
-export function ConnectionIndicator({
+export function ConnectionPanel({
   thread,
   sessionId,
   actions,
@@ -138,6 +134,9 @@ export function ConnectionIndicator({
   thread: ThreadState
   sessionId: string
   actions: Actions
+  /* Accepted for the panels' one shape; a recovery never closed the popover —
+     a thread that comes back takes the reading with it. */
+  onDone?: () => void
 }) {
   /** The recovery in flight, so the button says so and cannot be pressed twice. */
   const [busy, setBusy] = React.useState(false)
@@ -161,20 +160,8 @@ export function ConnectionIndicator({
   }
 
   return (
-    <StripIndicator
-      icon={note.icon}
-      label={note.label}
+    <ReadingPanel
       heading={note.title}
-      title={note.title}
-      tone={TONE_TRIGGER[note.tone]}
-      /* `always` and not the pill's default: this is the one reading whose
-         colour *is* the news, so its words never go quiet — a bare amber mark
-         says nothing about what broke. It also widens the trigger with the
-         words (`READING_TRIGGER_ALWAYS`), which is what stops the pill hanging
-         out of its 24px square and over the project beside it. This is the
-         reading that yields nothing; the project yields its name instead
-         (`DraftScopeRow`'s `reading`). */
-      labelAlways
       action={
         note.action && (
           <Button size="xs" variant="outline" className="w-full" onClick={recover} disabled={busy}>
@@ -185,6 +172,47 @@ export function ConnectionIndicator({
       }
     >
       <p className="text-xs text-muted-foreground">{note.message}</p>
+    </ReadingPanel>
+  )
+}
+
+/**
+ * The connection, on the scope row's head — beside the project.
+ *
+ * Those two are the questions every other control on the floor is read
+ * against: where the work lands, and whether this device can get a message out
+ * about it. It also designs its own absence — nothing on a healthy thread —
+ * which is what lets a reading that is usually a failure live on a row that is
+ * otherwise permanently true.
+ */
+export function ConnectionIndicator({
+  thread,
+  sessionId,
+  actions,
+}: {
+  thread: ThreadState
+  sessionId: string
+  actions: Actions
+}) {
+  const note = connectionNote(thread)
+  if (!note) return null
+
+  return (
+    <StripIndicator
+      icon={note.icon}
+      label={note.label}
+      title={note.title}
+      tone={TONE_TRIGGER[note.tone]}
+      /* `always` and not the pill's default: this is the one reading whose
+         colour *is* the news, so its words never go quiet — a bare amber mark
+         says nothing about what broke. It also widens the trigger with the
+         words (`READING_TRIGGER_ALWAYS`), which is what stops the pill hanging
+         out of its 24px square and over the project beside it. This is the
+         reading that yields nothing; the project yields its name instead
+         (`DraftScopeRow`'s `reading`). */
+      labelAlways
+    >
+      {(close) => <ConnectionPanel thread={thread} sessionId={sessionId} actions={actions} onDone={close} />}
     </StripIndicator>
   )
 }

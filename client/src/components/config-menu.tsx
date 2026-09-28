@@ -43,8 +43,10 @@ export interface MenuAdd {
 
 /** Past this many choices the submenu grows a filter box. Under it the list is
     shorter than the box would make it, and a search field over six rows is a
-    control asking to be used for nothing. */
-const SEARCH_THRESHOLD = 8
+    control asking to be used for nothing. Exported for the inline row
+    (`menu-kit.tsx`), which draws the same list in flow and must grow its box at
+    the same count. */
+export const SEARCH_THRESHOLD = 8
 
 /** Case-insensitive substring, over what the reader can see plus the id they
     may have pasted. Deliberately not fuzzy: these are model ids and project
@@ -122,20 +124,16 @@ export function MenuAddItem({ add }: { add: MenuAdd }) {
   )
 }
 
-export function MenuRow({
-  label,
-  value,
-  choices,
-  onSelect,
-  add,
-}: {
+export interface MenuRowProps {
   label: string
   value: string
   choices: Choice[]
   onSelect: (value: string) => void
   /** When the catalog this row draws can be added to from here. */
   add?: MenuAdd
-}) {
+}
+
+export function MenuRow({ label, value, choices, onSelect, add }: MenuRowProps) {
   const current = choices.find((choice) => choice.value === value)
   const [submenuOpen, setSubmenuOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")

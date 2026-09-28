@@ -1,7 +1,6 @@
 import * as React from "react"
 import { CalendarClock, FoldVertical, SlashSquare, type LucideIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
-import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
 /* Slash-command autocomplete for the composer.
@@ -189,20 +188,7 @@ export function useSlashCommands(
  * belong to the turn.
  */
 export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
-  /* Urgent: a menu you are arrow-keying through has to be visible to be a menu.
-     It belongs to the text being typed right now, so while it is up the shelf
-     is open regardless of what the summary line would otherwise have said. */
   const showing = state.hint !== null || state.matches.length > 0
-  useStripSummary(
-    showing
-      ? {
-          id: "slash",
-          icon: SlashSquare,
-          label: state.hint ?? `${state.matches.length} command${state.matches.length === 1 ? "" : "s"}`,
-          urgent: true,
-        }
-      : null
-  )
   if (state.hint) return <CompleterNote icon={SlashSquare}>{state.hint}</CompleterNote>
   if (state.matches.length === 0) return null
 

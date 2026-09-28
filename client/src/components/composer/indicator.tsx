@@ -241,6 +241,30 @@ export function ReadingFace({
 }
 
 /**
+ * The body of a plain reading — its heading, what it says and the one thing to
+ * do about it. The popover draws it, and so does any surface that shows the
+ * reading inline, so the two are one layout.
+ */
+export function ReadingPanel({
+  heading,
+  action,
+  children,
+}: {
+  heading: React.ReactNode
+  /** The one thing to do about it, at the foot. */
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="font-medium">{heading}</p>
+      {children}
+      {action}
+    </div>
+  )
+}
+
+/**
  * A reading in the composer footer's end cluster.
  *
  * One shape for every reading of this kind: the icon alone where the panel is
@@ -260,22 +284,18 @@ export function ReadingFace({
 export function StripIndicator({
   icon,
   label,
-  heading,
   title,
   tone,
   labelClass,
   labelAlways = false,
   side = "top",
   width = "w-72",
-  action,
   children,
 }: {
   icon: React.ReactNode
   /** Written beside the icon where the panel has room, and the accessible
       name everywhere. Short: it sits in a row of marks that are all short. */
   label: string
-  /** The popover's title, where the label is too clipped to carry it. */
-  heading?: string
   /** Overrides the tooltip when the label alone is not the whole answer. */
   title?: string
   /** The trigger's text tone. A reading that wants attention says so; the
@@ -289,9 +309,9 @@ export function StripIndicator({
   labelAlways?: boolean
   side?: "top" | "bottom"
   width?: string
-  /** The one thing to do about it, at the foot of the popover. */
-  action?: React.ReactNode
-  children: React.ReactNode
+  /** The popover's body — a `ReadingPanel`, usually — handed the popover's
+      own close for anything in it that should take the popover down. */
+  children: (close: () => void) => React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -324,9 +344,7 @@ export function StripIndicator({
         }
       />
       <PopoverContent align="end" side={side} className={cn(width, "gap-2")}>
-        <p className="font-medium">{heading ?? label}</p>
-        {children}
-        {action}
+        {children(() => setOpen(false))}
       </PopoverContent>
     </Popover>
   )

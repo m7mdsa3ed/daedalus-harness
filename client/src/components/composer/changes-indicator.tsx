@@ -37,6 +37,64 @@ function DiffCount({ added, removed }: { added: number; removed: number }) {
   )
 }
 
+/** The count, the two figures and the words, read once for trigger and panel. */
+function tally(changes: TurnChanges) {
+  const count = changes.files.length
+  return {
+    count,
+    added: changes.files.reduce((n, f) => n + f.additions, 0),
+    removed: changes.files.reduce((n, f) => n + f.deletions, 0),
+    label: `${count} ${count === 1 ? "file" : "files"} changed`,
+  }
+}
+
+/**
+ * The file list — the popover's body, and the same body wherever the reading
+ * is drawn inline. Nothing when the turn changed no file.
+ */
+export function ChangesPanel({ changes, onDone }: { changes: TurnChanges; onDone?: () => void }) {
+  if (changes.files.length === 0) return null
+  const { added, removed, label } = tally(changes)
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="font-medium">{label}</p>
+        <DiffCount added={added} removed={removed} />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        What the last turn that wrote anything did to the worktree — git's count, not the
+        transcript's, so a shell command that edited a file is in it.
+      </p>
+      <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+        {changes.files.map((file) => (
+          <li key={file.path} className="flex items-baseline gap-2 text-xs">
+            <span
+              className={cn("w-3 shrink-0 text-center font-mono font-semibold", FILE_STATUS[file.status].tone)}
+              title={file.status}
+            >
+              {FILE_STATUS[file.status].letter}
+            </span>
+            {/* shortPath, not truncate: a path clipped at the end loses the
+                filename, which is the only part being scanned for. */}
+            <span
+              className="min-w-0 flex-1 truncate font-mono text-foreground"
+              title={file.from ? `${file.from} → ${file.path}` : file.path}
+            >
+              {shortPath(file.path, 40)}
+            </span>
+            {file.binary ? (
+              <span className="shrink-0 text-[11px] text-muted-foreground">binary</span>
+            ) : (
+              <DiffCount added={file.additions} removed={file.deletions} />
+            )}
+          </li>
+        ))}
+      </ul>
+      <OpenInInspector tab="changes" onOpen={onDone} />
+    </div>
+  )
+}
+
 /**
  * What the last turn that wrote anything did to the worktree, beside the
  * checklist, the workers and the context ring.
@@ -62,10 +120,7 @@ export function ChangesIndicator({
   const [open, setOpen] = useState(false)
   if (!changes || changes.files.length === 0) return null
 
-  const count = changes.files.length
-  const added = changes.files.reduce((n, f) => n + f.additions, 0)
-  const removed = changes.files.reduce((n, f) => n + f.deletions, 0)
-  const label = `${count} ${count === 1 ? "file" : "files"} changed`
+  const { count, added, removed, label } = tally(changes)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -91,40 +146,7 @@ export function ChangesIndicator({
         }
       />
       <PopoverContent align="end" side="top" className="w-80 gap-2">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="font-medium">{label}</p>
-          <DiffCount added={added} removed={removed} />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          What the last turn that wrote anything did to the worktree — git's count, not the
-          transcript's, so a shell command that edited a file is in it.
-        </p>
-        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
-          {changes.files.map((file) => (
-            <li key={file.path} className="flex items-baseline gap-2 text-xs">
-              <span
-                className={cn("w-3 shrink-0 text-center font-mono font-semibold", FILE_STATUS[file.status].tone)}
-                title={file.status}
-              >
-                {FILE_STATUS[file.status].letter}
-              </span>
-              {/* shortPath, not truncate: a path clipped at the end loses the
-                  filename, which is the only part being scanned for. */}
-              <span
-                className="min-w-0 flex-1 truncate font-mono text-foreground"
-                title={file.from ? `${file.from} → ${file.path}` : file.path}
-              >
-                {shortPath(file.path, 40)}
-              </span>
-              {file.binary ? (
-                <span className="shrink-0 text-[11px] text-muted-foreground">binary</span>
-              ) : (
-                <DiffCount added={file.additions} removed={file.deletions} />
-              )}
-            </li>
-          ))}
-        </ul>
-        <OpenInInspector tab="changes" onOpen={() => setOpen(false)} />
+        <ChangesPanel changes={changes} onDone={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

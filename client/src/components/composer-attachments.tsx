@@ -5,7 +5,6 @@ import {
   FileTextIcon,
   ImageIcon,
   MessageSquareQuoteIcon,
-  PaperclipIcon,
   XIcon,
 } from "lucide-react"
 import type * as acp from "@daedalus/acp"
@@ -126,17 +125,8 @@ export function ComposerAttachments({
   onRetryAttachment: (id: string) => void
 }) {
   if (attachments.length === 0) return null
-  const label = `${attachments.length} file${attachments.length === 1 ? "" : "s"}`
   return (
-    <ComposerStripItem
-      summary={{
-        id: "attachments",
-        icon: PaperclipIcon,
-        label,
-        badge: attachments.length,
-      }}
-      className="px-2 py-1.5"
-    >
+    <ComposerStripItem className="px-2 py-1.5">
       <AttachmentGroup className="gap-2 py-0">
         {attachments.map((entry) => (
           <FileChip

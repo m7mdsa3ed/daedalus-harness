@@ -8,6 +8,8 @@ import { KeyRoundIcon } from "lucide-react"
 
 import { DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
 
+import { rowSubtitle } from "./use-thread-tools"
+
 export function ToolRow({
   name,
   checked,
@@ -47,11 +49,7 @@ export function ToolRow({
           )}
         </span>
         <span className="truncate font-mono text-[10px] text-muted-foreground">
-          {needsAuth
-            ? "needs authorization — Settings › MCP servers"
-            : from
-              ? "from profile"
-              : hint}
+          {rowSubtitle(needsAuth, from, hint)}
         </span>
       </span>
     </DropdownMenuCheckboxItem>

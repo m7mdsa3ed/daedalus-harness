@@ -4,7 +4,7 @@
 import { ClockIcon, LoaderCircleIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { READING_MARK, StripIndicator } from "@/components/composer/indicator"
+import { READING_MARK, ReadingPanel, StripIndicator } from "@/components/composer/indicator"
 import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { describeConfig } from "@/lib/actions"
@@ -42,37 +42,79 @@ export function ConfigIndicator({
   actions: Actions
 }) {
   const profiles = useProfiles()
-  const pending = thread.pendingConfig
-  const staged = thread.stagedConfig
-  if (!pending && !staged) return null
+  const reading = configReading(thread)
+  const change = thread.pendingConfig ?? thread.stagedConfig
+  if (!reading || !change) return null
+  const pending = Boolean(thread.pendingConfig)
+  return (
+    <StripIndicator
+      icon={
+        pending ? (
+          <LoaderCircleIcon className={cn(READING_MARK, "animate-spin")} />
+        ) : (
+          <ClockIcon className={READING_MARK} />
+        )
+      }
+      label={reading.label}
+      title={`${pending ? "Applying" : reading.title} — ${describeConfig(change, profiles)}`}
+      tone={pending ? undefined : "text-amber-600 hover:text-amber-600 dark:text-amber-400"}
+    >
+      {(close) => <ConfigPanel thread={thread} sessionId={sessionId} actions={actions} onDone={close} />}
+    </StripIndicator>
+  )
+}
 
+/**
+ * Which of the two states the thread's settings change is in, as the words
+ * the trigger and the panel's heading use — or null when there is no change,
+ * which is exactly when `ConfigIndicator` draws nothing. Pure: the change's
+ * own description needs the profile list and is the panel's to spell.
+ */
+export function configReading(thread: ThreadState): { label: string; title: string } | null {
+  if (thread.pendingConfig) return { label: "Applying…", title: "Applying this change" }
+  if (thread.stagedConfig) return { label: "Applies on send", title: "Applies with your next message" }
+  return null
+}
+
+/**
+ * The change itself, and — once the server is holding it — the way to cancel
+ * it. The popover's body, and the same body wherever the reading is drawn
+ * inline. Nothing when there is no change.
+ */
+export function ConfigPanel({
+  thread,
+  sessionId,
+  actions,
+}: {
+  thread: ThreadState
+  sessionId: string
+  actions: Actions
+  /* Accepted for the panels' one shape; cancelling never closed the popover —
+     the change going away takes the reading with it. */
+  onDone?: () => void
+}) {
+  const profiles = useProfiles()
+  const reading = configReading(thread)
+  if (!reading) return null
+
+  const pending = thread.pendingConfig
   if (pending) {
     return (
-      <StripIndicator
-        icon={<LoaderCircleIcon className={cn(READING_MARK, "animate-spin")} />}
-        label="Applying…"
-        heading="Applying this change"
-        title={`Applying — ${describeConfig(pending, profiles)}`}
-      >
+      <ReadingPanel heading={reading.title}>
         <p className="text-xs text-muted-foreground">
           A change that costs the process restarts the agent; one that does not moves on the running
           turn. Either way nothing is lost — the conversation comes back through a load.
         </p>
         <p className="text-xs text-foreground">{describeConfig(pending, profiles)}</p>
-      </StripIndicator>
+      </ReadingPanel>
     )
   }
 
-  const held = staged
+  const held = thread.stagedConfig
   if (!held) return null
-
   return (
-    <StripIndicator
-      icon={<ClockIcon className={READING_MARK} />}
-      label="Applies on send"
-      heading="Applies with your next message"
-      title={`Applies with your next message — ${describeConfig(held, profiles)}`}
-      tone="text-amber-600 hover:text-amber-600 dark:text-amber-400"
+    <ReadingPanel
+      heading={reading.title}
       action={
         <Button
           size="xs"
@@ -90,6 +132,6 @@ export function ConfigIndicator({
         send. Nothing is waiting for a turn boundary, and nothing is applied before you ask.
       </p>
       <p className="text-xs text-foreground">{describeConfig(held, profiles)}</p>
-    </StripIndicator>
+    </ReadingPanel>
   )
 }

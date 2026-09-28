@@ -5,7 +5,8 @@
  * whether the runtime will read them at all — and hands each submenu only the
  * slice it draws.
  */
-import { BlocksIcon, ServerIcon, SlashSquareIcon, WrenchIcon } from "lucide-react"
+import * as React from "react"
+import { ChevronRightIcon, KeyRoundIcon, WrenchIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -24,15 +25,12 @@ import {
   ReadingFace,
 } from "@/components/composer/indicator"
 import type { Actions } from "@/lib/actions"
-import { mcpNeedsAuth, mcpSubtitle, type SessionMeta } from "@/lib/settings"
-import { useAgents, useCommands, useMcpServers, useProfiles, useSkills } from "@/lib/queries/catalog"
+import { Switch } from "@/components/ui/switch"
+import type { SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 
 import { ToolSection } from "./tool-section"
-import { useThreadToolCount } from "./use-thread-tool-count"
-
-/** The three link kinds, in the order the menu prints them. */
-type LinkKey = "mcpServerIds" | "skillIds" | "commandIds"
+import { rowSubtitle, sectionView, unreadableNote, useThreadTools } from "./use-thread-tools"
 
 /**
  * What this thread brings with it: MCP servers, skills and slash commands out
@@ -62,7 +60,8 @@ type LinkKey = "mcpServerIds" | "skillIds" | "commandIds"
  * opening anything and the list you open is only the one you asked for.
  *
  * The project contributes nothing in either mode: it is the directory, not the
- * toolset.
+ * toolset. What the thread carries and what a pick writes are `useThreadTools`'s,
+ * shared with `ThreadToolsPanel` below.
  */
 export function ThreadToolsMenu({
   meta,
@@ -88,61 +87,15 @@ export function ThreadToolsMenu({
       draft you are about to send (a routine's kit) — see DraftScopeRow. */
   remember?: boolean
 }) {
-  /* Four catalog reads, each its own cache entry: this menu is in the
-     composer row of a live transcript, and nothing the transcript streams
-     touches any of them. */
-  const mcpServers = useMcpServers()
-  const skills = useSkills()
-  const commands = useCommands()
-  // Profiles carry no links; nothing is inherited.
-  const inherited: Record<LinkKey, Set<string>> = {
-    mcpServerIds: new Set<string>(),
-    skillIds: new Set<string>(),
-    commandIds: new Set<string>(),
-  }
-  const own: Record<LinkKey, string[]> = {
-    mcpServerIds: meta.mcpServerIds ?? [],
-    skillIds: meta.skillIds ?? [],
-    commandIds: meta.commandIds ?? [],
-  }
-  /* Published like the agent is: a reload rebuilds the draft from these, and
-     the next thread starts with the same kit — `configureDraft` writes the
-     project's defaults, and `remember: false` withholds that for a caller
-     configuring a routine rather than the thread you are about to start. */
-  const toggle = (key: LinkKey, id: string, on: boolean) => {
-    const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
-    actions.configureDraft(meta.id, { [key]: next }, remember)
-  }
-  const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
-  const total = useThreadToolCount(meta)
-
-  /* Only an MCP row can need one; the generic section renderer is handed a
-     predicate rather than learning what a server is. */
-  const needsAuth = (item: { id: string }): boolean => {
-    const server = mcpServers.find((s) => s.id === item.id)
-    return !!server && mcpNeedsAuth(server)
-  }
-
-  /* Whether this thread's runtime reads skills or commands out of the
-     workspace at all (`AgentDef.workspaceLayout`). The harness writes them
-     into the directory the runtime names, and a runtime that names none —
-     Codex, which resolves both only under `$CODEX_HOME` — is written none. A
-     pick that lands nowhere used to look exactly like one that works, which is
-     the whole reason this is said out loud rather than left as a silence.
-     Unknown (the catalog has not answered yet) is not "unsupported": it stays
-     quiet rather than nagging about a thread that is fine. */
-  const agent = useAgents().find((a) => a.id === meta.agentId)
-  const unreadable = (key: LinkKey): string | null => {
-    if (!agent) return null
-    if (key === "skillIds" && !agent.workspaceLayout?.skills) return "skills"
-    if (key === "commandIds" && !agent.workspaceLayout?.commands) return "commands"
-    return null
-  }
+  const { sections, extra, total, needsAuth, agentName, clear } = useThreadTools(
+    meta,
+    actions,
+    remember
+  )
 
   // Nothing to read out, so nothing on the composer row.
   if (!editable && total === 0) return null
 
-  const iconClass = "size-4 text-muted-foreground"
   /* One string for the title and the accessible name, since the trigger's
      words are its own (`Tools` and a count) rather than the whole answer. */
   const countLabel = `${editable ? "Tools for this thread" : "Tools this thread is running with"} — ${
@@ -156,7 +109,7 @@ export function ThreadToolsMenu({
      — the wrench alone is the one thing in the cluster a reader has to decode. */
   const toolsLabel = total === 0 ? "No tools" : `${total} tool${total === 1 ? "" : "s"}`
   /* What every section needs and none of them decides for itself. */
-  const common = { editable, needsAuth, agentName: agent?.name }
+  const common = { editable, needsAuth, agentName }
 
   return (
     <DropdownMenu>
@@ -209,70 +162,161 @@ export function ThreadToolsMenu({
           <DropdownMenuLabel>
             {editable ? "Tools for this thread" : "Running with"}
           </DropdownMenuLabel>
-          <ToolSection
-            {...common}
-            title="MCP servers"
-            icon={<ServerIcon className={iconClass} />}
-            items={mcpServers.filter((server) => server.type !== "builtin")}
-            hint={mcpSubtitle}
-            inherited={inherited.mcpServerIds}
-            own={own.mcpServerIds}
-            unreadable={unreadable("mcpServerIds")}
-            onToggle={(id, on) => toggle("mcpServerIds", id, on)}
-          />
-          <ToolSection
-            {...common}
-            title="Built-in tools"
-            icon={<WrenchIcon className={iconClass} />}
-            items={mcpServers.filter((server) => server.type === "builtin")}
-            hint={mcpSubtitle}
-            inherited={inherited.mcpServerIds}
-            own={own.mcpServerIds}
-            unreadable={unreadable("mcpServerIds")}
-            onToggle={(id, on) => toggle("mcpServerIds", id, on)}
-          />
-          <ToolSection
-            {...common}
-            title="Skills"
-            icon={<BlocksIcon className={iconClass} />}
-            items={skills}
-            hint={(s) => s.path}
-            inherited={inherited.skillIds}
-            own={own.skillIds}
-            unreadable={unreadable("skillIds")}
-            onToggle={(id, on) => toggle("skillIds", id, on)}
-          />
-          <ToolSection
-            {...common}
-            title="Slash commands"
-            icon={<SlashSquareIcon className={iconClass} />}
-            items={commands}
-            hint={(c) => `/${c.name}`}
-            inherited={inherited.commandIds}
-            own={own.commandIds}
-            unreadable={unreadable("commandIds")}
-            onToggle={(id, on) => toggle("commandIds", id, on)}
-          />
+          {sections.map((section) => (
+            <ToolSection key={section.title} {...common} section={section} />
+          ))}
         </DropdownMenuGroup>
         {/* Only offered when there is something of the thread's own to take
             back: the profile's links are not this menu's to clear. */}
         {editable && extra > 0 && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() =>
-                actions.configureDraft(
-                  meta.id,
-                  { mcpServerIds: [], skillIds: [], commandIds: [] },
-                  remember
-                )
-              }
-            >
+            <DropdownMenuItem onClick={clear}>
               Clear this thread&rsquo;s picks
             </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContentPositioned>
     </DropdownMenu>
+  )
+}
+
+/**
+ * The same thread's tools, drawn in flow instead of behind a trigger — for a
+ * surface that is already the opened thing (the panel that expands under the
+ * composer strip), where a popup inside a popup is one layer too many.
+ *
+ * Everything it knows is `useThreadTools`'s and `sectionView`'s, exactly as the
+ * menu's is: the same sections, the same counts, the same locked profile rows,
+ * the same read-out on a started thread, the same writes. Only the drawing
+ * differs — a kind is a row with a chevron that opens its list underneath,
+ * where the menu opened a submenu beside it. Nothing is open to begin with,
+ * for the menu's reason: a library grows, and the count on each row is what
+ * the reader came for.
+ */
+export function ThreadToolsPanel({
+  meta,
+  actions,
+  editable,
+  remember = true,
+}: {
+  meta: SessionMeta
+  actions: Actions
+  /** A draft can still choose; a started thread's links are already spawned. */
+  editable: boolean
+  /** False when editing a saved configuration rather than the draft about to
+      be sent — see `ThreadToolsMenu`. */
+  remember?: boolean
+}) {
+  const { sections, extra, total, needsAuth, agentName, clear } = useThreadTools(
+    meta,
+    actions,
+    remember
+  )
+  const [open, setOpen] = React.useState<ReadonlySet<string>>(() => new Set())
+  const flip = (title: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(title)) next.add(title)
+      return next
+    })
+
+  // The menu draws nothing here either: a read-out of nothing is not a reading.
+  if (!editable && total === 0) return null
+
+  const ROW = "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-xs hover:bg-muted"
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="px-2 pt-1 pb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        {editable ? "Tools for this thread" : "Running with"}
+      </div>
+      {sections.map((section) => {
+        const view = sectionView(section, editable)
+        if (!view) return null
+        const expanded = open.has(section.title)
+        return (
+          <div key={section.title} className="flex flex-col">
+            <button
+              type="button"
+              className={ROW}
+              aria-expanded={expanded}
+              onClick={() => flip(section.title)}
+            >
+              <ChevronRightIcon
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                  expanded && "rotate-90"
+                )}
+              />
+              {section.icon}
+              <span className="truncate">{section.title}</span>
+              <span className="ml-auto pl-2 tabular-nums text-muted-foreground">{view.count}</span>
+            </button>
+            {expanded && (
+              <div className="flex flex-col gap-0.5 pl-6">
+                {section.unreadable && (
+                  <div className="px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
+                    {unreadableNote(agentName, section.unreadable)}
+                  </div>
+                )}
+                {view.shown.length === 0 ? (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    None in the library.
+                  </div>
+                ) : (
+                  view.shown.map((item) => {
+                    const from = section.inherited.has(item.id)
+                    const auth = needsAuth(item)
+                    const checked = view.has(item.id)
+                    const disabled = from || !editable
+                    return (
+                      /* The whole row is the target, as a menu item was; the
+                         switch says the state and takes its own click, which
+                         is why it stops here rather than toggling twice. */
+                      <div
+                        key={item.id}
+                        className={cn(ROW, "h-auto min-h-8 py-1", disabled ? "cursor-default" : "cursor-pointer")}
+                        onClick={() => !disabled && section.onToggle(item.id, !checked)}
+                      >
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">{item.name}</span>
+                            {auth && (
+                              <KeyRoundIcon
+                                className="size-3 shrink-0 text-destructive"
+                                aria-label="needs authorization"
+                              />
+                            )}
+                          </span>
+                          <span className="truncate font-mono text-[10px] text-muted-foreground">
+                            {rowSubtitle(auth, from, section.hint(item))}
+                          </span>
+                        </span>
+                        <span onClick={(e) => e.stopPropagation()} className="flex">
+                          <Switch
+                            size="sm"
+                            checked={checked}
+                            disabled={disabled}
+                            aria-label={item.name}
+                            onCheckedChange={(on) => section.onToggle(item.id, on)}
+                          />
+                        </span>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {/* Only offered when there is something of the thread's own to take
+          back: the profile's links are not this panel's to clear. */}
+      {editable && extra > 0 && (
+        <button type="button" className={cn(ROW, "mt-1 text-muted-foreground")} onClick={clear}>
+          Clear this thread&rsquo;s picks
+        </button>
+      )}
+    </div>
   )
 }
