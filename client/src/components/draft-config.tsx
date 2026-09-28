@@ -3,6 +3,7 @@ import type * as acp from "@daedalus/acp";
 import { useQuery } from "@tanstack/react-query";
 import {
   BotIcon,
+  ChevronRightIcon,
   GitBranchIcon,
   GlobeIcon,
   Loader2,
@@ -214,14 +215,15 @@ export function DraftScopeRow({
        whole life of the app. Half a step rather than none, because the row now
        carries four readings at its end and h-6 controls edge to edge read as a
        band rather than as a floor. */
-    /* One grammar for the whole row: every item — the project, its checkout,
-       each MCP server, each reading — is a segment on its own tinted ground
-       (`SEGMENTS`), a hair apart. The start names where the work lands and
-       what rides along; the end is the readings. Nothing is folded away. */
-    <div className="flex min-w-0 items-center gap-2 px-2 py-1">
+    /* Two halves, two grammars. The start is a *path* — project, then its
+       checkout, then what rides along — read left to right like a location,
+       chevrons between and no frame, because it names a place and not a state.
+       The end is an instrument bar: every reading one cell of a single
+       segmented box, hairlines between, so the counts read as one gauge. */
+    <div className="flex min-w-0 items-center gap-3 px-3 py-1">
       <nav
         aria-label="Thread scope"
-        className={cn("flex min-w-0 flex-1 items-center gap-1 overflow-hidden", SEGMENTS)}
+        className="flex min-w-0 flex-1 items-center gap-0.5"
       >
         {editable ? (
           <PickerMenu
@@ -264,24 +266,36 @@ export function DraftScopeRow({
           editable={editable && remember}
           onToggle={(isolate) => configure({ isolate })}
         />
-        {selectedMcps.map(({ id, server }) => {
-          const Icon = mcpIcon(server);
-          return (
+        {selectedMcps.length > 0 && (
+          <>
+            <PathSep />
             <span
-              key={id}
-              className="flex min-w-0 items-center gap-1 px-1.5 text-xs text-muted-foreground"
-              title={server ? mcpSubtitle(server) : "MCP server unavailable"}
+              className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted-foreground"
+              aria-label="Selected MCP servers"
             >
-              <Icon aria-hidden className="size-3.5 shrink-0" />
-              <span className="hidden truncate @panel-sm:inline">
-                {server?.name ?? "Unavailable MCP"}
-              </span>
+              {selectedMcps.map(({ id, server }) => {
+                const Icon = mcpIcon(server);
+                return (
+                  <span
+                    key={id}
+                    className="flex min-w-0 items-center gap-1"
+                    title={
+                      server ? mcpSubtitle(server) : "MCP server unavailable"
+                    }
+                  >
+                    <Icon aria-hidden className="size-3.5 shrink-0" />
+                    <span className="hidden truncate @panel-sm:inline">
+                      {server?.name ?? "Unavailable MCP"}
+                    </span>
+                  </span>
+                );
+              })}
             </span>
-          );
-        })}
+          </>
+        )}
       </nav>
       {(leading || showTools || trailing) && (
-        <span className={cn("flex shrink-0 items-center gap-1", SEGMENTS)}>
+        <span className="flex shrink-0 items-center divide-x divide-foreground/10 overflow-hidden rounded-md bg-foreground/[0.03] ring-1 ring-foreground/10 [&>*]:rounded-none!">
           {leading}
           {showTools && (
             <ThreadToolsMenu
@@ -299,11 +313,16 @@ export function DraftScopeRow({
   );
 }
 
-/** The ground every item on the scope row stands on, applied by the two
-    containers to their direct children — so an indicator that renders nothing
-    leaves no empty segment, and no component has to know the row's look. */
-const SEGMENTS =
-  "[&>*]:h-6 [&>*]:rounded-md! [&>*]:bg-foreground/[0.06] [&>*]:transition-colors [&>*:hover]:bg-foreground/[0.1] [&>[data-popup-open]]:bg-foreground/[0.1]";
+/** The path's separator. Drawn by each optional segment in front of itself,
+    so a segment that renders nothing leaves no dangling chevron. */
+function PathSep() {
+  return (
+    <ChevronRightIcon
+      aria-hidden
+      className="size-3 shrink-0 text-foreground/25"
+    />
+  );
+}
 
 /**
  * "Isolate in a git worktree", on a draft whose project directory is a
@@ -336,6 +355,7 @@ function WorktreeChip({
     const gone = meta.worktree.exists === false;
     return (
       <>
+        <PathSep />
         <span
           title={
             gone
@@ -361,6 +381,7 @@ function WorktreeChip({
   const on = meta.isolate === true;
   return (
     <>
+      <PathSep />
       <Button
         variant="ghost"
         size="icon-xs"
