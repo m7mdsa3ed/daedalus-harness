@@ -568,7 +568,7 @@ export function DraftConfigPopover({
             /* Ellipsized rather than collapsed, on a phone as in a narrow dock
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
-            className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            className="h-8 gap-1.5 rounded-pill border border-border bg-transparent px-3 text-xs font-medium text-foreground shadow-none hover:bg-muted aria-expanded:bg-muted data-popup-open:bg-muted"
             title={[persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ")}
           >
             {/* The model's own icon replaces the profile's logo in the pair —

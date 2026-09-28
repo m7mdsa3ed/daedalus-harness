@@ -130,7 +130,7 @@ export function EnhanceButton({
     <Button
       variant="ghost"
       size={size}
-      className="shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
+      className="shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-4"
       onClick={enhance}
       disabled={disabled || gated || !hasContent}
       title={
