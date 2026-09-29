@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld("desktop", {
   popout: process.argv.includes("--daedalus-popout"),
   // Caption buttons (min/max/close) are drawn natively, colored via
   // titleBarOverlay; the app's theme is a user choice, so main must be told.
-  setTitleBarTheme: (resolved, source) => ipcRenderer.send("theme-changed", resolved, source),
+  setTitleBarTheme: (resolved, source, colorTheme) => ipcRenderer.send("theme-changed", resolved, source, colorTheme),
   writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
   /* OS notifications are the main process's (see main.cjs): the web
      Notification API inside Electron depends on an OS attribution the shell may
@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld("desktop", {
   /** Register the global quick-entry accelerator ("" turns it off).
       Resolves `{ok}` or `{ok:false, error}` — never rejects for a taken chord. */
   setQuickEntry: (accelerator) => ipcRenderer.invoke("set-quick-entry", accelerator),
+  /** Read or persist the Windows backdrop material used on the next launch. */
+  getWindowMaterial: () => ipcRenderer.invoke("get-window-material"),
+  setWindowMaterial: (material) => ipcRenderer.invoke("set-window-material", material),
   /** Open one thread in a window of its own (`?popout=1`). */
   openThreadWindow: (sessionId) => ipcRenderer.invoke("open-thread-window", sessionId),
   /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
@@ -48,8 +51,23 @@ contextBridge.exposeInMainWorld("desktop", {
 
 /* The attributes are set before first paint so CSS never flashes the browser
    look — one door, three facts, all of them the platform's. */
+const applyTheme = (resolved, colorTheme) => {
+  const el = document.documentElement
+  if (!el) return
+  el.classList.toggle("dark", resolved === "dark")
+  el.dataset.colorTheme = colorTheme
+}
+ipcRenderer.on("theme-changed", (_event, resolved, colorTheme) => applyTheme(resolved, colorTheme))
+
 const mark = () => {
   const el = document.documentElement
+  const theme = localStorage.getItem("theme")
+  const resolved = theme === "light" || theme === "dark"
+    ? theme
+    : window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light"
+  applyTheme(resolved, localStorage.getItem("ui.colorTheme") || "default")
   el.dataset.desktop = "true"
   el.dataset.desktopPlatform = process.platform
   if (vibrancy) el.dataset.desktopVibrancy = "true"

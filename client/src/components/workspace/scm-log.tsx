@@ -53,6 +53,8 @@ import {
 /** How many commits a section asks for. Enough to recognise where you are;
     anything more is what a terminal is for. */
 const LOG_LIMIT = 30
+/** The server's own ceiling on one `git log`. */
+const LOG_MAX = 200
 
 /* ── The shell both lists wear ──
    A disclosure whose content is fetched by the disclosure itself. `load` is
@@ -69,8 +71,11 @@ function Section({
   error,
   /** Anything the section itself offers, before the Refresh it always has. */
   actions,
+  fixed = false,
   children,
 }: {
+  /** Drawn as a tab's heading rather than a disclosure — always open. */
+  fixed?: boolean
   title: string
   count: number | null
   open: boolean
@@ -83,7 +88,7 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <div className="border-t border-border/40">
+    <div className={cn(!fixed && "border-t border-border/40")}>
       <div
         className={cn(
           "group flex items-center gap-1 px-1 text-[11px] font-medium text-muted-foreground",
@@ -92,15 +97,17 @@ function Section({
       >
         <button
           type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-1 py-1 text-left"
+          onClick={fixed ? undefined : onToggle}
+          aria-expanded={fixed ? undefined : open}
+          className={cn("flex min-w-0 flex-1 items-center gap-1 py-1 text-left", fixed && "pl-1.5 cursor-default")}
         >
-          <HugeiconsIcon
-            icon={open ? ArrowDown01Icon : ArrowRight01Icon}
-            strokeWidth={2}
-            className="size-3.5 shrink-0"
-          />
+          {!fixed && (
+            <HugeiconsIcon
+              icon={open ? ArrowDown01Icon : ArrowRight01Icon}
+              strokeWidth={2}
+              className="size-3.5 shrink-0"
+            />
+          )}
           <span className="min-w-0 truncate">{title}</span>
           {count !== null && count > 0 && (
             <span className="font-mono tabular-nums opacity-70">{count}</span>
@@ -237,7 +244,9 @@ export function StashSection({
   onToggle,
   onStatus,
   coarse,
+  fixed,
 }: {
+  fixed?: boolean
   projectId: string
   repo: string
   open: boolean
@@ -277,6 +286,7 @@ export function StashSection({
 
   return (
     <Section
+      fixed={fixed}
       title="Stashes"
       count={list.items?.length ?? null}
       open={open}
@@ -356,7 +366,12 @@ export function HistorySection({
   /** Bumped by the parent after a commit, so the list it invalidates is this
       one — the only event that changes a log while the panel is open. */
   generation,
+  fixed,
+  onSelect,
 }: {
+  fixed?: boolean
+  /** Open a commit. Without it a row copies its hash, as it always did. */
+  onSelect?: (commit: GitCommit) => void
   projectId: string
   repo: string
   open: boolean
@@ -365,10 +380,22 @@ export function HistorySection({
   generation: number
 }) {
   const settings = useServer()
+  /* "Load more" widens the window rather than paging: the graph's lanes are
+     a walk over the whole list, and a second page would start mid-lane. */
+  const [limit, setLimit] = React.useState(LOG_LIMIT)
   const list = useLazyList<GitCommit>(
-    () => gitLog(settings, projectId, { limit: LOG_LIMIT, repo: repo || undefined }),
+    () => gitLog(settings, projectId, { limit, repo: repo || undefined }),
     open
   )
+  const reload = list.reload
+  const widened = React.useRef(false)
+  React.useEffect(() => {
+    if (!widened.current) {
+      widened.current = true
+      return
+    }
+    reload()
+  }, [limit, reload])
 
   /* A commit landed. `generation` is the only thing that moves a log while the
      panel is open, and the first run is the mount — where the lazy read above
@@ -385,12 +412,16 @@ export function HistorySection({
 
   const layout = idePrefs.use().historyLayout
   const copy = (commit: GitCommit) =>
-    void writeClipboard(commit.hash)
-      .then(() => toast.success(`Copied ${commit.short}`))
-      .catch((err: unknown) => toast.error(describeError(err).title))
+    onSelect
+      ? onSelect(commit)
+      : void writeClipboard(commit.hash)
+          .then(() => toast.success(`Copied ${commit.short}`))
+          .catch((err: unknown) => toast.error(describeError(err).title))
+  const hint = onSelect ? "Click to open" : "Click to copy the full hash"
 
   return (
     <Section
+      fixed={fixed}
       title="History"
       count={null}
       open={open}
@@ -417,7 +448,7 @@ export function HistorySection({
         <p className="px-2 py-1 text-[11px] text-muted-foreground">No commits yet.</p>
       ) : layout === "graph" ? (
         <div className="py-1 pr-1">
-          <CommitGraph commits={list.items} onCopy={copy} coarse={coarse} />
+          <CommitGraph commits={list.items} onCopy={copy} coarse={coarse} hint={hint} />
         </div>
       ) : (
         list.items.map((commit) => (
@@ -425,7 +456,7 @@ export function HistorySection({
             key={commit.hash}
             type="button"
             onClick={() => copy(commit)}
-            title={`${commit.short} · ${commit.author} · ${new Date(commit.at * 1000).toLocaleString()}\n${commit.subject}\n\nClick to copy the full hash`}
+            title={`${commit.short} · ${commit.author} · ${new Date(commit.at * 1000).toLocaleString()}\n${commit.subject}\n${commit.filesChanged} files changed\n\n${hint}`}
             className={cn(
               "flex w-full items-center gap-2 rounded-md pr-1 pl-2 text-left text-xs hover:bg-accent/40",
               coarse ? "min-h-11" : "min-h-7"
@@ -435,6 +466,11 @@ export function HistorySection({
               {commit.short}
             </span>
             <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+            {commit.refs.length > 0 && (
+              <span className="hidden max-w-24 shrink-0 truncate rounded border border-border/70 px-1 text-[10px] text-muted-foreground @panel-sm:inline">
+                {commit.refs[0]}
+              </span>
+            )}
             <span className="hidden shrink-0 font-mono text-[10px] tabular-nums @panel-sm:inline">
               <span className="text-emerald-600 dark:text-emerald-400">+{commit.insertions}</span>{" "}
               <span className="text-red-600 dark:text-red-400">−{commit.deletions}</span>
@@ -444,6 +480,17 @@ export function HistorySection({
             </span>
           </button>
         ))
+      )}
+      {list.items !== null && list.items.length >= limit && limit < LOG_MAX && (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="mt-1 w-full text-[11px] text-muted-foreground"
+          disabled={list.busy}
+          onClick={() => setLimit((current) => Math.min(LOG_MAX, current + LOG_LIMIT))}
+        >
+          Load more
+        </Button>
       )}
     </Section>
   )

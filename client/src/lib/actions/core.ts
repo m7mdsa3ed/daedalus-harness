@@ -216,6 +216,11 @@ export function createCore(deps: CoreDeps) {
         /* "Isolate in a git worktree": the server makes the checkout first and
            spawns the agent in it. */
         worktree: meta.isolate === true || undefined,
+        /* An aside says which thread it was selected in and on what. */
+        aside:
+          meta.asideQuote && meta.forkedFromSessionId
+            ? { of: meta.forkedFromSessionId, quote: meta.asideQuote }
+            : undefined,
         /* A draft renamed before it was ever sent to: the name travels with
            the create call, and the server's first-prompt sniff then leaves
            it alone. Left out when nobody has named it, so the sniff still
@@ -279,8 +284,6 @@ export function createCore(deps: CoreDeps) {
      installs them once and this only re-aims them; the last connection bound
      is the live one, which is the rule the module-level bound callbacks
      followed before. */
-  watchNetwork({ settings, registry: threads })
-
   const refreshSessions = async () => {
     const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
     // The server's list is the authority on what still exists, so this is the
@@ -324,6 +327,11 @@ export function createCore(deps: CoreDeps) {
        returns is the same authority the dispatch carries, available now. */
     return sessions
   }
+
+  /* Point the window-level watchers — `online`, `visibilitychange`, the
+     shared health probe and the park poll — at this connection's registry and
+     session refresh action. */
+  watchNetwork({ settings, registry: threads, refreshSessions })
 
   /** Reattach, reviving the agent if it is gone. The connection owns the
       guards, the chain and the ladder; this names the entry point the UI

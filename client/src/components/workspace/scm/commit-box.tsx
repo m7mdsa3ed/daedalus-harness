@@ -21,7 +21,7 @@
    and hoped: switching repository or closing the panel mid-draft left a
    promise that came back and wrote into a box that had moved on. */
 import * as React from "react"
-import { SparklesIcon, Tick02Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
+import { PencilEdit02Icon, SparklesIcon, Tick02Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
@@ -32,7 +32,8 @@ import { canUseAi, gitPick } from "@/lib/ai-picks"
 import { describeError } from "@/lib/errors"
 import { useProfiles } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
-import { draftCommitMessage } from "@/lib/workspace/git-api"
+import { cn } from "@/lib/utils"
+import { draftCommitMessage, gitCommit } from "@/lib/workspace/git-api"
 
 export function CommitBox({
   projectId,
@@ -46,6 +47,8 @@ export function CommitBox({
   changeCount,
   stagedCount,
   unstagedCount,
+  canAmend,
+  prefill,
   onCommit,
   onStageAll,
   onError,
@@ -59,8 +62,13 @@ export function CommitBox({
   changeCount: number
   stagedCount: number
   unstagedCount: number
+  /** There is a commit to amend (not unborn). */
+  canAmend?: boolean
+  /** Words put back into the box — an undone commit's message. `id` changes
+      per fill, so the same message undone twice still lands. */
+  prefill?: { text: string; id: number } | null
   /** Answers false when the commit did not happen, so the message stays put. */
-  onCommit: (message: string) => Promise<boolean>
+  onCommit: (message: string, amend: boolean) => Promise<boolean>
   onStageAll: () => void
   /** A draft that failed belongs beside the box it was meant to fill, not in a
       toast over a panel the reader is already looking at. */
@@ -69,6 +77,30 @@ export function CommitBox({
   const settings = useServer()
   const [message, setMessage] = React.useState("")
   const [drafting, setDrafting] = React.useState(false)
+  /* Amend rewrites the last commit: with it on, the button needs no staged
+     change (a reword is an amend), and the box holds the message being
+     replaced — an empty box would amend it to nothing, which git refuses. */
+  const [amend, setAmend] = React.useState(false)
+
+  React.useEffect(() => {
+    if (prefill) setMessage(prefill.text)
+  }, [prefill])
+
+  React.useEffect(() => {
+    if (!canAmend) setAmend(false)
+  }, [canAmend])
+
+  const toggleAmend = async () => {
+    const next = !amend
+    setAmend(next)
+    if (!next || message.trim()) return
+    try {
+      const last = await gitCommit(settings, projectId, "HEAD", repo || undefined)
+      setMessage((current) => current || last.body)
+    } catch (err) {
+      onError(describeError(err).title)
+    }
+  }
 
   /* Source control has its own device-local pick (Settings › AI helpers),
      separate from the composer's enhancer: reading a diff and sharpening a
@@ -130,7 +162,10 @@ export function CommitBox({
     if (!typed) return
     /* Cleared only on a commit that happened — a refused hook or a conflict
        leaves the words where the author can fix them and try again. */
-    if (await onCommit(typed)) setMessage("")
+    if (await onCommit(typed, amend)) {
+      setMessage("")
+      setAmend(false)
+    }
   }
 
   return (
@@ -144,7 +179,7 @@ export function CommitBox({
       <Textarea
         value={message}
         onChange={(event) => setMessage(event.target.value)}
-        placeholder={named ? `Commit to ${repoName}` : "Commit message"}
+        placeholder={amend ? "Amended message" : named ? `Commit to ${repoName}` : "Commit message"}
         rows={2}
         className="min-h-0 text-xs"
         onKeyDown={(event) => {
@@ -162,12 +197,16 @@ export function CommitBox({
           type="submit"
           size="xs"
           className="min-w-0 flex-1"
-          disabled={busy || !typed || changeCount === 0}
-          title={`Commit on ${branch} (⌘Enter)`}
+          disabled={busy || !typed || (changeCount === 0 && !amend)}
+          title={`${amend ? "Amend the last commit" : "Commit"} on ${branch} (⌘Enter)`}
         >
           <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" />
           <span className="truncate">
-            {stagedCount > 0
+            {amend
+              ? stagedCount > 0
+                ? `Amend with ${stagedCount}`
+                : "Amend message"
+              : stagedCount > 0
               ? `Commit ${stagedCount}`
               : unstagedCount > 0
                 ? `Stage all & commit ${unstagedCount}`
@@ -184,6 +223,16 @@ export function CommitBox({
           <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
             {unstagedCount}
           </span>
+        )}
+        {canAmend && (
+          <IconAction
+            label={amend ? "Stop amending" : "Amend the last commit"}
+            icon={PencilEdit02Icon}
+            disabled={busy}
+            variant={amend ? "secondary" : "ghost"}
+            className={cn(amend && "text-primary")}
+            onClick={() => void toggleAmend()}
+          />
         )}
         {/* Offered only where there is a profile that can do it: a disabled
             wand nobody can enable is worse than no wand. The label is the only

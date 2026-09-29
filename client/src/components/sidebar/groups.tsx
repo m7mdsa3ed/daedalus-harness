@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/sidebar"
 import { ProjectIcon } from "@/components/entity-icon"
 import type { Actions } from "@/lib/actions"
-import { currentThreadId, projectPath } from "@/lib/router"
+import { projectPath } from "@/lib/router"
+import { useActiveChat } from "@/lib/workspace/open-threads"
 import { type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { ACTION, GROUP, GROUP_LABEL, NEST, PROJECT_PAGE_SIZE, ROW, TIER } from "./scale"
@@ -81,7 +82,7 @@ export function ProjectFolder({
     rememberFold(id, next, true)
   }
   const location = useLocation()
-  const activeThreadId = currentThreadId(location.pathname, location.search)
+  const activeThreadId = useActiveChat()
   const holdsActive = sessions.some((session) => session.id === activeThreadId)
   /* The project's own page is *about* this folder, so the folder is where you
      are — open or closed, unlike the thread case below. */
@@ -213,6 +214,7 @@ export function FoldableGroup({
   count,
   defaultOpen = true,
   action,
+  expandOn,
   children,
 }: {
   groupKey: string
@@ -229,11 +231,19 @@ export function FoldableGroup({
       the label, because the label is the fold trigger and a button in a
       button folds and fires at once. */
   action?: React.ReactNode
+  /** Open the tier when this key changes, without changing its saved fold preference. */
+  expandOn?: string | null
   children: React.ReactNode
 }) {
   const [open, setOpen] = React.useState(
     () => collapsedGroups().includes(groupKey) !== defaultOpen
   )
+  const previousExpandOn = React.useRef<string | null>(null)
+
+  React.useEffect(() => {
+    if (expandOn && expandOn !== previousExpandOn.current) setOpen(true)
+    previousExpandOn.current = expandOn ?? null
+  }, [expandOn])
 
   const toggle = (next: boolean) => {
     setOpen(next)

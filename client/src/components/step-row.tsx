@@ -4,11 +4,13 @@
    (thread-cards) and the recursive row cluster (thread-items) can both use it
    without importing each other. */
 import * as React from "react"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { ChevronRightIcon } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import { FileBadge } from "@/components/tool-parts"
 import type { FileRange } from "@/lib/tools"
+import { useViewOptionsContext } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
@@ -41,7 +43,35 @@ export function copyText(text: string) {
     inside a subagent (`SubagentTranscript`) and the steps inside a run
     (`workflow-run`) hang off it, and those two files may not import each other
     (see the header comment on workflow-run). */
-export const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-border/60 pl-2.5"
+export const RAIL_CLASS = "mt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 border-s border-border/60 ps-2.5"
+
+/* ── Direction ── a step reads in the direction of its own text: an Arabic
+   title puts the mark on the right and the title flush beside it, as one unit,
+   instead of a right-aligned title drifting away from a left-hand mark. A run
+   gives every step inside it one direction (`StepDirContext`), so its rail
+   stays on one side. The literal caption (a command, a path) keeps its own
+   direction and only aligns with the row. */
+const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
+const STRONG_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/
+
+/** The direction of the first strongly-directional character, as `dir="auto"` picks it. */
+export function textDir(text: string | undefined | null): "rtl" | "ltr" {
+  const first = text?.match(STRONG_CHAR)?.[0]
+  return first && RTL_CHAR.test(first) ? "rtl" : "ltr"
+}
+
+export const StepDirContext = React.createContext<"rtl" | "ltr" | null>(null)
+
+/* Closing gets its own symmetric curve: the opening ease-out run backwards
+   dropped ~70% of the height in the first frame and then crawled. */
+export const DISCLOSE_EXIT = { duration: 0.2, ease: [0.4, 0, 0.2, 1] as const }
+
+/** Whether a finished animation was the *open* one. `onAnimationComplete` also
+    fires for the exit, and restoring `overflow: visible` there painted every
+    row at full size for the frame between "height reached 0" and removal —
+    the flash on close. framer passes the target object, never "animate". */
+export const finishedOpening = (definition: unknown) =>
+  typeof definition === "object" && definition !== null && (definition as { height?: unknown }).height === "auto"
 
 /* ── A step's trailing columns ──
    The elapsed clock, whatever the row filed as its `metric` (tokens, a stamp,
@@ -101,6 +131,7 @@ export function formatElapsed(ms: number): string {
    they pass are rebuilt once per kind render, not unusably often. */
 export const StepRow = React.memo(function StepRow({
   target,
+  openTarget,
   caption,
   file,
   filePath,
@@ -121,8 +152,14 @@ export const StepRow = React.memo(function StepRow({
   iconAccent,
   iconChip,
   toolLayout,
+  dir,
 }: {
+  /** Overrides the direction read from `target` — a node target (a live
+      thought's shimmer) has none of its own. */
+  dir?: "rtl" | "ltr"
   target: React.ReactNode
+  /** Title content used while the row is expanded. */
+  openTarget?: React.ReactNode
   /** A second, quieter line under the target — the literal thing invoked when
       the target is the agent's prose *about* it (see `toolHeading`). */
   caption?: string
@@ -170,7 +207,7 @@ export const StepRow = React.memo(function StepRow({
   /** The view option behind `defaultOpen`, when one of them is. Changing it
       re-applies `defaultOpen` to a row that is already on screen; see below for
       why that is a separate prop rather than just watching `defaultOpen`. */
-  openSetting?: boolean
+  openSetting?: boolean | string
   /** Leading mark. On an expandable row it swaps for a chevron on hover, so
       the disclosure affordance appears where the eye already is instead of at
       the far end of the line. */
@@ -224,19 +261,26 @@ export const StepRow = React.memo(function StepRow({
     setChosen(null)
   }, [openSetting])
   const expandable = detail !== undefined && detail !== null && detail !== false
+  const { calmMotion } = useViewOptionsContext()
+  const systemReducedMotion = useReducedMotion()
+  const reduceMotion = calmMotion || systemReducedMotion
+  const detailClipRef = React.useRef<HTMLDivElement>(null)
   const belowContent = typeof below === "function" ? below(open, setOpen) : below
   const active = status === "in_progress" || status === "pending"
   const failed = status === "failed"
   const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
+  const runDir = React.useContext(StepDirContext)
+  const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)
 
   return (
     <div
+      dir={d}
       className={cn(
         toolLayout === "cards" && "my-1 rounded-lg border border-border/60 bg-card/60 p-2 shadow-sm",
         toolLayout === "compact" && "-my-0.5",
         toolLayout === "rail" &&
           cn(
-            "my-1 border-s-2 pl-3",
+            "my-1 border-s-2 ps-3",
             failed
               ? "border-destructive"
               : active
@@ -325,7 +369,10 @@ export const StepRow = React.memo(function StepRow({
                   aria-hidden
                   className={cn(
                     "absolute size-3.5 text-muted-foreground transition-[opacity,transform] duration-100",
-                    open ? "rotate-90 opacity-100" : "opacity-0 group-hover/step:opacity-100"
+                    d === "rtl" && "-scale-x-100",
+                    open
+                      ? d === "rtl" ? "-rotate-90 opacity-100" : "rotate-90 opacity-100"
+                      : "opacity-0 group-hover/step:opacity-100"
                   )}
                 />
               )}
@@ -346,7 +393,7 @@ export const StepRow = React.memo(function StepRow({
                   active && "harness-shimmer"
                 )}
               >
-                {target}
+                {open && openTarget !== undefined ? openTarget : target}
               </span>
               {/* The file a step acted on, as a chip: the path is gone in the
                   basename, so the row says "Read" + `package.json` instead of an
@@ -361,8 +408,10 @@ export const StepRow = React.memo(function StepRow({
                 pair reads as one row rather than as two. */}
             {caption && (
               <span
+                dir="auto"
                 className={cn(
                   "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
+                  d === "rtl" ? "text-right" : "text-left",
                   // Mono follows the title: a caption under a command is the
                   // literal thing that ran, but under prose (a subagent's
                   // model, a run's live step) it is prose too.
@@ -390,37 +439,49 @@ export const StepRow = React.memo(function StepRow({
         {control}
       </div>
 
-      {/* Both bodies fade rather than rise, and neither animates its height.
-          The diff of an edit, the output of a command and a search's answers
-          all arrive well after the row that heads them — the call is drawn the
-          moment it opens and filled in as its result streams — so mounting them
-          with nothing at all is the pop that ends an otherwise smooth row.
-          `harness-fade-in` and not `harness-item-in`: a rise would slide a
-          block into space that did not exist a frame ago, and the height is the
-          one thing that must land in a single frame (index.css — `scrollHeight`
-          is what the autoscroll pin chases). So the space appears at once and
-          only the content resolves into it, which is the accepted cost already
-          documented there rather than a new one.
-          It also covers the click: opening a row by hand used to pop too. */}
+      {/* The disclosure animates its own height so the surrounding transcript
+          follows the content into place rather than jumping. Content is clipped
+          only during this short transition; once open it returns to natural
+          height and can stream or scroll normally. */}
       {belowContent && (
-        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && "pl-7")}>{belowContent}</div>
+        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && "ps-7")}>{belowContent}</div>
       )}
-      {expandable && open && (
-        <div
-          className={cn(
-            "harness-fade-in mt-1 mb-2.5 min-w-0 space-y-2",
+      <AnimatePresence initial={false}>
+        {expandable && open && (
+          <motion.div
+            key="step-detail-clip"
+            ref={detailClipRef}
+            initial={reduceMotion ? false : { opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0, transition: reduceMotion ? { duration: 0 } : DISCLOSE_EXIT }}
+            transition={{ duration: reduceMotion ? 0 : 0.26, ease: [0.22, 1, 0.36, 1] }}
+            onAnimationStart={() => {
+              if (detailClipRef.current) detailClipRef.current.style.overflow = "hidden"
+            }}
+            onAnimationComplete={(definition) => {
+              if (finishedOpening(definition) && detailClipRef.current) detailClipRef.current.style.overflow = "visible"
+            }}
+            className="overflow-hidden"
+          >
+            {/* Spacing lives inside the clip: a margin on the animated box is
+                outside its height and snapped away after every collapse (14px). */}
+            <div
+            className={cn(
+            "mt-1 mb-2.5 min-w-0 space-y-2",
             toolLayout === "cards" && "mt-2 border-t border-border/50 pt-2",
             toolLayout === "compact" && "mt-0.5 mb-1 space-y-1",
-            toolLayout === "rail" && "mt-1 pl-3",
+            toolLayout === "rail" && "mt-1 ps-3",
             toolLayout === "console" && "mt-2 rounded-md border border-border/60 bg-background/70 p-2 font-mono",
             toolLayout === "outlined" && "border-t border-dashed border-border/60 pt-2",
             toolLayout === "minimal" && "mt-0 mb-1 space-y-1",
             toolLayout === "spotlight" && "mt-2 rounded-md bg-background/70 p-2 shadow-sm"
           )}
-        >
+            >
           {detail}
-        </div>
-      )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 })

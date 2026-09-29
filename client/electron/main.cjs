@@ -25,6 +25,21 @@ let win = null
 let server = null
 
 const symbolColorFor = (resolved) => (resolved === "dark" ? "#e5e5e5" : "#171717")
+let overlaySymbolColor = symbolColorFor(nativeTheme.shouldUseDarkColors ? "dark" : "light")
+let appTheme = { resolved: nativeTheme.shouldUseDarkColors ? "dark" : "light", colorTheme: "default" }
+
+/* Edge-to-edge: no OS title bar, the app paints its own chrome. macOS keeps
+   the traffic lights inset; Windows/Linux get an overlay for min/max/close.
+   Shared by the main window and every thread popout, so the two look alike. */
+const chrome = () => ({
+  frame: process.platform === "darwin",
+  titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+  titleBarOverlay:
+    process.platform === "darwin" ? undefined : { color: "#00000000", symbolColor: overlaySymbolColor, height: 36 },
+  trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 14 } : undefined,
+})
+// The windows built with chrome(), whose caption buttons follow the theme.
+const framelessWindows = new Set()
 
 /* ── What the window's material is tinted with ──
    Windows composites the window's own backgroundColor OVER the material, at
@@ -44,6 +59,21 @@ const symbolColorFor = (resolved) => (resolved === "dark" ? "#e5e5e5" : "#171717
    macOS needs none of this either: its vibrancy material carries its own
    light/dark appearance off `themeSource`. */
 const WINDOW_TINT = "#00000000"
+
+/* The desktop material is a native window-creation option. Keep this preference
+   outside window-state.json so geometry saves cannot overwrite it. */
+const windowMaterialFile = () => path.join(app.getPath("userData"), "window-material.json")
+let activeWindowMaterial
+function loadWindowMaterial() {
+  if (activeWindowMaterial) return activeWindowMaterial
+  try {
+    const value = JSON.parse(fs.readFileSync(windowMaterialFile(), "utf8"))
+    activeWindowMaterial = value === "mica" ? "mica" : "acrylic"
+  } catch {
+    activeWindowMaterial = "acrylic"
+  }
+  return activeWindowMaterial
+}
 
 /* ── Notifications ──
    The renderer does NOT use the web Notification API here, and the permission
@@ -76,7 +106,7 @@ ipcMain.handle("notify", (_event, payload) => {
   return true
 })
 
-ipcMain.on("theme-changed", (_event, resolved, source) => {
+ipcMain.on("theme-changed", (_event, resolved, source, colorTheme) => {
   /* The native material tints itself from the OS theme, never from the page:
      a light app on a dark desktop got a dark acrylic/vibrancy slab behind its
      sidebar, which is what "too dark in light mode" was. `themeSource` is the
@@ -84,15 +114,35 @@ ipcMain.on("theme-changed", (_event, resolved, source) => {
      colour — pinning "light"/"dark" also pins `prefers-color-scheme`, so a
      theme set to follow the OS has to stay "system" or it stops following it. */
   nativeTheme.themeSource = source === "light" || source === "dark" ? source : "system"
-  if (!win || win.isDestroyed() || process.platform === "darwin") return
-  win.setTitleBarOverlay({ color: "#00000000", symbolColor: symbolColorFor(resolved), height: 36 })
-  /* No setBackgroundColor here any more: the tint is a constant, and acrylic's own
-     light/dark variant is picked by the `themeSource` set two lines up. */
+  appTheme = { resolved, colorTheme }
+  overlaySymbolColor = symbolColorFor(resolved)
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed() && w.webContents !== _event.sender) w.webContents.send("theme-changed", resolved, colorTheme)
+  }
+  if (process.platform === "darwin") return
+  for (const w of framelessWindows) {
+    if (!w.isDestroyed()) w.setTitleBarOverlay({ color: "#00000000", symbolColor: overlaySymbolColor, height: 36 })
+  }
+  /* No setBackgroundColor here: the tint is constant, and the native material's
+     light/dark variant is picked by `themeSource` above. */
 })
 
 ipcMain.handle("write-clipboard", (_event, text) => {
   clipboard.writeText(String(text ?? ""))
   return true
+})
+
+ipcMain.handle("get-window-material", () => loadWindowMaterial())
+ipcMain.handle("set-window-material", (_event, value) => {
+  if (process.platform !== "win32") return { ok: false, error: "Window material is only available on Windows" }
+  if (value !== "acrylic" && value !== "mica") return { ok: false, error: "Unsupported window material" }
+  try {
+    fs.writeFileSync(windowMaterialFile(), JSON.stringify(value))
+    activeWindowMaterial = value
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: `Could not save window material: ${error?.message ?? error}` }
+  }
 })
 
 /* ── Reaching the main window from outside it ──
@@ -152,7 +202,7 @@ ipcMain.handle("set-quick-entry", (_event, accelerator) => {
    Same origin as the main window, so it shares every device-local store; the
    `?popout=1` flag is what makes the renderer draw the one transcript and none
    of the shell (`lib/popout.ts`) — and never save a layout or restore a draft
-   over the main window's. Framed, because it has no header to drag it by. */
+   over the main window's. Frameless like the main window; its band is the drag handle. */
 ipcMain.handle("open-thread-window", (_event, sessionId) => {
   if (!win || win.isDestroyed() || typeof sessionId !== "string" || !sessionId) return false
   const origin = new URL(win.webContents.getURL()).origin
@@ -163,11 +213,14 @@ ipcMain.handle("open-thread-window", (_event, sessionId) => {
     minHeight: 400,
     icon: iconFile(),
     autoHideMenuBar: true,
+    ...chrome(),
     ...material(),
     // Survives any navigation inside the window, unlike the URL flag (preload → desktop.popout).
     webPreferences: { ...webPreferences(), additionalArguments: ["--daedalus-popout"] },
   })
   guardWindow(popout)
+  framelessWindows.add(popout)
+  popout.on("closed", () => framelessWindows.delete(popout))
   void popout.loadURL(`${origin}/t/${encodeURIComponent(sessionId)}?popout=1`)
   return true
 })
@@ -310,7 +363,7 @@ const webPreferences = () => ({
 const material = () => ({
   vibrancy: process.platform === "darwin" ? "sidebar" : undefined,
   visualEffectState: process.platform === "darwin" ? "active" : undefined,
-  backgroundMaterial: process.platform === "win32" ? "acrylic" : undefined,
+  backgroundMaterial: process.platform === "win32" ? loadWindowMaterial() : undefined,
   roundedCorners: true,
   backgroundColor:
     process.platform === "darwin"
@@ -325,6 +378,17 @@ const material = () => ({
 /** Clipboard keys, the context menu and the external-link rules — every window's. */
 function guardWindow(w) {
   installClipboardHandlers(w)
+  w.webContents.on("did-create-window", (child) => {
+    framelessWindows.add(child)
+    child.on("closed", () => framelessWindows.delete(child))
+    guardWindow(child)
+    if (process.platform !== "darwin") {
+      child.setTitleBarOverlay({ color: "#00000000", symbolColor: overlaySymbolColor, height: 36 })
+    }
+    child.webContents.once("dom-ready", () => {
+      child.webContents.send("theme-changed", appTheme.resolved, appTheme.colorTheme)
+    })
+  })
   /* External links open in the real browser, never inside the app shell — but a
      dock popout is `window.open` too (dockview's `addPopoutGroup` opens
      `popout.html` and portals the panel's DOM into it). It is same-origin and
@@ -346,7 +410,8 @@ function guardWindow(w) {
       action: "allow",
       overrideBrowserWindowOptions: {
         autoHideMenuBar: true,
-        backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+        ...chrome(),
+        ...material(),
         webPreferences: webPreferences(),
       },
     }
@@ -406,18 +471,14 @@ async function createWindow() {
        electron-builder `icon` config instead. macOS ignores this entirely and
        uses the bundle icon. */
     icon: iconFile(),
-    // Edge-to-edge: no OS title bar, the app paints its own chrome. macOS keeps
-    // the traffic lights inset; Windows/Linux get an overlay for min/max/close.
-    frame: process.platform === "darwin",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    titleBarOverlay:
-      process.platform === "darwin"
-        ? undefined
-        : { color: "#00000000", symbolColor: symbolColorFor(nativeTheme.shouldUseDarkColors ? "dark" : "light"), height: 36 },
-    trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 14 } : undefined,
-    /* The window's own material: macOS vibrancy, Windows 11 acrylic.
-       Acrylic and not mica, and that is a measurement, not a taste. On Windows
-       11 build 26200 a frameless window with `backgroundMaterial: "mica"` draws
+    ...chrome(),
+    /* The window's own material: macOS vibrancy, Windows 11 Acrylic or Mica.
+       The Windows choice is device-local, defaults to Acrylic, and is read at
+       creation for this window and every popout. Mica is user-selectable despite
+       the observed limitation on build 26200: in this frameless configuration
+       it draws near-black instead of the desktop wallpaper. Acrylic draws there.
+       Keep the page transparent so the selected native material shows through.
+       On Windows 11 build 26200 a frameless window with `backgroundMaterial: "mica"` draws
        **nothing** — the page is genuinely transparent (html/body/wrapper/sidebar
        all compute to `rgba(0,0,0,0)`, `body::before` is the 45% veil) and what
        shows through is near-black, not the desktop. The same window with
@@ -451,6 +512,8 @@ async function createWindow() {
   })
 
   guardWindow(win)
+  framelessWindows.add(win)
+  win.on("closed", () => framelessWindows.delete(win))
   win.on("show", refreshTray)
   win.on("hide", refreshTray)
 

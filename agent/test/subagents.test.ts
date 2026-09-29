@@ -59,6 +59,23 @@ const SCRIPTS = () => [
       .map((u) => (u.update as { used?: number }).used);
     assert.deepEqual(childUsage, [150], "the child's step is reported on the child");
 
+    const attributedUsage = harness
+      .updatesOf("_daedalus/subagent_usage")
+      .filter((u) => u.sessionId === sessionId)
+      .map((u) => u.update as { subagentSessionId?: string; usage?: { totalTokens?: number } });
+    assert.deepEqual(attributedUsage, [{
+      sessionUpdate: "_daedalus/subagent_usage",
+      subagentSessionId: childId,
+      usage: {
+        totalTokens: 150,
+        inputTokens: 100,
+        outputTokens: 50,
+        thoughtTokens: null,
+        cachedReadTokens: null,
+        cachedWriteTokens: null,
+      },
+    }], "settled child usage is attributed to its parent card");
+
     const childChunks = harness
       .updatesOf("agent_message_chunk")
       .filter((u) => u.sessionId === childId);

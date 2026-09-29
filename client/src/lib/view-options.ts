@@ -34,7 +34,7 @@ import { createContext, useContext, useSyncExternalStore } from "react"
 
 import { createLocalStore } from "./local-store"
 import { isStreamSpeed, type StreamSpeed } from "./stream-pace"
-import { isStreamEffect, type StreamEffect } from "./stream-words"
+import type { StreamEffect } from "./stream-words"
 
 /** When a folded subagent shows its latest steps under its row. A mode, not a
     count: the count is the tool run's own peek (`PEEK`), so a worker and a run
@@ -82,6 +82,8 @@ export interface ViewOptions {
   wideTranscript: boolean
   /** Expand every tool call's input/output by default. */
   showToolDetails: boolean
+  /** Open edit diffs by default. Off, edits can join grouped tool runs. */
+  expandEdits: boolean
   /** When a folded subagent shows its latest steps without being opened. */
   subagentPeek: SubagentPeek
   /** The command, path or pattern under a tool row's description. Off, a step
@@ -109,10 +111,6 @@ export interface ViewOptions {
   showTokens: boolean
   /** Drop the row entrance animation and the running-turn shimmer. */
   calmMotion: boolean
-  /** How a live turn's prose resolves as it is written (lib/stream-words). The
-   *  one option here that is not a switch — the choice is between shapes, not
-   *  between on and off, and "none" is one of the shapes. */
-  streamEffect: StreamEffect
   /** How fast a live turn's prose is revealed (lib/stream-pace) — the other
    *  half of the reveal, and the half that used to be a constant. Deliberately
    *  *not* folded into calm motion: pacing is when a word appears, not whether
@@ -134,10 +132,11 @@ export const VIEW_DEFAULTS: ViewOptions = {
   showShellCommands: true,
   compactDensity: false,
   autoScroll: true,
-  showThinking: false,
+  showThinking: true,
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
+  expandEdits: true,
   subagentPeek: "live",
   showToolCommand: true,
   toolLayout: "timeline",
@@ -150,7 +149,6 @@ export const VIEW_DEFAULTS: ViewOptions = {
   showTokens: false,
   calmMotion: false,
   answersOnly: false,
-  streamEffect: "sweep",
   streamSpeed: "natural",
 }
 
@@ -164,22 +162,17 @@ export const VIEW_DEFAULTS: ViewOptions = {
    here and the rows read it. Deliberately not the whole Detail group:
    timestamps, sources and token figures are all still on screen and still say
    something about the turn that is left. */
-/* The same argument for calm motion: it is a statement about the transcript not
-   moving on its own, and a reveal is the transcript moving on its own. The
-   stored choice stays the reader's and comes back when calm motion goes off —
-   `resolveStreamEffect` is what makes it moot meanwhile, and the picker says so
-   rather than silently doing nothing. */
-export const CALM_MOTION_SUPPRESSES: readonly (keyof ViewOptions)[] = ["streamEffect"]
-
-/** What the transcript should actually draw, once calm motion has had its say.
- *  Read this, never `options.streamEffect`, anywhere the reveal is rendered. */
+/** What the transcript should actually draw: the sweep, the one reveal there
+ *  is (lib/stream-words), unless calm motion has stopped the transcript moving
+ *  on its own. Read this anywhere the reveal is rendered. */
 export function resolveStreamEffect(options: ViewOptions): StreamEffect {
-  return options.calmMotion ? "none" : options.streamEffect
+  return options.calmMotion ? "none" : "sweep"
 }
 
 export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
   "showThinking",
   "showToolDetails",
+  "expandEdits",
   "showToolCommand",
   "toolLayout",
   "subagentPeek",
@@ -222,8 +215,6 @@ function pick(raw: unknown): Partial<ViewOptions> {
       if (isSubagentPeek(value)) out[key] = value
       else if (legacy === 0 || legacy === false) out[key] = "off"
       else if (typeof legacy === "number" || legacy === true) out[key] = "always"
-    } else if (key === "streamEffect") {
-      if (isStreamEffect(value)) out[key] = value
     } else if (key === "toolLayout") {
       if (isToolLayout(value)) out[key] = value
     } else if (key === "streamSpeed") {

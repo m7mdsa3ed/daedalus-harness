@@ -21,23 +21,19 @@ import {
 } from "@/lib/settings"
 import { Button } from "@/components/ui/button"
 import {
-  BookOpenIcon,
   ChevronDownIcon,
   FlaskConicalIcon,
   GlobeIcon,
   KeyRoundIcon,
-  PlugIcon,
   PlugZapIcon,
   PlusIcon,
+  PlugIcon,
   SearchCheckIcon,
   StoreIcon,
-  TerminalIcon,
   UnplugIcon,
-  UsersIcon,
-  WorkflowIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { EntityIcon } from "@/components/entity-icon"
+import { McpIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import {
   DropdownMenu,
@@ -62,38 +58,23 @@ import type { McpTransportForm } from "./mcp-detail"
 type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents"
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
-   phrase the list needs to identify a row already there. They are different
-   lengths because they answer different questions, and using the menu's
-   sentence in the list stretched a table cell to the width of a paragraph. */
+   phrase the list needs to identify a row already there. */
 const BUILTINS: {
   kind: BuiltinKind
   label: string
   hint: string
   detail: string
-  icon: typeof GlobeIcon
 }[] = [
-  { kind: "web-search", label: "Web search", icon: GlobeIcon, detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
-  { kind: "knowledge", label: "Knowledge base", icon: BookOpenIcon, detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
-  { kind: "workflow", label: "Workflows", icon: WorkflowIcon, detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
-  { kind: "agents", label: "Ask agents", icon: UsersIcon, detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
+  { kind: "web-search", label: "Web search", detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
+  { kind: "knowledge", label: "Knowledge base", detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
+  { kind: "workflow", label: "Workflows", detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
+  { kind: "agents", label: "Ask agents", detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
 ]
 
 const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
 
-/** This row's mark. A library of MCP servers is not one kind of thing: two
-    transports and the harness's own tools share the list, and the plug every
-    row used to wear said none of that. */
-function mcpIcon(s: McpServerDef): React.ReactNode {
-  const Icon = s.type === "builtin" ? builtinOf(s.builtin)?.icon ?? PlugIcon : s.type === "http" ? GlobeIcon : TerminalIcon
-  return s.type !== "builtin" && s.logoUrl ? (
-    <EntityIcon
-      src={s.logoUrl}
-      className="size-4"
-      fallback={<Icon className="size-4 shrink-0 text-muted-foreground" />}
-    />
-  ) : (
-    <Icon className="size-4 shrink-0 text-muted-foreground" />
-  )
+function mcpIcon(server: McpServerDef): React.ReactNode {
+  return <McpIcon server={server} className="size-4" />
 }
 
 /**
@@ -130,6 +111,16 @@ export function McpPage() {
   const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("mcp")
   const mcpServers = useMcpServers()
+  const hasChromeDevtools = mcpServers.some((server) => server.id === "chrome-devtools-mcp")
+
+  const addChromeDevtools = async () => {
+    try {
+      await api(settings, "/api/mcp-servers/chrome-devtools", { method: "POST" })
+      await invalidate("mcp-servers")
+    } catch (err) {
+      reportError(err, "Couldn't add Chrome DevTools")
+    }
+  }
 
   /* The harness's own servers, added from one menu rather than typed in:
      there is nothing to type — the row is a handle, and the command, env and
@@ -175,9 +166,9 @@ export function McpPage() {
         }
       />
       <DropdownMenuContent align="end" className="w-64">
-        {missing.map(({ kind, label, hint, icon: Icon }) => (
+        {missing.map(({ kind, label, hint }) => (
           <DropdownMenuItem key={kind} onClick={() => void inject(kind)} title={hint}>
-            <Icon className="size-4" /> {label}
+            <McpIcon server={{ id: `builtin:${kind}`, type: "builtin", builtin: kind, name: label }} className="size-4" /> {label}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -197,6 +188,15 @@ export function McpPage() {
         <>
           {browse}
           {playground}
+          {!hasChromeDevtools && (
+            <Button
+              variant="outline"
+              onClick={() => void addChromeDevtools()}
+              title="Add Google Chrome DevTools MCP for Chrome running on the harness server"
+            >
+              <GlobeIcon className="size-4" /> Add Chrome DevTools
+            </Button>
+          )}
           {builtins}
         </>
       }
@@ -401,7 +401,8 @@ function McpCheck({ server, settings }: { server: McpServerDef; settings: Server
           <PlugZapIcon /> Couldn't read what it offers
         </Badge>
       )}
-      {result && !result.ok && (
+      {result?.deferred && <Badge variant="outline" title={result.error}>Not connected</Badge>}
+      {result && !result.ok && !result.deferred && (
         <Badge variant="destructive" title={result.error}>
           <PlugZapIcon /> {result.error ?? "Didn't connect"}
         </Badge>
@@ -692,7 +693,7 @@ function McpForm({
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>
-        <Field label="Logo URL" hint="Optional HTTPS image URL. Registry logos are filled in automatically.">
+        <Field label="Logo URL" hint="Optional image URL override. HTTP server URLs use the host favicon when no logo is set.">
           <Input
             type="url"
             value={form.logoUrl}

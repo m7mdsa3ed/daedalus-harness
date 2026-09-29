@@ -141,8 +141,8 @@ export function ReadingBubble({
  * both is one reading, and it is the shape the app's own chips already have
  * (`ChipBadge`, the `Badge` primitive), so a cluster of readings scans as a row
  * of chips. Small on purpose (10px — under the button's own `text-sm`), on the
- * same ring those two sit on, with a ground of its own (`bg-muted`) so it reads
- * as a label rather than as loose text.
+ * same ring those two sit on. No ground of its own: the strip draws its items
+ * bare, and the button's hover is the only frame a reading wears.
  *
  * It carries the panel breakpoint itself (`hidden @panel-sm:inline-flex`), so a
  * reading never has to remember when it may speak — it asks for the badge and
@@ -182,7 +182,7 @@ export function ReadingBadge({
            `max-w-full` so the pill can never be wider than the button it is in
            — the words ellipsis instead, which is what the truncating span below
            is for. */
-        "inline-flex h-5 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted px-1.5 text-[10px] leading-none font-medium whitespace-nowrap",
+        "inline-flex h-5 max-w-full min-w-0 items-center gap-1 px-0.5 text-[10px] leading-none font-medium whitespace-nowrap",
         !always && "hidden @panel-sm:inline-flex",
         className
       )}

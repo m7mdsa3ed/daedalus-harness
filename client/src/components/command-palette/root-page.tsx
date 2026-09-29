@@ -22,7 +22,6 @@ import * as React from "react"
 import {
   AppWindowIcon,
   Bot,
-  PanelRight,
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
@@ -354,17 +353,6 @@ export function RootPage() {
 
   /* ── This thread ── */
   if (meta) {
-    /* The chord's own handler (`runShortcut`), which only the routed
-       transcript answers — the same door the desktop menu uses. */
-    items.push({
-      id: "thread:inspector",
-      group: "This thread",
-      title: "Toggle the inspector",
-      keywords: "changes plan checklist todos subagents details sidebar panel right column",
-      icon: <PanelRight />,
-      chord: binds.inspector.chords[0],
-      onSelect: () => palette.run(() => runShortcut("inspector")),
-    })
     if (options.model) {
       items.push({
         id: "thread:model",

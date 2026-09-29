@@ -50,7 +50,7 @@ import {
   saveNamedLayout,
 } from "@/lib/workspace/layout"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
-import { setOpenThreads } from "@/lib/workspace/open-threads"
+import { setActiveChat, setChatFocusHandler, setOpenThreads } from "@/lib/workspace/open-threads"
 import { PANEL_SPECS, panelId, pageKey, parsePanel, type PanelDescriptor } from "@/lib/workspace/panels"
 
 const SAVE_DEBOUNCE_MS = 300
@@ -792,11 +792,26 @@ export function useWorkspaceDock(): DockController {
         }
       }
 
-      /* The sidebar's "Opened" tier is derived from the dock, never a second
-         copy of it: published on every change and once for what the restore
-         just put back. `setOpenThreads` is a no-op when nothing moved. */
+      /* The sidebar's thread rows are derived from the dock, never from a
+         second route-based copy: open tabs and the active chat are published
+         on layout changes and once for what restore put back. */
       const publishOpenThreads = () => setOpenThreads(openChatThreads(api.panels))
-      publishOpenThreads()
+      const publishActiveChat = (panel: IDockviewPanel | undefined) => {
+        const descriptor = panel ? descriptorOf(panel) : null
+        setActiveChat(descriptor?.kind === "chat" ? descriptor.sessionId : null)
+      }
+      const focusOpenChat = (id: string) => {
+        const panel = api.getPanel(panelId({ kind: "chat", sessionId: id }))
+        if (!panel) return false
+        panel.api.setActive()
+        return true
+      }
+      const publishDockState = () => {
+        publishOpenThreads()
+        publishActiveChat(api.activeGroup?.activePanel)
+      }
+      publishDockState()
+      setChatFocusHandler(focusOpenChat)
 
       let saveTimer: ReturnType<typeof setTimeout> | undefined
       const flushSave = () => {
@@ -806,10 +821,13 @@ export function useWorkspaceDock(): DockController {
         saveLayout(serverId, api.toJSON())
       }
       const disposables = [
-        api.onDidAddPanel(publishOpenThreads),
-        api.onDidRemovePanel(publishOpenThreads),
-        api.onDidMovePanel(publishOpenThreads),
-        api.onDidActivePanelChange(({ panel }) => followActive(panel)),
+        api.onDidAddPanel(publishDockState),
+        api.onDidRemovePanel(publishDockState),
+        api.onDidMovePanel(publishDockState),
+        api.onDidActivePanelChange(({ panel }) => {
+          publishActiveChat(panel)
+          followActive(panel)
+        }),
         /* A layout change is raised after the panels list has settled, and it
            covers tab-group changes too (dockview folds them into it). */
         api.onDidLayoutChange(() => {
@@ -827,6 +845,8 @@ export function useWorkspaceDock(): DockController {
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", flushSave)
         disposables.forEach((disposable) => disposable.dispose())
+        setChatFocusHandler(null)
+        setActiveChat(null)
       }
     },
     [silently]

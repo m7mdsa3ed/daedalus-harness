@@ -41,7 +41,9 @@ export function CommitGraph({
   commits,
   onCopy,
   coarse,
+  hint = "Click to copy the full hash",
 }: {
+  hint?: string
   commits: readonly GitCommit[]
   /** Clicking a row copies its hash — the one thing a log cannot give by look. */
   onCopy: (commit: GitCommit) => void
@@ -114,7 +116,7 @@ export function CommitGraph({
             <button
               type="button"
               onClick={() => onCopy(row.commit)}
-              title={`${row.commit.hash}\n${row.commit.author} · ${new Date(row.commit.at * 1000).toLocaleString()}\n${row.commit.subject}\n\nClick to copy the full hash`}
+              title={`${row.commit.hash}\n${row.commit.author} · ${new Date(row.commit.at * 1000).toLocaleString()}\n${row.commit.subject}\n\n${hint}`}
               className={cn(
                 "flex h-full w-full flex-col justify-center gap-0.5 rounded-md pr-1 pl-1 text-left",
                 "hover:bg-accent/40",

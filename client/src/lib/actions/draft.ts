@@ -25,6 +25,7 @@ import {
 import { api, profileAgentIds, type Profile, type Project, type SessionMeta } from "../settings"
 import { emptyThread } from "../store"
 import { patchDraft, rememberDraft } from "../draft-sessions"
+import { saveDraft } from "../drafts"
 import type { ActionsCore } from "./core"
 
 export function draftActions(core: ActionsCore) {
@@ -165,6 +166,8 @@ export function draftActions(core: ActionsCore) {
         a thread the server never heard of, which is what an unsent draft
         looks like from a fresh page. */
     id?: string
+    /** Start it as an aside of that thread, on that passage. */
+    aside?: { of: string; quote: string }
   }): string => {
     const { project, profile, model, effort } = opts
     const id = opts.id ?? uuid()
@@ -200,6 +203,7 @@ export function draftActions(core: ActionsCore) {
       cursor: 0,
       draft: true,
       ...tools,
+      ...(opts.aside ? { forkedFromSessionId: opts.aside.of, asideQuote: opts.aside.quote } : {}),
     }
     dispatch({ type: "draft-session", session })
     dispatch({ type: "thread-reset", id, thread: { ...emptyThread } })
@@ -235,6 +239,29 @@ export function draftActions(core: ActionsCore) {
     },
 
     newDraftThread,
+
+    /**
+     * An aside: a new thread started from a passage selected in `parentId`,
+     * on the parent's own (profile, agent, model, effort). A draft like any
+     * other — nothing exists until the first send — with the passage already
+     * quoted in its composer. The link and the flag ride the create.
+     */
+    startAside(parentId: string, quote: string): string | null {
+      const parent = core.getState().sessions.find((s) => s.id === parentId)
+      const project = catalog.projects().find((p) => p.id === parent?.projectId)
+      const profile = catalog.profiles().find((p) => p.id === parent?.profileId)
+      if (!parent || !project || !profile) return null
+      const id = newDraftThread({
+        project,
+        profile,
+        agentId: parent.agentId,
+        model: parent.model,
+        effort: parent.effort,
+        aside: { of: parentId, quote },
+      })
+      saveDraft(id, quote.split("\n").map((line) => `> ${line}`).join("\n") + "\n\n")
+      return id
+    },
 
     /**
      * Find out what an agent can be configured with on a profile, once.

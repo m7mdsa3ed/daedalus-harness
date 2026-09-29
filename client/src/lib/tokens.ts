@@ -10,6 +10,7 @@
    thing). See `components/token-usage.tsx` for the drawn forms. */
 import type * as acp from "@daedalus/acp"
 
+import type { ThreadItem } from "@/lib/store/items"
 import { vendorMeta } from "@/lib/tools"
 
 /**
@@ -43,7 +44,14 @@ export function windowEstimated(usage: acp.UsageUpdate | null | undefined): bool
 export interface PromptBreakdown {
   total: number
   system: number
+  /** Built-in tools only; MCP servers' tools are `mcp`. */
   tools: number
+  /** 0 on a step journaled before the MCP share was counted apart — those
+      carried it inside `tools`. */
+  mcp: number
+  /** Locally estimated tokens in user-role messages, null on older events. */
+  user: number | null
+  /** History and tool results after user messages are separated. */
   conversation: number
 }
 
@@ -52,12 +60,49 @@ export function promptBreakdown(
 ): PromptBreakdown | null {
   const raw = vendorMeta(usage?._meta, "daedalus")?.breakdown
   if (raw === null || typeof raw !== "object") return null
-  const { total, system, tools, conversation } = raw as Record<string, unknown>
+  const { total, system, tools, mcp, user, conversation } = raw as Record<string, unknown>
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null)
   const [t, s, tl, c] = [num(total), num(system), num(tools), num(conversation)]
   return t === null || s === null || tl === null || c === null
     ? null
-    : { total: t, system: s, tools: tl, conversation: c }
+    : { total: t, system: s, tools: tl, mcp: num(mcp) ?? 0, user: num(user), conversation: c }
+}
+
+/** One model request's own bill (`_meta.daedalus.step`, our runtime only) —
+    its output and reasoning, which the `used` total folds together. */
+export function stepBill(usage: acp.UsageUpdate | null | undefined): acp.Usage | null {
+  const step = vendorMeta(usage?._meta, "daedalus")?.step as acp.Usage | undefined
+  return step && typeof step.outputTokens === "number" ? step : null
+}
+
+export interface TurnTokens {
+  /** The user row that opened the turn. */
+  id: string
+  prompt: string
+  /** What the runtime billed for the whole turn, once it ended. */
+  usage?: acp.Usage
+  /** Each model request in it, in order, as `markStepUsage` filed them. */
+  steps: acp.UsageUpdate[]
+}
+
+/** The thread's tokens, turn by turn: the same nearest-user-row walk that
+    `withStepTurnUsage` does, collecting the step readings filed on the way.
+    A subagent's rows are skipped — their requests are the child's. */
+export function tokensByTurn(
+  items: ThreadItem[],
+  stepUsage: Record<string, acp.UsageUpdate>,
+  turnUsage: Record<string, acp.Usage>
+): TurnTokens[] {
+  const turns: TurnTokens[] = []
+  for (const item of items) {
+    if (item.parentId) continue
+    if (item.kind === "user") {
+      turns.push({ id: item.id, prompt: item.text, usage: item.turnId ? turnUsage[item.turnId] : undefined, steps: [] })
+    }
+    const step = stepUsage[item.id]
+    if (step) turns.at(-1)?.steps.push(step)
+  }
+  return turns.filter((turn) => turn.usage || turn.steps.length > 0)
 }
 
 /** `842`, `12.4k`, `1.3M` — three significant-ish digits at every scale, so a

@@ -59,14 +59,14 @@ import {
   settingsRootPath,
   threadPath,
 } from "@/lib/router"
-import type { ServerSettings } from "@/lib/settings"
+import type { ServerSettings, SessionMeta } from "@/lib/settings"
 import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
 import { formatChord } from "@/lib/shortcuts"
 import { useStoreHandle, useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { openTerminal } from "@/lib/workspace/open-terminal"
 import { threadDock } from "@/lib/workspace/thread-docks"
-import { HOME_PROJECT_ID, type PanelKind } from "@/lib/workspace/panels"
+import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -134,6 +134,11 @@ export function AppShell({
      than to any route or dock group under it. */
   const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
+  const closeOpenThread = React.useCallback(
+    (session: SessionMeta) =>
+      void dock.closePanel(panelId({ kind: "chat", sessionId: session.id })),
+    [dock]
+  )
   const headingFor = usePageHeading()
 
   const inSettings = location.pathname.startsWith("/settings")
@@ -548,7 +553,14 @@ export function AppShell({
                   Claude desktop sidebars open. `New project` stays reachable
                   from /settings/projects and the command palette. */}
               <SidebarNav onNewThread={() => startRef.current.startThread()} />
-              {loading ? <SidebarGroupsSkeleton /> : <ThreadSidebar actions={actions} />}
+              {loading ? (
+                <SidebarGroupsSkeleton />
+              ) : (
+                <ThreadSidebar
+                  actions={actions}
+                  closeOpenThread={closeOpenThread}
+                />
+              )}
             </>
           )}
         </SidebarContent>

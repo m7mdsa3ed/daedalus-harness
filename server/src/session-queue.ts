@@ -191,18 +191,24 @@ export class SessionQueue {
     await this.emitQueue(session);
   }
 
-  /** Inject one queued item into the running turn without stopping it — the
-      old steering path (`inflight++`). On an idle thread it simply starts one. */
-  async steer(session: Session, itemId: string): Promise<{ turnId: string }> {
-    const bridge = await this.host.whenSpawnable(session);
-    const item = (await listQueue(session.id)).find((entry) => entry.id === itemId);
-    if (!item) throw new Error("that queued message is gone");
-    const result = await this.host.startTurn(session, bridge, item.text, undefined, {
-      attachments: item.attachments ?? [],
+  /** Inject one queued item into the running turn without stopping it. */
+  steer(session: Session, itemId: string): Promise<{ turnId: string }> {
+    return this.chain(session, async () => {
+      const bridge = await this.host.whenSpawnable(session);
+      const item = (await listQueue(session.id)).find((entry) => entry.id === itemId);
+      if (!item) throw new Error("that queued message is gone");
+      if (!(await removeQueued(session.id, itemId))) throw new Error("that queued message is gone");
+      await this.emitQueue(session);
+      try {
+        return await this.host.startTurn(session, bridge, item.text, undefined, {
+          attachments: item.attachments ?? [],
+        });
+      } catch (error) {
+        await enqueue(session.id, item.text, item.attachments ?? []);
+        await this.emitQueue(session);
+        throw error;
+      }
     });
-    await removeQueued(session.id, itemId);
-    await this.emitQueue(session);
-    return result;
   }
 
   /**

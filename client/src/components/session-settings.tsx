@@ -44,6 +44,7 @@ import {
   MousePointer2,
   RotateCcw,
   Rows3,
+  Search,
   SeparatorHorizontal,
   Sparkles,
   Terminal as TerminalIcon,
@@ -59,12 +60,13 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { StreamEffectPicker } from "@/components/stream-effect-picker"
+import { StreamSpeedPicker } from "@/components/stream-speed-picker"
+import { STREAM_SPEEDS } from "@/lib/stream-pace"
 import { Switch } from "@/components/ui/switch"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import {
   ANSWERS_ONLY_SUPPRESSES,
-  CALM_MOTION_SUPPRESSES,
   SUBAGENT_PEEKS,
   TOOL_LAYOUTS,
   resetViewOptions,
@@ -96,7 +98,7 @@ type Group = {
   hint: string
   options: Option[]
   /** Non-switch controls that belong to this group's question. */
-  pickers?: ("streamEffect" | "subagentPeek" | "toolLayout")[]
+  pickers?: ("streamSpeed" | "subagentPeek" | "toolLayout")[]
 }
 
 const SUBAGENT_PEEK_COPY: Record<SubagentPeek, { label: string; description: string }> = {
@@ -164,6 +166,12 @@ const GROUPS: Group[] = [
         icon: ListTree,
         title: "Expand tool output",
         description: "Open every tool call's input and output by default, not just edits and diffs.",
+      },
+      {
+        key: "expandEdits",
+        icon: Code,
+        title: "Expand edits by default",
+        description: "Open file diffs automatically. Turn off to keep edits folded and let them join grouped tool calls.",
       },
       {
         key: "showToolCommand",
@@ -278,7 +286,7 @@ const GROUPS: Group[] = [
           "Drop the row entrance animation, the shimmer on a running turn and the streaming reveal. Colour still says what is live.",
       },
     ],
-    pickers: ["streamEffect"],
+    pickers: ["streamSpeed"],
   },
 ]
 
@@ -347,7 +355,6 @@ function ToolLayoutPreview({ layout }: { layout: ToolLayout }) {
     already settled it. One sentence, and it names the option responsible —
     a greyed switch with no reason is a bug report. */
 const MOOT_NOTE = "Nothing to apply it to while Answers only is on."
-const CALM_NOTE = "Calm motion is on, so a live answer arrives with nothing added."
 
 function OptionRow({
   option,
@@ -435,6 +442,43 @@ export function SessionSettingsDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const options = useViewOptions()
+  const [search, setSearch] = React.useState("")
+  const normalizedSearch = search.trim().toLowerCase()
+  const matches = (...values: string[]) =>
+    !normalizedSearch || values.some((value) => value.toLowerCase().includes(normalizedSearch))
+  const matchesPicker = (picker: NonNullable<Group["pickers"]>[number]) => {
+    if (picker === "streamSpeed") {
+      return matches("streaming speed", ...STREAM_SPEEDS.flatMap((speed) => [speed.label, speed.description]))
+    }
+    if (picker === "subagentPeek") {
+      return matches("subagent activity", ...SUBAGENT_PEEKS.flatMap((peek) => [SUBAGENT_PEEK_COPY[peek].label, SUBAGENT_PEEK_COPY[peek].description]))
+    }
+    return matches(
+      "tool call layout",
+      ...TOOL_LAYOUTS.flatMap((layout) => [
+        layout,
+        layout === "rail" ? "accent rail" : "",
+        layout === "console" ? "command-style" : "",
+        layout === "cards" ? "separate panels" : "",
+        layout === "compact" ? "tighter list" : "",
+        layout === "minimal" ? "no framing" : "",
+        layout === "spotlight" ? "live step focus" : "",
+      ])
+    )
+  }
+  const visibleGroups = GROUPS.flatMap((group) => {
+    const headerMatches = matches(group.label, group.hint)
+    const visibleOptions = headerMatches
+      ? group.options
+      : group.options.filter((option) => matches(option.title, option.description))
+    const visiblePickers = (headerMatches
+      ? group.pickers ?? []
+      : (group.pickers ?? []).filter(matchesPicker)
+    ).filter((picker) => !options.answersOnly || picker === "streamSpeed")
+    return visibleOptions.length || visiblePickers.length
+      ? [{ ...group, visibleOptions, visiblePickers }]
+      : []
+  })
   /* Every key the dialog can move, not just the switches: the count in the
      footer and the Reset beside it are about the whole surface, and a reveal
      changed from the default is exactly as much a change as a switch is. */
@@ -445,7 +489,6 @@ export function SessionSettingsDialog({
           ...ALL_OPTIONS.map((o) => o.key),
           "subagentPeek",
           "toolLayout",
-          "streamEffect",
           "streamSpeed",
         ] as (keyof ViewOptions)[]).filter(
           (key) => options[key] !== VIEW_DEFAULTS[key]
@@ -461,9 +504,8 @@ export function SessionSettingsDialog({
     () =>
       new Set([
         ...(options.answersOnly ? ANSWERS_ONLY_SUPPRESSES : []),
-        ...(options.calmMotion ? CALM_MOTION_SUPPRESSES : []),
       ]),
-    [options.answersOnly, options.calmMotion]
+    [options.answersOnly]
   )
 
   return (
@@ -475,8 +517,23 @@ export function SessionSettingsDialog({
             Shape the transcript around how you like to read. These preferences stay on this device and never affect the agent.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <div className="flex flex-col gap-5">
-          {GROUPS.map((group) => (
+        <div className="flex flex-col gap-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search view options…"
+              aria-label="Search view options"
+              className="h-9 pl-9 text-sm"
+            />
+          </div>
+          {visibleGroups.length === 0 && (
+            <p className="rounded-lg border border-border/60 px-3 py-6 text-center text-xs text-muted-foreground">
+              No view options match “{search.trim()}”.
+            </p>
+          )}
+          {visibleGroups.map((group) => (
             <section key={group.id} className="flex flex-col gap-2">
               <header className="flex items-center gap-2 px-1">
                 <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/8 text-primary">
@@ -490,7 +547,7 @@ export function SessionSettingsDialog({
                 </p>
               </header>
               <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-card/40">
-                {group.options.map((option) => (
+                {group.visibleOptions.map((option) => (
                   <OptionRow
                     key={option.key}
                     option={option}
@@ -499,16 +556,13 @@ export function SessionSettingsDialog({
                     moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
                   />
                 ))}
-                {group.pickers?.includes("streamEffect") && (
-                  <StreamEffectPicker
-                    effect={options.streamEffect}
-                    onEffectChange={(effect) => setViewOption("streamEffect", effect)}
+                {group.visiblePickers.includes("streamSpeed") && (
+                  <StreamSpeedPicker
                     speed={options.streamSpeed}
                     onSpeedChange={(speed) => setViewOption("streamSpeed", speed)}
-                    moot={mootKeys.has("streamEffect") ? CALM_NOTE : undefined}
                   />
                 )}
-                {!options.answersOnly && group.pickers?.includes("subagentPeek") && (
+                {!options.answersOnly && group.visiblePickers.includes("subagentPeek") && (
                   <div className="space-y-2.5 px-3 py-3">
                     <div className="flex items-center gap-3">
                       <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
@@ -550,7 +604,7 @@ export function SessionSettingsDialog({
                     </div>
                   </div>
                 )}
-                {!options.answersOnly && group.pickers?.includes("toolLayout") && (
+                {!options.answersOnly && group.visiblePickers.includes("toolLayout") && (
                   <div className="space-y-3 px-3 py-3">
                     <div className="flex items-center gap-3">
                       <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">

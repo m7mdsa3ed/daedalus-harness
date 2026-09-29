@@ -1,5 +1,5 @@
 import type * as acp from "./acp.js";
-import type { SessionStore } from "./persistence.js";
+import type { SessionStore, ToolErrorRecord } from "./persistence.js";
 import type { AnySessionUpdate, UpdateParams } from "./types.js";
 
 /* One emitter per turn: sends `session/update` notifications and writes the
@@ -54,6 +54,11 @@ export class Emitter {
   storeCompaction(summary: import("ai").ModelMessage): void {
     this.store.appendCompaction(this.sessionId);
     this.store.appendMessages(this.sessionId, [summary]);
+  }
+
+  /** Keep diagnostics out of transcript replay while attributing child calls to their own session. */
+  logToolError(record: Omit<ToolErrorRecord, "sessionId">): void {
+    this.store.appendToolError({ ...record, sessionId: this.childId ?? this.sessionId });
   }
 
   /** Live-only: notified but not journaled (live progress like terminal deltas). */

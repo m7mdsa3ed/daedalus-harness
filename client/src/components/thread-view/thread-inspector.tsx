@@ -5,9 +5,9 @@ import type { ReactNode } from "react"
 import {
   ActivityIcon,
   BotIcon,
+  CoinsIcon,
   CheckCircle2Icon,
   CircleDashedIcon,
-  CoinsIcon,
   FolderIcon,
   GaugeIcon,
   PanelRightCloseIcon,
@@ -35,14 +35,16 @@ import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 import { changesTimeline } from "./turn-footers"
 import { ProjectIcon } from "@/components/entity-icon"
-import { collectTools, lastActivityAt, stepNameOf, stepStateOf } from "@/components/workflow-run"
+import { collectTools, lastActivityAt, stepNameOf, stepStateOf, useStepThread } from "@/components/workflow-run"
 import { useNow } from "@/components/composer/agents-indicator"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState, ToolItem } from "@/lib/store"
-import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
+import { formatDuration, formatRate, formatTokens, promptBreakdown, promptTokens, sumUsage, tokensByTurn } from "@/lib/tokens"
+import { TurnTokensList } from "@/components/token-usage"
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
 import { extractSubagent, toolHeading } from "@/lib/tools"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { DockContext } from "@/components/workspace/dock-context"
 
 function workflowProgress(workflow: WorkflowGroup) {
   const total = workflow.plan?.reduce((sum, phase) => sum + phase.steps.length, 0) ?? workflow.steps.length
@@ -108,8 +110,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 /** Every subagent the thread has launched, running first then newest first —
-    the same groups `AgentsIndicator` counts the active ones of. A row jumps the
-    transcript to the step that launched it. */
+    the same groups `AgentsIndicator` counts the active ones of. */
 function AgentsTab({ groups, onJump }: { groups: SubagentGroup[]; onJump: (id: string) => void }) {
   const sorted = [...groups].sort(
     (a, b) => Number(b.active) - Number(a.active) || b.head.startedAt - a.head.startedAt
@@ -217,6 +218,8 @@ const STATE_TONE: Record<string, string> = {
 /** One subagent in full: who, on what, for how long, what it did and said. */
 function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; onJump: (id: string) => void }) {
   const head = group.head
+  const stepThread = useStepThread(group)
+  const dock = React.useContext(DockContext)
   const state = stepStateOf(group)
   const call = head.kind === "tool" ? extractSubagent(head) : null
   const type = head.kind === "subagent" ? (head.name !== stepNameOf(group) ? head.name : undefined) : call?.agentType
@@ -272,8 +275,28 @@ function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; 
           )}
         </span>
       </button>
-      {(brief || report || steps.length > 0) && (
+      {(stepThread || brief || report || steps.length > 0) && (
         <div className="space-y-1 px-2 pb-1.5 pl-5.5 text-[11px]">
+          {stepThread && dock && (
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <button
+                type="button"
+                onClick={() => dock.openChat(stepThread)}
+                className="text-muted-foreground hover:text-foreground"
+                title="Replace this tab with the subagent"
+              >
+                Take over tab
+              </button>
+              <button
+                type="button"
+                onClick={() => dock.openChat(stepThread, { newTab: true })}
+                className="text-muted-foreground hover:text-foreground"
+                title="Open the subagent in a separate thread tab"
+              >
+                Open as thread
+              </button>
+            </div>
+          )}
           {brief && <AgentFold summary="Brief" text={brief} />}
           {steps.length > 0 && <AgentSteps steps={steps} open={group.active} />}
           {report && <AgentFold summary={state === "failed" ? "Error" : "Report"} text={report} />}
@@ -666,6 +689,9 @@ export function ThreadInspector({
             <TabsTrigger value="details" className="text-xs">
               Details
             </TabsTrigger>
+            <TabsTrigger value="tokens" className="text-xs">
+              Tokens
+            </TabsTrigger>
           </TabsList>
           <Button
             variant="ghost"
@@ -678,7 +704,7 @@ export function ThreadInspector({
           </Button>
         </header>
 
-        {(["changes", "plan", "agents", "details"] as const).map((section) => (
+        {(["changes", "plan", "agents", "details", "tokens"] as const).map((section) => (
           <TabsContent key={section} value={section} className="flex min-h-0 flex-1 flex-col">
             <ThreadSection section={section} thread={thread} meta={meta} onSend={onSend} onJump={onJump} />
           </TabsContent>
@@ -691,7 +717,7 @@ export function ThreadInspector({
 /** One of the inspector's readings on its own — a tab of the sheet here, a
     panel of its own in the thread dock (`workspace/thread-dock.tsx`), where
     each can be moved and resized beside the transcript. */
-export type ThreadSectionKind = "changes" | "plan" | "agents" | "details"
+export type ThreadSectionKind = "changes" | "plan" | "agents" | "details" | "tokens"
 
 export function ThreadSection({
   section,
@@ -743,7 +769,36 @@ export function ThreadSection({
       </div>
     )
   if (section === "agents") return <AgentsTab groups={groups} onJump={onJump} />
+  if (section === "tokens") return <TokensTab thread={thread} />
   return <DetailsTab thread={thread} meta={meta} rows={rows} />
+}
+
+function TokensTab({ thread }: { thread: ThreadState }) {
+  const byTurn = React.useMemo(
+    () => tokensByTurn(thread.items, thread.stepUsage, thread.turnUsage),
+    [thread.items, thread.stepUsage, thread.turnUsage]
+  )
+  const hasUnattributedHistory = byTurn.some((turn) =>
+    turn.steps.some((step) => {
+      const breakdown = promptBreakdown(step)
+      return breakdown !== null && breakdown.user === null
+    })
+  )
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+      {byTurn.length > 0 ? (
+        <TurnTokensList turns={byTurn} />
+      ) : (
+        <Empty>No token usage has been recorded for this thread.</Empty>
+      )}
+      {hasUnattributedHistory && (
+        <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+          Some older requests do not include a user-message estimate. Their prompt totals and saved breakdowns are unchanged.
+        </p>
+      )}
+    </div>
+  )
 }
 
 function TabCount({ children }: { children: ReactNode }) {

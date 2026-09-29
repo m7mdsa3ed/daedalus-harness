@@ -217,7 +217,7 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
   return { app, harness };
 }
 
-const RFD_KINDS = new Set(["subagent_spawned", "subagent_state_update"]);
+const RFD_KINDS = new Set(["subagent_spawned", "subagent_state_update", "_daedalus/subagent_usage"]);
 
 /* Connects agent and client over message streams with the same re-addressing
    the server's `agentStream` does: the SDK's SessionUpdateRouter validates

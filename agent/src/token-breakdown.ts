@@ -28,15 +28,19 @@ import {
   estimateTokensInFunctions,
   type ChatCompletionFunctionDefinition,
 } from "gpt-tokenizer/functionCalling";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { z } from "zod";
 
 /** The two static parts of a request's prompt, counted once per turn. */
 export interface PrefixTokens {
   /** The `system` string as the runtime built it, framing included. */
   system: number;
-  /** Every tool's name, description and parameter schema, framing included. */
+  /** The built-in tools' names, descriptions and parameter schemas, framing
+      included. */
   tools: number;
+  /** The same for the MCP servers' tools (`mcp__<server>__<tool>`), which a
+      reader adds and removes — the part of the tool block that is theirs. */
+  mcp: number;
 }
 
 /** A request's prompt, divided. `total` and `conversation` are exact (they come
@@ -44,10 +48,9 @@ export interface PrefixTokens {
 export interface PromptBreakdown extends PrefixTokens {
   /** The whole prompt, as the provider billed it. */
   total: number;
-  /** Everything else the prompt carried: the thread's history, this turn's
-      user message, and every tool result — the three are not separable from
-      the provider's answer, and splitting them again would be a guess dressed
-      as a figure. */
+  /** User-role message text counted locally from the exact messages sent. */
+  user: number;
+  /** The remaining history and tool results, derived from the provider total. */
   conversation: number;
 }
 
@@ -97,11 +100,35 @@ export function prefixSystem(system: string): number {
   return system ? countMessageTokens({ role: "system", content: system }, countTokens) : 0;
 }
 
+/** Text in user-role messages is separate from assistant history and tool
+    results. Non-text media is excluded; text uses the same tokenizer and
+    framing as the system message. */
+export function userMessageTokens(messages: ModelMessage[]): number {
+  return messages.reduce((total, message) => {
+    if (message.role !== "user") return total;
+    const content =
+      typeof message.content === "string"
+        ? message.content
+        : message.content
+            .filter((part) => part.type === "text")
+            .map((part) => (part.type === "text" ? part.text : ""))
+            .join("");
+    return total + countMessageTokens({ role: "user", content }, countTokens);
+  }, 0);
+}
+
 /** Both static parts of the prompt, in one walk — the shape `turn.ts` caches
     per turn, since neither the system prompt nor the tool set changes between
-    the steps of one. */
+    the steps of one. The MCP share is counted on its own and the built-ins take
+    the rest of the whole block, so the block's framing is counted once and the
+    two still sum to it. */
 export function prefixTokens(system: string, tools: ToolSet): PrefixTokens {
-  return { system: prefixSystem(system), tools: prefixTools(tools) };
+  const all = prefixTools(tools);
+  const mcp = Math.min(
+    all,
+    prefixTools(Object.fromEntries(Object.entries(tools).filter(([name]) => name.startsWith("mcp__"))) as ToolSet),
+  );
+  return { system: prefixSystem(system), tools: all - mcp, mcp };
 }
 
 /**
@@ -121,22 +148,32 @@ export function prefixTokens(system: string, tools: ToolSet): PrefixTokens {
  * and leaving the prefix long — draws a system prompt bigger than the request
  * that carried it.
  */
-export function promptBreakdown(total: number, prefix: PrefixTokens): PromptBreakdown {
-  const staticTokens = prefix.system + prefix.tools;
+export function promptBreakdown(
+  total: number,
+  prefix: PrefixTokens,
+  user = 0,
+): PromptBreakdown {
+  const staticTokens = prefix.system + prefix.tools + prefix.mcp;
   if (staticTokens <= total) {
+    const userTokens = Math.min(user, total - staticTokens);
     return {
       total,
       system: prefix.system,
       tools: prefix.tools,
-      conversation: total - staticTokens,
+      mcp: prefix.mcp,
+      user: userTokens,
+      conversation: total - staticTokens - userTokens,
     };
   }
   /* Nothing to divide: no prompt, or a provider that reported nothing. */
-  if (total <= 0) return { total, system: 0, tools: 0, conversation: 0 };
+  if (total <= 0) return { total, system: 0, tools: 0, mcp: 0, user: 0, conversation: 0 };
   /* The estimate overshoots the invoice, so the invoice wins — the parts are
      the same estimates, so they shrink by one common factor and keep their
      ratio. `tools` takes the remainder rather than its own rounding, so a
-     fraction of a token can never make the three figures miss the total. */
+     fraction of a token can never make the figures miss the total. */
   const system = Math.round(prefix.system * (total / staticTokens));
-  return { total, system, tools: total - system, conversation: 0 };
+  const mcp = Math.min(total - system, Math.round(prefix.mcp * (total / staticTokens)));
+  const tools = total - system - mcp;
+  const userTokens = Math.min(user, Math.max(0, total - system - tools - mcp));
+  return { total, system, tools, mcp, user: userTokens, conversation: total - system - tools - mcp - userTokens };
 }

@@ -940,6 +940,10 @@ export const sessions = pgTable(
        "workflow step of" and hides a thread from the sidebar. */
     forkedFromSessionId: text("forked_from_session_id"),
     forkedFromTurnId: text("forked_from_turn_id"),
+    /* The passage an aside was started on (`forked_from_session_id` is the
+       thread it was selected in, turn null). Non-null is the flag: the sidebar
+       badges it and the parent highlights the passage. */
+    asideQuote: text("aside_quote"),
   },
   (t) => [
     index("sessions_live").on(t.deletedAt, t.createdAt),

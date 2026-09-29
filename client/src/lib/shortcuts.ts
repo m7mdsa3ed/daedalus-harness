@@ -200,7 +200,6 @@ export type ShortcutId =
   | "changeModel"
   | "changeProject"
   | "threadSearch"
-  | "inspector"
   | "sendReview"
   | "viewOptions"
   | "send"
@@ -291,11 +290,6 @@ export const KEYS = {
   changeProject: "alt+p",
   threadSearch: "mod+f",
   viewOptions: "alt+v",
-  /** The thread inspector. ⌥/Alt is the well the choosers came out of; the
-      ⌘/Ctrl beside it keeps a bare ⌥I (a dead key on a Mac layout) out of it.
-      Chrome on a Mac keeps ⌘⌥I for its devtools, which is what rebinding is
-      for. */
-  inspector: "mod+alt+i",
   /** Send the pending review comments — answered only while the focus is in
       the inspector, so the composer keeps its own ⌘↵. */
   sendReview: "mod+enter",
@@ -408,14 +402,6 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.threadSearch],
     rebindable: true,
     note: "Search the current thread's full transcript from the command palette.",
-  },
-  {
-    id: "inspector",
-    scope: "Thread",
-    label: "Toggle the thread inspector",
-    chords: [KEYS.inspector],
-    rebindable: true,
-    note: "The column beside the transcript — the last turn's changes, the plan, the subagents. A narrow panel shows it as a sheet over the chat instead.",
   },
   {
     id: "sendReview",

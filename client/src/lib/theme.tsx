@@ -181,7 +181,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     /* Both halves: the resolved colour draws the caption symbols, the *mode*
        points the native blur layer's own tint (main.cjs) — "system" stays
        "system" there, or the OS could never move it again. */
-    window.desktop?.setTitleBarTheme?.(resolved, theme)
+    window.desktop?.setTitleBarTheme?.(resolved, theme, colorTheme)
   }, [theme, resolved, colorTheme, customThemes])
 
   return (
@@ -287,7 +287,7 @@ declare global {
       vibrancy: boolean
       /** This window is a single-thread popout (lib/popout.ts). */
       popout?: boolean
-      setTitleBarTheme?: (resolved: "light" | "dark", source: Theme) => void
+      setTitleBarTheme?: (resolved: "light" | "dark", source: Theme, colorTheme: ColorTheme) => void
       writeClipboard?: (text: string) => Promise<boolean>
       /** Raise an OS notification through the main process (lib/notifications). */
       notify?: (payload: { title: string; body: string; sessionId?: string }) => Promise<boolean>
@@ -297,6 +297,9 @@ declare global {
       setActivity?: (summary: DesktopActivity) => void
       /** Global quick-entry accelerator; "" unregisters. */
       setQuickEntry?: (accelerator: string) => Promise<{ ok: true } | { ok: false; error: string }>
+      /** Windows backdrop material; changes take effect after restarting the app. */
+      getWindowMaterial?: () => Promise<"acrylic" | "mica">
+      setWindowMaterial?: (material: "acrylic" | "mica") => Promise<{ ok: true } | { ok: false; error: string }>
       /** A thread in a window of its own, drawn with no shell (`lib/popout.ts`). */
       openThreadWindow?: (sessionId: string) => Promise<boolean>
       /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */

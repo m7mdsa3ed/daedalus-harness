@@ -34,6 +34,7 @@ import {
   GitCompareIcon,
   InfoIcon,
   ListChecksIcon,
+  CoinsIcon,
   PlusIcon,
   RouteIcon,
   SquareTerminalIcon,
@@ -94,13 +95,14 @@ const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }>
   plan: { title: "Plan", icon: ListChecksIcon },
   agents: { title: "Agents", icon: BotIcon },
   details: { title: "Details", icon: InfoIcon },
+  tokens: { title: "Tokens", icon: CoinsIcon },
   terminal: { title: "Terminal", icon: SquareTerminalIcon },
   web: { title: "Preview", icon: AppWindowIcon },
   trajectory: { title: "Trajectory", icon: RouteIcon },
 }
 
 /** The readings — one panel each, the id is the kind. */
-const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details"]
+const SECTIONS: ThreadSectionKind[] = ["changes", "plan", "agents", "details", "tokens"]
 
 /* ── Where each kind lives ──
    A panel opens at its kind's own place, not wherever the focus happens to be:
@@ -112,6 +114,7 @@ const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   plan: "side",
   agents: "side",
   details: "side",
+  tokens: "side",
   web: "beside",
   trajectory: "beside",
   terminal: "below",

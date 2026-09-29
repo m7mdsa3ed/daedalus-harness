@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- C7 — Summary chips combine each item name and count into one token. -->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" /><title>C7 — Item chips</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" /><link rel="stylesheet" href="./composer.css" />
+<style>
+  :root { --dock-h: 228px; }
+  .tv { position:absolute; inset:0; }.tv .col { opacity:.4; mask-image:linear-gradient(to bottom,#000,#000 45%,transparent 96%); -webkit-mask-image:linear-gradient(to bottom,#000,#000 45%,transparent 96%); }
+  .item-proto-pile { position:relative; z-index:1; margin:0 16px -4px; padding:5px 6px 0; border-radius:13px 13px 0 0; background:var(--shelf); backdrop-filter:blur(10px); }
+  .item-proto-rail { display:flex; gap:5px; min-width:0; overflow-x:auto; scrollbar-width:none; }.item-proto-rail::-webkit-scrollbar { display:none; }
+  .item-proto-trigger { position:relative; display:inline-flex; align-items:center; justify-content:center; gap:6px; height:28px; flex:0 0 auto; padding:0 9px; border:0; border-radius:7px; background:transparent; color:var(--muted-foreground); font:500 11px Figtree,sans-serif; white-space:nowrap; cursor:pointer; }
+  .item-proto-trigger svg { width:14px; height:14px; }.item-proto-trigger[aria-pressed="true"] { color:var(--foreground); background:var(--composer); box-shadow:0 1px 3px #0002; }
+  .item-chip { height:25px; gap:5px; padding:0 9px; border:1px solid transparent; border-radius:99px; background:color-mix(in oklab,var(--composer) 55%,transparent); }.item-chip[aria-pressed="true"] { border-color:color-mix(in oklab,var(--primary) 32%,transparent); background:color-mix(in oklab,var(--primary) 11%,var(--shelf)); color:var(--primary); box-shadow:none; }
+  .item-count { font-size:10px; font-variant-numeric:tabular-nums; opacity:.72; }.item-proto-panel { min-height:43px; padding:8px 9px 10px; border-radius:9px 9px 0 0; }
+  .item-history { display:grid; gap:9px; color:var(--muted-foreground); font-size:11px; }.item-history div { display:flex; align-items:center; gap:8px; min-width:0; }.item-history svg { width:14px;height:14px;flex:0 0 auto; }.item-history span { overflow:hidden;flex:1;text-overflow:ellipsis;white-space:nowrap; }.item-history time { font-size:10px; }
+  .item-command { display:flex;align-items:center;gap:9px;font-size:11px; }.item-command code { font:11px ui-monospace,monospace; }.item-kind { border-radius:99px;padding:2px 7px;background:color-mix(in oklab,var(--primary) 12%,transparent);color:var(--primary);font-size:9px; }.item-hint { margin-left:auto;color:var(--muted-foreground); }.note { max-width:220px; }
+  @media(max-width:600px) { .item-hint { display:none; } }
+</style>
+</head>
+<body>
+<div class="app"><aside class="sidebar" data-sidebar></aside><main class="main"><div data-tabs></div><div class="panel"><div class="tv"><div class="tv-scroll"><div class="col" data-flow></div></div><div data-dock></div></div><div class="note left" style="right:14px;top:19%"><b>Summary chips</b> — name and count travel together in a quiet capsule.</div><div class="note right" style="left:14px;top:53%"><b>Trade-off</b> — softer chrome, but still spends horizontal space on labels.</div></div></main></div>
+<script src="./shared-transcript.js"></script><script src="./shared-composer.js"></script><script src="./composer-items.js"></script>
+<script>
+  document.querySelector("[data-tabs]").innerHTML = TX.tabs("Ship the composer width fix")
+  document.querySelector("[data-flow]").innerHTML = TX.render(TX.flow())
+  document.querySelector("[data-dock]").innerHTML = CX.itemsComposer("chips", "files")
+  TX.sidebar(document.querySelector("[data-sidebar]")); TX.theme()
+</script>
+</body>
+</html>

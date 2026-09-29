@@ -1,5 +1,5 @@
 /* ── A scope's files, each with its diff inline ──
-   Drawn the way source control draws a working set (`scm/working-list.tsx`,
+   Drawn the way source control draws a working set (`thread-view/source-control.tsx`,
    itself VS Code's shape): dense rows of icon, name and a dimmed folder, the
    actions revealed on hover (always shown on a finger), the +/− and the
    status letter at the end. A click opens the file's diff *under its row*, as
@@ -14,7 +14,7 @@ import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, FileIcon, FlagIcon, type 
 
 import type { ReviewAnchor } from "@/components/workspace/diff-editor"
 import { DiffTab, type DiffSide } from "@/components/workspace/diff-tab"
-import { MARK_CLASS } from "@/components/workspace/scm/working-list"
+import { MARK_CLASS } from "@/components/workspace/scm/shared"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { isViewed, setFlagged, setViewed, useChangesMarks } from "@/lib/changes-marks"
 import type { ReviewComment } from "@/lib/review-comments"

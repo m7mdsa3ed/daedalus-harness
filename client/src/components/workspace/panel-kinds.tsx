@@ -63,12 +63,9 @@ function PageIcon({ path, className }: { path: string; className?: string }) {
 /**
  * The mark an **open** panel wears.
  *
- * A chat panel is a thread, and a thread's face is its agent's — the same mark
- * the sidebar row and the thread card draw (`entity-icon.tsx`, from the
- * server's `AgentDef.icon`). Every chat tab wearing one speech bubble made a
- * split dock of four threads four identical tabs, and told you nothing the
- * title did not; with the agent's mark a tab and its sidebar row are visibly
- * the same thing.
+ * A chat panel is a thread, and its face pairs the agent mark with the
+ * project's mark. Both come from the cached catalogs through the shared
+ * `entity-icon.tsx` renderers, so tabs identify the runtime and its workspace.
  *
  * Every other kind *is* its kind — an IDE is an IDE — so it keeps the kind
  * glyph above.
@@ -85,8 +82,33 @@ export function PanelIcon({
   const meta = useSessionMeta(panel?.kind === "chat" ? panel.sessionId : "")
   if (!panel) return null
   if (panel.kind === "chat")
-    return <AgentIcon agentId={meta?.agentId} className={cn("shrink-0", className)} />
+    return (
+      <ChatPanelIcon
+        agentId={meta?.agentId}
+        projectId={meta?.projectId}
+        className={cn("shrink-0", className)}
+      />
+    )
   if (panel.kind === "page") return <PageIcon path={panel.path} className={cn("shrink-0", className)} />
   const Icon = PANEL_ICONS[panel.kind]
   return <Icon className={cn("shrink-0", className)} />
+}
+
+function ChatPanelIcon({
+  agentId,
+  projectId,
+  className,
+}: {
+  agentId?: string
+  projectId?: string
+  className: string
+}) {
+  const projects = useProjects()
+  const project = projects.find((candidate) => candidate.id === projectId)
+  return (
+    <span className="inline-flex shrink-0 items-center -space-x-1">
+      <AgentIcon agentId={agentId} className={className} />
+      {projectId && <ProjectIcon project={project} className={className} />}
+    </span>
+  )
 }

@@ -93,5 +93,19 @@ export function usePromptHistory(
     return false
   }
 
-  return { onKeyDown, browsing: index !== null }
+  /** Jump the walk to one row — a click in the list the strip draws. */
+  const select = (next: number) => {
+    const el = inputRef.current
+    if (!el || next < 0 || next >= history.length) return
+    if (index === null) stash.current = el.value
+    setIndex(next)
+    apply(el, history[next])
+    el.focus()
+  }
+
+  /* `rows` is oldest-first like the walk, so ↑ moves the highlight up the
+     list the way it moves back in time. */
+  const rows = React.useMemo(() => [...entries].reverse(), [entries])
+
+  return { onKeyDown, browsing: index !== null, index, rows, select }
 }

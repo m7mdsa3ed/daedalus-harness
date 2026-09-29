@@ -31,7 +31,7 @@ import {
 } from "./hold.js";
 import type { Session } from "./session.js";
 import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
-import { prefixTokens, promptBreakdown, type PrefixTokens } from "./token-breakdown.js";
+import { prefixTokens, promptBreakdown, userMessageTokens, type PrefixTokens } from "./token-breakdown.js";
 import { spanEvent } from "./tracing.js";
 import { Emitter } from "./updates.js";
 
@@ -282,6 +282,7 @@ export async function handlePrompt(
            neither the system prompt nor the tool set changes between the steps
            of one, and the walk is the expensive half of the breakdown. */
         const prefix = prefixTokens(system, tools);
+        let promptMessages: ModelMessage[] = session.messages;
 
         const result = streamText({
           model,
@@ -342,8 +343,9 @@ export async function handlePrompt(
               compactMidTurn = true;
             }
             const injected = drainSteers();
+            promptMessages = injected.length === 0 ? messages : [...messages, ...injected];
             if (injected.length === 0) return {};
-            return { messages: [...messages, ...injected] };
+            return { messages: promptMessages };
           },
         });
 
@@ -357,6 +359,8 @@ export async function handlePrompt(
           undefined,
           subagentsNegotiated(deps),
           prefix,
+          { cwd: session.cwd, model: session.modelId },
+          () => promptMessages,
         );
         if (outcome.totalUsage) turnUsage = addUsage(turnUsage, outcome.totalUsage);
 
@@ -707,6 +711,8 @@ async function pumpStream(
      one total per request and never divides it, so this is what lets each step's
      `usage_update` carry where its prompt actually went. */
   prefix?: PrefixTokens,
+  callContext?: { cwd: string; model: string },
+  requestMessages?: () => ModelMessage[],
 ): Promise<StreamOutcome> {
   const outcome: StreamOutcome = {
     finishReason: "stop",
@@ -824,6 +830,21 @@ async function pumpStream(
              worth a row. */
           const quiet = silenced.get(part.toolCallId);
           silenced.delete(part.toolCallId);
+          if (callContext) {
+            try {
+              emit.logToolError({
+                timestamp: new Date().toISOString(),
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                cwd: callContext.cwd,
+                model: callContext.model,
+                input: part.input,
+                error: errorDetails(part.error),
+              });
+            } catch (logError) {
+              process.stderr.write(`could not write tool error log: ${errorText(logError)}\n`);
+            }
+          }
           await emit.update(
             quiet
               ? {
@@ -875,10 +896,11 @@ async function pumpStream(
           /* Where this request's prompt went. `used` is the whole prompt as the
              provider billed it — cache hits included — which is exactly the
              anchor `promptBreakdown` divides, so the figures cannot disagree
-             with the headline number above them. Journaled with the event like
-             `cache`, and for the same reason: it is what answers "why was that
-             step expensive" after a reload instead of a reconstruction. */
-          const breakdown = prefix ? promptBreakdown(used, prefix) : undefined;
+             with the headline number above them. User-role content is counted
+             from the request's actual messages; the remaining conversation is
+             derived from the provider total. */
+          const userTokens = requestMessages ? userMessageTokens(requestMessages()) : 0;
+          const breakdown = prefix ? promptBreakdown(used, prefix, userTokens) : undefined;
           const usageMeta = {
             ...(cache ? { cache } : {}),
             ...(breakdown ? { breakdown } : {}),
@@ -1049,8 +1071,20 @@ async function runSubagent(
           undefined,
           rfd,
           prefixTokens(system, tools),
+          { cwd: session.cwd, model: session.modelId },
+          () => messages,
         );
-        if (outcome.totalUsage) reportUsage(outcome.totalUsage);
+        if (outcome.totalUsage) {
+          reportUsage(outcome.totalUsage);
+          const usage = toAcpUsage(outcome.totalUsage);
+          if (rfd && usage) {
+            await parentEmit.update({
+              sessionUpdate: "_daedalus/subagent_usage",
+              subagentSessionId: childId,
+              usage,
+            });
+          }
+        }
         if (outcome.error !== undefined) {
           if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
             lastError = outcome.error;
@@ -1624,6 +1658,42 @@ function rawOutputOf(output: unknown): Record<string, unknown> {
 
 function clampRaw(text: string): string {
   return text.length > OUTPUT_CONTENT_LIMIT ? text.slice(0, OUTPUT_CONTENT_LIMIT) : text;
+}
+
+function errorDetails(error: unknown): {
+  name: string;
+  message: string;
+  stack?: string;
+  cause?: unknown;
+  details?: Record<string, unknown>;
+} {
+  if (!(error instanceof Error)) {
+    const detail = safeErrorValue(error);
+    return {
+      name: typeof error,
+      message: typeof detail === "string" ? detail : JSON.stringify(detail) ?? String(detail),
+    };
+  }
+  const cause = (error as Error & { cause?: unknown }).cause;
+  return {
+    name: error.name,
+    message: error.message,
+    ...(error.stack ? { stack: error.stack } : {}),
+    ...(cause === undefined ? {} : { cause: safeErrorValue(cause) }),
+    details: Object.fromEntries(
+      Object.entries(error).map(([key, value]) => [key, safeErrorValue(value)]),
+    ),
+  };
+}
+
+function safeErrorValue(value: unknown): unknown {
+  if (value instanceof Error) return errorDetails(value);
+  try {
+    const encoded = JSON.stringify(value);
+    return encoded === undefined ? String(value) : JSON.parse(encoded);
+  } catch {
+    return String(value);
+  }
 }
 
 function errorText(error: unknown): string {

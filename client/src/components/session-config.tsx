@@ -14,7 +14,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MenuRow, MenuRowSkeleton, selectChoices } from "@/components/config-menu"
+import { HelperModelRow, MenuRow, MenuRowSkeleton, PILL, selectChoices } from "@/components/config-menu"
+import { ThreadToolsSections } from "@/components/thread-tools/menu"
 import { useAddModel, useNewProfile } from "@/lib/catalog-add"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
@@ -208,12 +209,13 @@ export function SessionConfigPopover({
 
   const persona = personas.find((p) => p.id === meta.personaId)
 
+  /* What the model pill's value cannot say about itself: the cheaper window,
+     and a pick that has not landed yet or waits for the send that will spend
+     the spawn. Effort and mode are their own pills and say their own. */
   /* The same settings as one string, for the collapsed trigger's tooltip and
      its accessible name — and what is true about them that the values alone
      cannot say: a pick that has not landed yet, or one waiting for the send
-     that will spend the spawn. Both are states of the *settings*, so they
-     belong in the settings' own sentence rather than in a badge somewhere
-     else. */
+     that will spend the spawn. */
   const triggerLabel = [
     [persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
     offPeak ? offPeakLabel(offPeak, now) : "",
@@ -246,16 +248,10 @@ export function SessionConfigPopover({
           ) : (
           <Button
             variant="ghost"
-            /* Width is the row's, not the device's: this used to collapse to
-               the icon alone under `md`, which made a phone the one place the
-               thread's model was unreadable without opening a menu — while the
-               same composer squeezed into a narrow dock panel kept saying it,
-               because a panel is not a viewport. Both read the same way now:
-               the label is capped at `max-w-40` and ellipsized past it, and
-               what will not fit scrolls with the rest of the control cluster,
-               which is already `overflow-x-auto`. The title still carries the
-               settings whole. */
-            className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            /* Width is the row's, not the device's: the label is capped and
+               ellipsized, and what will not fit scrolls with the rest of the
+               control cluster. The title still carries the settings whole. */
+            className={PILL}
             title={triggerLabel}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
@@ -285,28 +281,23 @@ export function SessionConfigPopover({
             ) : (
               <ProfileIcon profile={profile} agentId={agent?.id ?? agentId} className="size-4" />
             )}
-            {/* The mode rides along in the trigger: it left the composer, and a
-                silently-active "accept edits" is the one setting you must see. */}
+            {/* The mode rides along in the trigger: a silently-active "accept
+                edits" is the one setting you must see. */}
             <span className="max-w-40 truncate">
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
               {modeLabel && ` · ${modeLabel}`}
             </span>
-            {/* The one thing about the settings the values cannot say: the
-                provider is charging less right now. Drawn only while it is
-                true — peak is the ordinary state and needs no badge — and the
-                title above carries the window whole, both halves of it. */}
+            {/* Drawn only while it is true — peak is the ordinary state. */}
             {offPeakNow?.active && (
               <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
                 Off-peak
               </span>
             )}
-            {/* The chip already shows the value that was picked (the overlay is
-                what it reads); this is the half the value cannot say — whether
-                it is true yet. A spinner while the change is in flight, a clock
-                while it waits for the send that will spend the spawn, and
-                nothing at all the rest of the time. */}
+            {/* Whether the picked value is true yet: a spinner while the change
+                is in flight, a clock while it waits for the send that will
+                spend the spawn, nothing the rest of the time. */}
             {meta.configPending ? (
               <Loader2Icon className="size-3 shrink-0 animate-spin" />
             ) : meta.configStaged ? (
@@ -317,27 +308,15 @@ export function SessionConfigPopover({
         }
       />
       <DropdownMenuContent align="start" className="w-60">
-        {/* What is waiting, and the two things that can be done about it.
-            First, because it describes every row underneath it: those rows are
-            already drawing the staged values, and without this they would look
-            like settings that had simply been applied.
-
-            This is the resting state now, not a warning. A change that costs
-            the process is staged the moment it is picked and taken by the next
-            spawn — so it reads as information about when, and "Apply now" only
-            has a cost worth naming while a turn is actually running. */}
+        {/* What is waiting, and the one thing to do about it. First, because it
+            describes every row underneath: those rows already draw the staged
+            values, and without this they would look applied. */}
         {thread.stagedConfig && (
           <>
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-muted-foreground">
                 Applies when you next send
               </DropdownMenuLabel>
-              {/* Cancel only — the staged change is taken by the next spawn,
-                  which the composer footer's `ConfigIndicator` says, and the
-                  menu is where the pick was made. The "Apply
-                  now" that used to live here forced a spawn even when nothing
-                  was about to be sent, which is the one auto-apply the reader
-                  did not ask for. */}
               <DropdownMenuItem
                 onClick={() =>
                   void actions
@@ -354,9 +333,8 @@ export function SessionConfigPopover({
         )}
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session</DropdownMenuLabel>
-          {/* First, because it is the one row here that is about the work
-              rather than about the machinery — and because it is the only one
-              whose choices do not depend on the profile below it. */}
+          {/* First: the one row about the work rather than the machinery, and
+              the only one whose choices do not depend on the profile below. */}
           {personas.length > 0 && (
             <MenuRow
               label="Persona"
@@ -369,7 +347,7 @@ export function SessionConfigPopover({
             />
           )}
           {/* Drawn on a single profile too — the row is also the door to
-              making another. See the draft menu's copy of this. */}
+              making another. */}
           <MenuRow
             label="Profile"
             value={profile.id}
@@ -399,18 +377,13 @@ export function SessionConfigPopover({
                 })),
               ]}
               /* A new model brings its own effort list, and the one you were on
-                 may not be in it — clear rather than carry a stale value into
-                 the env. */
+                 may not be in it — clear rather than carry a stale value. */
               onSelect={(value) =>
                 actions.changeSpawnConfig(row, {
                   model: value === DEFAULT_CHOICE ? "" : value,
                   effort: "",
                 })
               }
-              /* Only where the profile already owns the catalog — see the
-                 draft menu's copy of this. Selecting the new model is the
-                 same spawn-config change picking an existing one would be, so
-                 it is staged or applied by the same rules. */
               add={
                 profile.virtual
                   ? undefined
@@ -437,16 +410,11 @@ export function SessionConfigPopover({
             />
           ) : (
             /* Nothing has said what this agent offers yet — the probe fired on
-               open and is a process spawning. A row that is missing reads as a
-               setting this agent does not have, and then appears under the
-               cursor a second later; a row that is waiting reads as what it is,
-               and the menu is the same height either way. */
+               open. A row that is waiting reads as what it is, and the menu is
+               the same height either way. */
             unanswered && <MenuRowSkeleton label="Model" />
           )}
-          {/* The window in full, under the row that owns it: which side of it
-              we are on and when it next flips. A property of the model, so it
-              reads like one — and it says nothing at all for a model with a
-              single all-day rate, which is most of them. */}
+          {/* The window in full, under the row that owns it. */}
           {offPeak && (
             <div className="px-2 pb-1 text-[11px] leading-snug text-muted-foreground">
               {offPeakLabel(offPeak, now)}
@@ -476,11 +444,13 @@ export function SessionConfigPopover({
           ) : (
             unanswered && <MenuRowSkeleton label="Effort" />
           )}
+          <HelperModelRow profile={profile} />
         </DropdownMenuGroup>
-        {/* Its own group: suggestions are not about who answers (the Session
-            group above) nor the agent's own selectors below — they are how the
-            thread's answers should behave. Always drawn: there is no catalog
-            to be empty of. */}
+        {/* What the thread is running with. Read-only once it has started:
+            the links are what a revive spawns with. */}
+        <ThreadToolsSections meta={row} actions={actions} editable={false} />
+        {/* Its own group: how the thread's answers should behave, not who
+            answers nor the agent's own selectors. */}
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session settings</DropdownMenuLabel>
@@ -490,10 +460,9 @@ export function SessionConfigPopover({
           >
             Suggest follow-ups
           </DropdownMenuCheckboxItem>
-          {/* The same spawn-text bargain: the lane is system-prompt text, so a
-              flip costs a respawn and the server says so. Off, the model is
-              never *asked* for one — a fence that arrives anyway still draws,
-              because the drawing is the client's and it reads no toggle. */}
+          {/* The lane is system-prompt text, so a flip costs a respawn. Off,
+              the model is never *asked* for one — a fence that arrives anyway
+              still draws, because the renderer reads no toggle. */}
           <DropdownMenuCheckboxItem
             checked={meta.uiBlocks !== false}
             onCheckedChange={(checked) => actions.changeThreadUiBlocks(row, checked === true)}
@@ -506,9 +475,8 @@ export function SessionConfigPopover({
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel>Agent options</DropdownMenuLabel>
-              {/* Untouched by the override above: only model and effort are the
-                  profile's to replace, and everything the agent offers besides
-                  them still applies live. */}
+              {/* Untouched by the profile: only model and effort are the
+                  profile's to replace. */}
               {modes && (
                 <MenuRow
                   label="Mode"

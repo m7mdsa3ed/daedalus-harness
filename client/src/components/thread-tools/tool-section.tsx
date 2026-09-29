@@ -24,6 +24,7 @@ export function ToolSection<T extends { id: string; name: string }>({
   title,
   icon,
   items,
+  itemIcon,
   hint,
   inherited,
   own,
@@ -38,6 +39,7 @@ export function ToolSection<T extends { id: string; name: string }>({
   title: string
   icon: React.ReactNode
   items: T[]
+  itemIcon?: (item: T) => React.ReactNode
   hint: (item: T) => string
   /** Linked by the profile: checked, locked, and not this menu's to clear. */
   inherited: Set<string>
@@ -88,6 +90,7 @@ export function ToolSection<T extends { id: string; name: string }>({
               <ToolRow
                 key={item.id}
                 name={item.name}
+                icon={itemIcon?.(item)}
                 checked={from || own.includes(item.id)}
                 disabled={from || !editable}
                 from={from}

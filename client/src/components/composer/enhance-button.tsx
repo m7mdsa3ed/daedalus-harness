@@ -20,6 +20,7 @@ import { reportError } from "@/lib/errors"
 import { useProfiles } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
 import type { SessionMeta } from "@/lib/settings"
+import { cn } from "@/lib/utils"
 
 /* Prompt enhancer: rewrites the draft through the AI SDK against a profile's
    own endpoint (`lib/enhance`). Which profile is the user's pick, remembered
@@ -40,6 +41,7 @@ export function EnhanceButton({
   gated,
   hasContent,
   size,
+  className,
   onEnhanced,
 }: {
   sessionId: string
@@ -51,6 +53,7 @@ export function EnhanceButton({
   hasContent: boolean
   /** The row's one scale — 24px under a mouse, 32px under a finger. */
   size: React.ComponentProps<typeof Button>["size"]
+  className?: string
   /** Put the rewrite in the box: replaced, unsent, caret at its end — the
       same landing a history recall makes. */
   onEnhanced: (enhanced: string) => void
@@ -130,7 +133,7 @@ export function EnhanceButton({
     <Button
       variant="ghost"
       size={size}
-      className="shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
+      className={cn("shrink-0 rounded-full text-muted-foreground hover:text-foreground", className)}
       onClick={enhance}
       disabled={disabled || gated || !hasContent}
       title={
@@ -140,7 +143,7 @@ export function EnhanceButton({
       }
       aria-label="Enhance the prompt"
     >
-      {enhancing ? <Spinner className="size-3.5" /> : <Sparkles />}
+      {enhancing ? <Spinner /> : <Sparkles />}
     </Button>
   )
 }

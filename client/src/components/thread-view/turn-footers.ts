@@ -61,11 +61,33 @@ function cachedTurnSources(turn: ThreadItem[]): TurnSources {
     cited and what it cost are read off the steps, which is exactly what that
     option takes off the screen. Only the anchor moves — to the last row of the
     turn still drawn, since a footer hung off a hidden item is dropped. */
+/* Six footers ask this of the same `items` on every streamed token; the walk
+   (a Map of the thread plus `splitTurns`) is paid once per array and argument
+   set, not once per footer. Keyed on the array object: the reducer hands back a
+   new one on any change, so a hit is never stale. */
+const FINISHED_TURNS_CACHE = new WeakMap<ThreadItem[], Map<string, { turn: ThreadItem[]; tailId: string }[]>>()
+
 function finishedTurns(
   items: ThreadItem[],
   turnActive: boolean,
   answersOnly = false,
   showConfigNotices = true
+): { turn: ThreadItem[]; tailId: string }[] {
+  const key = `${turnActive}|${answersOnly}|${showConfigNotices}`
+  let byArgs = FINISHED_TURNS_CACHE.get(items)
+  if (!byArgs) FINISHED_TURNS_CACHE.set(items, (byArgs = new Map()))
+  const hit = byArgs.get(key)
+  if (hit) return hit
+  const out = walkFinishedTurns(items, turnActive, answersOnly, showConfigNotices)
+  byArgs.set(key, out)
+  return out
+}
+
+function walkFinishedTurns(
+  items: ThreadItem[],
+  turnActive: boolean,
+  answersOnly: boolean,
+  showConfigNotices: boolean
 ): { turn: ThreadItem[]; tailId: string }[] {
   const byId = new Map(items.map((item) => [item.id, item]))
   /* The row a turn ends on. A subagent's item is not a row of its own — it is

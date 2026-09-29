@@ -30,12 +30,9 @@ export const PEEK = 3
    thought rides the rail exactly as a tool does — where a subagent's rail
    also carries prose, which has no mark to meet.
 
-   The width is 13px and not 11px — two more than the distance to the row's
-   content edge — because the mark it turns into is a 14px *box* with the glyph
-   inset inside it. Ending the curve at x=0 landed it on the box's edge and left
-   a hairline of daylight before the icon actually starts, so the rail read as
-   pointing at the step rather than joining it; the extra 2px tuck under the
-   glyph's leading edge, where the line is hidden by the mark itself.
+   The elbow is 24px wide so its curve reaches the leading icon inside the
+   child's row, rather than ending at the wrapper edge and leaving a visible
+   gap. This applies to both grouped tool rows and subagent transcript rows.
 
    `harness-rail-draw` is the entrance for that geometry: the elbow and the tail
    are the *same wrapper's* `::before` and `::after`, so one class on the step
@@ -44,20 +41,22 @@ export const PEEK = 3
    on `.harness-item-in` in the stylesheet because these three constants are the
    only rails in the app — a footer chip in thread-view wears the same entrance
    and has no line to draw. */
-export const RUN_RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 pl-2.5"
+/* `pt`, not `mt`: inside the animated run clip a margin collapses through the
+   moment overflow is restored, so the rail shrank 2px after every open. */
+export const RUN_RAIL_CLASS = "pt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 ps-2.5"
 
 export const RAIL_ELBOW =
-  "harness-rail-draw relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[13px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
+  "harness-rail-draw relative before:absolute before:-top-0.5 before:-start-[11px] before:h-4 before:w-[24px] before:rounded-es-[6px] before:border-b before:border-s before:border-border/60"
 
 /** The rail continuing past a step to the one under it — every step but the
     last, which is what makes the run's line end on its own last elbow. */
 export const RAIL_TAIL =
-  "after:absolute after:top-[0.875rem] after:-bottom-0.5 after:-left-[11px] after:w-px after:bg-border/60"
+  "after:absolute after:top-[0.875rem] after:-bottom-0.5 after:-start-[11px] after:w-px after:bg-border/60"
 
 /** A straight length of the same rail, for a row in it that is not a step (the
     "N earlier steps" line) — it passes the line on without claiming an elbow. */
 export const RAIL_THROUGH =
-  "harness-rail-draw relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-left-[11px] before:w-px before:bg-border/60"
+  "harness-rail-draw relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-start-[11px] before:w-px before:bg-border/60"
 
 /** "N earlier steps" — the top of a peeking rail. */
 export function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }) {

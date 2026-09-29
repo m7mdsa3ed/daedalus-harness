@@ -87,11 +87,15 @@ function AgentBlock({
   mark,
   body,
   accent,
+  stream,
+  streaming,
 }: {
   label: string
   mark: string
   body: string
   accent: boolean
+  stream?: StreamEffect
+  streaming: boolean
 }) {
   return (
     <aside
@@ -108,7 +112,7 @@ function AgentBlock({
       <p className={cn(LABEL, "mb-1.5", accent && "text-primary/80")}>
         <span aria-hidden>{mark}</span> {label}
       </p>
-      <ProseWithOpenui text={body} />
+      <ProseWithOpenui text={body} stream={stream} streaming={streaming} />
     </aside>
   )
 }
@@ -128,7 +132,32 @@ export function StreamedAgentText({ text, streaming }: { text: string; streaming
      subscribing every one of them to the option store would be a thousand
      subscriptions for a value only the tail can use. */
   const effect = useStreamEffect(streaming)
-  return <AgentText text={useStreamedText(text, streaming)} stream={effect} streaming={streaming} />
+  const painted = useStreamedText(text, streaming)
+  return (
+    <div className="contents" data-stream-idle={useStreamIdle(painted, streaming) || undefined}>
+      <AgentText text={painted} stream={effect} streaming={streaming} />
+    </div>
+  )
+}
+
+/** How long the painted text must hold still before the sweep's edge settles:
+ *  past any gap between two words of one answer, well short of the wait for a
+ *  tool call the model has moved on to. */
+const STREAM_IDLE_MS = 600
+
+/** True once a live row has painted nothing new for `STREAM_IDLE_MS`. Being the
+ *  tail of a running turn is not the same as being written: after its last
+ *  word the model may spend minutes on a tool call (a subagent), and the ramp
+ *  would hold the last words faded for all of it. The next word resets it. */
+function useStreamIdle(painted: string, streaming: boolean): boolean {
+  const [idle, setIdle] = React.useState(false)
+  React.useEffect(() => {
+    setIdle(false)
+    if (!streaming) return
+    const timer = window.setTimeout(() => setIdle(true), STREAM_IDLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [painted, streaming])
+  return idle
 }
 
 /** The effect this row should draw with, or nothing when it is not the row
@@ -162,13 +191,11 @@ export function StreamedProse({
   className?: string
 }) {
   const effect = useStreamEffect(streaming)
+  const painted = useStreamedText(text, streaming)
   return (
-    <ProseWithOpenui
-      text={useStreamedText(text, streaming)}
-      stream={effect}
-      className={className}
-      streaming={streaming}
-    />
+    <div className="contents" data-stream-idle={useStreamIdle(painted, streaming) || undefined}>
+      <ProseWithOpenui text={painted} stream={effect} className={className} streaming={streaming} />
+    </div>
   )
 }
 
@@ -216,8 +243,18 @@ export function AgentText({
   for (const block of blocks) {
     // Two conventions claiming the same span: the earlier one already took it.
     if (block.start < cut) continue
-    if (block.start > cut) parts.push(<ProseWithOpenui key={cut} text={painted.slice(cut, block.start)} />)
-    parts.push(<AgentBlock key={block.start} {...block} />)
+    if (block.start > cut)
+      parts.push(
+        <ProseWithOpenui
+          key={cut}
+          text={painted.slice(cut, block.start)}
+          stream={stream}
+          streaming={streaming}
+        />
+      )
+    parts.push(
+      <AgentBlock key={block.start} {...block} stream={stream} streaming={streaming} />
+    )
     cut = block.end
   }
   /* The tail is the *message's* tail, so only the last run of prose asks for a

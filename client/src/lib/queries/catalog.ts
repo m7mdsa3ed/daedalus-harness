@@ -66,12 +66,12 @@ export function useProfiles(): Profile[] {
   }).data)
 }
 
-/** Hide or disable a profile without editing it. A dedicated `PATCH`, not the
+/** Hide or disable a profile, or set its helper model, without editing it. A dedicated `PATCH`, not the
     editor's `PUT`: the client never holds the API key, so changing one flag
     must not have to mean "keep the stored key". One route, either field. */
 export function useSetProfileFlags() {
   const settings = useServer()
-  return useApiMutation<{ id: string; hidden?: boolean; disabled?: boolean }, Profile>(
+  return useApiMutation<{ id: string; hidden?: boolean; disabled?: boolean; smallModel?: string }, Profile>(
     [profilesKey(settings), agentsKey(settings)],
     (s, { id, ...flags }) =>
       api<Profile>(s, `/api/profiles/${encodeURIComponent(id)}`, {

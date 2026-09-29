@@ -1,6 +1,6 @@
 /* ── How the IDE is read ──
-   Device-local, global, and deliberately not on the panel's descriptor: whether
-   changed files are drawn as a tree or as a list is a property of the reader,
+   Device-local, global, and deliberately not on the panel's descriptor: how the
+   commit history is drawn is a property of the reader,
    the same way the transcript's density is (`lib/view-options.ts`). Putting it
    in the dock's params would make it a property of one panel in one layout, so
    the same reader would have to set it again in the next project — and it would
@@ -11,12 +11,7 @@
    (`lib/local-store.ts`), so a second tab follows along. */
 import { createLocalStore } from "@/lib/local-store"
 
-/** How a set of changed files is laid out. */
-export type FileLayout = "tree" | "list"
-
 export interface IdePrefs {
-  scmLayout: FileLayout
-  changesLayout: FileLayout
   /** How the commit history is read: rows, or rows with the lanes drawn. */
   historyLayout: HistoryLayout
   /** Width of the IDE panel's side view (explorer, search, source control), in px. */
@@ -27,11 +22,6 @@ export interface IdePrefs {
 export type HistoryLayout = "list" | "graph"
 
 const DEFAULTS: IdePrefs = {
-  /* A tree by default: a working set is usually a handful of files in two or
-     three directories, where the tree is shorter than the list and says where
-     the work happened. */
-  scmLayout: "tree",
-  changesLayout: "tree",
   /* The graph by default: a log read beside a running agent is usually a
      "which line did that land on" question, which is the one thing the picture
      answers and the flat list does not. */
@@ -39,7 +29,6 @@ const DEFAULTS: IdePrefs = {
   sideWidth: 240,
 }
 
-const isLayout = (value: unknown): value is FileLayout => value === "tree" || value === "list"
 const isHistoryLayout = (value: unknown): value is HistoryLayout =>
   value === "list" || value === "graph"
 
@@ -49,8 +38,6 @@ export const idePrefs = createLocalStore<IdePrefs>(
     if (!raw || typeof raw !== "object") return DEFAULTS
     const stored = raw as Partial<Record<keyof IdePrefs, unknown>>
     return {
-      scmLayout: isLayout(stored.scmLayout) ? stored.scmLayout : DEFAULTS.scmLayout,
-      changesLayout: isLayout(stored.changesLayout) ? stored.changesLayout : DEFAULTS.changesLayout,
       historyLayout: isHistoryLayout(stored.historyLayout)
         ? stored.historyLayout
         : DEFAULTS.historyLayout,

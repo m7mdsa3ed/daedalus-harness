@@ -1,7 +1,10 @@
+import * as React from "react"
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { ThemeGallery } from "@/components/theme-builder/gallery"
+import { getWindowMaterial, setWindowMaterial, type WindowMaterial } from "@/lib/desktop"
+import { toast } from "@/lib/toast"
 import {
   FONT_SIZE_DEFAULT,
   FONT_SIZE_MAX,
@@ -14,7 +17,7 @@ import {
   useTheme,
 } from "@/lib/theme"
 import { cn } from "@/lib/utils"
-import { PageHeader, Group } from "./primitives"
+import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
 const MODES = [
@@ -23,6 +26,79 @@ const MODES = [
   { value: "system", label: "System", icon: Monitor },
 ] as const
 
+const MATERIALS: { value: WindowMaterial; label: string }[] = [
+  { value: "acrylic", label: "Acrylic" },
+  { value: "mica", label: "Mica" },
+]
+
+function WindowMaterialGroup() {
+  const [material, setMaterial] = React.useState<WindowMaterial | null>(null)
+  const [saving, setSaving] = React.useState(false)
+
+  React.useEffect(() => {
+    let active = true
+    void getWindowMaterial().then(
+      (value) => active && setMaterial(value),
+      (error: unknown) => {
+        if (!active) return
+        setMaterial("acrylic")
+        toast.error("Couldn't read window material", {
+          description: error instanceof Error ? error.message : String(error),
+        })
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const choose = async (next: WindowMaterial) => {
+    if (next === material) return
+    setSaving(true)
+    try {
+      const error = await setWindowMaterial(next)
+      if (error) {
+        toast.error("Couldn't save window material", { description: error })
+        return
+      }
+      setMaterial(next)
+      toast("Window material saved", { description: "Restart Daedalus to apply the change." })
+    } catch (error) {
+      toast.error("Couldn't save window material", {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Group label="Windows desktop material">
+      <Row
+        title="Window blur"
+        subtitle="Choose the native Windows backdrop. Restart Daedalus for changes to take effect; Mica may appear nearly solid on some Windows builds."
+      >
+        <div className="flex gap-1 rounded-lg border bg-muted/30 p-1" role="group" aria-label="Window blur material">
+          {MATERIALS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={material === value}
+              disabled={saving || material === null}
+              onClick={() => void choose(value)}
+              className={cn(
+                "min-h-9 rounded-md px-3 text-xs font-medium transition-colors disabled:opacity-50",
+                material === value ? "bg-accent text-accent-foreground shadow-sm" : "text-muted-foreground hover:bg-accent/50"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </Row>
+    </Group>
+  )
+}
 
 /** Slider + live value + reset, on its own row so the track gets real width. */
 function SliderRow({
@@ -113,6 +189,7 @@ export function AppearancePage() {
       <Group label="Color theme">
         <ThemeGallery />
       </Group>
+      {window.desktop?.platform === "win32" && <WindowMaterialGroup />}
       <Group label="Density">
         <SliderRow
           title="Font size"

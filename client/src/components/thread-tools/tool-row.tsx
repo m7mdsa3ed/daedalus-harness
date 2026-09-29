@@ -5,11 +5,13 @@
  * kinds it is drawing.
  */
 import { KeyRoundIcon } from "lucide-react"
+import type { ReactNode } from "react"
 
 import { DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu"
 
 export function ToolRow({
   name,
+  icon,
   checked,
   disabled,
   /** Linked by the profile, not by the thread: checked and locked. */
@@ -20,6 +22,7 @@ export function ToolRow({
   onCheckedChange,
 }: {
   name: string
+  icon?: ReactNode
   checked: boolean
   disabled: boolean
   from: boolean
@@ -34,6 +37,7 @@ export function ToolRow({
       closeOnClick={false}
       onCheckedChange={onCheckedChange}
     >
+      {icon}
       <span className="flex min-w-0 flex-col">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="truncate">{name}</span>

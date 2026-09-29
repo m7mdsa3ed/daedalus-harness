@@ -20,9 +20,11 @@ const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectI
 export function gitFileAt(
   projectId: string,
   path: string,
-  comparison: Comparison
+  comparison: Comparison | { rev: string }
 ): Promise<{ content: string; missing: boolean }> {
-  const search = new URLSearchParams({ path, comparison })
+  const search = new URLSearchParams(
+    typeof comparison === "string" ? { path, comparison } : { path, rev: comparison.rev }
+  )
   return api<{ content: string; missing: boolean }>(
     server(),
     `${base(projectId)}/file?${search.toString()}`
@@ -83,6 +85,9 @@ export interface GitFileState {
   from?: string
   index: string
   worktree: string
+  /** Lines on this side of the change; absent for untracked and binary files. */
+  insertions?: number
+  deletions?: number
 }
 export interface GitStatus {
   repository: boolean
@@ -190,6 +195,37 @@ export function gitLog(
   return api<GitCommit[]>(settings, `${base(projectId)}/log?${search.toString()}`, { signal })
 }
 
+export interface CommitFile {
+  path: string
+  from?: string
+  /** A M D R C T, as `--name-status` spells it. */
+  status: string
+  /** Null for a binary file. */
+  insertions: number | null
+  deletions: number | null
+}
+
+export interface CommitDetail extends GitCommit {
+  email: string
+  body: string
+  committer: string
+  committedAt: number
+  files: CommitFile[]
+}
+
+/** One commit opened — `hash` may be `"HEAD"`. Paths are repository-relative. */
+export function gitCommit(
+  settings: ServerSettings,
+  projectId: string,
+  hash: string,
+  repo?: string,
+  signal?: AbortSignal
+) {
+  const search = new URLSearchParams({ hash })
+  if (repo) search.set("repo", repo)
+  return api<CommitDetail>(settings, `${base(projectId)}/commit?${search.toString()}`, { signal })
+}
+
 export interface StashEntry {
   index: number
   ref: string
@@ -261,7 +297,9 @@ export type GitAction =
   | { action: "checkout"; branch: string; create?: boolean; track?: boolean }
   /** The remote. A pull is `--ff-only` and a push publishes an unpublished
       branch to `origin`; both answer what the remote said in `output`. */
-  | { action: "pull" | "push" }
+  | { action: "pull" | "push" | "fetch" }
+  /** Soft-reset the last commit; `output` is the message it had. */
+  | { action: "undo" }
 
 /** Paths are relative to `repo`, the same way the status that listed them was. */
 export type GitWrite = GitAction & { repo?: string }

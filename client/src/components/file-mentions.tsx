@@ -6,7 +6,7 @@ import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
 import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type Persona, type ThreadMcpServer } from "@/lib/settings"
 import { useMcpServers, usePersonas, useProjects } from "@/lib/queries/catalog"
-import { ProjectIcon } from "@/components/entity-icon"
+import { McpIcon, ProjectIcon } from "@/components/entity-icon"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
@@ -415,6 +415,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
             <CompleterRow
               key={`mcp-server:${entry.server.id}`}
               icon={Plug}
+              mark={<McpIcon server={entry.server} className="size-3.5" />}
               label={entry.server.name}
               description={mcpSubtitle(entry.server)}
               badge={mcpNeedsAuth(entry.server) ? "needs auth" : "enable MCP"}

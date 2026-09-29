@@ -3,14 +3,59 @@
    draws that sentence (and the six the connection ladder reaches it with);
    `ActivityIndicator` is the turn's own caller. Not a reading in the footer's
    cluster — this one lives in the transcript, where the turn is. */
+import * as React from "react"
+import { LoaderCircleIcon } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { CopyButton } from "@/components/ui/copy-button"
 import { runningAgents } from "@/components/composer/agents-indicator"
+import { CARD, Disclosure } from "@/components/tool-parts"
 import { toolHeading } from "@/lib/tools"
 import { type ThreadState } from "@/lib/store"
 import { describeError } from "@/lib/errors"
 import { holdOf } from "@/lib/thread/hold"
 import { cn } from "@/lib/utils"
+
+function RetryStatus({ retry }: { retry: NonNullable<ThreadState["retry"]> }) {
+  const [detailsOpen, setDetailsOpen] = React.useState(false)
+  const errorText = retry.error ? retryErrorText(retry.error) : null
+  const cause = retry.error ? retryWhy(retry.error) : null
+  const attempts = retry.of ? `${retry.attempt} of ${retry.of} attempts` : `Attempt ${retry.attempt}`
+
+  return (
+    <section
+      aria-label="Agent retrying"
+      aria-live="polite"
+      className={cn(CARD, "border-destructive/25 bg-destructive/5 text-xs")}
+      role="status"
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        <LoaderCircleIcon className="mt-0.5 size-4 shrink-0 animate-spin text-destructive" aria-hidden />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="font-medium text-foreground">Retrying request</p>
+            <span className="rounded-pill bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+              {attempts}
+            </span>
+          </div>
+          {cause && <p className="break-words leading-5 text-muted-foreground">{cause}</p>}
+          {errorText && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+              <Disclosure open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)}>
+                {detailsOpen ? "Hide error details" : "Show error details"}
+              </Disclosure>
+              <CopyButton text={errorText} size="icon-xs" className="size-6" label="Copy error" />
+            </div>
+          )}
+          {detailsOpen && errorText && (
+            <pre className="max-h-40 overflow-auto rounded-md border border-border/50 bg-background/60 p-2 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words text-muted-foreground">
+              {errorText}
+            </pre>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
 
 /**
  * What the working line says, read off the thread: the one thing the turn is
@@ -173,25 +218,17 @@ export function PhaseLine({
 
 export function ActivityIndicator({ thread }: { thread: ThreadState }) {
   const message = workingMessage(thread)
+  /* A retry owns this slot while waiting out a backoff. Keeping it in the
+     transcript's card vocabulary makes the cause readable without duplicating
+     it in both a shimmer line and a raw payload. */
+  if (thread.retry) return <RetryStatus retry={thread.retry} />
+
   /* A held turn is stopped. The line stays in the same slot, which is the
      point — the turn is still open and the composer still belongs to it. */
   const held = thread.paused
-  const retryError = thread.retry?.error ? retryErrorText(thread.retry.error) : null
   return (
     <div className="min-w-0 max-w-full">
-      <PhaseLine
-        text={held ? message : `${message}…`}
-        still={held}
-        label={held ? "Turn held" : "Agent working"}
-      />
-      {thread.retry && retryError && (
-        <div className="ml-6 mt-1 flex min-w-0 items-start gap-1 rounded-sm border border-destructive/20 bg-background/50 p-2 text-[11px] text-muted-foreground">
-          <pre className="max-h-28 min-w-0 flex-1 overflow-auto font-mono whitespace-pre-wrap break-words">
-            {retryError}
-          </pre>
-          <CopyButton text={retryError} size="icon-xs" className="shrink-0" label="Copy error" />
-        </div>
-      )}
+      <PhaseLine text={held ? message : `${message}…`} still={held} label={held ? "Turn held" : "Agent working"} />
     </div>
   )
 }

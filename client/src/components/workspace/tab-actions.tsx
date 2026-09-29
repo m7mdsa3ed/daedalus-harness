@@ -88,7 +88,7 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
       className={cn("gap-2", active && "bg-accent/60")}
     >
       {Icon && <Icon className="text-muted-foreground" />}
-      <span className="min-w-0 flex-1 truncate">{title}</span>
+      <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>{title}</span>
       {pinned && <PinIcon aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
       <PanelStatusDot status={status} />
       {/* Closing from the list, so a tab that has scrolled out of the strip can

@@ -4,7 +4,7 @@
    the row. The two hidden pickers are here rather than in the card because
    this menu is the only thing that clicks them. */
 import * as React from "react"
-import { AtSign, Camera, Code, History, Paperclip, Plus, Slash, SquareTerminal, Trash2 } from "lucide-react"
+import { AtSign, Camera, Code, Paperclip, Plus, Slash, SquareTerminal, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -15,12 +15,15 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { ComposerHistorySubmenu } from "@/components/composer/history-menu"
 import { useChords } from "@/lib/keybindings"
+import { cn } from "@/lib/utils"
 import { formatChord } from "@/lib/shortcuts"
 
 export function ComposerAddMenu({
   disabled,
   size,
+  className,
   coarse,
   onFiles,
   canMention,
@@ -38,6 +41,8 @@ export function ComposerAddMenu({
   disabled: boolean
   /** The row's one scale — 24px under a mouse, 32px under a finger. */
   size: React.ComponentProps<typeof Button>["size"]
+  /** The row's one scale — see `iconFit` in the composer. */
+  className?: string
   coarse: boolean
   onFiles: (files: FileList) => void
   /** A file can only be mentioned where there is a project to resolve it in. */
@@ -51,7 +56,8 @@ export function ComposerAddMenu({
   onCommand: () => void
   onProjectCommand: () => void
   onCodeBlock: () => void
-  onHistory: () => void
+  /** A prompt picked from the history submenu. */
+  onHistory: (text: string) => void
   onClear: () => void
 }) {
   // Rebindable in Settings › Keyboard, so it is read rather than named here.
@@ -70,7 +76,10 @@ export function ComposerAddMenu({
             <Button
               variant="ghost"
               size={size}
-              className="shrink-0 rounded-pill bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground [&_svg]:size-3.5"
+              className={cn(
+                "shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
+                className
+              )}
               disabled={disabled}
               title="Add to the message"
             />
@@ -126,11 +135,7 @@ export function ComposerAddMenu({
               is something in it, so a fresh install is not given a door
               onto an empty room. */}
           {hasHistory && (
-            <DropdownMenuItem onClick={onHistory}>
-              <History />
-              Earlier prompt
-              <DropdownMenuShortcut>{formatChord(historyChords[0] ?? "")}</DropdownMenuShortcut>
-            </DropdownMenuItem>
+            <ComposerHistorySubmenu shortcut={formatChord(historyChords[0] ?? "")} onPick={onHistory} />
           )}
           {hasContent && (
             <>

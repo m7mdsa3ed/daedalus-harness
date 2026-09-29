@@ -29,7 +29,7 @@
    ACP call. `bindings` and `toolCalls` are off in the prompt for that reason
    (`scripts/gen-openui.mjs`). */
 import { z } from "zod/v4"
-import { createContext, useContext, useState, type ReactNode } from "react"
+import { createContext, useContext, useId, useState, type CSSProperties, type ReactNode } from "react"
 import { Check, ChevronRight, Minus, Plus, X } from "lucide-react"
 import {
   Area,
@@ -58,14 +58,8 @@ import { DiffView } from "@/components/ui/diff-view"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Notice } from "@/components/notice"
-import { MermaidFigure, diagramToMermaid } from "@/lib/openui/mermaid"
-import {
-  ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart"
+import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
 
 /* ── The system ── */
@@ -89,7 +83,7 @@ const SurfaceContext = createContext<Surface>("page")
 /** The one framed thing. What it looks like is where it is, never the caller's
     choice — which is the whole of "styled the same". Its children are inside a
     frame, so anything framed among them draws as a well. */
-function Box({ className, children }: { className?: string; children: ReactNode }) {
+function Box({ className, children, style }: { className?: string; children: ReactNode; style?: CSSProperties }) {
   const surface = useContext(SurfaceContext)
   return (
     <SurfaceContext.Provider value="frame">
@@ -99,6 +93,7 @@ function Box({ className, children }: { className?: string; children: ReactNode 
           surface === "page" ? FRAME : surface === "frame" ? INSET : "bg-card",
           className
         )}
+        style={style}
       >
         {children}
       </div>
@@ -774,17 +769,8 @@ const Gallery = defineComponent({
   ),
 })
 
-/* ── Diagrams ── */
+/* ── Flowcharts ── */
 
-/** The frame a diagram sits in is `Box`'s, so it is a card on the page and a
-    well inside one, like everything else. */
-function Figure({ code, narrowCode, caption }: { code: string; narrowCode?: string; caption?: string }) {
-  return (
-    <Box className={PAD}>
-      <MermaidFigure code={code} narrowCode={narrowCode} caption={caption} box="p-0" />
-    </Box>
-  )
-}
 
 /** A graph written as what it is — nodes and edges — rather than as mermaid
     source: mermaid's syntax is one more thing to get wrong. */
@@ -808,47 +794,34 @@ const graphProps = z.object({
   caption: z.string().optional(),
 })
 
-/* A pipeline drawn sideways on a phone is a strip of 6px text; below
-   `@panel-sm` it is drawn top-down, which is the one shape a column keeps. */
 function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
   return (
-    <Figure
-      code={diagramToMermaid(props.nodes, props.edges, props.direction ?? "down")}
-      narrowCode={props.direction === "right" ? diagramToMermaid(props.nodes, props.edges, "down") : undefined}
-      caption={props.caption}
-    />
+    <Box
+      className={cn("col-span-full w-full self-stretch", PAD, "space-y-1")}
+      style={{ gridColumn: "1 / -1", width: "100%", minWidth: 0 }}
+    >
+      <InteractiveFlowchart
+        key={JSON.stringify([props.nodes, props.edges, props.direction])}
+        nodes={props.nodes}
+        edges={props.edges}
+        direction={props.direction ?? "down"}
+      />
+      {props.caption && <p className={cn(META, "px-1")}>{props.caption}</p>}
+      <p className="px-1 text-[10px] text-muted-foreground/75">
+        Drag nodes; drag between handles to connect. Select an edge or node and press Delete to remove it.
+      </p>
+    </Box>
   )
 }
 
 const Flowchart = defineComponent({
   name: "Flowchart",
   description: "A flowchart from nodes and edges: each node has an id and a label, each edge joins two ids.",
-  /* A copy, not `graphProps` itself: the library names a component by its
-     props schema object, so two components sharing one keep only the last —
-     `Diagram` — and every Flowchart parsed as an unknown component. */
-  props: graphProps.extend({}),
-  component: GraphFigure,
-})
-
-/** Backwards-compatible name for Flowchart. */
-const Diagram = defineComponent({
-  name: "Diagram",
-  description: "An alias for Flowchart: give nodes and edges, with each edge joining two node ids.",
   props: graphProps,
   component: GraphFigure,
 })
 
-/** Mermaid source, drawn. The escape hatch for what `Flowchart` cannot spell. */
-const Mermaid = defineComponent({
-  name: "Mermaid",
-  description: "A diagram written in Mermaid syntax (sequence, state, class, gantt, flowchart).",
-  props: z.object({
-    code: z.string(),
-    caption: z.string().optional(),
-  }),
-  component: ({ props }) => <Figure code={props.code} caption={props.caption} />,
-})
-
+/** Backwards-compatible name for Flowchart. */
 /* ── Numbers ── */
 
 /** One metric: its name in small caps, the figure large and tabular, the hint
@@ -888,7 +861,7 @@ const StatRow = defineComponent({
       className={cn(
         "grid bg-card [&>*]:shadow-[1px_0_0_0_var(--border),0_1px_0_0_var(--border)]",
         props.stats.length > 1
-          ? "grid-cols-2 @panel-sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]"
+          ? "grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] @panel-sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]"
           : "grid-cols-1"
       )}
     >
@@ -932,7 +905,7 @@ const chartColor = (index: number) => `var(--chart-${(index % 5) + 1})`
 const Chart = defineComponent({
   name: "Chart",
   description:
-    "A chart over a shared set of labels: line, bar, area, radar, or pie/donut (first series only, one slice per label).",
+    "A full-width chart over shared labels: line, bar, area, radar, or pie/donut (first series only, one slice per label), with an optional title.",
   props: z.object({
     kind: z.enum(["line", "bar", "area", "pie", "donut", "radar"]),
     labels: z.array(z.string()),
@@ -944,6 +917,7 @@ const Chart = defineComponent({
     ),
     height: z.number().optional(),
     stacked: z.boolean().optional(),
+    title: z.string().optional(),
   }),
   component: ({ props }) => {
     const round = props.kind === "pie" || props.kind === "donut"
@@ -957,120 +931,356 @@ const Chart = defineComponent({
         ? props.labels.map((label, index) => [label, { label, color: chartColor(index) }])
         : props.series.map((series, index) => [series.name, { label: series.name, color: chartColor(index) }])
     )
+    const chartId = useId().replace(/:/g, "")
     const stack = props.stacked ? "a" : undefined
-    /* A chart cannot reflow, so the mobile work is all in the gutters: a 32px Y
-       gutter and 11px ticks give a 320px panel most of its width back, and
-       `preserveStartEnd` keeps the ends instead of every colliding label.
-       `ChartContainer` passes `initialDimension`, so a panel not yet laid out
-       draws a sized chart rather than an empty box. */
+    const chartHeight = Math.min(480, Math.max(180, props.height ?? (round || props.kind === "radar" ? 280 : 240)))
     const axes = (
       <>
-        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="2 6" />
         <XAxis
           dataKey="label"
           tickLine={false}
           axisLine={false}
-          tickMargin={8}
-          fontSize={11}
+          tickMargin={12}
+          fontSize={10}
           interval="preserveStartEnd"
+          tick={{ fill: "var(--muted-foreground)" }}
         />
-        <YAxis tickLine={false} axisLine={false} width={32} fontSize={11} />
-        <ChartTooltip content={<ChartTooltipContent />} />
+        <YAxis
+          tickLine={false}
+          axisLine={false}
+          width={36}
+          fontSize={10}
+          tick={{ fill: "var(--muted-foreground)" }}
+          tickFormatter={(value: number) => new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value)}
+        />
+        <ChartTooltip content={<ChartTooltipContent />} cursor={{ stroke: "var(--primary)", strokeDasharray: "3 3" }} />
       </>
     )
-    const margin = { left: 0, right: 8, top: 4 }
-    const legend = props.series.length > 1 && <ChartLegend content={<ChartLegendContent />} />
+    const margin = { left: 2, right: 12, top: 12, bottom: 2 }
+    const seriesLegend = round
+      ? props.labels.map((label, index) => ({ name: label, color: chartColor(index) }))
+      : props.series.map((series, index) => ({ name: series.name, color: chartColor(index) }))
     return (
-      <Box className="px-2 pt-3 pb-2 @panel-sm:px-3">
-        <ChartContainer
-          config={config}
-          className="aspect-auto w-full min-w-0"
-          style={{ height: `${props.height ?? (round || props.kind === "radar" ? 240 : 200)}px` }}
-        >
-          {round ? (
-            <PieChart>
-              <ChartTooltip content={<ChartTooltipContent nameKey="label" hideLabel />} />
-              <Pie
-                data={props.labels.map((label, index) => ({ label, value: props.series[0]?.values[index] ?? 0 }))}
-                dataKey="value"
-                nameKey="label"
-                innerRadius={props.kind === "donut" ? "58%" : 0}
-                paddingAngle={props.kind === "donut" ? 2 : 0}
-                stroke="var(--card)"
-                strokeWidth={2}
-              >
-                {props.labels.map((label, index) => (
-                  <Cell key={label} fill={chartColor(index)} />
+      <Box className="w-full overflow-hidden">
+        {(props.title || seriesLegend.length > 0) && (
+          <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="size-2 shrink-0 rounded-full bg-primary shadow-[0_0_0_4px_color-mix(in_oklch,var(--primary)_14%,transparent)]" />
+              {props.title && <h3 className={cn(TITLE, "min-w-0 text-sm")}>{props.title}</h3>}
+            </div>
+            {seriesLegend.length > 0 && (
+              <div className="flex min-w-0 flex-wrap justify-end gap-x-4 gap-y-2">
+                {seriesLegend.map((item) => (
+                  <span key={item.name} className="inline-flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                    <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                    <span className="max-w-32 truncate">{item.name}</span>
+                  </span>
                 ))}
-              </Pie>
-              <ChartLegend content={<ChartLegendContent nameKey="label" />} />
-            </PieChart>
-          ) : props.kind === "radar" ? (
-            <RadarChart data={data}>
-              <PolarGrid />
-              <PolarAngleAxis dataKey="label" fontSize={11} />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              {props.series.map((series, index) => (
-                <Radar
-                  key={series.name}
-                  dataKey={series.name}
-                  stroke={chartColor(index)}
-                  fill={chartColor(index)}
-                  fillOpacity={0.2}
-                />
-              ))}
-              {legend}
-            </RadarChart>
-          ) : props.kind === "bar" ? (
-            <BarChart data={data} margin={margin}>
-              {axes}
-              {props.series.map((series, index) => (
-                <Bar
-                  key={series.name}
-                  dataKey={series.name}
-                  stackId={stack}
-                  fill={chartColor(index)}
-                  radius={stack ? 0 : [4, 4, 0, 0]}
-                  maxBarSize={40}
-                />
-              ))}
-              {legend}
-            </BarChart>
-          ) : props.kind === "area" ? (
-            <AreaChart data={data} margin={margin}>
-              {axes}
-              {props.series.map((series, index) => (
-                <Area
-                  key={series.name}
-                  type="monotone"
-                  dataKey={series.name}
-                  stackId={stack}
-                  stroke={chartColor(index)}
-                  strokeWidth={2}
-                  fill={chartColor(index)}
-                  fillOpacity={0.15}
-                />
-              ))}
-              {legend}
-            </AreaChart>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="w-full min-w-0 bg-[linear-gradient(180deg,color-mix(in_oklch,var(--primary)_5%,var(--card)),var(--card)_68%)] px-2 pt-4 pb-2 @panel-sm:px-4">
+          <ChartContainer
+            config={config}
+            className="aspect-auto w-full min-w-0"
+            style={{ height: `${chartHeight}px` }}
+          >
+            {round ? (
+              <PieChart>
+                <ChartTooltip content={<ChartTooltipContent nameKey="label" hideLabel />} />
+                <Pie
+                  data={props.labels.map((label, index) => ({ label, value: props.series[0]?.values[index] ?? 0 }))}
+                  dataKey="value"
+                  nameKey="label"
+                  innerRadius={props.kind === "donut" ? "62%" : 0}
+                  outerRadius="86%"
+                  paddingAngle={props.kind === "donut" ? 3 : 1}
+                  cornerRadius={props.kind === "donut" ? 4 : 0}
+                  stroke="var(--card)"
+                  strokeWidth={3}
+                >
+                  {props.labels.map((label, index) => (
+                    <Cell key={`${label}-${index}`} fill={chartColor(index)} />
+                  ))}
+                </Pie>
+              </PieChart>
+            ) : props.kind === "radar" ? (
+              <RadarChart data={data} outerRadius="76%">
+                <PolarGrid stroke="var(--border)" />
+                <PolarAngleAxis dataKey="label" fontSize={10} tick={{ fill: "var(--muted-foreground)" }} />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                {props.series.map((series, index) => (
+                  <Radar
+                    key={series.name}
+                    dataKey={series.name}
+                    stroke={chartColor(index)}
+                    strokeWidth={2.5}
+                    fill={chartColor(index)}
+                    fillOpacity={0.18}
+                    dot={{ r: 3, fill: chartColor(index), stroke: "var(--card)", strokeWidth: 2 }}
+                  />
+                ))}
+              </RadarChart>
+            ) : props.kind === "bar" ? (
+              <BarChart data={data} margin={margin} barCategoryGap="28%">
+                {axes}
+                {props.series.map((series, index) => (
+                  <Bar
+                    key={series.name}
+                    dataKey={series.name}
+                    stackId={stack}
+                    fill={chartColor(index)}
+                    radius={stack ? 0 : [7, 7, 2, 2]}
+                    maxBarSize={props.series.length > 1 ? 28 : 44}
+                  />
+                ))}
+              </BarChart>
+            ) : props.kind === "area" ? (
+              <AreaChart data={data} margin={margin}>
+                <defs>
+                  {props.series.map((series, index) => (
+                    <linearGradient key={series.name} id={`${chartId}-area-${index}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={chartColor(index)} stopOpacity={0.34} />
+                      <stop offset="95%" stopColor={chartColor(index)} stopOpacity={0.015} />
+                    </linearGradient>
+                  ))}
+                </defs>
+                {axes}
+                {props.series.map((series, index) => (
+                  <Area
+                    key={series.name}
+                    type="monotone"
+                    dataKey={series.name}
+                    stackId={stack}
+                    stroke={chartColor(index)}
+                    strokeWidth={2.5}
+                    fill={`url(#${chartId}-area-${index})`}
+                    activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2 }}
+                  />
+                ))}
+              </AreaChart>
+            ) : (
+              <LineChart data={data} margin={margin}>
+                {axes}
+                {props.series.map((series, index) => (
+                  <Line
+                    key={series.name}
+                    type="monotone"
+                    dataKey={series.name}
+                    stroke={chartColor(index)}
+                    strokeWidth={2.75}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    dot={{ r: 2.5, fill: chartColor(index), stroke: "var(--card)", strokeWidth: 2 }}
+                    activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2 }}
+                  />
+                ))}
+              </LineChart>
+            )}
+          </ChartContainer>
+        </div>
+      </Box>
+    )
+  },
+})
+
+const Sparkline = defineComponent({
+  name: "Sparkline",
+  description: "A compact metric with a value, optional change, and small trend line.",
+  props: z.object({
+    label: z.string(),
+    value: z.string(),
+    values: z.array(z.number()),
+    change: z.string().optional(),
+    tone: z.enum(["positive", "negative", "neutral"]).optional(),
+  }),
+  component: ({ props }) => {
+    const gradientId = `spark-${useId().replace(/:/g, "")}`
+    const values = props.values.filter(Number.isFinite)
+    const min = Math.min(...values, 0)
+    const max = Math.max(...values, 0)
+    const range = max - min || 1
+    const points = values.map((value, index) => {
+      const x = values.length < 2 ? 50 : (index / (values.length - 1)) * 100
+      const y = 27 - ((value - min) / range) * 22
+      return `${x},${y}`
+    })
+    const tone = props.tone ?? "neutral"
+    const color = tone === "positive" ? "var(--primary)" : tone === "negative" ? "var(--destructive)" : "var(--chart-1)"
+    return (
+      <Box className={cn("flex min-w-0 items-center justify-between gap-4", PAD)}>
+        <div className="min-w-0 space-y-1">
+          <p className={cn(LABEL, "text-balance")}>{props.label}</p>
+          <p className="break-words text-xl leading-tight font-semibold tracking-tight text-foreground tabular-nums @panel-sm:text-2xl">
+            {props.value}
+          </p>
+          {props.change && <p className={cn(META, tone === "positive" && "text-primary", tone === "negative" && "text-destructive")}>{props.change}</p>}
+        </div>
+        <svg className="h-12 w-28 shrink-0 overflow-visible" viewBox="0 0 100 32" role="img" aria-label={`${props.label} trend`}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {values.length > 1 && <polygon points={`0,32 ${points.join(" ")} 100,32`} fill={`url(#${gradientId})`} />}
+          {values.length > 1 ? (
+            <polyline points={points.join(" ")} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          ) : values.length === 1 ? (
+            <circle cx="50" cy="16" r="3" fill={color} />
           ) : (
-            <LineChart data={data} margin={margin}>
-              {axes}
-              {props.series.map((series, index) => (
-                <Line
-                  key={series.name}
-                  type="monotone"
-                  dataKey={series.name}
-                  stroke={chartColor(index)}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              ))}
-              {legend}
-            </LineChart>
+            <line x1="2" y1="16" x2="98" y2="16" stroke="var(--border)" strokeWidth="2" strokeDasharray="3 4" />
           )}
-        </ChartContainer>
+          {values.length > 1 && <circle cx="100" cy={points.at(-1)?.split(",")[1]} r="3" fill={color} stroke="var(--card)" strokeWidth="1.5" />}
+        </svg>
+      </Box>
+    )
+  },
+})
+
+const Heatmap = defineComponent({
+  name: "Heatmap",
+  description: "A color-scaled grid showing values across row and column labels.",
+  props: z.object({
+    columns: z.array(z.string()),
+    rows: z.array(z.object({ label: z.string(), values: z.array(z.number()) })),
+    title: z.string().optional(),
+  }),
+  component: ({ props }) => {
+    const values = props.rows.flatMap((row) => row.values).filter(Number.isFinite)
+    const min = Math.min(...values, 0)
+    const max = Math.max(...values, 0)
+    const range = max - min || 1
+    const columns = Math.max(props.columns.length, 1)
+    return (
+      <Box className="w-full">
+        {props.title && <BoxHeader title={props.title} />}
+        <div className={cn("overflow-x-auto", PAD)}>
+          <div className="grid min-w-[22rem] gap-1.5" style={{ gridTemplateColumns: `minmax(3.5rem, 0.8fr) repeat(${columns}, minmax(1.35rem, 1fr))` }}>
+            <span aria-hidden="true" />
+            {props.columns.map((column, index) => (
+              <span key={`${column}-${index}`} className={cn(LABEL, "truncate text-center text-[9px]")} title={column}>{column}</span>
+            ))}
+            {props.rows.map((row, rowIndex) => (
+              <div key={`${row.label}-${rowIndex}`} className="contents">
+                <span className={cn(BODY, "truncate self-center text-xs")} title={row.label}>{row.label}</span>
+                {props.columns.map((column, columnIndex) => {
+                  const value = row.values[columnIndex]
+                  const intensity = Number.isFinite(value) ? Math.round(14 + ((value - min) / range) * 86) : 0
+                  return (
+                    <span
+                      key={`${rowIndex}-${column}-${columnIndex}`}
+                      className="flex aspect-square min-h-5 items-center justify-center rounded-[4px] text-[9px] tabular-nums text-foreground"
+                      style={{ background: Number.isFinite(value) ? `color-mix(in oklch, var(--chart-1) ${intensity}%, var(--muted))` : "var(--muted)", opacity: Number.isFinite(value) ? 1 : 0.45 }}
+                      title={`${row.label}, ${column}: ${Number.isFinite(value) ? value : "no value"}`}
+                      aria-label={`${row.label}, ${column}: ${Number.isFinite(value) ? value : "no value"}`}
+                    >
+                      {Number.isFinite(value) ? new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value) : "-"}
+                    </span>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Box>
+    )
+  },
+})
+
+const Funnel = defineComponent({
+  name: "Funnel",
+  description: "A staged funnel showing volume and retention through each step.",
+  props: z.object({
+    stages: z.array(z.object({ label: z.string(), value: z.number() })),
+    title: z.string().optional(),
+  }),
+  component: ({ props }) => {
+    const first = Math.max(0, props.stages[0]?.value ?? 0)
+    return (
+      <Box className="w-full">
+        {props.title && <BoxHeader title={props.title} />}
+        <div className={cn("space-y-3", PAD)}>
+          {props.stages.map((stage, index) => {
+            const value = Math.max(0, stage.value)
+            const width = first > 0 ? Math.min(100, (value / first) * 100) : 0
+            const retained = first > 0 ? Math.round((value / first) * 100) : 0
+            return (
+              <div key={`${stage.label}-${index}`} className="min-w-0 space-y-1.5">
+                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                  <span className={cn(BODY, "min-w-0 truncate font-medium")} title={stage.label}>{stage.label}</span>
+                  <span className={cn(META, "shrink-0 tabular-nums")}>{new Intl.NumberFormat().format(value)}{index > 0 && first > 0 ? ` · ${retained}%` : ""}</span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-pill bg-muted/80">
+                  <div className="h-full rounded-pill transition-[width]" style={{ width: `${width}%`, background: `linear-gradient(90deg, ${chartColor(index)}, color-mix(in oklch, ${chartColor(index)} 65%, var(--card)))` }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Box>
+    )
+  },
+})
+
+const Waterfall = defineComponent({
+  name: "Waterfall",
+  description: "A waterfall chart showing how positive and negative changes build to a total.",
+  props: z.object({
+    items: z.array(z.object({ label: z.string(), value: z.number(), total: z.boolean().optional() })),
+    title: z.string().optional(),
+  }),
+  component: ({ props }) => {
+    const running: number[] = []
+    let current = 0
+    for (const item of props.items) {
+      const next = item.total ? item.value : current + item.value
+      running.push(next)
+      current = next
+    }
+    const bounds = props.items.flatMap((item, index) => [item.total ? 0 : (index === 0 ? 0 : running[index - 1]), running[index]])
+    const min = Math.min(0, ...bounds)
+    const max = Math.max(0, ...bounds)
+    const range = max - min || 1
+    const chartTop = 16
+    const chartBottom = 176
+    const chartWidth = Math.max(416, props.items.length * 64)
+    const y = (value: number) => chartTop + ((max - value) / range) * (chartBottom - chartTop)
+    const step = props.items.length ? chartWidth / props.items.length : chartWidth
+    const barWidth = Math.min(42, step * 0.56)
+    return (
+      <Box className="w-full overflow-hidden">
+        {props.title && <BoxHeader title={props.title} />}
+        {props.items.length === 0 ? (
+          <div className={cn(META, PAD)}>No values to chart.</div>
+        ) : (
+          <div className="overflow-x-auto px-2 py-3 @panel-sm:px-3">
+            <svg className="h-52 w-full" style={{ minWidth: `${chartWidth}px` }} viewBox={`0 0 ${chartWidth} 220`} role="img" aria-label={props.title ?? "Waterfall chart"}>
+              <line x1="0" x2={chartWidth} y1={y(0)} y2={y(0)} stroke="var(--border)" strokeDasharray="3 4" />
+              {props.items.map((item, index) => {
+                const before = index === 0 ? 0 : running[index - 1]
+                const after = running[index]
+                const start = item.total ? 0 : before
+                const top = Math.min(y(start), y(after))
+                const height = Math.max(2, Math.abs(y(after) - y(start)))
+                const x = index * step + (step - barWidth) / 2
+                const fill = item.total ? "var(--chart-1)" : item.value < 0 ? "var(--destructive)" : "var(--chart-2)"
+                return (
+                  <g key={`${item.label}-${index}`}>
+                    {index < props.items.length - 1 && <line x1={x + barWidth} x2={(index + 1) * step + (step - barWidth) / 2} y1={y(after)} y2={y(after)} stroke="var(--muted-foreground)" strokeOpacity="0.35" strokeDasharray="3 3" />}
+                    <rect x={x} y={top} width={barWidth} height={height} rx="4" fill={fill}>
+                      <title>{`${item.label}: ${new Intl.NumberFormat().format(item.value)}${item.total ? " (total)" : ""}`}</title>
+                    </rect>
+                    <text x={x + barWidth / 2} y={Math.max(12, top - 5)} textAnchor="middle" className="fill-muted-foreground" fontSize="9">{new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(item.value)}</text>
+                    <text x={x + barWidth / 2} y="198" textAnchor="middle" className="fill-muted-foreground" fontSize="10">{item.label.length > 11 ? `${item.label.slice(0, 10)}...` : item.label}</text>
+                  </g>
+                )
+              })}
+            </svg>
+          </div>
+        )}
       </Box>
     )
   },
@@ -1084,6 +1294,10 @@ export const openuiLibrary = createLibrary({
     Section,
     StatRow,
     Stat,
+    Sparkline,
+    Heatmap,
+    Funnel,
+    Waterfall,
     Table,
     List,
     Callout,
@@ -1105,8 +1319,6 @@ export const openuiLibrary = createLibrary({
     People,
     Gallery,
     Flowchart,
-    Diagram,
-    Mermaid,
   ],
   componentGroups: [
     {
@@ -1130,20 +1342,21 @@ export const openuiLibrary = createLibrary({
       ],
     },
     {
-      name: "Diagrams",
-      components: ["Flowchart", "Diagram", "Mermaid"],
+      name: "Flowcharts",
+      components: ["Flowchart"],
       notes: [
-        "- Flowchart is the default: give nodes and edges, never Mermaid syntax. Every edge's `from`/`to` must be a node's `id`; Diagram is a backwards-compatible alias.",
-        "- Mermaid only for what Flowchart cannot spell — a sequence, a state machine, a gantt. Write the diagram type on the first line.",
-        '- Keep a diagram under ~12 nodes and use direction "right" for a pipeline, "down" for a hierarchy; a wide graph does not survive a narrow panel.',
+        "- Flowchart is the only diagram component. Give nodes and edges; every edge's `from` and `to` must match node ids.",
+        "- Flowcharts are locally interactive: readers can move nodes, connect handles, select elements and delete them. Edits are temporary and do not change the generated answer or run tools.",
+        '- Keep a flowchart under ~12 nodes and use direction "right" for a pipeline, "down" for a hierarchy; a wide graph does not survive a narrow panel.',
       ],
     },
     {
       name: "Numbers",
-      components: ["StatRow", "Stat", "Chart", "Progress"],
+      components: ["StatRow", "Stat", "Sparkline", "Chart", "Heatmap", "Funnel", "Waterfall", "Progress"],
       notes: [
-        "- `values` must be the same length as `labels`.",
-        "- Prefer StatRow for a handful of figures and Chart for a trend.",
+        "- `values` must be the same length as `labels` for Chart; Heatmap rows should match the column count.",
+        "- Prefer StatRow for a handful of figures, Sparkline for a compact metric trend, and Chart for a full trend or comparison.",
+        "- Heatmap shows values across two dimensions; Funnel shows stage retention; Waterfall shows additive increases/decreases and explicit totals.",
         "- Chart kind: line/area for trends, bar for comparisons (stacked for parts of a total), pie/donut for shares of one whole (few slices), radar for scoring options on several axes.",
       ],
     },

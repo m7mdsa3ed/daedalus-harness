@@ -9,10 +9,13 @@
    never offers it. Fixed-positioned off the range's own rect: it stays with
    the text through a scroll, and it is the selection's until the selection
    goes. On a touch device it sits *below* the text, because above is where the
-   OS draws its own copy/select-all bar. */
+   OS draws its own copy/select-all bar.
+
+   Beside it, "Aside" starts a new thread on the passage instead, in a mini
+   window over this one (`aside-window.tsx`). */
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { MessageSquareQuoteIcon } from "lucide-react"
+import { MessageSquareQuoteIcon, MessageSquareTextIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useCoarsePointer } from "@/hooks/use-device"
 
@@ -43,9 +46,13 @@ function readSelection(root: HTMLElement): Anchor | null {
 export function QuoteSelection({
   rootRef,
   onQuote,
+  onAside,
 }: {
   rootRef: React.RefObject<HTMLElement | null>
   onQuote: (text: string) => void
+  /** Start an aside on the passage; the point is where to open its window.
+      `asTab` (⌘/Ctrl-click) skips the window for a tab of its own. */
+  onAside?: (text: string, x: number, y: number, asTab: boolean) => void
 }) {
   const [anchor, setAnchor] = React.useState<Anchor | null>(null)
   const coarse = useCoarsePointer()
@@ -82,21 +89,40 @@ export function QuoteSelection({
         translate: below ? "-50% 0" : "-50% -100%",
       }}
     >
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 gap-1.5 bg-popover px-2 text-xs shadow-md"
-        // Keep the selection: a mousedown on a button would collapse it first.
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => {
-          onQuote(anchor.text)
-          window.getSelection()?.removeAllRanges()
-          setAnchor(null)
-        }}
-      >
-        <MessageSquareQuoteIcon aria-hidden className="size-3.5" />
-        Ask about this
-      </Button>
+      <div className="flex gap-1">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1.5 bg-popover px-2 text-xs shadow-md"
+          // Keep the selection: a mousedown on a button would collapse it first.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onQuote(anchor.text)
+            window.getSelection()?.removeAllRanges()
+            setAnchor(null)
+          }}
+        >
+          <MessageSquareQuoteIcon aria-hidden className="size-3.5" />
+          Ask about this
+        </Button>
+        {onAside && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 bg-popover px-2 text-xs shadow-md"
+            title="Ask in a new thread linked to this one (⌘/Ctrl-click: open as tab)"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => {
+              onAside(anchor.text, anchor.left, anchor.bottom, event.metaKey || event.ctrlKey)
+              window.getSelection()?.removeAllRanges()
+              setAnchor(null)
+            }}
+          >
+            <MessageSquareTextIcon aria-hidden className="size-3.5" />
+            Aside
+          </Button>
+        )}
+      </div>
     </div>,
     document.body
   )

@@ -174,13 +174,14 @@ export function buildRows(
   items: ThreadItem[],
   groupTools: boolean,
   turnActive = false,
-  groupShells = false
+  groupShells = false,
+  groupEdits = false
 ): Row[] {
   const nested = mergeSubagentBatches(
-    mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive))
+    mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits))
   )
   const placed = placeNativeWorkflows(nested, items)
-  const grouped = groupTools ? groupToolRuns(placed) : placed
+  const grouped = groupTools ? groupToolRuns(placed, turnActive, groupEdits) : placed
   return groupShells ? groupShellRuns(grouped) : grouped
 }
 
@@ -564,7 +565,7 @@ function subagentActive(
  * is a subagent step with an empty rail, not a generic tool row) and every
  * RFD session item, which is a subagent by definition.
  */
-function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boolean): Row[] {
+function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boolean, groupEdits: boolean): Row[] {
   const heads = new Set<string>()
   for (const item of items) {
     if (item.kind === "tool" || item.kind === "subagent") heads.add(item.id)
@@ -608,7 +609,7 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boo
         id: item.id,
         head,
         active: subagentActive(head, kids, children, items, indexOf, turnActive),
-        children: groupTools ? groupToolRuns(children) : children,
+        children: groupTools ? groupToolRuns(children, turnActive, groupEdits) : children,
       })
     }
     return rows
@@ -719,31 +720,34 @@ function groupCodexLifecycle(
  * become one parent group. Its children split at specialized-view changes,
  * with repeated same-view calls folded into expandable subgroups. Other content
  * stays outside these groups. A leading or trailing thought joins only if the
- * run it borders has at least two calls.
+ * run it borders has at least two calls. During a live turn, keep the in-flight
+ * singleton in a run wrapper so later calls join without remounting its row.
  */
-export function groupToolRuns(rows: Row[]): Row[] {
+export function groupToolRuns(rows: Row[], turnActive = false, groupEdits = false): Row[] {
   const out: Row[] = []
   let items: (ToolItem | TextItem)[] = []
   let thoughts: TextItem[] = []
 
-  const flush = () => {
+  const flush = (keepLiveSingleton = false) => {
     const tools = items.filter((item): item is ToolItem => item.kind === "tool")
     const views = new Set(tools.map(toolViewOf))
     if (tools.length > 1 && views.size === 1) {
-      out.push({ kind: "run", id: `tools-${items[0].id}`, items })
+      out.push({ kind: "run", id: items[0].id, items })
     } else if (tools.length > 1) {
       out.push({
         kind: "tool-group",
-        id: `tool-group-${items[0].id}`,
+        id: items[0].id,
         items,
         children: groupSameViewRuns(items),
       })
+    } else if (keepLiveSingleton && turnActive && tools.length === 1) {
+      out.push({ kind: "run", id: items[0].id, items })
     } else out.push(...items)
     items = []
   }
 
   for (const row of rows) {
-    if (row.kind === "tool" && toolViewOf(row) !== "edit") {
+    if (row.kind === "tool" && (groupEdits || toolViewOf(row) !== "edit")) {
       items.push(...thoughts, row)
       thoughts = []
     } else if (row.kind === "thought") {
@@ -763,7 +767,7 @@ export function groupToolRuns(rows: Row[]): Row[] {
     items.push(...thoughts)
     thoughts = []
   }
-  flush()
+  flush(turnActive)
   out.push(...thoughts)
   return out
 }
@@ -776,7 +780,7 @@ function groupSameViewRuns(items: (ToolItem | TextItem)[]): Array<ToolItem | Tex
 
   const flush = () => {
     if (run.filter((item) => item.kind === "tool").length > 1)
-      out.push({ kind: "run", id: `tools-${run[0].id}`, items: run })
+      out.push({ kind: "run", id: run[0].id, items: run })
     else out.push(...run)
     run = []
     runView = null

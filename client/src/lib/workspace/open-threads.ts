@@ -16,6 +16,8 @@ import * as React from "react"
 
 const EMPTY: readonly string[] = Object.freeze([])
 let open: readonly string[] = EMPTY
+let activeChat: string | null = null
+let focusChat: ((id: string) => boolean) | null = null
 const listeners = new Set<() => void>()
 
 /** Replace the list. A no-op when it says the same thing — the dock calls this
@@ -30,6 +32,26 @@ export function openThreadIds(): readonly string[] {
   return open
 }
 
+/** Publish the chat tab in front, or null when another panel is active. */
+export function setActiveChat(id: string | null): void {
+  if (activeChat === id) return
+  activeChat = id
+  for (const listener of [...listeners]) listener()
+}
+
+export function activeChatId(): string | null {
+  return activeChat
+}
+
+/** Let sidebar rows focus an existing tab without depending on route changes. */
+export function setChatFocusHandler(handler: ((id: string) => boolean) | null): void {
+  focusChat = handler
+}
+
+export function focusOpenChat(id: string): boolean {
+  return focusChat?.(id) ?? false
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -38,4 +60,9 @@ function subscribe(listener: () => void): () => void {
 /** The open threads, in tab order, for the sidebar's "Opened" tier. */
 export function useOpenThreads(): readonly string[] {
   return React.useSyncExternalStore(subscribe, openThreadIds, openThreadIds)
+}
+
+/** The active chat id; null means a non-chat panel is in front. */
+export function useActiveChat(): string | null {
+  return React.useSyncExternalStore(subscribe, activeChatId, activeChatId)
 }

@@ -24,9 +24,7 @@
    Pure and memoizable, for the reason: the
    fold runs on every watch tick and must not be redone on every keystroke in
    the commit box. */
-import type { FileLayout } from "@/lib/ide/prefs"
 import type { GitFileState, GitStatus } from "@/lib/workspace/git-api"
-import { buildPathTree, countFiles, filesUnder, type PathDirNode } from "@/lib/workspace/git-tree"
 
 export type Staged = "yes" | "no" | "partial"
 
@@ -40,6 +38,9 @@ export interface WorkingFile {
   conflicted: boolean
   /** Never tracked by git, so "discard" cannot revert it — only delete can. */
   untracked: boolean
+  /** Lines on the side this row stands for; absent where git has no count. */
+  insertions?: number
+  deletions?: number
 }
 
 /** The order the list is read in: what needs a decision, then what is ready,
@@ -116,6 +117,14 @@ export function workingSet(status: GitStatus): WorkingFile[] {
         : untracked.has(path)
           ? "?"
           : markOf(disk?.worktree ?? index?.index ?? "modified"),
+      /* ponytail: staged + unstaged counts summed — lines touched, not the net
+         HEAD↔disk diff; a third numstat per status would be the exact one. */
+      ...(index?.insertions !== undefined || disk?.insertions !== undefined
+        ? {
+            insertions: (index?.insertions ?? 0) + (disk?.insertions ?? 0),
+            deletions: (index?.deletions ?? 0) + (disk?.deletions ?? 0),
+          }
+        : {}),
     })
   }
 
@@ -143,83 +152,6 @@ export function countsOf(files: readonly WorkingFile[]): {
     if (file.staged !== "yes") unstaged++
   }
   return { total: files.length, staged, unstaged, conflicted }
-}
-
-/* ── Drawing it ──
-   The list is flattened to rows before it is drawn: a flat array of fixed-height
-   rows can be memoized and windowed, and a repository mid-rebase with two
-   thousand changed paths is two thousand DOM nodes otherwise. */
-
-/** Every row is one line of this height — see `hooks/use-windowed-rows.ts`. */
-export const WORK_ROW_HEIGHT = 28
-export const WORK_ROW_HEIGHT_COARSE = 44
-
-export type WorkRow =
-  | {
-      kind: "dir"
-      key: string
-      depth: number
-      path: string
-      name: string
-      count: number
-      /** Everything under it, for the folder-level stage and discard. */
-      paths: string[]
-      /** The tick a folder wears is its children's answer, folded. */
-      staged: Staged
-    }
-  | { kind: "file"; key: string; depth: number; file: WorkingFile }
-
-/** Fold a set of children into the one tick their folder wears. */
-function foldStaged(files: readonly WorkingFile[]): Staged {
-  let yes = 0
-  let no = 0
-  for (const file of files) {
-    if (file.staged === "partial") return "partial"
-    if (file.staged === "yes") yes++
-    else no++
-    if (yes > 0 && no > 0) return "partial"
-  }
-  return no === 0 && yes > 0 ? "yes" : "no"
-}
-
-export function flattenWorkingSet(
-  files: readonly WorkingFile[],
-  options: { layout: FileLayout; collapsed: ReadonlySet<string> }
-): WorkRow[] {
-  const rows: WorkRow[] = []
-
-  if (options.layout === "list") {
-    for (const file of files) rows.push({ kind: "file", key: file.path, depth: 0, file })
-    return rows
-  }
-
-  /* Single-child chains fold into one row (`src/lib/ide` rather than three
-     rows holding one child each) — the reason the tree is readable in a 320px
-     column at all. */
-  const tree = buildPathTree([...files], (file) => file.path, { compact: true })
-
-  const walk = (node: PathDirNode<WorkingFile>, depth: number): void => {
-    for (const dir of node.dirs) {
-      const under = filesUnder(dir).map((leaf) => leaf.item)
-      rows.push({
-        kind: "dir",
-        key: `dir:${dir.path}`,
-        depth,
-        path: dir.path,
-        name: dir.name,
-        count: countFiles(dir),
-        paths: under.map((file) => file.path),
-        staged: foldStaged(under),
-      })
-      if (!options.collapsed.has(dir.path)) walk(dir, depth + 1)
-    }
-    for (const leaf of node.files) {
-      rows.push({ kind: "file", key: leaf.path, depth, file: leaf.item })
-    }
-  }
-
-  walk(tree, 0)
-  return rows
 }
 
 /* ── The groups the list is drawn in ──
@@ -254,6 +186,8 @@ export function scmGroups(status: GitStatus): WorkGroup[] {
     mark,
     untracked: flags.untracked ?? false,
     conflicted: flags.conflicted ?? false,
+    insertions: source.insertions,
+    deletions: source.deletions,
   })
   const byPath = (a: WorkingFile, b: WorkingFile) => a.path.localeCompare(b.path)
   const groups: WorkGroup[] = [
@@ -282,36 +216,13 @@ export function scmGroups(status: GitStatus): WorkGroup[] {
   return groups.filter((group) => group.files.length > 0)
 }
 
-export type ScmRow =
-  | { kind: "group"; key: string; group: GroupId; title: string; count: number; paths: string[]; untracked: boolean }
-  | (WorkRow & { group: GroupId })
-
-/** Every group's header, then its rows (tree or list), as one flat array — so
-    the three groups are one windowed scroller, not three. A folder's collapse
-    is keyed per group (`group:path`): the same folder can be open above and
-    shut below. */
-export function flattenGroups(
-  groups: readonly WorkGroup[],
-  options: { layout: FileLayout; collapsedDirs: ReadonlySet<string>; collapsedGroups: ReadonlySet<GroupId> }
-): ScmRow[] {
-  const rows: ScmRow[] = []
-  for (const group of groups) {
-    rows.push({
-      kind: "group",
-      key: `group:${group.id}`,
-      group: group.id,
-      title: group.title,
-      count: group.files.length,
-      paths: group.files.map((file) => file.path),
-      untracked: group.files.every((file) => file.untracked),
-    })
-    if (options.collapsedGroups.has(group.id)) continue
-    const prefix = `${group.id}:`
-    const collapsed = new Set(
-      [...options.collapsedDirs].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length))
-    )
-    for (const row of flattenWorkingSet(group.files, { layout: options.layout, collapsed }))
-      rows.push({ ...row, key: `${prefix}${row.key}`, group: group.id })
+/** Lines across a set of rows — what a group header and the summary say. */
+export function linesOf(files: readonly { insertions?: number; deletions?: number }[]) {
+  let insertions = 0
+  let deletions = 0
+  for (const file of files) {
+    insertions += file.insertions ?? 0
+    deletions += file.deletions ?? 0
   }
-  return rows
+  return { insertions, deletions }
 }

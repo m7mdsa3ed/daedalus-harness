@@ -13,9 +13,9 @@ import * as React from "react"
 
 import { createLocalStore } from "@/lib/local-store"
 
-export type InspectorTab = "changes" | "plan" | "agents" | "details"
+export type InspectorTab = "changes" | "plan" | "agents" | "details" | "tokens"
 
-const TABS: readonly InspectorTab[] = ["changes", "plan", "agents", "details"]
+const TABS: readonly InspectorTab[] = ["changes", "plan", "agents", "details", "tokens"]
 
 export interface InspectorPrefs {
   /** Docked beside the transcript where the panel is wide enough. */

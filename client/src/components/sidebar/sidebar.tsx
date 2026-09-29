@@ -46,7 +46,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { FolderIcon, History as HistoryIcon, Layers, Pin, Trash2 } from "lucide-react"
+import { FolderIcon, History as HistoryIcon, Layers, Pin, RefreshCwIcon, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -65,10 +65,14 @@ import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { useProjects } from "@/lib/queries/catalog"
-import { useOpenThreads } from "@/lib/workspace/open-threads"
+import { useActiveChat, useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, isListed, type Project, type SessionMeta } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { useCoarsePointer } from "@/hooks/use-device"
+import { describeError } from "@/lib/errors"
+import { toast } from "@/lib/toast"
 
 /** Rows Recents shows before folding the rest into the project folders. */
 const RECENT_COUNT = 8
@@ -93,7 +97,13 @@ export function useStartThreadIn(actions: Actions) {
 }
 
 /* ── The list ── */
-export function ThreadSidebar({ actions }: { actions: Actions }) {
+export function ThreadSidebar({
+  actions,
+  closeOpenThread,
+}: {
+  actions: Actions
+  closeOpenThread: (session: SessionMeta) => void
+}) {
   /* The session list and the project catalog — never `state.threads` itself,
      which is replaced on every streamed token of every thread. Projects come
      from the query cache, so only a projects refresh reaches this. */
@@ -105,6 +115,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      what Recents leaves out. Published by the dock (lib/workspace/open-threads),
      so a reload rebuilds it from the restored layout. */
   const openIds = useOpenThreads()
+  const activeThreadId = useActiveChat()
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
   /* The icon rail is 3rem wide: a thread row there is a title clipped to
@@ -115,6 +126,16 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      is a sheet, always full width, whatever `open` says. */
   const { state: sidebarState, isMobile } = useSidebar()
   const railed = sidebarState === "collapsed" && !isMobile
+  const coarse = useCoarsePointer()
+  const [refreshing, setRefreshing] = React.useState(false)
+  const refreshSessions = React.useCallback(() => {
+    if (refreshing) return
+    setRefreshing(true)
+    void actions
+      .refreshSessions()
+      .catch((error: unknown) => toast.error(describeError(error).title))
+      .finally(() => setRefreshing(false))
+  }, [actions, refreshing])
 
   const statuses = useThreadStatuses()
   const status = React.useCallback(
@@ -234,7 +255,23 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       <SidebarGroup className={cn(TIER, GROUP)}>
         <SidebarGroupLabel className={cn(GROUP_LABEL, "group/label")}>
           <span className="truncate">Threads</span>
-          <ViewMenu view={view} />
+          <div className="ml-auto flex h-full items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              title="Refresh threads"
+              aria-label="Refresh threads"
+              disabled={refreshing}
+              onClick={refreshSessions}
+              className={cn(
+                "rounded-sm text-muted-foreground hover:text-sidebar-foreground",
+                coarse ? "size-10" : "size-6"
+              )}
+            >
+              <RefreshCwIcon className={cn("size-3.5", refreshing && "animate-spin")} />
+            </Button>
+            <ViewMenu view={view} />
+          </div>
         </SidebarGroupLabel>
       </SidebarGroup>
 
@@ -263,8 +300,18 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           every other tier, so the transcript in front of you always has a row
           that says so. Recents leaves these out; closing a tab returns it. */}
       {opened.length > 0 && (
-        <FoldableGroup groupKey="__opened" label="Opened" icon={<Layers className="size-3 shrink-0" />}>
-          <ThreadList sessions={opened} {...listProps} />
+        <FoldableGroup
+          groupKey="__opened"
+          label="Opened"
+          icon={<Layers className="size-3 shrink-0" />}
+          expandOn={opened.some((session) => session.id === activeThreadId) ? activeThreadId : null}
+        >
+          <ThreadList
+            sessions={opened}
+            {...listProps}
+            onClose={closeOpenThread}
+            revealActive
+          />
         </FoldableGroup>
       )}
 

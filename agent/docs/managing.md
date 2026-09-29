@@ -47,6 +47,15 @@ fallback model and no long backoff, because which model to move to is the one th
 harness cannot guess. A thread with nobody in front of it — a workflow step, a scheduled
 run — never holds; it fails fast, because the run is waiting on the turn to settle.
 
+**Tool failures have a separate diagnostic log.** Every failed tool call is
+appended to `~/.daedalus-agent/tool-errors.jsonl` (or the configured
+`DAEDALUS_AGENT_HOME`). Each JSONL record includes the timestamp, session and
+call IDs, tool name, workspace, model, complete input, and error name, message,
+stack and cause when available. This file is separate from the transcript so
+replay is unchanged; it is created with owner-only permissions. Inputs and
+error details can contain workspace data or secrets, so protect and share the
+file accordingly.
+
 **The model list is live and it is not magic.** Because the agent is declared
 `liveConfig: "acp"`, the server materializes the union of every profile's
 catalog into `<cwd>/.claude/settings.local.json` before each spawn, and the
@@ -124,12 +133,23 @@ The context-window reading (`usage_update`'s `used`) is a different number and
 deliberately untouched: it is the provider's own total for the last step, cache
 hits included, because a cached token still occupies the window.
 
+The thread's Tokens panel shows per-request estimates for the system prompt,
+built-in tool schemas, MCP tool schemas and text in user-role messages. The
+remaining history and tool results are derived from the provider's prompt total.
+These local estimates use the same tokenizer and framing, so they can differ from
+the provider; all prompt parts are kept within and sum to the provider total.
+Non-text media is not included in the user-message estimate. Other runtimes do
+not send this breakdown.
+
 A subagent's spend is part of the turn's answer: every child folds its total
 into the same `usage` the turn ends with, so a turn that spent most of its
-budget in three subagents no longer reports only the root's tokens. The
-context-window gauge is the parent's alone — a child's steps measure the
-child's own, smaller window, and writing them onto the parent made compaction
-threshold against a context the parent never had.
+budget in three subagents no longer reports only the root's tokens. Each Task
+child also reports settled usage on the parent as `_daedalus/subagent_usage`,
+keyed by child session id, for its own card's cost figure; this is attribution,
+not spend to add again to the parent's total. The context-window gauge is the
+parent's alone — a child's steps measure the child's own, smaller window, and
+writing them onto the parent made compaction threshold against a context the
+parent never had.
 
 ## Tracing
 

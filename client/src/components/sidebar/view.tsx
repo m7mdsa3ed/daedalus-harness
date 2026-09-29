@@ -76,7 +76,7 @@ export function ViewMenu({ view }: { view: SidebarView }) {
             type="button"
             title="Sort and filter"
             className={cn(
-              "ml-auto grid size-5 place-items-center rounded-sm transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:text-sidebar-foreground",
+              "grid size-5 place-items-center rounded-sm transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:text-sidebar-foreground",
               filtered ? "text-primary hover:text-primary" : "text-muted-foreground"
             )}
           />

@@ -359,12 +359,13 @@ export async function exportProfile(id: string, includeSecrets: boolean): Promis
  */
 export async function setProfileFlags(
   id: string,
-  flags: { hidden?: boolean; disabled?: boolean },
+  flags: { hidden?: boolean; disabled?: boolean; smallModel?: string },
 ): Promise<Profile | undefined> {
   if (isVirtualProfile(id)) return undefined;
-  const patch: { hidden?: boolean; disabled?: boolean } = {};
+  const patch: { hidden?: boolean; disabled?: boolean; smallModel?: string } = {};
   if (flags.hidden !== undefined) patch.hidden = flags.hidden;
   if (flags.disabled !== undefined) patch.disabled = flags.disabled;
+  if (flags.smallModel !== undefined) patch.smallModel = flags.smallModel.trim();
   if (Object.keys(patch).length === 0) return await getProfile(id);
   const result = await db.update(profilesTable).set(patch).where(eq(profilesTable.id, id));
   if ((result.rowCount ?? 0) === 0) return undefined;

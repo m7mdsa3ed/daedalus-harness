@@ -229,15 +229,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   and the reason an idle-retired thread no longer comes back on the agent's defaults. Model
   and effort keep their own columns; a value written twice can disagree with itself.
 - **A message typed into a running turn is queued, not steered — and the queue is the
-  server's.** Steering is explicit (`prompt {steer:true}`, ⌘⇧Enter). The `queue` event is
+  server's.** Steering is a composer send action only (`prompt {steer:true}`, ⌘Enter); queued
+  rows wait for the turn to finish unless the user chooses Send now. The `queue` event is
   absolute and reaches every peer including the origin.
-- **Escape stops the turn and takes back the message that has not landed** (`cancel
-  {reclaim:true}`), newest first and one only, back into an empty composer. Atomic and
-  server-side, and **the take-back comes before the cancel**: a settle is a step boundary, and
-  `flushSteers` would draw the held steer's bubble. A queued row never left the server; a held
-  steer is unwound only while it is still held (`takeSteer`) — **past its boundary nothing
-  comes back**, which is never a reason to reach for an older message. Opt-in, because the
-  message leaves the queue: only a caller with somewhere to put the words may ask.
+- **Escape stops the turn and can take back the newest queued row** (`cancel {reclaim:true}`),
+  one only, back into an empty composer. Atomic and server-side, and **the take-back comes
+  before the cancel**: a queued row never left the server. A composer steer is already on the
+  wire; if still held when stopped, it returns to the queue to run next. Opt-in, because the
+  reclaimed message leaves the queue: only a caller with somewhere to put the words may ask.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
   **The key in the path is the credential** — minted per boot, never stored.
@@ -380,6 +379,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the user typed it or the toggle was flipped back on mid-thread, still renders, because the
   renderer reads no switch. That is what makes a mid-thread flip change nothing already on
   screen.
+- **An aside is a thread, not an annotation store** (`thread-view/aside-window.tsx`): "Aside"
+  on a transcript selection mints a draft on the parent's pair with the passage quoted in its
+  composer, drawn in a mini window over the parent. The link is `forkedFromSessionId` (turn
+  null) and the flag is `sessions.aside_quote` — the sidebar badges it, and the parent marks
+  the passage with the CSS Custom Highlight API (`aside-highlights.ts`, one shared `aside`
+  highlight, matched ignoring whitespace), never by rewriting its rows. A click on the mark
+  reopens it; "Open as tab" is the same thread in the dock.
 - **⌘K's root page never asks the server**; searching is a destination owning its own query,
   debounce and abort. Rows are data, not JSX, and cmdk's own filter is off.
 - Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/view-options.ts`,
@@ -771,7 +777,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the newest gated turn's, which is a reading of the thread and belongs where the other three
   are, and the file list a chip could never hold is what its popover is for. `ThreadView` picks
   the turn (the last value of `withTurnChanges`) — the composer holds no opinion about which.
-  **Reviewing a turn is the Source Control panel's Review half** (the turn timeline, below); its Git half is the IDE's old `workspace/scm/` view — stage, commit, branch, pull/push, stashes, history.
+  **Reviewing a turn is the Source Control panel's Review half** (the turn timeline, below); its Git half is `thread-view/source-control.tsx` (on the `workspace/scm/` pieces: commit box, branch picker, commit graph and detail) — grouped working set with line counts, stage, commit/amend/undo, branch, fetch/pull/push, stashes, history that opens a commit to its files and diffs.
 - **A chat tab on a wide screen is a thread dock** (`workspace/thread-dock.tsx`): a nested
   dockview holding the transcript and the panels about *that* thread — Source Control, Plan, Agents,
   Details (`ThreadSection`, the inspector's readings one panel each), Terminal, Preview —

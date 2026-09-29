@@ -1,11 +1,12 @@
 /* ── The memoized thread list ── rows plus the hoisted handlers they share. */
 import * as React from "react"
 import { ChevronRight } from "lucide-react"
-import { useLocation, useNavigate } from "react-router"
+import { useNavigate } from "react-router"
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { useThreadRowActions } from "@/components/thread-menu"
 import type { Actions } from "@/lib/actions"
-import { currentThreadId, threadPath } from "@/lib/router"
+import { threadPath } from "@/lib/router"
+import { focusOpenChat, useActiveChat } from "@/lib/workspace/open-threads"
 import { usePins } from "@/lib/pins"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
@@ -24,10 +25,15 @@ export const ThreadList = React.memo(function ThreadList({
   trash = false,
   limit,
   grouped = false,
+  onClose,
+  revealActive = false,
 }: {
   sessions: SessionMeta[]
   actions: Actions
   status: (session: SessionMeta) => ThreadStatus
+  onClose?: (session: SessionMeta) => void
+  /** Keep the active row in view for the dock's Opened tier. */
+  revealActive?: boolean
   /** Rendering the Trash: these threads are deleted, so the row restores
       instead of opening and the menu offers the two ways back out. */
   trash?: boolean
@@ -47,9 +53,8 @@ export const ThreadList = React.memo(function ThreadList({
   const [expanded, setExpanded] = React.useState(false)
   const visible = limit && !expanded ? sessions.slice(0, limit) : sessions
   const hidden = sessions.length - visible.length
-  const location = useLocation()
   const navigate = useNavigate()
-  const activeThreadId = currentThreadId(location.pathname, location.search)
+  const activeThreadId = useActiveChat()
   const pins = usePins()
   const pinSet = React.useMemo(() => new Set(pins), [pins])
   const { isMobile, setOpenMobile } = useSidebar()
@@ -67,6 +72,7 @@ export const ThreadList = React.memo(function ThreadList({
 
   const open = React.useCallback((session: SessionMeta) => {
     if (isMobile) setOpenMobile(false)
+    if (focusOpenChat(session.id)) return
     void navigate(threadPath(session.id))
   }, [isMobile, setOpenMobile, navigate])
 
@@ -77,6 +83,22 @@ export const ThreadList = React.memo(function ThreadList({
      focusable buttons (Tab still enters and leaves the list as before); no
      roving tabindex, on purpose. */
   const listRef = React.useRef<HTMLUListElement>(null)
+  React.useEffect(() => {
+    if (
+      !revealActive ||
+      !activeThreadId ||
+      !sessions.some((session) => session.id === activeThreadId)
+    )
+      return
+    const frame = requestAnimationFrame(() => {
+      const row = Array.from(
+        listRef.current?.querySelectorAll<HTMLElement>("[data-thread-id]") ?? []
+      ).find((candidate) => candidate.dataset.threadId === activeThreadId)
+      row?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeThreadId, revealActive, sessions])
+
   const onListKeyDown = (event: React.KeyboardEvent<HTMLUListElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
     const root = listRef.current
@@ -124,6 +146,7 @@ export const ThreadList = React.memo(function ThreadList({
               onPurge={purge}
               onPin={pin}
               onRemoveWorktree={removeWorktree}
+              onClose={onClose}
             />
           </React.Fragment>
         )

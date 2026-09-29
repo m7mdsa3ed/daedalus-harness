@@ -425,6 +425,8 @@ export interface McpCheckResult {
   /** Unix ms of the connection this listing came from — absent on the two
       answers the server gives without connecting at all. */
   checkedAt?: number
+  /** This server deliberately defers its first connection until explicit Check. */
+  deferred?: boolean
 }
 
 /** One of a thread's MCP servers as the composer reads it
@@ -894,6 +896,9 @@ export interface SessionMeta {
       `parentSessionId`, it hides nothing). */
   forkedFromSessionId?: string | null
   forkedFromTurnId?: string | null
+  /** An aside: the passage it was started on, selected in the thread
+      `forkedFromSessionId` names. Set = flagged as an aside everywhere. */
+  asideQuote?: string | null
   /** The git worktree this thread runs in (server-side `git.createWorktree`):
       its project-relative path — which is also its `repo` for source control
       — the branch it was made on, and whether it is still on disk (absent
@@ -979,6 +984,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.parentSessionId === b.parentSessionId &&
     a.forkedFromSessionId === b.forkedFromSessionId &&
     a.forkedFromTurnId === b.forkedFromTurnId &&
+    (a.asideQuote ?? null) === (b.asideQuote ?? null) &&
     a.worktree?.path === b.worktree?.path &&
     a.worktree?.exists === b.worktree?.exists &&
     sameIds(a.mcpServerIds, b.mcpServerIds) &&

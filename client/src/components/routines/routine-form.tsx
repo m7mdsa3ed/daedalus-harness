@@ -541,7 +541,7 @@ export function RoutineForm({
           <div className="rounded-xl border">
             {/* Pinned below, unlike the composer's copy: this row is near the
                 top of a form page, where there is room under it. */}
-            <DraftScopeRow meta={meta} actions={facade} remember={false} side="bottom" />
+            <DraftScopeRow meta={meta} actions={facade} remember={false} />
             <div className="border-t px-1 py-0.5">
               <DraftConfigPopover meta={meta} actions={facade} remember={false} />
             </div>

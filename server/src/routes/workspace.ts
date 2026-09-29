@@ -365,14 +365,21 @@ export function workspaceRoutes(app: Hono): void {
     );
   });
 
+  app.get("/api/projects/:projectId/git/commit", (c) =>
+    workspace(c, () =>
+      git.commitDetail(c.req.param("projectId"), c.req.query("hash") ?? "", c.req.query("repo")),
+    ),
+  );
+
   app.get("/api/projects/:projectId/git/file", (c) => {
     const comparison = c.req.query("comparison");
     const side: git.Comparison =
       comparison === "staged" ? "staged" : comparison === "worktree" ? "worktree" : "head";
     /* No `?repo=`: the path is project-relative and names exactly one
        worktree, so the server derives it. */
+    const rev = c.req.query("rev");
     return workspace(c, () =>
-      git.fileAt(c.req.param("projectId"), c.req.query("path") ?? "", side),
+      git.fileAt(c.req.param("projectId"), c.req.query("path") ?? "", rev ? { rev } : side),
     );
   });
 
@@ -497,8 +504,14 @@ export function workspaceRoutes(app: Hono): void {
          to — and the status behind it is what repaints the ahead/behind. */
       case "pull":
       case "push":
+      case "fetch":
         return workspace(c, async () => {
           const result = await git.sync(projectId, action, repo);
+          return { ...result, status: await git.status(projectId, repo) };
+        });
+      case "undo":
+        return workspace(c, async () => {
+          const result = await git.undoCommit(projectId, repo);
           return { ...result, status: await git.status(projectId, repo) };
         });
       case "checkout":

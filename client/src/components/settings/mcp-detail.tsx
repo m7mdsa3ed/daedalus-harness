@@ -19,12 +19,13 @@
    A chunk of its own (`sections.ts` lazy-loads it), so the library list does
    not carry the playground. */
 import * as React from "react"
-import { Navigate, useLocation, useNavigate, useParams } from "react-router"
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { PlayIcon, PlugIcon, SaveIcon, SearchCheckIcon, SparklesIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { McpIcon } from "@/components/entity-icon"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -34,9 +35,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { useMcpCatalog, useMcpServers, useProjects } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
-import { settingsFormPath, settingsPath } from "@/lib/router"
+import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 import {
   api,
+  mcpNeedsAuth,
   mcpSubtitle,
   type McpCheckEntry,
   type McpCheckResult,
@@ -45,7 +47,7 @@ import {
   type McpInvokeKind,
   type McpServerDef,
 } from "@/lib/settings"
-import { Field, FormPageHeader, Group, PageForm, lines, pairs } from "./primitives"
+import { Field, FormPageHeader, Group, PageForm, Row, lines, pairs } from "./primitives"
 import { useSettingsPage } from "./layout"
 
 /** Where a playground's calls go. The page decides — a row's own routes, or
@@ -104,7 +106,14 @@ export function McpDetailPage() {
           {query.error.message}
         </Notice>
       )}
-      <McpPlayground result={query.data ?? null} call={call}>
+      {server.id === "chrome-devtools-mcp" && !query.data?.ok && (
+        <Notice tone="info" title="Chrome runs on the harness server">
+          Press Check to start Chrome DevTools MCP. With Chrome 144 or newer, enable remote debugging at
+          chrome://inspect/#remote-debugging; Chrome will ask you to approve the connection. The agent uses
+          the MCP permission gate for browser actions.
+        </Notice>
+      )}
+      <McpPlayground result={query.data?.deferred ? null : query.data ?? null} call={call}>
         {server.type === "builtin" && projects.length > 1 && (
           <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>
             <SelectTrigger size="sm" className="w-56" title="Which project a call runs against">
@@ -165,6 +174,30 @@ function serverOf(form: McpTransportForm) {
  * now: a half-edited command must not be what a Run press spawns. Connecting
  * again is what picks up an edit, and it starts every row afresh (`key`).
  */
+function ConnectedMcpServers() {
+  const servers = useMcpServers().filter((server) => !mcpNeedsAuth(server))
+
+  if (servers.length === 0) return null
+
+  return (
+    <Group label="Saved MCP servers" hint="Open a connected library server directly in the playground.">
+      {servers.map((server) => (
+        <Link
+          key={server.id}
+          to={mcpDetailPath(server.id)}
+          className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Row
+            icon={<McpIcon server={server} className="size-4" />}
+            title={server.name}
+            subtitle={mcpSubtitle(server)}
+          />
+        </Link>
+      ))}
+    </Group>
+  )
+}
+
 export function McpPlaygroundPage() {
   const { settings } = useSettingsPage()
   const navigate = useNavigate()
@@ -222,6 +255,7 @@ export function McpPlaygroundPage() {
         description="Connect to any MCP server, saved or not, and run what it offers. Nothing here is stored until you save it to the library."
         onBack={() => void navigate(settingsPath("mcp"))}
       />
+      <ConnectedMcpServers />
       <PageForm
         className="mb-8"
         onSubmit={(e) => {

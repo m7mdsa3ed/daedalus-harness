@@ -357,9 +357,10 @@ beside Import in Settings › MCP.
   same slot the Sources strip sits in — `finishedTurns` in `thread-view.tsx` is the one
   anchor both hang off — and reads `ThreadState.turnUsage`, the per-turn readings kept
   unsummed beside the running total and matched to a position by the `turnId` on the
-  message that opened the turn. A Task-tool subagent gets no figure at all: its tokens
-  are inside the parent turn's own reading, and counting them again would say the same
-  tokens twice.
+  message that opened the turn. A Task-tool subagent receives `_daedalus/subagent_usage`
+  updates from the Daedalus runtime, keyed by its child session id, so its card shows an
+  individual breakdown. Those tokens remain included in the parent turn's total; the child
+  figure is attribution, not additional spend to add on top.
   **Inside a turn the same question is answered by `usage_update`, which is not the
   running context total its name suggests**: both runtimes that send one fill `used` with
   the *last model request's* own token count (claude-agent-acp from the assistant

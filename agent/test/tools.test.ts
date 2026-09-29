@@ -76,8 +76,9 @@ function freshCwd(): string {
 // --- reject: the tool fails, the file stays, the turn still ends cleanly ---
 {
   const cwd = freshCwd();
+  const env = testEnv();
   const agent = buildAgentApp({
-    env: testEnv(),
+    env,
     makeModel: scriptedModel([
       toolCallScript("write_file", { path: "never.txt", content: "nope" }),
       textScript("Understood, not writing. "),
@@ -95,8 +96,32 @@ function freshCwd(): string {
       .updatesOf("tool_call_update")
       .find((u) => (u.update as { status?: string }).status === "failed");
     assert.ok(JSON.stringify(failed?.update).includes("rejected"));
+    const toolErrors = readFileSync(join(env.home, "tool-errors.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        timestamp: string;
+        sessionId: string;
+        toolCallId: string;
+        toolName: string;
+        cwd: string;
+        model: string;
+        input: { path?: string; content?: string };
+        error: { name: string; message: string };
+      });
+    const diagnostic = toolErrors.at(-1);
+    assert.ok(diagnostic, "failed tool call is written to the diagnostic log");
+    assert.equal(diagnostic.sessionId, sessionId);
+    assert.equal(diagnostic.toolCallId, "call-1");
+    assert.equal(diagnostic.toolName, "write_file");
+    assert.equal(diagnostic.cwd, cwd);
+    assert.equal(diagnostic.model, "test-model");
+    assert.deepEqual(diagnostic.input, { path: "never.txt", content: "nope" });
+    assert.equal(diagnostic.error.name, "PermissionRejected");
+    assert.match(diagnostic.error.message, /rejected/);
+    assert.ok(Number.isFinite(Date.parse(diagnostic.timestamp)));
   });
-  console.log("tools: reject ok");
+  console.log("tools: reject + diagnostic log ok");
 }
 
 // --- acceptEdits: edits run without asking; sticky always-allow works for bash ---

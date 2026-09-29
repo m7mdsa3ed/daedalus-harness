@@ -106,6 +106,8 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   const profilePatchSchema = z.object({
     hidden: z.boolean().optional(),
     disabled: z.boolean().optional(),
+    /** The helper model, from the composer's model picker — "" is "the session model". */
+    smallModel: z.string().optional(),
   });
   /* One model appended to a profile's catalog, for the composer's "Add
      model…". Its own route for the same reason the flags PATCH is one: the

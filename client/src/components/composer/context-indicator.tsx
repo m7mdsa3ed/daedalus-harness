@@ -337,8 +337,11 @@ export function ContextIndicator({
       ? [
           { label: "System prompt", tokens: split.system, value: `~${formatTokens(split.system)}`, swatch: "bg-chart-1" },
           { label: "Tool definitions", tokens: split.tools, value: `~${formatTokens(split.tools)}`, swatch: "bg-chart-2" },
+          ...(split.mcp > 0
+            ? [{ label: "MCP tools", tokens: split.mcp, value: `~${formatTokens(split.mcp)}`, swatch: "bg-chart-4" }]
+            : []),
           (() => {
-            const rest = Math.max(0, context.used - split.system - split.tools)
+            const rest = Math.max(0, context.used - split.system - split.tools - split.mcp)
             return { label: "Conversation", tokens: rest, value: formatTokens(rest), swatch: "bg-chart-3" }
           })(),
         ]

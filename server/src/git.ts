@@ -78,6 +78,10 @@ export interface GitFile {
   from?: string;
   index: GitState;
   worktree: GitState;
+  /** Lines added and removed on this side (index for a staged entry, disk for
+      an unstaged one). Absent for untracked, conflicted and binary files. */
+  insertions?: number;
+  deletions?: number;
 }
 
 export type GitState =
@@ -408,7 +412,8 @@ function parseStatus(stdout: string, scope: string): Omit<GitStatus, "repository
         worktree,
       };
       if (index !== "unmodified") status.staged.push(file);
-      if (worktree !== "unmodified") status.unstaged.push(file);
+      /* A copy: the two lists get different line counts. */
+      if (worktree !== "unmodified") status.unstaged.push({ ...file });
       continue;
     }
   }
@@ -437,16 +442,66 @@ export async function status(projectId: string, repo?: string): Promise<GitStatu
      checkout is not this project's, and asking for it would mean parsing (and
      on a large monorepo, buffering) changes that are then dropped. `--branch`
      still reports, pathspec or not. */
-  const { stdout } = await run(context.dir, [
-    "status",
-    "--porcelain=v2",
-    "-z",
-    "--branch",
-    "--untracked-files=all",
-    "--",
-    ".",
+  const [{ stdout }, cached, worktree] = await Promise.all([
+    run(context.dir, [
+      "status",
+      "--porcelain=v2",
+      "-z",
+      "--branch",
+      "--untracked-files=all",
+      "--",
+      ".",
+    ]),
+    numstat(context.dir, ["--cached"]),
+    numstat(context.dir, []),
   ]);
-  return { repository: true, repo: context.path, ...parseStatus(stdout, context.scope) };
+  const parsed = parseStatus(stdout, context.scope);
+  const attach = (files: GitFile[], stats: Map<string, LineStat>) => {
+    for (const file of files) Object.assign(file, stats.get(file.path));
+  };
+  attach(parsed.staged, cached);
+  attach(parsed.unstaged, worktree);
+  return { repository: true, repo: context.path, ...parsed };
+}
+
+interface LineStat {
+  insertions: number;
+  deletions: number;
+}
+
+/** `git diff --numstat -z` → path ⇒ lines. A rename record is
+    `ins\tdel\t\0from\0to`; a binary file is `-\t-` and is left out. */
+export function parseNumstat(stdout: string): Map<string, LineStat & { from?: string }> {
+  const stats = new Map<string, LineStat & { from?: string }>();
+  const parts = stdout.split("\0");
+  for (let i = 0; i < parts.length; i += 1) {
+    const record = parts[i];
+    if (!record) continue;
+    const [ins = "", del = "", ...rest] = record.split("\t");
+    let path = rest.join("\t");
+    let from: string | undefined;
+    if (!path) {
+      from = parts[i + 1];
+      path = parts[i + 2] ?? "";
+      i += 2;
+    }
+    if (!path || ins === "-") continue;
+    stats.set(path, { insertions: Number(ins) || 0, deletions: Number(del) || 0, ...(from ? { from } : {}) });
+  }
+  return stats;
+}
+
+/** Line counts for the working set, relative to `dir` like the status is. A
+    failure (an unborn HEAD on an old git) is no counts, never no status. */
+async function numstat(dir: string, extra: string[]): Promise<Map<string, LineStat>> {
+  try {
+    const { stdout } = await run(dir, ["diff", "--numstat", "-z", "--relative", "--no-ext-diff", ...extra, "--", "."]);
+    const stats = parseNumstat(stdout);
+    for (const value of stats.values()) delete value.from;
+    return stats;
+  } catch {
+    return new Map();
+  }
 }
 
 /** `--` before paths, always: a file called `-f` or `--cached` is a valid file
@@ -579,10 +634,16 @@ const REMOTE_ENV = {
 
 export async function sync(
   projectId: string,
-  action: "pull" | "push",
+  action: "pull" | "push" | "fetch",
   repo?: string,
 ): Promise<{ output: string }> {
   const { dir } = await repoOrThrow(projectId, repo);
+  /* A fetch moves no ref of ours, so it is safe anywhere — and it is what makes
+     the ahead/behind the header draws true rather than as of the last pull. */
+  if (action === "fetch") {
+    const { stdout, stderr } = await run(dir, ["fetch", "--all", "--prune"], REMOTE_ENV, [], REMOTE_TIMEOUT_MS);
+    return { output: [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") || "Fetched." };
+  }
   const state = await status(projectId, repo);
   if (state.unborn) throw fail(409, "this repository has no commits yet");
 
@@ -691,6 +752,117 @@ export async function log(
   return out;
 }
 
+export interface CommitFile {
+  path: string;
+  from?: string;
+  /** One letter, as `--name-status` spells it: A M D R C T. */
+  status: string;
+  /** Null for a binary file. */
+  insertions: number | null;
+  deletions: number | null;
+}
+
+export interface CommitDetail extends GitCommit {
+  email: string;
+  /** The whole message, subject included. */
+  body: string;
+  committer: string;
+  committedAt: number;
+  files: CommitFile[];
+}
+
+/**
+ * One commit, opened: its whole message, both identities and what it changed.
+ * A merge is measured against its first parent — the change it brought to the
+ * branch it landed on. `HEAD` is accepted beside a hash, for "amend the last
+ * commit" to read the message it is amending.
+ */
+export async function commitDetail(projectId: string, rev: string, repo?: string): Promise<CommitDetail> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  if (rev !== "HEAD" && !HASH.test(rev)) throw fail(400, "a commit needs a hash");
+  let head: string;
+  try {
+    ({ stdout: head } = await run(dir, [
+      "show",
+      "-s",
+      `--format=%H${US}%h${US}%an${US}%ae${US}%at${US}%cn${US}%ct${US}%P${US}%D${US}%B`,
+      rev,
+      "--",
+    ]));
+  } catch {
+    throw fail(404, `no commit ${rev}`);
+  }
+  const [hash = "", short = "", author = "", email = "", at = "0", committer = "", committedAt = "0", parentList = "", refList = "", ...bodyParts] =
+    head.split(US);
+  const body = bodyParts.join(US).trim();
+  const parents = parentList.trim() ? parentList.trim().split(/\s+/) : [];
+  const range = parents[0] ? [parents[0], hash] : ["--root", hash];
+  const diffArgs = ["diff-tree", "-r", "-M", "-z", "--no-commit-id", "--relative"];
+  const [names, counts] = await Promise.all([
+    run(dir, [...diffArgs, "--name-status", ...range]),
+    run(dir, [...diffArgs, "--numstat", ...range]),
+  ]);
+  const stats = parseNumstat(counts.stdout);
+  const files: CommitFile[] = [];
+  const parts = names.stdout.split("\0");
+  for (let i = 0; i < parts.length; i += 1) {
+    const code = parts[i];
+    if (!code) continue;
+    const letter = code[0] ?? "M";
+    const moved = letter === "R" || letter === "C";
+    const from = moved ? parts[i + 1] : undefined;
+    const path = parts[moved ? i + 2 : i + 1] ?? "";
+    i += moved ? 2 : 1;
+    const stat = stats.get(path);
+    files.push({
+      path,
+      ...(from ? { from } : {}),
+      status: letter,
+      insertions: stat?.insertions ?? null,
+      deletions: stat?.deletions ?? null,
+    });
+  }
+  const sum = (key: "insertions" | "deletions") => files.reduce((total, file) => total + (file[key] ?? 0), 0);
+  return {
+    hash,
+    short,
+    subject: body.split("\n")[0] ?? "",
+    author,
+    email,
+    at: Number(at) || 0,
+    committer,
+    committedAt: Number(committedAt) || 0,
+    body,
+    parents,
+    refs: refList.split(",").map((ref) => ref.trim().replace(/^HEAD -> /, "")).filter(Boolean),
+    filesChanged: files.length,
+    insertions: sum("insertions"),
+    deletions: sum("deletions"),
+    files,
+  };
+}
+
+/**
+ * Take the last commit back, keeping everything it changed staged — VS Code's
+ * "Undo Last Commit". A soft reset, so nothing on disk or in the index moves;
+ * on a root commit there is no parent to reset to, so HEAD is unborn again.
+ * Answers the message that was undone, so the box can hold it again.
+ */
+export async function undoCommit(projectId: string, repo?: string): Promise<{ output: string }> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  const state = await status(projectId, repo);
+  if (state.unborn) throw fail(409, "this repository has no commits yet");
+  if (state.conflicted.length > 0) throw fail(409, "resolve the conflicts first");
+  const { stdout: message } = await run(dir, ["log", "-1", "--format=%B"]);
+  const hasParent = await run(dir, ["rev-parse", "--verify", "--quiet", "HEAD^"]).then(
+    () => true,
+    () => false,
+  );
+  if (hasParent) await run(dir, ["reset", "--soft", "HEAD~1"]);
+  else await run(dir, ["update-ref", "-d", "HEAD"]);
+  return { output: message.trim() };
+}
+
 /** Whether the worktree has anything to commit, untracked files included. */
 async function isDirty(dir: string): Promise<boolean> {
   const { stdout } = await run(dir, ["status", "--porcelain=v2", "-z", "--untracked-files=all"]);
@@ -787,9 +959,12 @@ export type Comparison = "worktree" | "staged" | "head";
 export async function fileAt(
   projectId: string,
   path: string,
-  comparison: Comparison,
+  comparison: Comparison | { rev: string },
 ): Promise<{ content: string; missing: boolean }> {
   if (comparison === "worktree") return { content: "", missing: true };
+  /* A commit's side — the history's diff. A hash and nothing else, so the
+     value can never be read as a ref expression or a flag. */
+  if (typeof comparison === "object" && !HASH.test(comparison.rev)) throw fail(400, "a revision must be a commit hash");
   const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   /* Up to the nearest directory that exists: a file deleted along with its
@@ -803,7 +978,12 @@ export async function fileAt(
      than to the worktree root — the same translation `scope` does for status,
      done here by git itself. */
   const name = relativePath(dir, absolute);
-  const ref = comparison === "staged" ? `:./${name}` : `HEAD:./${name}`;
+  const ref =
+    typeof comparison === "object"
+      ? `${comparison.rev}:./${name}`
+      : comparison === "staged"
+        ? `:./${name}`
+        : `HEAD:./${name}`;
   try {
     const { stdout } = await run(dir, ["show", ref]);
     return { content: stdout, missing: false };

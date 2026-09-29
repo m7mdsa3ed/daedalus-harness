@@ -16,6 +16,7 @@
    that owns what they use (the row views here, `tool-parts.tsx` for the
    kind chips and `Prose`, `thread-cards.tsx` for `SourcesStrip`). */
 import * as React from "react"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import {
   ArrowUpRightIcon,
   BotIcon,
@@ -31,6 +32,7 @@ import { ItemContextMenu } from "@/components/item-context-menu"
 import { Message, MessageContent } from "@/components/ui/message"
 import { SkeletonText } from "@/components/ui/skeletons"
 import { MessageAttachments } from "@/components/message-attachments"
+import { splitOpenuiFences } from "@/lib/openui/fences"
 import { loadAgentTranscript, useAgentTranscript } from "@/lib/agent-transcripts"
 import { loadSettings } from "@/lib/settings"
 import {
@@ -50,7 +52,16 @@ import {
   toolHasDetail,
   toolOpensByDefault,
 } from "@/components/tool-views"
-import { copyText, RAIL_CLASS, StepMeta, StepRow, yieldToTextSelection } from "@/components/step-row"
+import {
+  copyText,
+  DISCLOSE_EXIT,
+  finishedOpening,
+  StepDirContext,
+  StepMeta,
+  StepRow,
+  textDir,
+  yieldToTextSelection,
+} from "@/components/step-row"
 import {
   collectTools,
   stepNameOf,
@@ -128,9 +139,14 @@ export const ToolRun = React.memo(function ToolRun({
   const failed = tools.filter((item) => item.status === "failed").length
   const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
   const summary = summarise(tools)
+  /* One direction for the whole run, from its first call: its steps share a
+     rail, and a rail cannot sit on both sides. */
+  const dir = textDir(tools[0]?.title)
   const displayItems: Array<ToolItem | TextItem | ToolRunGroup> = nestedRows ?? items
   const displayLength = displayItems.length
   const view = useViewOptionsContext()
+  const systemReducedMotion = useReducedMotion()
+  const reduceMotion = view.calmMotion || systemReducedMotion
   /* Open while it runs, folded once it has. A group is a sequence of tool calls
      with their interleaved thoughts — `groupToolRuns` breaks on other content —
      so the summary line heads the steps that belong together; while they are happening that
@@ -157,6 +173,9 @@ export const ToolRun = React.memo(function ToolRun({
      given one and the run's own state otherwise, so a hand-opened group stays
      open through the turn that follows it and a hand-closed one stays closed. */
   const [choice, setChoice] = React.useState<boolean | null>(null)
+  const railRef = React.useRef<HTMLDivElement>(null)
+  const isRun = tools.length > 1 || nestedRows !== undefined
+  const [showRunHeader] = React.useState(isRun)
   /* A step the transcript would have opened on its own keeps that answer inside
      the run: a single edit shows its diff without being asked, and a batch of
      edits grouped into one run may not fold away the thing each step exists to
@@ -164,7 +183,7 @@ export const ToolRun = React.memo(function ToolRun({
      a run opened this way keep their own defaultOpen (reads and searches stay
      one-line rows), and the reader's hand still wins over all of it. */
   const live = active || tail === true
-  const open = choice ?? ((view.openRunningGroup && live) || tools.some(toolOpensByDefault))
+  const open = choice ?? ((view.openRunningGroup && live) || tools.some((tool) => toolOpensByDefault(tool, view.expandEdits)))
   const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
     setChoice(typeof value === "function" ? value(open) : value)
 
@@ -181,23 +200,24 @@ export const ToolRun = React.memo(function ToolRun({
   const showing = open ? displayItems : live ? displayItems.slice(-PEEK) : []
   const hidden = live && !open ? displayLength - showing.length : 0
 
-  /* How many of `showing` were already on screen at the last commit, which is
-     what the entrance staggers off (`--item-i`, index.css). The steps' place
-     in the *list* is the wrong number: a run that streams one step at a time
-     mounts one row, and that row is its batch's first, so it waits for
-     nothing. Only a burst spreads — a replay, or this run being opened onto
-     the steps the peek had folded. Read in render and written in an effect,
-     never assigned during the render itself: under StrictMode's double pass
-     the second render would read what the first had just written and stagger
-     nothing, in dev only, which is the half of the feature you look at. */
-  const shown = React.useRef(0)
+  /* Keep the identities already on screen, not just their count: regrouping a
+     live tail can change its wrapper without making old tools new. When a live
+     singleton becomes a run, all but the newest child were already visible as
+     standalone rows before this component mounted. */
+  const shown = React.useRef(new Set(tail ? displayItems.slice(0, -1).map((item) => item.id) : []))
   const already = shown.current
+  const entranceIndex = new Map<string, number>()
+  let nextEntrance = 0
+  for (const item of showing) {
+    if (!already.has(item.id)) entranceIndex.set(item.id, nextEntrance++)
+  }
   React.useEffect(() => {
-    shown.current = showing.length
+    shown.current = new Set(showing.map((item) => item.id))
   })
 
   return (
-    <div>
+    <StepDirContext.Provider value={dir}>
+    <div dir={dir}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -207,13 +227,18 @@ export const ToolRun = React.memo(function ToolRun({
           aria-hidden
           className={cn(
             "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
-            open && "rotate-90"
+            dir === "rtl" && "-scale-x-100",
+            open && (dir === "rtl" ? "-rotate-90" : "rotate-90")
           )}
         />
         <RunAvatarStack items={items} />
+        {/* English UI words, isolated: in an RTL run "2 files" would otherwise
+            reorder into "files 2". */}
         <span
+          dir="auto"
           className={cn(
             "min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground",
+            dir === "rtl" ? "text-right" : "text-left",
             active && "harness-shimmer"
           )}
         >
@@ -224,45 +249,65 @@ export const ToolRun = React.memo(function ToolRun({
             kind of thing than it is. */}
         <StepMeta parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]} />
       </button>
-      {showing.length > 0 && (
-        /* One rail for both states, so expanding a peeking run grows the list
-           in place instead of swapping one layout for another. */
-        <div className={RUN_RAIL_CLASS}>
-          {hidden > 0 && (
-            <div className={RAIL_THROUGH}>
-              <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
+      <AnimatePresence initial={false}>
+        {showing.length > 0 && (
+          /* One rail for both states, so expanding a peeking run grows the list
+             in place instead of swapping one layout for another. */
+          <motion.div
+            key="run-rail-clip"
+            ref={railRef}
+            initial={reduceMotion ? false : { height: 0 }}
+            animate={{ height: "auto" }}
+            exit={{ height: 0, transition: reduceMotion ? { duration: 0 } : DISCLOSE_EXIT }}
+            transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+            onAnimationStart={() => {
+              if (railRef.current) railRef.current.style.overflow = "hidden"
+            }}
+            onAnimationComplete={(definition) => {
+              if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
+            }}
+            className="overflow-hidden"
+          >
+            {/* The rail's spacing lives inside the clip, so it collapses with it. */}
+            <div className={RUN_RAIL_CLASS}>
+            {hidden > 0 && (
+              <div className={RAIL_THROUGH}>
+                <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
+              </div>
+            )}
+            {/* Not `[data-message-id]` rows, so the transcript's entrance does
+                not reach them on its own — the class is the same animation. */}
+            {showing.map((item, index) => (
+              <div
+                key={item.id}
+                style={stagger(entranceIndex.get(item.id) ?? -1)}
+                className={cn(
+                  !already.has(item.id) && "harness-item-in",
+                  RAIL_ELBOW,
+                  index < showing.length - 1 && RAIL_TAIL
+                )}
+              >
+                {/* Nested rows retain their own same-view fold; direct items use
+                    the ordinary step renderer and preserve a live thought tail. */}
+                {item.kind === "run" ? (
+                  <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} />
+                ) : item.kind === "tool" ? (
+                  <ToolStep item={item} showTimestamp={showTimestamps} />
+                ) : (
+                  <ThreadItemView
+                    item={item}
+                    showTimestamps={showTimestamps}
+                    streaming={tail && index === showing.length - 1}
+                  />
+                )}
+              </div>
+            ))}
             </div>
-          )}
-          {/* Not `[data-message-id]` rows, so the transcript's entrance does
-              not reach them on its own — the class is the same animation. */}
-          {showing.map((item, index) => (
-            <div
-              key={item.id}
-              style={stagger(index - already)}
-              className={cn(
-                "harness-item-in",
-                RAIL_ELBOW,
-                index < showing.length - 1 && RAIL_TAIL
-              )}
-            >
-              {/* Nested rows retain their own same-view fold; direct items use
-                  the ordinary step renderer and preserve a live thought tail. */}
-              {item.kind === "run" ? (
-                <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} />
-              ) : item.kind === "tool" ? (
-                <ToolStep item={item} showTimestamp={showTimestamps} />
-              ) : (
-                <ThreadItemView
-                  item={item}
-                  showTimestamps={showTimestamps}
-                  streaming={tail && index === showing.length - 1}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+    </StepDirContext.Provider>
   )
 })
 ToolRun.displayName = "ToolRun"
@@ -618,10 +663,21 @@ function SubagentTranscript({
   const rows = limit ? all.slice(-limit) : all
   const hidden = all.length - rows.length
   return (
-    <div className={RAIL_CLASS}>
-      {hidden > 0 && onEarlier && <EarlierSteps count={hidden} onClick={onEarlier} />}
+    <div className={RUN_RAIL_CLASS}>
+      {hidden > 0 && onEarlier && (
+        <div className={RAIL_THROUGH}>
+          <EarlierSteps count={hidden} onClick={onEarlier} />
+        </div>
+      )}
       {rows.map((row, i) => (
-        <div key={row.id} className="harness-item-in">
+        <div
+          key={row.id}
+          className={cn(
+            "harness-item-in",
+            RAIL_ELBOW,
+            (i < rows.length - 1 || active) && RAIL_TAIL
+          )}
+        >
           <RowView
             row={row}
             showTimestamps={showTimestamps}
@@ -747,7 +803,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           </Message>
         </ItemContextMenu>
       )
-    case "agent":
+    case "agent": {
+      const hasOpenui = splitOpenuiFences(item.text, streaming).some((part) => typeof part !== "string")
       return (
         <ItemContextMenu
           items={[{ label: "Copy text", icon: <CopyIcon />, onClick: () => copyText(item.text) }]}
@@ -758,8 +815,11 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               the same left edge, with nothing inset for a gutter. */}
           <Message className="flex-col items-start gap-0.5 py-2">
             <MessageContent>
-              <Bubble variant="ghost">
-                <BubbleContent dir="auto" className="text-sm leading-relaxed">
+              <Bubble variant="ghost" className={hasOpenui ? "w-full max-w-full" : undefined}>
+                <BubbleContent
+                  dir="auto"
+                  className={hasOpenui ? "w-full max-w-full text-sm leading-relaxed" : "text-sm leading-relaxed"}
+                >
                   <StreamedAgentText text={item.text} streaming={streaming} />
                 </BubbleContent>
               </Bubble>
@@ -768,6 +828,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           </Message>
         </ItemContextMenu>
       )
+    }
     case "notice": {
       // Two things arrive as agent-authored transcript events: an interrupt
       // (one line, a rule) and a background task reporting back (a card — see
@@ -821,6 +882,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
 
       return (
         <StepRow
+          dir={textDir(reasoning)}
           icon={KIND_ICONS.think}
           iconAccent={KIND_COLORS.think}
           iconChip={KIND_CHIPS.think}
@@ -838,11 +900,12 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               preview
             )
           }
+          openTarget="Thinking"
           detail={
             <StreamedProse
               text={reasoning}
               streaming={streaming}
-              className="text-xs leading-relaxed text-muted-foreground"
+              className="thought-detail max-h-[min(60vh,28rem)] overflow-y-auto overscroll-contain pr-1"
             />
           }
         />
@@ -940,8 +1003,8 @@ const ToolStep = React.memo(function ToolStep({
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       firstRow={view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
       below={!view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
-      defaultOpen={view.showToolDetails || toolOpensByDefault(item)}
-      openSetting={view.showToolDetails}
+      defaultOpen={view.showToolDetails || toolOpensByDefault(item, view.expandEdits)}
+      openSetting={`${view.showToolDetails}:${view.expandEdits}`}
     />
   )
 })

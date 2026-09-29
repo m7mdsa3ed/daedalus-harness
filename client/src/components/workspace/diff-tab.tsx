@@ -58,12 +58,28 @@ export interface TreeSide {
   path: string
 }
 
-export type DiffSide = Comparison | TreeSide
+/** A file as a commit has it — the history's diff. An empty `rev` is the side
+    a root commit's parent would be: nothing. */
+export interface RevSide {
+  rev: string
+}
+
+export type DiffSide = Comparison | TreeSide | RevSide
 
 const sideLabel = (side: DiffSide) =>
-  typeof side === "string" ? SIDE_LABEL[side] : side.side === "before" ? "Before" : "After"
+  typeof side === "string"
+    ? SIDE_LABEL[side]
+    : "rev" in side
+      ? side.rev.slice(0, 7) || "Nothing"
+      : side.side === "before"
+        ? "Before"
+        : "After"
 const sideKey = (side: DiffSide | null) =>
-  side === null || typeof side === "string" ? side : `${side.sessionId}\0${side.scope}\0${side.side}\0${side.path}`
+  side === null || typeof side === "string"
+    ? side
+    : "rev" in side
+      ? `rev\0${side.rev}`
+      : `${side.sessionId}\0${side.scope}\0${side.side}\0${side.path}`
 
 /** One side of the comparison, whole. `generation` is how a caller says
     "read it again" — bumped by the watch stream and by Refresh. A null side
@@ -94,6 +110,14 @@ function useSide(
         /* Deleted on disk is a real answer, and an empty side is what it looks
            like. */
         .catch(() => settle(""))
+    } else if (typeof side === "object" && "rev" in side) {
+      if (!side.rev) settle("")
+      else
+        void gitFileAt(projectId, path, side)
+          .then((result) => settle(result.missing ? "" : result.content))
+          .catch((err: unknown) => {
+            if (!controller.signal.aborted) setError(describeError(err).title)
+          })
     } else if (typeof side === "object") {
       void scopeFileSide(side.sessionId, side.scope, side.path, side.side)
         .then((result) => {
@@ -158,7 +182,7 @@ export function DiffTab({
   const editorRef = React.useRef<MonacoDiff | null>(null)
   /* A scope's "after" tree that still reads as the disk does is the disk for
      the hunk verbs — the newest turn, reviewed before anything else wrote. */
-  const afterTree = typeof right === "object" && right.side === "after"
+  const afterTree = typeof right === "object" && "side" in right && right.side === "after"
   const disk = useSide(projectId, path, afterTree && repo !== undefined ? "worktree" : null, generation)
   const onDisk = right === "worktree" || (afterTree && disk.text !== null && disk.text === modified.text)
   const hunks = repo !== undefined && (left === "staged" || typeof left === "object") && onDisk

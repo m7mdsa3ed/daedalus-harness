@@ -29,8 +29,8 @@
 
    ── What the face draws ──
    The mark, the title, the reading, and two controls that appear when pointed
-   at. The project it runs in is NOT among them — that is the composer's scope
-   band, where it is a name rather than a mark. Nor is the thread's context
+   at. A chat's mark pairs its agent and project so both the runtime and workspace
+   are recognizable. Nor is the thread's context
    reading: a tab subscribed to a value written on every streamed token is a
    strip that re-renders per token.
 
@@ -321,7 +321,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               real column to truncate in — the grid-of-one this used to be was
               the same idea spelled with `grid-template-columns`. */}
           <span data-tab-title className="flex min-w-0 flex-1 items-center gap-1.5">
-            <span title={title} className="min-w-0 flex-1 truncate">
+            <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>
               {title}
             </span>
             {/* What the panel is doing, for a panel you cannot see. Decorative
@@ -394,8 +394,8 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
 }
 
 /**
- * The mark a tab wears: the panel's own (`PanelIcon`) — a chat's is its agent's,
- * which is what stops four threads from being four identical speech bubbles.
+ * The mark a tab wears: the panel's own (`PanelIcon`) — a chat pairs its agent
+ * and project so the runtime and workspace are both identifiable.
  *
  * Beside a title the mark is a glyph, and a ground around it would be a button
  * that is not one, so the tile it sits in draws no ground. That is also the
@@ -406,9 +406,14 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
  * swap to make.
  */
 function TabMark({ descriptor }: { descriptor: Descriptor }) {
+  const paired = descriptor?.kind === "chat"
   return (
-    <span data-tab-mark aria-hidden className="grid size-4 shrink-0 place-items-center">
-      <PanelIcon panel={descriptor} className="size-3.5" />
+    <span
+      data-tab-mark
+      aria-hidden
+      className={cn("grid shrink-0 place-items-center", paired ? "size-7" : "size-4")}
+    >
+      <PanelIcon panel={descriptor} className={paired ? "size-3" : "size-3.5"} />
     </span>
   )
 }

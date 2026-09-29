@@ -42,6 +42,17 @@ async function registerQuickEntry(accelerator: string): Promise<string> {
   return error
 }
 
+export type WindowMaterial = "acrylic" | "mica"
+
+export async function getWindowMaterial(): Promise<WindowMaterial> {
+  return (await desktop?.getWindowMaterial?.()) ?? "acrylic"
+}
+
+export async function setWindowMaterial(material: WindowMaterial): Promise<string> {
+  const result = await desktop?.setWindowMaterial?.(material)
+  return result && !result.ok ? result.error : ""
+}
+
 export function useQuickEntry(): {
   accelerator: string
   error: string

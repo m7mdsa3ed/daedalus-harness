@@ -30,9 +30,11 @@ let listenersInstalled = false
 let current: {
   settings: ServerSettings
   registry: ThreadRegistry
+  refreshSessions: () => Promise<unknown>
 } | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let probeCache: { at: number; promise: Promise<boolean> } | null = null
+let hasRefreshedWhileActive = true
 
 /** Whether anything is listening on the other end. Unauthenticated on purpose:
     `/api/health` exempts itself from the token check, so this answers on a
@@ -92,19 +94,35 @@ function retryWaiting(): void {
 export function watchNetwork(next: {
   settings: ServerSettings
   registry: ThreadRegistry
+  refreshSessions: () => Promise<unknown>
 }): void {
   current = next
   if (listenersInstalled || typeof window === "undefined") return
   listenersInstalled = true
   window.addEventListener("online", () => retryWaiting())
+  const refreshOnReturn = () => {
+    if (document.visibilityState !== "visible" || hasRefreshedWhileActive) return
+    hasRefreshedWhileActive = true
+    retryWaiting()
+    void current?.refreshSessions().catch(() => {
+      hasRefreshedWhileActive = false
+    })
+  }
+  window.addEventListener("blur", () => {
+    hasRefreshedWhileActive = false
+  })
+  window.addEventListener("focus", refreshOnReturn)
   /* The catalog half of coming back is not here any more: every catalog read
      is a query with a staleTime and `refetchOnWindowFocus`, so a profile added
      on the laptop — or an agent the server started offering after an upgrade —
      arrives on the phone the moment its tab is looked at, per slice and only
-     for the slices something is drawing. This is left with the half that is
-     genuinely the network's: the parked threads. */
+     for the slices something is drawing. The session list is store-owned, so
+     it uses the same return-to-window seam as parked thread recovery. */
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return
-    retryWaiting()
+    if (document.visibilityState !== "visible") {
+      hasRefreshedWhileActive = false
+      return
+    }
+    refreshOnReturn()
   })
 }

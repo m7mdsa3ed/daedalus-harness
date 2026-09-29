@@ -19,6 +19,13 @@ export interface SubagentStateUpdate {
   _meta?: Record<string, unknown>;
 }
 
+export interface SubagentUsage {
+  sessionUpdate: "_daedalus/subagent_usage";
+  subagentSessionId: string;
+  usage: acp.Usage;
+  _meta?: Record<string, unknown>;
+}
+
 export interface SessionInfoUpdate {
   sessionUpdate: "session_info_update";
   title?: string;
@@ -29,6 +36,7 @@ export type AnySessionUpdate =
   | acp.SessionUpdate
   | SubagentSpawned
   | SubagentStateUpdate
+  | SubagentUsage
   | SessionInfoUpdate;
 
 /** The `session/update` params shape, widened to carry the RFD kinds. */

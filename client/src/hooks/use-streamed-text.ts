@@ -24,10 +24,10 @@
      thread as a typewriter.
    • **It can lag, but only a little.** The drain is exponential (a fixed
      fraction of the backlog per frame), so a big burst empties fast and a
-     trickle stays smooth, and anything past `SNAP_CHARS` behind is not a stream
-     at all — a whole message arriving at once — and is shown immediately.
-     Combined with the floor of one character per frame, the buffer is
-     guaranteed to reach the end rather than asymptotically approach it. *How
+     trickle stays smooth, while a per-frame cap keeps a buffered paragraph from
+     arriving in one jump. Combined with the floor of one character per frame,
+     the buffer is guaranteed to reach the end rather than asymptotically
+     approach it. *How
      big* that fraction is, is the reader's (`streamSpeed`, `lib/stream-pace`),
      and `instant` bypasses the buffer outright — the rules below are what make
      pacing safe, not an argument that everyone wants it.
@@ -43,13 +43,11 @@ import * as React from "react"
 import { drainFor } from "@/lib/stream-pace"
 import { useViewOptionsContext } from "@/lib/view-options"
 
+/** Bound each frame's reveal so a buffered chunk cannot land as a paragraph. */
+const MAX_CHARS_PER_FRAME = 48
+
 /** Never slower than this, whatever the backlog — what makes the tail finish. */
 const MIN_CHARS_PER_FRAME = 1
-
-/** Past this far behind, it is not a stream: show it. A `session/load` replay
- *  and a buffered gateway both deliver a whole answer in one update, and pacing
- *  that is a typewriter nobody asked for. */
-const SNAP_CHARS = 1200
 
 /** Assumed frame budget, used to keep the drain frame-rate independent. */
 const FRAME_MS = 16.7
@@ -80,11 +78,21 @@ function boundary(text: string, n: number): number {
  */
 export function useStreamedText(text: string, streaming: boolean): string {
   const drain = drainFor(useViewOptionsContext().streamSpeed)
-  const [shown, setShown] = React.useState(text)
+  const [shown, setShown] = React.useState(streaming && drain !== null ? "" : text)
+  const wasStreaming = React.useRef(streaming)
   /* The loop reads these: it runs per frame, far more often than React renders,
      and a stale closure would pace a message the row has already moved past. */
   const textRef = React.useRef(text)
-  const lenRef = React.useRef(text.length)
+  const lenRef = React.useRef(streaming && drain !== null ? 0 : text.length)
+  if (!streaming) {
+    wasStreaming.current = false
+  } else if (!wasStreaming.current && drain !== null) {
+    /* A row can become the live tail after it has already mounted. Reset before
+       paint so the accumulated text does not flash once before being paced. */
+    wasStreaming.current = true
+    lenRef.current = 0
+    setShown("")
+  }
   textRef.current = text
 
   React.useEffect(() => {
@@ -93,15 +101,20 @@ export function useStreamedText(text: string, streaming: boolean): string {
     if (!streaming || drain === null) {
       lenRef.current = text.length
       setShown(text)
+      wasStreaming.current = streaming
       return
+    }
+    if (!wasStreaming.current) {
+      lenRef.current = 0
+      setShown("")
+      wasStreaming.current = true
     }
     /* A row that was replaced rather than appended to — a new message, a
        re-fold, an edited draft — has nothing in common with what is on screen,
        so there is no reveal to continue. */
     if (!text.startsWith(shown)) {
-      lenRef.current = text.length
-      setShown(text)
-      return
+      lenRef.current = 0
+      setShown("")
     }
 
     let frame = 0
@@ -111,18 +124,13 @@ export function useStreamedText(text: string, streaming: boolean): string {
       const full = textRef.current
       const remaining = full.length - lenRef.current
       if (remaining <= 0) return
-      if (remaining > SNAP_CHARS) {
-        lenRef.current = full.length
-        setShown(full)
-        return
-      }
       /* Scaled by elapsed time so a background tab or a 120Hz display drains at
          the same rate per second as a 60Hz one. */
       const frames = Math.max(1, Math.min(8, (now - last) / FRAME_MS))
       last = now
-      const advance = Math.max(
-        MIN_CHARS_PER_FRAME * frames,
-        remaining * drain * frames
+      const advance = Math.min(
+        MAX_CHARS_PER_FRAME * frames,
+        Math.max(MIN_CHARS_PER_FRAME * frames, remaining * drain * frames)
       )
       lenRef.current = Math.min(full.length, lenRef.current + Math.ceil(advance))
       const next = full.slice(0, boundary(full, lenRef.current))

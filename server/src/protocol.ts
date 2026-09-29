@@ -629,10 +629,8 @@ export interface QueuedMessage {
       carries none. */
   attachments?: AttachmentRef[];
   createdAt: number;
-  /** A steer whose words are already on the wire and whose bubble the bridge
-      is holding until the running step ends (`AcpBridge.prompt`). Listed here
-      so it is not invisible in between; nothing on it can be edited, removed
-      or sent — it has been sent. */
+  /** A composer steer whose words are on the wire while its transcript bubble
+      waits for the current step to finish. It cannot be edited, removed or sent. */
   steer?: true;
 }
 
@@ -715,11 +713,10 @@ export type ThreadCommand =
   | { id: number; cmd: "compact" }
   /* ---- the queue ----
      `queue_add` is `prompt` from a client that already knows the thread is
-     busy — on an idle thread it drains at once, so there is one path. The
-     three edits work with no agent process at all: a parked queue on an
-     archived thread is edited without spawning one to do it. `queue_send_now`
-     interrupts the running turn and sends (one item, or everything combined);
-     `queue_steer` injects one item into the running turn without stopping it. */
+     busy — on an idle thread it drains at once, so there is one path. Queue
+     edits work with no agent process at all; `queue_send_now` interrupts the
+     running turn and sends one item or the whole queue, while `queue_steer`
+     injects one queued item into the running turn without stopping it. */
   | { id: number; cmd: "queue_add"; text: string; attachmentIds?: string[] }
   | { id: number; cmd: "queue_update"; itemId: string; text: string; attachmentIds?: string[] }
   | { id: number; cmd: "queue_remove"; itemId: string }

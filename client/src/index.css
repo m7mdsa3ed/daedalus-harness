@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@xyflow/react/dist/style.css";
 /* The bundled typeface catalog. Every family here is offerable by
    lib/fonts.ts's FONT_CATALOG and nameable by a built-in theme — a built-in
    has to paint correctly on a cold, offline first load, which a Google family
@@ -880,25 +881,14 @@
   }
 }
 
-/* Fix laggy/flickering mobile sidebar slide on Chrome: translate3d keyframes
-   force GPU compositing for the sheet. */
-@keyframes sheet-slide-in-left {
-  from { transform: translate3d(-100%, 0, 0); }
-  to { transform: translate3d(0, 0, 0); }
-}
-@keyframes sheet-slide-out-left {
-  from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(-100%, 0, 0); }
-}
-[data-mobile="true"][data-state] {
-  will-change: transform;
-  backface-visibility: hidden;
-}
-[data-mobile="true"][data-state="open"] {
-  animation: sheet-slide-in-left 240ms ease !important;
-}
-[data-mobile="true"][data-state="closed"] {
-  animation: sheet-slide-out-left 200ms ease forwards !important;
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"],
+  [data-slot="sheet-overlay"],
+  [data-slot="sheet-content"][data-mobile="true"] {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
 }
 
 /* The streaming reveal (see `.t-stream-w` below and `lib/stream-words`). Every
@@ -906,31 +896,18 @@
    moment of arrival, not read as the text being out of focus. */
 :root {
   --stream-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  /* Per-word animations (`blur`, `rise`, `fade`, `pop`). */
-  --stream-fade: 350ms;
-  --stream-blur: 1px;
-  --stream-distance: 3px;
-  --stream-scale: 0.94;
   /* Sweep. The ramp is the CSS half of `TAIL_WORDS` — the pass stamps `--tail`
      in words, this is what divides it back into a 0…1 position — so the two
-     have to move together. The fade is shorter than the mount animations'
-     because it runs on every word of the ramp at once, each time the edge
-     advances; at 350ms the ramp would still be catching up a word later and the
-     softness would read as lag rather than as an edge. */
+     have to move together. The fade is short because it runs on every word
+     of the ramp at once, each time the edge advances; longer and the ramp would
+     still be catching up a word later and the softness would read as lag
+     rather than as an edge. */
   --stream-ramp: 8;
   --stream-sweep-fade: 240ms;
   --stream-sweep-blur: 1.4px;
   /* Where the newest word starts. Not 0: it has already been *revealed*, and a
      word that arrives invisible reads as the text running behind itself. */
   --stream-sweep-floor: 0.18;
-  /* `trail` carries the whole arrival in light, so it starts lower than the
-     sweep, which has a blur doing half the work. `warm` starts higher still:
-     its arrival is mostly the colour, and dimming an accent reads as disabled
-     rather than as new. */
-  --stream-trail-floor: 0.1;
-  --stream-warm-floor: 0.45;
-  --stream-caret-width: 0.5em;
-  --stream-caret-blink: 1.1s;
 }
 
 /* Running-turn label: a pale band sweeps through the glyphs. */
@@ -962,128 +939,45 @@
    The composer wears the same bump: typing is writing, and its textarea reads
    at the size of the messages it answers, not the control tier (`md:text-sm`
    on the Textarea primitive would otherwise win halfway up the breakpoints). */
+/* A passage an aside was started on (`aside-highlights.ts`). Only colours
+   and decorations apply to a highlight — no cursor, no padding. */
+::highlight(aside) {
+  background-color: color-mix(in oklch, var(--primary) 16%, transparent);
+  text-decoration: underline dotted color-mix(in oklch, var(--primary) 60%, transparent);
+  text-underline-offset: 3px;
+}
+
 :is(.thread-transcript, [data-slot="composer-card"]) {
   --text-xs: 0.9375rem;
   --text-xs--line-height: 1.375rem;
 }
 
-/* ── Streaming prose, a word at a time ──
-   `use-streamed-text` paces *when* a word lands; these are what landing looks
-   like, one block per `streamEffect`. The spans are the tail of the row being
-   written and nothing else (see `lib/stream-words` for why), and the effect is
-   named by `data-stream` on the prose wrapper — so a settled row, a replayed
-   one and `none` are all simply prose with no attribute and no rule matching.
-
-   `harness-word-in` / `harness-word-rise` are **mount** animations: a span
-   exists only once its word does, so each runs exactly once, on arrival, and
-   nothing tracks how far the reveal has got. `backwards` is what makes that
-   true on screen as well as in principle — the span is in the document for a
-   frame before the animation starts, and without it that frame paints the word
-   at full opacity, which is a flash of exactly the pop this replaces. */
-@keyframes harness-word-in {
-  from { opacity: 0; filter: blur(var(--stream-blur)); }
-  to { opacity: 1; filter: blur(0); }
-}
-@keyframes harness-word-rise {
-  from {
-    opacity: 0;
-    filter: blur(var(--stream-blur));
-    transform: translateY(var(--stream-distance));
-  }
-  to { opacity: 1; filter: blur(0); transform: none; }
-}
-[data-stream="blur"] .t-stream-w {
-  animation: harness-word-in var(--stream-fade) var(--stream-ease) backwards;
-}
-@keyframes harness-word-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes harness-word-pop {
-  from {
-    opacity: 0;
-    filter: blur(var(--stream-blur));
-    transform: scale(var(--stream-scale));
-  }
-  to { opacity: 1; filter: blur(0); transform: none; }
-}
-[data-stream="fade"] .t-stream-w {
-  animation: harness-word-fade var(--stream-fade) var(--stream-ease) backwards;
-}
-[data-stream="rise"] .t-stream-w,
-[data-stream="pop"] .t-stream-w {
-  /* Inline boxes cannot be transformed, and these two are the transforms. The
-     baseline is unchanged, so a word that is momentarily an inline block still
-     sits on the line it belongs to. */
-  display: inline-block;
-}
-[data-stream="rise"] .t-stream-w {
-  animation: harness-word-rise var(--stream-fade) var(--stream-ease) backwards;
-}
-[data-stream="pop"] .t-stream-w {
-  animation: harness-word-pop var(--stream-fade) var(--stream-ease) backwards;
-  /* From the baseline, so the word grows onto the line rather than out of its
-     own middle and through the one above. */
-  transform-origin: 50% 100%;
-}
-
-/* The sweep is not an animation at all — the softness is a function of *where*
-   a word is rather than of when it arrived, so there is nothing to play and
-   nothing to finish. Each span in the ramp carries its distance from the newest
-   word (`--tail`, 0 at the edge); the transition is what makes the whole ramp
-   glide by one word each time the edge advances, which is what turns a row of
-   discrete steps into an edge that travels.
-
-   Matched on `[data-tail]`, never on the class: the pass stamps the attribute
-   only inside the ramp, so the words behind it carry no `filter` — and a
-   `filter` on every word of a long answer is a compositing layer on every word
-   of a long answer, which is the whole reason the ramp is bounded. */
-[data-stream="sweep"] .t-stream-w[data-tail],
-[data-stream="trail"] .t-stream-w[data-tail],
-[data-stream="warm"] .t-stream-w[data-tail] {
+/* ── Streaming prose: the sweep ──
+   `use-streamed-text` paces *when* a word lands; this is what landing looks
+   like. The softness is a function of *where* a word is rather than of when it
+   arrived: each span in the ramp carries its distance from the newest word
+   (`--tail`, 0 at the edge), and the transition is what makes the ramp glide
+   by one word each time the edge advances. Matched on `[data-tail]`, which the
+   pass stamps only inside the ramp, so the words behind it carry no `filter`.
+   A settled row, a replayed one and calm motion are prose with no attribute
+   and no rule matching. */
+[data-stream="sweep"] .t-stream-w[data-tail] {
   --p: calc(var(--tail) / var(--stream-ramp));
   transition:
     opacity var(--stream-sweep-fade) var(--stream-ease),
-    color var(--stream-sweep-fade) var(--stream-ease),
     filter var(--stream-sweep-fade) var(--stream-ease);
-}
-[data-stream="sweep"] .t-stream-w[data-tail] {
   opacity: calc(var(--stream-sweep-floor) + (1 - var(--stream-sweep-floor)) * var(--p));
   @apply blur-[calc((1-var(--p))*var(--stream-sweep-blur))];
 }
-/* The sweep with the filter taken out, which is the entire point of it: no
-   compositing layer per word, so it is the one to run when the machine is
-   already busy. */
-[data-stream="trail"] .t-stream-w[data-tail] {
-  opacity: calc(var(--stream-trail-floor) + (1 - var(--stream-trail-floor)) * var(--p));
-}
-/* Arrival as temperature rather than as light. `currentColor` inside the
-   element's own `color` resolves to the *inherited* value, which is what makes
-   this a mix between the accent and whatever the prose around it is — a hard
-   foreground token would be wrong inside a muted thought or a subagent rail. */
-[data-stream="warm"] .t-stream-w[data-tail] {
-  opacity: calc(var(--stream-warm-floor) + (1 - var(--stream-warm-floor)) * var(--p));
-  color: color-mix(in oklab, var(--primary) calc((1 - var(--p)) * 100%), currentColor);
-}
-
-/* The caret marks the edge and changes nothing else — no ramp, no fade, so the
-   text is exactly as it will settle and only the cursor says more is coming.
-   It rides the one word at the edge, which is what the attribute's *value* is
-   for. */
-@keyframes harness-caret {
-  50% { opacity: 0; }
-}
-[data-stream="caret"] .t-stream-w[data-tail="0"]::after {
-  content: "";
-  display: inline-block;
-  width: var(--stream-caret-width);
-  height: 1em;
-  margin-left: 0.12em;
-  vertical-align: -0.12em;
-  border-radius: 1px;
-  background: currentColor;
-  opacity: 0.5;
-  animation: harness-caret var(--stream-caret-blink) steps(2, start) infinite;
+/* The edge at rest. The ramp says "more is coming", and when nothing has come
+   for a moment that is no longer true — the model has stopped writing and is
+   calling a tool, which can be minutes under a subagent. The row is still the
+   tail of a live turn, so without this the last words sat faded the whole
+   time. Settled by the same transition, so the edge catches up rather than
+   snapping; a word that arrives after lifts it again (`useStreamIdle`). */
+[data-stream-idle] [data-stream="sweep"] .t-stream-w[data-tail] {
+  opacity: 1;
+  filter: none;
 }
 
 /* ── The mark, working ──
@@ -1470,31 +1364,6 @@ html[data-window-controls-overlay="true"] {
   /* The row is the titlebar here too, so nothing above it. */
   --app-frame-gap: 0px;
 }
-/* ── The desktop toggle moves the column, never the layout ──
-   The vendored primitive eases the gap's `width` and the column's `left` over
-   200ms. Every frame of the first re-laid-out the dock and every panel in it —
-   Monaco, xterm, each transcript's virtualizer — which is the toggle's lag. So
-   the gap *steps*, once: at once when opening, so the column slides into room
-   already made, and after the slide when closing (`200ms` delay), so the
-   transparent column never slides across content. The column rides
-   `translate`, which the compositor animates without a layout. Unlayered, so
-   it outranks the component's utilities without touching the reinstallable
-   file; the resize rule below still wins on specificity. Left side only —
-   the only side this app mounts. */
-[data-slot="sidebar"] [data-slot="sidebar-gap"] {
-  transition: width 0s;
-}
-[data-slot="sidebar"][data-collapsible="offcanvas"] [data-slot="sidebar-gap"] {
-  transition-delay: 200ms;
-}
-[data-slot="sidebar"] [data-slot="sidebar-container"][data-side="left"] {
-  left: 0;
-  transition: translate 200ms ease-out;
-}
-[data-slot="sidebar"][data-collapsible="offcanvas"] [data-slot="sidebar-container"][data-side="left"] {
-  translate: -100% 0;
-}
-
 /* Sidebar drag-resize (handle lives in sidebar/resizer.tsx): kill the width
    easing while dragging so the sidebar tracks the pointer, and drop the handle
    when the sidebar is collapsed to icons.
@@ -1704,18 +1573,11 @@ html[data-window-controls-overlay="true"] {
   box-shadow: inset 2px 0 0 0 color-mix(in oklch, var(--primary) 55%, transparent);
 }
 
-/* A transcript row that is *not* the streaming tail. `content-visibility: auto`
-   lets the browser skip layout for off-screen rows — the whole win of a long
-   thread — and `contain-intrinsic-size: auto` tells it to remember each one's
-   last real height, so collapsing them does not distort scrollHeight the way a
-   fixed placeholder would. Set only when no turn is streaming (a `data-settled`
-   attribute on the item), because a row mid-growth must stay measured: the
-   scroller reads scrollHeight to follow the stream, and a placeholder height
-   would make the autoscroll target jump. See thread-view.tsx. */
-[data-slot="message-scroller-content"] [data-message-id][data-settled] {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 48px;
-}
+/* Off-screen transcript rows skip layout through `MessageScrollerItem`'s own
+   `content-visibility: auto` + `contain-intrinsic-size: auto` (the size is
+   remembered once a row has rendered). It used to be switched per row on
+   turn start/end by a `data-settled` rule here, which restyled the whole
+   thread at the moment of Send. See thread-view.tsx. */
 
 /* A transcript item entering the list — a new row, a streamed tool step, a
    workflow step starting. It *rises* in: a fade with a small upward translate
@@ -1752,10 +1614,8 @@ html[data-window-controls-overlay="true"] {
    text inside it each time. During a fast stream that is dozens of rows
    rasterising at once, which is the stutter it was supposed to be smoothing.
    Two pixels of blur under a simultaneous 10px rise and a fade is below the
-   threshold where anyone can see it; the cost was not. The word-level effects
-   (`harness-word-in` and friends) keep theirs, because there the blur IS the
-   effect the reader picked — and `trail` is the option offered to anyone whose
-   machine disagrees. */
+   threshold where anyone can see it; the cost was not. The streaming sweep
+   keeps its blur because it is bounded to the eight words at the edge. */
 @keyframes harness-item-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1882,16 +1742,16 @@ html[data-window-controls-overlay="true"] {
 
    `translate`, not `transform`: the independent property composes with anything
    else that wants this element's transform rather than replacing it. */
+/* No blur in it: a filter transition is painted on the CPU, and two
+   compositor properties already read as the line settling in. */
 .harness-phase-swap {
   transition:
     opacity 260ms var(--stream-ease),
-    filter 260ms var(--stream-ease),
     translate 260ms var(--stream-ease);
 }
 @starting-style {
   .harness-phase-swap {
     opacity: 0;
-    @apply blur-[2px];
     translate: 0 4px;
   }
 }
@@ -1899,8 +1759,15 @@ html[data-window-controls-overlay="true"] {
 @media (prefers-reduced-motion: reduce) {
   .harness-item-in,
   .harness-fade-in,
-  .harness-part-in,
-  .t-stream-w {
+  .harness-part-in {
+    animation: none;
+  }
+  /* The working line's sweep repaints every frame, forever (a background
+     clipped to text is not composited). Calm motion stopped it; the OS
+     preference did not. Same flattening as calm motion's below. */
+  .harness-shimmer {
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
     animation: none;
   }
   /* A transition, so it is stopped rather than cancelled — and with nothing to
@@ -1916,19 +1783,13 @@ html[data-window-controls-overlay="true"] {
   .harness-rail-draw::after {
     animation: none;
   }
-  /* The edge family has no animation to cancel — its softness is a resting
-     state, so it has to be flattened rather than stopped, or reduced motion
-     would leave the newest words permanently dimmed and blurred. */
+  /* The sweep has no animation to cancel — its softness is a resting state,
+     so it has to be flattened rather than stopped, or reduced motion would
+     leave the newest words permanently dimmed and blurred. */
   [data-stream] .t-stream-w[data-tail] {
     opacity: 1;
-    color: inherit;
     filter: none;
     transition: none;
-  }
-  /* The caret stays: it is the one of these that is information rather than
-     decoration, and a still cursor still marks the edge. */
-  [data-stream="caret"] .t-stream-w[data-tail="0"]::after {
-    animation: none;
   }
 }
 
@@ -1954,14 +1815,9 @@ html[data-window-controls-overlay="true"] {
    practice — but a row mounted on the frame the option is flipped would
    otherwise keep whatever it was drawn with. */
 [data-slot="message-scroller-content"][data-motion="calm"] .t-stream-w {
-  animation: none;
   opacity: 1;
-  color: inherit;
   filter: none;
   transition: none;
-}
-[data-slot="message-scroller-content"][data-motion="calm"] .t-stream-w::after {
-  content: none;
 }
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-shimmer {
   background-image: none;
@@ -2038,6 +1894,15 @@ html[data-window-controls-overlay="true"] {
 }
 .prose :where(input[type="checkbox"]) {
   @apply me-1.5 align-middle accent-primary;
+}
+
+/* Thinking is secondary to the conversation: smaller and quieter than an
+   answer, including headings and emphasis inside its markdown. */
+.thought-detail .prose,
+.thought-detail .prose :where(*) {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 /* A path, a URL or a hash in running text is a single unbreakable token, and
@@ -2249,6 +2114,21 @@ html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
    header space — its tab row and its panel body are both still drop targets,
    and neither is a gesture anyone reaches for by aiming at emptiness. */
 html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container > .dv-void-container {
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+
+html[data-desktop="true"] .dv-popout-window > .dv-groupview > .dv-tabs-and-actions-container {
+  -webkit-app-region: drag;
+}
+html[data-desktop="true"] .dv-popout-window > .dv-groupview > .dv-tabs-and-actions-container > .dv-tabs-container {
+  -webkit-app-region: drag;
+}
+html[data-desktop="true"] .dv-popout-window > .dv-groupview > .dv-tabs-and-actions-container > .dv-tabs-container > *,
+html[data-desktop="true"] .dv-popout-window > .dv-groupview > .dv-tabs-and-actions-container > :not(.dv-tabs-container):not(.dv-void-container) {
+  -webkit-app-region: no-drag;
+}
+html[data-desktop="true"] .dv-popout-window > .dv-groupview > .dv-tabs-and-actions-container > .dv-void-container {
   pointer-events: none;
   -webkit-app-region: drag;
 }
@@ -2508,13 +2388,10 @@ html .dv-tab {
      scroll, wrong for ours, which carries the ⋮ and the close at the tab's far
      end and would push them past the strip's edge the moment a title is long.
 
-     The ceiling is still wider than a browser's 240px, for the reason a tab
-     here exists: it holds a *name* — a thread is named after what it is doing,
-     not after a domain — and two names truncated to the same first three words
-     are two identical tabs. 256px is a step off the browser's 240px, and it
-     was 304px: at five tabs the strip held 1520px of tabs in a 1184px strip, so
-     every one of them was already squeezed or scrolled off, and the 48px this
-     gives back is most of a sixth tab at the width the app is actually used at.
+     The ceiling gives a thread's name room to distinguish it from the next:
+     two names truncated to the same few words are two identical tabs. Keep it
+     at 18rem, wide enough for the paired agent and project marks plus a useful
+     slice of the title, without making the strip scroll sooner than needed.
 
      The floor is what keeps this from being the opposite problem: past about
      nine tabs, shrinking without one leaves slivers rather than a strip that
@@ -2524,14 +2401,14 @@ html .dv-tab {
      **The size is a `width`, not a flex-basis**, and that is not a preference:
      dockview's reorder collapses the tab being dragged with
      `width: 0 !important` and opens the gap by measuring what is left. A
-     `flex-basis` of 16rem outranks any `width`, so with `flex: 1 1 16rem` the
+     `flex-basis` of 18rem outranks any `width`, so with `flex: 1 1 18rem` the
      dragged tab never left the strip and every gap was a tab too wide. `flex-
      basis: auto` defers to the width, which makes the two agree — same
      grow-to-a-ceiling, shrink-to-a-floor behaviour, one that dockview can
      animate. */
   flex: 1 1 auto;
-  width: 16rem;
-  max-width: 16rem;
+  width: 18rem;
+  max-width: 18rem;
   min-width: 6.5rem;
   /* Dockview times its own reorder off this (it defaults to 200ms, and sets
      70ms on every `.dv-drop-target` — which a tab is, so the collapse and the
@@ -2589,10 +2466,10 @@ html {
   }
 
   /* ── and the one that is left takes the strip ──
-     The wide strip's 16rem cap is a *browser's* sizing: one width whether a tab
+     The wide strip's 18rem cap is a *browser's* sizing: one width whether a tab
      is alone or one of nine, so the row reads the same as it fills up. Below
      `md` there is no row to read — every other tab is hidden, so the cap only
-     left a 16rem tab against the header's controls with a run of dead strip
+     left an 18rem tab against the header's controls with a run of dead strip
      after it, which reads as a tab that failed to load rather than as the one
      thing on screen. It grows instead, and the title it is named after gets
      the width back.
@@ -2981,8 +2858,8 @@ html .dock-tab [data-tab-action="pin"] {
     display: flex;
   }
   html .dock-nested .dv-tab.dv-active-tab {
-    width: 16rem;
-    max-width: 16rem;
+    width: 18rem;
+    max-width: 18rem;
   }
   html .dock-nested .dv-tabs-and-actions-container {
     touch-action: pan-x;

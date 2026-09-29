@@ -1,6 +1,6 @@
 /* ── One thread, one line ── the row, its actions, and its menus. */
 import * as React from "react"
-import { MoreVertical } from "lucide-react"
+import { MoreVertical, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,6 +58,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   onPurge,
   onPin,
   onRemoveWorktree,
+  onClose,
 }: {
   session: SessionMeta
   state: ThreadStatus
@@ -71,6 +72,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   onPurge: (session: SessionMeta) => void
   onPin: (session: SessionMeta) => void
   onRemoveWorktree?: (session: SessionMeta) => void
+  onClose?: (session: SessionMeta) => void
 }) {
   /* One list feeds both the ⋯ menu and the right-click menu. */
   const items = React.useMemo(
@@ -134,6 +136,13 @@ export const ThreadRow = React.memo(function ThreadRow({
       {/* The second line: where it runs, and when it last spoke — the two facts a
           title cannot carry and the ⋯ card was the only place to read. */}
       <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 text-[11px] leading-4 text-muted-foreground">
+        {/* An aside is flagged on the row: a thread started from a passage of
+            another (`asideQuote`), whose card names that thread. */}
+        {session.asideQuote && (
+          <span className="shrink-0 rounded-sm bg-primary/10 px-1 text-primary" title={`Aside on: ${session.asideQuote}`}>
+            Aside
+          </span>
+        )}
         <span className="truncate">{project}</span>
         <span aria-hidden className="opacity-50">
           ·
@@ -152,6 +161,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           phone its trigger is the long press the ⋯ is a finger-reach for. */}
       <ItemContextMenu items={items}>
         <SidebarMenuButton
+          data-thread-id={session.id}
           size="sm"
           isActive={active}
           onClick={() => onOpen(session)}
@@ -161,11 +171,30 @@ export const ThreadRow = React.memo(function ThreadRow({
           onContextMenu={(event) => {
             if (isMobile) event.preventDefault()
           }}
-          className={cn(ROW_TWO_LINE, FLOAT_ROW, isMobile && "select-none [-webkit-touch-callout:none]")}
+          className={cn(
+            ROW_TWO_LINE,
+            FLOAT_ROW,
+            onClose && "pr-14!",
+            isMobile && "select-none [-webkit-touch-callout:none]"
+          )}
         >
           {row}
         </SidebarMenuButton>
       </ItemContextMenu>
+      {onClose && (
+        <SidebarMenuAction
+          showOnHover
+          title={`Close ${session.title}`}
+          aria-label={`Close ${session.title}`}
+          className={cn(FLOAT_ACTION, "right-8")}
+          onClick={(event) => {
+            event.stopPropagation()
+            onClose(session)
+          }}
+        >
+          <X />
+        </SidebarMenuAction>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -249,6 +278,11 @@ function ThreadInfoCard({
       ? s.sessions.find((row) => row.id === session.parentSessionId)?.title
       : undefined
   )
+  const asideOfTitle = useStoreSelect((s) =>
+    session.asideQuote && session.forkedFromSessionId
+      ? s.sessions.find((row) => row.id === session.forkedFromSessionId)?.title
+      : undefined
+  )
   const when = (ts: number) =>
     new Date(ts).toLocaleString(undefined, {
       month: "short",
@@ -318,6 +352,10 @@ function ThreadInfoCard({
       </span>,
     ])
   if (session.parentSessionId) rows.push(["Step of", parentTitle ?? "a workflow"])
+  if (session.asideQuote) {
+    rows.push(["Aside of", asideOfTitle ?? "a thread no longer held"])
+    rows.push(["On", <span key="on" title={session.asideQuote}>“{session.asideQuote}”</span>])
+  }
   if (trash && session.deletedAt) rows.push(["Deleted", when(session.deletedAt)])
   return (
     <div className="flex flex-col gap-2 text-left text-xs">

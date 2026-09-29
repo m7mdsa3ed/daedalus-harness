@@ -85,7 +85,7 @@ export function OpenuiView({ code, streaming }: { code: string; streaming: boole
   }
 
   return (
-    <div ref={container} className="min-w-0 [overflow-wrap:anywhere]">
+    <div ref={container} className="w-full max-w-full min-w-0 [overflow-wrap:anywhere]">
       <Renderer
         library={openuiLibrary}
         response={code}

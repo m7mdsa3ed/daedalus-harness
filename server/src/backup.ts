@@ -390,6 +390,7 @@ const SessionRow = z.object({
      that was never branched — which is what every thread in it was. */
   forkedFromSessionId: optStr,
   forkedFromTurnId: optStr,
+  asideQuote: optStr,
   mcpServerIds: z.array(str).default([]),
   skillIds: z.array(str).default([]),
   commandIds: z.array(str).default([]),
@@ -1176,6 +1177,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           parentSessionId: columns.parentSessionId ?? null,
           forkedFromSessionId: columns.forkedFromSessionId ?? null,
           forkedFromTurnId: columns.forkedFromTurnId ?? null,
+          asideQuote: columns.asideQuote ?? null,
         };
       }),
     );

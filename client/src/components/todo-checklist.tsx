@@ -1,4 +1,4 @@
-import { CheckCircle2Icon, CircleDotIcon, CircleIcon } from "lucide-react"
+import { CheckIcon, CircleDotIcon, CircleIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -10,32 +10,27 @@ export interface ChecklistItem {
 
 export function TodoChecklist({ items, className }: { items: ChecklistItem[]; className?: string }) {
   return (
-    <ul className={cn("space-y-0.5", className)}>
+    <ul className={cn("flex min-w-0 flex-col gap-1", className)}>
       {items.map((item, index) => (
         <li
           key={`${item.content}-${index}`}
           className={cn(
-            "group flex min-w-0 items-start gap-2.5 rounded-md px-2 py-1.5 text-xs transition-colors",
-            item.status === "in_progress" && "bg-primary/5"
+            "flex min-w-0 items-start gap-2 rounded-md border border-border/60 px-2 py-1.5 text-start transition-colors",
+            item.status === "in_progress" && "border-primary/30 bg-primary/[0.04]"
           )}
         >
-          <span
-            className={cn(
-              "mt-0.5 grid size-4 shrink-0 place-items-center",
-              item.status === "in_progress" ? "text-primary" : "text-muted-foreground/60"
-            )}
-          >
+          <span aria-hidden className="grid h-5 w-4 shrink-0 place-items-center">
             {item.status === "completed" ? (
-              <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
+              <CheckIcon className="size-3.5 text-primary" />
             ) : item.status === "in_progress" ? (
-              <CircleDotIcon aria-hidden className="size-3.5" />
+              <CircleDotIcon className="size-3.5 text-primary" />
             ) : (
-              <CircleIcon aria-hidden className="size-3" />
+              <CircleIcon className="size-3 text-muted-foreground/60" />
             )}
           </span>
           <span
             className={cn(
-              "min-w-0 flex-1 break-words leading-5",
+              "min-w-0 flex-1 break-words text-xs leading-5",
               item.status === "completed"
                 ? "text-muted-foreground line-through decoration-muted-foreground/40"
                 : item.status === "in_progress"
@@ -44,12 +39,12 @@ export function TodoChecklist({ items, className }: { items: ChecklistItem[]; cl
             )}
           >
             {item.content}
-            {item.priority === "high" && item.status !== "completed" && (
-              <span className="ml-1.5 inline-flex rounded-sm bg-destructive/10 px-1.5 py-0.5 align-middle text-[9px] font-semibold tracking-wide uppercase text-destructive">
-                high
-              </span>
-            )}
           </span>
+          {item.priority === "high" && item.status !== "completed" && (
+            <span className="shrink-0 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide uppercase text-destructive">
+              high
+            </span>
+          )}
         </li>
       ))}
     </ul>

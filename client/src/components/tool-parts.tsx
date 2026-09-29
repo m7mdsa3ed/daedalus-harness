@@ -198,16 +198,13 @@ export function Disclosure({
 }
 
 const REHYPE = [rehypeHighlight] as never
-/* The same pass with the tail wrapper appended, for the one row being written.
-   Two arrays, because only the edge family needs each span stamped with its
-   distance from the edge; both are held as constants rather than built per render, since
-   a new array identity would make react-markdown rebuild its processor on every
-   revealed word — the opposite of what the pacing is for. */
-const REHYPE_STREAM = [rehypeHighlight, [rehypeStreamWords, { tail: false }]] as never
-const REHYPE_STREAM_TAIL = [rehypeHighlight, [rehypeStreamWords, { tail: true }]] as never
+/* The same pass with the sweep's tail wrapper appended, for the one row being
+   written. Held as a constant rather than built per render, since a new array
+   identity would make react-markdown rebuild its processor on every revealed
+   word — the opposite of what the pacing is for. */
+const REHYPE_STREAM = [rehypeHighlight, rehypeStreamWords] as never
 
-const rehypeFor = (stream: StreamEffect | undefined) =>
-  needsTail(stream) ? REHYPE_STREAM_TAIL : stream && stream !== "none" ? REHYPE_STREAM : REHYPE
+const rehypeFor = (stream: StreamEffect | undefined) => (needsTail(stream) ? REHYPE_STREAM : REHYPE)
 const REMARK = [remarkGfm]
 
 /* The two elements markdown cannot style from CSS alone.

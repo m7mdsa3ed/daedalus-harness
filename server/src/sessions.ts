@@ -299,6 +299,8 @@ export interface Session {
       retired and revived on its own clock. Persisted. */
   forkedFromSessionId: string | null;
   forkedFromTurnId: string | null;
+  /** The passage an aside was started on, else null. Persisted. */
+  asideQuote: string | null;
   /** The git worktree this thread runs in, project-relative, or null for the
       project's own cwd (`git.createWorktree`). Chosen on the draft, never
       moved: the agent names its conversation by the cwd it ran in. */
@@ -1362,6 +1364,8 @@ export class SessionManager {
           (`git.createWorktree`), a string is an existing one (project-relative)
           — a workflow step working in its parent's. */
       worktree?: boolean | string;
+      /** An aside of that thread, started on this passage. */
+      aside?: { of: string; quote: string };
     } = {},
   ): Promise<Session> {
     await this.ready;
@@ -1388,6 +1392,7 @@ export class SessionManager {
       title: opts.title,
       parentSessionId: opts.parentSessionId,
       autonomy: opts.autonomy,
+      ...(opts.aside ? { forkedFrom: { sessionId: opts.aside.of, turnId: null }, asideQuote: opts.aside.quote } : {}),
     });
     /* Re-checked after the awaits above, and synchronously with the set: a
        caller's "is it free" was asked before them, and two creates for one id
@@ -1483,7 +1488,9 @@ export class SessionManager {
       autonomy?: AutonomyPolicy;
       /** Where a forked thread was branched from — the parent's id and the
           turn the branch carries through. Provenance only; see `Session`. */
-      forkedFrom?: { sessionId: string; turnId: string };
+      forkedFrom?: { sessionId: string; turnId: string | null };
+      /** An aside: a thread started from a passage selected in another. */
+      asideQuote?: string;
       /** Project-relative worktree this thread runs in. */
       worktree?: string | null;
       /** An imported thread already had a life before this row existed; its
@@ -1543,6 +1550,7 @@ export class SessionManager {
       parentSessionId: opts.parentSessionId ?? null,
       forkedFromSessionId: opts.forkedFrom?.sessionId ?? null,
       forkedFromTurnId: opts.forkedFrom?.turnId ?? null,
+      asideQuote: opts.asideQuote ?? null,
       worktree: opts.worktree ?? null,
       autonomy: opts.autonomy ?? null,
       deadline: null,
@@ -3286,6 +3294,7 @@ export class SessionManager {
       parentSessionId: s.parentSessionId,
       forkedFromSessionId: s.forkedFromSessionId,
       forkedFromTurnId: s.forkedFromTurnId,
+      asideQuote: s.asideQuote,
       /* The thread's own checkout, when it was isolated: where it is, the
          branch it was made on, and whether it is still there (a removed one
          keeps the column — a revive then fails on the missing cwd, loudly).
@@ -3534,5 +3543,6 @@ function rowValues(s: Session) {
     parentSessionId: s.parentSessionId,
     forkedFromSessionId: s.forkedFromSessionId,
     forkedFromTurnId: s.forkedFromTurnId,
+    asideQuote: s.asideQuote,
   };
 }

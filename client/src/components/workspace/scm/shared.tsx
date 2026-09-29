@@ -62,3 +62,33 @@ export function IconAction({
     </Tooltip>
   )
 }
+
+/** `+12 −3` — drawn only where git counted something. */
+export function LineCounts({
+  insertions,
+  deletions,
+  className,
+}: {
+  insertions?: number | null
+  deletions?: number | null
+  className?: string
+}) {
+  if (!insertions && !deletions) return null
+  return (
+    <span className={cn("shrink-0 font-mono text-[10px] tabular-nums", className)}>
+      {!!insertions && <span className="text-emerald-600 dark:text-emerald-400">+{insertions}</span>}
+      {!!insertions && !!deletions && " "}
+      {!!deletions && <span className="text-red-600 dark:text-red-400">−{deletions}</span>}
+    </span>
+  )
+}
+
+/** A status letter's colour — the working set's and the Review list's. */
+export const MARK_CLASS: Record<string, string> = {
+  A: "text-emerald-600 dark:text-emerald-400",
+  "?": "text-emerald-600 dark:text-emerald-400",
+  M: "text-amber-600 dark:text-amber-400",
+  D: "text-red-600 dark:text-red-400",
+  U: "text-red-600 dark:text-red-400",
+  R: "text-sky-600 dark:text-sky-400",
+}

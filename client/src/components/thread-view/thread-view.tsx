@@ -9,7 +9,7 @@
    `ThreadWelcome` at the path every caller already spells. */
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { ChevronUp, PanelRightOpenIcon } from "lucide-react"
+import { ChevronUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ActivityIndicator } from "@/components/composer-status"
 import { ComposerQueue } from "@/components/composer-queue"
@@ -60,8 +60,6 @@ import {
   withTurnUsage,
 } from "@/components/thread-view/turn-footers"
 import { useShortcut } from "@/hooks/use-hotkey"
-import { useChord } from "@/lib/keybindings"
-import { formatChord } from "@/lib/shortcuts"
 import {
   InspectorContext,
   ThreadJumpContext,
@@ -78,6 +76,8 @@ import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
 import { ThreadInspector } from "@/components/thread-view/thread-inspector"
 import { QuoteSelection } from "@/components/thread-view/quote-selection"
+import { AsideWindow, type AsideAt } from "@/components/thread-view/aside-window"
+import { useAsideHighlights } from "@/components/thread-view/aside-highlights"
 
 /** How wide the *panel* must be for the inspector to dock beside the
     transcript (`--container-panel-lg`, 64rem); below it the column is a sheet. */
@@ -98,6 +98,27 @@ function rowContains(row: Row, id: string): boolean {
   return false
 }
 
+type RowHandlers = {
+  resume: () => void
+  rewind: () => void
+  fork: () => void
+  retry: () => void
+  retryAsPaths: () => void
+  dismiss: () => void
+}
+
+/** A row's entrance, decided once, when it mounts. Toggling the class on a
+    mounted row would start the animation there and then, so a thread that
+    finished replaying would rise in whole a second time. */
+function Entrance({ animate, children }: { animate: boolean; children: React.ReactNode }) {
+  const [on] = React.useState(animate)
+  return (
+    <div className={on ? "harness-item-in" : undefined} style={on ? stagger(0) : undefined}>
+      {children}
+    </div>
+  )
+}
+
 /** A transcript, addressed by the pair that names it. The panel above hands
     the key down (see workspace/chat-panel): every store read, every action and
     every device-local draft below is keyed by it, because a bare session id is
@@ -106,6 +127,7 @@ export function ThreadView({
   sessionId,
   actions,
   docked = false,
+  pinComposer = false,
 }: {
   sessionId: string
   actions: Actions
@@ -113,6 +135,9 @@ export function ThreadView({
       readings are panels beside it there, so this view draws no inspector of
       its own and answers "Open in inspector" with the dock's door. */
   docked?: boolean
+  /** Keep the composer at the bottom even while the thread is empty, with no
+      welcome over it — the aside window (`aside-window.tsx`). */
+  pinComposer?: boolean
 }) {
   /* Narrow subscriptions, not the wide hook: the dock keeps every opened
      transcript mounted, and on `useStore()` a streamed token in ANY thread
@@ -120,7 +145,22 @@ export function ThreadView({
      re-render exactly when this thread's own objects are replaced. */
   const dispatch = useDispatch()
   const thread = useThread(sessionId)
+  /* What the composer and the inspector draw. Both take the whole thread (the
+     indicators read `items`), so on the urgent value they re-rendered with the
+     transcript on every streamed token — the composer's Tiptap editor
+     included, which is what made typing during a stream lag. Deferred, React
+     renders them at low priority and drops the frames a newer token has
+     already replaced. */
+  const lazyThread = React.useDeferredValue(thread)
   const hold = holdOf(thread)
+  /* Rows animate in only once the view is up and the thread is live: a replay,
+     or a thread opened with its transcript already in the store, mounts every
+     row on one frame, and 480ms of every row rising together is lag, not news. */
+  const mounted = React.useRef(false)
+  React.useEffect(() => {
+    mounted.current = true
+  }, [])
+  const animateEntrance = mounted.current && !isOpening(thread.phase)
   /* Whether the connection's own wait is on screen — read by the two rows at
      the foot of the transcript that trade places with it. */
   const waitShown = useWaitShown(thread.phase)
@@ -211,8 +251,8 @@ export function ThreadView({
      are ways of looking at the transcript, not changes to it, and toggling
      the option must not touch a single item. See lib/transcript-rows. */
   const rows = React.useMemo(
-    () => buildRows(visible, options.groupTools, thread.turnActive, options.groupShellCommands),
-    [options.groupTools, options.groupShellCommands, visible, thread.turnActive]
+    () => buildRows(visible, options.groupTools, thread.turnActive, options.groupShellCommands, !options.expandEdits),
+    [options.expandEdits, options.groupTools, options.groupShellCommands, visible, thread.turnActive]
   )
   /* Where a Sources strip goes: after the item that ends each finished turn.
      Keyed by that item's id so the lookup below is one map hit per row, and
@@ -275,13 +315,14 @@ export function ThreadView({
   const changesAfter = React.useMemo(
     () =>
       withTurnChanges(
-        thread.items,
-        thread.turnActive,
-        thread.turnChanges,
+        lazyThread.items,
+        lazyThread.turnActive,
+        lazyThread.turnChanges,
         options.answersOnly,
         options.showConfigNotices
       ),
-    [thread.items, thread.turnActive, thread.turnChanges, options.answersOnly, options.showConfigNotices]
+    // Read only by the composer and the inspector, so it follows their value.
+    [lazyThread.items, lazyThread.turnActive, lazyThread.turnChanges, options.answersOnly, options.showConfigNotices]
   )
   const latestChanges = React.useMemo(() => [...changesAfter.values()].at(-1), [changesAfter])
   /* The per-turn rows are the server's and live-only on the socket, so a
@@ -413,6 +454,44 @@ export function ThreadView({
      it, and an error row uses it to decide whether "Retry as file paths" would
      change anything. */
   const delivery = useAttachmentDelivery(meta, thread)
+  /* Each row's handlers at one identity per row id, for the life of the view:
+     fresh arrows per render were what made `RowView`'s memo ornamental, so every
+     finished row re-rendered on every streamed token. They read the latest
+     render's closures through `live` at click time. Which handlers a row is
+     *offered* is still decided per render below — that only changes at turn
+     boundaries. */
+  const live = React.useRef({ rows, resume, retry, retryAsPaths, forkAt, turnNumber, sessionId })
+  live.current = { rows, resume, retry, retryAsPaths, forkAt, turnNumber, sessionId }
+  const handlerCache = React.useRef(new Map<string, RowHandlers>())
+  const handlersFor = (id: string): RowHandlers => {
+    let handlers = handlerCache.current.get(id)
+    if (handlers) return handlers
+    const row = () => live.current.rows.find((r) => r.id === id)
+    handlers = {
+      resume: () => live.current.resume(),
+      rewind: () => {
+        const r = row()
+        if (r?.kind !== "user" || !r.turnId) return
+        setRewindTarget({ turnId: r.turnId, n: live.current.turnNumber.get(r.turnId) ?? 0, text: r.text })
+      },
+      fork: () => {
+        const r = row()
+        if (r?.kind === "user" && r.turnId) live.current.forkAt(r.turnId)
+      },
+      retry: () => {
+        const r = row()
+        if (r?.kind === "error" && r.retryText) live.current.retry(r.retryText)
+      },
+      retryAsPaths: () => {
+        const r = row()
+        if (r?.kind === "error") live.current.retryAsPaths(r)
+      },
+      dismiss: () => dispatch({ type: "dismiss-error", id: live.current.sessionId, itemId: id }),
+    }
+    handlerCache.current.set(id, handlers)
+    return handlers
+  }
+  const pickSuggestion = React.useCallback((prompt: string) => composerApiRef.current?.fill(prompt), [])
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
@@ -423,7 +502,6 @@ export function ThreadView({
      above the keys because Escape is one of them. */
   const composerApiRef = React.useRef<ComposerHandle>(null)
   const routed = currentThreadId(location.pathname, location.search) === sessionId
-  const inspectorChord = useChord("inspector")
   useThreadKeys({
     sessionId,
     thread,
@@ -434,6 +512,9 @@ export function ThreadView({
   // Shared with the hero behind the whole inset, which the shell paints — the
   // two must agree about when this thread counts as empty. See lib/store.
   const empty = threadIsEmpty(thread, meta?.draft)
+  /* Whether the composer sits centred under the welcome — an empty thread's
+     layout — or docked at the foot, which a mini window always wants. */
+  const centred = empty && !pinComposer
   /* The stand-in for a transcript that is on its way: opening, nothing folded
      yet, and not a draft (which has no transcript to wait for). Gated out here
      rather than inside the component because a `MessageScrollerItem` that
@@ -452,6 +533,15 @@ export function ThreadView({
     suggestionsAfter.get(rowTailId(row))
 
   const rootRef = React.useRef<HTMLDivElement>(null)
+  /* The aside open over this thread, if any — one at a time. */
+  const [aside, setAside] = React.useState<AsideAt | null>(null)
+  const closeAside = React.useCallback(() => setAside(null), [])
+  /* ⌘/Ctrl on either door opens the aside as a tab, like any thread. */
+  const openAside = React.useCallback((at: AsideAt, asTab: boolean) => {
+    if (asTab) navigateTo(threadPath(at.id))
+    else setAside(at)
+  }, [])
+  useAsideHighlights(rootRef, sessionId, openAside)
   const composerRef = React.useRef<HTMLDivElement>(null)
 
   /* ── The inspector ──
@@ -489,18 +579,27 @@ export function ThreadView({
     },
     [wide]
   )
-  const toggleInspector = () => {
-    if (wide) setInspectorPref("open", !inspector.open)
-    else setSheetOpen((open) => !open)
-  }
-  useShortcut("inspector", toggleInspector, { enabled: routed && !docked })
   /* The row a subagent is drawn in, for the Agents tab's jump: a nested group
      lives inside a run, a batch or a workflow, and only top-level rows are
      scroller items. */
+  /* Through a ref, so its identity does not move per token: `PublishJump`'s
+     effect and the inspector both depend on it. */
+  const rowsRef = React.useRef(rows)
+  rowsRef.current = rows
   const locate = React.useCallback(
-    (id: string) => rows.find((row) => rowContains(row, id))?.id,
-    [rows]
+    (id: string) => rowsRef.current.find((row) => rowContains(row, id))?.id,
+    []
   )
+  const sendFromInspector = React.useCallback(
+    (text: string) => actions.send(sessionId, text),
+    [actions, sessionId]
+  )
+  const closeInspector = React.useCallback(
+    () => (inspectorDocked ? setInspectorPref("open", false) : setSheetOpen(false)),
+    [inspectorDocked]
+  )
+  /* The rail's ticks are turn boundaries, which a streamed token never moves. */
+  const railItems = React.useDeferredValue(visible)
   /* The docked composer is an overlay of unknown height — shelf rows, the
      queue, attachments and textarea growth all move it — so its pixel height
      is measured and published as `--composer-dock-h` on the grid root for the
@@ -510,24 +609,36 @@ export function ThreadView({
   React.useLayoutEffect(() => {
     const root = rootRef.current
     const composer = composerRef.current
-    if (!root || !composer || empty) {
+    if (!root || !composer || centred) {
       root?.style.removeProperty("--composer-dock-h")
       return
     }
+    /* Once per settled height, not per frame of a shelf or checklist height
+       transition: the variable is the transcript's padding and scroll-padding,
+       so each frame of a 280ms slide used to re-lay out the scroller. The
+       reserve lands when the slide does. */
     const publish = () => {
+      const sliding = composer
+        .getAnimations({ subtree: true })
+        .filter((a) => a instanceof CSSTransition && a.transitionProperty === "height")
+      if (sliding.length > 0) {
+        void Promise.allSettled(sliding.map((a) => a.finished)).then(publish)
+        return
+      }
       root.style.setProperty("--composer-dock-h", `${composer.offsetHeight}px`)
     }
     publish()
     const observer = new ResizeObserver(publish)
     observer.observe(composer)
     return () => observer.disconnect()
-  }, [empty])
+  }, [centred])
 
   return (
     /* Rows: transcript | composer | spacer. The spacer is 1fr while the thread
        is empty and 0fr once it is not, which centres the composer and then
-       docks it — `fr` interpolates, so that whole move is one transition on one
-       property with nothing measured in JS.
+       docks it. Not transitioned: the composer leaves the flow (absolute) on
+       the same render, so it jumped anyway and the 500ms `grid-template-rows`
+       tween only re-laid out the transcript every frame under it.
        minmax(0,…) on both flexible tracks, never a bare `1fr`: that is shorthand
        for minmax(auto,1fr), whose auto minimum lets a long transcript push the
        row taller than the thread and scroll the whole pane. */
@@ -541,9 +652,9 @@ export function ThreadView({
     {docked && <PublishJump locate={locate} sessionId={sessionId} actions={actions} />}
     <div
       ref={rootRef}
-      data-empty={empty || undefined}
+      data-empty={centred || undefined}
       className={cn(
-        "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+        "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
         inspectorDocked && "grid-cols-[minmax(0,1fr)_auto]"
       )}
     >
@@ -554,33 +665,23 @@ export function ThreadView({
               type="button"
               aria-label="Close the inspector"
               tabIndex={-1}
-              className="absolute inset-0 z-30 bg-background/40 backdrop-blur-[1px]"
+              /* A dim, not a blur: a backdrop filter over the whole scroller
+                 re-blurs it every frame the transcript streams or scrolls. */
+              className="absolute inset-0 z-30 bg-background/60"
               onClick={() => setSheetOpen(false)}
             />
           )}
           <ThreadInspector
-            thread={thread}
+            thread={lazyThread}
             meta={meta}
             changes={latestChanges}
-            onSend={(text) => actions.send(sessionId, text)}
+            onSend={sendFromInspector}
             mode={inspectorDocked ? "docked" : "sheet"}
-            onClose={() => (inspectorDocked ? setInspectorPref("open", false) : setSheetOpen(false))}
+            onClose={closeInspector}
             locate={locate}
             maxWidth={panelWidth - INSPECTOR_TRANSCRIPT_MIN}
           />
         </>
-      )}
-      {meta && !docked && !inspectorDocked && !sheet && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="absolute right-3 top-[var(--dock-content-overlap,0px)] z-30 mt-2 text-muted-foreground hover:text-foreground"
-          onClick={() => openInspector()}
-          aria-label="Show the inspector"
-          title={inspectorChord ? `Show the inspector (${formatChord(inspectorChord)})` : "Show the inspector"}
-        >
-          <PanelRightOpenIcon aria-hidden className="size-4" />
-        </Button>
       )}
       {/* `autoScroll` defaults to FALSE — without it the transcript never follows
            the stream. Every direct child of Content must be an Item with a
@@ -612,7 +713,7 @@ export function ThreadView({
                lost). */
             className={cn(
               "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))]",
-              !empty && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
+              !centred && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
             )}
           >
             <ViewOptionsContext.Provider value={options}>
@@ -630,7 +731,7 @@ export function ThreadView({
                 /* Scrollable reserve matching the measured dock height, plus a
                    breath of room, so the last message rests above the glass
                    instead of behind it. */
-                !empty && "pb-[calc(var(--composer-dock-h,13rem)+1rem)]",
+                !centred && "pb-[calc(var(--composer-dock-h,13rem)+1rem)]",
               )}
             >
               {/* A stand-in while the transcript is being read — and only then:
@@ -674,19 +775,23 @@ export function ThreadView({
                     separates one turn from the next when Turn dividers is on. */
                 const isUser = row.kind === "user"
                 const divider = options.stepDividers && isUser && i !== firstUserIndex
+                const handlers = handlersFor(row.id)
+                const finishedUserTurn =
+                  row.kind === "user" && !!row.turnId && !row.local && !thread.turnActive
                 return (
                 /* ponytail: no scrollAnchor. Anchoring the user's message to
                     the top of the viewport meant sending scrolled the whole
                     transcript up and left a blank screen until the agent
                     produced enough output to fill it back in. Autoscroll alone
                     keeps the newest content in view without the jump. */
-                /* data-settled gates content-visibility (see index.css). It is
-                    set only while a turn is NOT streaming: content-visibility
-                    lays off-screen items out at a placeholder, so scrollHeight
-                    is only trustworthy when nothing is about to grow — and
-                    autoscroll reads scrollHeight. With autoScroll engaged
-                    (turnActive) every row stays fully measured; a quiet thread
-                    can then bound its DOM for the off-screen bulk. */
+                /* Off-screen rows skip layout through `MessageScrollerItem`'s
+                    own `content-visibility: auto`, streaming or not. It used to
+                    be toggled per row on turn start/end (`data-settled`), which
+                    restyled every row of the thread at the moment of Send —
+                    and the primitive's class had it on all along anyway.
+                    `contain-intrinsic-size: auto` remembers each row's last
+                    real height, and only the on-screen tail grows, so the
+                    autoscroll target does not drift. */
                 <MessageScrollerItem
                   key={row.id}
                   messageId={row.id}
@@ -697,11 +802,11 @@ export function ThreadView({
                      index.css against the *adjacency*, which is a fact only the
                      rendered list has — see the [data-answers="only"] block. */
                   data-row-kind={row.kind}
-                  data-settled={!thread.turnActive ? "true" : undefined}
                 >
-                  {divider && (
-                    <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
-                  )}
+                  {/* No `first:hidden`: the divider is always its item's first
+                      child, so that hid every one. `firstUserIndex` already
+                      skips the first turn. */}
+                  {divider && <div aria-hidden className="my-1.5 h-px bg-border/50" />}
                   {/* The entrance wrapper (index.css): one per row, so the
                       divider and the Sources strip sit beside it — each mounts
                       at its own moment and rises in on its own.
@@ -716,43 +821,18 @@ export function ThreadView({
                       token figure, the changes chip and the follow-ups all
                       resolve on one frame, and a replay, where the whole row is
                       one mount. Both used to land as a single block. */}
-                  <div className="harness-item-in" style={stagger(0)}>
+                  <Entrance animate={animateEntrance}>
                     <RowView
                       row={row}
-                      onContinue={resumable === row.id ? resume : undefined}
-                      onRewind={
-                        row.kind === "user" &&
-                        row.turnId &&
-                        !row.local &&
-                        !thread.turnActive &&
-                        !meta?.parentSessionId
-                          ? () =>
-                              setRewindTarget({
-                                turnId: row.turnId!,
-                                n: turnNumber.get(row.turnId!) ?? 0,
-                                text: row.text,
-                              })
-                          : undefined
-                      }
+                      onContinue={resumable === row.id ? handlers.resume : undefined}
+                      onRewind={finishedUserTurn && !meta?.parentSessionId ? handlers.rewind : undefined}
                       /* No dialog: there is no scope to pick — a fork never
                          touches this thread. Gated on the agent's door rather
                          than the parent check rewind carries, because a
                          branch of a workflow step is allowed to be its own
                          thread where a rewind of one is not allowed at all. */
-                      onFork={
-                        row.kind === "user" &&
-                        row.turnId &&
-                        !row.local &&
-                        !thread.turnActive &&
-                        canRewindConversation
-                          ? () => forkAt(row.turnId!)
-                          : undefined
-                      }
-                      onRetry={
-                        row.kind === "error" && row.retryText
-                          ? () => retry(row.retryText!)
-                          : undefined
-                      }
+                      onFork={finishedUserTurn && canRewindConversation ? handlers.fork : undefined}
+                      onRetry={row.kind === "error" && row.retryText ? handlers.retry : undefined}
                       /* Offered only when something on that turn would actually
                          have been inlined — a turn whose files all went as paths
                          already failed for some other reason, and a button that
@@ -760,26 +840,20 @@ export function ThreadView({
                          the same `resolveDelivery` the chip's note and the
                          bridge's branch use. */
                       onRetryAsPaths={
-                        row.kind === "error" && wentInline(row, delivery)
-                          ? () => retryAsPaths(row)
-                          : undefined
+                        row.kind === "error" && wentInline(row, delivery) ? handlers.retryAsPaths : undefined
                       }
-                      onDismiss={
-                        row.kind === "error"
-                          ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
-                          : undefined
-                      }
+                      onDismiss={row.kind === "error" ? handlers.dismiss : undefined}
                       showTimestamps={options.showTimestamps}
                       streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
                     />
-                  </div>
+                  </Entrance>
                   <TurnFooter
                     sources={options.showSources ? sourcesFor(row) : undefined}
                     usage={options.showTokens ? usageFor(row) : undefined}
                     durationMs={durationFor(row)}
                     toolDurationMs={toolDurationFor(row)}
                     suggestions={suggestionsFor(row)?.prompts}
-                    onPick={(prompt) => composerApiRef.current?.fill(prompt)}
+                    onPick={pickSuggestion}
                   />
                 </MessageScrollerItem>
                 )
@@ -908,7 +982,7 @@ export function ThreadView({
           <MessageScrollerButton
             onClick={follow.follow}
             className={cn(
-              !empty &&
+              !centred &&
                 "z-30 data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)]",
             )}
           />
@@ -917,9 +991,9 @@ export function ThreadView({
               the viewport, so it does not scroll with the content. Under the
               reader's Turn rail toggle, and the rail draws nothing under two
               turns, so a short thread pays for it only in a hook call. */}
-          {options.turnRail && visible.length > 0 && (
+          {options.turnRail && railItems.length > 0 && (
             <ThreadRail
-              items={visible}
+              items={railItems}
               turns={thread.turns}
               onEnsureTurn={(turnId, seq) => actions.loadUntilTurn(sessionId, turnId, seq)}
             />
@@ -977,8 +1051,8 @@ export function ThreadView({
         ref={composerRef}
         className={cn(
           "col-start-1 row-start-2 min-w-0",
-          empty ? KEYBOARD_CENTER_FLOW : KEYBOARD_LIFT,
-          empty
+          centred ? KEYBOARD_CENTER_FLOW : KEYBOARD_LIFT,
+          centred
             ? "relative"
             : cn(
                 "pointer-events-none absolute bottom-0 z-20",
@@ -989,18 +1063,31 @@ export function ThreadView({
               ),
         )}
       >
-        {empty && <ThreadWelcome draft={meta?.draft} />}
+        {centred && <ThreadWelcome draft={meta?.draft} />}
         <Composer
           ref={composerApiRef}
           sessionId={sessionId}
           actions={actions}
-          thread={thread}
+          thread={lazyThread}
           meta={meta}
           delivery={delivery}
           changes={latestChanges}
         />
       </div>
-      <QuoteSelection rootRef={rootRef} onQuote={(text) => composerApiRef.current?.quote(text)} />
+      <QuoteSelection
+        rootRef={rootRef}
+        onQuote={(text) => composerApiRef.current?.quote(text)}
+        /* A draft has no row to link an aside to. */
+        onAside={
+          meta && !meta.draft
+            ? (text, x, y, asTab) => {
+                const id = actions.startAside(sessionId, text)
+                if (id) openAside({ id, x, y }, asTab)
+              }
+            : undefined
+        }
+      />
+      {aside && <AsideWindow at={aside} actions={actions} onClose={closeAside} />}
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
       <span aria-hidden className="col-start-1 row-start-3" />

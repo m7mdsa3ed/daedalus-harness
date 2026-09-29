@@ -471,21 +471,6 @@ assert.equal(b.of("turn_ended")[sEnded + 1].continued, true);
 assert.equal(b.of("turn_started")[sStarted + 1].text, "a1", "the remainder drained after the sent-now turn");
 assert.deepEqual(lastQueue(a), []);
 
-// Steer: inject one queued item into the running turn without stopping it.
-permission = await park(4);
-send(a, { id: 41, cmd: "queue_add", text: "s1" });
-await waitFor(() => lastQueue(a).length === 1, "one queued");
-const stEnded = a.of("turn_ended").length;
-send(b, { id: 42, cmd: "queue_steer", itemId: lastQueue(a)[0].id });
-await waitFor(() => b.of("reply").some((r) => r.id === 42), "steer is answered");
-assert.equal(a.of("turn_started").at(-1)!.text, "s1", "the steered item reached every peer");
-assert.deepEqual(lastQueue(b), [], "…and left the queue");
-assert.equal(session.bridge!.promptActive, true, "steering keeps the turn open");
-send(a, { cmd: "answer_permission", requestId: permission, response: allow });
-await waitFor(() => a.of("turn_ended").length === stEnded + 1, "the turn ends");
-await new Promise((r) => setTimeout(r, 200));
-assert.equal(a.of("turn_ended").length, stEnded + 1, "a steer plus its turn is one turn end");
-
 // Stop parks the queue: nothing auto-follows a cancelled turn.
 await park(5);
 send(a, { id: 51, cmd: "queue_add", text: "parked" });
@@ -1066,6 +1051,28 @@ assert.ok(oneMore !== undefined && await sizeFrom(oneMore) > REPLAY_WINDOW_BYTES
 // same tick so the two cannot disagree.
 assert.equal(cappedAttach.to, (await manager.journal(logged.id))!.cursor, "attached says how far it runs");
 assert.equal(capped.of("caught_up")[0].cursor, cappedAttach.to);
+
+// --- queue steering ---
+
+// Steer one queued item into the current turn without interrupting it.
+permission = await park(4);
+send(a, { id: 41, cmd: "queue_add", text: "steered from queue permission" });
+await waitFor(() => lastQueue(a).length === 1, "the steer candidate is queued");
+const queuedSteerStarted = b.of("turn_started").length;
+const queuedSteerEnded = a.of("turn_ended").length;
+const permissionCountBeforeSteer = b.of("permission").length;
+send(a, { id: 42, cmd: "queue_steer", itemId: lastQueue(a)[0].id });
+await waitFor(() => a.of("reply").some((r) => r.id === 42), "queue steer is answered");
+assert.ok("turnId" in (a.of("reply").find((r) => r.id === 42)!.result as object));
+await waitFor(() => b.of("permission").length === permissionCountBeforeSteer + 1, "the queued steer reaches the running turn");
+await waitFor(() => lastQueue(a)[0]?.steer === true, "the row is shown as steering while its bubble is held");
+assert.equal(b.of("turn_started").length, queuedSteerStarted, "the steered bubble waits for the current step");
+for (const requestId of b.of("permission").slice(-2).map((p) => p.requestId)) {
+  send(a, { cmd: "answer_permission", requestId, response: allow });
+}
+await waitFor(() => b.of("turn_started").length === queuedSteerStarted + 1, "the queued steer lands at the step boundary");
+assert.equal(b.of("turn_started").at(-1)!.text, "steered from queue permission");
+await waitFor(() => a.of("turn_ended").length === queuedSteerEnded + 1, "the steered turn settles");
 
 // --- the queue outlives the process ---
 

@@ -1,6 +1,7 @@
 /* The readings a finished turn leaves under its answer: sources, usage and
    follow-ups. Kept together so the transcript owns one turn-tail layout while
    each part keeps its own component and entrance timing. */
+import * as React from "react"
 import type * as acp from "@daedalus/acp"
 
 import { PromptSuggestions } from "@/components/prompt-suggestions"
@@ -9,7 +10,8 @@ import { TokenSummary } from "@/components/token-usage"
 import type { TurnSources } from "@/lib/sources"
 import { stagger } from "@/lib/utils"
 
-export function TurnFooter({
+/* Memoised: one per row, and the transcript re-renders on every streamed token. */
+export const TurnFooter = React.memo(function TurnFooter({
   sources,
   usage,
   durationMs,
@@ -50,4 +52,4 @@ export function TurnFooter({
       )}
     </div>
   )
-}
+})

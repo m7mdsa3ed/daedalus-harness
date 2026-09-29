@@ -72,6 +72,7 @@ const PROMPT_OPTIONS = {
        are composition rules, not layout instructions: the components already
        reflow themselves (`@panel-*`), so all the model has to get right is the
        shape and the size. */
+    "Every standalone component fills the available width. Use side-by-side layouts only for an intentional comparison or a small related group; otherwise keep components full-width and stacked.",
     "The view may be read on a phone. Prefer shapes that survive a narrow column: a StatRow of two to four figures, or a Table/Chart, rather than a wide custom layout. Keep every label and title short.",
     "Keep the program to roughly a dozen statements. A long fence is harder to follow and likelier to be cut off before `root` — and a program with no `root` draws nothing at all.",
   ],

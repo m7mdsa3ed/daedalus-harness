@@ -80,7 +80,7 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     assert.ok(split.system > 0, "the system prompt is counted");
     assert.ok(split.tools > 0, "the tool block is counted");
     assert.equal(
-      split.system + split.tools + split.conversation,
+      split.system + split.tools + split.mcp + split.user + split.conversation,
       split.total,
       "the split sums back to the total",
     );

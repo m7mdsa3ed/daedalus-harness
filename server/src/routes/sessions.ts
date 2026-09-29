@@ -72,6 +72,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       skillIds,
       commandIds,
       worktree,
+      aside,
       prompt,
     } = await c.req.json();
     // The thread's own picks, on top of the project's and the profile's. Stale
@@ -134,6 +135,13 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
            checkout before the thread exists, and refuses in git's words when
            the project cannot have one. */
         worktree: worktree === true,
+        /* An aside: the thread it was selected in, and the passage. The parent
+           is provenance only (a chip, a highlight), so an id naming nothing is
+           harmless — it links to nothing, as a purged fork parent does. */
+        aside:
+          aside && typeof aside.of === "string" && typeof aside.quote === "string" && aside.quote.trim()
+            ? { of: aside.of, quote: aside.quote.slice(0, 4000) }
+            : undefined,
       });
       /* Wait for the handshake. A 201 therefore means the agent has answered
          session/new, its settings have been applied, and the first `session_config`

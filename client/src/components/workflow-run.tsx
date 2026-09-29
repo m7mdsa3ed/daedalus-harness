@@ -100,10 +100,8 @@ export function subagentHasBody(group: SubagentGroup, stepThread: string | null)
   )
 }
 
-/** What a step spent, when its runtime reported it. Only the RFD/workflow head
-    has one: a Task-tool head is a call on the *parent's* session, so its tokens
-    are already inside the parent turn's own reading and counting them here
-    would say the same tokens twice. */
+/** What a step spent, when its runtime reported it. Task-child usage is
+    attribution only: those tokens remain included in the parent's turn total. */
 export function stepUsage(group: SubagentGroup): acp.Usage | undefined {
   return group.head.kind === "subagent" ? group.head.usage : undefined
 }

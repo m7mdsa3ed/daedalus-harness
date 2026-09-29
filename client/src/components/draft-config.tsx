@@ -5,15 +5,13 @@ import {
   BotIcon,
   ChevronRightIcon,
   GitBranchIcon,
-  GlobeIcon,
   Loader2,
-  PlugIcon,
   RefreshCwIcon,
-  TerminalIcon,
 } from "lucide-react";
 import {
   AgentIcon,
   EntityIcon,
+  McpIcon,
   ModelIcon,
   ProfileIcon,
   ProjectIcon,
@@ -27,14 +25,17 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
+  HelperModelRow,
   MenuAddItem,
   MenuRow,
+  PILL,
   MenuSearchInput,
   menuFilter,
   selectChoices,
@@ -47,8 +48,7 @@ import {
   READING_TRIGGER_ALWAYS,
   ReadingFace,
 } from "@/components/composer/indicator";
-import { ThreadToolsMenu } from "@/components/thread-tools/menu";
-import { useThreadToolCount } from "@/components/thread-tools/use-thread-tool-count";
+import { ThreadToolsSections } from "@/components/thread-tools/menu";
 import { cn } from "@/lib/utils";
 import type { Actions } from "@/lib/actions";
 import {
@@ -132,7 +132,8 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
 }
 
 /**
- * Where this thread runs and what it carries: the project, and the tools kit.
+ * Where this thread runs: the project and its checkout. What it carries is
+ * the thread picker's Tools section.
  *
  * It outlives the draft. Both halves used to disappear at the moment they
  * started mattering — the row was rendered only while `meta.draft`, so the
@@ -150,9 +151,9 @@ export function DraftScopeRow({
   actions,
   remember = true,
   editable = true,
-  side,
   leading,
   trailing,
+  showSelectedMcps = true,
 }: {
   meta: SessionMeta;
   actions: Actions;
@@ -162,9 +163,6 @@ export function DraftScopeRow({
   /** A draft may still pick; a started thread's project and links are already
       spawned, so the row reads them out instead. */
   editable?: boolean;
-  /** Passed to the tools menu — the row does not know whether it is standing
-      in the composer or on a form. See `ThreadToolsMenu`. */
-  side?: "top" | "bottom";
   /** Drawn just after the project, on the row's *start*. The composer's
       connection reading goes here: "where does this work land" and "can I get
       a message out about it" are the two facts that outrank the rest of the
@@ -180,16 +178,13 @@ export function DraftScopeRow({
       full the window is belongs with where the thread runs, not with the
       controls that send. */
   trailing?: React.ReactNode;
+  /** Keep the scope path focused on location when the composer has its own
+      selected-MCP readout beside model configuration. */
+  showSelectedMcps?: boolean;
 }) {
   const { projects, project, configure } = useDraft(meta, actions, remember);
   const mcpServers = useMcpServers();
   const newProject = useNewProject();
-  /* Asked here rather than left to the menu: it decides whether that menu is on
-     the row at all — a draft always draws it (it is the picker), a started
-     thread only when it carries something. Same count the menu itself prints,
-     one place for the rule. */
-  const carries = useThreadToolCount(meta);
-  const showTools = editable || carries > 0;
   /* Whether something is standing beside the project on the head of the row.
      The project is the only control here whose words are optional *in
      practice*: it is named one directory and marked with an icon that says
@@ -201,13 +196,6 @@ export function DraftScopeRow({
     id,
     server: mcpServers.find((server) => server.id === id),
   }));
-  const mcpIcon = (server: (typeof selectedMcps)[number]["server"]) =>
-    server?.type === "builtin"
-      ? PlugIcon
-      : server?.type === "http"
-        ? GlobeIcon
-        : TerminalIcon;
-
   return (
     /* py-1, not the shelf's py-1.5: every control in here is already h-6, so
        the padding is the only slack there is, and this row is under the pile on
@@ -218,8 +206,8 @@ export function DraftScopeRow({
     /* Two halves, two grammars. The start is a *path* — project, then its
        checkout, then what rides along — read left to right like a location,
        chevrons between and no frame, because it names a place and not a state.
-       The end is an instrument bar: every reading one cell of a single
-       segmented box, hairlines between, so the counts read as one gauge. */
+       The end is a bare cluster of readings: no box around them, each
+       trigger's own hover ground is the only frame it wears. */
     <div className="flex min-w-0 items-center gap-3 px-3 py-1">
       <nav
         aria-label="Thread scope"
@@ -266,16 +254,14 @@ export function DraftScopeRow({
           editable={editable && remember}
           onToggle={(isolate) => configure({ isolate })}
         />
-        {selectedMcps.length > 0 && (
+        {showSelectedMcps && selectedMcps.length > 0 && (
           <>
             <PathSep />
             <span
               className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted-foreground"
               aria-label="Selected MCP servers"
             >
-              {selectedMcps.map(({ id, server }) => {
-                const Icon = mcpIcon(server);
-                return (
+              {selectedMcps.map(({ id, server }) => (
                   <span
                     key={id}
                     className="flex min-w-0 items-center gap-1"
@@ -283,33 +269,88 @@ export function DraftScopeRow({
                       server ? mcpSubtitle(server) : "MCP server unavailable"
                     }
                   >
-                    <Icon aria-hidden className="size-3.5 shrink-0" />
+                    <McpIcon server={server} className="size-3.5" />
                     <span className="hidden truncate @panel-sm:inline">
                       {server?.name ?? "Unavailable MCP"}
                     </span>
                   </span>
-                );
-              })}
+              ))}
             </span>
           </>
         )}
       </nav>
-      {(leading || showTools || trailing) && (
-        <span className="flex shrink-0 items-center divide-x divide-foreground/10 overflow-hidden rounded-md bg-foreground/[0.03] ring-1 ring-foreground/10 [&>*]:rounded-none!">
+      {(leading || trailing) && (
+        <span className="flex shrink-0 items-center gap-0.5">
           {leading}
-          {showTools && (
-            <ThreadToolsMenu
-              meta={meta}
-              actions={actions}
-              editable={editable}
-              remember={remember}
-              side={side}
-            />
-          )}
           {trailing}
         </span>
       )}
     </div>
+  );
+}
+
+/** A compact readout of this thread's selected MCP servers, kept beside the
+    model control rather than expanding the scope path. */
+export function SelectedMcpIndicator({ meta }: { meta: SessionMeta }) {
+  const mcpServers = useMcpServers();
+  const selected = (meta.mcpServerIds ?? []).map((id) => ({
+    id,
+    server: mcpServers.find((server) => server.id === id),
+  }));
+  if (selected.length === 0) return null;
+
+  const label = `${selected.length} ${selected.length === 1 ? "MCP" : "MCPs"}`;
+  const names = selected.map(({ server }) => server?.name ?? "Unavailable MCP").join(", ");
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-5 min-w-0 max-w-48 gap-1 rounded-pill px-1.5 text-[11px] pointer-coarse:h-7 bg-blue-500/12 text-blue-600 hover:bg-blue-500/20 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-400"
+            aria-label={`${label} selected`}
+            title={names}
+          >
+            {/* The model picker's stacked marks, one per server, capped at
+                three: the count beside them says how many there are. */}
+            <AvatarGroup className="-space-x-1">
+              {selected.slice(0, 3).map(({ id, server }) => (
+                <span
+                  key={id}
+                  className="grid size-3.5 shrink-0 place-items-center rounded-full bg-blue-500/25 ring-1 ring-composer"
+                >
+                  <McpIcon server={server} className="size-2" />
+                </span>
+              ))}
+            </AvatarGroup>
+            {selected.length === 1 ? (
+              <span className="truncate">{names}</span>
+            ) : (
+              <span className="font-medium tabular-nums">{selected.length}</span>
+            )}
+          </Button>
+        }
+      />
+      <PopoverContent align="start" side="top" className="w-72 gap-2">
+        <p className="font-medium">{label} selected</p>
+        <ul className="space-y-2">
+          {selected.map(({ id, server }) => (
+              <li key={id} className="flex min-w-0 items-start gap-2 text-xs">
+                <McpIcon server={server} className="mt-0.5 size-3.5" />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    {server?.name ?? "Unavailable MCP"}
+                  </span>
+                  <span className="block truncate text-muted-foreground">
+                    {server ? mcpSubtitle(server) : "MCP server unavailable"}
+                  </span>
+                </span>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -675,15 +716,14 @@ export function DraftConfigPopover({
             /* Ellipsized rather than collapsed, on a phone as in a narrow dock
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
-            className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            className={PILL}
             title={[persona?.name, modelLabel, effortLabel, modeLabel]
               .filter(Boolean)
               .join(" · ")}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
                 the two marks stay, it is only the second one that changes. A
-                broken model icon falls back to the profile logo, which is what
-                would have shown anyway. */}
+                broken model icon falls back to the profile logo. */}
             {resolvedModel?.iconUrl ? (
               <AvatarGroup className="-space-x-1">
                 <AgentIcon
@@ -721,9 +761,8 @@ export function DraftConfigPopover({
                 className="size-4"
               />
             )}
-            {/* Same words the started thread's trigger (SessionConfigPopover)
-               reads — the agent is named by its mark above, and naming it here
-               too made the label change the moment the thread started. */}
+            {/* Same words the started thread's trigger reads — the agent is
+                named by its mark above. */}
             <span className="max-w-40 truncate">
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
@@ -739,8 +778,7 @@ export function DraftConfigPopover({
         <DropdownMenuGroup>
           <DropdownMenuLabel>Start this thread with</DropdownMenuLabel>
           {/* First, because it decides what every row below it even means —
-              switching it resets model and effort (`chooseAgent`) the same
-              way switching profile does. */}
+              switching it resets model and effort (`chooseAgent`). */}
           <MenuRow
             label="Agent"
             value={agent?.id ?? ""}
@@ -751,9 +789,7 @@ export function DraftConfigPopover({
             }))}
             onSelect={chooseAgent}
           />
-          {/* Above Profile, because it is the only row here that does not
-              depend on one — and free on a draft, where the rest of this menu
-              is a set of placeholders and nothing has been spawned yet. A
+          {/* Above Profile: the only row here that does not depend on one. A
               persona that names an effort applies it on the spot; the row
               below still shows it, and still overrides it. */}
           {personas.length > 0 && (
@@ -771,19 +807,15 @@ export function DraftConfigPopover({
                     : personas.find((p) => p.id === value);
                 configure({
                   personaId: picked?.id ?? "",
-                  /* Only when the persona has an opinion: dropping to "" here
-                     would make picking "General chat" silently clear an effort
-                     the user chose on purpose. The server applies the same rule
-                     for a started thread. */
+                  /* Only when the persona has an opinion: dropping to "" would
+                     silently clear an effort chosen on purpose. */
                   ...(picked?.effort ? { effort: picked.effort } : {}),
                 });
               }}
             />
           )}
-          {/* Drawn even on a single profile now, which it was not: the row is
-              also the door to making another, and a menu that hides the list
-              whenever there is one entry is a menu with nowhere to add the
-              second. */}
+          {/* Drawn even on a single profile: the row is also the door to
+              making another. */}
           <MenuRow
             label="Profile"
             value={profile?.id ?? ""}
@@ -802,8 +834,8 @@ export function DraftConfigPopover({
               configure({ profileId: id, model: "", effort: "" })
             }
             add={{
-              /* Adding one selects it, as the project picker does: the model
-                 and effort are the old profile's, so they are cleared. */
+              /* Adding one selects it: the model and effort are the old
+                 profile's, so they are cleared. */
               label: "New profile…",
               onSelect: () =>
                 newProfile((id) =>
@@ -820,9 +852,6 @@ export function DraftConfigPopover({
                 ...models.map((m) => ({
                   value: m.id,
                   name: m.label,
-                  /* Every row carries a mark: the model's own icon when it
-                     has one, a neutral glyph otherwise, so rows without art
-                     align with those that have it. */
                   icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
                   group: m.group || undefined,
                 })),
@@ -833,10 +862,9 @@ export function DraftConfigPopover({
                   effort: "",
                 })
               }
-              /* Only on the overridden branch: a profile with no catalog is
-                 deferring to the agent's own list, and appending one row there
-                 would silently flip it into overriding the agent — a decision
-                 that belongs in the editor, not in a menu. */
+              /* Only on the overridden branch: appending one row to a
+                 profile that defers to the agent would silently flip it into
+                 overriding the agent. */
               add={
                 profile && !profile.virtual
                   ? {
@@ -860,12 +888,8 @@ export function DraftConfigPopover({
                   ...c,
                   icon: <BotIcon className="size-4 text-muted-foreground" />,
                 }))}
-                /* The row's own `model`, not a config choice: the agent's model
-                   and effort have a channel of their own at spawn
-                   (`agentOwned`) and are never replayed from `configChoices`,
-                   so a pick left in there would be dropped and the thread would
-                   come up on the agent's default. Same field the profile
-                   catalog writes — one record either way. */
+                /* The row's own `model`, not a config choice: the agent's
+                   model has a channel of its own at spawn (`agentOwned`). */
                 onSelect={(value) => configure({ model: value })}
               />
             )
@@ -891,11 +915,12 @@ export function DraftConfigPopover({
                 label="Effort"
                 value={optionValue(liveEffort)}
                 choices={selectChoices(liveEffort)}
-                /* Effort travels the same channel as the model — see above. */
+                /* Effort travels the same channel as the model. */
                 onSelect={(value) => configure({ effort: value })}
               />
             )
           )}
+          {profile && <HelperModelRow profile={profile} />}
           {nothingYet &&
             (!profile ? (
               <DropdownMenuItem disabled className="whitespace-normal text-xs">
@@ -903,9 +928,7 @@ export function DraftConfigPopover({
               </DropdownMenuItem>
             ) : probeStatus === "failed" ? (
               /* The one row here that is not disabled: a failed probe is the
-                 only one of the three states the reader can do something
-                 about, and `force` is what lets it step over the
-                 once-per-page-load guard. */
+                 only state the reader can do something about. */
               <DropdownMenuItem
                 className="whitespace-normal text-xs"
                 onSelect={(event) => {
@@ -933,9 +956,13 @@ export function DraftConfigPopover({
               </DropdownMenuItem>
             ))}
         </DropdownMenuGroup>
-        {/* Its own group, mirroring the started thread's menu: suggestions are
-            how the thread's answers should behave, not who answers — and with
-            nothing running yet there is no restart to warn about. */}
+        {/* What the thread will carry — still a choice on a draft. */}
+        <ThreadToolsSections
+          meta={meta}
+          actions={actions}
+          editable
+          remember={remember}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session settings</DropdownMenuLabel>
@@ -956,17 +983,14 @@ export function DraftConfigPopover({
             Draw answers as UI
           </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
-        {/* Never touched by the profile: mode and the rest are the agent's, and
-            they stay exactly where they are whichever profile is selected. */}
+        {/* Never touched by the profile: mode and the rest are the agent's. */}
         {(modes || agentOptions.rest.length > 0) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel>Agent options</DropdownMenuLabel>
-              {/* First, like the started thread's menu — and remembered on the
-                  draft rather than replayed as a config choice, because a mode
-                  travels over `session/set_mode`, not `set_config_option`. The
-                  server applies it the moment session/new answers. */}
+              {/* Remembered on the draft rather than replayed as a config
+                  choice, because a mode travels over `session/set_mode`. */}
               {modes && (
                 <MenuRow
                   label="Mode"
@@ -999,8 +1023,8 @@ export function DraftConfigPopover({
                   </DropdownMenuCheckboxItem>
                 ),
               )}
-              {/* The probe is cached on both ends, keyed on what the harness can
-                  see — an upgraded binary or a new login is not in the key. */}
+              {/* The probe is cached on both ends, keyed on what the harness
+                  can see — an upgraded binary or a new login is not in it. */}
               <DropdownMenuItem
                 className="text-xs text-muted-foreground"
                 disabled={probeStatus === "asking"}

@@ -64,11 +64,10 @@
    `prompt-history.ts` (the Up walk). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowUp, History, Mic, Pause, Play, Square } from "lucide-react"
+import { ArrowUp, Mic, Pause, Play, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { Shortcut } from "@/components/shortcut"
 import {
   AgentsIndicator,
   ChangesIndicator,
@@ -83,14 +82,14 @@ import {
 import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerEditor, type TextSurface } from "@/components/composer/composer-editor"
 import { quoteLines } from "@/components/composer/editor-text"
-import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
-import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
+import { ComposerStrip } from "@/components/composer-strip"
 import { ComposerAddMenu } from "@/components/composer/add-menu"
 import { EnhanceButton } from "@/components/composer/enhance-button"
 import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
+import { PromptHistoryWalk } from "@/components/composer/history-menu"
 import { selectionOf, textInsertions } from "@/components/composer/text-insertions"
-import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
+import { DraftConfigPopover, DraftScopeRow, SelectedMcpIndicator } from "@/components/draft-config"
 import { SessionConfigPopover } from "@/components/session-config"
 import { FileMentionMenu, useFileMentions } from "@/components/file-mentions"
 import {
@@ -285,7 +284,6 @@ export function Composer({
      from the cache rather than a round trip. */
   const composerHistory = useComposerHistory()
   const recordHistory = useRecordComposerHistory()
-  const [historyOpen, setHistoryOpen] = React.useState(false)
 
   const send = async (opts: { steer?: boolean } = {}) => {
     if (gated) return
@@ -674,7 +672,11 @@ export function Composer({
      target to hold a thumb on. Under a coarse pointer every control grows to
      the 32px icon-sm scale — still one language across the row, still inside
      the composer card where the filled Send keeps the eye. */
-  const iconSize = coarse ? "icon-sm" : "icon-xs"
+  const iconSize = "icon-xs"
+  /* The row's one scale, smaller than the app's xs: 20px under a mouse, 28px
+     under a finger. Every icon button in the composer takes it, so the row is
+     one size and the text box, not the chrome, is what the card is about. */
+  const iconFit = coarse ? "size-7 [&_svg]:size-3.5" : "size-5 [&_svg]:size-3"
   const steerChord = formatChord(steerChords[0] ?? "")
 
   const sendTitle = gated
@@ -708,6 +710,7 @@ export function Composer({
               meta={meta}
               actions={actions}
               editable={draft}
+              showSelectedMcps={false}
               /* The row's head, immediately after the project: where the work
                  lands and whether this device can get a message out about it
                  are the two facts the rest of the floor is read against, so
@@ -766,21 +769,8 @@ export function Composer({
         />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
-        {history.browsing && (
-          <ComposerStripItem
-            summary={{ id: "history", icon: History, label: "Earlier prompt" }}
-            className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground"
-          >
-            <History className="size-3" />
-            <span>Earlier prompt</span>
-            {/* The way out, for the pointer that has one. Hidden on touch —
-                there is no Esc key on a phone, so it is an instruction that
-                cannot be followed taking up the end of the row. */}
-            <span className="ms-auto hidden items-center gap-1.5 sm:flex">
-              <Shortcut chord="esc" />
-              to go back
-            </span>
-          </ComposerStripItem>
+        {history.browsing && history.index !== null && (
+          <PromptHistoryWalk rows={history.rows} selected={history.index} onSelect={history.select} />
         )}
         {/* Last on the shelf, nearest the composer: these suggestions are about
             the text being typed right now, where everything above belongs to
@@ -810,7 +800,11 @@ export function Composer({
       <div
         data-slot="composer-card"
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer/70 p-2 shadow-glass-lg backdrop-blur-xl backdrop-saturate-150",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl p-2 shadow-glass-lg",
+          /* Glass only while nothing streams under it: a backdrop filter over
+             the transcript re-blurs on every token and every scroll frame,
+             which is the dearest paint on the screen. */
+          thread.turnActive ? "bg-composer/95" : "bg-composer/70 backdrop-blur-xl backdrop-saturate-150",
           "transition-[ring-color] duration-200",
           voice.listening && "ring-1 ring-destructive/40"
         )}
@@ -842,6 +836,25 @@ export function Composer({
             Drop to attach
           </div>
         )}
+        {/* The prompt enhancer, in the card's top-right corner: it acts on
+            the words in the box, so it sits with them rather than in the row
+            of controls about sending. It rewrites the draft through the AI SDK
+            against the profile picked in Settings › General — a device habit,
+            not a property of the thread. */}
+        <div className="absolute top-2 right-2 z-10">
+          <EnhanceButton
+            sessionId={sessionId}
+            meta={meta}
+            draft={draft}
+            text={text}
+            disabled={disabled}
+            gated={gated}
+            hasContent={hasContent}
+            size={iconSize}
+            className={iconFit}
+            onEnhanced={applySuggestion}
+          />
+        </div>
         <ComposerEditor
           ref={composerRef}
           value={text}
@@ -876,6 +889,8 @@ export function Composer({
                the `--text-xs` bump `.thread-transcript` sets, so `text-xs`
                here is 0.875rem and typing matches what is being answered. */
             "w-full text-xs md:text-xs",
+            /* Clear of the enhance button in the corner. */
+            "pr-7",
             /* The box grows to ten lines and then scrolls. */
             "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons
@@ -883,13 +898,12 @@ export function Composer({
             coarse && "[&_.tiptap]:min-h-11"
           )}
         />
-        {/* One control language across the row: every button is the same
-            size — 24px (`icon-xs`), the app's xs scale, mouse and finger
-            alike — and rounded-pill. The three that act on the message as a
-            whole carry a filled ground rather than a border: the "+" a muted
-            disc, Send a primary one, Stop a destructive one. The row sits
-            INSIDE the composer card, so a bordered button there would be a box
-            inside a box; the ground and the colour carry the meaning instead. */}
+        {/* One control language across the row: every icon button shares the
+            plus button's size (`iconFit`: 20px, 28px under a finger) and round
+            shape. The three that act on the message as a whole carry a filled
+            ground rather than a border: the "+" a muted disc, Send a primary
+            one, Stop a destructive one. The row sits INSIDE the composer card,
+            so the ground and colour carry the meaning instead of a border. */}
         <div
           data-slot="composer-toolbar"
           className={cn("flex items-center gap-1 pt-1", coarse && "gap-1.5 pt-1.5")}
@@ -897,6 +911,7 @@ export function Composer({
           <ComposerAddMenu
             disabled={disabled || gated}
             size={iconSize}
+            className={iconFit}
             coarse={coarse}
             onFiles={files.add}
             canMention={Boolean(meta?.projectId)}
@@ -908,20 +923,28 @@ export function Composer({
             onCommand={insertCommand}
             onProjectCommand={insertProjectCommand}
             onCodeBlock={insertCodeBlock}
-            onHistory={() => setHistoryOpen(true)}
+            /* Picking replaces the box rather than appending: this is "recall
+               that prompt", the same act Up performs. */
+            onHistory={(picked) => {
+              setText(picked)
+              requestAnimationFrame(() => {
+                const el = composerRef.current
+                if (!el) return
+                el.focus()
+                el.setSelectionRange(el.value.length, el.value.length)
+              })
+            }}
             onClear={clearAll}
           />
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* Who answers. Before the session exists the profile catalog is the
-                only thing that knows the choices; after it, the agent is. Two
-                controls, one slot — see CLAUDE.md's rule about which owns the
-                model. The kit this thread carries is NOT here: it is one of the
-                footer's readings, in the cluster that ends the scope row above. */}
+            {/* Who answers and the MCPs this thread carries sit together as
+                compact choices, while the footer stays focused on scope. */}
             {draft && meta ? (
               <DraftConfigPopover meta={meta} actions={actions} />
             ) : (
               <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
             )}
+            {meta && <SelectedMcpIndicator meta={meta} />}
           </div>
           {/* How long the prompt is, once that is worth knowing. The token
               figure is an estimate and is printed as one (the tilde); it is
@@ -935,27 +958,13 @@ export function Composer({
               {formatTokens(chars)} · ~{formatTokens(Math.ceil(chars / 4))} tok
             </span>
           )}
-          {/* The prompt enhancer. The button rewrites the draft through the AI
-              SDK against the profile picked in Settings › General; the pick
-              lives there, not here, because it is a device habit like the
-              thread defaults rather than a property of the thread. */}
-          <EnhanceButton
-            sessionId={sessionId}
-            meta={meta}
-            draft={draft}
-            text={text}
-            disabled={disabled}
-            gated={gated}
-            hasContent={hasContent}
-            size={iconSize}
-            onEnhanced={applySuggestion}
-          />
           {voice.supported && (voice.listening || (!hasContent && !gated)) && (
             <Button
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
+                "shrink-0 rounded-full text-muted-foreground hover:text-foreground",
+                iconFit,
                 // Listening is a live state, so it stays coloured — but as text,
                 // not as a filled chip that reintroduces the chrome.
                 voice.listening && "animate-pulse text-destructive hover:text-destructive"
@@ -983,7 +992,8 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
+                "shrink-0 rounded-full text-muted-foreground hover:text-foreground",
+                iconFit,
                 thread.paused && "text-primary hover:text-primary"
               )}
               onClick={() =>
@@ -1006,7 +1016,7 @@ export function Composer({
             <Button
               variant="destructive"
               size={iconSize}
-              className="shrink-0 rounded-pill shadow-sm"
+              className={cn("shrink-0 rounded-pill shadow-sm", iconFit)}
               /* Stop and Escape are the same gesture, so they answer the same
                  way: a message the user has not seen land comes back into the
                  box rather than staying parked in a queue nothing will drain.
@@ -1020,46 +1030,28 @@ export function Composer({
               }
               title="Stop"
             >
-              <Square className="size-3.5 fill-current" />
+              <Square className="fill-current" />
             </Button>
           )}
           {/* Always drawn, even on an empty box: the affordance you aim at
               stays in the same place before and after you type, rather than
               appearing the moment the first character lands. When there is
               nothing to send `canSend` is false, so it wears the disabled
-              ground — a muted chip — and fills primary the moment it becomes
-              sendable. Wears the row's own corner (`rounded-pill`, like the
-              "+"), so the cluster is one shape. */}
+              ground — a muted disc — and fills primary the moment it becomes
+              sendable. Like the "+", it is round and the same size. */}
           <Button
             variant="default"
             size={iconSize}
-            className="shrink-0 rounded-pill disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+            className={cn("shrink-0 rounded-full disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100", iconFit)}
             onClick={() => void send()}
             disabled={!canSend}
             title={sendTitle}
             aria-label={sendTitle}
           >
-            {gated ? <Spinner className="size-3.5" /> : <ArrowUp className="size-3.5" strokeWidth={2.5} />}
+            {gated ? <Spinner /> : <ArrowUp strokeWidth={2.5} />}
           </Button>
         </div>
       </div>
-      {/* Outside the card so the dialog is not inside the element it writes
-          into. Picking replaces the box rather than appending: this is
-          "recall that prompt", the same act Up performs, and appending would
-          make the two doors onto one list behave differently. */}
-      <ComposerHistoryDialog
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        onPick={(picked) => {
-          setText(picked)
-          requestAnimationFrame(() => {
-            const el = composerRef.current
-            if (!el) return
-            el.focus()
-            el.setSelectionRange(el.value.length, el.value.length)
-          })
-        }}
-      />
     </div>
   )
 }

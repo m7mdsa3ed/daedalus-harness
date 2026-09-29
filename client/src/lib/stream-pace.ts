@@ -17,9 +17,8 @@
 
    `instant` is not a slow speed, it is the absence of one — the buffer is
    bypassed and the painted text is the arrived text. It is deliberately a speed
-   and not a switch: "no pacing" and `streamEffect: "none"` are different
-   answers to different questions, and folding them into one control would make
-   an unadorned-but-paced reveal unaskable-for. */
+   and not a switch: "no pacing" and calm motion's plain reveal are different
+   answers to different questions. */
 
 /** Fraction of the remaining backlog drained per frame at 60fps, per speed.
  *  `null` means no pacing at all. */
@@ -71,23 +70,4 @@ export function isStreamSpeed(value: unknown): value is StreamSpeed {
 export function drainFor(speed: StreamSpeed): number | null {
   const found = STREAM_SPEEDS.find((entry) => entry.id === speed)
   return found ? found.drain : 0.14
-}
-
-/** How long a word should be held in the picker's sample at this speed. The
- *  sample is a fixed cadence rather than the pacer's exponential drain — there
- *  is no backlog to drain in a preview — so this is the *feel* of each speed
- *  rather than its arithmetic, spread wide enough that two tiles side by side
- *  are visibly different. `instant` has no rate, so it shows the whole sentence
- *  arriving at once, which is what it does. */
-export function sampleStepMs(speed: StreamSpeed): number | null {
-  switch (speed) {
-    case "gentle":
-      return 190
-    case "quick":
-      return 70
-    case "instant":
-      return null
-    default:
-      return 130
-  }
 }

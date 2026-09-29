@@ -30,7 +30,9 @@ import {
   formatTokens,
   promptBreakdown,
   promptTokens,
+  stepBill,
   windowEstimated,
+  type TurnTokens,
 } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -175,7 +177,9 @@ export function StepTokens({
             <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
               <Stat label="System" value={`~${formatTokens(split.system)}`} />
               <Stat label="Tools" value={`~${formatTokens(split.tools)}`} />
-              <Stat label="Conversation" value={formatTokens(split.conversation)} />
+              {split.mcp > 0 && <Stat label="MCP tools" value={`~${formatTokens(split.mcp)}`} />}
+              {split.user !== null && <Stat label="User messages" value={`~${formatTokens(split.user)}`} />}
+              <Stat label="History/tools" value={formatTokens(split.conversation)} />
               <Stat label="Prompt" value={formatTokens(split.total)} />
             </dl>
           </>
@@ -316,5 +320,123 @@ export function TokenSummary({
         </p>
       </PopoverContent>
     </Popover>
+  )
+}
+
+/* ── The thread, turn by turn ──
+   Every model request the thread made, grouped under the message that started
+   its turn, each drawn as where its prompt went (system / built-in tools / MCP
+   tools / user messages / history and tool results — our runtime's split, see
+   `promptBreakdown`) and what it wrote (output, of which reasoning). Another
+   runtime reports only a total per request, so its bar is one grey segment and
+   the turn's billed split is all there is. */
+const PARTS = [
+  { key: "system", label: "System", swatch: "bg-chart-1" },
+  { key: "tools", label: "Tools", swatch: "bg-chart-2" },
+  { key: "mcp", label: "MCP tools", swatch: "bg-chart-4" },
+  { key: "conversation", label: "History/tools", swatch: "bg-chart-3" },
+] as const
+
+function Bar({ parts, total, max }: { parts: { swatch: string; tokens: number }[]; total: number; max: number }) {
+  return (
+    <div className="flex h-1.5 overflow-hidden rounded-full bg-muted" style={{ width: `${Math.max(4, (total / max) * 100)}%` }}>
+      {parts.map((part, i) =>
+        part.tokens > 0 ? (
+          <div key={i} className={part.swatch} style={{ width: `${(part.tokens / total) * 100}%` }} />
+        ) : null
+      )}
+    </div>
+  )
+}
+
+function stepParts(step: acp.UsageUpdate) {
+  const split = promptBreakdown(step)
+  return split
+    ? [
+        ...PARTS.map((part) => ({ ...part, tokens: split[part.key] })),
+        ...(split.user === null ? [] : [{ key: "user", label: "User messages", swatch: "bg-chart-5", tokens: split.user }]),
+      ]
+    : [{ key: "used", label: "Prompt", swatch: "bg-foreground/40", tokens: step.used }]
+}
+
+export function TurnTokensList({ turns }: { turns: TurnTokens[] }) {
+  const max = Math.max(1, ...turns.flatMap((turn) => turn.steps.map((step) => step.used)))
+  const measured = turns.some((turn) => turn.steps.some((step) => promptBreakdown(step)))
+  return (
+    <div className="space-y-1.5 text-[11px]">
+      {measured && (
+        <p className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px] text-muted-foreground">
+          {PARTS.map((part) => (
+            <span key={part.key} className="inline-flex items-center gap-1">
+              <span className={cn("size-2 rounded-sm", part.swatch)} />
+              {part.label}
+            </span>
+          ))}
+        </p>
+      )}
+      {turns.map((turn, index) => {
+        /* The turn's prompt parts, summed over its requests — billed, not held:
+           each request re-sends the lot. */
+        const sums = new Map<string, { label: string; swatch: string; tokens: number }>()
+        for (const step of turn.steps)
+          for (const part of stepParts(step)) {
+            const held = sums.get(part.key)
+            sums.set(part.key, { ...part, tokens: (held?.tokens ?? 0) + part.tokens })
+          }
+        const usage = turn.usage
+        return (
+          <details key={turn.id} open={index === turns.length - 1} className="group rounded-md bg-muted/35 px-2 py-1.5">
+            <summary className="flex cursor-pointer list-none items-baseline gap-2">
+              <span className="shrink-0 font-medium tabular-nums">{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={turn.prompt}>
+                {turn.prompt || "(no text)"}
+              </span>
+              <span className="shrink-0 font-medium tabular-nums">
+                {usage ? formatTokens(usage.totalTokens) : "…"}
+              </span>
+            </summary>
+            <dl className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1">
+              {usage && <Stat label="Prompt" value={formatTokens(promptTokens(usage))} />}
+              {usage && <Stat label="Output" value={formatTokens(usage.outputTokens)} />}
+              {usage?.thoughtTokens ? <Stat label="Reasoning" value={formatTokens(usage.thoughtTokens)} /> : null}
+              {usage?.cachedReadTokens ? <Stat label="Cached" value={formatTokens(usage.cachedReadTokens)} /> : null}
+              {[...sums.values()].map((part) =>
+                part.tokens > 0 ? (
+                  <Stat
+                    key={part.label}
+                    label={part.label}
+                    value={`${part.label === "History/tools" || part.label === "Prompt" ? "" : "~"}${formatTokens(part.tokens)}`}
+                  />
+                ) : null
+              )}
+              <Stat label="Requests" value={String(turn.steps.length)} />
+            </dl>
+            {turn.steps.length > 0 && (
+              <ol className="mt-1.5 space-y-1 border-t border-border/40 pt-1.5">
+                {turn.steps.map((step, i) => {
+                  const bill = stepBill(step)
+                  const parts = stepParts(step)
+                  return (
+                    <li
+                      key={i}
+                      className="grid grid-cols-[1.25rem_1fr_auto] items-center gap-x-2"
+                      title={parts.map((part) => `${part.label} ${formatTokens(part.tokens)}`).join(" · ")}
+                    >
+                      <span className="text-[10px] text-muted-foreground tabular-nums">{i + 1}</span>
+                      <Bar parts={parts} total={step.used} max={max} />
+                      <span className="text-[10px] tabular-nums text-muted-foreground">
+                        {formatTokens(step.used)}
+                        {bill && ` · ${formatTokens(bill.outputTokens)} out`}
+                        {bill?.thoughtTokens ? ` · ${formatTokens(bill.thoughtTokens)} think` : ""}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </details>
+        )
+      })}
+    </div>
   )
 }

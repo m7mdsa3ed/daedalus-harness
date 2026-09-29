@@ -18,10 +18,18 @@
    The white disc under a picture is deliberate — provider marks are usually
    plain black SVGs, invisible on a dark theme without it. */
 import * as React from "react"
-import { BotIcon } from "lucide-react"
+import {
+  BookOpenIcon,
+  BotIcon,
+  GlobeIcon,
+  TerminalIcon,
+  UsersIcon,
+  WorkflowIcon,
+} from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import { useAgents } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
+import type { McpServerDef } from "@/lib/settings"
 
 /** `AgentDef.icon` for the harness's own runtime: its mark is the app's, drawn
     in currentColor so it themes with everything else rather than being a
@@ -121,6 +129,41 @@ export function ProfileIcon({
 
 /** A model's logo when it has one; a neutral glyph otherwise, so rows with
     and without art stay aligned. */
+const BUILTIN_MCP_MARKS = {
+  "web-search": GlobeIcon,
+  knowledge: BookOpenIcon,
+  workflow: WorkflowIcon,
+  agents: UsersIcon,
+} as const
+
+function mcpFaviconUrl(server: McpServerDef): string | undefined {
+  if (server.type !== "http") return undefined
+  try {
+    const url = new URL(server.url)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(url.hostname)}&sz=64`
+  } catch {
+    return undefined
+  }
+}
+
+/** A server's own image when supplied, otherwise the host favicon for HTTP
+    endpoints; transport and built-in marks remain the fallback. */
+export function McpIcon({ server, className }: { server?: McpServerDef | null; className?: string }) {
+  const Icon = server?.type === "builtin"
+    ? BUILTIN_MCP_MARKS[server.builtin]
+    : server?.type === "http"
+      ? GlobeIcon
+      : TerminalIcon
+  return (
+    <EntityIcon
+      src={server?.type === "builtin" ? undefined : server?.logoUrl || (server ? mcpFaviconUrl(server) : undefined)}
+      className={className}
+      fallback={<Icon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />}
+    />
+  )
+}
+
 export function ModelIcon({
   iconUrl,
   className,

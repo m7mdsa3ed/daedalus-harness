@@ -2,12 +2,14 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  fchmodSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -20,6 +22,23 @@ export interface IndexEntry {
   cwd: string;
   title: string | null;
   updatedAt: number;
+}
+
+export interface ToolErrorRecord {
+  timestamp: string;
+  sessionId: string;
+  toolCallId: string;
+  toolName: string;
+  cwd: string;
+  model: string;
+  input: unknown;
+  error: {
+    name: string;
+    message: string;
+    stack?: string;
+    cause?: unknown;
+    details?: Record<string, unknown>;
+  };
 }
 
 interface MetaRecord {
@@ -125,6 +144,7 @@ export class SessionStore {
   index: Map<string, IndexEntry>;
   private flushTimer: NodeJS.Timeout | null = null;
   private activeSubagents = new Set<string>();
+  private toolErrorsFd: number | null = null;
 
   constructor(home: string) {
     this.home = home;
@@ -179,6 +199,23 @@ export class SessionStore {
   /** A line written exactly as it was read — the fork path's copy primitive. */
   private appendRaw(sessionId: string, line: string): void {
     appendFileSync(this.file(sessionId), `${line}\n`);
+  }
+
+  appendToolError(record: ToolErrorRecord): void {
+    const line = `${JSON.stringify(record)}\n`;
+    if (this.toolErrorsFd === null) {
+      const path = join(this.home, "tool-errors.jsonl");
+      this.toolErrorsFd = openSync(path, "a", 0o600);
+      try {
+        fchmodSync(this.toolErrorsFd, 0o600);
+      } catch (error) {
+        closeSync(this.toolErrorsFd);
+        this.toolErrorsFd = null;
+        throw error;
+      }
+    }
+    let offset = 0;
+    while (offset < line.length) offset += writeSync(this.toolErrorsFd, line, offset, "utf8");
   }
 
   create(sessionId: string, cwd: string): void {

@@ -19,6 +19,9 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { flattenSelectOptions } from "@/lib/session-options"
+import { reportError } from "@/lib/errors"
+import { useSetProfileFlags } from "@/lib/queries/catalog"
+import type { Profile } from "@/lib/settings"
 
 export interface Choice {
   value: string
@@ -256,3 +259,37 @@ export const selectChoices = (option: acp.SessionConfigOption): Choice[] =>
         name: choice.name,
       }))
     : []
+
+/** The composer's thread-settings chip. */
+export const PILL =
+  "h-5 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-muted/60 hover:text-foreground aria-expanded:bg-muted/60 data-popup-open:bg-muted/60 pointer-coarse:h-7 pointer-coarse:px-2 [&_[data-slot=avatar]]:size-3.5"
+
+/**
+ * The profile's helper model — what the agent's side-jobs run on — as one more
+ * row of the settings menu. It edits the *profile* (`smallModel`), never the
+ * thread: the helper goes to the same endpoint with the same key, so it is one
+ * of this provider's models, and every thread on the profile takes it from its
+ * next start. Drawn only where the profile owns a catalog to pick from.
+ */
+export function HelperModelRow({ profile }: { profile: Profile }) {
+  const setFlags = useSetProfileFlags()
+  if (profile.virtual || profile.models.length === 0) return null
+  return (
+    <MenuRow
+      label="Helper model"
+      value={profile.smallModel || SAME_AS_THREAD}
+      choices={[
+        { value: SAME_AS_THREAD, name: "Same as thread" },
+        ...profile.models.map((m) => ({ value: m.id, name: m.label, group: m.group || undefined })),
+      ]}
+      onSelect={(value) =>
+        void setFlags
+          .mutateAsync({ id: profile.id, smallModel: value === SAME_AS_THREAD ? "" : value })
+          .catch((err) => reportError(err, "Couldn't change the helper model"))
+      }
+    />
+  )
+}
+
+/** Sentinel for "the session model", which is not itself a model id. */
+const SAME_AS_THREAD = "__same__"

@@ -201,21 +201,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   route, because the layout is what renders the container and it only knows the
   location; and set by the layout rather than by each page, or the frame would
   jump width as you moved between them.
-  **The window's own material — macOS vibrancy, Windows 11 acrylic — is on
-  wherever the platform has one, and has no switch.** It is the one thing here
-  that is *not* a theme token and cannot be: the material sits behind the
-  window, and the `data-desktop-vibrancy` blocks in `index.css` are what drop
-  the page ground so the sidebar, the gutters and the header band show it
-  through. The attribute is the preload's, set before first paint, and its whole
-  condition is the platform (`window.desktop.vibrancy`, the preload's own
-  darwin/win32 read) — a browser and a shell on a platform with no material get
-  no attribute and stay opaque. There is no stored preference behind it, and a
-  switch was tried and removed: it read as doing nothing because the material
-  was not arriving on Windows at all. That was `backgroundMaterial: "mica"`,
-  which draws nothing behind a frameless window on build 26200 — the page was
-  genuinely transparent and showed near-black. **`acrylic` is the material that
-  draws** (`electron/main.cjs`, and the measurement is written up there), so
-  there is nothing left for a switch to turn off.
+  **The window's own material — macOS vibrancy, Windows Acrylic or Mica — is
+  native window state, not a theme token.** On Windows its device-local choice is
+  in Appearance; Electron only accepts `backgroundMaterial` when creating a
+  window, so a change is saved for the next app launch and applies to new thread
+  popouts immediately. Acrylic remains the default. The `data-desktop-vibrancy`
+  blocks in `index.css` drop the page ground so the OS material shows through;
+  the preload sets the attribute before first paint on macOS and Windows, where
+  the material is available. Mica is offered despite its known limitation:
+  on Windows 11 build 26200 it drew nothing behind a frameless window in our
+  measurement, leaving near-black through the transparent page; Acrylic draws
+  the desktop wallpaper there.
   **The colour before the app exists is
   `src/lib/boot-colors.ts`** — the address-bar tint, the inlined splash and the
   manifest all need the background named before any stylesheet is parsed, so it
@@ -637,30 +633,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   whole list, permanently, for a question that is usually "how far along". **A popover is a
   fixed surface with a viewport of its own**, which is what lets these lists scroll without
   taking the room from the transcript.
-- **The queue is drawn as the messages it is** (`components/composer-queue.tsx`), at the very
-  end of the flow: the same tinted bubble at the same right edge as a sent message, dashed and
-  a shade back, with the state ("Next", "Steering") and the queued time in the caption. It is
-  **last** because a queued message is the conversation's *future* — everything above it has
-  happened or is happening, including the approval or question the turn stopped on. What
-  changes when one is sent is one border, not its shape or its place.
-  **The dash's weight is the reading order** — faint further down the queue, halfway for the
-  **next** one, nearly solid for a **steer** (which has also dropped the `opacity-90`, because
-  it has gone) — so the stack ranks itself without the numbered list that was tried and
-  rejected. The state pill is one shape for both states; only the word and the dot differ, and
-  the steer's pulses because that one is happening rather than waiting.
-  **The caption is state then time, and the row actions are one bordered group** that fades in
-  on hover and is simply always drawn where there is no hover — `useCoarsePointer`, the
-  device's question, not a `sm:` breakpoint's. Four loose ghost buttons, a pill and a time on
-  one 10px line read as six things. **Below `@panel-sm:` the caption stacks** — the panel's
-  width, not the window's — because a pill, a time and four 32px touch targets are a phone's
-  whole width: state and time keep the line a sent message's timestamp sits on, and the
-  actions drop to a line of their own beneath it, full size and still hittable. One `order`
-  swap is the whole mechanism, so the same markup is one line on a wide panel and two on a
-  narrow one. **"Send all" and "Clear" are the plural actions**: with one
-  editable message they repeat what its own two buttons say a line below and louder, so below
-  two the rule carries nothing but its label. The rule puts that label near the start with the
-  growing half *after* it, so a narrow panel gets a shorter rule instead of a 16px stub of dash
-  with two orphaned buttons wrapped under it.
+- **Queued prompts share one pending-update panel** (`components/composer-queue.tsx`), at the
+  very end of the flow. Rows carry the prompt, status and timestamp; "Up next" identifies the
+  first item to send after the turn, with later messages marked "Queued". Steering is a composer
+  send action only, not a second action on each queued row. Queue actions stay with each item,
+  use `useCoarsePointer` for touch sizing and remain reachable by keyboard focus.
 - **Editing a queued message takes it back to the composer** — `queueRemove` first, then the
   composer's `fill` handle, and the fill only on success, because a message in the box *and*
   in the queue gets said twice. There is no in-place editor: that was a second, worse composer
@@ -1417,14 +1394,10 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   answer), and staged work wins when there is any, since that is what a commit would actually
   contain. The button is drawn only where a profile can actually do it — a disabled wand nobody
   can enable is worse than none.
-- **Changed files are a tree, and the reader chooses.** `lib/workspace/git-tree.ts` is
-  generic in what a row carries (a `GitFileState` in source control, a `ChangedFile` in the
-  turn-changes tab) and folds single-child chains into one row (`src/lib/ide`, not three rows
-  holding one child each) — the thing that makes a tree readable in a 320px column. A folder
-  row acts on everything under it, which on a phone is the difference between one tap and
-  twelve. Tree or list is `lib/ide/prefs.ts`: device-local and global, like the transcript's
-  density, and deliberately not on the panel descriptor, where it would be one panel's in one
-  layout and serialized into stored layouts. The two surfaces remember it separately.
+- **The working set is grouped rows, not a tree** (`thread-view/source-control.tsx`): each row
+  is the file's name, its folder dimmed beside it, and its `+/−` lines (`git diff --numstat`,
+  read with the status), under a group header that carries the group's own lines and bulk
+  verbs. The tree layout (`git-tree.ts`, the windowed `ScmView`) went with the IDE's view.
 - **Touch is the device's; width is the panel's.** Row heights and icon buttons follow
   `useCoarsePointer` (44px on a finger, 24–28px with a mouse), and row actions are always
   visible on a finger because there is no hover to reveal them. Below 560px of *panel* width
@@ -1534,25 +1507,10 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   alone lets the small pieces in and then *warns* about `ts.worker` — and vite-plugin-pwa
   treats that warning as a failed build. Offline, the IDE is the one surface that does not
   open.
-- **Reviewing a turn is source control, narrowed.** The "N files changed" reading in the
-  composer footer's end cluster (`ChangesIndicator` in `composer-status.tsx`, fed the newest
-  gated turn by `thread-view.tsx`) opens the IDE and hands it a *filter*:
-  `requestIde({kind:"review", …})` writes the turn's paths into `lib/ide/scm-filter.ts`, the
-  panel switches to its source-control view, and that view draws only those files under a
-  banner naming them, with "Show everything" to drop it. It was a tab of its own
-  (`changes-tab.tsx`, a second file tree and a Monaco diff over the turn's two trees) and that
-  is exactly what was wrong with it: the same files, in a surface that could not stage,
-  discard or commit any of them, next door to the view that could.
-  **The narrowing is one derivation, not a filtered render** — `RepoSection` filters the
-  *status object* once, so the groups, the header count, the commit button and "stage all"
-  all describe what is on screen. A filtered render would have left a button reading
-  "Stage all 12" over three visible rows.
-  It filters `git status`, so it shows the turn's files **that are still uncommitted**: a turn
-  whose work has since been committed narrows to nothing, and the section says "None of these
-  files are uncommitted here" rather than "clean", which would be a claim about the whole
-  worktree. The filter is per project, ephemeral (never `idePrefs`, which is for standing
-  choices) and re-asked by nonce, so clicking a second chip re-opens a side view you closed.
-  **Whether the chip is drawn at all is the transcript's one contribution to a measurement that is
+- **Reviewing a turn is the Source Control panel's Review half**, not source control narrowed
+  to a filter: the old `ScmView` + `lib/ide/scm-filter.ts` pair could only show what was still
+  uncommitted, and both are gone (see "Why not source control any more" below).
+  **Whether the "N files changed" chip is drawn at all is the transcript's one contribution to a measurement that is
   otherwise entirely git's.** The snapshots bracket a *window*, and everything landing in that
   window is attributed to whichever turn was open — a second thread on the same cwd, the
   user's own editor, a dev server writing something that is not gitignored. The recorded row
@@ -1709,7 +1667,7 @@ goes to it.
   A chat tab on a wide screen is `workspace/thread-dock.tsx`, a nested dockview: the
   transcript (`ThreadView docked`, which draws no inspector of its own, and wears no strip —
   `syncStrips` hides the header of a group holding only it) and, from the + floating over it
-  only, Changes/Plan/Agents/Details (`ThreadSection`), Terminal, Preview and Tasks — each at
+  only, Changes/Plan/Agents/Details/Tokens (`ThreadSection`), Terminal, Preview and Tasks — each at
   its kind's own place (`SLOT`: readings a column at the right edge, preview and board beside
   the transcript, a shell below it; later ones join that group as tabs). The panes are flush,
   meeting at hairlines, and their strips are title bars with an underlined tab
@@ -1730,7 +1688,7 @@ goes to it.
 - **On a phone, the inspector is a column of the chat panel, never a dock split**
   (`components/thread-view/thread-inspector.tsx`, rendered by `ThreadView` inside its own
   grid). Opening a panel never splits the dock, and a column that belongs to one thread has
-  no business being a panel another thread could land beside. Four tabs, each the *full*
+  no business being a panel another thread could land beside. Five tabs, each the *full*
   reading behind one of the composer footer's readings:
   - **Changes** — a **turn timeline** (`inspector-changes.tsx`, pieces in
     `thread-view/changes/`). `ThreadView` still seeds `thread.turnChanges` from
@@ -1749,7 +1707,7 @@ goes to it.
     base** (merge-base with `origin/HEAD`, else `main`/`master` → now; a sentence when there
     is none or HEAD is it). Every side is read through the scope's own routes
     (`…/changes/file?scope=&side=`, `DiffTab`'s `TreeSide`), never re-derived client-side.
-    **Why not source control any more**: `ScmView` narrowed to a turn could only ever show
+    **Why not source control any more**: the old `ScmView` (since removed) narrowed to a turn could only ever show
     what is *still uncommitted*, so a committed turn read as nothing, and it could not show a
     turn other than the newest at all. Staging a whole file is still the IDE's; the hunk
     verbs came along (below).
@@ -1769,8 +1727,10 @@ goes to it.
   - **Agents** — every subagent group, running first, each a button that scrolls the
     transcript to the top-level row containing it (`rowContains` → `scrollToMessage`, the
     rail's own gesture). A sheet closes itself on a jump.
-  - **Details** — what the whole column was before it had tabs: model, workspace, usage,
-    workflow runs, history.
+  - **Details** — model, workspace, usage, workflow runs and history.
+  - **Tokens** — per-turn and per-request usage, with system, built-in tool, MCP tool and
+    user-message estimates when the runtime records them. Older journal entries retain their
+    saved breakdown; no missing user-message estimate is reconstructed for past requests.
 - **A review is written on the diff and sent as one ordinary message.** In the Changes tab's
   diff, a "+" follows the pointer down the gutter (`DiffEditor`'s `review` opt-in: a glyph
   decoration, `glyphMargin` on only then); a click anchors a comment at that line — or at the
@@ -1808,9 +1768,9 @@ goes to it.
 - The footer readings stay the readings; their popovers end in **Open in inspector**
   (`OpenInInspector` in `composer/indicator.tsx`), which reaches the column through
   `InspectorContext` — null outside a transcript (the landing console), where the row is not
-  drawn. The toggle is the rebindable `inspector` shortcut (⌘/Ctrl+⌥/Alt+I), bound with
-  `enabled: routed` because every opened transcript is mounted, a button at the transcript's
-  top-right, and a palette row that calls `runShortcut`.
+  drawn. **That is the only door** — there is no toggle button, chord or palette row: a
+  chat tab reaches the same readings as panels through its thread dock's +, so a second
+  control for the column was a duplicate.
 
 - **`/agents` is every listed thread's live state** (`components/agents-page.tsx`, a page panel
   in `PageFrame`, a sidebar nav row and a palette row). It fetches nothing of its own: rows are

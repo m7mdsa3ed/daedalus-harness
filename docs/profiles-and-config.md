@@ -269,9 +269,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   drained with nobody attached. A `prompt` arriving while `bridge.promptActive` is enqueued and
   answered `{queued, itemId}` — only the server knows whether the turn is still open, the
   browser's `turnActive` is a hint (a `{queued}` reply to a prompt the client sent optimistically
-  is what `drop-user-message` takes back). Steering is the explicit `prompt {steer:true}` /
-  `queue_steer` (⌘⇧Enter), which joins the turn through the old `inflight++` path. The queue
-  travels as the `queue` event — **absolute** like `session_config`, never a delta, fanned to
+  is what `drop-user-message` takes back). Steering is the explicit composer send chord
+  (`prompt {steer:true}`), which joins the active turn. Queued rows always wait for the turn to
+  finish unless the user chooses Send now. The queue travels as the `queue` event — **absolute**
+  like `session_config`, never a delta, fanned to
   every peer *including* the origin because the ids are minted here — and is not journaled: it
   is current state, handed over on `caught_up` the way a pending permission is handed over
   after the replay. A drain combines **everything** queued into one blank-line-separated
