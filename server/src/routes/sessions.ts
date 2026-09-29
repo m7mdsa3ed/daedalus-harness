@@ -54,6 +54,17 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     return c.json({ ok: true });
   });
 
+  app.patch("/api/sessions/:id/links", async (c) => {
+    const parsed = z.object({
+      key: z.enum(["mcpServerIds", "skillIds", "commandIds"]),
+      ids: z.array(z.string()),
+    }).safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "key and ids are required" }, 400);
+    const { key, ids } = parsed.data;
+    const staged = sessions.stageLinks(c.req.param("id"), key, ids);
+    return c.json({ ok: true, staged });
+  });
+
   app.post("/api/sessions", async (c) => {
     const {
       id,
@@ -338,7 +349,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
     const body = await c.req.json();
     if (body.cancelStaged === true) {
-      sessions.clearStaged(session);
+      sessions.cancelStaged(session);
       return c.json({ ok: true, live: false, staged: null });
     }
     /* The floor under "apply now": the staged change, for any field this body

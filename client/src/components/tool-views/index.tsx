@@ -116,7 +116,7 @@ export function toolHasDetail(item: ToolItem): boolean {
 /** Steps that open by themselves — the view's own call, plus one cross-view
     rule: a background task is still producing after its turn ends, so folded
     it would be the one live thing on screen and invisible. */
-export function toolOpensByDefault(item: ToolItem, expandEdits = true): boolean {
+export function toolOpensByDefault(item: ToolItem, expandEdits = false): boolean {
   return (
     (TOOL_VIEWS[toolViewOf(item)].opensByDefault && (toolViewOf(item) !== "edit" || expandEdits)) ||
     extractBackgroundTask(item) !== null

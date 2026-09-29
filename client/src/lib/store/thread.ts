@@ -159,7 +159,7 @@ export interface ThreadState {
    * ends the sequence — and by a failure, which puts the menu back.
    */
   pendingConfig: StagedConfig | null
-  /** A change the *server* is holding for this turn's boundary (`staged_config`,
+  /** A change the *server* is holding for the next spawn (`staged_config`,
       and `caught_up` on attach). Absolute, from every peer's point of view the
       same: this device's own staging arrives back through the event like
       anyone else's. Drawn as a value the thread is about to be on, never as one

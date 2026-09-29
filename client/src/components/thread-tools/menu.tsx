@@ -18,22 +18,27 @@
 import { BlocksIcon, ServerIcon, SlashSquareIcon, WrenchIcon } from "lucide-react"
 
 import { McpIcon } from "@/components/entity-icon"
+import { useDispatch } from "@/lib/store"
 import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-import type { Actions } from "@/lib/actions"
+import type { Actions, LinkKey } from "@/lib/actions"
 import { mcpNeedsAuth, mcpSubtitle, type SessionMeta } from "@/lib/settings"
+import type { StagedConfig } from "@daedalus/protocol"
+import { useStoreSelect } from "@/lib/store"
 import { useAgents, useCommands, useMcpServers, useSkills } from "@/lib/queries/catalog"
 
 import { ToolSection } from "./tool-section"
 
-/** The three link kinds. */
-export type LinkKey = "mcpServerIds" | "skillIds" | "commandIds"
-
-export function useThreadToolLinks(meta: SessionMeta, actions: Actions, remember = true) {
+export function useThreadToolLinks(
+  meta: SessionMeta,
+  actions: Actions,
+  remember = true,
+) {
+  const dispatch = useDispatch()
   /* Catalog reads, each its own cache entry: nothing the transcript streams
      touches any of them. */
   const mcpServers = useMcpServers()
@@ -45,18 +50,25 @@ export function useThreadToolLinks(meta: SessionMeta, actions: Actions, remember
     skillIds: new Set<string>(),
     commandIds: new Set<string>(),
   }
+  const threadState = useStoreSelect((state) => state.threads[meta.id])
+  const staged = threadState?.stagedConfig
+  const stagedLinks = !meta.draft && staged &&
+    (staged.mcpServerIds !== undefined || staged.skillIds !== undefined || staged.commandIds !== undefined)
+      ? staged as StagedConfig
+      : null
   const own: Record<LinkKey, string[]> = {
-    mcpServerIds: meta.mcpServerIds ?? [],
-    skillIds: meta.skillIds ?? [],
-    commandIds: meta.commandIds ?? [],
+    mcpServerIds: stagedLinks?.mcpServerIds ?? meta.mcpServerIds ?? [],
+    skillIds: stagedLinks?.skillIds ?? meta.skillIds ?? [],
+    commandIds: stagedLinks?.commandIds ?? meta.commandIds ?? [],
   }
-  /* Published like the agent is: a reload rebuilds the draft from these, and
-     the next thread starts with the same kit — `remember: false` withholds that
-     for a caller configuring a routine rather than the thread you are about to
-     start. */
   const toggle = (key: LinkKey, id: string, on: boolean) => {
-    const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
-    actions.configureDraft(meta.id, { [key]: next }, remember)
+    if (meta.draft) {
+      const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
+      actions.configureDraft(meta.id, { [key]: next }, remember)
+    } else {
+      const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
+      void actions.changeThreadLink(meta, key, next).catch(() => {})
+    }
   }
 
   /* Only an MCP row can need one. */
@@ -78,7 +90,7 @@ export function useThreadToolLinks(meta: SessionMeta, actions: Actions, remember
     return null
   }
 
-  return { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable }
+  return { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks, pending }
 }
 
 /** The tools group of a settings dropdown: four submenus and, on a draft that
@@ -93,21 +105,29 @@ export function ThreadToolsSections({
 }: {
   meta: SessionMeta
   actions: Actions
-  /** A draft can still choose; a started thread's links are already spawned. */
+  /** A draft can still choose; a started thread's links are staged for next spawn. */
   editable: boolean
   remember?: boolean
 }) {
-  const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable } =
+  const dispatch = useDispatch()
+  const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks, pending } =
     useThreadToolLinks(meta, actions, remember)
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
-  if (!editable && extra === 0) return null
+  if (!editable && extra === 0 && !stagedLinks) return null
   const iconClass = "size-4 text-muted-foreground"
-  const common = { editable, needsAuth, agentName: agent?.name }
+  const common = { editable: editable || stagedLinks !== null, needsAuth, agentName: agent?.name }
   return (
     <>
     <DropdownMenuSeparator />
     <DropdownMenuGroup>
-      <DropdownMenuLabel>{editable ? "Tools" : "Running with"}</DropdownMenuLabel>
+      <DropdownMenuLabel>
+        {editable ? "Tools" : stagedLinks ? "Tools — applies on next send" : "Running with"}
+      </DropdownMenuLabel>
+      {!editable && pending && (
+        <DropdownMenuItem disabled className="text-xs">
+          Saving tool selection…
+        </DropdownMenuItem>
+      )}
       <ToolSection
         {...common}
         title="MCP servers"
@@ -162,6 +182,11 @@ export function ThreadToolsSections({
           }
         >
           Clear this thread&rsquo;s tools
+        </DropdownMenuItem>
+      )}
+      {!editable && stagedLinks && (
+        <DropdownMenuItem onClick={() => void actions.cancelStagedConfig(meta.id)}>
+          Cancel pending tool changes
         </DropdownMenuItem>
       )}
     </DropdownMenuGroup>

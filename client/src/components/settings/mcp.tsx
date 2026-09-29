@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/button"
 import {
   ChevronDownIcon,
   FlaskConicalIcon,
-  GlobeIcon,
   KeyRoundIcon,
   PlugZapIcon,
   PlusIcon,
@@ -111,16 +110,6 @@ export function McpPage() {
   const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("mcp")
   const mcpServers = useMcpServers()
-  const hasChromeDevtools = mcpServers.some((server) => server.id === "chrome-devtools-mcp")
-
-  const addChromeDevtools = async () => {
-    try {
-      await api(settings, "/api/mcp-servers/chrome-devtools", { method: "POST" })
-      await invalidate("mcp-servers")
-    } catch (err) {
-      reportError(err, "Couldn't add Chrome DevTools")
-    }
-  }
 
   /* The harness's own servers, added from one menu rather than typed in:
      there is nothing to type — the row is a handle, and the command, env and
@@ -188,15 +177,6 @@ export function McpPage() {
         <>
           {browse}
           {playground}
-          {!hasChromeDevtools && (
-            <Button
-              variant="outline"
-              onClick={() => void addChromeDevtools()}
-              title="Add Google Chrome DevTools MCP for Chrome running on the harness server"
-            >
-              <GlobeIcon className="size-4" /> Add Chrome DevTools
-            </Button>
-          )}
           {builtins}
         </>
       }

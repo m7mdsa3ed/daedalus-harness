@@ -36,9 +36,11 @@ import { draftActions } from "./actions/draft"
 import { historyActions } from "./actions/history"
 import { sendActions } from "./actions/send"
 import { lifecycleActions } from "./actions/lifecycle"
+import { linkActions } from "./actions/links"
 
 export type { ConfigPatch } from "./actions/config"
 export { describeConfig } from "./actions/config"
+export type { LinkKey } from "./actions/links"
 
 /** Side-effectful operations: REST calls + ACP thread lifecycle. */
 export function useActions(settings: ServerSettings) {
@@ -70,6 +72,7 @@ export function useActions(settings: ServerSettings) {
       ...historyActions(core),
       ...sendActions(core, config),
       ...config,
+      ...linkActions(core),
       ...lifecycleActions(core),
     }
   }, [settings, dispatch, getState])

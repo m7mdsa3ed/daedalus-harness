@@ -881,9 +881,8 @@ export interface SessionMeta {
       by the server right after session/new; once the thread runs, its own
       `modes` state is the only truth and this is dead weight the merge drops. */
   modeId?: string
-  /** This thread's own library picks, on top of what its project and profile
-      link. Chosen on the draft, sent with `POST /api/sessions`, and reported
-      back by the server for the thread's life. */
+  /** This thread's library picks. Staged changes are overlaid from live thread
+      state until the next spawn applies them. */
   mcpServerIds?: string[]
   skillIds?: string[]
   commandIds?: string[]

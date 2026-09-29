@@ -106,13 +106,6 @@ export function McpDetailPage() {
           {query.error.message}
         </Notice>
       )}
-      {server.id === "chrome-devtools-mcp" && !query.data?.ok && (
-        <Notice tone="info" title="Chrome runs on the harness server">
-          Press Check to start Chrome DevTools MCP. With Chrome 144 or newer, enable remote debugging at
-          chrome://inspect/#remote-debugging; Chrome will ask you to approve the connection. The agent uses
-          the MCP permission gate for browser actions.
-        </Notice>
-      )}
       <McpPlayground result={query.data?.deferred ? null : query.data ?? null} call={call}>
         {server.type === "builtin" && projects.length > 1 && (
           <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>

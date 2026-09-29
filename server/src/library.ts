@@ -119,8 +119,6 @@ export type CommandDef = CommandInput & { id: string };
 
 type McpRow = typeof mcpServersTable.$inferSelect;
 
-export const CHROME_DEVTOOLS_MCP_ID = "chrome-devtools-mcp";
-
 /** The table holds both variants in one row shape — the columns the other
     variant uses are null. These two functions are the only place that knows. */
 function toDef(row: McpRow): McpServerDef {
@@ -194,23 +192,6 @@ export const mcpServers = {
       .values(toRow(id, { type: "builtin", name, builtin: kind }))
       .onConflictDoNothing();
     return toDef((await db.select().from(mcpServersTable).where(eq(mcpServersTable.id, id)).limit(1))[0]!);
-  },
-  async ensureChromeDevtools(): Promise<McpServerDef> {
-    const input: McpServerInput = {
-      type: "stdio",
-      name: "Chrome DevTools",
-      command: "npx",
-      args: [
-        "--yes",
-        "chrome-devtools-mcp@1.10.1",
-        "--autoConnect",
-        "--no-usage-statistics",
-        "--no-update-checks",
-      ],
-      env: [],
-    };
-    await db.insert(mcpServersTable).values(toRow(CHROME_DEVTOOLS_MCP_ID, input)).onConflictDoNothing();
-    return toDef((await db.select().from(mcpServersTable).where(eq(mcpServersTable.id, CHROME_DEVTOOLS_MCP_ID)).limit(1))[0]!);
   },
   async update(id: string, input: McpServerInput): Promise<McpServerDef | undefined> {
     const row = toRow(id, input);

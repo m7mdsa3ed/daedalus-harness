@@ -267,6 +267,9 @@ export interface StagedConfig {
   personaId?: string;
   suggestFollowups?: boolean;
   uiBlocks?: boolean;
+  mcpServerIds?: string[];
+  skillIds?: string[];
+  commandIds?: string[];
 }
 
 /**

@@ -136,7 +136,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
-  expandEdits: true,
+  expandEdits: false,
   subagentPeek: "live",
   showToolCommand: true,
   toolLayout: "timeline",

@@ -92,31 +92,6 @@ await test("configured -> stdio def with live env", async () => {
   assert.deepEqual(server.env, toMcpServerEnv(cfg.webSearch!));
 });
 
-await test("Chrome DevTools MCP is an opt-in editable stdio row", async () => {
-  const first = await mcpServers.ensureChromeDevtools();
-  const second = await mcpServers.ensureChromeDevtools();
-  assert.equal(first.id, second.id);
-  assert.equal(first.id, "chrome-devtools-mcp");
-  assert.equal(first.type, "stdio");
-  if (first.type !== "stdio") throw new Error("expected a stdio row");
-  assert.deepEqual(first.args, [
-    "--yes",
-    "chrome-devtools-mcp@1.10.1",
-    "--autoConnect",
-    "--no-usage-statistics",
-    "--no-update-checks",
-  ]);
-  assert.deepEqual(first.env, []);
-  const cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  const [linked] = (await mcpServersFor({ mcpServerIds: [first.id] }, { id: "p1" }, cfg)).servers;
-  assert.deepEqual(linked, {
-    name: "Chrome DevTools",
-    command: "npx",
-    args: first.args,
-    env: [],
-  });
-});
-
 await test("ensureBuiltin is idempotent and the row stores nothing", async () => {
   const first = await mcpServers.ensureBuiltin("web-search");
   const second = await mcpServers.ensureBuiltin("web-search");

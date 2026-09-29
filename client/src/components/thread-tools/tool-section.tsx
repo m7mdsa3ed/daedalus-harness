@@ -51,9 +51,8 @@ export function ToolSection<T extends { id: string; name: string }>({
   agentName: string | undefined
   onToggle: (id: string, on: boolean) => void
 }) {
-  /* A draft offers the whole library to pick from; a started thread lists
-     only what it is actually running — the rest is neither a choice it has
-     nor a fact about it. */
+  /* A draft or an editable thread can pick from the catalog; a read-out only
+     lists what the thread actually carries. */
   const shown = editable
     ? items
     : items.filter((item) => inherited.has(item.id) || own.includes(item.id))

@@ -66,7 +66,7 @@ import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspac
 import { useIsMobile } from "@/hooks/use-device"
 import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
-import { useProjects } from "@/lib/queries/catalog"
+import { useAgents, useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
 import { useSessionMeta } from "@/lib/store"
 import { toast } from "@/lib/toast"
@@ -188,15 +188,15 @@ function useTabNeighbours(api: PanelApi, containerApi: ContainerApi): TabNeighbo
     label on its own `setTitle`. */
 function useTabLabel(
   ref: React.RefObject<HTMLElement | null>,
-  title: string,
+  hoverDetails: string,
   parts: Array<string | undefined | false>
 ): void {
   const label = parts.filter(Boolean).join(", ")
   React.useEffect(() => {
     const tab = tabElementOf(ref.current)
     tab?.setAttribute("aria-label", label)
-    tab?.setAttribute("title", title)
-  }, [ref, label, title])
+    tab?.setAttribute("title", hoverDetails)
+  }, [ref, label, hoverDetails])
 }
 
 /**
@@ -261,10 +261,38 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const pinned = usePanelPinned(api.id)
   const status = usePanelStatus(api.id)
   const neighbours = useTabNeighbours(api, containerApi)
+  const meta = useSessionMeta(descriptor?.kind === "chat" ? descriptor.sessionId : "")
+  const projects = useProjects()
+  const agents = useAgents()
+  const projectId =
+    descriptor && "projectId" in descriptor
+      ? descriptor.projectId
+      : descriptor?.kind === "chat"
+        ? meta?.projectId
+        : undefined
+  const project = projects.find((candidate) => candidate.id === projectId)
+  const agent = meta ? agents.find((candidate) => candidate.id === meta.agentId) : undefined
+  const hoverDetails = [
+    title,
+    status?.label,
+    pinned && "Pinned",
+    agent?.name && `Agent: ${agent.name}`,
+    project?.name && `Project: ${project.name}`,
+    descriptor?.kind === "terminal" && (descriptor.cwd ?? project?.cwd) &&
+      `Directory: ${descriptor.cwd ?? project?.cwd}`,
+    descriptor?.kind === "web" && (descriptor.file ?? descriptor.url) &&
+      `Location: ${descriptor.file ?? descriptor.url}`,
+    descriptor?.kind === "page" && `Page: ${descriptor.path}`,
+    descriptor?.kind === "chat" && meta?.model && `Model: ${meta.model}`,
+    descriptor?.kind === "chat" && meta?.effort && `Effort: ${meta.effort}`,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .filter((part, index, parts) => parts.indexOf(part) === index)
+    .join("\n")
 
   const close = React.useCallback(() => void dock.closePanel(api.id), [dock, api.id])
 
-  useTabLabel(ref, title, [title, status?.label, pinned && "pinned"])
+  useTabLabel(ref, hoverDetails, [title, status?.label, pinned && "pinned"])
   useTabKeys(ref, { onClose: close, onMenu: () => setMenuOpen(true) })
 
   const items = useTabMenuItems({

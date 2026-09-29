@@ -8,7 +8,6 @@ import {
   mcpServers,
   skills,
   isBuiltinMcp,
-  CHROME_DEVTOOLS_MCP_ID,
 } from "../library.js";
 import { ModelPromptInputSchema, modelPrompts, modelPromptsFilePath, writeModelPromptsLibrary } from "../model-prompts.js";
 import { PersonaInputSchema, personas } from "../personas.js";
@@ -138,17 +137,6 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
     if ("unavailable" in resolved) {
       return c.json({ ok: false, ms: 0, tools: [], prompts: [], resources: [], error: resolved.unavailable });
-    }
-    if (c.req.method === "GET" && id === CHROME_DEVTOOLS_MCP_ID) {
-      return c.json({
-        ok: false,
-        deferred: true,
-        ms: 0,
-        tools: [],
-        prompts: [],
-        resources: [],
-        error: "Chrome access is requested only when you press Check or start a linked thread.",
-      });
     }
     return c.json(await mcpCatalogFor(id, resolved.def, c.req.method === "POST"));
   });
@@ -291,10 +279,6 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     if (!isBuiltinMcp(kind)) return c.json({ error: "unknown builtin" }, 404);
     return c.json(await mcpServers.ensureBuiltin(kind), 201);
   });
-
-  app.post("/api/mcp-servers/chrome-devtools", async (c) =>
-    c.json(await mcpServers.ensureChromeDevtools(), 201),
-  );
 
   /* The marketplace. A proxy and nothing else — no row is written here, and
      what comes back is already `McpServerInput`-shaped, so installing one is

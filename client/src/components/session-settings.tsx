@@ -12,19 +12,21 @@
 
    The list is declarative and **grouped**: add an entry to a group's `options`
    and the row appears; non-switch controls can live in the same group's picker.
-   Grouping is the whole layout argument — thirteen equally
-   weighted outlined cards read as a wall, and the questions they answer are not
-   one question. Four sections, each answering one:
+   Grouping is the whole layout argument: choices that answer different
+   questions should not compete in one long list. Seven sections, each answering
+   one:
 
-     Layout   — how much of the thread is on screen at once
-     Detail   — how much of each step is spelled out
-     Code     — how a diff or a code block is drawn
-     Motion   — what moves on its own
+     Layout              — how much of the thread is on screen at once
+     Conversation        — what the messages and answers show
+     Agent activity      — how the work behind an answer is drawn
+     Shell activity      — how reader-run commands are shown
+     Sources and labels  — where source and tool markers appear
+     Code                — how a diff or a code block is drawn
+     Motion              — what moves on its own
 
-   Each section is one card with hairline-separated rows, so the eye counts four
-   things and not thirteen; a row that differs from its default carries a dot, so
-   "what have I changed here" is answerable without reading every switch, and the
-   footer says how many and offers the one way back. */
+   Each section is one card with hairline-separated rows; a row that differs from
+   its default carries a dot, and the footer counts those changes and offers the
+   one way back. */
 import * as React from "react"
 import {
   AlignJustify,
@@ -142,11 +144,10 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    id: "detail",
-    label: "Detail",
-    icon: ListTree,
-    hint: "How much of each step is spelled out.",
-    pickers: ["subagentPeek", "toolLayout"],
+    id: "conversation",
+    label: "Conversation",
+    icon: MessageSquareText,
+    hint: "Choose what stays visible around the answers.",
     options: [
       {
         key: "answersOnly",
@@ -154,73 +155,6 @@ const GROUPS: Group[] = [
         title: "Answers only",
         description:
           "Keep the conversation and drop the work: your messages and the agent's replies, without thinking, tool steps, plans or subagents. Errors stay, and nothing is deleted — the steps come back when you turn it off.",
-      },
-      {
-        key: "showThinking",
-        icon: Brain,
-        title: "Show thinking",
-        description: "Expand the agent's reasoning steps by default instead of folding them away.",
-      },
-      {
-        key: "showToolDetails",
-        icon: ListTree,
-        title: "Expand tool output",
-        description: "Open every tool call's input and output by default, not just edits and diffs.",
-      },
-      {
-        key: "expandEdits",
-        icon: Code,
-        title: "Expand edits by default",
-        description: "Open file diffs automatically. Turn off to keep edits folded and let them join grouped tool calls.",
-      },
-      {
-        key: "showToolCommand",
-        icon: TerminalIcon,
-        title: "Show the command",
-        description:
-          "The command, path or pattern a step ran, under the sentence describing it. Off, a row is the description alone — the command is still in the step's own body.",
-      },
-      {
-        key: "groupTools",
-        icon: Wrench,
-        title: "Group tool calls and thinking",
-        description:
-          "Fold consecutive tool calls and the thinking between them into one expandable group.",
-      },
-      {
-        key: "openRunningGroup",
-        icon: Wrench,
-        title: "Keep the running group open",
-        description:
-          "The group the agent is working in stays expanded until it moves on. Off, it folds like the rest and shows only its last few steps.",
-      },
-      {
-        key: "showShellCommands",
-        icon: TerminalIcon,
-        title: "Show `!` commands",
-        description:
-          "The shell commands you ran in the box and what they printed. Off, the rows are hidden and the thread reads as the conversation alone — nothing is deleted, and they come back when you turn it on.",
-      },
-      {
-        key: "groupShellCommands",
-        icon: Rows3,
-        title: "Group `!` commands",
-        description:
-          "Fold a run of commands you ran back to back into one line you can open, the way tool steps fold. A single command stays its own block.",
-      },
-      {
-        key: "showSources",
-        icon: Globe,
-        title: "Show sources",
-        description:
-          "Site favicons under a web step, and the pages an answer cited under the finished turn. Their row placement is controlled below.",
-      },
-      {
-        key: "showToolSourcesOnFirstRow",
-        icon: Rows3,
-        title: "Show tool sources on first row",
-        description:
-          "Place grouped-tool icons and web-search favicons beside the title instead of on a second row.",
       },
       {
         key: "showTokens",
@@ -246,11 +180,103 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    id: "agent-activity",
+    label: "Agent activity",
+    icon: ListTree,
+    hint: "Choose how much of the work behind an answer is shown.",
+    pickers: ["subagentPeek", "toolLayout"],
+    options: [
+      {
+        key: "showThinking",
+        icon: Brain,
+        title: "Show thinking",
+        description: "Expand the agent's reasoning steps by default instead of folding them away.",
+      },
+      {
+        key: "showToolDetails",
+        icon: ListTree,
+        title: "Expand tool output",
+        description: "Open every tool call's input and output by default, not just edits and diffs.",
+      },
+      {
+        key: "showToolCommand",
+        icon: TerminalIcon,
+        title: "Show the command",
+        description:
+          "The command, path or pattern a step ran, under the sentence describing it. Off, a row is the description alone — the command is still in the step's own body.",
+      },
+      {
+        key: "groupTools",
+        icon: Wrench,
+        title: "Group tool calls and thinking",
+        description:
+          "Fold consecutive tool calls and the thinking between them into one expandable group.",
+      },
+      {
+        key: "openRunningGroup",
+        icon: Wrench,
+        title: "Keep the running group open",
+        description:
+          "The group the agent is working in stays expanded until it moves on. Off, it folds like the rest and shows only its last few steps.",
+      },
+    ],
+  },
+  {
+    id: "shell-activity",
+    label: "Shell activity",
+    icon: TerminalIcon,
+    hint: "Control the shell commands you run from the composer.",
+    options: [
+      {
+        key: "showShellCommands",
+        icon: TerminalIcon,
+        title: "Show `!` commands",
+        description:
+          "The shell commands you ran in the box and what they printed. Off, the rows are hidden and the thread reads as the conversation alone — nothing is deleted, and they come back when you turn it on.",
+      },
+      {
+        key: "groupShellCommands",
+        icon: Rows3,
+        title: "Group `!` commands",
+        description:
+          "Fold a run of commands you ran back to back into one line you can open, the way tool steps fold. A single command stays its own block.",
+      },
+    ],
+  },
+  {
+    id: "sources",
+    label: "Sources and labels",
+    icon: Globe,
+    hint: "Choose whether sources appear and where their markers sit.",
+    options: [
+      {
+        key: "showSources",
+        icon: Globe,
+        title: "Show sources",
+        description:
+          "Site favicons under a web step, and the pages an answer cited under the finished turn. Their row placement is controlled below.",
+      },
+      {
+        key: "showToolSourcesOnFirstRow",
+        icon: Rows3,
+        title: "Show tool sources on first row",
+        description:
+          "Place grouped-tool icons and web-search favicons beside the title instead of on a second row.",
+      },
+    ],
+  },
+  {
     id: "code",
     label: "Code and diffs",
     icon: Code,
     hint: "How an edit is drawn.",
     options: [
+      {
+        key: "expandEdits",
+        icon: Code,
+        title: "Expand edits by default",
+        description: "Open file diffs automatically. Turn off to keep edits folded and let them join grouped tool calls.",
+      },
       {
         key: "codeWrap",
         icon: WrapText,

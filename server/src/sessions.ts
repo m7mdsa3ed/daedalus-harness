@@ -560,7 +560,6 @@ export class SessionManager {
   private turnWaiters = new Map<string, { turnId: string; settle: (outcome: TurnOutcome) => void; fail: (error: Error) => void }[]>();
   /** Injected at boot; null means no thread is handed the workflow server. */
   private workflowRunner: WorkflowUrlSource | null = null;
-
   /** The event-journal concern — the buffered writes, the reads that flush
       first, the turn-boundary math and the replay framing — extracted to
       session-journal.ts. The manager decides when; the journal knows the table. */
@@ -857,12 +856,44 @@ export class SessionManager {
     });
   }
 
-  /** The thread's own links are written once, at create — they do not change
-      with a title sniff or a model switch, so `persist` leaves them alone. */
+  /** Persist the link selection without changing what the running process uses. */
+  private async writeLinkSelection(session: Session, links: LinkSet): Promise<LinkSet> {
+    await db.transaction(async (tx) => await writeLinks(tx, SESSION_LINKS, session.id, links));
+    return await linksOf(SESSION_LINKS, session.id);
+  }
+
+  /** The thread's active links are read from the stored, validated selection. */
   private async persistLinks(session: Session): Promise<void> {
-    await db.transaction(async (tx) => await writeLinks(tx, SESSION_LINKS, session.id, session.links));
-    // What the tables kept (a stale id links nothing) is what the thread has.
-    session.links = await linksOf(SESSION_LINKS, session.id);
+    session.links = await this.writeLinkSelection(session, session.links);
+  }
+
+  /** Stage a full thread-link selection without mutating the running session. */
+  stageLinks(id: string, key: keyof LinkSet, ids: string[]): StagedConfig {
+    const session = this.sessions.get(id);
+    if (!session) throw new HttpError("not found", 404);
+    if (session.deletedAt !== null) throw new HttpError("session deleted", 409);
+    if (session.respawnChain) throw new HttpError("the agent is restarting; try changing tools again when it is ready", 409);
+    const staged = session.stagedConfig ?? {};
+    const next: StagedConfig = { ...staged, [key]: [...new Set(ids)] };
+    this.setStaged(session, next);
+    return next;
+  }
+
+  private async applyStagedLinks(session: Session, staged: StagedConfig): Promise<void> {
+    if (
+      staged.mcpServerIds === undefined &&
+      staged.skillIds === undefined &&
+      staged.commandIds === undefined
+    ) return;
+    session.links = await this.writeLinkSelection(session, {
+      mcpServerIds: staged.mcpServerIds ?? session.links.mcpServerIds,
+      skillIds: staged.skillIds ?? session.links.skillIds,
+      commandIds: staged.commandIds ?? session.links.commandIds,
+    });
+  }
+
+  cancelStaged(session: Session): void {
+    this.clearStaged(session);
   }
 
   /**
@@ -2573,6 +2604,7 @@ export class SessionManager {
       if (staged.personaId !== undefined) session.personaId = staged.personaId;
       if (staged.suggestFollowups !== undefined) session.suggestFollowups = staged.suggestFollowups;
       if (staged.uiBlocks !== undefined) session.uiBlocks = staged.uiBlocks;
+      await this.applyStagedLinks(session, staged);
     }
     this.clearStaged(session);
     /* Captured while the old process is still up — it is the only thing that
