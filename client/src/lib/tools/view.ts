@@ -10,6 +10,7 @@ import { extractFindings, extractPlanProposal, extractQuestions, extractSkill } 
 import { extractSubagent } from "./subagents"
 import { hasTerminalContent } from "./terminal"
 import { extractTodos } from "./todos"
+import { extractToolSearch } from "./tool-search"
 import { extractWebFetch, extractWebSearch } from "./web"
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
@@ -63,6 +64,14 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
       })()
   if (churn) return `+${churn.added} −${churn.removed}`
 
+  /* Before the line count below: a search's result is a list of tools, and
+     its JSON is many lines that are not matches. */
+  const search = extractToolSearch(item)
+  if (search && item.status === "completed") {
+    const n = search.tools.length
+    return n === 0 ? "no match" : `${n} ${n === 1 ? "tool" : "tools"} loaded`
+  }
+
   const { text } = toolOutputText(item, 100_000)
   const lines = text.split("\n").filter((line) => line.trim().length > 0)
   if (lines.length === 0) return null
@@ -99,6 +108,7 @@ export type ToolView =
   | "findings"
   | "plan"
   | "skill"
+  | "toolsearch"
   | "execute"
   | "read"
   | "search"
@@ -132,6 +142,7 @@ function computeToolView(item: ToolItem): ToolView {
   if (extractFindings(item)) return "findings"
   if (extractSubagent(item)) return "subagent"
   if (extractSkill(item)) return "skill"
+  if (extractToolSearch(item)) return "toolsearch"
   if (extractWebSearch(item)) return "websearch"
   if (extractWebFetch(item)) return "webfetch"
   if (extractMcpCall(item)) return "mcp"

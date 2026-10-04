@@ -26,7 +26,7 @@
    `dock-surface.tsx`, the shape and contexts every panel reads are
    `dock-context.ts`, and the header measurement is `dock-header.ts`. */
 import * as React from "react"
-import type { DockviewApi, DockviewGroupPanel, IDockviewPanel } from "dockview-react"
+import type { DockviewApi, DockviewGroupPanel, IDockviewPanel, SerializedDockview } from "dockview-react"
 
 import {
   descriptorOf,
@@ -49,6 +49,7 @@ import {
   saveLayout,
   saveNamedLayout,
 } from "@/lib/workspace/layout"
+import { loadActiveSpace } from "@/lib/spaces"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
 import { setActiveChat, setChatFocusHandler, setOpenThreads } from "@/lib/workspace/open-threads"
 import { PANEL_SPECS, panelId, pageKey, parsePanel, type PanelDescriptor } from "@/lib/workspace/panels"
@@ -113,6 +114,10 @@ export interface DockController extends WorkspaceDock {
   onReady: (api: DockviewApi) => void
   /** Drop panels whose session or project no longer exists. */
   prunePanels: (live: { sessions: Iterable<string>; projects: Iterable<string> }) => void
+  /** Swap the dock to another space's tabs (`layout.ts` files each space's dock
+      under its own key). `from`/`to` are space ids; `from` null is the first
+      resolution, which adopts what is on screen rather than swapping it. */
+  switchSpace: (from: string | null, to: string | null) => void
 }
 
 export function useWorkspaceDock(): DockController {
@@ -125,6 +130,15 @@ export function useWorkspaceDock(): DockController {
   const silentRef = React.useRef(0)
   const serverIdRef = React.useRef<string | null>(null)
   if (serverIdRef.current === null) serverIdRef.current = loadSettings()?.id ?? "none"
+  /* The debounced save, reachable from `switchSpace` — a space swap must cancel
+     a pending write rather than let it land under the wrong space. */
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  /* The space whose tabs are on screen — moved only by `onReady` and
+     `switchSpace`, never by the click. Every save files under this and not under
+     the device's chosen space: that moves the instant a space is clicked, a
+     render before the dock swaps, and a save landing in the gap wrote the old
+     space's tabs under the new one (and pushed them to the server). */
+  const heldSpaceRef = React.useRef("")
 
   const silently = React.useCallback(<T,>(fn: () => T): T => {
     silentRef.current += 1
@@ -769,6 +783,52 @@ export function useWorkspaceDock(): DockController {
     if (panel) await removeWithGuard(panel)
   }, [activeStrip, removeWithGuard])
 
+  /**
+   * Swap the dock to another space's tabs.
+   *
+   * The outgoing layout is filed under the space it was in — under `from`
+   * explicitly, because by the time this runs the active space has already
+   * moved, and `saveLayout` would otherwise write it under the new one. The
+   * debounced save is cancelled first for the same reason. The very first
+   * resolution (`from` null: no space was chosen when the dock loaded) is not a
+   * switch at all — whatever is on screen is adopted under the space it landed
+   * in, so choosing a space on an existing install keeps its tabs.
+   */
+  const switchSpace = React.useCallback(
+    (from: string | null, to: string | null) => {
+      const api = apiRef.current
+      if (!api) return
+      const serverId = serverIdRef.current ?? "none"
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = undefined
+      heldSpaceRef.current = to ?? ""
+      const outgoing = api.toJSON()
+      if (!from) {
+        saveLayout(serverId, outgoing, to ?? "")
+        return
+      }
+      saveLayout(serverId, outgoing, from)
+      const next = loadLayout(serverId, to ?? "")
+      silently(() => {
+        try {
+          if (next) api.fromJSON(next)
+          else api.clear()
+        } catch (error) {
+          console.warn("Could not apply the workspace layout for that space", error)
+          api.clear()
+        }
+      })
+      /* The front tab writes the URL only when it has a route (a terminal has
+         none), and a URL still naming the last space's thread pulls a reload
+         back there. Point it at a tab this space holds; an empty dock is the
+         console's (`dock-surface.tsx`). */
+      const routes = api.panels.map(routeOf).filter((path): path is string => !!path)
+      if (routes[0] && !routes.includes(location.pathname + location.search))
+        navigateTo(routes[0], { replace: true })
+    },
+    [silently]
+  )
+
   const cleanupRef = React.useRef<(() => void) | null>(null)
 
   const onReady = React.useCallback(
@@ -781,6 +841,7 @@ export function useWorkspaceDock(): DockController {
 
       const serverId = serverIdRef.current ?? "none"
       const saved = loadLayout(serverId)
+      heldSpaceRef.current = loadActiveSpace(serverId) ?? ""
       if (saved) {
         try {
           silently(() => api.fromJSON(saved))
@@ -813,12 +874,13 @@ export function useWorkspaceDock(): DockController {
       publishDockState()
       setChatFocusHandler(focusOpenChat)
 
-      let saveTimer: ReturnType<typeof setTimeout> | undefined
       const flushSave = () => {
-        if (saveTimer === undefined) return
-        clearTimeout(saveTimer)
-        saveTimer = undefined
-        saveLayout(serverId, api.toJSON())
+        if (saveTimerRef.current === undefined) return
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = undefined
+        const layout = api.toJSON()
+        const space = heldSpaceRef.current
+        saveLayout(serverId, layout, space)
       }
       const disposables = [
         api.onDidAddPanel(publishDockState),
@@ -832,8 +894,8 @@ export function useWorkspaceDock(): DockController {
            covers tab-group changes too (dockview folds them into it). */
         api.onDidLayoutChange(() => {
           publishOpenThreads()
-          clearTimeout(saveTimer)
-          saveTimer = setTimeout(flushSave, SAVE_DEBOUNCE_MS)
+          clearTimeout(saveTimerRef.current)
+          saveTimerRef.current = setTimeout(flushSave, SAVE_DEBOUNCE_MS)
         }),
       ]
 
@@ -842,7 +904,8 @@ export function useWorkspaceDock(): DockController {
       window.addEventListener("pagehide", flushSave)
 
       cleanupRef.current = () => {
-        clearTimeout(saveTimer)
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = undefined
         window.removeEventListener("pagehide", flushSave)
         disposables.forEach((disposable) => disposable.dispose())
         setChatFocusHandler(null)
@@ -911,6 +974,7 @@ export function useWorkspaceDock(): DockController {
       hasClosedPanels,
       activeDescriptor,
       prunePanels,
+      switchSpace,
       setTabIndex,
       cycleTab,
       closeActiveTab,
@@ -954,6 +1018,7 @@ export function useWorkspaceDock(): DockController {
       hasClosedPanels,
       activeDescriptor,
       prunePanels,
+      switchSpace,
       setTabIndex,
       cycleTab,
       closeActiveTab,

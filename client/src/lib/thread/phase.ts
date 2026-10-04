@@ -106,7 +106,7 @@ export function samePhase(a: ConnPhase, b: ConnPhase): boolean {
   if (a.kind === "parked" && b.kind === "parked")
     return a.reason === b.reason && a.since === b.since
   if (a.kind === "failed" && b.kind === "failed")
-    return a.title === b.title && a.reason === b.reason && a.recover === b.recover
+    return a.title === b.title && a.reason === b.reason && a.detail === b.detail && a.recover === b.recover
   return true
 }
 
@@ -411,6 +411,10 @@ export interface ConnBanner {
   tone: "info" | "warn" | "error"
   title: string
   message: string
+  /** The cause in the agent's or the server's own words — folded under the
+      card and what its Copy takes. Absent when the phase has nothing past
+      the sentence. */
+  detail?: string
   action?: { label: string; busyLabel: string; kind: "revive" | "reconnect" | "restore" }
 }
 
@@ -426,18 +430,22 @@ export interface ConnBanner {
  */
 export function bannerFor(phase: ConnPhase): ConnBanner | null {
   switch (phase.kind) {
+    /* Calm on purpose: a server restart or a network blink is routine and
+       this heals itself, so the tone is the sky's, not a warning. It becomes an
+       error only when the ladder is spent (`parked`). The first rung is not
+       counted aloud — "attempt 1 of 5" is an alarm about nothing yet. */
     case "reconnecting":
       return {
-        tone: "warn",
-        title: `Reconnecting — attempt ${phase.attempt} of ${phase.max}`,
-        message: phase.reason ?? "The connection to this thread dropped.",
+        tone: "info",
+        title: "Reconnecting…",
+        message: `${phase.attempt > 1 ? `Attempt ${phase.attempt} of ${phase.max}. ` : ""}${phase.reason ?? "The connection to this thread dropped."}`,
         action: { label: "Reconnect now", busyLabel: "Reconnecting…", kind: "reconnect" },
       }
     case "parked":
       return {
-        tone: "warn",
-        title: "Waiting for the server",
-        message: `${phase.reason ?? "The server or the agent process is not reachable."} This reconnects on its own once the server answers.`,
+        tone: "error",
+        title: "Couldn't reconnect to the server",
+        message: `${phase.reason ?? "The server or the agent process is not reachable."} Still trying — this reconnects on its own once the server answers.`,
         action: { label: "Retry now", busyLabel: "Reconnecting…", kind: "reconnect" },
       }
     case "failed":
@@ -445,6 +453,7 @@ export function bannerFor(phase: ConnPhase): ConnBanner | null {
         tone: "error",
         title: phase.title,
         message: phase.reason,
+        detail: phase.detail,
         action:
           phase.recover === "revive"
             ? { label: "Revive", busyLabel: "Reviving…", kind: "revive" }
@@ -501,14 +510,15 @@ export function markFor(
   phase: ConnPhase,
   turnActive: boolean,
   waiting: boolean,
-  failed = false
+  failed = false,
+  background = false
 ): ThreadActivity {
   if (waiting) return "waiting"
   if (phase.kind === "deleted") return "gone"
   if (phase.kind === "failed") return "stopped"
   if (phase.kind === "parked") return "offline"
   if (phase.kind === "reconnecting") return "reconnecting"
-  if (turnActive) return "running"
+  if (turnActive || background) return "running"
   if (failed) return "failed"
   if (isOpening(phase)) return "connecting"
   if (phase.kind === "archived") return "stopped"
@@ -603,7 +613,7 @@ export function startingLine(
       }
     case "reconnecting":
       return {
-        text: `Reconnecting — attempt ${phase.attempt} of ${phase.max}…`,
+        text: "Reconnecting…",
         detail:
           "The connection to the server dropped. The agent keeps working either way, so this reattaches to the thread rather than restarting anything.",
       }

@@ -84,12 +84,14 @@ export class SessionQueue {
    */
   async drain(session: Session): Promise<{ turnId: string } | null> {
     const bridge = session.bridge;
-    if (!bridge || bridge.promptActive) return null;
+    /* A dead process is checked before any row is claimed: sending to it
+       throws, and the claim-then-restore round trip made the queue flicker. */
+    if (!bridge || session.exited || bridge.promptActive) return null;
     return this.chain(session, async () => {
       /* Re-read inside the chain: whatever ran ahead of this may have sent some
          of them, and — the case this ordering is for — the thread may have
          started a turn while it did. */
-      if (session.bridge !== bridge || bridge.promptActive) return null;
+      if (session.bridge !== bridge || session.exited || bridge.promptActive) return null;
       const items = await listQueue(session.id);
       if (items.length === 0) return null;
       return this.send(session, bridge, items);

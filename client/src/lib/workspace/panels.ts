@@ -22,6 +22,11 @@ export const HOME_PROJECT_ID = "home"
 
 export type WebTrust = "project" | "external"
 
+/** A file against git, shown in the Preview panel: the two sides of a source-control row.
+    A side is a `Comparison` name or a commit's `{ rev }` — the JSON-safe half of `DiffSide`. */
+export type WebDiffSide = "head" | "staged" | "worktree" | { rev: string }
+export interface WebDiff { path: string; left: WebDiffSide; right: WebDiffSide; repo?: string }
+
 export type PanelDescriptor =
   | { kind: "chat"; sessionId: string }
   /* `closeOnExit` is a helper command's terminal: it was opened by a button
@@ -40,7 +45,7 @@ export type PanelDescriptor =
     }
   /** `file` is a project-relative path the panel is showing instead of the
       page (`workspace/file-preview.tsx`) — a project panel's only. */
-  | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string; file?: string }
+  | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string; file?: string; diff?: WebDiff }
   /** A board, beside the work it describes. One panel, not one per board: the
       board being read is a *place inside* it (`lib/tasks-location.ts`) the way
       a file is a place inside the IDE, so it travels in the params and moving
@@ -117,6 +122,22 @@ export function pageKey(path: string): string {
   return first || "home"
 }
 
+const SIDES = ["head", "staged", "worktree"]
+const diffSide = (v: unknown): WebDiffSide | undefined =>
+  typeof v === "string" && SIDES.includes(v)
+    ? (v as WebDiffSide)
+    : v && typeof v === "object" && typeof (v as { rev?: unknown }).rev === "string"
+      ? { rev: (v as { rev: string }).rev }
+      : undefined
+function parseWebDiff(v: unknown): WebDiff | undefined {
+  const d = (v ?? {}) as Record<string, unknown>
+  const left = diffSide(d.left)
+  const right = diffSide(d.right)
+  return typeof d.path === "string" && d.path && left && right
+    ? { path: d.path, left, right, ...(typeof d.repo === "string" ? { repo: d.repo } : {}) }
+    : undefined
+}
+
 const str = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined
 
@@ -181,6 +202,7 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         ...(trust === "project" && projectId ? { projectId } : {}),
         ...(str(p.url) ? { url: str(p.url) } : {}),
         ...(trust === "project" && str(p.file) ? { file: str(p.file) } : {}),
+        ...(trust === "project" && parseWebDiff(p.diff) ? { diff: parseWebDiff(p.diff) } : {}),
       }
     }
   }

@@ -5,7 +5,9 @@
    the reasoning behind both is long enough to bury the transcript. */
 import * as React from "react"
 import { Progress } from "@/components/ui/progress"
+import { Button } from "@/components/ui/button"
 import { PhaseLine } from "@/components/composer-status"
+import { formatElapsed } from "@/components/step-row"
 import { slowLine, startingLine, waitDelayMs, type ConnPhase } from "@/lib/thread/phase"
 
 /** The one line a starting thread is allowed to say, staged through the phases
@@ -32,6 +34,11 @@ import { slowLine, startingLine, waitDelayMs, type ConnPhase } from "@/lib/threa
     is over in a blink, and a bar that appears and vanishes is noise about work
     nobody waited for. */
 const SLOW_MS = 6_000
+
+/** When a spawn or a restart has gone on long enough to say how long, and to
+    offer the way out. The same rule as the delay above it: nothing is drawn
+    until the wait lasts — a handshake that beats this never shows a clock. */
+const CLOCK_MS = 10_000
 
 /** Replays smaller than this fold imperceptibly; below it the progress is true
     but not worth drawing. */
@@ -65,12 +72,22 @@ export function useWaitShown(phase: ConnPhase): boolean {
   return elapsed && startingLine(phase) !== null
 }
 
-export function StartingLine({ phase }: { phase: ConnPhase }) {
+export function StartingLine({ phase, onCancel }: { phase: ConnPhase; onCancel?: () => void }) {
   const [slow, setSlow] = React.useState(false)
   React.useEffect(() => {
     const timer = setTimeout(() => setSlow(true), SLOW_MS)
     return () => clearTimeout(timer)
   }, [])
+  /* Only the waits that can be given up on tick: a clock re-rendering a replay
+     once a second would be motion with nothing behind it. */
+  const cancellable = !!onCancel
+  const [waited, setWaited] = React.useState(0)
+  React.useEffect(() => {
+    if (!cancellable) return
+    const since = Date.now()
+    const timer = setInterval(() => setWaited(Date.now() - since), 1000)
+    return () => clearInterval(timer)
+  }, [cancellable])
   const line = startingLine(phase)
   if (!line) return null
   /* A bar only when there is a number behind the wait AND the wait is long
@@ -111,6 +128,16 @@ export function StartingLine({ phase }: { phase: ConnPhase }) {
         {line.detail}
         {slowText && <span className="mt-1 block">{slowText}</span>}
       </div>
+      {/* The way out of a wait that has stopped looking like one. Cancel gives
+          up the *wait*, never the words: the message goes back in the box. */}
+      {onCancel && waited >= CLOCK_MS && (
+        <div className="flex items-center gap-2 pl-6 pt-1.5 text-xs text-muted-foreground">
+          <span className="tabular-nums">Waiting {formatElapsed(waited)}</span>
+          <Button variant="outline" size="xs" onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

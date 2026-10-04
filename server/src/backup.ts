@@ -27,6 +27,7 @@ import {
   sessionQueue as queueTable,
   sessions as sessionsTable,
   skills as skillsTable,
+  spaces as spacesTable,
   boards as boardsTable,
   boardViews as boardViewsTable,
   boardLists as boardListsTable,
@@ -140,13 +141,12 @@ const ModelRow = z.object({
   reasoningEfforts: z.array(str).default([]),
   description: str.optional(),
   pricing: z.object({ input: z.number(), output: z.number() }).optional(),
-  // A cheaper window of the day (schema.ts `OffPeakWindow`). Carried because it
-  // is configuration the user wrote, like the price itself.
-  offPeak: z
-    .object({ from: str, to: str, tz: str, multiplier: z.number() })
-    .optional(),
   modalities: z.array(str).optional(),
   devRef: str.optional(),
+  // The model's own mark and its picker group: both user-written, like the
+  // price above, so a bundle carries them.
+  iconUrl: str.optional(),
+  group: str.optional(),
 });
 
 const ProfileRow = z.object({
@@ -166,6 +166,7 @@ const ProfileRow = z.object({
   usage: z
     .object({ kind: z.enum(USAGE_KINDS), baseUrl: optStr, apiKey: optStr })
     .nullish(),
+  upstreamTimeoutSeconds: z.number().int().nullish(),
   models: z.array(ModelRow).default([]),
   /** Absent in a bundle written before the flag existed, which reads as
       shown — the safe default for a profile a bundle would otherwise
@@ -281,10 +282,24 @@ const ProjectDefaultsRow = z.object({
   uiBlocks: z.boolean().default(true),
 });
 
+/** A space — a named scope above projects (spaces.ts). Carried so a bundle's
+    projects keep a scope to land in; without it the boot backfill would file
+    every restored project under the install's own first space. */
+const SpaceRow = z.object({
+  id: str.min(1),
+  name: str,
+  sortOrder: int.default(0),
+  createdAt: int,
+});
+
 const ProjectRow = z.object({
   id: str.min(1),
   name: str,
   cwd: str,
+  /** The space this project is filed under. Absent on bundles from before
+      spaces existed, which reads as "no scope" and is backfilled to the first
+      space at the next boot. */
+  spaceId: optStr,
   description: optStr,
   logoUrl: optStr,
   /** Absent on bundles from before the column; 0 then, which leaves the
@@ -751,6 +766,7 @@ export const BundleSchema = z.object({
   commands: z.array(CommandRow).default([]),
   personas: z.array(PersonaRow).default([]),
   modelPrompts: z.array(ModelPromptRow).default([]),
+  spaces: z.array(SpaceRow).default([]),
   projects: z.array(ProjectRow).default([]),
   projectHelpers: z.array(HelperRow).default([]),
   knowledge: z.array(KnowledgeRow).default([]),
@@ -836,6 +852,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     commands: await db.select().from(commandsTable),
     personas: await db.select().from(personasTable),
     modelPrompts: await db.select().from(modelPromptsTable),
+    spaces: await db.select().from(spacesTable),
     projects: (await db.select().from(projectsTable)).map((row) => ({
       ...withoutDefaults(row),
       defaults: projectDefaultsOf(row),
@@ -890,7 +907,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "projects" | "projectHelpers" | "knowledge" | "settings"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
   | "rules" | "themes" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
@@ -976,7 +993,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
     rules: 0, themes: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
@@ -998,7 +1015,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       for (const table of [
         // `mcp_oauth` cascades off `mcp_servers`, and is named here anyway so
         // the list reads as the whole of what `replace` empties.
-        sessionsTable, profilesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
+        sessionsTable, profilesTable, spacesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
         personasTable, modelPromptsTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
@@ -1093,6 +1110,10 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     summary.personas = bundle.personas.length;
     upsertChunked(tx, modelPromptsTable, "id", bundle.modelPrompts.map((r) => ({ ...r })));
     summary.modelPrompts = bundle.modelPrompts.length;
+    /* Spaces before projects: a project names one, and the running install may
+       already hold rows under a space id the bundle also uses. */
+    upsertChunked(tx, spacesTable, "id", bundle.spaces.map((s) => ({ ...s })));
+    summary.spaces = bundle.spaces.length;
     upsertChunked(
       tx,
       projectsTable,

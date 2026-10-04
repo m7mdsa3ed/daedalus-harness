@@ -20,6 +20,10 @@ export const agentsKey = (s: ServerSettings) => scope(s).concat(["agents"])
     (`GET /api/agents/status`) — a reading about this machine, not a row. */
 export const agentsStatusKey = (s: ServerSettings) => scope(s).concat(["agents-status"])
 export const projectsKey = (s: ServerSettings) => scope(s).concat(["projects"])
+/** The spaces this server holds (`GET /api/spaces`). Which one is active is
+    device-local and not part of the key: the list is the same whichever you are
+    in. */
+export const spacesKey = (s: ServerSettings) => scope(s).concat(["spaces"])
 /** The repositories a project can see (`GET …/git/repos`) — asked by the
     draft's worktree toggle, which needs only whether the project is one. */
 export const gitReposKey = (s: ServerSettings, projectId: string) =>
@@ -97,6 +101,8 @@ export const taskDetailKey = (s: ServerSettings, taskId?: string) =>
 export const notificationsKey = (s: ServerSettings) => scope(s).concat(["notifications"])
 /** Every question a live agent is blocked on, across threads (`GET /api/pending`). */
 export const pendingKey = (s: ServerSettings) => scope(s).concat(["pending"])
+/** Branch and uncommitted line counts per thread (`GET /api/sessions/git-summary`). */
+export const gitSummaryKey = (s: ServerSettings) => scope(s).concat(["git-summary"])
 /** Every prompt this server has been sent, newest first — global across
     threads, which is why it hangs off the connection and not off a session.
     Persisted with the rest of the cache on purpose: Up must answer on the

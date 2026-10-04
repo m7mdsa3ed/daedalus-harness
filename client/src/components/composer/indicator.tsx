@@ -8,6 +8,7 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ChipBadge } from "@/components/composer-strip"
 import { PanelRightOpenIcon } from "lucide-react"
 import { useOpenInspector, type InspectorTab } from "@/lib/inspector"
 import { cn } from "@/lib/utils"
@@ -108,10 +109,12 @@ export const READING_TRIGGER_ALWAYS = "w-auto! max-w-40 min-w-0 px-1.5"
  * running wore `primary` and the settled ones `secondary` — and a cluster of
  * four marks came out with two different counts on it, which read as two
  * meanings where there was only one (a number on a mark). The tone went; every
- * count in the shelf now wears the same chip, and it is verbatim the one
- * `ChipBadge` draws a sliver's count in (`bg-primary/15 text-primary`), so a
- * count reads the same wherever the strip draws it — footer bubble or sliver,
- * running or settled.
+ * count in the shelf now wears the same chip, and it is **verbatim** the one
+ * `ChipBadge` draws a sliver's count in (`composer-strip.tsx`), so a count
+ * reads the same wherever the strip draws it — footer bubble or sliver,
+ * running or settled. What is local here is only *where* it sits (pinned to
+ * the mark's top-end corner) and that it hides itself where the words are on
+ * screen.
  */
 export function ReadingBubble({
   children,
@@ -121,14 +124,9 @@ export function ReadingBubble({
   className?: string
 }) {
   return (
-    <span
-      className={cn(
-        "absolute -end-0.5 -top-0.5 grid h-3 min-w-3 place-items-center rounded-full bg-primary/15 px-0.5 text-[8px] font-semibold tabular-nums text-primary @panel-sm:hidden",
-        className
-      )}
-    >
+    <ChipBadge className={cn("absolute -end-0.5 -top-0.5 @panel-sm:hidden", className)}>
       {children}
-    </span>
+    </ChipBadge>
   )
 }
 

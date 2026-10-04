@@ -1,12 +1,13 @@
 // Self-check for the harness's own MCP client: the listing carries
-// instructions, capabilities and templates; the playground's calls share one
-// pooled connection; completions answer. Uses the agent's full fixture server.
+// instructions, capabilities and templates; a call runs on one pooled
+// connection; a child's stderr rides the error. Uses the agent's full fixture
+// server.
 // Run: pnpm test:mcp-check
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkMcpServer, completeMcp, invokeMcp } from "../src/mcp-check.js";
+import { checkMcpServer, invokeMcp } from "../src/mcp-check.js";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "../../agent/test/helpers/mcp-full-server.mjs");
 const def = { name: "full", command: process.execPath, args: [FIXTURE], env: [] };
@@ -26,11 +27,6 @@ const prompt = await invokeMcp("full", def, { kind: "prompt", name: "greet", arg
 assert.match(JSON.stringify(prompt.result), /hello ada/);
 console.log("mcp-check: pooled invoke ok");
 
-assert.deepEqual(
-  await completeMcp("full", def, { ref: { type: "ref/prompt", name: "greet" }, argument: { name: "who", value: "a" } }),
-  ["ada", "alan"],
-);
-console.log("mcp-check: completions ok");
 /* A child that dies before the handshake says why, not just "closed". */
 const broken = await checkMcpServer({
   name: "broken",

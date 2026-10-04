@@ -80,10 +80,14 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     assert.ok(split.system > 0, "the system prompt is counted");
     assert.ok(split.tools > 0, "the tool block is counted");
     assert.equal(
-      split.system + split.tools + split.mcp + split.user + split.conversation,
+      split.system + split.tools + split.mcp + split.user + split.assistant + split.results,
       split.total,
       "the split sums back to the total",
     );
+    /* The first step of an attempt names what the prefix is made of. */
+    const items = (split as unknown as { items?: { system: { name: string }[]; tools: unknown[] } }).items;
+    assert.ok(items?.system.some((item) => item.name.startsWith("Core instructions")), "system sections ride the first step");
+    assert.ok((items?.tools.length ?? 0) > 0, "and each tool's definition");
   });
   console.log("turn: text ok");
 }

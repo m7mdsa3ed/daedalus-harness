@@ -31,6 +31,16 @@ export function recordThreadError(
         agent's answer: a reconnect is coming and it re-folds the transcript,
         so nothing in flight is over. */
     settle?: boolean
+    /** A headline-sized reason of the caller's own, for a failure whose
+        normalized title says less than the caller knows. The normalized
+        title moves into the folded detail rather than being lost. */
+    reason?: string
+    /** Softer than a failure: a thing to know, said in the amber. */
+    severity?: "warning"
+    /** The agent's process ended under this turn — the row offers Continue. */
+    stopped?: boolean
+    /** Extra lines for the folded detail, ahead of the error's own. */
+    detail?: string
   } = {}
 ): ErrorInfo {
   const info = describeError(err)
@@ -43,8 +53,11 @@ export function recordThreadError(
     type: "error",
     id: sessionId,
     title: context,
-    reason: info.title,
-    detail: info.detail,
+    reason: opts.reason ?? info.title,
+    detail: [opts.detail, opts.reason ? info.title : undefined, info.detail].filter(Boolean).join("\n\n") || undefined,
+    notInstalled: info.notInstalled,
+    severity: opts.severity,
+    stopped: opts.stopped,
     retryText: opts.retryText,
     retryAttachments: opts.retryAttachments,
     settle: opts.settle ?? true,

@@ -18,8 +18,9 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
-import { flattenSelectOptions } from "@/lib/session-options"
+import { flattenSelectOptions, recommendedValue } from "@/lib/session-options"
 import { reportError } from "@/lib/errors"
+import { cn } from "@/lib/utils"
 import { useSetProfileFlags } from "@/lib/queries/catalog"
 import type { Profile } from "@/lib/settings"
 
@@ -31,6 +32,12 @@ export interface Choice {
   /** Optional group label — choices with the same group are rendered under a
       shared heading in the submenu. */
   group?: string
+  /** The agent marks this one as its recommendation (ACP `_meta`, read in
+      `selectChoices`) — drawn as a muted suffix, never selected for you. */
+  recommended?: boolean
+  /** A muted word on the row's end that is a *fact about the choice*, not a
+      recommendation — "Not installed". The row stays pickable. */
+  note?: string
 }
 
 /** The row that makes the list longer, at the foot of a submenu: "Add model…",
@@ -176,6 +183,16 @@ export function MenuRow({
         <span className="flex min-w-0 flex-col">
           <span className="truncate">{choice.name}</span>
         </span>
+        {(choice.note || choice.recommended) && (
+          <span
+            className={cn(
+              "ml-auto shrink-0 pl-2 text-[11px]",
+              choice.note ? "text-destructive" : "text-muted-foreground"
+            )}
+          >
+            {choice.note ?? "Recommended"}
+          </span>
+        )}
       </DropdownMenuRadioItem>,
     )
     return parts
@@ -252,17 +269,52 @@ export function MenuRowSkeleton({ label }: { label: string }) {
 }
 
 /** A select option's choices, flattened out of any groups the agent used. */
-export const selectChoices = (option: acp.SessionConfigOption): Choice[] =>
-  option.type === "select"
-    ? flattenSelectOptions(option.options).map((choice) => ({
-        value: choice.value,
-        name: choice.name,
-      }))
-    : []
+export const selectChoices = (option: acp.SessionConfigOption): Choice[] => {
+  if (option.type !== "select") return []
+  const recommended = recommendedValue(option)
+  return flattenSelectOptions(option.options).map((choice) => ({
+    value: choice.value,
+    name: choice.name,
+    recommended: choice.value === recommended,
+  }))
+}
 
 /** The composer's thread-settings chip. */
 export const PILL =
   "h-5 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-muted/60 hover:text-foreground aria-expanded:bg-muted/60 data-popup-open:bg-muted/60 pointer-coarse:h-7 pointer-coarse:px-2 [&_[data-slot=avatar]]:size-3.5"
+
+/**
+ * The words on the settings chip, shared by the draft's trigger and the started
+ * thread's so the two cannot drift.
+ *
+ * The model is the part the reader is looking for, so it is the only piece
+ * that gives way: effort and mode are `shrink-0` and the model ellipsizes
+ * first, instead of one string being cut wherever the cap lands. The persona
+ * is a prefix that pushes the model out of a narrow chip, so it waits for
+ * `@panel-sm` (the panel's width, never the device's) — the title and the menu
+ * still carry it. The mode stays at every width: a silently-active "accept
+ * edits" is the one setting you must see.
+ */
+export function PillLabel({
+  persona,
+  model,
+  effort,
+  mode,
+}: {
+  persona?: string
+  model: string
+  effort?: string | null
+  mode?: string
+}) {
+  return (
+    <span className="flex min-w-0 max-w-52 items-baseline gap-1 @panel-sm:max-w-64">
+      {persona && <span className="hidden shrink-0 @panel-sm:inline">{persona} ·</span>}
+      <span className="min-w-0 truncate font-medium text-foreground/90">{model}</span>
+      {effort && <span className="shrink-0 capitalize">· {effort}</span>}
+      {mode && <span className="shrink-0">· {mode}</span>}
+    </span>
+  )
+}
 
 /**
  * The profile's helper model — what the agent's side-jobs run on — as one more

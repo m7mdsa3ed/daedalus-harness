@@ -16,11 +16,10 @@
    that owns what they use (the row views here, `tool-parts.tsx` for the
    kind chips and `Prose`, `thread-cards.tsx` for `SourcesStrip`). */
 import * as React from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { AnimatePresence, m, useReducedMotion } from "motion/react"
 import {
   ArrowUpRightIcon,
   BotIcon,
-  EyeIcon,
   ListTodoIcon,
   PlayIcon,
   WrenchIcon,
@@ -41,8 +40,10 @@ import {
   KIND_COLORS,
   KIND_ICONS,
   SmartBlock,
+  THOUGHT_MAX_H,
   Timestamp,
 } from "@/components/tool-parts"
+import { useFollowStream } from "@/hooks/use-follow-stream"
 import {
   BriefSection,
   SubagentBrief,
@@ -116,7 +117,6 @@ import { cn, stagger } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import { threadPath } from "@/lib/router"
-import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 import { Link } from "react-router"
 
 export const ToolRun = React.memo(function ToolRun({
@@ -253,7 +253,7 @@ export const ToolRun = React.memo(function ToolRun({
         {showing.length > 0 && (
           /* One rail for both states, so expanding a peeking run grows the list
              in place instead of swapping one layout for another. */
-          <motion.div
+          <m.div
             key="run-rail-clip"
             ref={railRef}
             initial={reduceMotion ? false : { height: 0 }}
@@ -303,7 +303,7 @@ export const ToolRun = React.memo(function ToolRun({
               </div>
             ))}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>
@@ -391,9 +391,13 @@ RowView.displayName = "RowView"
 export const SubagentStep = React.memo(function SubagentStep({
   group,
   showTimestamps,
+  variant = "row",
 }: {
   group: SubagentGroup
   showTimestamps?: boolean
+  /** `body`: only what the step produced, without its header row — a run's
+      navigation has already said whose step it is, and gives it the width. */
+  variant?: "row" | "body"
 }) {
   const { head, children } = group
   const view = useViewOptionsContext()
@@ -441,6 +445,13 @@ export const SubagentStep = React.memo(function SubagentStep({
   const hasBody = subagentHasBody(group, stepThread)
   const tokens = view.showTokens ? stepUsage(group) : undefined
   const peek = view.subagentPeek === "always" || (view.subagentPeek === "live" && active)
+
+  if (variant === "body")
+    return hasBody ? (
+      <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} />
+    ) : (
+      <p className="text-xs text-muted-foreground/60">This step left nothing to show.</p>
+    )
 
   return (
     <StepRow
@@ -750,6 +761,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           item={item}
           onRetry={onRetry}
           onRetryAsPaths={onRetryAsPaths}
+          onContinue={onContinue}
           onDismiss={onDismiss}
           showTimestamp={showTimestamps}
         />
@@ -887,11 +899,17 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           iconAccent={KIND_COLORS.think}
           iconChip={KIND_CHIPS.think}
           status={streaming ? "in_progress" : null}
-          label={streaming ? "thinking" : undefined}
+          label={streaming ? <ThinkingLabel /> : undefined}
           startedAt={streaming ? item.at : undefined}
           metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
           mono={false}
-          defaultOpen={view.showThinking}
+          /* The row is open for exactly as long as the thought streams: a live
+             view you watch, not a block left standing in the transcript. The
+             moment it settles it folds to its one-line preview — the compact
+             shape every finished step keeps — and the reader opens it to read
+             the reasoning. "Show thinking" arms the live view: off, nothing pops
+             open and the row is the ticker alone. */
+          autoOpen={view.showThinking && streaming}
           openSetting={view.showThinking}
           target={
             streaming ? (
@@ -901,13 +919,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             )
           }
           openTarget="Thinking"
-          detail={
-            <StreamedProse
-              text={reasoning}
-              streaming={streaming}
-              className="thought-detail max-h-[min(60vh,28rem)] overflow-y-auto overscroll-contain pr-1"
-            />
-          }
+          detail={<ThoughtDetail text={reasoning} streaming={streaming} />}
         />
       )
     }
@@ -935,6 +947,60 @@ export const ThreadItemView = React.memo(function ThreadItemView({
 })
 ThreadItemView.displayName = "ThreadItemView"
 
+/* What the running thought says in the row's trailing column: a live dot beside
+   its word. The row no longer stays open past the stream, so the dot is what
+   marks "still being written" without the block standing in the way — and it is
+   the same violet the kind wears on its mark. */
+function ThinkingLabel() {
+  return (
+    <span className="flex items-center gap-1">
+      <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-violet-500" />
+      thinking
+    </span>
+  )
+}
+
+/* The thinking row's detail: a capped, live-styled box that follows its own
+   newest text while the thought streams.
+
+   The cap is `THOUGHT_MAX_H` (a tight fraction of the panel, narrower on a
+   narrow panel — see `tool-parts.tsx`). It exists, so the box is what scrolls,
+   and a box that scrolls has to be *driven*: the transcript's own
+   `useFollowStream` watches the content element, and a capped box stops growing
+   when it fills, so left alone the newest thinking would be exactly what falls
+   out of view. So this is the same hook on a smaller scroller — it owns
+   unpinning on a gesture and re-pinning at the end, which is more than a
+   `scrollTop = scrollHeight` per chunk would get right.
+
+   While it streams the box wears its own ground — a violet-framed well that
+   reads as something still happening, a different design from the plain quiet
+   text a settled thought shows when the reader opens it. Settled (`streaming`
+   false) it is inert: the box opens at the top so a folded-away thought is read
+   from its start.
+
+   A component rather than inline JSX for the reason `StreamedProse` is one:
+   `ThreadItemView`'s kind switch is a chain of returns, so a hook at the call
+   site would be a conditional one. */
+function ThoughtDetail({ text, streaming }: { text: string; streaming: boolean }) {
+  const follow = useFollowStream(streaming)
+  return (
+    <div
+      ref={follow.viewportRef}
+      className={cn(
+        THOUGHT_MAX_H,
+        "overflow-y-auto overscroll-contain",
+        streaming
+          ? "rounded-md border border-violet-500/25 bg-violet-500/[0.05] px-2.5 py-2"
+          : "pr-1"
+      )}
+    >
+      <div ref={follow.contentRef}>
+        <StreamedProse text={text} streaming={streaming} className="thought-detail" />
+      </div>
+    </div>
+  )
+}
+
 // ─── Per-kind layouts ────────────────────────────────────────────────────────
 
 const ToolStep = React.memo(function ToolStep({
@@ -956,7 +1022,8 @@ const ToolStep = React.memo(function ToolStep({
      depend on which layout the call resolved to — and a chevron that opens an
      empty box is worse than no chevron. "Expand tool output" overrides the
      second, so the body is there to read without a click. */
-  const hasBody = toolHasDetail(item)
+  /* Raw data on, every step has a body — the call itself is always something. */
+  const hasBody = toolHasDetail(item) || view.showRawToolData
   /* What the request that ended on this call cost. Only the step it ended on
      carries one, so most rows in a run have none — that is the reading being
      honest about which step it can be pinned to, not a gap. */
@@ -983,11 +1050,6 @@ const ToolStep = React.memo(function ToolStep({
       file={heading.file}
       filePath={heading.filePath}
       fileRange={fileRangeOf(item) ?? undefined}
-      control={
-        (kind === "read" || kind === "edit") && heading.filePath ? (
-          <PreviewFileButton path={heading.filePath} />
-        ) : undefined
-      }
       mono={!heading.prose}
       /* No outcome here. The header line is the title and the command that
          produced it; churn counts and echoed output lines competed with both
@@ -1009,26 +1071,3 @@ const ToolStep = React.memo(function ToolStep({
   )
 })
 ToolStep.displayName = "ToolStep"
-
-/* A read's or a write's file, opened in the Preview panel through the same
-   door a mention takes (`FilePreviewContext`). Beside the row, not on its
-   badge: the badge sits inside the disclosure button, and a button may not
-   hold a button. Nothing is drawn for a path outside the project or where no
-   dock is in reach (a popout). */
-function PreviewFileButton({ path }: { path: string }) {
-  const ctx = React.useContext(FilePreviewContext)
-  const target = ctx ? projectPath(path, ctx.scope) : null
-  if (!ctx || !target) return null
-  return (
-    <Button
-      size="icon-xs"
-      variant="ghost"
-      aria-label={`Preview ${target}`}
-      title={`Preview ${target}`}
-      onClick={() => ctx.open(target)}
-      className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/step:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
-    >
-      <EyeIcon className="size-3.5" />
-    </Button>
-  )
-}

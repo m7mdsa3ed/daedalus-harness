@@ -11,6 +11,7 @@ import {
   FolderIcon,
   GaugeIcon,
   PanelRightCloseIcon,
+  PlugZapIcon,
   WorkflowIcon,
   XCircleIcon,
 } from "lucide-react"
@@ -35,14 +36,15 @@ import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 import { changesTimeline } from "./turn-footers"
 import { ProjectIcon } from "@/components/entity-icon"
-import { collectTools, lastActivityAt, stepNameOf, stepStateOf, useStepThread } from "@/components/workflow-run"
+import { collectTools, lastActivityAt, stepNameOf, stepStateOf, subagentHasBody, useStepThread } from "@/components/workflow-run"
+import { SubagentStep } from "@/components/thread-items/rows"
 import { useNow } from "@/components/composer/agents-indicator"
 import type { SessionMeta } from "@/lib/settings"
-import type { ThreadItem, ThreadState, ToolItem } from "@/lib/store"
-import { formatDuration, formatRate, formatTokens, promptBreakdown, promptTokens, sumUsage, tokensByTurn } from "@/lib/tokens"
-import { TurnTokensList } from "@/components/token-usage"
+import type { ThreadItem, ThreadState } from "@/lib/store"
+import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
+import { TokensPanel } from "./tokens-panel"
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
-import { extractSubagent, toolHeading } from "@/lib/tools"
+import { extractSubagent, formatMcpName, loadedTools, parseMcpToolName, toolHeading, type LoadedTool } from "@/lib/tools"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { DockContext } from "@/components/workspace/dock-context"
 
@@ -173,19 +175,6 @@ const AGENT_FILTERS: Record<AgentFilter, (group: SubagentGroup) => boolean> = {
   failed: (group) => !group.active && stepStateOf(group) !== "completed",
 }
 
-/** The tool calls a group made itself, oldest first — a nested agent's are its own card's. */
-function ownTools(rows: Row[]): ToolItem[] {
-  return rows.flatMap((row) =>
-    row.kind === "tool"
-      ? [row]
-      : row.kind === "run"
-        ? row.items.filter((item): item is ToolItem => item.kind === "tool")
-        : row.kind === "tool-group"
-          ? row.items.filter((item): item is ToolItem => item.kind === "tool")
-          : []
-  )
-}
-
 /** What a group did underneath it: tool calls, and subagents of its own. */
 function childCounts(rows: Row[]): { tools: number; agents: number } {
   let tools = 0
@@ -223,14 +212,11 @@ function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; 
   const state = stepStateOf(group)
   const call = head.kind === "tool" ? extractSubagent(head) : null
   const type = head.kind === "subagent" ? (head.name !== stepNameOf(group) ? head.name : undefined) : call?.agentType
-  const brief = head.kind === "subagent" ? head.prompt || head.task : call?.prompt || call?.description
-  const report =
-    head.kind === "subagent"
-      ? head.report
-      : (call?.result ?? (head.status !== "pending" && head.status !== "in_progress" && typeof head.rawOutput === "string" ? head.rawOutput : undefined))
   const usage = head.kind === "subagent" ? head.usage : undefined
   const counts = childCounts(group.children)
-  const steps = ownTools(group.children)
+  /* Whether the step's own turn parts would draw anything — the transcript's
+     own question, so the card and the row agree on whether there is a body. */
+  const hasBody = subagentHasBody(group, stepThread)
   /* Claude Code says how long its child ran; everyone else is read off the
      transcript — now while it runs, else the last thing that arrived under it. */
   const elapsedMs = call?.elapsedSeconds
@@ -275,8 +261,8 @@ function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; 
           )}
         </span>
       </button>
-      {(stepThread || brief || report || steps.length > 0) && (
-        <div className="space-y-1 px-2 pb-1.5 pl-5.5 text-[11px]">
+      {hasBody && (
+        <div className="space-y-1.5 px-2 pt-0.5 pb-2 pl-5.5 text-[11px]">
           {stepThread && dock && (
             <div className="flex flex-wrap gap-x-3 gap-y-1">
               <button
@@ -297,57 +283,47 @@ function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; 
               </button>
             </div>
           )}
-          {brief && <AgentFold summary="Brief" text={brief} />}
-          {steps.length > 0 && <AgentSteps steps={steps} open={group.active} />}
-          {report && <AgentFold summary={state === "failed" ? "Error" : "Report"} text={report} />}
+          {/* The step's own turn parts, drawn by the transcript's own component —
+              the brief, the real rail of rows and tool views, the report — so an
+              agent read here is the agent read in the transcript, whether it is
+              an ordinary subagent or a step of a workflow run. One fold, open
+              while it works: a native workflow step fetches its transcript when
+              it opens, and a panel holding thirty of them must not ask for all
+              thirty (see `loadAgentTranscript`). */}
+          <details className="group" open={group.active}>
+            <summary className="cursor-pointer list-none truncate text-muted-foreground hover:text-foreground">
+              <span className="font-medium">What it did</span>
+            </summary>
+            <div className="mt-1.5">
+              <SubagentStep group={group} variant="body" />
+            </div>
+          </details>
         </div>
       )}
     </li>
   )
 }
 
-const STEP_SHOWN = 8
-
-/** Its newest tool calls, each a line — open while it runs, so the panel is a live feed. */
-function AgentSteps({ steps, open }: { steps: ToolItem[]; open: boolean }) {
-  const recent = steps.slice(-STEP_SHOWN)
+/** The thread's loaded tools in the panel's own row rhythm (`Metric`'s): name
+    and server on one line, what the tool does under it. */
+function LoadedToolRows({ tools }: { tools: LoadedTool[] }) {
   return (
-    <details className="group" open={open}>
-      <summary className="cursor-pointer list-none truncate text-muted-foreground hover:text-foreground">
-        <span className="font-medium">Steps</span> <span className="tabular-nums">{steps.length}</span>
-      </summary>
-      <ol className="mt-1 space-y-0.5 rounded bg-muted/40 p-1.5">
-        {steps.length > STEP_SHOWN && (
-          <li className="text-[10px] text-muted-foreground">{steps.length - STEP_SHOWN} earlier</li>
-        )}
-        {recent.map((step) => {
-          const heading = toolHeading(step)
-          const text = heading.detail ? `${heading.title} ${heading.detail}` : heading.title
-          return (
-            <li key={step.id} className="flex min-w-0 items-center gap-1.5">
-              <span
-                className={cn(
-                  "size-1.5 shrink-0 rounded-full",
-                  step.status === "failed" ? "bg-destructive" : step.status === "completed" ? "bg-foreground/40" : "animate-pulse bg-primary"
-                )}
-              />
-              <span className={cn("min-w-0 truncate", !heading.prose && "font-mono text-[10px]")} title={text}>{text}</span>
-            </li>
-          )
-        })}
-      </ol>
-    </details>
-  )
-}
-
-function AgentFold({ summary, text }: { summary: string; text: string }) {
-  return (
-    <details className="group">
-      <summary className="cursor-pointer list-none truncate text-muted-foreground hover:text-foreground">
-        <span className="font-medium">{summary}</span> <span className="group-open:hidden">— {text.split("\n")[0]}</span>
-      </summary>
-      <p className="mt-1 max-h-60 overflow-y-auto rounded bg-muted/40 p-1.5 leading-4 break-words whitespace-pre-wrap">{text}</p>
-    </details>
+    <ul className="max-h-64 divide-y divide-border/40 overflow-y-auto">
+      {tools.map((tool) => {
+        const mcp = parseMcpToolName(tool.name)
+        return (
+          <li key={tool.name} className="min-w-0 py-1">
+            <div className="flex min-w-0 items-baseline justify-between gap-2">
+              <span className="min-w-0 truncate text-[11px] font-medium" title={tool.name}>
+                {mcp?.tool ? formatMcpName(mcp.tool) : tool.name}
+              </span>
+              {mcp && <span className="shrink-0 truncate text-[10px] text-muted-foreground">{formatMcpName(mcp.server)}</span>}
+            </div>
+            {tool.description && <p className="mt-0.5 line-clamp-2 text-[10px] leading-3.5 text-muted-foreground">{tool.description}</p>}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -401,6 +377,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
   const measuredOutput = measured.reduce((sum, [, usage]) => sum + usage.outputTokens, 0)
   const measuredDuration = measured.reduce((sum, [id]) => sum + (thread.turnDuration[id] ?? 0), 0)
   const ownItems = thread.items.filter((item) => !item.parentId)
+  const loaded = React.useMemo(() => loadedTools(thread.items), [thread.items])
   const tools = ownItems.filter((item) => item.kind === "tool")
   const completedTools = tools.filter((item) => item.status === "completed").length
   const failedTools = tools.filter((item) => item.status === "failed").length
@@ -409,7 +386,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
     return total
   }, 0)
   const queued = thread.queue.length
-  const failedRows = ownItems.filter((item) => item.kind === "error").length
+  const failedRows = ownItems.filter((item) => item.kind === "error" && !item.severity).length
   const requestsIn = thread.usage ? promptTokens(thread.usage) : null
   const cachedIn = thread.usage?.cachedReadTokens ?? 0
   const cacheRate = requestsIn && requestsIn > 0 ? Math.round((cachedIn / requestsIn) * 100) : null
@@ -468,6 +445,13 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
                 {project.description && <p className="mt-1.5 line-clamp-3 text-[10px] leading-3.5 text-muted-foreground">{project.description}</p>}
               </div>
             </div>
+          </Section>
+        )}
+
+        {loaded.length > 0 && (
+          <Section title={`Loaded tools · ${loaded.length}`} icon={<PlugZapIcon aria-hidden className="size-3.5" />}>
+            <LoadedToolRows tools={loaded} />
+            <p className="mt-1 flex items-center gap-1 text-[9px] text-muted-foreground"><PlugZapIcon aria-hidden className="size-3" /> Loaded by tool searches in this thread</p>
           </Section>
         )}
 
@@ -769,36 +753,8 @@ export function ThreadSection({
       </div>
     )
   if (section === "agents") return <AgentsTab groups={groups} onJump={onJump} />
-  if (section === "tokens") return <TokensTab thread={thread} />
+  if (section === "tokens") return <TokensPanel thread={thread} />
   return <DetailsTab thread={thread} meta={meta} rows={rows} />
-}
-
-function TokensTab({ thread }: { thread: ThreadState }) {
-  const byTurn = React.useMemo(
-    () => tokensByTurn(thread.items, thread.stepUsage, thread.turnUsage),
-    [thread.items, thread.stepUsage, thread.turnUsage]
-  )
-  const hasUnattributedHistory = byTurn.some((turn) =>
-    turn.steps.some((step) => {
-      const breakdown = promptBreakdown(step)
-      return breakdown !== null && breakdown.user === null
-    })
-  )
-
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
-      {byTurn.length > 0 ? (
-        <TurnTokensList turns={byTurn} />
-      ) : (
-        <Empty>No token usage has been recorded for this thread.</Empty>
-      )}
-      {hasUnattributedHistory && (
-        <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
-          Some older requests do not include a user-message estimate. Their prompt totals and saved breakdowns are unchanged.
-        </p>
-      )}
-    </div>
-  )
 }
 
 function TabCount({ children }: { children: ReactNode }) {

@@ -47,6 +47,8 @@ import { cn } from "@/lib/utils"
 import { useDock } from "@/components/workspace/dock-context"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { FilePreview } from "@/components/workspace/file-preview"
+import type { WebDiff } from "@/lib/workspace/panels"
+import { DiffTab } from "@/components/workspace/diff-tab"
 
 /**
  * A typed address → a URL this panel will open, or a throw.
@@ -97,7 +99,7 @@ const VIEWPORTS = [
 
 type ViewportId = (typeof VIEWPORTS)[number]["id"]
 
-type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string; file?: string }
+type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string; file?: string; diff?: WebDiff }
 
 /** The stored preview answer: whether the project's dev server is up, probed
     from the server's own machine (a browser fetch would be CORS-blocked and a
@@ -197,11 +199,11 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   }
 
   React.useEffect(() => {
-    const file = params.file
+    const file = params.diff?.path ?? params.file
     api.setTitle(
       file ? file.slice(file.lastIndexOf("/") + 1) : url ? new URL(url).host : project ? `Preview — ${project.name}` : "Preview"
     )
-  }, [api, url, project, params.file])
+  }, [api, url, project, params.file, params.diff])
 
   /* One panel follows successive sources. `openPanel` re-points an existing
      panel's params rather than opening a second tab per link (see dock.tsx),
@@ -325,6 +327,21 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   }, [])
 
   const width = VIEWPORTS.find((entry) => entry.id === viewport)?.width ?? null
+
+  if (params.diff && projectId)
+    return (
+      <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
+        <PanelToolbar>
+          <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" className="size-6" onClick={() => api.updateParameters({ diff: undefined })}>
+            <ArrowLeftIcon className="size-3.5" />
+          </Button>
+          <span className="truncate font-mono text-[11px] text-muted-foreground">{params.diff.path}</span>
+        </PanelToolbar>
+        <div className="min-h-0 flex-1">
+          <DiffTab projectId={projectId} path={params.diff.path} left={params.diff.left} right={params.diff.right} repo={params.diff.repo} active />
+        </div>
+      </div>
+    )
 
   if (params.file && projectId)
     return (

@@ -16,10 +16,17 @@ import { ProjectIcon } from "@/components/entity-icon"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 
-/** The pill. `trailing` narrows the end inset for a control drawn after the face. */
+/** The pill. `trailing` narrows the end inset for a control drawn after the face.
+ *
+ * `items-baseline`, not `items-center`: an inline-flex container with nothing
+ * baseline-aligned takes its baseline from the *bottom edge* of its first item,
+ * so a chip leading with an icon (or a project's mark) sat a few pixels off the
+ * text it rides in — `align-baseline` had nothing true to align to. Aligning the
+ * face's own label puts the pill's text on the line's baseline; a control drawn
+ * after the face (`trailing`) centres itself back with `self-center`. */
 export function chipClass(opts: { selected?: boolean; trailing?: boolean } = {}) {
   return cn(
-    "mx-px inline-flex max-w-[min(20rem,100%)] items-center gap-0.5 rounded-md bg-foreground/[0.06] py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-foreground/[0.1]",
+    "mx-px inline-flex max-w-[min(20rem,100%)] items-baseline gap-0.5 rounded-md bg-foreground/[0.06] py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-foreground/[0.1]",
     opts.trailing ? "pe-0.5" : "pe-1.5",
     opts.selected && "bg-primary/15 hover:bg-primary/15"
   )
@@ -47,12 +54,14 @@ export function ChipBody({
 }: ChipFace & { preview?: React.ReactNode; onClick?: () => void }) {
   const face = (
     <>
-      {mark ?? <Icon aria-hidden className="size-3.5 shrink-0 text-primary/80" />}
+      {mark ?? <Icon aria-hidden className="size-3.5 shrink-0 self-center text-primary/80" />}
       <span className="truncate">{label}</span>
       {aside && <span className="shrink-0 text-muted-foreground">{aside}</span>}
     </>
   )
-  const faceClass = "inline-flex min-w-0 items-center gap-1 [&_svg]:pointer-events-none"
+  /* Baseline, so the label is the item the pill's own baseline comes from (the
+     icon centres itself). */
+  const faceClass = "inline-flex min-w-0 items-baseline gap-1 [&_svg]:pointer-events-none"
   if (preview) {
     return (
       <Popover>
@@ -83,7 +92,8 @@ export function useMentionFace(path: string): ChipFace {
   if (project) {
     return {
       icon: AtSignIcon,
-      mark: <ProjectIcon project={project} className="size-3.5" />,
+      /* `self-center`: the label carries the chip's baseline (see `chipClass`). */
+      mark: <ProjectIcon project={project} className="size-3.5 self-center" />,
       label: project.name,
     }
   }

@@ -56,12 +56,12 @@
    ── What lives beside this file ──
    The card and its two rows are here, because the rule is about the two of
    them together. The pieces that are a subject of their own are not:
-   `connection-indicator.tsx` (this device's connection, beside the project on
-   the footer, and the tone the shelf wears for it), `add-menu.tsx` (the
-   "+", and the pickers only it clicks), `text-insertions.ts` (what that menu
-   types on the user's behalf), `enhance-button.tsx` (the rewrite and every
-   read behind it), `keys.ts` (the one ordering of Enter and the completers),
-   `prompt-history.ts` (the Up walk). */
+   `add-menu.tsx` (the "+", and the pickers only it clicks),
+   `text-insertions.ts` (what that menu types on the user's behalf),
+   `enhance-button.tsx` (the rewrite and every read behind it), `keys.ts` (the
+   one ordering of Enter and the completers), `prompt-history.ts` (the Up
+   walk). Nothing about the *connection* is here at all — it is a `Notice` at
+   the foot of the transcript (`components/connection-card.tsx`). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
 import { ArrowUp, Mic, Pause, Play, Square } from "lucide-react"
@@ -72,12 +72,9 @@ import {
   AgentsIndicator,
   ChangesIndicator,
   ConfigIndicator,
-  ConnectionIndicator,
   ContextIndicator,
   RepoIndicator,
   TodoIndicator,
-  connectionNote,
-  connectionTone,
 } from "@/components/composer-status"
 import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerEditor, type TextSurface } from "@/components/composer/composer-editor"
@@ -687,15 +684,9 @@ export function Composer({
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
 
-  /* What the shelf's ground is saying. Read from the same answer the footer's
-     connection reading draws, so the colour and the words cannot disagree, and
-     `null` (an idle or live thread) is the ordinary ground. */
-  const shelfTone = connectionTone(thread) ?? "neutral"
-
   return (
     <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,var(--safe-bottom))]">
       <ComposerStrip
-        tone={shelfTone}
         /* ── The scope row ──
            Where this thread runs, what it carries, how full it is — the shelf's
            floor, under whatever the turn has put on it. It survives the first
@@ -703,7 +694,13 @@ export function Composer({
            stops being a choice. The ring is here rather than on the send row
            because context occupancy is a fact about the thread, not a control.
            Nothing without a `meta`, which is a thread the server has not
-           answered for yet. */
+           answered for yet.
+
+           The connection is not here. It was a reading on this row, and for a
+           while the one whose tone the shelf's whole ground wore; a dead
+           connection is a sentence with a button rather than a number glanced
+           at, so it is a `Notice` at the foot of the transcript with the other
+           things the thread is doing (`ConnectionCard`). */
         footer={
           meta && (
             <DraftScopeRow
@@ -711,23 +708,6 @@ export function Composer({
               actions={actions}
               editable={draft}
               showSelectedMcps={false}
-              /* The row's head, immediately after the project: where the work
-                 lands and whether this device can get a message out about it
-                 are the two facts the rest of the floor is read against, so
-                 they sit together rather than at opposite ends of the row. The
-                 connection is also the one whose answer the shelf's own ground
-                 wears (`tone` above) — a thread that cannot send is not a
-                 thread whose other readings are the news.
-
-                 Passed only when there is something to say. The reading itself
-                 draws nothing on a healthy thread, but its *presence* is what
-                 tells the project to give up its name — and there is no reason
-                 for that on the ordinary thread whose state is "fine". */
-              leading={
-                connectionNote(thread) ? (
-                  <ConnectionIndicator thread={thread} sessionId={sessionId} actions={actions} />
-                ) : undefined
-              }
               /* The readings, in one cluster at the row's end: how far the
                  checklist has got, how many workers are out, what the last turn
                  wrote, how full the window is. Four answers of the same *kind*
@@ -801,10 +781,8 @@ export function Composer({
         data-slot="composer-card"
         className={cn(
           "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl p-2 shadow-glass-lg",
-          /* Glass only while nothing streams under it: a backdrop filter over
-             the transcript re-blurs on every token and every scroll frame,
-             which is the dearest paint on the screen. */
-          thread.turnActive ? "bg-composer/95" : "bg-composer/70 backdrop-blur-xl backdrop-saturate-150",
+          /* Keep the glass surface consistent while the transcript streams. */
+          "bg-composer/70 backdrop-blur-xl backdrop-saturate-150",
           "transition-[ring-color] duration-200",
           voice.listening && "ring-1 ring-destructive/40"
         )}
@@ -963,7 +941,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-full text-muted-foreground hover:text-foreground",
+                "shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground dark:bg-muted dark:hover:bg-muted/70",
                 iconFit,
                 // Listening is a live state, so it stays coloured — but as text,
                 // not as a filled chip that reintroduces the chrome.
@@ -992,14 +970,16 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-full text-muted-foreground hover:text-foreground",
+                "shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground dark:bg-muted dark:hover:bg-muted/70",
                 iconFit,
                 thread.paused && "text-primary hover:text-primary"
               )}
               onClick={() =>
-                (thread.paused ? actions.resume(sessionId) : actions.pause(sessionId)).catch((err) =>
-                  reportError(err, thread.paused ? "Couldn't resume the turn" : "Couldn't pause the turn")
-                )
+                /* Resume records its own failure in the thread (a toast would
+                   be the second telling); pause records nothing, so it toasts. */
+                thread.paused
+                  ? actions.resume(sessionId).catch(() => {})
+                  : actions.pause(sessionId).catch((err) => reportError(err, "Couldn't pause the turn"))
               }
               title={
                 hold.byError
@@ -1014,9 +994,9 @@ export function Composer({
           )}
           {thread.turnActive && (
             <Button
-              variant="destructive"
+              variant="ghost"
               size={iconSize}
-              className={cn("shrink-0 rounded-pill shadow-sm", iconFit)}
+              className={cn("shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground dark:bg-muted dark:hover:bg-muted/70 text-destructive hover:text-destructive", iconFit)}
               /* Stop and Escape are the same gesture, so they answer the same
                  way: a message the user has not seen land comes back into the
                  box rather than staying parked in a queue nothing will drain.
@@ -1040,9 +1020,9 @@ export function Composer({
               ground — a muted disc — and fills primary the moment it becomes
               sendable. Like the "+", it is round and the same size. */}
           <Button
-            variant="default"
+            variant="ghost"
             size={iconSize}
-            className={cn("shrink-0 rounded-full disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100", iconFit)}
+            className={cn("shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground dark:bg-muted dark:hover:bg-muted/70 text-primary hover:text-primary disabled:text-muted-foreground disabled:opacity-100", iconFit)}
             onClick={() => void send()}
             disabled={!canSend}
             title={sendTitle}

@@ -33,7 +33,7 @@ import { useProfiles } from "@/lib/queries/catalog"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { ComposerStripItem } from "./composer-strip"
+import { ComposerStripItem, SHELF_PAD } from "./composer-strip"
 
 /* ── The chip row ──
    What is riding along with the message but is not in the box: a long paste
@@ -135,7 +135,7 @@ export function ComposerAttachments({
         label,
         badge: attachments.length,
       }}
-      className="px-2 py-1.5"
+      className={cn(SHELF_PAD, "py-1.5")}
     >
       <AttachmentGroup className="gap-2 py-0">
         {attachments.map((entry) => (

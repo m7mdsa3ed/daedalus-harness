@@ -612,6 +612,8 @@ export function ProfileForm({
        carries the custom models the notice would be nagging about. Absent on
        older servers (and the virtual Default), which is the same as off. */
     suppressModelMetadataWarning: profile?.suppressModelMetadataWarning ?? false,
+    /* A string while it is typed; blank = the server's default. */
+    upstreamTimeoutSeconds: profile?.upstreamTimeoutSeconds ? String(profile.upstreamTimeoutSeconds) : "",
     hidden: profile?.hidden ?? false,
     disabled: profile?.disabled ?? false,
   }))
@@ -727,6 +729,7 @@ export function ProfileForm({
             ? null
             : { kind: form.usageKind, baseUrl: form.usageBaseUrl.trim(), apiKey: form.usageApiKey },
         suppressModelMetadataWarning: form.suppressModelMetadataWarning,
+        upstreamTimeoutSeconds: Number(form.upstreamTimeoutSeconds) > 0 ? Math.round(Number(form.upstreamTimeoutSeconds)) : null,
         hidden: form.hidden,
         disabled: form.disabled,
 
@@ -939,6 +942,20 @@ export function ProfileForm({
           />
           <span className="min-w-0 flex-1 leading-snug">Hide "Model metadata … not found. Defaulting to fallback metadata"</span>
         </label>
+      </Field>
+      <Field
+        label="Response timeout (seconds)"
+        hint="How long the server waits for this provider to start answering before it gives up and the agent retries. Some gateways send nothing until the first token, which a reasoning model on a large context can take minutes to reach. Blank uses the default (600). Allowed: 10 to 3600."
+      >
+        <Input
+          type="number"
+          inputMode="numeric"
+          min={10}
+          max={3600}
+          placeholder="600"
+          value={form.upstreamTimeoutSeconds}
+          onChange={(e) => set({ upstreamTimeoutSeconds: e.target.value })}
+        />
       </Field>
       <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
       </PageForm>

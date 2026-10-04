@@ -9,6 +9,7 @@ import type {
   PromptReply,
   QueuedMessage,
   QuotaSnapshot,
+  SessionFailure,
   SessionUpdate,
   StagedConfig,
   ThreadCommand,
@@ -197,7 +198,10 @@ export interface ThreadCallbacks {
     /** Server-measured wall clock for the whole logical turn, ms. */
     durationMs?: number,
     /** Union wall time spent in tool calls, ms. */
-    toolDurationMs?: number
+    toolDurationMs?: number,
+    /** The AIR failure the turn ended on, already drawn through `onUpdate`;
+        here only so a severity `error` counts as a failed turn. */
+    failure?: SessionFailure
   ) => void
   /** The thread's queue, whole. Every change to it arrives this way — this
       device's own included, since the ids are the server's. */
@@ -754,6 +758,21 @@ export class ThreadSocket {
         this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp, event.attachments)
         return
       case "turn_ended":
+        /* A turn the agent ended on an AIR `sessionFailure` (stopReason
+           `end_turn`, the record on the prompt's answer). Handed to the
+           transcript as the `session_info_update` the same record arrives on
+           otherwise, so there is one reader for both doors and the revision
+           rule is applied once. Before the end, so the row stands inside the
+           turn it ended. */
+        if (event.failure) {
+          this.callbacks.onUpdate(
+            {
+              sessionUpdate: "session_info_update",
+              _meta: { jetbrains: { air: { sessionFailure: event.failure } } },
+            },
+            this.catchingUp
+          )
+        }
         this.callbacks.onTurnEnded(
           event.usage,
           event.error,
@@ -762,7 +781,8 @@ export class ThreadSocket {
           event.continued ?? false,
           event.turnId,
           event.durationMs,
-          event.toolDurationMs
+          event.toolDurationMs,
+          event.failure
         )
         return
     }

@@ -17,7 +17,7 @@ import {
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
 import { evictAgentStatus, getAgentsStatus, installAgent } from "../agent-status.js";
 import { getProject } from "../projects.js";
-import { probeAgentOptions } from "../probe.js";
+import { clearProbeCache, probeAgentOptions } from "../probe.js";
 import { modelsDevProviders, searchModelsDev, toCandidate } from "../models-dev.js";
 import { resolveProfilePresets } from "../profile-presets.js";
 import { enrichProviderModels, fetchProviderModels, testProviderModel } from "../provider-models.js";
@@ -209,6 +209,12 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     if (!project) return c.json({ error: "unknown project" }, 404);
     const refresh = c.req.query("refresh") === "1";
     return c.json(await probeAgentOptions(profile, agentId, project, { refresh }));
+  });
+
+  /** Drop the whole probe cache; each pair re-probes on its next ask. */
+  app.delete("/api/agent-options", async (c) => {
+    await clearProbeCache();
+    return c.json({ ok: true });
   });
 
   /**

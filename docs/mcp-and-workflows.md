@@ -99,24 +99,24 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## The harness's own MCP client
 
-The server connects to MCP servers itself for four things: the listing
-(`checkMcpServer`, cached as `mcp_catalog`), the playground, completions, and the
-composer. Everything but the Check button goes through **one pooled client per
-row** (`pooledClient` in `mcp-check.ts`): a stdio server is a process, and once
-completions existed, connecting per call was a spawn per keystroke. An entry
-closes after 5 idle minutes, drops itself when its transport closes, and is keyed
-on the resolved def, so an edited row or a builtin resolved for another project
-connects afresh. A pooled client that hears `list_changed` deletes the row's
-`mcp_catalog` entry, so the next read connects. **Check still connects fresh** —
-that is what it means.
+The server connects to MCP servers itself for two things: the listing
+(`checkMcpServer`, cached as `mcp_catalog`) and the composer. Everything but the
+Check button goes through **one pooled client per row** (`pooledClient` in
+`mcp-check.ts`): a stdio server is a process, and connecting per call was a spawn
+per read. An entry closes after 5 idle minutes, drops itself when its transport
+closes, and is keyed on the resolved def, so an edited row or a builtin resolved
+for another project connects afresh. A pooled client that hears `list_changed`
+deletes the row's `mcp_catalog` entry, so the next read connects. **Check still
+connects fresh** — that is what it means.
 
 The listing carries `instructions`, the declared `capabilities` and
-`resourceTemplates` beside tools, prompts and resources. The detail page draws
-all of them: instructions as a group, capabilities as badges, templates as a
-fourth section whose Run fills the RFC 6570 template and reads it as a resource.
-Where the server declares `completions`, prompts and templates get
-**Suggest values** (`POST /api/mcp-servers/:id/complete`). Images in any answer
-are drawn as images above the raw JSON.
+`resourceTemplates` beside tools, prompts and resources. The row's badge links
+to the server's own page (`settings/mcp-detail.tsx`, `/settings/mcp/:id/tools`),
+which draws each of them as the **contract** it is — a tool's input fields and
+its `outputSchema`, a prompt's arguments, a resource's URI and type — as a rail
+of what the server offers beside one entry's fields, with the raw schema one fold
+below. It is a reading: nothing on it runs (that was the playground, and it is
+gone). The page takes the whole settings frame (`isFullWidthSettings`).
 
 **A thread's servers reach the composer through the harness, for every
 runtime** — Claude Code and Codex included, whatever their own MCP client does:
@@ -136,9 +136,8 @@ runtime** — Claude Code and Codex included, whatever their own MCP client does
   knows it came from MCP.
 - Tools are never offered here: a tool call is the agent's, behind its gate.
 
-Not done on the harness side: template variables in the `@` menu (the
-playground fills them; our agent has `list_resource_templates`) and completions
-in the composer (the playground has them).
+Not done on the harness side: template variables in the `@` menu (our agent has
+`list_resource_templates`) and completions in the composer.
 
 `pnpm test:mcp-check` (server) and `pnpm test:mcp-features` (agent) both run
 against `agent/test/helpers/mcp-full-server.mjs`, a fixture exercising every
@@ -417,7 +416,7 @@ beside Import in Settings › MCP.
   1. The adapter republishes background work as an AIR async-task lifecycle
      (`async_task_spawned` / `_progress` / `_state_update`) but only to a client
      that advertises the capability, which the harness now does
-     (`AIR_ASYNC_TASKS_META`).
+     (`AIR_META`).
   2. It dropped `workflow_progress` on the floor while copying the rest of the
      beat. `pnpm patch:acp` puts it back in two lines
      (`server/scripts/patch-claude-acp.mjs` — idempotent, refuses rather than

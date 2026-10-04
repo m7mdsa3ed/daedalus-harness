@@ -65,7 +65,7 @@ async function seed() {
      dropped it would never be re-seeded and the thread below would point at a
      persona that no longer exists. */
   await db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 });
-  await db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [] }] });
+  await db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [], group: "Speed", iconUrl: "https://models.dev/logos/gw.svg" }] });
   
   /* A project with start defaults picked, so the round trip below is a real
      one: an empty defaults object would pass whether or not the columns are
@@ -163,6 +163,11 @@ await test("a full export round-trips through the schema", async () => {
     sortOrder: 10,
   });
   assert.equal(bundle.sessions[0]!.personaId, "builtin:terse", "the thread remembers how it was worked on");
+  /* A model's `group` and `iconUrl` are the user's own writing, like the price
+     beside them — a bundle that did not carry them would hand back a restored
+     profile whose picker headings were silently gone. */
+  assert.equal(bundle.profiles[0]!.models[0]!.group, "Speed");
+  assert.equal(bundle.profiles[0]!.models[0]!.iconUrl, "https://models.dev/logos/gw.svg");
 });
 
 await test("a 0 thinking budget survives the round trip as 0, not as absent", async () => {

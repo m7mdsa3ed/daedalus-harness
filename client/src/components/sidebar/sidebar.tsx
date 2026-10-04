@@ -64,7 +64,7 @@ import { useThreadStatuses } from "@/lib/thread/statuses"
 import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
-import { useProjects } from "@/lib/queries/catalog"
+import { useActiveSpace, useProjects } from "@/lib/queries/catalog"
 import { useActiveChat, useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, isListed, type Project, type SessionMeta } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
@@ -109,6 +109,7 @@ export function ThreadSidebar({
      from the query cache, so only a projects refresh reaches this. */
   const sessions = useStoreSelect((state) => state.sessions)
   const projects = useProjects()
+  const { id: activeSpaceId } = useActiveSpace()
   const pins = usePins()
   const view = useSidebarView()
   /* The threads with a tab open, in the dock's order — the "Opened" tier, and
@@ -143,6 +144,30 @@ export function ThreadSidebar({
     [statuses]
   )
 
+  /* Which projects — and so which threads — belong to the space in front of
+     you. A thread is filed under its project, so this is the whole of a
+     thread's space. A thread whose project is gone is unattributable: it shows
+     in every space (as "Other" below) rather than vanishing from the one space
+     it was last worked in. */
+  const spaceProjectIds = React.useMemo(
+    () =>
+      activeSpaceId
+        ? new Set(projects.filter((project) => project.spaceId === activeSpaceId).map((project) => project.id))
+        : null,
+    [projects, activeSpaceId]
+  )
+  const knownProject = React.useMemo(() => new Set(projects.map((project) => project.id)), [projects])
+  const inSpace = React.useCallback(
+    (session: SessionMeta) =>
+      !spaceProjectIds || spaceProjectIds.has(session.projectId) || !knownProject.has(session.projectId),
+    [spaceProjectIds, knownProject]
+  )
+  // The folders this space draws. `projects` stays whole for orphan detection.
+  const scopedProjects = React.useMemo(
+    () => (spaceProjectIds ? projects.filter((project) => spaceProjectIds.has(project.id)) : projects),
+    [projects, spaceProjectIds]
+  )
+
   /* All the derived lists in one memo: none of them depend on anything a
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
@@ -152,6 +177,7 @@ export function ThreadSidebar({
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = sessions
       .filter(isListed)
+      .filter(inSpace)
       .filter((session) => !session.deletedAt)
       .filter((session) => {
         if (view.filter === "running") return statuses.get(session.id) === "running"
@@ -166,6 +192,7 @@ export function ThreadSidebar({
       })
     const trashed = sessions
       .filter(isListed)
+      .filter(inSpace)
       .filter((session) => !!session.deletedAt)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
 
@@ -225,7 +252,7 @@ export function ThreadSidebar({
     }
     const recent = view.sort === "recent" ? closed.filter((session) => shown.has(session.id)) : []
     return { live, trashed, pinned, recent, opened, filed: newestFirst }
-  }, [sessions, statuses, pins, view.filter, view.sort, openIds])
+  }, [sessions, statuses, pins, view.filter, view.sort, openIds, inSpace])
 
   const { byProject, orphans } = React.useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>()
@@ -282,7 +309,7 @@ export function ThreadSidebar({
               ? view.filter === "running"
                 ? "Nothing is running right now."
                 : "Nothing is waiting on you."
-              : projects.length > 0
+              : scopedProjects.length > 0
                 ? "No threads yet — start one from a project below."
                 : "No threads yet."}
           </p>
@@ -326,10 +353,10 @@ export function ThreadSidebar({
       {/* Projects: one folder each. Not a foldable tier itself — the folders
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
-      {projects.length > 0 && !(filtered && nothingLive) && (
+      {scopedProjects.length > 0 && !(filtered && nothingLive) && (
         <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon className="size-3 shrink-0" />}>
             <SidebarMenu className={MENU}>
-              {projects.map((project) => (
+              {scopedProjects.map((project) => (
                 <ProjectFolder
                   key={project.id}
                   id={project.id}

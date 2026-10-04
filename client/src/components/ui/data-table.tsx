@@ -54,7 +54,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SwipeableRow } from "@/components/swipeable-row";
 import type { SwipeNeighborMotion } from "@/components/motion/swipeable-list";
-import { useMotionValue } from "framer-motion";
+import { useMotionValue } from "motion/react";
 import { HeaderActionOverflow } from "@/components/ui/action-overflow";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { PaginationControls } from "@/components/pagination-controls";

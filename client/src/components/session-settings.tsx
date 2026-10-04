@@ -32,6 +32,7 @@ import {
   AlignJustify,
   ArrowDownToLine,
   Bot,
+  Braces,
   Brain,
   Clock,
   Code,
@@ -190,7 +191,8 @@ const GROUPS: Group[] = [
         key: "showThinking",
         icon: Brain,
         title: "Show thinking",
-        description: "Expand the agent's reasoning steps by default instead of folding them away.",
+        description:
+          "Open the agent's reasoning while it streams. It folds away the moment the step finishes — click a row to read a settled one.",
       },
       {
         key: "showToolDetails",
@@ -204,6 +206,13 @@ const GROUPS: Group[] = [
         title: "Show the command",
         description:
           "The command, path or pattern a step ran, under the sentence describing it. Off, a row is the description alone — the command is still in the step's own body.",
+      },
+      {
+        key: "showRawToolData",
+        icon: Braces,
+        title: "Show raw tool data",
+        description:
+          "The call exactly as the agent sent it — input, output, content and metadata — as JSON at the foot of every tool step.",
       },
       {
         key: "groupTools",

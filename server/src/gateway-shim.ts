@@ -543,8 +543,14 @@ function applySessionModel(body: Json, model: string, effort: string): boolean {
     deadline would be wrong (a streaming turn is open for minutes by design),
     but with no deadline at all a gateway that never answers pins this request,
     and the body it buffered, forever. Generous because a non-streaming
-    Messages call generates its whole reply before the headers go out. */
-const UPSTREAM_HEADERS_TIMEOUT_MS = 120_000;
+    Messages call generates its whole reply before the headers go out, and
+    because many gateways hold the headers of a *streaming* call until the
+    first token — a reasoning model on a large context takes minutes to get
+    there. It matches Claude Code's own request timeout (API_TIMEOUT_MS, 10
+    minutes): a shorter one here aborts a call the client would have waited
+    for, and the client answers with "Retrying request" on a turn that was
+    working. */
+const UPSTREAM_HEADERS_TIMEOUT_MS = 600_000;
 
 const notFound = (error: string) =>
   new Response(JSON.stringify({ error }), { status: 404, headers: { "content-type": "application/json" } });
@@ -632,9 +638,12 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   /* The deadline is disarmed the moment fetch resolves — once headers are in,
      the body is the model streaming and takes as long as it takes. */
   const connect = new AbortController();
+  const headersTimeoutMs = profile?.upstreamTimeoutSeconds
+    ? profile.upstreamTimeoutSeconds * 1000
+    : UPSTREAM_HEADERS_TIMEOUT_MS;
   const connectTimer = setTimeout(
-    () => connect.abort(new Error(`gateway sent no response headers within ${UPSTREAM_HEADERS_TIMEOUT_MS}ms`)),
-    UPSTREAM_HEADERS_TIMEOUT_MS,
+    () => connect.abort(new Error(`gateway sent no response headers within ${headersTimeoutMs}ms`)),
+    headersTimeoutMs,
   );
   try {
     upstream = await fetch(`${baseUrl.replace(/\/+$/, "")}${parsed.rest}${url.search}`, {

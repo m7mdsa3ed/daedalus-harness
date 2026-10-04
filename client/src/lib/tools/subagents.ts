@@ -76,8 +76,27 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
       started: activity === "started",
     }
   }
-  const collab = asRecord(vendorMeta(item.meta, "codex")?.collaboration)
   const input = asRecord(item.rawInput)
+  /* codex-acp 2.x sends neither `codex.subagent` nor `codex.collaboration`:
+     an activity row is `rawInput: {agentThreadId, agentPath, activityKind}`,
+     and a collaboration call is recognised by its three rawInput keys, its
+     tool being the title. (With native subagent sessions the adapter makes
+     children sessions instead, so these are the fallback shape.) */
+  const agentPath = str(input?.agentPath)
+  if (agentPath && str(input?.agentThreadId)) {
+    const activity = str(input?.activityKind) ?? undefined
+    return {
+      agentType: agentPath.split("/").filter(Boolean).at(-1) ?? undefined,
+      activity,
+      threadId: str(input?.agentThreadId) ?? undefined,
+      started: activity === "started",
+    }
+  }
+  const collab =
+    asRecord(vendorMeta(item.meta, "codex")?.collaboration) ??
+    (input && "senderThreadId" in input && "receiverThreadIds" in input && "agentsStates" in input
+      ? { tool: item.title, senderThreadId: input.senderThreadId }
+      : null)
   if (collab) {
     const receivers = collab.receiverThreadIds ?? input?.receiverThreadIds
     return {
@@ -92,8 +111,16 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
     }
   }
   const claude = vendorMeta(item.meta, "claudeCode")
+  const air = vendorMeta(item.meta, "air")
+  /* Under AIR `toolResponse` is down to its `status`/`isAsync` markers (plus
+     the progress beats' `elapsedTimeSeconds`/`subagentType`), so every field
+     read off it below is optional. */
   const response = asRecord(claude?.toolResponse)
-  if (claude?.subagent !== true && !isOneOf(item, ["task", "agent", "subagent", "dispatch_agent"])) {
+  if (
+    claude?.subagent !== true &&
+    air?.subagent !== true &&
+    !isOneOf(item, ["task", "agent", "subagent", "dispatch_agent"])
+  ) {
     return null
   }
   /* OpenCode wraps the child's report in `<task id state>…<task_result>…`
@@ -103,7 +130,10 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
   const wrapper = parseTaskWrapper(str(output?.output))
   const model = asRecord(asRecord(output?.metadata)?.model)
   const elapsed = response?.elapsedTimeSeconds
-  const background = response?.isAsync === true || response?.status === "async_launched"
+  const background =
+    response?.isAsync === true ||
+    response?.status === "async_launched" ||
+    asRecord(air?.asyncTasks)?.backgrounded === true
   return {
     agentType:
       str(input?.subagent_type) ??

@@ -139,6 +139,7 @@ export const ThreadList = React.memo(function ThreadList({
               trash={trash}
               active={activeThreadId === session.id}
               pinned={pinSet.has(session.id)}
+              showProject={!grouped}
               onOpen={open}
               onRename={rename}
               onDelete={remove}

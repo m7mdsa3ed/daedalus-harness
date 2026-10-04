@@ -101,6 +101,8 @@ function mcpServer(pidFile: string): acp.McpServer {
   const agent = buildAgentApp({
     env: testEnv(),
     makeModel: scriptedModel([
+      /* Every MCP tool is deferred: found by a search, then called. */
+      toolCallScript("search_tools", { query: "select:mcp__echo__echo" }, { id: "search-1" }),
       toolCallScript("mcp__echo__echo", { text: "one" }),
       toolCallScript("mcp__echo__echo", { text: "two" }, { id: "call-2" }),
       textScript("Echoed twice. "),

@@ -27,15 +27,7 @@ import {
 } from "../mcp-oauth.js";
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
-import {
-  checkMcpServer,
-  completeMcp,
-  invokeMcp,
-  mcpCatalogFor,
-  type McpCompletion,
-  type McpInvocation,
-} from "../mcp-check.js";
-import type * as acp from "../acp.js";
+import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
 import { searchRegistry } from "../mcp-registry.js";
 import { mcpServersFor, type SessionManager } from "../sessions.js";
 import { getProject, listProjects, type Project } from "../projects.js";
@@ -99,14 +91,13 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
    * configured.
    */
   /**
-   * The server as a thread's agent would be handed it — the one resolution
-   * both the listing and the playground stand on.
+   * The server as a thread's agent would be handed it — the one resolution the
+   * listing stands on.
    *
    * A builtin's env carries the *calling thread's* project, and there is no
    * thread behind a settings screen, so one is named or the first stands in.
    * For a listing which project it is changes what the tools answer and never
-   * what they are; for a call it changes the answer itself, which is why the
-   * detail page lets a builtin's project be picked.
+   * what they are; the `project` query is what names it.
    */
   async function resolveMcpDef(id: string, projectId?: string) {
     const row = (await mcpServers.list()).find((s) => s.id === id);
@@ -139,75 +130,6 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       return c.json({ ok: false, ms: 0, tools: [], prompts: [], resources: [], error: resolved.unavailable });
     }
     return c.json(await mcpCatalogFor(id, resolved.def, c.req.method === "POST"));
-  });
-
-  /**
-   * The playground: run one of the things this server offers — a tool, a
-   * prompt or a resource — and hand back what it answered, verbatim.
-   *
-   * One route for all three, because the kind picks an SDK method and nothing
-   * else (`invokeMcp`). A connection of its own per call rather than a pooled
-   * one, the same bargain the check makes. A tool call is a *write* as often as
-   * a read, so this is deliberately behind an explicit press on a page somebody
-   * navigated to, and nothing here is cached: the point is the live answer.
-   */
-  app.post("/api/mcp-servers/:id/invoke", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const call = invocationOf(body);
-    if (typeof call === "string") return c.json({ error: call }, 400);
-    const resolved = await resolveMcpDef(c.req.param("id"), body.project as string | undefined);
-    if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
-    if ("unavailable" in resolved) return c.json({ error: resolved.unavailable }, 400);
-    return c.json(await invokeMcp(c.req.param("id"), resolved.def, call));
-  });
-
-  /** Suggestions for a prompt argument or a template variable, as the server
-      ranks them — the playground's inputs ask as they are typed. */
-  app.post("/api/mcp-servers/:id/complete", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as Partial<McpCompletion> & { project?: string };
-    const bad = completionError(body);
-    if (bad) return c.json({ error: bad }, 400);
-    const resolved = await resolveMcpDef(c.req.param("id"), body.project);
-    if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
-    if ("unavailable" in resolved) return c.json({ values: [] });
-    return c.json({ values: await completeMcp(c.req.param("id"), resolved.def, body as McpCompletion) });
-  });
-
-  /* ── The playground for a server that is not a row ──
-
-     The same three reads, handed a definition instead of an id: a server
-     being tried before it is saved, or one that never will be. Nothing is
-     stored — no catalog row, no library row — and the pool is keyed on the
-     definition itself, so every call with the same one shares a connection
-     and an edited one connects afresh (`playgroundDef`).
-
-     Stdio, streamable HTTP and legacy SSE — every transport the client speaks,
-     including the one the library cannot store yet. Not OAuth and not a
-     builtin: the first needs a row for its token to belong to, the second is
-     synthesized from a row. Behind the bearer token like everything else, and
-     no wider than what it already grants: a stdio row is a command too. */
-  app.post("/api/mcp-playground/:op", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const parsed = PlaygroundServerSchema.safeParse(body.server);
-    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    const def = playgroundDef(parsed.data);
-    const poolId = `playground:${JSON.stringify(def)}`;
-    switch (c.req.param("op")) {
-      case "check":
-        return c.json({ ...(await checkMcpServer(def)), checkedAt: Date.now() });
-      case "invoke": {
-        const call = invocationOf(body);
-        if (typeof call === "string") return c.json({ error: call }, 400);
-        return c.json(await invokeMcp(poolId, def, call));
-      }
-      case "complete": {
-        const bad = completionError(body as Partial<McpCompletion>);
-        if (bad) return c.json({ error: bad }, 400);
-        return c.json({ values: await completeMcp(poolId, def, body as unknown as McpCompletion) });
-      }
-      default:
-        return c.json({ error: "op must be check, invoke or complete" }, 404);
-    }
   });
 
   /* ── A thread's MCP servers, for the composer ──
@@ -501,48 +423,4 @@ function callbackPage({ ok, message }: { ok: boolean; message: string }): string
   try { window.opener && window.opener.postMessage({ source: "daedalus-mcp-oauth", ok: ${ok} }, "*") } catch (e) {}
   ${ok ? "setTimeout(function () { window.close() }, 1200)" : ""}
 </script></body></html>`;
-}
-
-const pairList = z.array(z.object({ name: z.string(), value: z.string() })).default([]);
-
-/** A server the playground is handed rather than looks up. */
-const PlaygroundServerSchema = z.union([
-  z.object({ type: z.enum(["http", "sse"]), url: z.string().url(), headers: pairList }),
-  z.object({
-    type: z.literal("stdio").default("stdio"),
-    command: z.string().min(1),
-    args: z.array(z.string()).default([]),
-    env: pairList,
-  }),
-]);
-
-/** As ACP spells it — the shape `mcpServersFor` hands a spawn, so the
-    playground connects exactly as a thread's agent would once it is saved. */
-function playgroundDef(input: z.infer<typeof PlaygroundServerSchema>): acp.McpServer {
-  const name = "playground";
-  return input.type === "stdio"
-    ? { name, command: input.command, args: input.args, env: input.env }
-    : { type: input.type, name, url: input.url, headers: input.headers };
-}
-
-/** A playground call from a request body, or what is wrong with it. */
-function invocationOf(body: Record<string, unknown>): McpInvocation | string {
-  const { kind, name, args } = body;
-  if (kind !== "tool" && kind !== "prompt" && kind !== "resource") return "kind must be tool, prompt or resource";
-  if (typeof name !== "string" || !name) return "name is required";
-  if (args !== undefined && (typeof args !== "object" || args === null || Array.isArray(args))) {
-    return "arguments must be a JSON object";
-  }
-  return { kind, name, args: (args as Record<string, unknown>) ?? {} };
-}
-
-function completionError(body: Partial<McpCompletion>): string | null {
-  const ref = body.ref as { type?: string; name?: unknown; uri?: unknown } | undefined;
-  if (!ref || (ref.type === "ref/prompt" ? typeof ref.name !== "string" : ref.type !== "ref/resource" || typeof ref.uri !== "string")) {
-    return "ref must be {type:'ref/prompt',name} or {type:'ref/resource',uri}";
-  }
-  if (typeof body.argument?.name !== "string" || typeof body.argument.value !== "string") {
-    return "argument must be {name, value}";
-  }
-  return null;
 }

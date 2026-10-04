@@ -264,9 +264,11 @@ export function parseWebResults(text: string): WebResult[] {
 }
 
 /** Where a runtime puts a search's structured answer: `rawOutput` for most,
-    and `_meta.claudeCode.toolResponse` for Claude Code's built-in `WebSearch`,
-    whose `results[]` mixes `{content: [{title, url}]}` pages with the prose
-    strings of its own answer. */
+    and `_meta.claudeCode.toolResponse` for Claude Code's built-in `WebSearch`
+    from adapters before AIR, whose `results[]` mixes `{content: [{title, url}]}`
+    pages with the prose strings of its own answer. For an AIR client
+    claude-agent-acp ≥ 0.84 sends none of that: the hits arrive as `content`
+    text, one `Title (url)` per line, which `parseWebResults` reads. */
 function webOutputRecord(item: Pick<ToolItem, "rawOutput" | "meta">): Record<string, unknown> | null {
   const raw = asRecord(item.rawOutput)
   // Codex's MCP envelope: the answer is `result`, and a server that returns

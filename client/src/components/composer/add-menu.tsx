@@ -77,7 +77,7 @@ export function ComposerAddMenu({
               variant="ghost"
               size={size}
               className={cn(
-                "shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
+                "shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground data-popup-open:bg-foreground/15 data-popup-open:text-foreground dark:bg-muted dark:hover:bg-muted/70 dark:data-popup-open:bg-muted",
                 className
               )}
               disabled={disabled}

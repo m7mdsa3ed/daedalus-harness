@@ -192,6 +192,9 @@ self.addEventListener("push", (event) => {
         tag: sessionId ? `${sessionId}:${title}` : title,
         sessionId,
         actionable: kind ? BLOCKING_EVENTS.has(kind) : false,
+        // An explicit "Open" beside the tappable banner — the label says where
+        // the tap goes, and only a thread gives it somewhere to go.
+        openAction: Boolean(sessionId),
       })
     )
   )
@@ -199,6 +202,10 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close()
+  /* A tap on the banner is `event.action === ""`; our one action is "open", and
+     both go to the same place — the notification *is* the thread's, so the
+     button spells out what the whole banner already does. Dismissing without
+     acting (`notificationclose`) arrives on its own event and routes nowhere. */
   const { sessionId } = (event.notification.data ?? {}) as { sessionId?: string }
   // One route per thread — see client/src/lib/router.ts.
   const url = new URL(sessionId ? `/t/${encodeURIComponent(sessionId)}` : "/", self.location.origin)

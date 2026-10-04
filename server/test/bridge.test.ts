@@ -6,7 +6,7 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeJson } from "../src/config.js";
@@ -14,6 +14,7 @@ import type { Profile } from "../src/profiles.js";
 import type { ThreadCommand, ThreadEvent } from "../src/protocol.js";
 
 rmSync(process.env.DAEDALUS_DATA_DIR!, { recursive: true, force: true });
+mkdirSync("/tmp/daedalus-test-data/ws", { recursive: true });
 writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
   {
     id: "fake",
@@ -1470,9 +1471,9 @@ assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told 
    browser answers the server's WebSocket pings from its network stack, so the
    thread looks watched while nothing on it can draw anything. The `background`
    command is how the page says so on the way into the freeze. */
-const pushed: string[] = [];
+const pushed: { id: string; prompt?: string }[] = [];
 const notifying = new SessionManager(
-  { onTurnEnd: (s) => pushed.push(s.id) },
+  { onTurnEnd: (s, _error, promptText) => pushed.push({ id: s.id, prompt: promptText }) },
   1,
 );
 const frozen = await notifying.create(profile, "fake", project);
@@ -1482,12 +1483,16 @@ assert.equal(await notifying.attach(frozen.id, phone as never), null);
 
 send(phone, { id: 1, cmd: "prompt", text: "watched" });
 await waitFor(() => phone.of("turn_ended").length === 1, "the watched turn ends");
-assert.deepEqual(pushed, [], "a turn ending in front of someone raises no push");
+assert.equal(pushed.length, 0, "a turn ending in front of someone raises no push");
 
 send(phone, { cmd: "background", background: true });
 send(phone, { id: 2, cmd: "prompt", text: "backgrounded" });
 await waitFor(() => phone.of("turn_ended").length === 2, "the backgrounded turn ends");
 await waitFor(() => pushed.length === 1, "a frozen peer is pushed to");
+/* …and the notice says what the turn was about, not merely that something
+   ended: `promptText` is the message that opened the turn, threaded from the
+   bridge through `onTurnSettled` so the push and the inbox can name it. */
+assert.equal(pushed[0].prompt, "backgrounded", "the notice carries the message that opened the turn");
 /* The socket is still a peer in every other sense — the events go out to it as
    they always did (the browser hands them over when the page thaws), which is
    why nothing about the fan-out, the idle sweep or the journal reads this flag.

@@ -77,6 +77,9 @@ import {
 import { QuickAdd } from "./quick-add"
 import { TaskEditor } from "./task-editor"
 
+const FIELD_CHIP =
+  "inline-flex h-9 items-center gap-2 rounded-lg border bg-background px-3 text-sm text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+
 const fmtWhen = (ms: number) => {
   const d = new Date(ms)
   const sameYear = d.getFullYear() === new Date().getFullYear()
@@ -275,7 +278,7 @@ export function TaskDetailDialog({
   sprints,
   allTasks,
   facets,
-  onOpen,
+  onOpen: openTask,
   onCreate,
   onUpdate,
   onDelete,
@@ -302,8 +305,8 @@ export function TaskDetailDialog({
 
   const [title, setTitle] = React.useState("")
   const [editingTitle, setEditingTitle] = React.useState(false)
-  const [editingDesc, setEditingDesc] = React.useState(false)
-  const [desc, setDesc] = React.useState("")
+  const [draft, setDraft] = React.useState<{ id: string; text: string } | null>(null)
+  const [tag, setTag] = React.useState("")
   const [comment, setComment] = React.useState("")
   const [editingComment, setEditingComment] = React.useState<{ id: string; body: string } | null>(null)
   const [linkKind, setLinkKind] = React.useState<LinkKind>("relates")
@@ -312,11 +315,35 @@ export function TaskDetailDialog({
 
   React.useEffect(() => {
     setEditingTitle(false)
-    setEditingDesc(false)
     setConfirmDelete(false)
     setError(null)
     setEditingComment(null)
   }, [taskId])
+
+  /* The description saves itself: a draft is only pending while it differs from
+     the row, and it is written after a pause or on the way out. */
+  const pendingDesc = task && draft?.id === task.id && draft.text !== (task.description ?? "") ? draft.text : null
+  const saveDesc = (text: string) => {
+    if (!task) return
+    onUpdate(task.id, { description: text.trim() || null }).catch((err) => setError(captureError(err, "Couldn't save the description")))
+  }
+  React.useEffect(() => {
+    if (pendingDesc == null) return
+    const timer = setTimeout(() => saveDesc(pendingDesc), 700)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDesc])
+  const flushDesc = () => {
+    if (pendingDesc != null) saveDesc(pendingDesc)
+  }
+  const close = () => {
+    flushDesc()
+    onClose()
+  }
+  const onOpen = (t: Task) => {
+    flushDesc()
+    openTask(t)
+  }
 
   if (!task) {
     return (
@@ -372,7 +399,7 @@ export function TaskDetailDialog({
   }
 
   return (
-    <ResponsiveDialog open={!!taskId} onOpenChange={(open) => !open && onClose()} tall>
+    <ResponsiveDialog open={!!taskId} onOpenChange={(open) => !open && close()} tall>
       <ResponsiveDialogContent className="sm:max-w-3xl" bodyClassName="p-0">
         {/* Header: key, type, actions — the dialog's own close button takes the corner. */}
         <ResponsiveDialogHeader className="flex-row items-center gap-2 py-2.5">
@@ -403,33 +430,6 @@ export function TaskDetailDialog({
             >
               {task.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
             </button>
-            {confirmDelete ? (
-              <span className="inline-flex items-center gap-1 text-xs">
-                <span className="text-muted-foreground">Delete {key}?</span>
-                <Button
-                  size="xs"
-                  variant="destructive"
-                  onClick={async () => {
-                    try {
-                      await onDelete(task.id)
-                      toast.success(`${key} deleted`)
-                      onClose()
-                    } catch (err) {
-                      reportError(err, "Couldn't delete the task")
-                    }
-                  }}
-                >
-                  Delete
-                </Button>
-                <Button size="xs" variant="outline" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </Button>
-              </span>
-            ) : (
-              <button type="button" onClick={() => setConfirmDelete(true)} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label="Delete task" title="Delete">
-                <Trash2 className="size-4" />
-              </button>
-            )}
           </span>
         </ResponsiveDialogHeader>
 
@@ -446,7 +446,7 @@ export function TaskDetailDialog({
                 if (e.key === "Escape") setEditingTitle(false)
               }}
               aria-label="Title"
-              className="w-full rounded-lg border border-input bg-background px-2 py-1 text-lg font-semibold leading-snug outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full rounded-lg border border-input bg-background px-2 py-1 text-2xl font-semibold leading-snug outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           ) : (
             <ResponsiveDialogTitle
@@ -457,7 +457,7 @@ export function TaskDetailDialog({
                     setTitle(task.title)
                     setEditingTitle(true)
                   }}
-                  className={cn("-mx-2 rounded-lg px-2 py-1 text-left text-lg font-semibold leading-snug hover:bg-accent/50", task.completedAt != null && "text-muted-foreground line-through")}
+                  className={cn("-mx-2 rounded-lg px-2 py-1 text-left text-2xl font-semibold leading-snug hover:bg-accent/50", task.completedAt != null && "text-muted-foreground line-through")}
                   title="Click to rename"
                 />
               }
@@ -469,63 +469,86 @@ export function TaskDetailDialog({
           {task.archived && <p className="pt-1 text-xs text-muted-foreground">Archived — hidden from every view unless the filter includes it.</p>}
         </div>
 
-        <div className="grid w-full content-start md:grid-cols-[minmax(0,1fr)_17rem]">
+        {/* The task itself, as one column: the three facts that place it, its tags, its text. */}
+        <div className="grid gap-3 px-4 pt-3 pb-4 sm:px-6">
+          <div className="flex flex-wrap gap-2">
+            <StatusPicker
+              value={task.statusId}
+              statuses={statuses}
+              onChange={(statusId) => void patch({ statusId })}
+              trigger={
+                <button type="button" className={FIELD_CHIP}>
+                  <span className="text-muted-foreground">Status</span>
+                  <StatusPill status={status} />
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </button>
+              }
+            />
+            <PriorityPicker
+              value={task.priority}
+              onChange={(priority) => void patch({ priority })}
+              trigger={
+                <button type="button" className={FIELD_CHIP}>
+                  <span className="text-muted-foreground">Priority</span>
+                  <PriorityIcon priority={task.priority} /> {PRIORITY_LABEL[task.priority]}
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </button>
+              }
+            />
+            <AssigneePicker
+              value={task.assignee}
+              suggestions={facets.assignees}
+              onChange={(assignee) => void patch({ assignee })}
+              trigger={
+                <button type="button" className={FIELD_CHIP}>
+                  <span className="text-muted-foreground">Assignee</span>
+                  <span className="truncate">{task.assignee ?? "Unassigned"}</span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </button>
+              }
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {task.labels.map((l) => (
+              <LabelChip key={l} label={l} onRemove={() => void patch({ labels: task.labels.filter((x) => x !== l) })} />
+            ))}
+            <input
+              value={tag}
+              onChange={(e) => setTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== ",") return
+                e.preventDefault()
+                const next = tag.trim()
+                setTag("")
+                if (next && !task.labels.includes(next)) void patch({ labels: [...task.labels, next] })
+              }}
+              list="task-label-suggestions"
+              placeholder="Add tag"
+              aria-label="Add tag"
+              className="h-6 w-24 bg-transparent px-1 text-xs outline-none placeholder:text-muted-foreground"
+            />
+            <datalist id="task-label-suggestions">
+              {facets.labels.filter((l) => !task.labels.includes(l)).map((l) => (
+                <option key={l} value={l} />
+              ))}
+            </datalist>
+          </div>
+
+          <TaskEditor
+            key={task.id}
+            value={task.description ?? ""}
+            onChange={(text) => setDraft({ id: task.id, text })}
+            placeholder="Add a description…"
+            title={task.title}
+            className="[&_.ProseMirror]:min-h-[12rem]"
+          />
+          {task.archived && <p className="text-xs text-muted-foreground">Archived — hidden from every view unless the filter includes it.</p>}
+        </div>
+
+        <div className="grid w-full content-start border-t md:grid-cols-[minmax(0,1fr)_17rem]">
           {/* Main column. */}
           <div className="grid content-start gap-6 px-4 py-4 sm:px-6">
-            <Section
-              icon={Pencil}
-              title="Description"
-              action={
-                !editingDesc && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDesc(task.description ?? "")
-                      setEditingDesc(true)
-                    }}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    {task.description ? "Edit" : "Add"}
-                  </button>
-                )
-              }
-            >
-              {editingDesc ? (
-                <div className="grid gap-2">
-                  <TaskEditor value={desc} onChange={setDesc} className="[&_.ProseMirror]:min-h-[10rem]" />
-                  <div className="flex justify-end gap-2">
-                    <Button size="xs" variant="outline" onClick={() => setEditingDesc(false)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      size="xs"
-                      onClick={async () => {
-                        await patch({ description: desc.trim() || null })
-                        setEditingDesc(false)
-                      }}
-                    >
-                      Save
-                    </Button>
-                  </div>
-                </div>
-              ) : task.description ? (
-                <div className="prose prose-sm max-w-none rounded-xl border bg-muted/20 px-4 py-3 dark:prose-invert">
-                  <Markdown remarkPlugins={[remarkGfm]}>{task.description}</Markdown>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDesc("")
-                    setEditingDesc(true)
-                  }}
-                  className="rounded-xl border border-dashed px-4 py-3 text-left text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                >
-                  Add a description…
-                </button>
-              )}
-            </Section>
-
             <Section icon={ListChecks} title="Checklist" count={progress.total} action={progress.total > 0 ? <span className="text-xs tabular-nums text-muted-foreground">{progress.done}/{progress.total}</span> : null}>
               {progress.total > 0 && (
                 <div className="h-1.5 overflow-hidden rounded-pill bg-muted">
@@ -746,56 +769,6 @@ export function TaskDetailDialog({
           {/* Properties — a collapsed "Details" section on a phone, the right column on desktop. */}
           <PropertiesDisclosure>
           <aside className="grid content-start gap-3 border-b bg-muted/30 px-4 py-4 md:border-b-0 md:border-l">
-            <Property label="Status">
-              <StatusPicker
-                value={task.statusId}
-                statuses={statuses}
-                onChange={(statusId) => void patch({ statusId })}
-                trigger={
-                  <button type="button" className={cn(CHIP, "px-0.5")}>
-                    <StatusPill status={status} />
-                  </button>
-                }
-              />
-            </Property>
-            <Property label="Priority">
-              <PriorityPicker
-                value={task.priority}
-                onChange={(priority) => void patch({ priority })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <PriorityIcon priority={task.priority} /> {PRIORITY_LABEL[task.priority]}
-                  </button>
-                }
-              />
-            </Property>
-            <Property label="Assignee">
-              <AssigneePicker
-                value={task.assignee}
-                suggestions={facets.assignees}
-                onChange={(assignee) => void patch({ assignee })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <AssigneeAvatar name={task.assignee} size="xs" /> <span className="truncate">{task.assignee ?? "Unassigned"}</span>
-                  </button>
-                }
-              />
-            </Property>
-            <Property label="Labels">
-              <LabelsPicker
-                value={task.labels}
-                suggestions={facets.labels}
-                onChange={(labels) => void patch({ labels })}
-                trigger={
-                  <button type="button" className={cn(CHIP, "h-auto min-h-7 flex-wrap gap-1 py-1")}>
-                    {task.labels.length === 0 && <span className="text-muted-foreground">None</span>}
-                    {task.labels.map((l) => (
-                      <LabelChip key={l} label={l} />
-                    ))}
-                  </button>
-                }
-              />
-            </Property>
             <Property label="Sprint">
               <SprintPicker
                 value={task.sprintId}
@@ -895,6 +868,42 @@ export function TaskDetailDialog({
           </aside>
           </PropertiesDisclosure>
         </div>
+
+        <footer className="sticky bottom-0 flex items-center gap-2 border-t bg-background px-4 py-3 sm:px-6">
+          {confirmDelete ? (
+            <>
+              <span className="text-xs text-muted-foreground">Delete {key}?</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={async () => {
+                  try {
+                    await onDelete(task.id)
+                    toast.success(`${key} deleted`)
+                    onClose()
+                  } catch (err) {
+                    reportError(err, "Couldn't delete the task")
+                  }
+                }}
+              >
+                Delete
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setConfirmDelete(false)}>
+                Keep
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+              Delete
+            </Button>
+          )}
+          <span className="ml-auto mr-2 hidden text-xs text-muted-foreground sm:inline">
+            {comments.length} comment{comments.length === 1 ? "" : "s"}
+          </span>
+          <Button size="sm" onClick={close}>
+            Done
+          </Button>
+        </footer>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

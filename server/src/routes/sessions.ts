@@ -1,3 +1,5 @@
+import { HttpError } from "../http-error.js";
+import { spliceStderr } from "../stderr-ring.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Hono } from "hono";
@@ -7,7 +9,8 @@ import { getAgent, profileHasAgent } from "../registry.js";
 import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
 import { getProject } from "../projects.js";
 import { listAgentSessions } from "../session-list.js";
-import type { SessionManager } from "../sessions.js";
+import { threadCwd, type SessionManager } from "../sessions.js";
+import * as git from "../git.js";
 import type { SpansPage } from "../protocol.js";
 import { getSpan, listSpans } from "../tracing.js";
 import { listHelpers } from "../project-helpers.js";
@@ -38,6 +41,27 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.get("/api/sessions", (c) => {
     const list = sessions.list();
     return c.json(c.req.query("deleted") === "1" ? list : list.filter((s) => s.deletedAt === null));
+  });
+
+  /* The branch and uncommitted line counts of every listed thread's checkout,
+     for the sidebar. Read off the disk and never stored; threads sharing a cwd
+     share one read (`git.summaryOf`). A thread with nothing to say is absent. */
+  app.get("/api/sessions/git-summary", async (c) => {
+    const entries = sessions
+      .list()
+      .filter((s) => s.deletedAt === null && !s.parentSessionId)
+      .flatMap((s) => {
+        const live = sessions.get(s.id);
+        return live?.project ? [[s.id, threadCwd(live, live.project)] as const] : [];
+      });
+    const out: Record<string, git.DirSummary> = {};
+    await Promise.all(
+      entries.map(async ([id, cwd]) => {
+        const summary = await git.summaryOf(cwd).catch(() => null);
+        if (summary) out[id] = summary;
+      }),
+    );
+    return c.json(out);
   });
 
   /* The cross-thread inbox: every question a live agent is blocked on. */
@@ -305,7 +329,15 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     }
     const project = await getProject(session.projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
-    await sessions.respawn(session.id, profile, agentId, project, model, effort);
+    try {
+      // A revive: a thread another device already brought up is answered as it
+      // is, not respawned under it — so this route is idempotent.
+      await sessions.respawn(session.id, profile, agentId, project, model, effort, { revive: true });
+    } catch (error) {
+      // The agent's own words for why it would not come up, bounded.
+      const message = spliceStderr({ stderr: sessions.stderrTail(session.id), stderrCount: 0, stderrMark: 0 }, error instanceof Error ? error.message : String(error));
+      throw error instanceof HttpError ? new HttpError(message, error.status) : new Error(message);
+    }
     return c.json({
       ok: true,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
@@ -772,6 +804,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     text: z.string(),
     profileId: z.string(),
     model: z.string().optional(),
+    /* A board task's description rather than an agent prompt (`enhance.ts`). */
+    kind: z.enum(["prompt", "task"]).optional(),
   });
 
   app.post("/api/enhance", async (c) => {
@@ -789,6 +823,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const enhanced = await enhancePrompt(profile, {
       text: parsed.data.text,
       model: parsed.data.model || undefined,
+      kind: parsed.data.kind,
     });
     return c.json({ enhanced });
   });

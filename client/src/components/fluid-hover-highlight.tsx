@@ -1,11 +1,11 @@
 "use client";
 
 import {
-  motion,
+  m,
   AnimatePresence,
   useReducedMotion,
   type Transition,
-} from "framer-motion";
+} from "motion/react";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/springs";
 import type { ItemRect, UseFluidHoverReturn } from "@/hooks/use-fluid-hover";
@@ -115,7 +115,7 @@ export function FluidHoverHighlight(props: FluidHoverHighlightProps) {
   return (
     <AnimatePresence>
       {rect && (
-        <motion.div
+        <m.div
           key={session}
           data-slot="fluid-hover-highlight"
           // Pinned to the container's padding corner and moved with a

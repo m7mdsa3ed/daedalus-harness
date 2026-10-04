@@ -19,6 +19,19 @@ interface NotificationOptions {
   renotify?: boolean
   vibrate?: number | number[]
   timestamp?: number
+  /** `actions` is the same story once more: a Chromium extension (buttons on
+      the notification, Android and desktop Chrome) that the DOM lib has never
+      carried. The worker's `notificationclick` reads `event.action` against
+      them, and a plain tap is the empty string. */
+  actions?: NotificationAction[]
+}
+
+/** One button on a notification — `action` is the id reported on the click,
+    `title` is the label drawn. */
+interface NotificationAction {
+  action: string
+  title: string
+  icon?: string
 }
 
 /** The app's version, defined by vite.config.ts from the root package.json —

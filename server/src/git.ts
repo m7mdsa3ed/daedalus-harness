@@ -297,6 +297,41 @@ export async function repositories(projectId: string): Promise<GitRepo[]> {
   );
 }
 
+/** What the sidebar says about a thread's checkout: its branch and the lines
+    HEAD ↔ disk differ by. Cached a few seconds per directory and coalesced, so a
+    list of forty threads in three projects is three reads, however often it polls.
+    ponytail: tracked files only (untracked ones have no diff against HEAD), and
+    two git calls per distinct cwd — a worktree-per-thread fleet pays per thread. */
+export interface DirSummary {
+  branch: string | null;
+  files: number;
+  additions: number;
+  deletions: number;
+}
+
+const SUMMARY_TTL_MS = 5_000;
+const summaries = new Map<string, { at: number; value: Promise<DirSummary | null> }>();
+
+export function summaryOf(dir: string): Promise<DirSummary | null> {
+  const hit = summaries.get(dir);
+  if (hit && Date.now() - hit.at < SUMMARY_TTL_MS) return hit.value;
+  const value = (async (): Promise<DirSummary | null> => {
+    const branch = await currentBranch(dir);
+    // Not a repository (or an unborn one): nothing to say, which is not an error.
+    if (branch === null && !(await repoDirAt(dir))) return null;
+    let stat = "";
+    try {
+      stat = (await run(dir, ["diff", "HEAD", "--shortstat", "--no-ext-diff"])).stdout;
+    } catch {
+      /* no HEAD yet: the branch alone */
+    }
+    const n = (re: RegExp) => Number(re.exec(stat)?.[1] ?? 0);
+    return { branch, files: n(/(\d+) files? changed/), additions: n(/(\d+) insertions?/), deletions: n(/(\d+) deletions?/) };
+  })();
+  summaries.set(dir, { at: Date.now(), value });
+  return value;
+}
+
 export async function currentBranch(dir: string): Promise<string | null> {
   try {
     const { stdout } = await run(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);

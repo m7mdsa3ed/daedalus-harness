@@ -124,9 +124,8 @@ export const SETTINGS_SECTIONS = [
     sub: [
       { path: "import", page: lazyPage(() => import("./mcp"), "McpImportPage") },
       { path: "browse", page: lazyPage(() => import("./mcp"), "McpBrowsePage") },
-      /* A chunk of its own: the playground and the schema rendering are a
-         page somebody navigates to, and the library list must not carry them. */
-      { path: "playground", page: lazyPage(() => import("./mcp-detail"), "McpPlaygroundPage") },
+      /* A chunk of its own: the contract rendering is a page somebody
+         navigates to, and the library list must not carry it. */
       { path: ":entryId/tools", page: lazyPage(() => import("./mcp-detail"), "McpDetailPage") },
       { path: ":entryId", page: lazyPage(() => import("./mcp"), "McpFormPage") },
     ],
@@ -283,13 +282,22 @@ export const sectionOf = (segment: string): SettingsSectionId | null =>
    beside a sticky preview of the app — and at a form's width neither half has
    room: the preview shrinks to a thumbnail and the colour grid wraps its
    light/dark pair onto separate lines, which is the one comparison the whole
-   screen exists to make. Those get the full width of the frame.
+   screen exists to make. The MCP server's own page is a rail of what it offers
+   beside one entry's contract (`mcp-detail.tsx`), and at a form's width the
+   rail leaves the field list a column too narrow to read. Those get the full
+   width of the frame; the pages themselves clamp to `max-w-7xl`, so the noise
+   of a very wide window does not land on the pane.
 
    Matched on the pathname rather than declared per route because the layout is
    what renders the container and it only knows the location; keeping the list
    here rather than in layout.tsx keeps route facts in the module that already
    owns them. */
-const FULL_WIDTH_SETTINGS: readonly RegExp[] = [/^\/settings\/appearance\/themes\//]
+const FULL_WIDTH_SETTINGS: readonly RegExp[] = [
+  /^\/settings\/appearance\/themes\//,
+  /* The MCP server's own page: a rail of what it offers beside one entry's
+     contract, which is what the row's badge links to (`…/:entryId/tools`). */
+  /^\/settings\/mcp\/[^/]+\/tools$/,
+]
 
 /** A settings page that takes the whole frame — and, with it, no section rail:
     the studio is already two columns and a third is what makes neither fit. */

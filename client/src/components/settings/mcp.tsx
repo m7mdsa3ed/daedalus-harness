@@ -22,8 +22,9 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   ChevronDownIcon,
-  FlaskConicalIcon,
   KeyRoundIcon,
+  PencilIcon,
+  Trash2Icon,
   PlugZapIcon,
   PlusIcon,
   PlugIcon,
@@ -44,7 +45,9 @@ import { useInvalidateCatalog, useMcpCatalog, useMcpServers } from "@/lib/querie
 import { mcpCatalogKey } from "@/lib/queries/keys"
 import { useQueryClient } from "@tanstack/react-query"
 import { useStoreSelect } from "@/lib/store"
-import { EmptyCard, FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { cn } from "@/lib/utils"
+import { EmptyCard, FormPageHeader, PageForm, Field, FormActions, INSET, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
@@ -52,7 +55,6 @@ import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
-import type { McpTransportForm } from "./mcp-detail"
 
 type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents"
 
@@ -135,15 +137,6 @@ export function McpPage() {
       <StoreIcon className="size-4" /> Browse
     </Button>
   )
-  const playground = (
-    <Button
-      variant="outline"
-      onClick={() => void navigate(settingsFormPath(meta.id, "playground"))}
-      title="Connect to any MCP server without saving it"
-    >
-      <FlaskConicalIcon className="size-4" /> Playground
-    </Button>
-  )
   const builtins = missing.length > 0 && (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -176,29 +169,163 @@ export function McpPage() {
       extraActions={
         <>
           {browse}
-          {playground}
           {builtins}
         </>
       }
-      rowIcon={mcpIcon}
-      rowDetail={(s) => <McpDetail server={s} />}
-      /* Reads first, then the controls that produce them — the same order the
-         composer's footer puts a reading and its trigger in. `justify-end` in
-         the table (the column is end-aligned, so the cluster has to be too) and
-         `justify-start` on a card, where the row above it starts at the left
-         and a right-aligned pile of buttons reads as a second column that
-         isn't there. */
-      rowExtra={(s) => (
-        <div className="flex flex-wrap items-center gap-1.5 @panel-md:justify-end">
-          {s.type === "http" && s.auth === "oauth" && (
-            <McpConnection server={s} settings={settings} refresh={() => invalidate("mcp-servers")} />
-          )}
-          <McpCheck server={s} settings={settings} />
-        </div>
+      renderRows={({ items, canEdit, edit, remove }) => (
+        <McpCards
+          items={items}
+          settings={settings}
+          refresh={() => invalidate("mcp-servers")}
+          canEdit={canEdit}
+          edit={edit}
+          remove={remove}
+        />
       )}
       // A built-in has nothing to edit — it is resolved at spawn, not stored.
       editable={(s) => s.type !== "builtin"}
     />
+  )
+}
+
+/* ── The list ──
+   One card per server, closed to a single line: mark, name, transport and a
+   status dot with what it offers. Open, it says everything the old table
+   spread across three columns — the full endpoint, the OAuth state, the
+   listing, and the row's actions — in one place. Open state is the card's own
+   and is not remembered: a list you came to read starts calm. */
+
+function McpStatus({ server }: { server: McpServerDef }) {
+  const { data, error } = useMcpCatalog(server.id)
+  const down = !!error || (!!data && !data.ok && !data.deferred)
+  const n = data ? data.tools.length + data.prompts.length + data.resources.length : 0
+  const text = down
+    ? "Offline"
+    : data?.deferred
+      ? "Not connected"
+      : data?.ok
+        ? n > 0 ? `${n} offered` : "Nothing offered"
+        : "Reading…"
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <span
+        className={cn(
+          "size-2 rounded-full",
+          down ? "bg-destructive" : data?.ok ? "bg-emerald-500" : "bg-muted-foreground/40"
+        )}
+      />
+      <span className="hidden @panel-sm:inline">{text}</span>
+    </span>
+  )
+}
+
+function McpCard({
+  server,
+  settings,
+  refresh,
+  canEdit,
+  edit,
+  remove,
+}: {
+  server: McpServerDef
+  settings: ServerSettings
+  refresh: () => Promise<void>
+  canEdit: boolean
+  edit: () => void
+  remove: () => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const builtin = server.type === "builtin" ? builtinOf(server.builtin) : null
+  const endpoint =
+    server.type === "http"
+      ? server.url
+      : server.type === "stdio"
+        ? [server.command, ...server.args].join(" ")
+        : builtin?.hint
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm"
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-3 p-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50 @panel-sm:p-4">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
+          {mcpIcon(server)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{server.name}</span>
+          <McpDetail server={server} />
+        </span>
+        <McpStatus server={server} />
+        <ChevronDownIcon
+          className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-3 border-t border-border/60 p-3 @panel-sm:p-4">
+        <div className={cn(INSET, "p-3")}>
+          <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            {server.type === "http" ? "Endpoint" : server.type === "stdio" ? "Command" : "About"}
+          </div>
+          <div className={cn("mt-1 text-sm break-all", server.type !== "builtin" && "font-mono text-xs")}>
+            {endpoint}
+          </div>
+        </div>
+        {server.type === "http" && server.auth === "oauth" && (
+          <McpConnection server={server} settings={settings} refresh={refresh} />
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <McpCheck server={server} settings={settings} />
+        </div>
+        <div className="flex justify-end gap-1.5 border-t border-border/60 pt-3">
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={edit}>
+              <PencilIcon className="size-4" /> Edit
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={remove}>
+            <Trash2Icon className="size-4" /> Delete
+          </Button>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function McpCards({
+  items,
+  settings,
+  refresh,
+  canEdit,
+  edit,
+  remove,
+}: {
+  items: McpServerDef[]
+  settings: ServerSettings
+  refresh: () => Promise<void>
+  canEdit: (s: McpServerDef) => boolean
+  edit: (s: McpServerDef) => void
+  remove: (s: McpServerDef) => void
+}) {
+  const [q, setQ] = React.useState("")
+  const needle = q.trim().toLowerCase()
+  const shown = needle
+    ? items.filter((s) => `${s.name} ${mcpSubtitle(s)}`.toLowerCase().includes(needle))
+    : items
+  return (
+    <div className="flex flex-col gap-2">
+      {items.length > 8 && <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search MCP servers…" />}
+      {shown.map((s) => (
+        <McpCard
+          key={s.id}
+          server={s}
+          settings={settings}
+          refresh={refresh}
+          canEdit={canEdit(s)}
+          edit={() => edit(s)}
+          remove={() => remove(s)}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -335,9 +462,8 @@ function listedWhen(result: McpCheckResult) {
  *
  * The result is a *reading*, so it is the shape every other reading in the app
  * has — a badge with the counts in it. It is a **link to the server's own
- * page**, not a popover: what a tool takes, what a prompt's arguments are and
- * what happens when you run one is a place you go, and it was already more
- * than a fixed surface over a table row could hold.
+ * page**, where each tool, prompt and resource is drawn as the contract it is;
+ * the tooltip says how old the remembered answer is.
  *
  * Check is what is left of the old button and it still means what it said:
  * connect *now*. It POSTs, which is the one door that refuses the stored
@@ -395,7 +521,10 @@ function McpCheck({ server, settings }: { server: McpServerDef; settings: Server
             <PlugZapIcon /> Connected, nothing advertised
           </Badge>
         ) : (
-          <Link to={mcpDetailPath(server.id)} title={`${result.serverInfo?.name ?? server.name} — ${listedWhen(result)}`}>
+          <Link
+            to={mcpDetailPath(server.id)}
+            title={`${result.serverInfo?.name ?? server.name} — ${listedWhen(result)}`}
+          >
             <Badge variant="secondary" className="cursor-pointer hover:bg-secondary/80">
               <PlugZapIcon /> {counts}
             </Badge>
@@ -598,14 +727,6 @@ function McpForm({
   }))
   const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
-  const navigate = useNavigate()
-  /* The fields as they stand, connected without saving — the playground holds
-     the same string shape, so the state goes over whole. An OAuth server is
-     the one it cannot try: its token needs the row. */
-  const tryIt = () => {
-    const prefill: McpTransportForm = { ...form }
-    void navigate(settingsFormPath("mcp", "playground"), { state: { prefill } })
-  }
 
   /* What the last probe said, so the form can report it in words rather than
      silently flipping a field the user cannot see. */
@@ -765,11 +886,6 @@ function McpForm({
             />
           </Field>
         </>
-      )}
-      {(form.type === "stdio" ? form.command : form.url) && form.auth !== "oauth" && (
-        <Button type="button" variant="outline" className="self-start" onClick={tryIt}>
-          <FlaskConicalIcon className="size-4" /> Try it in the playground
-        </Button>
       )}
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>

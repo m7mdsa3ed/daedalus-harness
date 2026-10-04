@@ -74,7 +74,8 @@ export interface ViewOptions {
   compactDensity: boolean
   /** Pin to the newest content while the agent is streaming. */
   autoScroll: boolean
-  /** Render reasoning/expanded by default instead of folded. */
+  /** Open a reasoning row while it streams. It folds once the step finishes;
+   *  off, only its one-line ticker shows. */
   showThinking: boolean
   /** Soft-wrap long code and diff lines instead of scrolling. */
   codeWrap: boolean
@@ -89,6 +90,10 @@ export interface ViewOptions {
   /** The command, path or pattern under a tool row's description. Off, a step
    *  row says what the call *did* and leaves what it typed to the body. */
   showToolCommand: boolean
+  /** The call as the agent sent it — input, output, content, `_meta` — as a
+   *  JSON tree at the foot of every tool step's body. For checking what a
+   *  runtime actually said, not for reading the work. */
+  showRawToolData: boolean
   /** The visual arrangement of tool-call rows in the transcript. */
   toolLayout: ToolLayout
   /** Render file diffs side by side instead of unified. */
@@ -139,6 +144,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   expandEdits: false,
   subagentPeek: "live",
   showToolCommand: true,
+  showRawToolData: false,
   toolLayout: "timeline",
   splitDiffs: false,
   stepDividers: false,
@@ -174,6 +180,7 @@ export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
   "showToolDetails",
   "expandEdits",
   "showToolCommand",
+  "showRawToolData",
   "toolLayout",
   "subagentPeek",
   "groupTools",

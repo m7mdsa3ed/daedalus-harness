@@ -4,6 +4,7 @@ import type { Action, State } from "../store"
 import { makeThreadCallbacks } from "./callbacks"
 import { newFoldState, type FoldState } from "./fold-context"
 import { makeReconnectLadder, type ReconnectLadder } from "./ladder"
+import { describeError } from "../errors"
 import { recordThreadError } from "./record-error"
 import {
   IDLE_PHASE,
@@ -169,6 +170,8 @@ export class ThreadConnection {
       nowhere to put an exception, and wrong for `ready`, whose caller is a
       person who just pressed send and is owed the actual reason. */
   private lastOpenError: unknown = null
+  /** Aborts the respawn request while it is in flight — see `cancelWait`. */
+  private waitAbort: AbortController | null = null
 
   constructor(id: string, deps: ThreadDeps) {
     this.id = id
@@ -220,6 +223,15 @@ export class ThreadConnection {
    */
   markReviving(because: "revive" | "config" = "revive"): void {
     this.apply({ type: "revive-begin", because })
+  }
+
+  /** Give up on a revive's wait. Only the respawn request can be abandoned
+      (it is the long part: the server spawns, handshakes and reloads the
+      conversation inside it), and the server finishes what it started — the
+      next send finds the agent up or asks again. ponytail: no server-side
+      cancel; add one if abandoned spawns ever pile up. */
+  cancelWait(): void {
+    this.waitAbort?.abort()
   }
 
   /** The create never happened — put the thread back to "never opened", which
@@ -362,6 +374,12 @@ export class ThreadConnection {
              — that race is what put two peers on one session and drew every
              message twice. */
           await this.settled()
+          /* `reviving` with nothing in flight and no restart held is owned by
+             nobody (a respawn that died before it could say so): recover. */
+          if (this.phase.kind === "reviving" && !this.state.restarting) {
+            await this.revive(this.probe)
+            break
+          }
           /* Except that `starting` is not on the chain at all. Every other phase
              here is one an open moved through, so waiting for the chain is
              waiting for the thing that will end it — but `starting` is set by
@@ -415,7 +433,41 @@ export class ThreadConnection {
    * failed open does not reject the next.
    */
   open(meta: SessionMeta, opts: ConnectOpts = {}): Promise<void> {
-    return this.run(() => this.openNow(meta, opts))
+    return this.run(async () => {
+      try {
+        await this.openNow(meta, opts)
+      } catch (error) {
+        /* A throw while `reviving` (the respawn POST, or the open behind it)
+           would leave a phase with no banner and a Send that throws "stuck".
+           Say it as a failure with the Revive button instead. */
+        if (this.phase.kind === "reviving" && !this.disposed) {
+          const info = describeError(error)
+          if (info.kind === "cancelled") {
+            /* The wait was given up on (`cancelWait`): back to what it was
+               before — a thread with no process, sendable, whose send starts
+               the agent again. Not a failure, so no card and no row. */
+            this.apply({ type: "caught-up", archived: true })
+          } else {
+            /* Said as WHICH thing failed — the title used to be the error's
+               own, so a failed revive read as "The request failed (500)" —
+               with the cause one fold down, where Copy takes it. */
+            this.apply({
+              type: "failed",
+              title: "Couldn't revive the agent",
+              reason: info.title,
+              detail: [
+                info.notInstalled?.install && `Install it with: ${info.notInstalled.install}`,
+                info.detail,
+              ]
+                .filter(Boolean)
+                .join("\n\n") || undefined,
+              recover: "revive",
+            })
+          }
+        }
+        throw error
+      }
+    })
   }
 
   /**
@@ -594,14 +646,20 @@ export class ThreadConnection {
          is, and it is worth saying so: without this the thread reads "Reading
          this conversation…" through a wait that is not a read at all. */
       this.apply({ type: "revive-begin", because: "revive" })
-      await api(this.deps.settings, `/api/sessions/${this.id}/respawn`, {
-        method: "POST",
-        body: JSON.stringify({
-          profileId: meta.profileId,
-          model: meta.model || undefined,
-          effort: meta.effort || undefined,
-        }),
-      })
+      const abort = (this.waitAbort = new AbortController())
+      try {
+        await api(this.deps.settings, `/api/sessions/${this.id}/respawn`, {
+          method: "POST",
+          signal: abort.signal,
+          body: JSON.stringify({
+            profileId: meta.profileId,
+            model: meta.model || undefined,
+            effort: meta.effort || undefined,
+          }),
+        })
+      } finally {
+        if (this.waitAbort === abort) this.waitAbort = null
+      }
       await this.deps.refreshSessions()
       if (this.disposed) return
       /* Respawn cleared the server's journal; a saved cursor now points past its

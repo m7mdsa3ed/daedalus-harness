@@ -101,6 +101,10 @@ Lists: `POST /api/boards/:id/lists`, `PATCH /api/lists/:id`,
 - **The atoms and the pickers are one file** (`fields.tsx`) so the card, the
   row, the table cell, the detail panel and the bulk bar agree on what a
   priority looks like and how a status is chosen.
+- **The detail dialog is one column, and the description saves itself.** Status, priority and
+  assignee chips, inline tags, then an always-on Tiptap editor (H1-H3, GFM task lists, code
+  block, a markdown-source toggle) whose value stays markdown. A draft is written after a
+  700ms pause and flushed on Done, close or opening another task — never on a Save button.
 - **The open task is a search param** (`?task=<id>`), so a task is a URL that
   survives reload and can be copied; opening a task on another board navigates
   to that board.

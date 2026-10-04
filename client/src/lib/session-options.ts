@@ -16,6 +16,7 @@
    settings only says how a thread *starts*; once it is running, these are what
    the menus read. */
 import type * as acp from "@daedalus/acp"
+import { vendorMeta } from "./tools/helpers"
 
 export interface SessionOptions {
   /** The agent's model selector, if it advertises one. */
@@ -84,4 +85,16 @@ export function currentChoiceLabel(option: acp.SessionConfigOption): string {
   if (option.type !== "select") return option.currentValue ? "On" : "Off"
   const choice = flattenSelectOptions(option.options).find((c) => c.value === option.currentValue)
   return choice?.name ?? option.currentValue
+}
+
+/** The value the agent recommends for a selector, when it says so — the AIR
+    `recommendedValue` extension (`_meta.jetbrains.air.recommendedValue`), which
+    both Claude Code and codex send for model and effort. Independent of
+    `currentValue`, and only ever one of the selector's own values; anything
+    else is ignored rather than drawn as a row nobody can pick. */
+export function recommendedValue(option: acp.SessionConfigOption): string | undefined {
+  if (option.type !== "select") return undefined
+  const value = vendorMeta(option._meta, "air")?.recommendedValue
+  if (typeof value !== "string") return undefined
+  return flattenSelectOptions(option.options).some((c) => c.value === value) ? value : undefined
 }

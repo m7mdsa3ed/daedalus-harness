@@ -35,8 +35,13 @@ export interface NotificationShape {
   /** One notification per thread per kind: a replacement, never a pile. */
   tag: string
   sessionId?: string
-  /** The agent is blocked on the user (a permission, a question). */
+  /** The agent is blocked on the user (a permission, a question) — the
+      notification stays up until it is dealt with. Distinct from
+      `openAction`: a finished turn has somewhere to go and no reason to nag. */
   actionable?: boolean
+  /** Draw an "Open" action (the button the click already performs, said out
+      loud for a reader who does not know the whole banner is tappable). */
+  openAction?: boolean
 }
 
 export function notificationOptions({
@@ -44,6 +49,7 @@ export function notificationOptions({
   tag,
   sessionId,
   actionable = false,
+  openAction = false,
 }: NotificationShape): NotificationOptions {
   return {
     body,
@@ -56,6 +62,9 @@ export function notificationOptions({
     silent: false,
     vibrate: NOTIFICATION_VIBRATE,
     requireInteraction: actionable,
+    // The `data.sessionId` is what the worker's click routes on, so an action
+    // needs nothing of its own — pressing it is pressing the notification.
+    ...(openAction ? { actions: [{ action: "open", title: "Open" }] } : {}),
     timestamp: Date.now(),
     data: { sessionId },
   }

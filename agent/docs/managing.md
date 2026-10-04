@@ -133,13 +133,23 @@ The context-window reading (`usage_update`'s `used`) is a different number and
 deliberately untouched: it is the provider's own total for the last step, cache
 hits included, because a cached token still occupies the window.
 
-The thread's Tokens panel shows per-request estimates for the system prompt,
-built-in tool schemas, MCP tool schemas and text in user-role messages. The
-remaining history and tool results are derived from the provider's prompt total.
-These local estimates use the same tokenizer and framing, so they can differ from
-the provider; all prompt parts are kept within and sum to the provider total.
-Non-text media is not included in the user-message estimate. Other runtimes do
-not send this breakdown.
+The thread's Tokens panel is the only place a token figure is *estimated*, and
+each `usage_update` carries what it needs in `_meta.breakdown`: the system prompt,
+the built-in tool schemas and the MCP tool schemas, tokenized locally
+(`src/token-breakdown.ts`), and the history by who wrote it — the user's
+messages, the assistant's replies, the tools' results — counted locally by role
+and then given **the provider's remainder in proportion** (`prompt_tokens` less
+the static parts). Every part sums to the provider's prompt total. Message counts
+are cached per message object, so a request counts only what is new. The first
+step of each attempt, and any step after a tool search changed the set, also
+carries `items`: the system prompt by named section (`systemSections` in
+`src/turn.ts`, split again at each `##` heading) and each built-in and MCP tool's
+definition, as raw local counts the panel scales to the part's figure. Non-text
+media is not counted. Other runtimes do not send this breakdown, and the panel
+infers one from the transcript instead (`client/src/lib/token-breakdown.ts`),
+alongside the billed figures (fresh input, cache read and write, output, of which
+reasoning), which are the provider's own. Nothing else — the context
+popover, the step and turn popovers — reads `_meta.breakdown`.
 
 A subagent's spend is part of the turn's answer: every child folds its total
 into the same `usage` the turn ends with, so a turn that spent most of its

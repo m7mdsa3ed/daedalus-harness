@@ -54,12 +54,6 @@
   --color-card: var(--card);
   --color-composer: var(--composer);
   --color-shelf: var(--shelf);
-  /* The shelf when the connection it is describing is not well. Three tones,
-     not a palette: the same sky/amber/destructive `Notice` already means by
-     its tones, mixed onto the shelf's own ground per mode below. */
-  --color-shelf-info: var(--shelf-info);
-  --color-shelf-warn: var(--shelf-warn);
-  --color-shelf-error: var(--shelf-error);
   --color-surface: var(--surface);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -357,25 +351,6 @@
      tint rather than by a grey. */
   --shelf: color-mix(in oklch, var(--composer) 96%, var(--foreground) 4%);
 
-  /* ── The shelf when the connection is not well ──
-     Three tints of the ground above, mixed *from* it rather than picked, so
-     the tinted ground is still recognisably the shelf — the same object in a
-     different mood rather than a different surface that appeared. They are the
-     tones `Notice` already means by sky, amber and destructive, and the error
-     takes its ink from `--destructive` so a user-made theme's destructive moves
-     this with it. `--shelf` is the one declared per mode, and these lift it the
-     same way `--composer` lifts `--card`: a custom property is substituted
-     lazily at use, so these resolve against whichever ground the mode declares
-     without the base being stated twice.
-
-     The percentage is a *wash*, not a fill: a box a few lines tall can carry a
-     12% tint, but a shelf the width of the composer wearing that reads as a
-     coloured band. These are light's numbers; `.dark` restates them heavier,
-     the way its `--app-ground` step is heavier. */
-  --shelf-warn: color-mix(in oklch, var(--shelf) 84%, oklch(0.769 0.188 70.08) 16%);
-  --shelf-error: color-mix(in oklch, var(--shelf) 82%, var(--destructive) 18%);
-  --shelf-info: color-mix(in oklch, var(--shelf) 88%, oklch(0.685 0.169 237.323) 12%);
-
   /* ── The main surface ──
      What the thread (and every page) sits on, inside the sidebar's tinted
      ground. Light: the card colour — white on most palettes — the way both
@@ -530,14 +505,6 @@
      the other direction: there is less room between the composer and the
      background down here, so it takes more of it to read. */
   --shelf: color-mix(in oklch, var(--composer) 44%, var(--background) 56%);
-  /* The connection tones again, and not because light's would have missed this
-     ground — a custom property is substituted lazily, so they name whatever
-     `--shelf` resolves to on the element. They are restated because dark's tint
-     has to be the *heavier* mix, the way `--app-ground`'s step is heavier below:
-     the same percentage over a dark ground is a wash that cannot be seen. */
-  --shelf-warn: color-mix(in oklch, var(--shelf) 78%, oklch(0.769 0.188 70.08) 22%);
-  --shelf-error: color-mix(in oklch, var(--shelf) 74%, var(--destructive) 26%);
-  --shelf-info: color-mix(in oklch, var(--shelf) 80%, oklch(0.685 0.169 237.323) 20%);
   /* The shell steps the other way here: `--background` is the darkest tone in
      every dark palette and the content card is already `--background`, so the
      frame has to lift rather than sink. A step toward the foreground (the light
@@ -876,7 +843,26 @@
    smaller target than anything else. Unlayered, so it overrides the Button's
    own `h-6`/`size-*` utilities. */
 @media (pointer: coarse) {
-  [data-slot="composer-toolbar"] [data-slot="button"] {
+  /* Not the round icon buttons: they are sized square by `iconFit`, and a
+     forced height made them ovals. */
+  [data-slot="composer-toolbar"] [data-slot="button"]:not(.rounded-full) {
+    height: 2rem;
+  }
+}
+
+/* The shelf's floor under a finger, for the same reason and by the same rule:
+   the project, the connection and the cluster of readings are 24px triggers
+   under a mouse and 32px under a touch pointer, so the footer is the same
+   target language as the toolbar it sits under. `min-width` as well as
+   `height` because the readings are `size-6` *squares* — a bare height would
+   have made them 24x32 rectangles — while a pill dress that sizes to its
+   words (`@panel-sm:w-auto!`) is already wider than 2rem and is left alone.
+   The mark itself is unchanged (`READING_MARK`): the target grows, the glyph
+   does not, exactly as on the toolbar. Unlayered, like the rule above, so it
+   outranks the Button's `size-6`. */
+@media (pointer: coarse) {
+  [data-strip-footer] [data-slot="button"] {
+    min-width: 2rem;
     height: 2rem;
   }
 }
@@ -2094,6 +2080,16 @@ html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
   /* The measurement is the header's content box, gutter included, so the tabs
      stand on the same `px-4` line the transcript and the composer do — no 4px
      of the strip's own on top of it. */
+  /* Below `md` there is no card: the strip is an overlay and the transcript
+     scrolls up under it and the header's progressive blur (app-shell.tsx), which
+     takes those lines out of focus before they reach the chips. The panel pads
+     by the measured `--dock-content-overlap`. `top: 0` because the offset
+     arrives as the inherited `margin-top`, which applies here too. */
+  @media (width < 48rem) {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+  }
   padding-left: var(--dock-band-left, 0px);
   padding-right: var(--dock-band-right, 0px);
   /* The strip spans its whole group at z-40, so its reserved ends sit *over*
@@ -2224,14 +2220,6 @@ html [data-slot="sidebar-inset"] {
 }
 html .dv-groupview > .dv-content-container {
   background-color: var(--background);
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-}
-/* The `always`-rendered panel is an overlay positioned from that container's
-   border box, so it takes the same corners or an opaque panel (a terminal, the
-   IDE) squares them back off. */
-html .dv-render-overlay {
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  overflow: hidden;
 }
 @media (width >= 48rem) {
   html [data-slot="sidebar-inset"] {
@@ -3122,4 +3110,25 @@ html .dock-tab [data-tab-action="pin"] {
 }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+}
+/* GFM task lists in the task editor: a checkbox in the margin, no bullet. */
+.task-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.task-editor ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.task-editor ul[data-type="taskList"] li > label {
+  margin-top: 0.2rem;
+  user-select: none;
+}
+.task-editor ul[data-type="taskList"] li > div {
+  flex: 1;
+}
+.task-editor ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
 }

@@ -86,7 +86,7 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
     /* The drain runs here, synchronously after `turn_ended` was journaled,
        so the log reads turn_ended(continued) → turn_started(combined). The
        push says "turn finished" only for a turn nothing follows. */
-    onTurnSettled: ({ error, interrupted, continued, turnId }) => {
+    onTurnSettled: ({ error, interrupted, continued, turnId, promptText }) => {
       owner.settleWaiters(session, turnId, { error, interrupted });
       /* A turn is what spends the plan, so it is also what dates the reading.
          Before the `continued` return: a queue draining into the next turn is
@@ -97,7 +97,7 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
         owner.drainQueue(session);
         return;
       }
-      if (watchers(session) === 0 && !session.parentSessionId) owner.events.onTurnEnd?.(session, error);
+      if (watchers(session) === 0 && !session.parentSessionId) owner.events.onTurnEnd?.(session, error, promptText);
     },
     /* Two callbacks where there was one, and the gap between them is the
        point — but the gap is about *precedence*, not about whether to write
@@ -129,15 +129,27 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
       const live = session.liveAcpSessionId;
       if (!live) return;
       if (live === session.acpSessionId && !session.acpSessionProvisional) {
-        if (session.historyLost) {
+        // Only a report about this very id is answered by it; one about the id
+        // a fresh session replaced stays (see below).
+        if (session.historyLost?.acpSessionId === live) {
           session.historyLost = null;
           owner.persist(session);
         }
         return;
       }
+      /* The fresh session after a refused load is the thread now — but the id
+         it replaces is the only pointer to the conversation the agent could
+         not load. Said in the log so it can be found and imported by hand, and
+         `historyLost` is kept for the life of this process so every reattach
+         still names it (`start` clears it with the process). No column holds
+         it beyond that. */
+      if (session.historyLost && session.acpSessionId && !session.acpSessionProvisional) {
+        console.warn(
+          `[${session.id.slice(0, 8)}] history of ${session.acpSessionId} could not be loaded; the thread continues as ${live}`,
+        );
+      }
       session.acpSessionId = live;
       session.acpSessionProvisional = false;
-      session.historyLost = null; // superseded: this session is the thread now
       owner.persist(session);
     },
     /* Recorded, not broadcast. A load only ever runs inside a spawn, and a
@@ -153,7 +165,13 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
          would put an error row at the top of every thread that was killed
          before its first turn ever finished. */
       if (session.acpSessionProvisional) return;
-      session.historyLost = lost;
+      session.historyLost = {
+        ...lost,
+        error: {
+          ...lost.error,
+          message: `The agent could not load this thread's history (session ${lost.acpSessionId}), so it continues in a fresh session without it. ${lost.error.message}`,
+        },
+      };
     },
     onSpawnStateChange: (next) => {
       /* The agent reports the id it was given, which for Claude Code carries

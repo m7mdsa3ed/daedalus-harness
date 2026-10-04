@@ -210,6 +210,20 @@ export interface ErrorItem {
       Absent on the error a `turn_ended` carries, which the replay brings back
       on its own and which must therefore NOT be carried, or it shows twice. */
   local?: boolean
+  /** Absent = an error. The agent's own reports come in softer tones too: an
+      AIR `sessionFailure` of severity `warning`, and the ACP `notice` update
+      (`warning`/`info`). Same row, same Copy — only the card's tone moves. */
+  severity?: "warning" | "info"
+  /** The create was refused because the agent's binary is missing — a setup
+      step, drawn with the install line and a door to Settings › Agents. */
+  notInstalled?: { install?: string }
+  /** The agent's process ended under the turn this row closes: Continue is
+      offered on it while it is the newest thing in the thread. */
+  stopped?: boolean
+  /** An AIR `sessionFailure`'s revision, on a row keyed `failure:<id>`: the
+      agent restates a failure under the same id with a higher revision, and
+      only a higher one may replace what is drawn. */
+  revision?: number
   at?: number
   /** Never set today — errors are the thread's — but every item carries the
       field so the row builder can read it without narrowing per kind. */

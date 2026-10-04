@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { asc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, projects as projectsTable } from "./db/index.js";
 import { helpersByProject, listHelpers, type HelperCommand } from "./project-helpers.js";
+import { defaultSpaceId } from "./spaces.js";
 
 // A project is the WORKSPACE a session runs in — a directory and a name. What
 // a thread brings into it (MCP servers, skills, commands) is the profile's
@@ -14,6 +16,10 @@ import { helpersByProject, listHelpers, type HelperCommand } from "./project-hel
 export const ProjectInputSchema = z.object({
   name: z.string().min(1),
   cwd: z.string().min(1),
+  /** The space this project belongs to. Optional: a create that names none
+      lands in the default space (`defaultSpaceId`), and an update that omits it
+      leaves the project's space alone rather than clearing it. */
+  spaceId: z.string().optional(),
   description: z.string().nullable().default(null),
   /** Optional — a URL. Empty means "no logo of its own"; the client draws
       the project's initial instead. */
@@ -33,6 +39,12 @@ export type ProjectInput = z.input<typeof ProjectInputSchema>;
     are stored in the `rules` table (rules.ts), not as a column here. */
 export type Project = ProjectInput & {
   id: string;
+  /** The space this project is filed under. Optional in the type for the same
+      reason `helpers` and `defaults` are: internal stubs (a quota probe's cwd,
+      the status handshake's) carry a directory and nothing else, while every
+      row the API answers names it — `rowToProject` folds the column in, and the
+      boot backfill (`ensureSchema`) has assigned every project one. */
+  spaceId?: string;
   helpers?: HelperCommand[];
   /** How a thread started in this project opens. Optional in the type for the
       same reason `helpers` is — internal stubs (a quota probe's cwd, the
@@ -184,6 +196,7 @@ const rowToProject = (
   helpers: HelperCommand[],
 ): Project => ({
   ...withoutDefaults(row),
+  spaceId: row.spaceId ?? "",
   logoUrl: row.logoUrl ?? "",
   previewUrl: row.previewUrl ?? "",
   helpers,
@@ -198,15 +211,19 @@ const rowToProject = (
 const columns = (input: ProjectInput) => ({
   name: input.name,
   cwd: input.cwd,
+  spaceId: input.spaceId,
   description: input.description ?? null,
   logoUrl: input.logoUrl ?? "",
   previewUrl: input.previewUrl ?? "",
 });
 
-export async function listProjects(): Promise<Project[]> {
+/** Every project, or only one space's — the sidebar and the pickers that are
+    scoped to the space in front of you ask for the second. */
+export async function listProjects(spaceId?: string): Promise<Project[]> {
   const rows = await db
     .select()
     .from(projectsTable)
+    .where(spaceId ? eq(projectsTable.spaceId, spaceId) : undefined)
     .orderBy(asc(projectsTable.sortOrder), asc(projectsTable.name));
   const helpers = await helpersByProject(rows.map((r) => r.id));
   return rows.map((row) => rowToProject(row, helpers.get(row.id) ?? []));
@@ -219,11 +236,18 @@ export async function getProject(id: string): Promise<Project | undefined> {
 
 export async function createProject(input: ProjectInput): Promise<Project> {
   const id = randomUUID();
+  /* The deliberate creation of the directory (`ensureProjectDir` no longer makes
+     it on a spawn): a project made here has a cwd, and one deleted later is a
+     spawn error rather than a silently recreated empty folder. */
+  mkdirSync(input.cwd, { recursive: true });
   // A new project lands at the end of the list, not in the middle of an order
   // somebody arranged by hand.
   const last = (await db.select({ max: max(projectsTable.sortOrder) }).from(projectsTable))[0]?.max ?? 0;
+  /* A create that names no space gets the default one — a project with a null
+     space would be invisible in every space, since the filter is an equality. */
+  const spaceId = input.spaceId || (await defaultSpaceId());
   await db.insert(projectsTable)
-    .values({ id, ...columns(input), sortOrder: last + 1 });
+    .values({ id, ...columns({ ...input, spaceId }), sortOrder: last + 1 });
   return (await getProject(id))!;
 }
 

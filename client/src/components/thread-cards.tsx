@@ -10,14 +10,18 @@ import {
   ChevronRightIcon,
   CopyIcon,
   FoldVerticalIcon,
+  InfoIcon,
   ListTodoIcon,
   PaperclipIcon,
+  PlayIcon,
   RotateCwIcon,
+  SettingsIcon,
   ShieldCheckIcon,
   SquareTerminalIcon,
   TriangleAlertIcon,
   UserRoundXIcon,
 } from "lucide-react"
+import { useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
@@ -296,7 +300,7 @@ const AlertCard = React.memo(function AlertCard({
   icon,
   children,
 }: {
-  tone: "error" | "neutral"
+  tone: "error" | "warn" | "neutral"
   /** The leading glyph, tone-coloured by the caller. */
   icon: React.ReactNode
   children: React.ReactNode
@@ -308,7 +312,9 @@ const AlertCard = React.memo(function AlertCard({
         "text-xs",
         tone === "error"
           ? "border-destructive/30 bg-destructive/5"
-          : "border-border/60 bg-muted/40"
+          : tone === "warn"
+            ? "border-amber-500/40 bg-amber-500/10"
+            : "border-border/60 bg-muted/40"
       )}
     >
       <div className="flex items-start gap-2">
@@ -424,11 +430,15 @@ export const ErrorRow = React.memo(function ErrorRow({
   item,
   onRetry,
   onRetryAsPaths,
+  onContinue,
   onDismiss,
   showTimestamp = false,
 }: {
   item: Extract<ThreadItem, { kind: "error" }>
   onRetry?: () => void
+  /** Present on the newest row of a turn the agent's process ended under —
+      the same "Continue." the interrupt rule sends. */
+  onContinue?: () => void
   /** Offered only for the failure the capability story exists around: a turn
       that died carrying attachments that were delivered *inline*. It re-sends
       the same bytes pinned to the materialise-and-link branch. */
@@ -437,6 +447,11 @@ export const ErrorRow = React.memo(function ErrorRow({
   showTimestamp?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
+  const navigate = useNavigate()
+  /* A missing binary is a setup step, not a fault in the turn: amber, with
+     the line that fixes it where it can be copied. */
+  const missing = item.notInstalled
+  const severity = missing ? "warning" : item.severity
   /* Retry is a text path by construction — `turn_ended` carries the prompt,
      never the bytes — so a turn that had an image says so rather than quietly
      producing prose about a picture that is no longer there. */
@@ -446,7 +461,7 @@ export const ErrorRow = React.memo(function ErrorRow({
      still a failure someone has to paste into an issue — and it is the case
      with the *least* to select by hand, since there is no expandable well
      under it holding the text. */
-  const full = [item.title, item.reason, item.detail].filter(Boolean).join("\n")
+  const full = [item.title, item.reason, missing?.install, item.detail].filter(Boolean).join("\n")
   // The pill buttons stay — they are the discoverable path. The menu repeats them.
   const menuItems: MenuItemSpec[] = [
     ...(onRetry ? [{ label: retryLabel, icon: <RotateCwIcon />, onClick: onRetry }] : []),
@@ -462,9 +477,38 @@ export const ErrorRow = React.memo(function ErrorRow({
       className="select-text"
       onContextMenu={yieldToTextSelection}
     >
-      <AlertCard tone="error" icon={<TriangleAlertIcon className="text-destructive" />}>
-        <p className="font-medium text-destructive">{item.title}</p>
+      {/* The agent's own reports come softer too (`ErrorItem.severity`): a
+          warning in the Notice's amber, an info note on the muted ground. */}
+      <AlertCard
+        tone={severity === "warning" ? "warn" : severity === "info" ? "neutral" : "error"}
+        icon={
+          severity === "info" ? (
+            <InfoIcon className="text-muted-foreground" />
+          ) : (
+            <TriangleAlertIcon
+              className={severity === "warning" ? "text-amber-700 dark:text-amber-400" : "text-destructive"}
+            />
+          )
+        }
+      >
+        <p
+          className={cn(
+            "font-medium",
+            severity === "warning"
+              ? "text-amber-700 dark:text-amber-400"
+              : severity === "info"
+                ? "text-foreground"
+                : "text-destructive"
+          )}
+        >
+          {item.title}
+        </p>
         {item.reason && <p className="text-muted-foreground">{item.reason}</p>}
+        {missing?.install && (
+          <code className="block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
+            {missing.install}
+          </code>
+        )}
         {item.detail && (
           <Disclosure open={open} onToggle={() => setOpen((v) => !v)}>
             {open ? "Hide details" : "Show details"}
@@ -476,6 +520,29 @@ export const ErrorRow = React.memo(function ErrorRow({
           </pre>
         )}
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {missing && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+              onClick={() => void navigate("/settings/agents")}
+            >
+              <SettingsIcon className="size-3" />
+              Open Agents settings
+            </Button>
+          )}
+          {onContinue && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+              onClick={onContinue}
+              title="Start the agent again and ask it to pick up where it stopped"
+            >
+              <PlayIcon className="size-3" />
+              Continue
+            </Button>
+          )}
           {onRetry && (
             <Button
               variant="outline"

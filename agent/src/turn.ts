@@ -31,8 +31,10 @@ import {
 } from "./hold.js";
 import type { Session } from "./session.js";
 import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
-import { prefixTokens, promptBreakdown, userMessageTokens, type PrefixTokens } from "./token-breakdown.js";
+import { deferMcpTools, pickTools } from "./tools/tool-search.js";
+import { historyTokens, prefixTokens, promptBreakdown, type PrefixTokens } from "./token-breakdown.js";
 import { spanEvent } from "./tracing.js";
+import { generateTitle } from "./title.js";
 import { Emitter } from "./updates.js";
 
 export interface TurnDeps {
@@ -102,8 +104,14 @@ export async function handlePrompt(
   session.abort = abort;
   const emit = new Emitter(ctx, session.id, deps.store);
 
+  /* Only a session's very first message is named: a reloaded session has no
+     `title` either, but it has messages. */
+  const naming = !session.title && session.messages.length === 0 && deps.env.autoTitle;
   if (!session.title) session.title = firstLine(text);
-  if (session.title) {
+  /* Naming sends the fallback only if the model fails to do better: the
+     harness takes an agent title only while its own prompt-derived one stands,
+     so a first-line update landing first would lock the good one out. */
+  if (session.title && !naming) {
     await emit.update({
       sessionUpdate: "session_info_update",
       title: session.title,
@@ -111,6 +119,16 @@ export async function handlePrompt(
     });
   }
   deps.store.touch(session.id, session.title ?? undefined);
+  if (naming) {
+    const fallback = session.title;
+    void generateTitle(deps.env, deps.makeModel, session.modelId, text, abort.signal).then((title) => {
+      const next = title ?? fallback;
+      if (!next) return;
+      session.title = next;
+      if (title) deps.store.retitle(session.id, title);
+      return emit.update({ sessionUpdate: "session_info_update", title: next, updatedAt: new Date().toISOString() });
+    }).catch(() => {});
+  }
 
   /* One compaction attempt, whichever door asked for it. Resolves false when
      the summarizer failed — the `failed` compaction_update has already said
@@ -273,16 +291,29 @@ export async function handlePrompt(
             }, agent),
         };
         const { tools, meta } = buildTools(rt);
+        const deferral = deferMcpTools(tools, session.messages);
+        let active = deferral?.activeFor(session.messages);
 
         /* Hoisted out of the call so `pumpStream` can divide the prompt the
            request carries: the same string and the same tool set go to the
-           model and to the breakdown, so the two cannot drift. */
-        const system = systemPrompt(session, deps.env, { toolNames: Object.keys(tools) });
+           model and to the breakdown, so the two cannot drift. The system
+           prompt names the tools that are never deferred; a loaded MCP tool is
+           said by the search result that loaded it, so a load never rewrites
+           the prompt — not this turn, and not the next one either. */
+        const sections = systemSections(session, deps.env, { toolNames: deferral?.base ?? Object.keys(tools) });
+        const system = sections.map((part) => part.text).join("\n\n");
         /* The static prefix is walked once per attempt rather than per step —
-           neither the system prompt nor the tool set changes between the steps
-           of one, and the walk is the expensive half of the breakdown. */
-        const prefix = prefixTokens(system, tools);
+           the system prompt never changes between the steps of one, and the
+           tool set only when a search loads more (re-walked in `prepareStep`,
+           in place, because `pumpStream` holds this object). */
+        const prefix = prefixTokens(sections, active ? pickTools(tools, active) : tools);
         let promptMessages: ModelMessage[] = session.messages;
+        /* The SDK picks which deferred tools a step sends; the breakdown
+           re-counts the prefix when a search grows the set. */
+        const recount = (next: string[]) => {
+          if (next.length !== active?.length) Object.assign(prefix, prefixTokens(sections, pickTools(tools, next)));
+          active = next;
+        };
 
         const result = streamText({
           model,
@@ -344,6 +375,7 @@ export async function handlePrompt(
             }
             const injected = drainSteers();
             promptMessages = injected.length === 0 ? messages : [...messages, ...injected];
+            if (deferral) recount(deferral.activeFor(promptMessages));
             if (injected.length === 0) return {};
             return { messages: promptMessages };
           },
@@ -497,6 +529,11 @@ export async function handlePrompt(
         /* Abortable: a Stop pressed during a 30s backoff must not wait it
            out. The loop head rethrows on the aborted signal. */
         await sleep(delayMs, undefined, { signal: abort.signal }).catch(() => {});
+        /* The backoff is over and the next attempt is about to run — the
+           silence the notice explains is behind us. Left up until the attempt
+           *finishes*, it sat over a turn that was streaming normally, for as
+           long as that turn took. A failure of this attempt announces again. */
+        await clearRetry();
         continue;
       }
 
@@ -723,6 +760,8 @@ async function pumpStream(
   };
   let messageId = randomUUID();
   let block = { kind: "" as "text" | "reasoning" | "", buffer: "" };
+  /* The prefix item list last sent on this attempt's stream — see `finish-step`. */
+  let sentItems = "";
   /* Calls whose row was withheld, by id, so the result can be dropped and a
      failure can be sent whole. Keyed on the id `tool-input-start` carries,
      which is the `toolCallId` the later parts use. */
@@ -896,14 +935,22 @@ async function pumpStream(
           /* Where this request's prompt went. `used` is the whole prompt as the
              provider billed it — cache hits included — which is exactly the
              anchor `promptBreakdown` divides, so the figures cannot disagree
-             with the headline number above them. User-role content is counted
-             from the request's actual messages; the remaining conversation is
-             derived from the provider total. */
-          const userTokens = requestMessages ? userMessageTokens(requestMessages()) : 0;
-          const breakdown = prefix ? promptBreakdown(used, prefix, userTokens) : undefined;
+             with the headline number above them. The history is counted by role
+             from the request's actual messages, and only as proportions of what
+             the provider's total left after the static prefix. */
+          const breakdown = prefix
+            ? promptBreakdown(used, prefix, requestMessages ? historyTokens(requestMessages()) : undefined)
+            : undefined;
+          /* What the static prefix is made of rides only the first step of an
+             attempt and any step after it changed (a search loaded tools): it is
+             byte-identical between steps, and a turn is the smallest window a
+             reader ever loads, so every loaded turn holds one. */
+          const items = prefix ? JSON.stringify(prefix.items) : "";
+          const itemsMeta = prefix && items !== sentItems ? { items: prefix.items } : {};
+          sentItems = items;
           const usageMeta = {
             ...(cache ? { cache } : {}),
-            ...(breakdown ? { breakdown } : {}),
+            ...(breakdown ? { breakdown: { ...breakdown, ...itemsMeta } } : {}),
             /* The step's own bill in `acp.Usage` shape, so a reader can keep a
                running total while the turn is still going instead of waiting
                for `turn_ended` — which still carries the authoritative sum. */
@@ -1013,6 +1060,7 @@ async function runSubagent(
     content: { type: "text", text: prompt },
     messageId: randomUUID(),
   });
+  const deferral = deferMcpTools(tools, messages);
   if (!existing) deps.store.appendSubagentMessages(session.id, childId, messages);
   else deps.store.appendSubagentMessages(session.id, childId, [{ role: "user", content: prompt }]);
 
@@ -1027,8 +1075,14 @@ async function runSubagent(
         if (session.abort?.signal.aborted) throw lastError;
       }
 
-      const system = systemPrompt(session, deps.env, { subagent: true, toolNames: Object.keys(tools) });
+      let active = deferral?.activeFor(messages);
+      const sections = systemSections(session, deps.env, { subagent: true, toolNames: deferral?.base ?? Object.keys(tools) });
+      const system = sections.map((part) => part.text).join("\n\n");
+      const prefix = prefixTokens(sections, active ? pickTools(tools, active) : tools);
       let settled: ModelMessage[] = [];
+      /* What the step about to run sends — the breakdown counts the history by
+         role, and `messages` alone is only where the child started. */
+      let sent: ModelMessage[] = messages;
       const result = streamText({
         model: deps.makeModel(deps.env, session.modelId),
         system,
@@ -1054,8 +1108,14 @@ async function runSubagent(
         /* A subagent pauses with its parent: the Codex thread-tree issue's
            complaint is exactly a root held while its collaborators keep
            spending, so the child's steps pass the same gate. */
-        prepareStep: async () => {
+        prepareStep: async ({ messages: stepMessages }) => {
           await session.gate(session.abort?.signal);
+          sent = stepMessages;
+          if (deferral) {
+            const next = deferral.activeFor(stepMessages);
+            if (next.length !== active?.length) Object.assign(prefix, prefixTokens(sections, pickTools(tools, next)));
+            active = next;
+          }
           return {};
         },
       });
@@ -1070,9 +1130,9 @@ async function runSubagent(
           null,
           undefined,
           rfd,
-          prefixTokens(system, tools),
+          prefix,
           { cwd: session.cwd, model: session.modelId },
-          () => messages,
+          () => sent,
         );
         if (outcome.totalUsage) {
           reportUsage(outcome.totalUsage);
@@ -1147,7 +1207,26 @@ export function systemPrompt(
   env: AgentEnv,
   opts: { subagent?: boolean; toolNames?: string[] } = {},
 ): string {
-  const parts: string[] = [];
+  return systemSections(session, env, opts)
+    .map((part) => part.text)
+    .join("\n\n");
+}
+
+/** One block of the system prompt, named for the Tokens panel. Joined with a
+    blank line they are the prompt byte for byte — splitting them changes
+    nothing a provider's cache keys on. */
+export interface SystemSection {
+  name: string;
+  text: string;
+}
+
+export function systemSections(
+  session: Session,
+  env: AgentEnv,
+  opts: { subagent?: boolean; toolNames?: string[] } = {},
+): SystemSection[] {
+  const parts: SystemSection[] = [];
+  const section = (name: string, text: string) => parts.push({ name, text });
   /* What is actually built for this turn, not what the prompt remembers being
      built. Plan mode strips every writing tool and a subagent strips `task`,
      and a prompt that names a tool the loop did not offer is a NoSuchToolError
@@ -1155,7 +1234,8 @@ export function systemPrompt(
      mode, where bash is not there at all, is exactly how that failed. */
   const toolNames = opts.toolNames ?? [];
   const has = (name: string) => toolNames.length === 0 || toolNames.includes(name);
-  parts.push(
+  section(
+    opts.subagent ? "Subagent brief" : "Core instructions",
     opts.subagent
       ? "You are Daedalus Agent, running as a subagent on a delegated task. Complete the task and end with a concise report of what you did and found — your final message is all the caller sees."
       : `You are Daedalus Agent, a coding agent running in the Daedalus harness on the user's computer. The harness draws your tool calls, diffs and todos in a live transcript, and renders your text as GitHub-flavored markdown in a monospace terminal.
@@ -1370,7 +1450,8 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
      with no respawn. A session with no model (a spawn that never got one) is
      told nothing. */
   if (session.modelId) {
-    parts.push(
+    section(
+      "Model guidance",
       modelPromptLayer(
         session.modelId,
         env.modelPromptsFile ? loadModelPrompts(env.modelPromptsFile) : [],
@@ -1387,11 +1468,12 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
      forgot its `path` — is a failure a subagent makes in exactly the same way,
      and it was only ever told the short brief. */
   if (toolNames.length) {
-    parts.push(
+    section(
+      "Tool guidance",
       `## Tools available to you
 ${toolNames.map((n) => `- ${n}`).join("\n")}
 
-That list is exhaustive for this turn. A tool that is not on it does not exist here — do not call it, and do not tell the user you will. If something you need is missing, say so and use what you have.
+That list is exhaustive for this turn${toolNames.includes("search_tools") ? ", except for the held-back MCP tools search_tools can load" : ""}. A tool that is not on it does not exist here — do not call it, and do not tell the user you will. If something you need is missing, say so and use what you have.
 
 ## Calling tools correctly
 - Every call carries its own complete JSON arguments object. Never run two calls' arguments together into one, and never leave one of them empty — parallel calls are independent messages, not one message split up.
@@ -1408,7 +1490,8 @@ That list is exhaustive for this turn. A tool that is not on it does not exist h
        words called a tool that was not there and got a NoSuchToolError back
        for its trouble. What plan mode has to say is which tools exist, not
        which uses of a missing one are forbidden. */
-    parts.push(
+    section(
+      "Plan mode",
       `## Plan mode
 
 You are in PLAN MODE. Every tool that can change anything — writing files, editing them, running shell commands, MCP tools — is not built for this turn: it is absent, not merely discouraged. ${
@@ -1438,19 +1521,23 @@ Nothing is implemented in plan mode. End by asking the user to approve the plan 
     ? readInstructions(findInstructionFiles(session.cwd, session.instructionsHome))
     : [];
   if (instructions.length) {
-    parts.push(
-      [
-        "Standing instructions for this workspace, from the files below. Follow them as though the user had written them here; anything the user says directly in this conversation wins over them.",
-        ...instructions,
-      ].join("\n\n"),
+    section(
+      "Workspace instructions",
+      "Standing instructions for this workspace, from the files below. Follow them as though the user had written them here; anything the user says directly in this conversation wins over them.",
     );
+    /* One section per file, so the panel can say which file is the heavy one. */
+    for (const block of instructions) {
+      const head = block.slice(0, block.indexOf(":\n"));
+      section(`Instructions: ${head.replace(/^Instructions from /, "")}`, block);
+    }
   }
-  if (session.personaText) parts.push(session.personaText.trim());
+  if (session.personaText) section("Persona", session.personaText.trim());
   if (session.skills.length && !opts.subagent) {
     const listing = session.skills
       .map((s) => `- ${s.name}: ${s.description || "(no description)"} — ${s.path}`)
       .join("\n");
-    parts.push(
+    section(
+      "Skills",
       `Skills available in this workspace (read the SKILL.md before relying on one):\n${listing}`,
     );
   }
@@ -1458,11 +1545,11 @@ Nothing is implemented in plan mode. End by asking the user to approve the plan 
      spec's `instructions`, which a client is meant to put in front of the
      model. Tool descriptions say what one tool does; this says how they fit. */
   for (const { server, text } of session.mcp?.instructions ?? []) {
-    parts.push(`Instructions from the ${server} MCP server:\n${text}`);
+    section(`MCP instructions: ${server}`, `Instructions from the ${server} MCP server:\n${text}`);
   }
   const failures = session.mcp?.failures ?? [];
   if (failures.length) {
-    parts.push(`These MCP servers failed to start and their tools are unavailable:\n${failures.join("\n")}`);
+    section("MCP failures", `These MCP servers failed to start and their tools are unavailable:\n${failures.join("\n")}`);
   }
   /* Last, and deliberately so. Prompt caching keys on an exact byte-for-byte
      prefix: a single changed byte near the front of the prompt invalidates
@@ -1471,10 +1558,11 @@ Nothing is implemented in plan mode. End by asking the user to approve the plan 
      turn (hostname and today's date, plus a cwd that differs from repo to
      repo) is pinned to the very end, keeping the identity, persona, skills and
      instructions that precede it byte-identical and therefore cacheable. */
-  parts.push(
+  section(
+    "Environment",
     `WorkDir: ${session.cwd} | Platform: ${platform()} (${hostname()}) | Date: ${new Date().toDateString()}`,
   );
-  return parts.join("\n\n");
+  return parts;
 }
 
 /* A prefix cache lives on the machine that built it, so a router free to pick

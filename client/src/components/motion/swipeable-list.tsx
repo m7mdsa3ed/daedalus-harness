@@ -2,14 +2,14 @@
 
 import {
   animate,
-  motion,
+  m,
   useMotionValue,
   useReducedMotion,
   useSpring,
   useTransform,
   type MotionValue,
   type PanInfo,
-} from "framer-motion";
+} from "motion/react";
 import {
   useCallback,
   useEffect,
@@ -550,7 +550,7 @@ function SwipeableListRow({
   );
 
   return (
-    <motion.div
+    <m.div
       style={{ x: neighborX }}
       className={cn(
         "relative isolate overflow-hidden rounded-xl bg-transparent",
@@ -593,7 +593,7 @@ function SwipeableListRow({
         </div>
       </div>
 
-      <motion.div
+      <m.div
         drag={item.disabled ? false : "x"}
         dragConstraints={{ left: -rightWidth, right: leftWidth }}
         dragElastic={0.04}
@@ -609,8 +609,8 @@ function SwipeableListRow({
         )}
       >
         {renderItem ? renderItem(item) : item.content ?? defaultContent}
-      </motion.div>
-    </motion.div>
+      </m.div>
+    </m.div>
   );
 }
 

@@ -18,7 +18,7 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { rmSync } from "node:fs";
+import { rmSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeJson } from "../src/config.js";
@@ -26,6 +26,7 @@ import type { Profile } from "../src/profiles.js";
 import type { ThreadEvent } from "../src/protocol.js";
 
 rmSync(process.env.DAEDALUS_DATA_DIR!, { recursive: true, force: true });
+mkdirSync("/tmp/daedalus-test-workflow/ws", { recursive: true });
 writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
   {
     id: "fake",

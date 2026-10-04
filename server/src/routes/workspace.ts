@@ -80,7 +80,10 @@ async function probePreview(url: string): Promise<boolean> {
 /** Projects and everything scoped to a project's directory: the workspace
     filesystem, source control, the file watcher and the terminals' JSON half. */
 export function workspaceRoutes(app: Hono): void {
-  app.get("/api/projects", async (c) => c.json(await listProjects()));
+  /* `?spaceId=` narrows the list to one space (spaces.ts); the client reads the
+     whole catalog and filters, because the same projects are needed for lookups
+     a space filter would hide, but a scoped reader is a plain query. */
+  app.get("/api/projects", async (c) => c.json(await listProjects(c.req.query("spaceId") || undefined)));
   const projectCrud = crud(ProjectInputSchema);
   app.post("/api/projects", projectCrud.create(createProject));
   /* Declared before `:id` so the literal wins the match, and answering with

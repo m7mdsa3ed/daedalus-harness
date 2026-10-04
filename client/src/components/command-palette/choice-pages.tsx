@@ -12,6 +12,7 @@ import { activityAt, isListed } from "@/lib/settings"
 import { usePersonas, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { requestComposerFocus } from "@/lib/composer-focus"
+import { recommendedValue } from "@/lib/session-options"
 import { customThemeValue } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
 import { loadThreadDefaults, saveThreadDefaults } from "@/lib/thread-defaults"
@@ -67,6 +68,7 @@ export function ModelPage() {
   const palette = usePalette()
   const { sessionId, options, modelChoices } = useThreadTarget()
   const current = options.model?.type === "select" ? options.model.currentValue : undefined
+  const recommended = options.model && recommendedValue(options.model)
 
   const items: PaletteItem[] = modelChoices.map((choice) => ({
     id: `model:${choice.value}`,
@@ -74,6 +76,7 @@ export function ModelPage() {
     title: choice.name,
     icon: <Cpu className={current === choice.value ? "text-primary" : undefined} />,
     checked: current === choice.value,
+    badges: choice.value === recommended ? [{ label: "Recommended" }] : undefined,
     onSelect: () => palette.run(() => retune(palette.actions, sessionId, options.model, choice.value)),
   }))
 
@@ -84,6 +87,7 @@ export function EffortPage() {
   const palette = usePalette()
   const { sessionId, options, effortChoices } = useThreadTarget()
   const current = options.effort?.type === "select" ? options.effort.currentValue : undefined
+  const recommended = options.effort && recommendedValue(options.effort)
 
   const items: PaletteItem[] = effortChoices.map((choice) => ({
     id: `effort:${choice.value}`,
@@ -91,6 +95,7 @@ export function EffortPage() {
     title: capitalize(choice.name),
     icon: <Gauge className={current === choice.value ? "text-primary" : undefined} />,
     checked: current === choice.value,
+    badges: choice.value === recommended ? [{ label: "Recommended" }] : undefined,
     onSelect: () =>
       palette.run(() => retune(palette.actions, sessionId, options.effort, choice.value)),
   }))

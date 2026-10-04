@@ -14,6 +14,7 @@ import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
+import { ProgressiveBlur } from "@/components/ui/progressive-blur"
 import { SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
   Sidebar,
@@ -34,6 +35,7 @@ import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { useSidebarWidth } from "@/components/sidebar/resizer"
 import { ServerIconButton } from "@/components/sidebar/server-menu"
+import { SpaceIconButton, SpaceSwitcher } from "@/components/sidebar/space-menu"
 import {
   FOOTER_ICON,
   SettingsNav,
@@ -48,9 +50,9 @@ import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
-import { HEADER_BADGE, HEADER_CHIP } from "@/lib/header-chrome"
+import { HEADER_BADGE, HEADER_CHIP, STRIP_GROUND } from "@/lib/header-chrome"
 import { useChord } from "@/lib/keybindings"
-import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useActiveSpace, useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
 import {
   currentThreadId,
   NavigationBridge,
@@ -67,6 +69,8 @@ import { cn } from "@/lib/utils"
 import { openTerminal } from "@/lib/workspace/open-terminal"
 import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
+import { loadActiveSpace } from "@/lib/spaces"
+import { IS_POPOUT } from "@/lib/popout"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -115,6 +119,9 @@ export function AppShell({
   const storeHandle = useStoreHandle()
   const projects = useProjects()
   const profiles = useProfiles()
+  /* The space in front of you. Switching it swaps the dock (see the effect
+     below) — each space keeps its own tabs. */
+  const { id: activeSpaceId, setActive: setActiveSpace } = useActiveSpace()
   /* `bootstrap` answers for the session list alone — each catalog is its own
      query — so the loading gate is the two together. Without it an empty
      catalog mid-read draws the "Finish the setup" screen at every boot. */
@@ -241,9 +248,22 @@ export function AppShell({
      to another tab. Only absent ↔ present re-runs it; `routedState` is still
      read fresh inside, since any run happens on a render that holds it. */
   const routedKnown = routedState !== "absent"
+  /* Flips once, when the spaces list first answers — a dependency so a cold
+     load at another space's thread is re-asked then, and never a switch's own
+     id, or the switch below would bounce off the URL it is about to replace. */
+  const spacesKnown = activeSpaceId !== null
   React.useEffect(() => {
     if (!sessionId) return
     if (location.search) void navigate(threadPath(sessionId), { replace: true }) // legacy ?session=
+    /* A thread from another space (search, a notification, a pasted link)
+       takes you to its space rather than landing in this one's dock; the
+       switch effect opens it once that space's tabs are in. */
+    const owner = projects.find((project) => project.id === routed?.projectId)?.spaceId
+    if (owner && activeSpaceId && owner !== activeSpaceId) {
+      keepRef.current = sessionId
+      setActiveSpace(owner)
+      return
+    }
     if (routedState !== "absent") {
       /* Always a tab of its own. Opening a thread used to *replace* the chat
          you were reading — the sidebar as navigation — and a new tab was the
@@ -276,13 +296,38 @@ export function AppShell({
     // redirect above clears the search, and re-running on that would only
     // open the same tab a second time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, routedKnown, ready, dock, location.key])
+  }, [sessionId, routedKnown, ready, spacesKnown, dock, location.key])
 
   /* Drop tabs whose thread or project is gone — but never against a session
      list that never arrived. `loading` alone is not that test: a failed
      bootstrap still resolves (`finally` sets it), and pruning every restored
      chat against an empty list closes the whole workspace, which the debounced
      layout save then writes to disk. */
+  /* ── A tab belongs to its project's space ──
+     A thread is its project's, and a project is its space's, so the tabs of
+     the space in front of you are exactly those — anything else in the dock is
+     a tab that landed in the wrong space (or was filed there when spaces
+     arrived) and is closed. A thread or project with no space is everyone's,
+     as in the sidebar. `spaceRef` is the space the *dock* holds: moved only by
+     the switch effect, never by the click, so a prune between the click and
+     the swap cannot close the outgoing space's tabs before they are filed. */
+  const spaceRef = React.useRef<string | null>(null)
+  /* A thread routed from another space, opened once its space is in front. */
+  const keepRef = React.useRef<string | null>(null)
+  const pruneDock = React.useCallback(() => {
+    const live = storeHandle.getState().sessions
+    if (live.length === 0) return
+    const space = spaceRef.current
+    const here = (projectId?: string) => {
+      const owner = projects.find((project) => project.id === projectId)?.spaceId
+      return !space || !owner || owner === space
+    }
+    dock.prunePanels({
+      sessions: live.filter((session) => here(session.projectId)).map((session) => session.id),
+      projects: [HOME_PROJECT_ID, ...projects.filter((project) => here(project.id)).map((project) => project.id)],
+    })
+  }, [projects, dock, storeHandle])
+
   React.useEffect(() => {
     if (loading || failed) return
     /* The session list is read off the store rather than off this render's
@@ -296,13 +341,24 @@ export function AppShell({
        different door. The store is authoritative at the moment the effect runs,
        so it is what the prune is given; the guard below is the backstop for a
        genuinely empty one. */
-    const live = storeHandle.getState().sessions
-    if (live.length === 0) return
-    dock.prunePanels({
-      sessions: live.map((session) => session.id),
-      projects: [HOME_PROJECT_ID, ...projects.map((project) => project.id)],
-    })
-  }, [loading, failed, sessions, projects, dock, storeHandle])
+    pruneDock()
+  }, [loading, failed, sessions, pruneDock])
+
+  /* ── Switching spaces swaps the dock ──
+     Each space keeps its own tabs (the layout store is keyed by space), so a
+     switch files the tabs you were looking at under the space you were in and
+     brings in the next space's. */
+  React.useEffect(() => {
+    if (loading || failed || IS_POPOUT) return
+    const previous = spaceRef.current
+    spaceRef.current = activeSpaceId
+    if (previous === activeSpaceId) return
+    dock.switchSpace(previous, activeSpaceId)
+    pruneDock()
+    const keep = keepRef.current
+    keepRef.current = null
+    if (keep) dock.openChat(keep, { newTab: true })
+  }, [activeSpaceId, loading, failed, dock, pruneDock])
 
   const handleDockReady = React.useCallback(
     (api: DockviewApi) => {
@@ -577,6 +633,7 @@ export function AppShell({
               three. */}
           <div className="flex items-center gap-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1">
             <SidebarUsage />
+            <SpaceIconButton />
             <ServerIconButton settings={settings} onAddServer={onAddServer} />
             <NotificationIconButton />
             <Button
@@ -647,41 +704,37 @@ export function AppShell({
         <header
           data-app-header
           data-drag-region
-          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[var(--app-inset-top)] sm:gap-2 md:px-1"
+          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[var(--app-inset-top)] md:px-1"
         >
-          {/* ── The header paints NOTHING, and carries no backdrop filter ──
-              One bar on every device: no ground of its own, no ramp, no blur.
-              The band it spans is the shell's ground (`body::before`,
-              `--app-ground`), the same sheet the sidebar and the gutters are
-              transparent down to, so the strip in this row and the sidebar
-              beside it are one surface by construction — which is only true
-              while nothing here paints over it.
-
-              A `backdrop-blur` here is that paint, and under the window's own
-              material it is the thing that turns the material off. A
-              backdrop-filter composites its backdrop *from the page*, and
-              macOS vibrancy / Windows acrylic live behind the **window**, not in
-              the page — so the filtered box is drawn without them and the
-              header's row comes out a flat slab across exactly the tab strip's
-              band, against a sidebar two pixels away that still shows the
-              desktop. The blur was there to soften a line of transcript
-              passing under the chips, and nothing passes under them any more:
-              the band is in flow above the card (`data-header-band`,
-              index.css) and the transcript starts below it. A filter with
-              nothing to filter, costing a compositing layer and the OS
-              material. */}
+          {/* Below `md` there is no card: the strip is an overlay (`index.css`)
+              and the transcript scrolls up under the tabs and this bar, so the
+              bar keeps a progressive blur there. `md:hidden` — at `md` the card
+              starts under the tabs, and a backdrop filter would also turn off
+              the window's vibrancy/acrylic across the band. */}
+          <ProgressiveBlur
+            position="top"
+            height="calc(100% + 1rem)"
+            blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
+            className="absolute inset-x-0 top-0 -z-10 md:hidden"
+          />
           {/* The two device-level controls. No title and no crumb — every
               route is a tab, and the tab says the name; a thread keeps only
               its fork badge here. Wrapped and named so the dock can measure
               what a strip in this row has to reserve (`--dock-band-left`).
               Nothing on the right: the bell and the palette stand in the
               sidebar header. */}
-          {/* `md`, not `sm`: below `md` this cluster stands *in the tab strip's
-              row*, where the one gutter is 4px (the tab chip's `mx-0.5` twice
-              over). At `sm` it widened to 8px while the tab 2px away from it
-              did not, which is the row reading as two different spacings. */}
-          <div data-header-left className="flex min-w-0 items-center gap-1 md:gap-2">
+          {/* One 4px gutter at every width, the same one the tab strip keeps
+              between its tabs and its +/list buttons (`tab-actions.tsx`): this
+              cluster stands in that row, and 8px here against 4px there read
+              as two spacings on one line. */}
+          <div data-header-left className="flex min-w-0 items-center gap-1">
             <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
+            {/* Which space the app is showing — the one control in this row that
+                says where you are, beside the one that opens the list of where
+                you can go. */}
+            {/* Height of the chip, width of its label: HEADER_CHIP is a square,
+                which clipped the name down to the glyph. */}
+            <SpaceSwitcher className={cn("h-[var(--dock-chip-h)] shrink-0 px-2.5", STRIP_GROUND)} />
             {/* How transcripts are drawn, on this device — beside the one other
                 control that is also this device's and not this route's.
                 Sliders, not a cog: a cog in this app means the *server's*

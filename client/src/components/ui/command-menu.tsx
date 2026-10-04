@@ -21,7 +21,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import { animate, motion, useReducedMotion } from "framer-motion";
+import { animate, m, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/springs";
 import { useIcon, type IconComponent } from "@/lib/icon-context";
@@ -711,7 +711,7 @@ const CommandMenu = forwardRef<HTMLDivElement, CommandMenuProps>(
             className={cn("relative w-full max-h-[inherit] overflow-hidden", className)}
             {...props}
           >
-            <motion.div
+            <m.div
               className="max-h-[inherit] overflow-hidden"
               initial={false}
               animate={height === null ? {} : { height }}
@@ -720,7 +720,7 @@ const CommandMenu = forwardRef<HTMLDivElement, CommandMenuProps>(
               <div ref={columnRef} className="flex max-h-[inherit] min-h-0 flex-col">
                 {children}
               </div>
-            </motion.div>
+            </m.div>
           </div>
         </CommandMenuFillContext.Provider>
       </CommandMenuContext.Provider>

@@ -289,19 +289,33 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
 export function EditDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const view = useViewOptionsContext()
   const failed = item.status === "failed"
-  const diffs = item.content.filter((block) => block.type === "diff")
-  const edits = diffs.length > 0 ? [] : extractEdits(item)
+  /* The diff blocks win over the input's pair (they are the final change, and
+     under AIR the input carries no text at all); extractEdits reads them
+     when the input has none, so one list covers both. A runtime sends one
+     block per hunk, so hunks are numbered per path. */
+  const hasDiffs = item.content.some((block) => block.type === "diff")
+  const edits = hasDiffs
+    ? extractEdits({ ...item, rawInput: undefined })
+    : extractEdits(item)
+  const others = hasDiffs ? item.content.filter((block) => block.type !== "diff") : []
+  const perPath = new Map<string | undefined, number>()
+  for (const edit of edits) perPath.set(edit.path, (perPath.get(edit.path) ?? 0) + 1)
+  const seen = new Map<string | undefined, number>()
 
   return (
     <div className="space-y-1.5">
-      {diffs.length > 0 && <ToolContentBlocks item={item} />}
-      {edits.map((edit, index) => (
+      {others.length > 0 && <ToolContentBlocks item={{ ...item, content: others }} />}
+      {edits.map((edit, index) => {
+        const total = perPath.get(edit.path) ?? 1
+        const nth = (seen.get(edit.path) ?? 0) + 1
+        seen.set(edit.path, nth)
+        return (
         <div key={index} className="space-y-1">
-          {/* Numbered only when there is more than one: a lone "hunk 1 of 1"
+          {/* Numbered only when a path has more than one: a lone "hunk 1 of 1"
               is a label for a fact the reader can already see. */}
-          {edits.length > 1 && (
+          {total > 1 && (
             <div className={LABEL}>
-              hunk {index + 1} of {edits.length}
+              hunk {nth} of {total}
             </div>
           )}
           <DiffView
@@ -311,9 +325,10 @@ export function EditDetail({ item, active }: { item: ToolItem; active: boolean }
             split={view.splitDiffs}
           />
         </div>
-      ))}
+        )
+      })}
       {failed && <SmartBlock text={toolOutputText(item).text} tone="error" />}
-      {diffs.length === 0 && edits.length === 0 && active && <ToolCallSkeleton className="py-1" />}
+      {edits.length === 0 && active && <ToolCallSkeleton className="py-1" />}
     </div>
   )
 }

@@ -34,30 +34,6 @@ import type { AutonomyPolicy } from "../autonomy.js";
  *     the tail costs nothing to keep and a replay is a range scan.
  */
 
-/**
- * The hours a provider charges less for, and by how much.
- *
- * Some providers price a window of the day rather than a request: DeepSeek's
- * off-peak discount is the well-known one, and there is nothing to send — the
- * endpoint charges by its own clock. So a window is *declared*, beside the
- * model's `pricing`, and read back as a live indicator; no turn carries it.
- *
- * `pricing` is the full-price rate; inside the window the rate is that times
- * `multiplier`. The window is stated in the provider's own zone (`tz`) — UTC
- * for the provider this exists for — and `from` may wrap past midnight
- * (16:30 → 00:30 is one continuous span).
- */
-export interface OffPeakWindow {
-  /** "HH:MM", 24-hour, in `tz`. */
-  from: string;
-  /** "HH:MM", 24-hour, in `tz`; earlier than `from` when it wraps. */
-  to: string;
-  /** IANA zone the provider states the window in, e.g. "UTC". */
-  tz: string;
-  /** Fraction of the list price charged inside the window: 0.5 = half off. */
-  multiplier: number;
-}
-
 /** One model in a profile's catalog. Nested, and only ever read as a whole.
     The optional metadata past `reasoningEfforts` is filled from models.dev (or
     an agent's own advertising) and is display/enrichment only — nothing at
@@ -72,9 +48,6 @@ export interface ModelDef {
   description?: string;
   /** USD per million tokens, at full price. */
   pricing?: { input: number; output: number };
-  /** Hours the provider charges less for — display only, since the provider
-      decides by its own clock. Absent = one rate all day. */
-  offPeak?: OffPeakWindow;
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[];
   /** Provenance when enriched: "providerId/modelId" in models.dev, so the
@@ -410,6 +383,11 @@ export const profiles = pgTable("profiles", {
   suppressModelMetadataWarning: boolean("suppress_model_metadata_warning")
     .notNull()
     .default(false),
+  /** How long the gateway shim waits for this provider's response *headers*
+      before giving up (gateway-shim.ts). Null = the shim's default. Raised
+      for a provider that holds the headers of a streaming call until the
+      first token, which on a reasoning model can be minutes. */
+  upstreamTimeoutSeconds: integer("upstream_timeout_seconds"),
   /** Two selection flags, one column each — both keep the row, its credentials
       and its linked tools, and both leave every thread already on the profile
       running: a flag on a profile is a state, not a deletion, the same bargain
@@ -428,10 +406,42 @@ export const profiles = pgTable("profiles", {
      server — see BUILTIN_MCP in library.ts. */
 });
 
+/**
+ * A named scope *above* projects: "Personal", "Work". The one you are in picks
+ * which projects (and so which threads, routines and knowledge) the app shows.
+ *
+ * Deliberately not a `profile`: a profile is a *provider* — credentials, a
+ * catalog, a usage plan — and a space is a place to keep work, and the two are
+ * orthogonal (one provider serves several spaces; one space may use several
+ * providers). Not a `workspace` either: the client already calls the dock and
+ * the file/git surface that, and a *project* is described as the workspace a
+ * session runs in. The word had to be free, and this one was.
+ *
+ * Never linked to agents or profiles: what a space holds is projects, and every
+ * setting below a project (its tools, its threads' picks) is already scoped by
+ * the project. So this table is only a name and an order — nothing else about a
+ * space is its own.
+ */
+export const spaces = pgTable("spaces", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  /** Where the space sits in the switcher and in every list that names one.
+      Ties (and rows from before the column) fall back to name. */
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+
 export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   cwd: text("cwd").notNull(),
+  /** The space this project belongs to (see `spaces`). Nullable so a project
+      from before spaces existed is a row Postgres can hold; the boot backfill
+      (`ensureSchema`) assigns it to the first space, and every project the API
+      creates is given one. Not a foreign key, for the reason the `sessions`
+      columns below are not: a project has to survive the row it names, and the
+      route that deletes a space refuses while one still points at it. */
+  spaceId: text("space_id"),
   /** Optional free-text notes; null on rows from before the column existed. */
   description: text("description"),
   /** Optional logo URL, shown wherever the project is named — the sidebar

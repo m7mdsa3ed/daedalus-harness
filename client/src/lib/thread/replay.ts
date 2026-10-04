@@ -99,12 +99,14 @@ export const foldAttached: Fold<"onAttached"> = (
      Repeated on every reattach because the server holds it for as long as
      the process that failed the load is the one running. */
   if (historyLost) {
-    recordThreadError(
-      send,
-      id,
-      new AgentError(historyLost.error),
-      "Couldn't restore this thread's history"
-    )
+    /* A warning, not a failure: the thread is usable and continues in a fresh
+       session. The id the load was attempted with is still the only way back,
+       so it is in the detail — and in what Copy takes. */
+    recordThreadError(send, id, new AgentError(historyLost.error), "Couldn't restore this thread's history", {
+      reason: "The agent could not load this conversation, so the thread continues in a fresh session.",
+      severity: "warning",
+      detail: `Lost session id: ${historyLost.acpSessionId}`,
+    })
   }
 }
 

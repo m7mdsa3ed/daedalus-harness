@@ -45,9 +45,14 @@ import {
 } from "./agent-request"
 import { FileBadge, JSON_INPUT_PREVIEW, JsonView, PlanFullscreen, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "@/components/tool-parts"
-import type { PendingPermission } from "@/lib/store"
+import type { PendingPermission, ToolItem } from "@/lib/store"
 import { isTypingTarget } from "@/lib/shortcuts"
-import { extractPlanProposalFromPermission, toolDescription, toolHeading } from "@/lib/tools"
+import {
+  extractPlanProposalFromPermission,
+  permissionToolCall,
+  toolDescription,
+  toolHeading,
+} from "@/lib/tools"
 import { cn } from "@/lib/utils"
 
 /**
@@ -337,9 +342,15 @@ function PlanApproval({
  */
 export function InlineApproval({
   permission,
+  item,
   autofocus = true,
 }: {
   permission: PendingPermission | null
+  /** The transcript's own row for the call being asked about. An AIR agent
+      sends the request with little more than an id and a title — the diff an
+      Edit/Write is asking to apply is on the row — so the card reads the two
+      together (`permissionToolCall`), the request winning where it speaks. */
+  item?: ToolItem
   /** Whether this card may take focus. A stack of parked asks renders one card
       per request and the hotkeys answer the oldest, so only the head of the
       stack focuses — and when an earlier card is answered, the next one's
@@ -350,7 +361,9 @@ export function InlineApproval({
      `rawInput.plan` is the whole markdown proposal, and Claude Code asks the
      same thing as `ExitPlanMode`. Read before the hooks below, because the
      fold's initial state differs for it. */
-  const plan = permission ? extractPlanProposalFromPermission(permission.request.toolCall) : null
+  const plan = permission
+    ? extractPlanProposalFromPermission(permissionToolCall(permission.request.toolCall, item))
+    : null
   const isPlan = plan !== null
   const [open, setOpen] = React.useState(false)
   /* When a new request arrives — keyed on its id, so a second ask refocuses —
@@ -390,7 +403,7 @@ export function InlineApproval({
     )
   }
   const { request, resolve } = permission
-  const call = request.toolCall
+  const call = permissionToolCall(request.toolCall, item)
   const kind = call.kind ?? "other"
   const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
   const input = prettyJson(call.rawInput)

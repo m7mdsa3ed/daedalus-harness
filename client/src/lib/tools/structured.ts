@@ -73,8 +73,8 @@ export function extractQuestions(
    and `annotations` *on the input*, keyed by the question text, and fills them
    in when the permission component collects them; a bridge that answers over
    ACP puts the same map on `rawOutput`, or on the MCP envelope inside it, or on
-   `_meta.claudeCode.toolResponse`, or serialises the whole thing into the
-   output text. So every one of those is read, in that order, and the first
+   `_meta.claudeCode.toolResponse` (older adapters; AIR gets only its status
+   markers), or serialises the whole thing into the output text. So every one of those is read, in that order, and the first
    place that names a question wins. The keying is just as loose — question
    text, else the header, else position — because a bridge that rewrites the
    prompt still emits the answers in order. */
@@ -98,6 +98,7 @@ function collectAnswers(item: Pick<ToolItem, "meta" | "rawInput" | "rawOutput" |
   /* Last, and only into what the structured sources left empty: a runtime that
      sends both means the one with a schema. */
   readArrowAnswers(text, byKey, byIndex)
+  readQuotedAnswers(text, byKey)
 
   const lookup = (question: string, header: string | undefined) =>
     byKey.get(question) ?? (header ? byKey.get(header) : undefined)
@@ -184,6 +185,21 @@ function readArrowAnswers(text: string, byKey: Map<string, string[]>, byIndex: s
     if (!byKey.has(question)) byKey.set(question, [answer])
     if (byIndex[index] === undefined) byIndex[index] = [answer]
   })
+}
+
+/* Claude Code's own result text — `User has answered your questions:
+   "Q"="A", "Q2"="A2". You can now continue…` — which, for an AIR client, is
+   all there is: claude-agent-acp no longer sends the `toolResponse` that held
+   the `answers` record, and puts the result in `content`. Keyed only, into
+   what nothing structured already filled. */
+const QUOTED_ANSWER_RE = /"((?:[^"\\]|\\.)+)"="((?:[^"\\]|\\.)*)"/g
+
+function readQuotedAnswers(text: string, byKey: Map<string, string[]>): void {
+  if (!text.includes('"="')) return
+  for (const match of text.matchAll(QUOTED_ANSWER_RE)) {
+    const picked = answerValues(match[2])
+    if (picked && !byKey.has(match[1])) byKey.set(match[1], picked)
+  }
 }
 
 function readNotes(value: unknown, notes: Map<string, string>): void {
@@ -285,6 +301,32 @@ export function extractPlanProposalFromPermission(
   }
   const input = asRecord(toolCall.rawInput)
   return str(input?.plan) ?? str(input?.markdown) ?? null
+}
+
+/**
+ * A permission request's tool call, filled in from the transcript's own row
+ * for that call. For an AIR client both adapters send only what the client
+ * lacks — claude-agent-acp's request carries `toolCallId`, `title` and a
+ * `rawInput` with the file text stripped out, because the `tool_call` it sent
+ * first holds the diff, the kind, the locations and the `_meta`. Drawn from
+ * the request alone, an Edit's approval is a JSON dump of a path. The request
+ * wins wherever it says something; the row fills what it left out.
+ */
+export function permissionToolCall(
+  toolCall: acp.ToolCallUpdate,
+  item: ToolItem | undefined
+): acp.ToolCallUpdate {
+  if (!item) return toolCall
+  return {
+    ...toolCall,
+    title: toolCall.title ?? item.title,
+    name: toolCall.name ?? item.name,
+    kind: toolCall.kind ?? (item.toolKind as acp.ToolKind | undefined),
+    content: toolCall.content?.length ? toolCall.content : item.content,
+    locations: toolCall.locations?.length ? toolCall.locations : item.locations,
+    rawInput: toolCall.rawInput ?? item.rawInput,
+    _meta: { ...item.meta, ...toolCall._meta },
+  }
 }
 
 /** A `Skill` load: which packaged workflow the agent pulled in, and with what. */

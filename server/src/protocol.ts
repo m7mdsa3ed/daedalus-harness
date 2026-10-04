@@ -349,12 +349,32 @@ export interface WorkflowStateUpdate {
   _meta?: Record<string, unknown> | null;
 }
 
+/**
+ * A warning or error an AIR adapter reports as a typed record rather than as
+ * text (`sessionFailure` in `AIR_META`, acp-bridge.ts). Two doors: on a
+ * `session_info_update` at `_meta.jetbrains.air.sessionFailure` — an ordinary
+ * update the server never reads — and, for a failure that ends the running
+ * turn, on the prompt's answer, which the bridge puts on `turn_ended.failure`.
+ * One incident is one `id`; a higher `revision` replaces it in place, and the
+ * same or a lower one is ignored. `actions` v1 is `retry`, `login` and
+ * `new_session`; anything else is ignored, and never inferred from `category`.
+ */
+export interface SessionFailure {
+  id: string;
+  revision: number;
+  category: string;
+  severity: "warning" | "error";
+  title: string;
+  details?: string;
+  actions: string[];
+}
+
 /* ── Async background tasks ──
    Work an agent launched that outlives the turn that launched it: a Claude Code
    dynamic workflow, a backgrounded shell command, a monitor. The JetBrains AIR
    extension to ACP models these as their own lifecycle — spawn, progress,
    terminal state — and claude-agent-acp sends them only to a client that
-   advertises it (`AIR_ASYNC_TASKS_META` in acp-bridge.ts).
+   advertises it (`AIR_META` in acp-bridge.ts).
 
    Not the harness's own, so no `_daedalus/` prefix: these are the adapter's
    names, spelled exactly as it publishes them, and they pass through the bridge
@@ -1208,6 +1228,11 @@ export type ThreadEvent =
           has no notion of a turn to fork at, only a message. Optional like
           every field added to an event that already had journaled rows. */
       lastMessageId?: string;
+      /** The AIR failure record the prompt's answer carried
+          (`_meta.jetbrains.air.sessionFailure`) — a turn that failed and still
+          answered `end_turn`. Journaled with the event, so a replay draws it
+          where the live turn did. Absent on every older row. */
+      failure?: SessionFailure;
     }
 
   /* ---- fan-out only ----

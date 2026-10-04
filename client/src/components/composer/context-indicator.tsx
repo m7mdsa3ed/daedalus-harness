@@ -15,6 +15,7 @@ import {
   READING_TRIGGER,
   ReadingBubble,
   ReadingFace,
+  OpenInInspector,
   Ring,
 } from "@/components/composer/indicator"
 import {
@@ -37,7 +38,6 @@ import {
   formatRate,
   formatTokens,
   formatTps,
-  promptBreakdown,
   windowEstimated,
 } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
@@ -52,17 +52,14 @@ function Row({
   value,
   hint,
   valueClass,
-  swatch,
 }: {
   label: string
   value: string
   hint?: string
   valueClass?: string
-  swatch?: string
 }) {
   return (
     <div className="flex items-baseline gap-2 text-xs">
-      {swatch && <span aria-hidden className={cn("size-2 shrink-0 translate-y-px rounded-[2px]", swatch)} />}
       <dt className="min-w-0 flex-1 truncate text-muted-foreground">{label}</dt>
       {hint && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{hint}</span>}
       <dd className={cn("shrink-0 font-medium tabular-nums", valueClass)}>{value}</dd>
@@ -79,8 +76,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </section>
   )
 }
-
-const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0)
 
 /** One window of a plan, at a glance's measure: the name, the amounts behind
     the percentage, the bar and when it rolls over. Shared by a flat reading and
@@ -280,6 +275,7 @@ export function ContextIndicator({
       pill, which the composer's own toolbar wears too. */
   triggerClassName?: string
 }) {
+  const [open, setOpen] = useState(false)
   const { context, ttftMs } = thread
   /* The finished turns plus the running one's steps so far, so every figure
      below moves per step rather than jumping once at `turn_ended`. */
@@ -328,28 +324,8 @@ export function ContextIndicator({
           : "text-destructive"
   /* `turnUsage` is filled in turn order, so its last entry is the newest turn. */
   const lastTurn = Object.values(thread.turnUsage).at(-1)
-  const split = promptBreakdown(context)
-  /* What fills the window. `used` can run past the prompt (it counts what the
-     last request wrote too), so the conversation takes the remainder rather
-     than the split's own figure — the segments then sum to `used` exactly. */
-  const segments = context
-    ? split
-      ? [
-          { label: "System prompt", tokens: split.system, value: `~${formatTokens(split.system)}`, swatch: "bg-chart-1" },
-          { label: "Tool definitions", tokens: split.tools, value: `~${formatTokens(split.tools)}`, swatch: "bg-chart-2" },
-          ...(split.mcp > 0
-            ? [{ label: "MCP tools", tokens: split.mcp, value: `~${formatTokens(split.mcp)}`, swatch: "bg-chart-4" }]
-            : []),
-          (() => {
-            const rest = Math.max(0, context.used - split.system - split.tools - split.mcp)
-            return { label: "Conversation", tokens: rest, value: formatTokens(rest), swatch: "bg-chart-3" }
-          })(),
-        ]
-      : [{ label: "Used", tokens: context.used, value: formatTokens(context.used), swatch: "bg-foreground/60" }]
-    : []
-
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <Button
@@ -383,10 +359,8 @@ export function ContextIndicator({
         }
       />
       <PopoverContent align="end" side={side} className="w-72 gap-2.5">
-        {/* The window: one headline figure, and a bar that says what fills it
-            where our runtime measured the split (system and tools are its local
-            count, hence the tilde; the conversation is the provider's
-            remainder), a plain fill where no runtime did. */}
+        {/* The window: one headline figure and a plain fill. What the prompt is
+            made of is the inspector's Tokens panel's to say, estimates included. */}
         <div>
           <div className="flex items-baseline justify-between gap-2">
             <p className="font-medium">Context window</p>
@@ -412,27 +386,8 @@ export function ContextIndicator({
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            {segments.map((segment) => (
-              <div
-                key={segment.label}
-                className={cn("h-full transition-all", segment.swatch)}
-                style={{ width: `${(segment.tokens / context.size) * 100}%` }}
-              />
-            ))}
+            <div className="h-full bg-foreground/60 transition-all" style={{ width: `${Math.min(100, (context.used / context.size) * 100)}%` }} />
           </div>
-        )}
-        {split && context && (
-          <dl className="space-y-1">
-            {segments.map((segment) => (
-              <Row
-                key={segment.label}
-                swatch={segment.swatch}
-                label={segment.label}
-                hint={`${pct(segment.tokens, context.size)}%`}
-                value={segment.value}
-              />
-            ))}
-          </dl>
         )}
         {estimated && (
           <p className="text-[11px] text-muted-foreground">
@@ -445,6 +400,8 @@ export function ContextIndicator({
             Context is nearly full — the agent compacts the history soon to keep the turn going.
           </Notice>
         )}
+
+        {context && <OpenInInspector tab="tokens" label="Token breakdown" onOpen={() => setOpen(false)} />}
 
         {/* Billed, not held: every request re-sends the context, so these run
             far above the window. Totals over the session; a revive resets them. */}

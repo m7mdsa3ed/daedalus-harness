@@ -22,16 +22,16 @@ import { mcpCatalog } from "./db/schema.js";
  */
 
 const CONNECT_TIMEOUT_MS = 20_000;
-/** A tool the playground runs may be a search, a build or a long fetch, so it
-    gets its own, longer budget than the handshake does. */
+/** A tool call may be a search, a build or a long fetch, so it gets its own,
+    longer budget than the handshake does. */
 const CALL_TIMEOUT_MS = 120_000;
 
 export interface McpCheckEntry {
   name: string;
   description?: string;
   /** A tool's JSON Schema, as the server declared it. Carried whole rather
-      than picked apart: the detail page draws the arguments from it and the
-      playground validates against it by handing it back to the server. */
+      than picked apart: what a tool takes is half of what somebody reading
+      the list needs to know. */
   inputSchema?: unknown;
   /** A tool's declared *output* schema, where it declares one (MCP 2025-06-18).
       Carried for the same reason the input one is: what a tool answers is half
@@ -181,9 +181,8 @@ export async function checkMcpServer(def: acp.McpServer): Promise<McpCheckResult
   return result;
 }
 
-/** What the playground can run. The three things an MCP server offers, which
-    is the whole of its surface — a page that could only run tools left the
-    other two listed but dead. */
+/** The three things an MCP server offers, which is the whole of its surface.
+    The composer renders prompts and resources; a tool call is the agent's. */
 export type McpInvokeKind = "tool" | "prompt" | "resource";
 
 export interface McpInvocation {
@@ -198,9 +197,8 @@ export interface McpCallResult {
   ok: boolean;
   ms: number;
   /** What the server answered, whole — content blocks, `structuredContent`,
-      `isError`, a prompt's messages, a resource's contents. The page renders
-      it rather than interpreting it: this is a playground, and the thing being
-      inspected is exactly this payload. */
+      `isError`, a prompt's messages, a resource's contents. The caller renders
+      it rather than interpreting it: what it needed was exactly this payload. */
   result?: unknown;
   /** The call never happened: a transport failure, a timeout, an unknown name.
       A tool that ran and failed is `result.isError`, which is not this. */
@@ -241,42 +239,11 @@ export async function invokeMcp(id: string, def: acp.McpServer, call: McpInvocat
   }
 }
 
-/** What `completion/complete` is asked about: a prompt's argument or a
-    resource template's variable. */
-export interface McpCompletion {
-  ref: { type: "ref/prompt"; name: string } | { type: "ref/resource"; uri: string };
-  argument: { name: string; value: string };
-  /** Values already chosen for the other arguments, which narrow this one. */
-  context?: Record<string, string>;
-}
-
-/**
- * Suggestions for one argument, as the server ranks them. Asked per keystroke
- * (debounced by the caller), which is what the pool is for. A server that does
- * not declare `completions` answers nothing rather than an error: an input
- * with no suggestions is the ordinary case.
- */
-export async function completeMcp(id: string, def: acp.McpServer, req: McpCompletion): Promise<string[]> {
-  const client = await pooledClient(id, def);
-  if (!client.getServerCapabilities()?.completions) return [];
-  const answer = await withTimeout(
-    client.complete({
-      ref: req.ref,
-      argument: req.argument,
-      ...(req.context ? { context: { arguments: req.context } } : {}),
-    }),
-    CONNECT_TIMEOUT_MS,
-    `complete ${req.argument.name}`,
-  );
-  return answer.completion.values;
-}
-
 /* ── The pool ──
 
    One live client per server row, for everything that is not the Check
-   button: the playground, the composer's `@` and `/` reads, completions.
-   A stdio server is a process, and connecting per call spawned one per
-   keystroke once completions existed. Idle entries close after a while, a
+   button: the composer's `@` and `/` reads. A stdio server is a process,
+   and connecting per call spawned one per read. Idle entries close after a while, a
    transport that closes drops its entry, and the key carries the resolved def,
    so an edited row (or a builtin resolved for another project) connects
    afresh rather than reusing the old one.

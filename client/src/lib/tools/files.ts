@@ -49,7 +49,7 @@ const lineSpan = (text: string): number => text.replace(/\n$/, "").split("\n").l
  * range opens the file at the top, exactly as before.
  */
 export function fileRangeOf(
-  item: Pick<ToolItem, "title" | "meta" | "rawInput" | "locations" | "toolKind">,
+  item: Pick<ToolItem, "title" | "meta" | "rawInput" | "locations" | "toolKind"> & { content?: ToolItem["content"] },
   location?: acp.ToolCallLocation
 ): FileRange | null {
   const input = asRecord(item.rawInput)
@@ -82,7 +82,7 @@ export function fileRangeOf(
   if (!line) return null
 
   if (toolKindOf(item) === "edit") {
-    const hunk = extractEdits({ ...item, locations: item.locations }).find(
+    const hunk = extractEdits(item).find(
       (edit) => !edit.path || !at?.path || edit.path === at.path
     )
     const height = hunk ? lineSpan(hunk.newText) : 0

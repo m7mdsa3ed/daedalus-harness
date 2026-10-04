@@ -16,7 +16,7 @@ import type { SessionMeta } from "../settings"
 import { unclaimed } from "../thread/carry"
 import type { ConnPhase } from "../thread/phase"
 import { mintItemId } from "./items"
-import type { PendingElicitation, PendingPermission, TextItem, ThreadItem } from "./items"
+import type { ErrorItem, PendingElicitation, PendingPermission, TextItem, ThreadItem } from "./items"
 import { emptyThread } from "./thread"
 import type { State, ThreadState } from "./thread"
 import { applyMetaUpdate, settleTools } from "./session-update"
@@ -141,6 +141,9 @@ export type Action =
       /** Written by this client rather than replayed from a journal — see
           `ErrorItem.local`. */
       local?: boolean
+      notInstalled?: ErrorItem["notInstalled"]
+      severity?: ErrorItem["severity"]
+      stopped?: boolean
     }
   | { type: "dismiss-error"; id: string; itemId: string }
   | {
@@ -489,6 +492,9 @@ export function reducer(state: State, action: Action): State {
           retryText: action.retryText,
           retryAttachments: action.retryAttachments,
           local: action.local,
+          notInstalled: action.notInstalled,
+          severity: action.severity,
+          stopped: action.stopped,
           at: Date.now(),
         },
       ]

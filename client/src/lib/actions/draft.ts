@@ -7,6 +7,7 @@ import type * as acp from "@daedalus/acp"
 import { uuid } from "../uuid"
 import {
   alreadyAsked,
+  freshAgentOptions,
   loadAgentOptions,
   markAsked,
   markProbed,
@@ -24,6 +25,7 @@ import {
 } from "../thread-defaults"
 import { api, profileAgentIds, type Profile, type Project, type SessionMeta } from "../settings"
 import { emptyThread } from "../store"
+import { loadActiveSpace } from "../spaces"
 import { patchDraft, rememberDraft } from "../draft-sessions"
 import { saveDraft } from "../drafts"
 import type { ActionsCore } from "./core"
@@ -228,10 +230,16 @@ export function draftActions(core: ActionsCore) {
      * like from a fresh page.
      */
     startThreadIn(opts: { projectId?: string; id?: string } = {}): string | null {
+      /* A caller that names a project gets it; the fallbacks stay inside the
+         space in front of you, then anywhere rather than nowhere. */
+      const space = loadActiveSpace(settings.id)
+      const all = catalog.projects()
+      const inSpace = space ? all.filter((p) => p.spaceId === space) : all
       const project =
-        (opts.projectId ? catalog.projects().find((p) => p.id === opts.projectId) : undefined) ??
-        catalog.projects().find((p) => p.id === loadThreadDefaults().projectId) ??
-        catalog.projects()[0]
+        (opts.projectId ? all.find((p) => p.id === opts.projectId) : undefined) ??
+        inSpace.find((p) => p.id === loadThreadDefaults().projectId) ??
+        inSpace[0] ??
+        all[0]
       if (!project) return null
       const start = resolveThreadStart(project.defaults ?? emptyDefaults(), catalog.profiles())
       if (!start) return null
@@ -285,13 +293,16 @@ export function draftActions(core: ActionsCore) {
     ) {
       if (!agentId) return
       const key = optionKey(profileId, agentId)
-      if (!force && (alreadyAsked(key) || loadAgentOptions(key).base.length > 0)) return
+      if (!force && (alreadyAsked(key) || freshAgentOptions(key))) return
+      // Re-asking over a stale set answers for the whole set, like a refresh.
+      const replace = force || loadAgentOptions(key).base.length > 0
       markAsked(key)
       try {
         const probed = await api<{
           configOptions: acp.SessionConfigOption[]
           byModel: AgentOptionSet["byModel"]
           modes?: acp.SessionModeState | null
+          expiresAt?: number | null
         }>(settings, `/api/profiles/${profileId}/options${force ? "?refresh=1" : ""}`, {
           method: "POST",
           body: JSON.stringify({ projectId, agentId }),
@@ -300,7 +311,8 @@ export function draftActions(core: ActionsCore) {
           base: probed.configOptions ?? [],
           byModel: probed.byModel ?? {},
           ...(probed.modes ? { modes: probed.modes } : {}),
-        }, force)
+          expiresAt: probed.expiresAt ?? null,
+        }, replace)
         markProbed(key, true)
       } catch (error) {
         console.warn(`Couldn't ask ${agentId} on ${profileId} what it supports`, error)

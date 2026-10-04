@@ -31,12 +31,18 @@ import { Cancel01Icon } from "@hugeicons/core-free-icons"
    near-full screen on mobile and the dialog's to 92svh on desktop — it never
    goes fullscreen, so the grab handle and the swipe-to-dismiss stay.
 
+   `fullscreen` is the one surface that does go edge to edge: the desktop popup
+   drops its width cap, its centring transform and its zoom-in, and on a phone
+   the sheet's cap goes full. A reader (a whole run's board and graph) earns it;
+   nothing that is a form does, which is why it is a flag and not the new default.
+
    `disableDrawer` is the opt-out for surfaces that own their own anchored
    layout (the command palette): mobile renders the centred dialog instead
    of the sheet, and every subcomponent follows through `MobileCtx`. */
 
 const MobileCtx = React.createContext(false)
 const TallCtx = React.createContext(false)
+const FullCtx = React.createContext(false)
 
 /* The panel: shared by the centred popup and the sheet. `data-slot` is what
    index.css keys the glass background/blur/shadow on. */
@@ -54,6 +60,7 @@ function ResponsiveDialog({
   onOpenChange,
   children,
   tall = false,
+  fullscreen = false,
   disableDrawer = false,
 }: {
   open: boolean
@@ -61,30 +68,36 @@ function ResponsiveDialog({
   children: React.ReactNode
   /** Near-full-height surface: raises the sheet's mobile cap and the desktop cap. */
   tall?: boolean
+  /** The popup fills the window, and the sheet's mobile cap goes full with it.
+      Its own door rather than a stronger `tall`: an edge-to-edge surface has no
+      room for the centring transform or the desktop zoom-in. */
+  fullscreen?: boolean
   /** Skip the bottom sheet: render the centred dialog on mobile too. */
   disableDrawer?: boolean
 }) {
   const isMobile = useIsMobile() && !disableDrawer
   return (
-    <TallCtx.Provider value={tall}>
-      <MobileCtx.Provider value={isMobile}>
-        {isMobile ? (
-          <DrawerPrimitive.Root
-            data-slot="responsive-dialog"
-            open={open}
-            onOpenChange={onOpenChange}
-            modal
-            swipeDirection="down"
-          >
-            {children}
-          </DrawerPrimitive.Root>
-        ) : (
-          <DialogPrimitive.Root data-slot="responsive-dialog" open={open} onOpenChange={onOpenChange}>
-            {children}
-          </DialogPrimitive.Root>
-        )}
-      </MobileCtx.Provider>
-    </TallCtx.Provider>
+    <FullCtx.Provider value={fullscreen}>
+      <TallCtx.Provider value={tall}>
+        <MobileCtx.Provider value={isMobile}>
+          {isMobile ? (
+            <DrawerPrimitive.Root
+              data-slot="responsive-dialog"
+              open={open}
+              onOpenChange={onOpenChange}
+              modal
+              swipeDirection="down"
+            >
+              {children}
+            </DrawerPrimitive.Root>
+          ) : (
+            <DialogPrimitive.Root data-slot="responsive-dialog" open={open} onOpenChange={onOpenChange}>
+              {children}
+            </DialogPrimitive.Root>
+          )}
+        </MobileCtx.Provider>
+      </TallCtx.Provider>
+    </FullCtx.Provider>
   )
 }
 
@@ -151,6 +164,7 @@ function ResponsiveDialogContent({
 }: ContentProps) {
   const isMobile = React.useContext(MobileCtx)
   const tall = React.useContext(TallCtx)
+  const fullscreen = React.useContext(FullCtx)
   const { header, body, footer } = partitionChildren(children)
 
   if (isMobile) {
@@ -184,9 +198,11 @@ function ResponsiveDialogContent({
                  owns the transform and it is the *edge* that has to move: the
                  cap below is measured from it. */
               KEYBOARD_RISE,
-              tall
-                ? "max-h-[calc(100dvh-1.5rem-var(--keyboard-inset,0px))]"
-                : "max-h-[calc(100dvh-6rem-var(--keyboard-inset,0px))]",
+              fullscreen
+                ? "max-h-[calc(100dvh-1rem-var(--keyboard-inset,0px))]"
+                : tall
+                  ? "max-h-[calc(100dvh-1.5rem-var(--keyboard-inset,0px))]"
+                  : "max-h-[calc(100dvh-6rem-var(--keyboard-inset,0px))]",
               "transform-[translate3d(0,var(--drawer-swipe-movement-y),0)] will-change-transform",
               "[--closed-transform:translate3d(0,calc(100%+var(--drawer-inset)+2px),0)]",
               "transition-[transform,opacity,bottom,max-height] duration-450 ease-[cubic-bezier(0.22,1,0.36,1)]",
@@ -232,14 +248,22 @@ function ResponsiveDialogContent({
         data-slot="dialog-content"
         className={cn(
           SURFACE,
-          "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl sm:max-w-lg",
+          fullscreen
+            ? /* Edge to edge: the width cap, the centring transform and the
+                 zoom all come off — a fullscreen surface that pops in reads as
+                 a jump, not a surface arriving. */
+              "fixed inset-0 z-50 flex flex-col overflow-hidden rounded-none"
+            : "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl sm:max-w-lg",
           /* The keyboard is a phone's, but a laptop in tablet mode raises one
              over this half too, and the cap costs nothing when there is none. */
-          tall
-            ? "max-h-[min(92svh,calc(100dvh-var(--keyboard-inset,0px)-2rem))]"
-            : "max-h-[min(85svh,calc(100dvh-var(--keyboard-inset,0px)-2rem))]",
-          "duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          KEYBOARD_CENTER,
+          !fullscreen &&
+            (tall
+              ? "max-h-[min(92svh,calc(100dvh-var(--keyboard-inset,0px)-2rem))]"
+              : "max-h-[min(85svh,calc(100dvh-var(--keyboard-inset,0px)-2rem))]"),
+          fullscreen
+            ? "duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+            : "duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          !fullscreen && KEYBOARD_CENTER,
           className
         )}
         {...props}

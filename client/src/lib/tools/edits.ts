@@ -38,7 +38,24 @@ export function extractEditInput(item: Pick<ToolItem, "rawInput" | "locations">)
  * kind of edit the transcript could not draw, and a whole-file `Write`, whose
  * "before" is the absence of a file rather than a field.
  */
-export function extractEdits(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "locations">): EditInputDiff[] {
+export function extractEdits(
+  item: Pick<ToolItem, "title" | "meta" | "rawInput" | "locations"> & { content?: ToolItem["content"] }
+): EditInputDiff[] {
+  const fromInput = editsFromInput(item)
+  if (fromInput.length > 0) return fromInput
+  /* The input no longer carries the text: for an AIR client claude-agent-acp
+     strips `old_string`/`new_string`/`content` out of `rawInput`, because the
+     `diff` content block holds it. So the diff blocks are the source — one
+     per hunk (codex sends one per hunk of an update, Claude one per
+     structured-patch hunk), several of which may name the same path. */
+  return (item.content ?? []).flatMap((block) =>
+    block.type === "diff"
+      ? [{ oldText: block.oldText ?? "", newText: block.newText, path: block.path || undefined }]
+      : []
+  )
+}
+
+function editsFromInput(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "locations">): EditInputDiff[] {
   const input = asRecord(item.rawInput)
   if (!input) return []
   const path =

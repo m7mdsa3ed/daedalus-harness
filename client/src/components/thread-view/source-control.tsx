@@ -24,6 +24,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { CopyButton } from "@/components/ui/copy-button"
+import type { WebDiff } from "@/lib/workspace/panels"
+import { DockContext } from "@/components/workspace/dock-context"
 import { DiffTab, type DiffSide } from "@/components/workspace/diff-tab"
 import { BranchPicker } from "@/components/workspace/scm/branch-picker"
 import { CommitBox } from "@/components/workspace/scm/commit-box"
@@ -133,6 +135,13 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   const [stashGeneration, setStashGeneration] = React.useState(0)
   const [stashMessage, setStashMessage] = React.useState("")
   const [diff, setDiff] = React.useState<OpenDiff | null>(null)
+  /* The diff is read in the Preview panel, like a file; without a dock (a phone's
+     stacked sheet) it falls back to replacing this view. */
+  const dock = React.useContext(DockContext)
+  const showDiff = (next: OpenDiff) =>
+    dock
+      ? dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file: undefined, diff: next as WebDiff })
+      : setDiff(next)
   const [commit, setCommit] = React.useState<GitCommit | null>(null)
   const [collapsed, setCollapsed] = React.useState<ReadonlySet<GroupId>>(() => new Set())
   /* An undone commit's message, handed back to the box it came from. */
@@ -315,9 +324,9 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
 
   const openRow = (file: WorkingFile, group: GroupId) => {
     const path = projectPath(repoPath, file.path)
-    if (file.untracked || file.conflicted || (group === "changes" && file.mark === "A")) setDiff({ path, left: "head", right: "worktree", repo: repoPath })
-    else if (group === "staged") setDiff({ path, left: "head", right: "staged", repo: repoPath })
-    else setDiff({ path, left: "staged", right: "worktree", repo: repoPath })
+    if (file.untracked || file.conflicted || (group === "changes" && file.mark === "A")) showDiff({ path, left: "head", right: "worktree", repo: repoPath })
+    else if (group === "staged") showDiff({ path, left: "head", right: "staged", repo: repoPath })
+    else showDiff({ path, left: "staged", right: "worktree", repo: repoPath })
   }
 
   const branch = status?.branch ?? repo?.branch ?? (status?.unborn ? "no commits yet" : "detached")
@@ -361,7 +370,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
         coarse={coarse}
         onBack={() => setCommit(null)}
         onOpenFile={(file, detail) =>
-          setDiff({
+          showDiff({
             path: projectPath(repoPath, file.path),
             left: { rev: file.status === "A" ? "" : (detail.parents[0] ?? "") },
             right: { rev: file.status === "D" ? "" : detail.hash },

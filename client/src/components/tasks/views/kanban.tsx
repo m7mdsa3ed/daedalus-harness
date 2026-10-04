@@ -14,9 +14,6 @@ import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-ki
 import {
   ChevronLeft,
   ChevronRight,
-  CircleCheck,
-  CircleDashed,
-  CircleDot,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -32,7 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { COLOR_DOT, type BoardStatus, type StatusCategory } from "@/lib/boards"
+import { COLOR_DOT, type BoardStatus } from "@/lib/boards"
 import type { Task } from "@/lib/tasks-board"
 import { TaskCard } from "../task-card"
 import { QuickAdd } from "../quick-add"
@@ -77,12 +74,6 @@ function statusFromOverId(columns: Columns, overId: string): string | undefined 
   return overId.startsWith(COLUMN_PREFIX) ? overId.slice(COLUMN_PREFIX.length) : columnOf(columns, overId)
 }
 
-const CATEGORY_ICON: Record<StatusCategory, React.ComponentType<{ className?: string }>> = {
-  todo: CircleDashed,
-  in_progress: CircleDot,
-  done: CircleCheck,
-}
-
 /** One kanban column (a status): the drop target for its tasks. */
 function Column({
   status,
@@ -109,8 +100,8 @@ function Column({
   onCreate: (statusId: string, title: string) => Promise<void>
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `${COLUMN_PREFIX}${status.id}` })
+  const [adding, setAdding] = React.useState(false)
   const over = status.wipLimit != null && count > status.wipLimit
-  const Icon = CATEGORY_ICON[status.category]
   return (
     <div
       ref={setNodeRef}
@@ -118,18 +109,18 @@ function Column({
         /* On a phone a column is nearly the viewport and snaps into place, so
            the horizontal scroller reads as a pager rather than as a strip of
            half-visible columns; from `sm` up it is the fixed width it was. */
-        "flex max-h-full w-[85vw] max-w-[19rem] shrink-0 snap-start flex-col rounded-2xl border bg-muted/30 sm:w-72 sm:max-w-none",
+        "flex max-h-full w-[85vw] max-w-[19rem] shrink-0 snap-start flex-col rounded-2xl bg-muted/50 sm:w-72 sm:max-w-none",
         isOver && "border-primary/40 bg-muted/60",
         over && "border-destructive/40",
       )}
     >
       <div className="flex items-center justify-between gap-1 px-3 py-2.5">
-        <span className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
           <span className={cn("size-2 shrink-0 rounded-full", status.color ? COLOR_DOT[status.color] : "bg-muted-foreground/40")} />
           <span className="truncate">{status.name}</span>
           <span
             className={cn(
-              "rounded-pill bg-muted px-1.5 text-[10px] tabular-nums",
+              "text-xs font-normal tabular-nums text-muted-foreground",
               over && "bg-destructive/15 text-destructive",
             )}
             title={status.wipLimit != null ? `Work-in-progress limit ${status.wipLimit}` : undefined}
@@ -140,7 +131,14 @@ function Column({
           {points > 0 && <span className="text-[10px] tabular-nums normal-case">{points} pts</span>}
         </span>
         <span className="flex shrink-0 items-center">
-          <Icon className="mr-1 size-3.5 text-muted-foreground/70" aria-hidden />
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            aria-label={`Add task to ${status.name}`}
+            className="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:size-7"
+          >
+            <Plus className="size-4" />
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -191,7 +189,7 @@ function Column({
         )}
       </div>
       <div className="p-2 pt-0">
-        <QuickAdd onCreate={(title) => onCreate(status.id, title)} compact />
+        <QuickAdd onCreate={(title) => onCreate(status.id, title)} compact open={adding} onOpenChange={setAdding} />
       </div>
     </div>
   )

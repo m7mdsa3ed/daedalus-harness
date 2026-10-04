@@ -193,11 +193,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   It is also why the settings frame's width is chosen by **`isFullWidthSettings`**
   (`components/settings/sections.ts`, handed to `PageFrame` as `full` or
   `settings`) rather than the constant `max-w-3xl` it was: forms read at
-  `max-w-4xl` now, and the routes that are *not* forms — the
-  studio is the only one so far — take the frame's full width, because at a
-  form's measure the preview shrinks to a thumbnail and the colour grid wraps
-  its light/dark pair onto separate lines, which is the one comparison the
-  screen exists to make. Matched on the pathname there rather than declared per
+  `max-w-4xl` now, and the routes that are *not* forms — the studio, and the
+  MCP server's own page (a rail of what it offers beside one entry's contract,
+  `mcp-detail.tsx`) — take the frame's full width, because at a form's measure
+  the preview shrinks to a thumbnail, the colour grid wraps its light/dark pair
+  onto separate lines, and the rail leaves the field list a column too narrow to
+  read. Matched on the pathname there rather than declared per
   route, because the layout is what renders the container and it only knows the
   location; and set by the layout rather than by each page, or the frame would
   jump width as you moved between them.
@@ -382,23 +383,49 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   so the anchor *is* the avatar root and the group's ring selector
   (`*:data-[slot=avatar]`) still finds it. The two strips answer different questions: the row's is
   "what did this call see", the turn's is "what did the answer use".
-  **A run of subagents is a step row, not a surface of its own.** A harness
-  workflow and an ad-hoc batch of workers are the same question asked twice — a
-  workflow knows its shape up front, a batch does not — so `workflow-run.tsx`
-  draws both through one `RunRow`: a `StepRow` like every other row in the
-  transcript, whose line carries the run's name, `done/total`, elapsed, cost
-  and, while it runs, the phase and step being written with what that step is
-  on. Opening it lists the steps on the same rail a subagent's own rows hang
-  off (`RAIL_CLASS`, in `step-row.tsx` because thread-items and workflow-run may
-  not import each other), each one the *same* `SubagentStep` row it would be on
-  its own, each opening its own transcript in place. A subagent step also keeps
+  **A run of subagents is a card whose steps are rows.** A harness workflow and
+  an ad-hoc batch of workers are the same question asked twice — a workflow
+  knows its shape up front, a batch does not — so `workflow-run.tsx` draws both
+  through one `RunRow`: a card whose header carries the run's name, a state
+  badge, `done/total`, elapsed, cost and the hold toggle, a line naming the
+  phase and step being written and what it is on, and a segmented progress
+  strip (a segment per step, a wider gap per phase) drawn even when folded.
+  Opened, it defaults to **Browse**: three levels drilled through at full
+  width under a breadcrumb — the phases (state, running step, a strip per
+  phase), then the picked phase's steps as cards, then the picked step's own
+  turn parts, which is `SubagentStep` with `variant="body"` (its `SubagentBody`
+  without the header row, because the breadcrumb already says whose it is). A
+  one-phase run starts at its steps.
+  The same outline has four other readings, picked per card: **Board** (a
+  column per phase of step cards, pending ones dashed), **List** (a numbered
+  phase stepper with every step's row inline), **Timeline** (a bar per step on
+  the run's own clock, start to last activity) and **Graph** (wide panels, and
+  only where a barrier joins several steps). A subagent step also keeps
   its newest three child rows under the folded header by default — a separate
   preview, not a disclosure of the brief/report — with its reader-global view
   option to hide that preview; opening the row still reveals the full rail.
   Native workflow transcript previews read at most the recent steps while closed
   and the full transcript when opened. Steps the runner has not spawned yet are
   pending rows, so the run's shape is whole from the first spawn and does not
-  change under the reader. This replaced a preview card (icon tile,
+  change under the reader. **The card also opens fullscreen** — a `Maximize2Icon`
+  in its header — through the app's own dialog, `ResponsiveDialog` (the sheet on a
+  phone, the centred popup on a desktop), in the `fullscreen` mode it now carries:
+  edge to edge on a desktop, the sheet's cap gone full, and none of the centred
+  popup's width cap, centring transform or zoom-in. It shares the card's view and
+  picked step, so it continues the reading rather than restating it, and it is not
+  a second design: the card's expanded panel and the dialog's body are one
+  `RunBody`, and the head they share is one `RunHead` (a disclosure inline, a
+  plain header in the dialog, which has nothing to fold). The popup is the
+  `@container` the board and the graph inside it resolve `@panel-*` against,
+  because a portal leaves the panel behind — a run confined to the transcript
+  column was never wide enough to draw the graph. It is the one surface that earns
+  a fullscreen dialog: a reader, never a form. **A run whose barrier joins several steps opens on a
+  Graph view** (List is the toggle's other half) (`workflow-graph.tsx`, lazy, `@panel-md` and up): phases as columns, a
+  join dot between two wide phases, node borders by step state, a live clock on a running node, a clicked node opening
+  as the same step row under the graph. It draws **phase joins only** — the outline
+  carries no `dependsOn`, so an edge inside a phase is never guessed — and a chain, a
+  one-phase run or a batch gets no toggle, because the list already is that line.
+  This replaced a preview card (icon tile,
   state pill, progress bar, fact line, live foot) over a modal dialog that
   restated all five and then drew its own step rows, phase rules, tone table and
   two fact renderings — a second design language, and a modal that took the
@@ -419,6 +446,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`thoughtPreview`), clipped from the front because the end is the part that is new.
   Settled, the title is the opening line as before. Derived at view time from position,
   not from a flag in the store: the reducer never marks a thought done.
+  **Its detail is capped — `THOUGHT_MAX_H`, a fraction of `--panel-h`, less of a narrow
+  panel than a roomy one (`@panel-sm:`, the container query)** — because an unbounded
+  reasoning block pushes everything after it off the screen, and a fixed cap is wrong in
+  both a phone and a desktop. A cap means the box is the thing that scrolls, so
+  `ThoughtDetail` follows *itself*: the transcript's `useFollowStream` measures the
+  content element, and a capped box stops growing when it fills, which would leave the
+  newest thinking — the part being written — exactly what falls out of view. Settled it
+  is inert and opens at the top.
   `components/ui/diff-view.tsx` is a dependency-free line LCS.
   Device-local, per-session state lives in its own tiny stores — `lib/drafts.ts`
   (unsent prompts) chief among them, pruned from
@@ -594,6 +629,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`side`), not read off `editable` — that was only ever a proxy for where the trigger stood,
   and it pointed the draft's menu off the bottom of the screen the moment the row moved into
   the composer. The routine form passes `side="bottom"`; the composer takes the default.
+  **The connection is not on this row, or anywhere on the shelf.** It spent time as a lead
+  reading beside the project, with the shelf's own ground wearing its tone (`--shelf-info`/
+  `-warn`/`-error`); that made the composer wear the state of the *thread*, and it reported a
+  dead socket as an entire surface coloured amber. It is a `Notice` at the foot of the
+  transcript now (`components/connection-card.tsx`), with the wait, the working line and the
+  turn's other stops — so the shelf has no tone and nothing on it is ever wrong.
 - **The toolbar is the card's second row**, reading *what goes in → who answers → what
   happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, run a project command,
   insert a code block, clear), the model/config cluster, the length reading, then voice, pause, stop and
@@ -1033,6 +1074,11 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   comes back on reload from the journaled `turn_ended` (which carries the prompt text, so
   the rebuilt row still offers Retry). `installGlobalErrorReporting()` in `main.tsx` is
   the floor under both.
+  **An agent's own typed failure is the same row** (AIR `sessionFailure`, `docs/protocol.md`
+  "AIR"): `upsertFailure` in `store/session-update.ts` keys it `failure:<id>` and a higher
+  `revision` replaces it in place, and ACP's `notice` is one too. Both carry a `severity`,
+  which is the row's tone (`AlertCard`'s `warn`, or muted for info) — and a row with a
+  severity is not a *failed* row, so the inspector's count skips it.
   **A toast is for a failure that happened *around* the user; a surface that has the
   user's attention holds its own.** `captureError(err, context)` is `reportError` minus
   the toast — same normalizing, same console line, same `markReported` so the global net
@@ -1726,11 +1772,39 @@ goes to it.
     which item *is* the checklist), full height.
   - **Agents** — every subagent group, running first, each a button that scrolls the
     transcript to the top-level row containing it (`rowContains` → `scrollToMessage`, the
-    rail's own gesture). A sheet closes itself on a jump.
+    rail's own gesture), and under it the step's **own turn parts**: the very
+    `SubagentStep` with `variant="body"` a run's drill-down draws, so an ordinary agent and
+    a step of a workflow run read here exactly as they read in the transcript. One fold,
+    open while the step works, because a native workflow step's transcript is fetched when
+    it opens (`loadAgentTranscript`) and a panel holding thirty of them must not ask for
+    all thirty at once. A sheet closes itself on a jump.
   - **Details** — model, workspace, usage, workflow runs and history.
-  - **Tokens** — per-turn and per-request usage, with system, built-in tool, MCP tool and
-    user-message estimates when the runtime records them. Older journal entries retain their
-    saved breakdown; no missing user-message estimate is reconstructed for past requests.
+  - **Tokens** (`thread-view/tokens-panel.tsx`, arithmetic in `lib/token-breakdown.ts`,
+    checked by `token-breakdown.check.mjs`) — two readings kept apart. **Billed** is the
+    provider's own count (new input, cache read, cache write, output, reasoning — exact,
+    every runtime), headlined by its total. **Prompt** is what a request held, drawn as one
+    column per request (stacked by part, click one to read it) over a table of that request
+    beside all of them, then turn by turn with a bar per request. **Every part opens onto
+    what it was made of**: the system prompt by section and `##` heading, each built-in
+    tool's definition, MCP tools folded by server, each of your messages, the assistant's
+    replies and calls by tool, tool results by tool and call — scaled so a part's rows add
+    up to the part. The prefix lists ride our runtime's first step of each attempt
+    (`_meta.daedalus.breakdown.items`) and carry forward to the steps after it; the history
+    lists are the transcript the request carried. For our runtime the parts are
+    **measured**; for any other they are **inferred**: the transcript up to the request is
+    counted at about four characters a token, a finished compaction replaces what preceded
+    it, and what is left of the request's `used` is "Agent overhead" — the system prompt and
+    tool schemas inside that agent's process, which have no item list. Every figure carries
+    a `~`. **It is the only surface that prints an estimate**: the context popover shows a
+    plain fill and a "Token breakdown" button that opens this tab, and the step/turn popovers
+    show only what was reported. Older journal entries lack the by-role split and draw their
+    history as one "unsplit" row; nothing is reconstructed for past requests. **Its colours
+    are fixed hues (`PROMPT_PARTS`/`BILLED_PARTS` swatches), never `--chart-*`**: the default
+    theme makes those five greys, which draws a stacked bar as one colour in five shades.
+    Billed opens on tiles for what the thread already knows (context window, cache hit,
+    average turn, largest prompt, reported cost, output share), every row carries a share
+    bar, and a turn says its requests, wall time and cache rate (`TurnTokens.turnId` keys
+    `turnDuration`).
 - **A review is written on the diff and sent as one ordinary message.** In the Changes tab's
   diff, a "+" follows the pointer down the gutter (`DiffEditor`'s `review` opt-in: a glyph
   decoration, `glyphMargin` on only then); a click anchors a comment at that line — or at the

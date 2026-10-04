@@ -119,6 +119,18 @@ export function createCore(deps: CoreDeps) {
     return conn.requireLive()
   }
 
+  /** The create requests in flight, by thread — what "Cancel" on a long
+      start aborts. */
+  const starting = new Map<string, AbortController>()
+
+  /** Give up waiting on a thread that is starting or reviving. Only the
+      request is abandoned: the server finishes what it began, and the create
+      is idempotent on the client's id, so sending again picks it up. */
+  const cancelWait = (sessionId: string) => {
+    starting.get(sessionId)?.abort()
+    known(sessionId)?.cancelWait()
+  }
+
   /** Bring a draft into existence: tell the server (which spawns the agent
       and handshakes), adopt its row, then attach. The id travelled from the
       client, so the route the user is already looking at needs no correction.
@@ -174,8 +186,11 @@ export function createCore(deps: CoreDeps) {
         new Set(known.modes?.availableModes.map((m) => m.id) ?? [])
       ).rest.map((o) => [o.id, o.currentValue])
     )
+    const abort = new AbortController()
+    starting.set(meta.id, abort)
     const reply = await api<{ id: string; turnId?: string; promptError?: string }>(settings, "/api/sessions", {
       method: "POST",
+      signal: abort.signal,
       body: JSON.stringify({
         id: meta.id,
         profileId: profile.id,
@@ -228,9 +243,11 @@ export function createCore(deps: CoreDeps) {
         title: meta.title && meta.title !== "New thread" ? meta.title : undefined,
         prompt: first,
       }),
-    })
+    }).finally(() => starting.delete(meta.id))
     // Swaps the draft row for the server's own — see the `sessions` reducer.
-    const listed = await refreshSessions()
+    /* The POST landed: a failed refresh must not read as an unsent turn (a
+       retry would duplicate the message). */
+    const listed = await refreshSessions().catch(() => [] as SessionMeta[])
     /* Through the connection's own open chain: that refresh is what makes the
        chat panel re-run its open effect (the row it reads is a new object), so
        by the time this line is reached an open for this thread may already be
@@ -354,6 +371,7 @@ export function createCore(deps: CoreDeps) {
     known,
     requireLive,
     createSession,
+    cancelWait,
     refreshSessions,
     reconnectThread,
   }

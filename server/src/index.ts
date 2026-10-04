@@ -31,6 +31,7 @@ import { backfillSearchIndex } from "./search.js";
 import { bearerToken } from "./routes/helpers.js";
 import { miscRoutes } from "./routes/misc.js";
 import { profileRoutes } from "./routes/profiles.js";
+import { spaceRoutes } from "./routes/spaces.js";
 import { workspaceRoutes } from "./routes/workspace.js";
 import { attachmentRoutes } from "./routes/attachments.js";
 import { libraryRoutes } from "./routes/library.js";
@@ -72,22 +73,25 @@ await writeModelPromptsLibrary();
    rows become legible without being rewritten. See boards.ensureDefaultBoard. */
 await ensureDefaultBoard();
 const push = new Push(config.fcm);
-/** Thread title, with the failure's own message appended when there is one. */
-const pushBody = (title: string, error?: unknown): string => {
+/** The failure's own line, or null. A push body is a sentence, so its
+    whitespace is collapsed on the way into one. */
+const errorLine = (error?: unknown): string | null => {
   const message =
     error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string"
       ? ((error as { message: string }).message)
       : null;
-  return message ? `${title} — ${message}` : title;
+  const flat = message?.replace(/\s+/g, " ").trim();
+  return flat ? flat : null;
 };
-/** The failure's own line, pulled apart from the title the way `push` sends it:
-    a pill's body is the event (the error, the tool), its title is the thread. */
-const failureDetail = (error?: unknown): string | undefined => {
-  const message =
-    error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string"
-      ? ((error as { message: string }).message)
-      : null;
-  return message ?? undefined;
+/** A notification body, from its parts: the thread is the "where", the message
+    the user sent is the "what", and a failure's own line follows them. A long
+    part is cut for the lock screen rather than left to be truncated there. */
+const notifyBody = (...parts: (string | null | undefined)[]): string => {
+  const one = (part: string) => {
+    const flat = part.replace(/\s+/g, " ").trim();
+    return flat.length > 160 ? `${flat.slice(0, 157)}...` : flat;
+  };
+  return parts.filter((part): part is string => Boolean(part)).map(one).join(" — ");
 };
 let workflows: WorkflowRunner | null = null;
 let routines: RoutineEngine | null = null;
@@ -102,10 +106,20 @@ const sessions = new SessionManager(
       await addNotification("question", s);
       push.send("The agent has a question", s.title, { sessionId: s.id, event: "questionAsked" }).catch(console.error);
     },
-    onTurnEnd: async (s, error) => {
-      await addNotification(error ? "turn_failed" : "turn_finished", s, failureDetail(error));
+    onTurnEnd: async (s, error, promptText) => {
+      /* The thread is the row's title; the body is what the turn was about —
+         the message the user sent, and the failure's own line when it failed.
+         A notice that said only "Turn finished" told the reader nothing they
+         could recognise on a lock screen. */
+      const asked = promptText?.trim() ? promptText : null;
+      const failed = errorLine(error);
+      await addNotification(
+        error ? "turn_failed" : "turn_finished",
+        s,
+        notifyBody(asked, failed) || undefined,
+      );
       push
-        .send(error ? "Turn failed" : "Turn finished", pushBody(s.title, error), {
+        .send(error ? "Turn failed" : "Turn finished", notifyBody(s.title, asked, failed), {
           sessionId: s.id,
           // The client reads this to decide whether the notification is one the
           // agent is BLOCKED on (lib/notification-shape).
@@ -230,7 +244,8 @@ app.use("/api/sessions/:id/spans/:spanId", compress());
    backup route additionally refuses `?token=` — see routes/misc.ts. */
 miscRoutes(app, { config, sessions, push });
 profileRoutes(app, { sessions });
-workspaceRoutes(app);
+  spaceRoutes(app);
+  workspaceRoutes(app);
 attachmentRoutes(app);
 libraryRoutes(app, { sessions });
 sessionRoutes(app, { sessions });

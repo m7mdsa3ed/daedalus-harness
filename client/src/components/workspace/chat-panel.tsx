@@ -7,6 +7,7 @@ import { ThreadDock } from "@/components/workspace/thread-dock"
 import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { markFor, type ThreadActivity } from "@/lib/thread/phase"
+import { backgroundRunning } from "@/lib/thread/statuses"
 import { usePublishPanelStatus, type PanelStatus } from "@/lib/workspace/panel-status"
 import { useThreadConnection } from "@/lib/thread/use-thread-connection"
 import { ThreadLinksProvider } from "@/lib/workspace/thread-links"
@@ -68,7 +69,8 @@ export function ChatPanel({
       thread.phase,
       thread.turnActive,
       thread.permissions.length > 0 || thread.elicitations.length > 0,
-      !!meta?.lastTurnError
+      !!meta?.lastTurnError,
+      thread.phase.kind === "live" && backgroundRunning(thread.items)
     )
   ]
   usePublishPanelStatus(api.id, status)

@@ -7,7 +7,7 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
@@ -20,6 +20,7 @@ rmSync(dataDir, { recursive: true, force: true });
 const cwd = join(dataDir, "ws");
 mkdirSync(cwd, { recursive: true });
 const logPath = join(dataDir, "multi.log");
+writeFileSync(logPath, ""); // the install check wants every absolute arg to exist
 writeJson(join(dataDir, "agents.json"), [
   {
     id: "multi",

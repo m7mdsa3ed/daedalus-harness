@@ -85,7 +85,12 @@ console.log("mcp-features: handle ok");
 /* End to end: the image a tool returned is in the *next* step's prompt as a
    file part — unless the catalog says the model takes no images. */
 async function nextStepParts(env: Partial<AgentEnv>): Promise<string[]> {
-  const scripts: LanguageModelV4StreamPart[][] = [toolCallScript("mcp__full__pic", {}), textScript("A dot. ")];
+  const scripts: LanguageModelV4StreamPart[][] = [
+    /* Every MCP tool is deferred: found by a search, then called. */
+    toolCallScript("search_tools", { query: "select:mcp__full__pic" }, { id: "search-1" }),
+    toolCallScript("mcp__full__pic", {}),
+    textScript("A dot. "),
+  ];
   const model = new MockLanguageModelV4({
     doStream: async () => ({ stream: convertArrayToReadableStream(scripts.shift()!) }),
   });

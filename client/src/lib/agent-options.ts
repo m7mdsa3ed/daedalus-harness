@@ -1,6 +1,7 @@
 import type * as acp from "@daedalus/acp"
 
 import { createLocalStore, createStore } from "./local-store"
+import { flattenSelectOptions } from "./session-options"
 
 /* ── What an agent can be configured with ──
    ACP config options come from a *running* agent, and a thread that has not
@@ -23,7 +24,9 @@ import { createLocalStore, createStore } from "./local-store"
    for reasoning models). So it is a *starting* point; the real set replaces it
    the moment a session answers. */
 
-const STORAGE_KEY = "ui.agentOptions.v3"
+/* v4: sets remembered before the AIR `recommendedValue` upgrade carry Claude
+   Code's `default` model and effort rows, which a live agent no longer offers. */
+const STORAGE_KEY = "ui.agentOptions.v4"
 
 /** The store's key for one (profile, agent) pair. Every reader and writer
     below takes this rather than a bare profile id. */
@@ -52,6 +55,18 @@ export interface AgentOptionSet {
       story as every option here: the live `session_config` replaces the
       probed set the moment a session answers. */
   modes?: acp.SessionModeState
+  /** When the server's probe answer stops standing (`agentOptionsTtlHours` in
+      its config.json); null never. Absent on a set no probe has answered for —
+      only a live session's, or one written before this existed — which counts
+      as stale, costing one HTTP call per page-load answered from the server's
+      own cache. */
+  expiresAt?: number | null
+}
+
+/** Does this pair hold a set the server has not yet expired? */
+export const freshAgentOptions = (key: string): boolean => {
+  const { base, expiresAt } = loadAgentOptions(key)
+  return base.length > 0 && expiresAt !== undefined && (expiresAt === null || Date.now() < expiresAt)
 }
 
 const EMPTY: AgentOptionSet = { base: [], byModel: {} }
@@ -123,6 +138,8 @@ export function saveAgentOptions(
       byModel: model ? { ...known.byModel, [model]: base } : known.byModel,
       ...(modes ? { modes } : {}),
       ...(known.promptCapabilities ? { promptCapabilities: known.promptCapabilities } : {}),
+      // A live session restates the set, not its age: the probe's clock stands.
+      ...(known.expiresAt !== undefined ? { expiresAt: known.expiresAt } : {}),
     },
   })
 }
@@ -140,6 +157,7 @@ export function saveProbedOptions(key: string, probed: AgentOptionSet, replace =
       byModel: { ...known.byModel, ...probed.byModel },
       ...(probed.modes ? { modes: probed.modes } : {}),
       ...(probed.promptCapabilities ? { promptCapabilities: probed.promptCapabilities } : {}),
+      expiresAt: probed.expiresAt ?? null,
     },
   })
 }
@@ -230,12 +248,20 @@ export function withChoices(
     if (option.type === "boolean" && typeof chosen === "boolean") {
       return { ...option, currentValue: chosen }
     }
-    if (option.type === "select" && typeof chosen === "string") {
+    if (option.type === "select" && typeof chosen === "string" && offers(option, chosen)) {
       return { ...option, currentValue: chosen }
     }
     return option
   })
 }
+
+/** Does a select still offer this value? A pick stored before the agent changed
+    its list — Claude Code's `default` model and effort rows, gone once the
+    adapter sends concrete values (AIR `recommendedValue`) — must not become the
+    drawn value, or the menu names a row it cannot tick. The agent's own
+    `currentValue` stands instead. */
+const offers = (option: acp.SessionConfigOption, value: string): boolean =>
+  option.type === "select" && flattenSelectOptions(option.options).some((c) => c.value === value)
 
 /** The option set a thread *shows*: the remembered set for the model the row
     records, with its own picks laid over it. One derivation for the new-thread
@@ -269,8 +295,10 @@ export function shownOptions(
      last), and what it is sitting on is not what this thread is on. */
   return shown.map((option) => {
     if (option.type !== "select") return option
-    if (option.category === "model" && model) return { ...option, currentValue: model }
-    if (option.category === "thought_level" && effort) return { ...option, currentValue: effort }
+    if (option.category === "model" && model && offers(option, model)) return { ...option, currentValue: model }
+    if (option.category === "thought_level" && effort && offers(option, effort)) {
+      return { ...option, currentValue: effort }
+    }
     return option
   })
 }
@@ -304,6 +332,13 @@ export function dropAgentOptionsFor(agentId: string): void {
     Object.entries(store.get()).filter(([key]) => !key.endsWith(suffix))
   )
   if (Object.keys(kept).length !== Object.keys(store.get()).length) store.set(kept)
+}
+
+/** Forget every remembered set on this device, and let every pair be asked
+    again this page-load — the client half of "Clear cached options". */
+export function clearAgentOptions(): void {
+  probes.set({})
+  store.set({})
 }
 
 /** Drop the cache for profiles that no longer exist. Keys are

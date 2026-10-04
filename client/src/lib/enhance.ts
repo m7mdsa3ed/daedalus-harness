@@ -45,7 +45,7 @@ export async function enhanceThread(
 export async function enhanceDraft(
   settings: ServerSettings,
   text: string,
-  opts: { profileId: string; model?: string },
+  opts: { profileId: string; model?: string; kind?: "prompt" | "task" },
   signal?: AbortSignal
 ): Promise<string> {
   const { enhanced } = await api<{ enhanced: string }>(settings, "/api/enhance", {

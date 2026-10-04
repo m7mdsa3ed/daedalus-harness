@@ -31,6 +31,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   rowDetail,
   editable = () => true,
   importable = true,
+  renderRows,
 }: {
   meta: SectionMeta
   items: T[]
@@ -60,6 +61,15 @@ export function LibrarySection<T extends { id: string; name: string }>({
       own configs know nothing about (personas), where the button would open a
       scan that can only ever come back empty. */
   importable?: boolean
+  /** Replaces the table/cards list for a library whose rows want a shape of
+      their own (MCP's expandable cards). Header, actions, the empty state and
+      the delete confirmation stay this component's. */
+  renderRows?: (ctx: {
+    items: T[]
+    canEdit: (item: T) => boolean
+    edit: (item: T) => void
+    remove: (item: T) => void
+  }) => React.ReactNode
 }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -106,6 +116,14 @@ export function LibrarySection<T extends { id: string; name: string }>({
           `rowExtra` a page passes — MCP's Connect button and its status pill —
           is a *column*, not something crowded in beside Edit and Delete: it is
           a fact about the row, and a fact belongs under a heading. */}
+      {renderRows && items.length > 0 ? (
+        renderRows({
+          items,
+          canEdit: editable,
+          edit: (item) => void navigate(settingsFormPath(meta.id, item.id)),
+          remove: (item) => void remove(item),
+        })
+      ) : (
       <SettingsList
         rows={items}
         rowId={(item) => item.id}
@@ -199,6 +217,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
           />
         }
       />
+      )}
     </>
   )
 }

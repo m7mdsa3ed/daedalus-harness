@@ -61,6 +61,11 @@ export interface ServerConfig {
       silently starts in the middle. 0 disables the archive entirely, which is
       the pre-archive behaviour. Defaults to 30. */
   sessionJournalRetentionDays: number;
+  /** How long an agent's probed options (models, modes, config options) are
+      trusted before the next ask spawns the agent again — server cache and
+      every device's copy alike. 0 never expires them, the pre-TTL behaviour.
+      Defaults to 24. */
+  agentOptionsTtlHours: number;
   /**
    * Origin (scheme + host, no trailing slash) an OAuth authorization server
    * should redirect back to when connecting an MCP server — the `/oauth/mcp/
@@ -151,6 +156,7 @@ export function loadConfig(): ServerConfig {
       process.env.DATABASE_URL ?? existing.databaseUrl ?? DEFAULT_DATABASE_URL,
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
     sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
+    agentOptionsTtlHours: existing.agentOptionsTtlHours ?? 24,
     ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
     ...(existing.mcpRegistryUrl ? { mcpRegistryUrl: existing.mcpRegistryUrl } : {}),
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),

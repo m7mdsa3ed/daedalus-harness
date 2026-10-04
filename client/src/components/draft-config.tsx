@@ -36,6 +36,7 @@ import {
   MenuAddItem,
   MenuRow,
   PILL,
+  PillLabel,
   MenuSearchInput,
   menuFilter,
   selectChoices,
@@ -48,6 +49,7 @@ import {
   READING_TRIGGER_ALWAYS,
   ReadingFace,
 } from "@/components/composer/indicator";
+import { SHELF_PAD } from "@/components/composer-strip";
 import { ThreadToolsSections } from "@/components/thread-tools/menu";
 import { cn } from "@/lib/utils";
 import type { Actions } from "@/lib/actions";
@@ -63,7 +65,9 @@ import {
 } from "@/lib/session-options";
 import { mcpSubtitle, profileSupports, type SessionMeta } from "@/lib/settings";
 import {
+  useActiveSpace,
   useAgents,
+  useAgentsStatus,
   useMcpServers,
   usePersonas,
   useProfiles,
@@ -151,7 +155,6 @@ export function DraftScopeRow({
   actions,
   remember = true,
   editable = true,
-  leading,
   trailing,
   showSelectedMcps = true,
 }: {
@@ -163,17 +166,6 @@ export function DraftScopeRow({
   /** A draft may still pick; a started thread's project and links are already
       spawned, so the row reads them out instead. */
   editable?: boolean;
-  /** Drawn just after the project, on the row's *start*. The composer's
-      connection reading goes here: "where does this work land" and "can I get
-      a message out about it" are the two facts that outrank the rest of the
-      floor, so they sit at its head rather than in the cluster of counts at
-      its end.
-
-      A `leading` that draws makes the project give up its *name* and keep only
-      its mark (see `reading` below): the connection is a state of the unit and
-      may not be elided, so what yields on a narrow panel is the label that is
-      still legible as an icon. */
-  leading?: React.ReactNode;
   /** Drawn at the row's own end. The composer's context ring goes here: how
       full the window is belongs with where the thread runs, not with the
       controls that send. */
@@ -183,15 +175,14 @@ export function DraftScopeRow({
   showSelectedMcps?: boolean;
 }) {
   const { projects, project, configure } = useDraft(meta, actions, remember);
+  /* Only the space in front of you — plus the draft's own project, so the
+     picker still marks what the thread is on. */
+  const { id: spaceId } = useActiveSpace();
+  const pickable = projects.filter(
+    (p) => !spaceId || p.spaceId === spaceId || p.id === meta.projectId,
+  );
   const mcpServers = useMcpServers();
   const newProject = useNewProject();
-  /* Whether something is standing beside the project on the head of the row.
-     The project is the only control here whose words are optional *in
-     practice*: it is named one directory and marked with an icon that says
-     which directory at a glance, so on a narrow panel its name is the label
-     that can go. A `leading` that draws takes that room — the connection is a
-     state, and a state that has gone quiet cannot be read at all. */
-  const shared = leading != null;
   const selectedMcps = (meta.mcpServerIds ?? []).map((id) => ({
     id,
     server: mcpServers.find((server) => server.id === id),
@@ -208,7 +199,7 @@ export function DraftScopeRow({
        chevrons between and no frame, because it names a place and not a state.
        The end is a bare cluster of readings: no box around them, each
        trigger's own hover ground is the only frame it wears. */
-    <div className="flex min-w-0 items-center gap-3 px-3 py-1">
+    <div className={cn(SHELF_PAD, "flex min-w-0 items-center gap-3 py-1")}>
       <nav
         aria-label="Thread scope"
         className="flex min-w-0 flex-1 items-center gap-0.5"
@@ -219,8 +210,7 @@ export function DraftScopeRow({
             label={project?.name ?? "No project"}
             title="Project"
             value={project?.id ?? ""}
-            reading={shared ? "mark" : "always"}
-            options={projects.map((p) => ({
+            options={pickable.map((p) => ({
               value: p.id,
               name: p.name,
               hint: p.cwd,
@@ -237,12 +227,12 @@ export function DraftScopeRow({
             title={project?.cwd}
             className={cn(
               READING_TRIGGER,
-              shared && READING_TRIGGER_ALWAYS,
+              READING_TRIGGER_ALWAYS,
               "flex h-6 items-center font-medium text-foreground/80",
             )}
           >
             <ReadingFace
-              always={!shared}
+              always
               icon={<ProjectIcon project={project} className={READING_MARK} />}
               label={project?.name ?? "No project"}
               labelClass="max-w-40"
@@ -279,12 +269,7 @@ export function DraftScopeRow({
           </>
         )}
       </nav>
-      {(leading || trailing) && (
-        <span className="flex shrink-0 items-center gap-0.5">
-          {leading}
-          {trailing}
-        </span>
-      )}
+      {trailing && <span className="flex shrink-0 items-center gap-0.5">{trailing}</span>}
     </div>
   );
 }
@@ -308,7 +293,13 @@ export function SelectedMcpIndicator({ meta }: { meta: SessionMeta }) {
           <Button
             variant="ghost"
             size="xs"
-            className="h-5 min-w-0 max-w-48 gap-1 rounded-pill px-1.5 text-[11px] pointer-coarse:h-7 bg-blue-500/12 text-blue-600 hover:bg-blue-500/20 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-400"
+            /* The shelf's accent, not three blue literals: this is the one
+               control in the cluster that used to pick its own colour, so a
+               generated palette left it a blue the rest of the row was not.
+               `primary` is what every other chip on the shelf wears (the count
+               chip, the readings), and the ring around each mark is the
+               composer's own ground. */
+            className="h-5 min-w-0 max-w-48 gap-1 rounded-pill bg-primary/12 px-1.5 text-[11px] text-primary hover:bg-primary/20 hover:text-primary pointer-coarse:h-7"
             aria-label={`${label} selected`}
             title={names}
           >
@@ -318,7 +309,7 @@ export function SelectedMcpIndicator({ meta }: { meta: SessionMeta }) {
               {selected.slice(0, 3).map(({ id, server }) => (
                 <span
                   key={id}
-                  className="grid size-3.5 shrink-0 place-items-center rounded-full bg-blue-500/25 ring-1 ring-composer"
+                  className="grid size-3.5 shrink-0 place-items-center rounded-full bg-primary/25 ring-1 ring-composer"
                 >
                   <McpIcon server={server} className="size-2" />
                 </span>
@@ -454,7 +445,6 @@ export function PickerMenu({
   value,
   options,
   onSelect,
-  reading = "always",
   add,
 }: {
   icon: React.ReactNode;
@@ -468,16 +458,9 @@ export function PickerMenu({
     icon?: React.ReactNode;
   }[];
   onSelect: (value: string) => void;
-  /** Whether the value's words are kept on a narrow panel: `always` for the
-      project, which names *where the work lands* and so never goes quiet unless
-      it has to; `mark` for it when another reading is standing beside it and
-      the row's start is contended. Either way the mark stays, so the control is
-      never a blank. */
-  reading?: "always" | "mark";
   /** The row that makes this catalog longer — see `MenuAdd`. */
   add?: MenuAdd;
 }) {
-  const always = reading === "always";
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
   React.useEffect(() => {
@@ -492,19 +475,22 @@ export function PickerMenu({
       <DropdownMenuTrigger
         render={
           /* The reading shape the rest of the footer wears — one 24px pill, a
-             16px mark, and the value as a badge on a wide panel. */
+             16px mark, and the value as a badge on a wide panel. The words are
+             kept on every width: this picker names *where the work lands*, and
+             a location that goes quiet on a narrow panel is the one thing in
+             the row that must not. */
           <Button
             variant="ghost"
             size="icon-xs"
             title={title}
             className={cn(
               READING_TRIGGER,
-              always && READING_TRIGGER_ALWAYS,
+              READING_TRIGGER_ALWAYS,
               "text-muted-foreground hover:text-foreground",
             )}
           >
             <ReadingFace
-              always={always}
+              always
               icon={icon}
               label={label}
               labelClass="max-w-40"
@@ -626,6 +612,15 @@ export function DraftConfigPopover({
   );
   const newProfile = useNewProfile();
   const addModel = useAddModel();
+  /* The measured install state Settings › Agents draws from (one shared,
+     server-cached query) — read so a runtime that cannot start is marked
+     before the first message is spent on finding out. `installed === false`
+     only: an unanswered query says nothing, and a handshake `error` is not a
+     missing binary. */
+  const { status: agentsStatus } = useAgentsStatus();
+  const missingAgents = new Set(
+    (agentsStatus?.agents ?? []).filter((a) => !a.installed).map((a) => a.agentId),
+  );
 
   /* What this profile's agent offered the last time one ran. A draft has no
      process to ask, so this is the only way its settings can be picked before
@@ -763,14 +758,7 @@ export function DraftConfigPopover({
             )}
             {/* Same words the started thread's trigger reads — the agent is
                 named by its mark above. */}
-            <span className="max-w-40 truncate">
-              {persona && <span>{persona.name} · </span>}
-              {modelLabel}
-              {effortLabel && (
-                <span className="capitalize"> · {effortLabel}</span>
-              )}
-              {modeLabel && ` · ${modeLabel}`}
-            </span>
+            <PillLabel persona={persona?.name} model={modelLabel} effort={effortLabel} mode={modeLabel} />
           </Button>
         }
       />
@@ -786,6 +774,7 @@ export function DraftConfigPopover({
               value: a.id,
               name: a.name,
               icon: <AgentIcon agentId={a.id} className="size-4" />,
+              note: missingAgents.has(a.id) ? "Not installed" : undefined,
             }))}
             onSelect={chooseAgent}
           />

@@ -90,7 +90,7 @@ export function useThreadToolLinks(
     return null
   }
 
-  return { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks, pending }
+  return { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks }
 }
 
 /** The tools group of a settings dropdown: four submenus and, on a draft that
@@ -109,8 +109,7 @@ export function ThreadToolsSections({
   editable: boolean
   remember?: boolean
 }) {
-  const dispatch = useDispatch()
-  const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks, pending } =
+  const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks } =
     useThreadToolLinks(meta, actions, remember)
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
   if (!editable && extra === 0 && !stagedLinks) return null
@@ -123,11 +122,6 @@ export function ThreadToolsSections({
       <DropdownMenuLabel>
         {editable ? "Tools" : stagedLinks ? "Tools — applies on next send" : "Running with"}
       </DropdownMenuLabel>
-      {!editable && pending && (
-        <DropdownMenuItem disabled className="text-xs">
-          Saving tool selection…
-        </DropdownMenuItem>
-      )}
       <ToolSection
         {...common}
         title="MCP servers"

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Kbd } from "@/components/ui/kbd"
 import { useCoarsePointer } from "@/hooks/use-device"
-import { ComposerStripItem } from "../composer-strip"
+import { ComposerStripItem, SHELF_PAD } from "../composer-strip"
 
 /* The one list and the one row every composer completer draws — `/`
    (`slash-commands.tsx`), `@` (`file-mentions.tsx`) and `!`
@@ -188,8 +188,11 @@ export function CompleterList({
       <div ref={listRef} className="max-h-52 overflow-y-auto p-1 overscroll-contain">
         {children}
       </div>
+      {/* `SHELF_PAD` here and the rows' own `p-1` + `px-2` land at the same
+          12px, so the hint and the keys that drive the list line up with the
+          rows above them rather than sitting 2px inboard. */}
       {(hint || !coarse) && (
-        <div className="flex items-center gap-3 border-t px-2.5 py-1 text-[10px] text-muted-foreground/70">
+        <div className={cn(SHELF_PAD, "flex items-center gap-3 border-t py-1 text-[10px] text-muted-foreground/70")}>
           {hint && <span className="mr-auto min-w-0 truncate font-mono">{hint}</span>}
           {coarse ? null : (
             <>
@@ -217,7 +220,7 @@ export function CompleterList({
 /** The one-line "nothing yet" / hint row the menus draw instead of a list. */
 export function CompleterNote({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
   return (
-    <ComposerStripItem className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
+    <ComposerStripItem className={cn(SHELF_PAD, "flex items-center gap-2 py-1.5 text-[11px] text-muted-foreground")}>
       <Icon className="size-3 shrink-0" />
       <span className="min-w-0 truncate">{children}</span>
     </ComposerStripItem>

@@ -22,16 +22,22 @@ export const str = (value: unknown): string | null =>
  * because a shape is not a name.
  */
 export const VENDOR_META = {
-  claudeCode: "claudeCode",
-  codex: "codex",
-  daedalus: "daedalus",
+  claudeCode: ["claudeCode"],
+  codex: ["codex"],
+  daedalus: ["daedalus"],
+  /* JetBrains AIR's extension namespace, which both claude-agent-acp and
+     codex-acp write to for a client that declares it (the harness does —
+     `CLIENT_CAPABILITIES` in `server/src/acp-bridge.ts`). Nested two deep,
+     hence a path rather than a key. */
+  air: ["jetbrains", "air"],
 } as const
 
 /** One vendor's `_meta` block on an item, or null. */
 export const vendorMeta = (
   meta: unknown,
   vendor: keyof typeof VENDOR_META,
-): Record<string, unknown> | null => asRecord(asRecord(meta)?.[VENDOR_META[vendor]])
+): Record<string, unknown> | null =>
+  VENDOR_META[vendor].reduce<Record<string, unknown> | null>((at, key) => asRecord(at?.[key]), asRecord(meta))
 
 /** `<name>…</name>` out of an XML-ish body — task notifications and OpenCode's
     task wrapper are both read with it. */

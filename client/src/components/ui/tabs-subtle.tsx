@@ -12,7 +12,7 @@ import {
   type HTMLAttributes,
 } from "react";
 import { Tabs } from "@base-ui/react/tabs";
-import { motion, AnimatePresence } from "framer-motion";
+import { m, AnimatePresence } from "motion/react";
 import type { IconComponent } from "@/lib/icon-context";
 import { cn } from "@/lib/utils";
 import { spring } from "@/lib/springs";
@@ -171,7 +171,7 @@ const TabsSubtle = forwardRef<HTMLDivElement, TabsSubtleProps>(
             >
               {/* Selected pill */}
               {selectedRect && (
-                <motion.div
+                <m.div
                   className={cn("absolute bg-active pointer-events-none", shape.bg)}
                   initial={false}
                   animate={{
@@ -191,7 +191,7 @@ const TabsSubtle = forwardRef<HTMLDivElement, TabsSubtleProps>(
               {/* Hover pill */}
               <AnimatePresence>
                 {hoverRect && !isHoveringSelected && selectedRect && (
-                  <motion.div
+                  <m.div
                     className={cn("absolute bg-active pointer-events-none", shape.bg)}
                     initial={{
                       left: selectedRect.left,
@@ -230,7 +230,7 @@ const TabsSubtle = forwardRef<HTMLDivElement, TabsSubtleProps>(
               {/* Focus ring */}
               <AnimatePresence>
                 {focusRect && (
-                  <motion.div
+                  <m.div
                     className={cn("absolute pointer-events-none z-20 border border-[color:var(--focus-ring,#6B97FF)]", shape.focusRing)}
                     initial={false}
                     animate={{
@@ -376,7 +376,7 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
         {collapseLabel ? (
           <AnimatePresence initial={false}>
             {showLabel && (
-              <motion.span
+              <m.span
                 key="label"
                 className="overflow-hidden"
                 // Until the measurement lands, let CSS resolve the width
@@ -402,7 +402,7 @@ const TabsSubtleItem = forwardRef<HTMLButtonElement, TabsSubtleItemProps>(
                 }}
               >
                 {labelContent}
-              </motion.span>
+              </m.span>
             )}
           </AnimatePresence>
         ) : (

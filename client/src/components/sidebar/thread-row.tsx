@@ -1,6 +1,6 @@
 /* ── One thread, one line ── the row, its actions, and its menus. */
 import * as React from "react"
-import { MoreVertical, X } from "lucide-react"
+import { GitBranchIcon, MoreVertical, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,10 +17,13 @@ import { useIsMobile } from "@/hooks/use-device"
 import { Badge } from "@/components/ui/badge"
 import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
+import { DiffCount } from "@/components/composer/changes-indicator"
+import { ChatPanelIcon } from "@/components/workspace/panel-kinds"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useGitSummary } from "@/lib/queries/git-summary"
 import { useStoreSelect } from "@/lib/store"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
@@ -51,6 +54,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   trash,
   active,
   pinned,
+  showProject,
   onOpen,
   onRename,
   onDelete,
@@ -65,6 +69,9 @@ export const ThreadRow = React.memo(function ThreadRow({
   trash: boolean
   active: boolean
   pinned: boolean
+  /** Whether the row names its project. Under a project's own folder it would
+      only repeat the folder, so it wears the agent's mark alone. */
+  showProject: boolean
   onOpen: (session: SessionMeta) => void
   onRename: (session: SessionMeta) => void
   onDelete: (session: SessionMeta) => void
@@ -93,6 +100,11 @@ export const ThreadRow = React.memo(function ThreadRow({
   /* The second line's first half. A project the catalog has not landed yet reads
      "Other", the same word the orphan folder uses. */
   const project = useProjects().find((p) => p.id === session.projectId)?.name ?? "Other"
+  /* The checkout's branch and uncommitted lines — the same readings the footer's
+     changes pill gives, for a thread you are not looking at. A worktree thread
+     knows its branch before the poll lands. */
+  const git = useGitSummary(session.id, !trash && !session.draft)
+  const branch = git?.branch ?? session.worktree?.branch ?? null
 
   /* ── Two lines ──
      The title owns the first line and the status is *beside* it, because the
@@ -136,6 +148,15 @@ export const ThreadRow = React.memo(function ThreadRow({
       {/* The second line: where it runs, and when it last spoke — the two facts a
           title cannot carry and the ⋯ card was the only place to read. */}
       <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 text-[11px] leading-4 text-muted-foreground">
+        {/* The tab strip's own mark — agent over project — so a row and the tab
+            it opens are visibly the same thread. Project folders drop the project. */}
+        <span aria-hidden title={showProject ? project : undefined} className="shrink-0">
+          {showProject ? (
+            <ChatPanelIcon agentId={session.agentId} projectId={session.projectId} className="size-3.5" />
+          ) : (
+            <AgentIcon agentId={session.agentId} className="size-3.5" />
+          )}
+        </span>
         {/* An aside is flagged on the row: a thread started from a passage of
             another (`asideQuote`), whose card names that thread. */}
         {session.asideQuote && (
@@ -143,7 +164,20 @@ export const ThreadRow = React.memo(function ThreadRow({
             Aside
           </span>
         )}
-        <span className="truncate">{project}</span>
+        {/* The branch takes the project's words: the mark says which project,
+            and a second line has room for one name. A thread that is in no
+            repository keeps the project's. */}
+        {branch ? (
+          <span className="flex min-w-0 items-center gap-1" title={`Branch: ${branch}`}>
+            <GitBranchIcon aria-hidden className="size-3 shrink-0" />
+            <span className="truncate">{branch}</span>
+          </span>
+        ) : (
+          showProject && <span className="truncate">{project}</span>
+        )}
+        {git && git.additions + git.deletions > 0 && (
+          <DiffCount added={git.additions} removed={git.deletions} />
+        )}
         <span aria-hidden className="opacity-50">
           ·
         </span>

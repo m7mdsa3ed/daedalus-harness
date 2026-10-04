@@ -38,22 +38,14 @@ export const ProfileInputSchema = z.object({
         // payloads from before they existed still parse.
         description: z.string().optional(),
         pricing: z.object({ input: z.number().min(0), output: z.number().min(0) }).optional(),
-        // A cheaper window of the day, stated in the provider's own clock. A
-        // fraction of the list price, so 0.5 is "half off" — and it must be
-        // inside (0, 1], since a window that costs full price or more is not
-        // one. Kept permissive on the clock strings: an unparseable "HH:MM" is
-        // read by the client as "no window", never a failed profile write.
-        offPeak: z
-          .object({
-            from: z.string().regex(/^\d{1,2}:\d{2}$/),
-            to: z.string().regex(/^\d{1,2}:\d{2}$/),
-            tz: z.string().min(1),
-            multiplier: z.number().gt(0).lte(1),
-          })
-          .optional(),
         modalities: z.array(z.string()).optional(),
         devRef: z.string().optional(),
         iconUrl: z.string().optional(),
+        // User-written, not enrichment: a label the user puts on a model so the
+        // picker draws the ones sharing it under one heading (schema.ts
+        // `ModelDef.group`). Declared here or Zod strips it on save and the
+        // group is gone the moment the form is submitted.
+        group: z.string().optional(),
       }),
     )
     .default([]),
@@ -80,6 +72,9 @@ export const ProfileInputSchema = z.object({
       carries the model's numbers, so the nag is noise the user has chosen to
       not see (see acp-bridge.ts — the bridge is where it is dropped). */
   suppressModelMetadataWarning: z.boolean().default(false),
+  /** Seconds the gateway shim waits for this provider's response headers
+      (db/schema.ts). Null/absent = the shim's default. */
+  upstreamTimeoutSeconds: z.number().int().min(10).max(3600).nullish(),
   /** Kept but not offered when starting a new thread — see `profiles.hidden`
       and `profiles.disabled` in db/schema.ts. Defaulted, so a payload from a
       client that predates the flags shows the profile rather than failing the

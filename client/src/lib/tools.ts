@@ -107,9 +107,13 @@ export {
   extractFindings,
   extractPlanProposal,
   extractPlanProposalFromPermission,
+  permissionToolCall,
   extractSkill,
   searchFlags,
 } from "./tools/structured"
+
+export type { LoadedTool, ToolSearchCall } from "./tools/tool-search"
+export { extractToolSearch, loadedTools } from "./tools/tool-search"
 
 export type { ToolView } from "./tools/view"
 export { toolSummary, toolViewOf } from "./tools/view"

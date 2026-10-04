@@ -24,17 +24,47 @@ export interface BackgroundTask {
   summary?: string
 }
 
-export function extractBackgroundTask(item: Pick<ToolItem, "meta">): BackgroundTask | null {
+export function extractBackgroundTask(
+  item: Pick<ToolItem, "meta"> & { content?: ToolItem["content"]; rawOutput?: unknown }
+): BackgroundTask | null {
   const claude = vendorMeta(item.meta, "claudeCode")
   const response = asRecord(claude?.toolResponse)
   const transcriptDir = str(response?.transcriptDir)
-  if (!transcriptDir) return null
+  if (transcriptDir) {
+    return {
+      transcriptDir,
+      taskId: str(response?.taskId) ?? undefined,
+      runId: str(response?.runId) ?? undefined,
+      workflowName: str(response?.workflowName) ?? undefined,
+      summary: str(response?.summary) ?? undefined,
+    }
+  }
+  return launchFromText(item)
+}
+
+/* For an AIR client claude-agent-acp keeps only the `status`/`isAsync`
+   markers of `toolResponse`, so the launch is read off the result the model
+   was handed, which is the call's `content`: "Workflow launched in
+   background. Task ID: …\nSummary: …\nTranscript dir: …\n…Run ID: …". The
+   workflow's name is not in it — the run's heading is `AsyncTaskItem.name`. */
+const LAUNCH_RE = /^Workflow launched in background\. Task ID: (\S+)/
+const lineAfter = (text: string, label: string): string | undefined =>
+  new RegExp(`^${label}: (.+)$`, "m").exec(text)?.[1].trim() || undefined
+
+function launchFromText(item: { content?: ToolItem["content"]; rawOutput?: unknown }): BackgroundTask | null {
+  const text =
+    (typeof item.rawOutput === "string" ? item.rawOutput : null) ??
+    (item.content ?? [])
+      .map((block) => (block.type === "content" && block.content.type === "text" ? block.content.text : ""))
+      .join("\n")
+  const launch = LAUNCH_RE.exec(text.trim())
+  const transcriptDir = launch ? lineAfter(text, "Transcript dir") : undefined
+  if (!launch || !transcriptDir) return null
   return {
     transcriptDir,
-    taskId: str(response?.taskId) ?? undefined,
-    runId: str(response?.runId) ?? undefined,
-    workflowName: str(response?.workflowName) ?? undefined,
-    summary: str(response?.summary) ?? undefined,
+    taskId: launch[1],
+    runId: lineAfter(text, "Run ID"),
+    summary: lineAfter(text, "Summary"),
   }
 }
 

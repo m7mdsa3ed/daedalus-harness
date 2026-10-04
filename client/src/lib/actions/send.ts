@@ -13,7 +13,7 @@
    Split out of the one 1500-line `useActions` memo; see `lib/actions.ts`. */
 
 import type { AttachmentRef } from "@daedalus/protocol"
-import { errorText } from "../errors"
+import { describeError, errorText } from "../errors"
 import { ApiError } from "../settings"
 import { toast } from "../toast"
 import { uuid } from "../uuid"
@@ -35,11 +35,16 @@ export function sendActions(
     known,
     requireLive,
     createSession,
+    cancelWait,
     refreshSessions,
   } = core
   const { flushThreadConfig } = config
 
   return {
+    /** Stop waiting on a long start or revive; the typed message comes back
+        through `send`'s own unsent path. */
+    cancelWait,
+
     /**
      * Send a prompt. A failure here is recorded in the transcript — with the
      * text, so the row can offer Retry — and then rethrown, so the composer
@@ -80,6 +85,18 @@ export function sendActions(
        */
       const recordUnsent = (error: unknown, context: string) => {
         const reclaimed = opts.onUnsent?.() === true
+        /* The user's own Cancel on a long wait is not a failure and draws no
+           row — unless the words had nowhere to go back to, in which case the
+           row is the only place they survive. */
+        if (describeError(error).kind === "cancelled") {
+          if (!reclaimed) {
+            recordError(sessionId, new Error("Cancelled before the agent was ready."), "Message not sent", {
+              text,
+              attachments,
+            })
+          }
+          return
+        }
         recordError(
           sessionId,
           error,
@@ -354,7 +371,12 @@ export function sendActions(
     },
 
     async resume(sessionId: string) {
-      await requireLive(sessionId).resume()
+      try {
+        await threads.for(sessionId).ready().then((socket) => socket.resume())
+      } catch (error) {
+        recordError(sessionId, error, "Couldn't continue the turn")
+        throw error
+      }
     },
 
     /** Summarize the context now. Nothing is dispatched on the way out: the

@@ -6,7 +6,6 @@ import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
 import { captureError, type InlineError } from "@/lib/errors"
 import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
-import type { OffPeakWindow } from "@/lib/off-peak"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -48,31 +47,10 @@ export interface ModelRow {
   efforts: string
   pricingInput: string
   pricingOutput: string
-  /** The cheaper window of the day, as the provider states it: two clocks, a
-      zone, and the fraction of list price charged inside it. Strings, like
-      every other number here — a half-typed one is a normal editing state. All
-      four together are the window; any blank is a model with one rate. */
-  offPeakFrom: string
-  offPeakTo: string
-  offPeakTz: string
-  offPeakMultiplier: string
   modalities: string
   devRef: string
   iconUrl: string
   group: string
-}
-
-/** The row's off-peak fields as a window, or null when they are not one. All
-    four are required and the rate has to land in (0, 1]: a half-filled window
-    is a typo in progress, not a discount to save. */
-function offPeakWindowOf(row: ModelRow): OffPeakWindow | null {
-  const from = row.offPeakFrom.trim()
-  const to = row.offPeakTo.trim()
-  const tz = row.offPeakTz.trim()
-  const multiplier = Number(row.offPeakMultiplier.trim())
-  if (!from || !to || !tz) return null
-  if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 1) return null
-  return { from, to, tz, multiplier }
 }
 
 let modelUid = 0
@@ -85,10 +63,6 @@ export const blankModelRow = (): ModelRow => ({
   efforts: "",
   pricingInput: "",
   pricingOutput: "",
-  offPeakFrom: "",
-  offPeakTo: "",
-  offPeakTz: "",
-  offPeakMultiplier: "",
   modalities: "",
   devRef: "",
   iconUrl: "",
@@ -106,12 +80,6 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   efforts: candidate.reasoningEfforts.join(", "),
   pricingInput: candidate.pricing ? String(candidate.pricing.input) : "",
   pricingOutput: candidate.pricing ? String(candidate.pricing.output) : "",
-  // models.dev has no peak/off-peak data, so a fetched candidate never brings
-  // a window — the four fields start empty and are typed by hand.
-  offPeakFrom: "",
-  offPeakTo: "",
-  offPeakTz: "",
-  offPeakMultiplier: "",
   modalities: (candidate.modalities ?? []).join(", "),
   devRef: candidate.devRef ?? "",
   iconUrl: candidate.iconUrl ?? "",
@@ -125,7 +93,6 @@ export const toModelRows = (models: {
   maxOutputTokens?: number
   reasoningEfforts: string[]
   pricing?: { input: number; output: number }
-  offPeak?: OffPeakWindow
   modalities?: string[]
   devRef?: string
   iconUrl?: string
@@ -140,10 +107,6 @@ export const toModelRows = (models: {
     efforts: m.reasoningEfforts.join(", "),
     pricingInput: m.pricing ? String(m.pricing.input) : "",
     pricingOutput: m.pricing ? String(m.pricing.output) : "",
-    offPeakFrom: m.offPeak?.from ?? "",
-    offPeakTo: m.offPeak?.to ?? "",
-    offPeakTz: m.offPeak?.tz ?? "",
-    offPeakMultiplier: m.offPeak ? String(m.offPeak.multiplier) : "",
     modalities: (m.modalities ?? []).join(", "),
     devRef: m.devRef ?? "",
     iconUrl: m.iconUrl ?? "",
@@ -158,7 +121,6 @@ export function rowsToModels(rows: ModelRow[]) {
     maxOutputTokens?: number
     reasoningEfforts: string[]
     pricing?: { input: number; output: number }
-    offPeak?: OffPeakWindow
     modalities?: string[]
     devRef?: string
     iconUrl?: string
@@ -171,7 +133,6 @@ export function rowsToModels(rows: ModelRow[]) {
     const maxOut = Number(row.maxOutputTokens.trim())
     const pricingInput = Number(row.pricingInput.trim())
     const pricingOutput = Number(row.pricingOutput.trim())
-    const offPeak = offPeakWindowOf(row)
     const modalities = row.modalities
       .split(/[,\s]+/)
       .map((m) => m.trim().toLowerCase())
@@ -191,7 +152,6 @@ export function rowsToModels(rows: ModelRow[]) {
       pricingOutput > 0
         ? { pricing: { input: pricingInput, output: pricingOutput } }
         : {}),
-      ...(offPeak ? { offPeak } : {}),
       ...(modalities.length ? { modalities } : {}),
       ...(row.devRef.trim() ? { devRef: row.devRef.trim() } : {}),
       ...(row.iconUrl.trim() ? { iconUrl: row.iconUrl.trim() } : {}),
@@ -220,11 +180,6 @@ const summaryBadges = (row: ModelRow) => {
   if (context > 0) badges.push(`${formatTokens(Math.round(context))} context`)
   if (row.pricingInput.trim() && row.pricingOutput.trim())
     badges.push(`$${trimNum(Number(row.pricingInput))} / $${trimNum(Number(row.pricingOutput))} per Mtok`)
-  const offPeak = offPeakWindowOf(row)
-  if (offPeak)
-    badges.push(
-      `${Math.round((1 - offPeak.multiplier) * 100)}% off ${offPeak.from}–${offPeak.to} ${offPeak.tz}`
-    )
   const efforts = row.efforts.split(/[,\s]+/).filter(Boolean)
   if (efforts.length) badges.push(`efforts: ${efforts.join(" · ")}`)
   const modalities = row.modalities.split(/[,\s]+/).filter((m) => m && m !== "text")
@@ -569,51 +524,6 @@ function ModelEditorFields({
             className="text-left @panel-sm:text-right font-mono text-xs"
           />
         </Field>
-        {/* A window of the day the provider charges less for. All four make the
-            window; a blank one is a model with a single all-day rate, which is
-            what most are. */}
-        <div className="@panel-sm:col-span-2 grid gap-3 @panel-sm:grid-cols-4">
-          <Field label="Off-peak from" hint="HH:MM, in the zone beside it.">
-            <Input
-              value={row.offPeakFrom}
-              onChange={(e) => onPatch({ offPeakFrom: e.target.value })}
-              placeholder="16:30"
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field label="Off-peak to" hint="May wrap past midnight.">
-            <Input
-              value={row.offPeakTo}
-              onChange={(e) => onPatch({ offPeakTo: e.target.value })}
-              placeholder="00:30"
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field label="Zone" hint="The provider's own clock.">
-            <Input
-              value={row.offPeakTz}
-              onChange={(e) => onPatch({ offPeakTz: e.target.value })}
-              placeholder="UTC"
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field label="Rate" hint="Fraction of list price; 0.5 = half off.">
-            <Input
-              type="number"
-              step="any"
-              min="0.01"
-              max="1"
-              value={row.offPeakMultiplier}
-              onChange={(e) => onPatch({ offPeakMultiplier: e.target.value })}
-              placeholder="0.5"
-              className="text-left @panel-sm:text-right font-mono text-xs"
-            />
-          </Field>
-          <p className="@panel-sm:col-span-4 text-xs text-muted-foreground">
-            A cheaper window of the day, as the provider states it — the endpoint bills by its
-            own clock, so this only reports the saving; nothing is sent to ask for it.
-          </p>
-        </div>
         <div className="@panel-sm:col-span-2">
           <Field label="Icon URL" hint="Optional — shown in the composer trigger when this model is selected.">
             <div className="flex items-center gap-2">

@@ -358,6 +358,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   true again. An agent that does not advertise `sessionCapabilities.resume`, or refuses one,
   gets `session/load` with its narration dropped (`quietLoad`); only if that fails too does
   the thread start fresh. A rewind passes `clear` — truncating is what it is for.
+  **The clear waits for the spawn to be proven**: the load's events are held in
+  `Session.loadBuffer` and the journal is emptied and refilled only once `bridge.ready`
+  resolves, so a revive that fails (agent missing, handshake timeout) leaves the archive
+  whole and readable. Whatever can be checked before the old process is closed — agent,
+  profile, install — is checked first, and a failure after it ends `exited`, never a
+  half-live session with no bridge.
 - **A process is the pool's; a session is the thread's** (`acp-connection.ts`). An
   `AcpConnection` owns the child, its stdio and the one `initialize`; each `AcpBridge` is one
   session on it and routes by id (`ConnectionRoute.ownsSession`: its own id, the id a
@@ -581,6 +587,59 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   completes is accepted **server-side** on `elicitation/complete`: the answer is already in,
   and waiting for a browser meant an agent with no peer attached blocked forever.
 
+## AIR: the dialect we are spoken to in
+
+- **The harness declares `_meta.jetbrains.air` in `CLIENT_CAPABILITIES`, and both adapters
+  then treat it as JetBrains AIR** (codex-acp ≥ 2.0.1, claude-agent-acp ≥ 0.84.0; their own
+  docs are the adapters' `AIR.md`). It was declared for `asyncTasks` — the background-task
+  lifecycle (`async_task_*`, rerouted past the SDK's update union in `acp-bridge.ts`) — and
+  the key is a whole dialect, not one feature: it gives things and takes them away. The
+  capability list (`AIR_META`) carries, beside `asyncTasks`:
+  - `nativeSubagentSessions` — the AIR spelling of the RFD's `clientCapabilities.subagents`,
+    which a released SDK may strip. Both are sent; a Claude Code `Agent`/`Task` child now
+    gets a session of its own, the way codex's did ("Subagents").
+  - `sessionFailure` — a warning or a failed turn is a typed record
+    (`protocol.ts` `SessionFailure`: `id`, `revision`, `category`, `severity`, `title`,
+    `details?`, `actions`) instead of a `Warning:` text chunk, a JSON-RPC error or
+    `_meta.codex.error`. It arrives two ways: on a `session_info_update` at
+    `_meta.jetbrains.air.sessionFailure` (an ordinary update, journaled, the server never
+    reads it), and — for a failure that ends the running turn, answered `end_turn` — on the
+    prompt's *answer*, which the bridge parses (`parseSessionFailure`) and puts on
+    `turn_ended.failure`. Journaled with the turn's end, so a replay draws it again. The
+    client hands the second door to the first reader (`thread-socket.ts`), so there is one
+    rule: **one row per `id`, placed where its first record arrived, replaced only by a
+    higher `revision`**. Actions are the agent's and never inferred from `category`; only
+    `retry` has a door on a row today. A severity `error` still makes the turn's verdict a
+    failure.
+  - `recommendedValue` — model and effort selectors name the runtime's recommendation, and
+    Claude Code replaces its ambiguous `default` row with concrete values. The client reads
+    it generically (`session-options.ts` `recommendedValue`, only if it names one of the
+    selector's own values) and the config menu and palette draw a muted "Recommended".
+  - `planContentDelta` — codex sends a markdown plan whole once, then `plan.content: ""`
+    with the appended text at `_meta.jetbrains.air.contentDelta`.
+- **What it costs.** **`_meta.terminal_output_delta` must be declared beside `jetbrains`**,
+  or an AIR client gets no command output at all — codex sends a Bash step with nothing in
+  it, and Claude Code draws no terminal. Claude's `_meta.claudeCode` shrinks to `toolName`,
+  `parentToolUseId` and `toolResponse` *markers* (`status`, `isAsync`) — the full tool
+  response is gone, so a question's answers, a web search's hits and a workflow launch are
+  read from the result text. **Edit's `rawInput` has no `old_string`/`new_string` and
+  Write's no `content`: the `diff` content block is the source** (`extractEdits` falls back
+  to it), and a permission request carries little more than the id and a title, so the
+  approval card reads it together with the transcript's own row (`permissionToolCall`).
+  A Bash description is `air.commandTitle`; a subagent call says `air.subagent: true`.
+- **An update is a delta.** A `tool_call_update` omits every top-level field unchanged since
+  the last report, and `_meta` is filtered per key (the terminal chunks excepted), so the
+  client's `mergeMeta` merges plain objects all the way down — a one-level merge wiped the
+  rest of `air` on every update.
+- **Old journals keep their old shapes.** A thread journaled before the upgrade replays
+  `claudeCode.toolResponse`, `claudeCode.title`, `codex.subagent` and the rest verbatim, so
+  **no old reader is deleted**; each new source is read beside it, new first. The namespace
+  is spelled once, `VENDOR_META.air` in `lib/tools/helpers.ts`, read through `vendorMeta`.
+- **ACP's own `notice` update is claimed too** (`session.notices`): warnings, deprecations and
+  config problems the agent used to keep to itself. It is live by the spec and journaled by
+  us like every update, so the client keys its row on the text and a replay does not draw it
+  twice.
+
 ## Subagents
 
 - **Subagents: the store is flat, the transcript is a tree, and there are three ways a
@@ -590,7 +649,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   = the `toolCallId` of the `Task`/`Agent` call that launched it — but withholds the
   child's prose and thinking unless the client claims
   `clientCapabilities._meta["subagent-transcript"]`, and attributes best-effort: a child's
-  `tool_call` can go out unowned and be told its parent on a later update. Codex
+  `tool_call` can go out unowned and be told its parent on a later update. That is the
+  pre-0.84 shape, still read for old journals: since 0.84 a client that negotiates native
+  subagent sessions (we do, see "AIR") gets Claude Code's children the way Codex's arrive
+  below. Codex
   (`codex-acp` ≥ 1.7) implements the draft **ACP Subagent Sessions RFD** (PR #1992):
   after both sides advertise `subagents`, the parent session gets `subagent_spawned
   {subagentSessionId, name, task, capabilities}`, the child's updates arrive as ordinary

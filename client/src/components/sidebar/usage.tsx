@@ -58,7 +58,7 @@ type PlanReading = {
   groupKey: string
   name: string
   /** The fullest window — what each popover block summarises with. */
-  peak: WindowReading
+  peak: WindowReading | null
   windows: WindowReading[]
   /** The accounts a multi-account gateway holds, when it named any — see
       `QuotaAccount`. Each draws its own block inside the reading, because a
@@ -202,7 +202,10 @@ export function SidebarUsage() {
          exception: a turned-off account has no bars either, and saying so is
          exactly what the popover is for. */
       if (windows.length === 0 && accounts.length === 0) return []
-      const peak = windows.reduce((worst, window) => (window.percent >= worst.percent ? window : worst))
+      const peak = windows.reduce<WindowReading | null>(
+        (worst, window) => (!worst || window.percent >= worst.percent ? window : worst),
+        null
+      )
       /* Which card the reading files under. A provider plan carries its
          provider's `usage.kind` (`zai`, `command-code`, …) — two Z.AI keys land
          on one Z.AI card, each still naming its own account. A runtime probe is

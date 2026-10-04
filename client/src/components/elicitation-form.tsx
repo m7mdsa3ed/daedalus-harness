@@ -62,6 +62,12 @@ function fieldPrompt(field: ElicitationField, message: string, single: boolean):
     The current one is a pill, not a dot — position reads at a glance, which is
     the one thing about a multi-question form a reader keeps wanting to know.
     Cheaper than "2 of 3" and it sits in the header where the eye already is. */
+/** Inline markdown, unless the text has blocks: the inline renderer unwraps a
+ *  fenced block or a list into one run of text, losing its lines. */
+function QuestionText({ text, className }: { text: string; className?: string }) {
+  return text.includes("\n") ? <Prose text={text} className={className} /> : <ProsePreview text={text} className={className} />
+}
+
 function StepDots({ total, current }: { total: number; current: number }) {
   return (
     <span aria-hidden className="flex shrink-0 items-center gap-1 pt-0.5">
@@ -109,7 +115,7 @@ function ElicitationStep({
         {/* mb-0! because the wrapper's own margin is set by a `:has(~ …)`
             variant that can't see the description through this row. */}
         <QuestionnaireTitle className="mb-0! flex-1 text-[15px] leading-snug">
-          <ProsePreview text={prompt} className="text-[15px] leading-snug" />
+          <QuestionText text={prompt} className="text-[15px] leading-snug" />
         </QuestionnaireTitle>
         {chip && (
           <span className="mt-px shrink-0 rounded-pill bg-background/60 px-2 py-0.5 text-[10px] leading-4 tracking-wide text-muted-foreground">
@@ -131,20 +137,26 @@ function ElicitationStep({
               <ProsePreview text={option.label} className="font-medium" />
               {option.description && (
                 <QuestionnaireChoiceDescription className="text-xs">
-                  <ProsePreview text={option.description} />
+                  <QuestionText text={option.description} />
                 </QuestionnaireChoiceDescription>
               )}
               {/* A preview is a mockup or a snippet the option wants compared
-                  against its siblings, so every option shows its own rather
-                  than revealing one at a time — but capped, since a long one
-                  would push the next option off the screen. */}
+                  against its siblings, so every option shows its own, whole —
+                  a capped one hid the very lines it was there to compare. Only
+                  a wide line scrolls, sideways. */}
               {option.preview && (
                 /* One step further down than the option it sits in — the same
                    `bg-background/60` would make it invisible against its own
                    parent. Prose marks up a markdown preview; a code preview
                    still finds its fenced blocks styled by the same renderer. */
-                <div className="mt-1.5 max-h-40 overflow-auto rounded-lg bg-muted/60 px-2.5 py-2 text-[11px] leading-relaxed text-foreground/90">
-                  <Prose text={option.preview} />
+                <div className="mt-1.5 overflow-x-auto rounded-lg bg-muted/60 px-2.5 py-2 text-[11px] leading-relaxed text-foreground/90">
+                  {/* A mockup's whitespace is its layout, so it is drawn verbatim
+                      in mono; only a preview that fences its own code is markdown. */}
+                  {option.preview.includes("```") ? (
+                    <Prose text={option.preview} />
+                  ) : (
+                    <pre className="font-mono whitespace-pre">{option.preview}</pre>
+                  )}
                 </div>
               )}
             </QuestionnaireChoice>

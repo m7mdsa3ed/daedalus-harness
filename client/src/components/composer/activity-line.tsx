@@ -31,20 +31,22 @@ function RetryStatus({ retry }: { retry: NonNullable<ThreadState["retry"]> }) {
       <div className="flex min-w-0 items-start gap-2">
         <LoaderCircleIcon className="mt-0.5 size-4 shrink-0 animate-spin text-destructive" aria-hidden />
         <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="font-medium text-foreground">Retrying request</p>
-            <span className="rounded-pill bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+          {/* One row that never wraps: the title gives way (truncates), the badge
+              and Copy keep their size, so neither drops onto a line of its own. */}
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="min-w-0 flex-1 truncate font-medium text-foreground">Retrying request</p>
+            <span className="shrink-0 rounded-pill bg-destructive/10 px-2 py-0.5 text-[10px] font-medium whitespace-nowrap text-destructive">
               {attempts}
             </span>
+            {errorText && (
+              <CopyButton text={errorText} size="icon-xs" className="-my-1 -mr-1 size-6 shrink-0" label="Copy error" />
+            )}
           </div>
-          {cause && <p className="break-words leading-5 text-muted-foreground">{cause}</p>}
+          {cause && <p className="line-clamp-2 break-words leading-5 text-muted-foreground">{cause}</p>}
           {errorText && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
-              <Disclosure open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)}>
-                {detailsOpen ? "Hide error details" : "Show error details"}
-              </Disclosure>
-              <CopyButton text={errorText} size="icon-xs" className="size-6" label="Copy error" />
-            </div>
+            <Disclosure open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)}>
+              {detailsOpen ? "Hide error details" : "Show error details"}
+            </Disclosure>
           )}
           {detailsOpen && errorText && (
             <pre className="max-h-40 overflow-auto rounded-md border border-border/50 bg-background/60 p-2 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words text-muted-foreground">

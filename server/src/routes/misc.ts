@@ -44,6 +44,8 @@ const webSearchResponse = (ws: { searchApiBaseUrl: string; searchModel: string; 
   hasToken: Boolean(ws.searchApiToken),
 });
 
+/* A dockview's own shape and nothing deeper: its panels and its grid. */
+
 /* What the composer posts after a send has reached the server. `text` is the
    prompt as typed; the rest is provenance the history panel prints and is
    optional because not every surface that sends has a thread behind it. */

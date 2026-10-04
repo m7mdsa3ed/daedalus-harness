@@ -32,7 +32,8 @@ import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
 import { AcpPool, pool } from "./acp-connection.js";
 import { makeBridgeHost } from "./bridge-host.js";
-import { enrichError, pushStderr, resetStderr } from "./stderr-ring.js";
+import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-ring.js";
+import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
 import { AGENTS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
@@ -269,6 +270,12 @@ export interface Session {
       both journal and fan out through. Set for the length of one spawn; see
       `respawnNow`. */
   quietLoad: boolean;
+  /** Set while a respawn that *clears* the journal is running its handshake:
+      the journaled events it emits are held here instead of appended, and
+      the clear happens only once `bridge.ready` resolves — then they are
+      replayed into the emptied log. A spawn that fails leaves the old journal
+      exactly as it was. See `respawnNow`. */
+  loadBuffer?: Array<[ThreadEvent, Peer | undefined, boolean]> | null;
   /** The journal is this thread's conversation, whole: written live by a
       handshake that succeeded in *this* server run, not pruned since, and not
       forked from by a load that fell back to a fresh session. What lets a
@@ -522,8 +529,10 @@ export interface SessionEvents {
   /** The agent asked the user something (elicitation/create) with nobody
       attached to answer. Same push case as a permission, different sentence. */
   onElicitationRequest?: (session: Session) => void;
-  /** `error` is the error the prompt failed with, when it failed. */
-  onTurnEnd?: (session: Session, error?: unknown) => void;
+  /** `error` is the error the prompt failed with, when it failed. `promptText`
+      is the message that opened the turn, so a notification can say what was
+      asked and not merely that something finished. */
+  onTurnEnd?: (session: Session, error?: unknown, promptText?: string) => void;
   /** The process is gone — retired, collapsed, or the thread deleted. Fired
       for every session, live or not; the workflow runner cancels whatever this
       thread was orchestrating. */
@@ -784,7 +793,10 @@ export class SessionManager {
    */
   shutdown(): void {
     for (const session of this.sessions.values()) {
-      this.closePeers(session, 4000, "The server shut down, which stops every agent process with it.");
+      /* 1001 ("going away"), not 4000: a deploy says nothing about the thread,
+         so the client's ladder reattaches on its own once the server is back,
+         instead of drawing a dead thread with a Revive button. */
+      this.closePeers(session, 1001, "The server shut down, which stops every agent process with it.");
       if (!session.exited)
         this.retire(
           session,
@@ -1029,6 +1041,10 @@ export class SessionManager {
        what took the turn boundaries with it, which `rewindPoint`, the turn
        table of contents and every window are read from. See `respawnNow`. */
     if (session.quietLoad && event.ev === "update" && event.historyReplay) return;
+    if (session.loadBuffer && JOURNALED.has(event.ev)) {
+      session.loadBuffer.push([event, except, mirrored]);
+      return;
+    }
     // A mirrored event is a step's, already recorded under the step's own
     // thread — counting it again here would bill every search twice.
     if (!mirrored && session.websearchViaMcp && event.ev === "update" && !event.historyReplay) {
@@ -1075,10 +1091,10 @@ export class SessionManager {
          turn ending states its own verdict, which for a clean or cancelled one
          is null. Only a top-level turn: a workflow step's `turn_ended` is
          never mirrored onto its parent, so a failed step marks the step. */
-      session.lastTurnError =
-        event.ev === "turn_ended" && event.error
-          ? event.error.message.slice(0, LAST_ERROR_MAX)
-          : null;
+      const failedAs = event.ev === "turn_ended"
+        ? event.error?.message ?? (event.failure?.severity === "error" ? event.failure.title : undefined)
+        : undefined;
+      session.lastTurnError = failedAs ? failedAs.slice(0, LAST_ERROR_MAX) : null;
       if (event.ev === "turn_ended" && event.usage && event.durationMs && event.durationMs > 0) {
         const rate = (event.usage.outputTokens * 1000) / event.durationMs;
         if (Number.isFinite(rate) && rate > 0) {
@@ -1335,6 +1351,10 @@ export class SessionManager {
    * how a prompt to a dying agent used to just stop mid-turn.
    */
   private collapse(session: Session, bridge: AcpBridge, reason: string): void {
+    /* Once per bridge: a failed handshake and the process's own error/close
+       handlers can each report the same death. */
+    if (this.collapsed.has(bridge)) return;
+    this.collapsed.add(bridge);
     session.exited = true;
     /* Nothing is going to reach that turn's boundary now — the process holding
        it is gone. A change left staged would be applied by whatever revived the
@@ -1347,6 +1367,8 @@ export class SessionManager {
       this.closePeers(session, 4001, reason);
     }, 0).unref();
   }
+
+  private collapsed = new WeakSet<AcpBridge>();
 
   /** `id` lets the client name the thread it has already routed to; the caller
       is responsible for having checked that it is a free UUID. Without one the
@@ -1405,41 +1427,66 @@ export class SessionManager {
        no half-made thread behind it. The id is needed to name it, so it is
        minted here when the caller did not. */
     const threadId = id ?? randomUUID();
-    const worktree =
-      opts.worktree === true
-        ? await git.createWorktree(project.cwd, threadId)
-        : typeof opts.worktree === "string"
-          ? opts.worktree
-          : null;
-    const session = this.blankSession(profile, agentId, project, links, {
-      worktree,
-      id: threadId,
-      model,
-      effort,
-      modeId: opts.modeId,
-      personaId: opts.personaId,
-      suggestFollowups: opts.suggestFollowups,
-      uiBlocks: opts.uiBlocks,
-      title: opts.title,
-      parentSessionId: opts.parentSessionId,
-      autonomy: opts.autonomy,
-      ...(opts.aside ? { forkedFrom: { sessionId: opts.aside.of, turnId: null }, asideQuote: opts.aside.quote } : {}),
-    });
+    const madeWorktree = opts.worktree === true;
+    const worktree = madeWorktree
+      ? await git.createWorktree(project.cwd, threadId)
+      : typeof opts.worktree === "string"
+        ? opts.worktree
+        : null;
+    /* A failed create leaves nothing behind: no map entry (a retry would be a
+       409), no row (a ghost "New thread"), no worktree this call made. */
+    const undoWorktree = () => {
+      if (madeWorktree && worktree) void git.removeWorktree(project.cwd, worktree, true).catch(() => {});
+    };
+    let session: Session;
+    try {
+      session = this.blankSession(profile, agentId, project, links, {
+        worktree,
+        id: threadId,
+        model,
+        effort,
+        modeId: opts.modeId,
+        personaId: opts.personaId,
+        suggestFollowups: opts.suggestFollowups,
+        uiBlocks: opts.uiBlocks,
+        title: opts.title,
+        parentSessionId: opts.parentSessionId,
+        autonomy: opts.autonomy,
+        ...(opts.aside ? { forkedFrom: { sessionId: opts.aside.of, turnId: null }, asideQuote: opts.aside.quote } : {}),
+      });
+    } catch (error) {
+      undoWorktree();
+      throw error;
+    }
     /* Re-checked after the awaits above, and synchronously with the set: a
        caller's "is it free" was asked before them, and two creates for one id
        both passing it used to overwrite the map — leaking the first thread's
-       process where nothing could reach it again. */
+       process where nothing could reach it again. Refused before anything is
+       ours to undo: the id's owner keeps its row, links and worktree. */
     if (this.sessions.has(session.id)) throw new HttpError("session already exists", 409);
     this.sessions.set(session.id, session);
-    // Before the bridge: the event rows reference this one, so the session has
-    // to exist by the time the agent's first update arrives.
-    await this.createRow(session);
-    await this.persistLinks(session);
-    await this.start(session, profile, project, model, effort, {
-      configChoices,
-      restore: opts.restore,
-      modeId: opts.modeId,
-    });
+    try {
+      // Before the bridge: the event rows reference this one, so the session has
+      // to exist by the time the agent's first update arrives.
+      await this.createRow(session);
+      await this.persistLinks(session);
+      const bridge = await this.start(session, profile, project, model, effort, {
+        configChoices,
+        restore: opts.restore,
+        modeId: opts.modeId,
+      });
+      /* The handshake is part of creating: a thread whose agent never answered
+         is not one. */
+      await bridge.ready;
+    } catch (error) {
+      const message = spliceStderr(session, describe(error));
+      this.sessions.delete(session.id);
+      if (!session.exited) this.retire(session, message);
+      await db.delete(sessionsTable).where(eq(sessionsTable.id, session.id)).catch(() => {});
+      undoWorktree();
+      if (error instanceof HttpError) throw new HttpError(message, error.status);
+      throw new Error(message);
+    }
     /* Again, now that the handshake has answered. What it answered with — the
        agent's session id above all — is written by a callback whose own write
        is not awaited by anything (`onAcpSessionId`), so it is only as durable
@@ -1658,14 +1705,19 @@ export class SessionManager {
        where it also pins the model alias vars — and it is put back over ACP
        once the session exists instead. */
     const ownsCatalog = (profile.models?.length ?? 0) > 0;
-    this.materializeFor(session, profile, project);
     /* Independent reads, taken together: each is a query, and in series they
-       were the part of a spawn that happens before the process even exists. */
+       were the part of a spawn that happens before the process even exists.
+       The materialisation is among them and awaited: a failure to write the
+       workspace (or a project directory that is gone) fails the spawn. */
     const [agent, rules, servers] = await Promise.all([
       getAgent(session.agentId),
       Promise.all([globalRules(), projectRules(project.id)]).then(([global, local]) => [...global, ...local]),
       this.serversFor(session, profile, project),
+      this.materializeFor(session, profile, project),
     ]);
+    /* Measured, not assumed: a missing binary fails here naming the agent and
+       its own install line, not later as an ENOENT naming the command. */
+    if (agent) assertInstalled(agent, session, project);
     /* The allowlist an `"acp"`-live agent builds its model picker from. Written
        before the spawn because it is read once, at `session/new`, and it is the
        union across every profile that serves this agent rather than this one's
@@ -1713,21 +1765,27 @@ export class SessionManager {
     const feedPort = wantsFeed ? this.ports.take() : undefined;
     const sidecar = feedPort ? { port: feedPort, password: randomBytes(24).toString("hex") } : undefined;
     if (wantsFeed && !sidecar) console.warn(`[${session.id.slice(0, 8)}] no port ready for the subagent feed; spawning without it`);
-    const spec = await resolveAgentSpawn(
-      profile,
-      session.agentId,
-      /* The agent runs where the thread does — its worktree, when it has one. */
-      { ...project, cwd: threadCwd(session, project) },
-      ownsCatalog ? model : undefined,
-      ownsCatalog ? effort : undefined,
-      session.id,
-      persona,
-      sidecar,
-      /* Nobody is going to change the model for a workflow step or a scheduled
-         run, and `whenTurnSettled` is what both wait on — so a held turn there
-         is a run that never reports. */
-      unattended,
-    );
+    let spec: Awaited<ReturnType<typeof resolveAgentSpawn>>;
+    try {
+      spec = await resolveAgentSpawn(
+        profile,
+        session.agentId,
+        /* The agent runs where the thread does — its worktree, when it has one. */
+        { ...project, cwd: threadCwd(session, project) },
+        ownsCatalog ? model : undefined,
+        ownsCatalog ? effort : undefined,
+        session.id,
+        persona,
+        sidecar,
+        /* Nobody is going to change the model for a workflow step or a scheduled
+           run, and `whenTurnSettled` is what both wait on — so a held turn there
+           is a run that never reports. */
+        unattended,
+      );
+    } catch (error) {
+      if (feedPort) this.ports.give(feedPort);
+      throw error;
+    }
     /* A runtime that takes env per session (`AgentDef.sharedProcess`) is
        spawned with none of the thread's: all of it — gateway URL, key, model
        vars — rides this session's `_meta` instead, so every thread in this cwd
@@ -1797,7 +1855,7 @@ export class SessionManager {
         if (session.bridge === bridge && !session.historyLost) session.journalClean = true;
       },
       (error: unknown) => {
-        if (session.bridge === bridge && !session.exited) this.collapse(session, bridge, describe(error));
+        if (session.bridge === bridge && !session.exited) this.collapse(session, bridge, spliceStderr(session, describe(error)));
       },
     );
     this.wire(session, proc, bridge, profile.name, conn.shared);
@@ -1827,7 +1885,7 @@ export class SessionManager {
        workflow; Claude Code's `Workflow` tool writes a *script* — loops,
        branching, fan-out over a list it discovered — where a definition here is
        a static graph of at most 16 steps, and the harness can now draw its runs
-       (`AIR_ASYNC_TASKS_META` in acp-bridge.ts, `nativeWorkflowRun` in the
+       (`AIR_META` in acp-bridge.ts, `nativeWorkflowRun` in the
        client), which is the only thing it ever lacked. Handing such a runtime
        the lesser engine AND disallowing its own — which is what linking the
        server does, see `workflowViaMcp` — would be trading down.
@@ -2122,7 +2180,10 @@ export class SessionManager {
         keepJournal: keep,
       });
     } catch (error) {
-      this.emit(session, { ev: "restart", state: "failed", error: toWireError(error) });
+      /* The agent's own words for why it would not come up — the same splice
+         the respawn route and a ready rejection make. */
+      const wire = toWireError(error);
+      this.emit(session, { ev: "restart", state: "failed", error: { ...wire, message: spliceStderr(session, wire.message) } });
       return error;
     }
     /* Every setting this restart moved, one row each, journaled so they replay
@@ -2504,7 +2565,7 @@ export class SessionManager {
     project: Project,
     model?: string,
     effort?: string,
-    opts: { keepJournal?: boolean; clear?: boolean } = {},
+    opts: { keepJournal?: boolean; clear?: boolean; revive?: boolean } = {},
   ): Promise<Session> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(
@@ -2540,7 +2601,7 @@ export class SessionManager {
     project: Project,
     model?: string,
     effort?: string,
-    opts: { keepJournal?: boolean; clear?: boolean } = {},
+    opts: { keepJournal?: boolean; clear?: boolean; revive?: boolean } = {},
   ): Promise<Session> {
     // Re-checked once the queue lets us through: the thread may have been
     // deleted (or purged) while a first respawn was still in flight.
@@ -2551,6 +2612,36 @@ export class SessionManager {
       throw new Error(
         "This thread is in Trash. Restore it from the thread list before changing or starting it.",
       );
+    /* A revive of a thread that is already live is answered with the live
+       thread. Two devices opening the same retired thread each ask for one;
+       the second, queued behind the first, used to kill the process the first
+       had just brought up. Only a revive (`opts.revive`) — a restart asked for
+       by name may be about a setting that is not an argument here (a persona)
+       — and only with nothing to change. */
+    if (
+      opts.revive &&
+      !opts.clear &&
+      !session.stagedConfig &&
+      session.bridge &&
+      !session.exited &&
+      profile.id === session.profileId &&
+      agentId === session.agentId &&
+      (!model || model === session.model) &&
+      (!effort || effort === session.effort)
+    ) {
+      await session.bridge.ready;
+      return session;
+    }
+    /* What `start` would refuse, refused before anything is torn down: an
+       unknown agent, a profile not configured for it, a binary that is not
+       there. Failing after the close below left a thread with no process and
+       a row naming settings nothing ever ran on. */
+    const agentDef = await getAgent(agentId);
+    if (!agentDef) throw new Error(`unknown agent: ${agentId}`);
+    if (!profileSupports(profile, agentId)) {
+      throw new Error(`profile "${profile.name}" is not configured for ${agentId}`);
+    }
+    assertInstalled(agentDef, session, project);
     /* A change that costs the process was staged when it was picked, and this
        is a spawn — so the settings it comes up on are the staged ones. Folded
        as a *value substitution*, never by re-entering `applyConfig`: that path
@@ -2619,6 +2710,9 @@ export class SessionManager {
     const restore = live ?? { modeId: session.modeId ?? undefined, configOptions: [] };
     const choices = live ? undefined : session.configChoices;
     const oldBridge = session.bridge;
+    /* Put back if the spawn fails: the row must name what is actually running
+       — or, with nothing running, what last did. */
+    const prev = { profileId: session.profileId, agentId: session.agentId, model: session.model, effort: session.effort };
     session.bridge = null; // stale generation from here on
     session.unwire?.();
     /* Closing the bridge is what ends the process — or, on a shared one, this
@@ -2655,8 +2749,18 @@ export class SessionManager {
        is for. */
     const keep = !opts.clear && (opts.keepJournal || (session.journalClean && session.eventCount > 0));
     session.journalClean = false; // until this spawn's handshake says otherwise
+    /* The clear is not taken until the new process has proven itself: the
+       load's narration is held (`loadBuffer`) and written into the emptied log
+       once `ready` resolves. A spawn that fails — a crash, a refused handshake
+       — used to have already destroyed the only readable copy of the thread. */
     if (keep) session.quietLoad = true;
-    else await this.log.clear(session);
+    else {
+      /* The old bridge's close lands a microtask or two later, and the turn it
+         interrupted ends in the log being *kept* until this spawn proves
+         itself — the same tick `processGone` waits for. */
+      await new Promise((resolve) => setImmediate(resolve));
+      session.loadBuffer = [];
+    }
     resetStderr(session);
     try {
       const bridge = await this.start(session, spawnProfile, project, spawnModel, spawnEffort, {
@@ -2668,10 +2772,31 @@ export class SessionManager {
       // A handshake that never finished leaves a thread that needs reviving —
       // `start` has collapsed it, and the caller turns this into an {error}.
       await bridge.ready;
+      if (session.loadBuffer) {
+        await this.log.clear(session);
+        const held = session.loadBuffer;
+        session.loadBuffer = null;
+        for (const [event, except, mirrored] of held) this.emit(session, event, except, mirrored);
+      }
+    } catch (error) {
+      /* Never leave `bridge: null, exited: false` behind — every path that
+         asks "is this thread live" reads `exited`, and a send then failed
+         inside a bridge that did not exist instead of reviving. */
+      const failed = session.bridge;
+      if (failed && !session.exited) this.collapse(session, failed, spliceStderr(session, describe(error)));
+      else if (!failed) {
+        session.exited = true;
+        session.proc = null;
+        this.processGone(session, describe(error));
+      }
+      Object.assign(session, prev);
+      this.persist(session);
+      throw error;
     } finally {
       /* The load is over either way it went, and a flag left standing would
          silence the next turn's updates. */
       session.quietLoad = false;
+      session.loadBuffer = null;
     }
     /* A fold moved settings nobody has announced yet — `restartWith` says what
        it moved because it knows, and this spawn happened for some other reason
@@ -2994,9 +3119,10 @@ export class SessionManager {
   private async whenSpawnable(session: Session): Promise<AcpBridge> {
     await session.respawnChain?.catch(() => {});
     const bridge = session.bridge;
-    if (!bridge) throw new Error("this thread has no running agent");
+    // A collapsed process keeps its bridge; it is no more live than none.
+    if (!bridge || session.exited) throw new Error("this thread has no running agent");
     await bridge.ready;
-    if (session.bridge !== bridge) throw new Error("the agent process is gone");
+    if (session.bridge !== bridge || session.exited) throw new Error("the agent process is gone");
     return bridge;
   }
 
@@ -3184,13 +3310,17 @@ export class SessionManager {
    */
   async resumeTurn(id: string): Promise<{ paused: boolean }> {
     const session = this.requireSession(id);
-    const bridge = session.bridge;
-    if (!bridge) throw new Error("this thread has no running agent");
+    /* Behind any respawn in flight, and never against a dead process: a
+       hook-held bridge answers `resume` from its own state, so a collapsed one
+       would report success for a turn nothing is running. */
+    const bridge = await this.whenSpawnable(session);
     if (session.stagedConfig) {
       await this.flushStagedNow(session);
       if (session.bridge !== bridge) return { paused: false };
     }
-    return bridge.resume();
+    const result = await bridge.resume();
+    if (session.bridge !== bridge || session.exited) throw new Error("the agent process is gone");
+    return result;
   }
 
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
@@ -3313,7 +3443,10 @@ export class SessionManager {
       pinnedAt: s.pinnedAt,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,
-      exited: s.exited,
+      /* A collapsed process keeps its bridge object (the generation token),
+         so `exited` alone is the answer — but a thread mid-respawn has no
+         bridge at all, and neither can take a prompt. */
+      exited: s.exited || !s.bridge,
       promptActive: s.bridge?.promptActive ?? false,
       /* Live state for a list that has never opened the thread (the agents
          dashboard): read off the bridge, never stored. A permission or a
@@ -3505,6 +3638,18 @@ export class SessionManager {
   /** One page of history, without a socket. See `SessionSocket.earlierPage`. */
   earlierPage(id: string, before: number) {
     return this.socket.earlierPage(id, before);
+  }
+}
+
+/** Measured, not assumed: a missing binary fails naming the agent and its own
+    install line, not later as an ENOENT naming the command. */
+function assertInstalled(agent: AgentDef, session: Session, project: Project): void {
+  const found = checkInstalled(agent, { ...project, cwd: threadCwd(session, project) });
+  if (!found.installed) {
+    throw new HttpError(
+      `${agent.name} is not installed (missing ${found.missing})${agent.install ? ` — install it with: ${agent.install}` : ""}`,
+      424,
+    );
   }
 }
 

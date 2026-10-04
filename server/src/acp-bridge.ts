@@ -24,6 +24,7 @@ import type {
   SessionUpdate,
   ThreadEvent,
   ThreadHold,
+  SessionFailure,
   ThreadRetry,
   WireError,
 } from "./protocol.js";
@@ -183,10 +184,66 @@ const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCa
 
    Requires the adapter's `workflow_progress` passthrough (`pnpm patch:acp`).
    Without the patch this still earns the run's name, live token and tool
-   counts and its terminal state — everything except the per-agent tree. */
-const AIR_ASYNC_TASKS_META = {
-  jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } },
+   counts and its terminal state — everything except the per-agent tree.
+
+   Declaring AIR at all is a bargain with both adapters, not one: each reads
+   the key and from then on speaks to us as it speaks to JetBrains, which
+   takes things away as well as giving them. What each name below buys:
+
+   - `terminal_output_delta` (a sibling of `jetbrains`, not one of its
+     capabilities). An AIR client gets a command's output ONLY as
+     `_meta.terminal_output_delta` chunks, and only if it says it takes them —
+     unclaimed, codex sends a Bash step with no output at all and Claude Code
+     draws no terminal. The adapters spell it at the top of `_meta`.
+   - `asyncTasks` — the background-task lifecycle above.
+   - `nativeSubagentSessions` — the AIR spelling of SUBAGENT_CAPABILITY's
+     opt-in. Released SDKs may strip the draft `clientCapabilities.subagents`
+     field on the way out, and both adapters accept this as the same signal,
+     so a child keeps its own session whichever one survives. Both are sent.
+   - `sessionFailure` — a warning or a failed turn arrives as a typed record
+     (`protocol.ts` `SessionFailure`) instead of a `Warning:` text chunk, a
+     JSON-RPC error or `_meta.codex.error`. On a `session_info_update` it is
+     an ordinary update and passes through untouched; on the prompt's answer
+     it rides `turn_ended.failure` (`settleTurn`).
+   - `recommendedValue` — the model and effort selectors name the value the
+     runtime recommends, and Claude Code replaces its ambiguous `default` row
+     with concrete values. Read by the client; nothing here.
+   - `planContentDelta` — codex streams a markdown plan as appended text on
+     `plan_update` rather than a whole snapshot per beat. The client appends. */
+const AIR_META = {
+  terminal_output_delta: true,
+  jetbrains: {
+    air: {
+      version: 1,
+      capabilities: ["asyncTasks", "nativeSubagentSessions", "sessionFailure", "recommendedValue", "planContentDelta"],
+    },
+  },
 } as const;
+
+/** Read the AIR failure record off a `session/prompt` answer's `_meta`, or
+    undefined when there is none or it is malformed. A record that fails the
+    shape is dropped rather than repaired: every field is the adapter's, and a
+    half-record drawn as a failure is worse than the turn's plain ending. */
+export function parseSessionFailure(meta: unknown): SessionFailure | undefined {
+  const raw = (meta as { jetbrains?: { air?: { sessionFailure?: unknown } } } | null | undefined)
+    ?.jetbrains?.air?.sessionFailure;
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== "string" || !r.id) return undefined;
+  if (typeof r.revision !== "number" || !Number.isInteger(r.revision) || r.revision < 1) return undefined;
+  if (r.severity !== "warning" && r.severity !== "error") return undefined;
+  if (typeof r.title !== "string") return undefined;
+  if (!Array.isArray(r.actions) || !r.actions.every((a) => typeof a === "string")) return undefined;
+  return {
+    id: r.id,
+    revision: r.revision,
+    category: typeof r.category === "string" ? r.category : "unknown",
+    severity: r.severity,
+    title: r.title,
+    ...(typeof r.details === "string" ? { details: r.details } : {}),
+    actions: r.actions as string[],
+  };
+}
 
 /* The harness's own pause pair, spelled the same in `agent/src/app.ts`. ACP
    has no pause — `session/cancel` is the one interruption and it throws the
@@ -284,7 +341,7 @@ const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
      ahead of the SDK in exactly the same way, and met exactly the same fate:
      the adapter sent every beat of a dynamic workflow, the server logged each
      one as an unknown variant and dropped it, and the client saw nothing —
-     found by driving a run end to end after `AIR_ASYNC_TASKS_META` went in.
+     found by driving a run end to end after `AIR_META` went in.
      Same detour, for as long as the SDK's union lacks them. */
   "async_task_spawned",
   "async_task_progress",
@@ -313,21 +370,21 @@ const isSubagentUpdate = (message: acp.AnyMessage): boolean => {
 
 /**
  * Codex's "Model metadata for `…` not found. Defaulting to fallback metadata"
- * notice, in the shape codex-acp streams it: a text chunk whose content begins
- * "Warning: Model metadata for ". Matched on the wording, not on the
- * particular `sessionUpdate`, because that is what is stable across codex-acp
- * builds and what is meaningful to a human — anything else a gateway agent
- * warns about still gets through, and a chunk that is not a warning is left
- * alone.
+ * warning, in every shape codex-acp sends it: an ACP `notice` (its title) when
+ * the client takes notices, an AIR `sessionFailure` record, and the old
+ * "Warning: …" text chunk. Matched on the wording, which is what is stable
+ * across builds — anything else a gateway agent warns about still gets through.
  */
-function isFallbackModelMetadataWarning(update: { sessionUpdate?: unknown; content?: unknown; text?: unknown }): boolean {
-  if (update.sessionUpdate !== "agent_message_chunk") return false;
+function isFallbackModelMetadataWarning(update: Record<string, unknown>): boolean {
   let text = "";
-  if (update.content && typeof update.content === "object") {
-    const content = update.content as Record<string, unknown>;
-    if (typeof content.text === "string") text = content.text;
-  } else if (typeof update.text === "string") {
-    text = update.text;
+  if (update.sessionUpdate === "notice") {
+    if (typeof update.title === "string") text = update.title;
+  } else if (update.sessionUpdate === "session_info_update") {
+    text = parseSessionFailure(update._meta)?.title ?? "";
+  } else if (update.sessionUpdate === "agent_message_chunk") {
+    const content = update.content as Record<string, unknown> | undefined;
+    if (content && typeof content.text === "string") text = content.text;
+    else if (typeof update.text === "string") text = update.text;
   }
   return text.includes("not found. Defaulting to fallback metadata");
 }
@@ -349,7 +406,15 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
   // `compaction_summary_chunk` to itself unless the client claims this,
   // so without it a long thread silently loses its history mid-turn and
   // the transcript shows nothing at all. `{}` is the whole contract.
-  session: { compaction: {}, configOptions: { boolean: {} } },
+  session: {
+    compaction: {},
+    configOptions: { boolean: {} },
+    // The ACP `notice` session update: advisory text — codex's warnings,
+    // config warnings and deprecations — that an agent otherwise sends as a
+    // `Warning:` text chunk in the assistant's own prose. Passed through like
+    // any other update; the client draws it.
+    notices: {},
+  },
   // Same bargain for plans. ACP has two plan channels: the original
   // `plan` notification, and `plan_update`/`plan_removed`, which carry
   // markdown and file-backed plans as well as structured entries. An
@@ -376,8 +441,9 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
   // stamps every update a subagent produces with
   // `_meta.claudeCode.parentToolUseId`, but withholds the subagent's
   // prose and thinking — the part that says what it concluded — unless
-  // the client says it can render a nested transcript.
-  _meta: { "subagent-transcript": true, ...AIR_ASYNC_TASKS_META },
+  // the client says it can render a nested transcript. The rest is AIR's
+  // (`AIR_META`, above).
+  _meta: { "subagent-transcript": true, ...AIR_META },
 };
 
 /** The ndJSON stream over a spawned agent's stdio. From here on the SDK owns
@@ -540,7 +606,16 @@ export interface BridgeHost {
       cancelled or failed, after which nothing should auto-follow; `continued`
       = `hasQueued()` said yes and the host is expected to drain now. The push
       hook lives behind this on the host's side, gated on both. */
-  onTurnSettled(info: { error?: WireError; interrupted: boolean; continued: boolean; turnId: string }): void;
+  onTurnSettled(info: {
+    error?: WireError;
+    interrupted: boolean;
+    continued: boolean;
+    turnId: string;
+    /** The words that opened the logical turn — the first prompt of it, since a
+        steer joins a turn rather than opening one. A notification shows it as
+        the "what was asked"; undefined when the turn had no prompt of ours. */
+    promptText?: string;
+  }): void;
   /** The agent accepted a `session/new` or a `session/load`: this is the
       session the running process is on. `proven` says which — a load that
       answered is the strongest evidence an id can have (the agent found the
@@ -713,6 +788,9 @@ export class AcpBridge implements ConnectionRoute {
       so a turn's last REAL id survives chunks that do not carry one, rather
       than being clobbered back to nothing at the end. */
   private lastSeenMessageId: string | null = null;
+  /** The AIR failure record the running turn's prompt answers carried, for
+      `turn_ended.failure`. Cleared when a turn opens and when it ends. */
+  private turnFailure: SessionFailure | undefined;
   /** Tool calls this turn has announced and not yet settled. A steer's bubble
       waits on this being empty — see `announceSteer`. Cleared with the turn,
       because a turn that ended has no step left to finish. */
@@ -770,9 +848,24 @@ export class AcpBridge implements ConnectionRoute {
 
   private async handshake(opts: BridgeOptions): Promise<void> {
     const timeout = new Error("the agent did not finish the handshake in time");
+    /* An inactivity budget, not a wall clock: `session/load` streams the whole
+       conversation back before it answers, and a long thread legitimately
+       takes longer than any fixed span. The clock is re-armed when
+       `initialize` answers and on every frame the agent sends this session
+       (`onUpdate`), so only an agent that has gone *silent* for the full span
+       times out. */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let fire = (): void => {};
     const deadline = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(timeout), HANDSHAKE_TIMEOUT_MS).unref();
+      fire = () => reject(timeout);
     });
+    const arm = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(fire, HANDSHAKE_TIMEOUT_MS);
+      timer.unref();
+    };
+    arm();
+    this.handshakeActivity = arm;
     const span = this.trace.standalone(
       opts.load?.resume ? "session/resume" : opts.load ? "session/load" : "session/new",
       "session",
@@ -798,13 +891,20 @@ export class AcpBridge implements ConnectionRoute {
         if (error === timeout || initFailed) this.conn.kill();
       }
       throw error;
+    } finally {
+      clearTimeout(timer);
+      this.handshakeActivity = null;
     }
   }
+
+  /** Re-arms the handshake's inactivity clock while one is running. */
+  private handshakeActivity: (() => void) | null = null;
 
   private async runHandshake(opts: BridgeOptions): Promise<void> {
     /* Said once per process, by the connection — every session on it shares
        the answer (`AcpConnection.initialized`). */
     const initialized = await this.conn.initialized;
+    this.handshakeActivity?.(); // initialize answered: the load gets a fresh budget
     this.agentCapabilities = initialized.agentCapabilities ?? {};
 
     if (opts.load?.resume && this.agentCapabilities.sessionCapabilities?.resume) {
@@ -1089,13 +1189,15 @@ export class AcpBridge implements ConnectionRoute {
    */
   private async applyAgentOwned(state: { model?: string; effort?: string }): Promise<void> {
     const placed = await this.setByCategory(state, "after the restart");
-    if (!state.model || placed.model) return;
-    /* Only where the agent has a model selector to be corrected *from*: one
-       that advertises none was never asked, so there is no answer of its own to
-       put in the record's place and the pick stays where it is. */
-    const selector = this.selectorFor("model");
-    if (!selector || selector.type !== "select") return;
-    this.host.onSpawnStateChange({ model: selector.currentValue });
+    /* Only where the agent has a selector to be corrected *from*: one that
+       advertises none was never asked, so there is no answer of its own to put
+       in the record's place and the pick stays where it is. Effort too — a
+       Claude Code record still saying its old `default` effort was refused on
+       every revive and never moved. */
+    const model = state.model && !placed.model ? this.selectorFor("model") : undefined;
+    if (model?.type === "select") this.host.onSpawnStateChange({ model: model.currentValue });
+    const effort = state.effort && !placed.effort ? this.selectorFor("thought_level") : undefined;
+    if (effort?.type === "select") this.host.onSpawnStateChange({ effort: effort.currentValue });
   }
 
   /** The agent's own selector for a category, if it advertises one. */
@@ -1258,11 +1360,12 @@ export class AcpBridge implements ConnectionRoute {
   }
 
   onUpdate(notification: SessionNotification): void {
+    this.handshakeActivity?.(); // a load still streaming is not a wedged agent
     /* A profile that opted out of the nag never sees it: the model's numbers
        were already given in the profile, so what codex is warning about is
        something the harness could not put back (the catalog file not reaching
        this codex build — see model-catalog.ts), which no user action fixes. */
-    if (this.suppressModelMetadataWarning && isFallbackModelMetadataWarning(notification.update)) {
+    if (this.suppressModelMetadataWarning && isFallbackModelMetadataWarning(notification.update as unknown as Record<string, unknown>)) {
       return;
     }
     /* A subagent's session (RFD) is any id that is not this process's own.
@@ -1622,6 +1725,7 @@ export class AcpBridge implements ConnectionRoute {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
       this.lastSeenMessageId = null;
+      this.turnFailure = undefined;
       this.host.markTurnStderr();
       this.turnStartedAt = performance.now();
       this.turnToolDurationMs = 0;
@@ -1700,7 +1804,13 @@ export class AcpBridge implements ConnectionRoute {
       })
       .then(
         once(async (response: acp.PromptResponse) =>
-          await this.settleTurn(response.usage ?? null, undefined, text, response.stopReason),
+          await this.settleTurn(
+            response.usage ?? null,
+            undefined,
+            text,
+            response.stopReason,
+            parseSessionFailure(response._meta),
+          ),
         ),
         once((error: unknown) => this.onPromptRejected(error, text)),
       );
@@ -1730,7 +1840,12 @@ export class AcpBridge implements ConnectionRoute {
     error: WireError | undefined,
     text: string,
     stopReason?: acp.StopReason,
+    /** The AIR record of a turn that failed while answering `end_turn` — a
+        steer's answer can carry one too, so the last one seen is kept until
+        the turn itself ends. */
+    failure?: SessionFailure,
   ): Promise<void> {
+    if (failure) this.turnFailure = failure;
     // Steering: a second prompt sent mid-turn keeps the turn open. Only the one
     // that empties the set ends it.
     if (--this.inflight > 0) return;
@@ -1755,7 +1870,16 @@ export class AcpBridge implements ConnectionRoute {
     const toolDurationMs = durationMs !== undefined
       ? Math.min(durationMs, Math.round(this.turnToolDurationMs))
       : undefined;
-    this.trace.endTurn({ error: error?.message, usage, stopReason, durationMs, toolDurationMs });
+    const turnFailure = this.turnFailure;
+    this.turnFailure = undefined;
+    /* An AIR failure answers `end_turn`, but it is a failed turn to everything
+       on this side — a workflow step, a routine, the push, `lastTurnError`,
+       the queue's park. The wire keeps `error` as the agent sent it (the
+       client draws `failure`); only the server's own verdict reads this. */
+    const failed = error ?? (turnFailure?.severity === "error"
+      ? { code: -32603, message: turnFailure.details ? `${turnFailure.title}\n${turnFailure.details}` : turnFailure.title }
+      : undefined);
+    this.trace.endTurn({ error: failed?.message, usage, stopReason, durationMs, toolDurationMs });
     this.turnStartedAt = null;
     this.turnToolDurationMs = 0;
     /* The session has content now, so the agent has written it down and a later
@@ -1772,7 +1896,7 @@ export class AcpBridge implements ConnectionRoute {
     /* A cancelled turn is a SUCCESS on the wire — the agent answers the prompt
        with `stopReason: "cancelled"` — which is why the reason is read here and
        not only the error: a Stop must park the queue, not drain it. */
-    const interrupted = error !== undefined || stopReason === "cancelled";
+    const interrupted = failed !== undefined || stopReason === "cancelled";
     const continued = !interrupted && !this.closed && (await this.host.hasQueued());
     this.host.emit({
       ev: "turn_ended",
@@ -1782,12 +1906,13 @@ export class AcpBridge implements ConnectionRoute {
       error,
       promptText,
       ...(continued ? { continued: true } : {}),
+      ...(turnFailure ? { failure: turnFailure } : {}),
       ...(this.lastSeenMessageId ? { lastMessageId: this.lastSeenMessageId } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
       ...(toolDurationMs !== undefined ? { toolDurationMs } : {}),
     });
     this.releaseIdle();
-    this.host.onTurnSettled({ error, interrupted, continued, turnId });
+    this.host.onTurnSettled({ error: failed, interrupted, continued, turnId, promptText: promptText ?? undefined });
   }
 
   async setMode(modeId: string, origin?: Peer): Promise<void> {

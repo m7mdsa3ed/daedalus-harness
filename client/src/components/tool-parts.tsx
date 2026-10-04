@@ -56,6 +56,7 @@ import { useCoarsePointer } from "@/hooks/use-device"
 import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
 import { splitOpenuiFences } from "@/lib/openui/fences"
 import { FileLink } from "@/components/file-link"
+import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 import { USER_CHIP_COMPONENTS, remarkUserChips } from "@/components/thread-items/user-chips"
 
 export const KIND_LABELS: Record<string, string> = {
@@ -135,6 +136,31 @@ export const KIND_CHIPS: Record<string, string> = {
    the thing it is in. Outside the dock the var is unset and the fallback makes
    it the viewport again. */
 export const PANE_MAX_H = "max-h-[min(calc(var(--panel-h,100svh)*0.6),28rem)]"
+
+/* How tall a thinking row's detail grows before it scrolls itself.
+
+   The cap has to exist — an unbounded reasoning block pushes everything after
+   it off the screen — but a fixed one is wrong in both directions: 28rem is
+   most of a phone and a slab on a desktop, and the whole point of the row while
+   it streams is that you can watch the newest words land. So it is a fraction
+   of the *panel* (`--panel-h`, published by `workspace/panel-container`; the
+   fallback makes it the viewport outside one), and the fraction moves with the
+   panel's **width** — `@panel-sm:`, the container query, not `sm:`, because a
+   chat squeezed beside a terminal is narrow for the same reason a phone is.
+
+   Deliberately *tight*: the box is a live view, not a reading pane — it is open
+   only while the thought streams (see `ThoughtDetail` in
+   `thread-items/rows.tsx`, and `autoOpen` on `StepRow`) and folds to one line
+   the moment it settles, so it should not eat the turn it sits in. A short
+   panel gets less of it (0.3), a roomy one more (0.42, still ceilinged so a tall
+   monitor does not turn a thought into a page).
+
+   The box follows its own newest text while the thought streams — see
+   `ThoughtDetail` — because the transcript's `useFollowStream` measures the
+   *content*, and a capped box stops growing: the newest thinking would be
+   exactly what falls out of view. */
+export const THOUGHT_MAX_H =
+  "max-h-[calc(var(--panel-h,100svh)*0.3)] @panel-sm:max-h-[min(calc(var(--panel-h,100svh)*0.42),20rem)]"
 
 /* ── The transcript's shared shapes ──
    One spelling each for a pane, a card, a caption and a disclosure, because
@@ -275,6 +301,23 @@ const MarkdownPre = ({
   )
 }
 
+/* Inline code that is an absolute path is a door to the file, like a `FileLink`
+   elsewhere. Only a leading `/`: relative names in prose are too often not files.
+   `FileLink` itself refuses a path outside the project, and a `:line` suffix is
+   dropped because the preview opens the file, not a line. */
+const ABS_PATH_RE = /^\/[\w@.+-]+(?:\/[\w@.+-]+)*$/
+const MarkdownCode = ({
+  node: _node,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"code"> & { node?: unknown }) => {
+  const code = <code className={className} {...props}>{children}</code>
+  if (className || typeof children !== "string") return code
+  const path = children.replace(/:\d+(?:[-:]\d+)?$/, "")
+  return ABS_PATH_RE.test(path) ? <FileLink path={path}>{code}</FileLink> : code
+}
+
 /* Exported so the one markdown pass can be reused outside the transcript — the
    changelog dialog renders a release's own markdown, and a table or a link there
    should be the same box and the same target `Prose` gives it. */
@@ -285,6 +328,7 @@ export const MARKDOWN_COMPONENTS = {
     </div>
   ),
   a: MarkdownLink,
+  code: MarkdownCode,
   pre: MarkdownPre,
 } as never
 
@@ -1187,7 +1231,19 @@ export function ShellPane({
 
 /** A file a step acted on, as a chip. The path is elided to its basename so a
     row says "Read" + `package.json` rather than an elided mono path; the full
-    path rides in the tooltip. Clickable only where `useThreadLinks` is alive. */
+    path rides in the tooltip.
+
+    **The chip is the door to the file, not a label with an eye beside it.** A
+    path that resolves into the thread's project (`projectPath`) is drawn as a
+    button that opens the Preview panel, exactly as a `FileLink` in prose and a
+    user bubble's `@` mention do; anything else — outside the project, or no
+    thread in reach — is the plain chip it always was, because a control that
+    can only fail is worse than none.
+
+    It cannot be a real `<button>`: the chip sits inside the row's disclosure
+    button, and a button may not hold a button. It is a `role="button"` span
+    instead, which is also what lets the row keep one hit target for "read this
+    step" without the file chip stealing the whole line's clicks. */
 export function FileBadge({
   file,
   filePath,
@@ -1200,6 +1256,8 @@ export function FileBadge({
       which is the part of the file the row is actually about. */
   range?: FileRange
 }) {
+  const ctx = React.useContext(FilePreviewContext)
+  const target = filePath && ctx ? projectPath(filePath, ctx.scope) : null
   const inner = (
     <>
       <FileTextIcon aria-hidden className="size-3 shrink-0 opacity-70" />
@@ -1215,8 +1273,36 @@ export function FileBadge({
      line that had otherwise faded in. On a row that mounts whole it simply
      lands with the title it belongs to — it inherits that part's `--part-i`,
      so it is the same 45ms, not a slot of its own. */
-  const cls = "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
-  return <span className={cls} title={filePath ?? file}>{inner}</span>
+  const cls =
+    "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
+  if (!ctx || !target) return <span className={cls} title={filePath ?? file}>{inner}</span>
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      /* The disclosure is the row's, so a click here must not fold the row it
+         sits in: kept from reaching the button above it, the same way the
+         chip's own keyboard activation is. */
+      onClick={(event) => {
+        event.stopPropagation()
+        ctx.open(target)
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return
+        event.preventDefault()
+        event.stopPropagation()
+        ctx.open(target)
+      }}
+      aria-label={`Preview ${target}`}
+      title={`Preview ${target}`}
+      className={cn(
+        cls,
+        "cursor-pointer transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      )}
+    >
+      {inner}
+    </span>
+  )
 }
 
 

@@ -53,9 +53,25 @@ const EVENT_LABELS: Record<ThreadEvent, string> = {
   questionAsked: "The agent has a question",
 }
 
-/** The events the agent is BLOCKED on — they get an "Open" affordance, and the
-    OS notification stays up until it is dealt with where the platform allows. */
+/** The events the agent is BLOCKED on, so the OS notification stays up until it
+    is dealt with where the platform honours `requireInteraction`. Distinct from
+    the "Open" action, which every event carries: the thread is where the answer
+    is, and a turn that merely finished has somewhere to go too. */
 const ACTIONABLE = new Set<ThreadEvent>(["permissionNeeded", "questionAsked", "turnFailed"])
+
+/** One line, cut for a notification body. The OS truncates silently and a toast
+    does not truncate at all, so the cut is made once here, where both read it. */
+function oneLine(text: string, max = 160): string {
+  const flat = text.replace(/\s+/g, " ").trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}...` : flat
+}
+
+/** The parts of a notice's body, joined for `notifyThreadEvent`: the thread
+    title is prefixed there, so a caller with more than one thing to say — the
+    message the user sent, then the failure's own line — says it here. */
+export function noticeDetail(...parts: (string | undefined)[]): string | undefined {
+  return parts.filter((part): part is string => Boolean(part)).join(" — ") || undefined
+}
 
 /** Which tone carries which event: the tinted disc on the toast. Actionable
     kinds are "info" (the agent is waiting), a finished turn is a quiet
@@ -310,18 +326,18 @@ export function notifyThreadEvent(
   if (!force && isViewing(sessionId)) return
 
   const label = EVENT_LABELS[event]
-  const body = [title, detail].filter(Boolean).join(" — ")
+  const body = [title, detail]
+    .filter((part): part is string => Boolean(part))
+    .map((part) => oneLine(part))
+    .join(" — ")
 
-  /* In-app, a normal toast. The actionable events — the ones that are
-     waiting on the user — carry an "Open" affordance; a turn that merely
-     finished needs no button. The tone says the kind (the tinted disc on the
+  /* In-app, a normal toast. Every event carries the "Open" action — the thread
+     is where the detail is, and a finished turn is exactly the case where the
+     reader wants to jump there. The tone says the kind (the tinted disc on the
      card's leading edge), the same language the inbox rows speak. */
-  const actionable = ACTIONABLE.has(event)
   const toastOpts: Parameters<typeof toast>[1] = {
     description: body,
-    ...(actionable
-      ? { action: { label: "Open", onClick: () => openThread(sessionId) } }
-      : {}),
+    action: { label: "Open", onClick: () => openThread(sessionId) },
   }
   const tone = EVENT_TOAST_TONE[event]
   if (tone === "error") toast.error(label, toastOpts)
@@ -345,8 +361,15 @@ function raiseSystemNotification(
   label: string,
   body: string
 ): void {
-  const tag = `${sessionId}:${event}`
-  const actionable = ACTIONABLE.has(event)
+  const shape: NotificationShape = {
+    body,
+    tag: `${sessionId}:${event}`,
+    sessionId,
+    actionable: ACTIONABLE.has(event),
+    // The web layer's explicit "Open" button. The desktop shell is one banner
+    // whose click already routes, so it has nothing to draw instead.
+    openAction: true,
+  }
 
   /* The desktop shell first, and with no permission check: it has no web
      permission worth consulting (main.cjs grants it) and the web API is the one
@@ -356,13 +379,13 @@ function raiseSystemNotification(
   if (desktopNotify) {
     void desktopNotify({ title: label, body, sessionId }).then(
       (shown) => {
-        if (!shown) showWebNotification(label, { body, tag, sessionId, actionable }, sessionId)
+        if (!shown) showWebNotification(label, shape, sessionId)
       },
-      () => showWebNotification(label, { body, tag, sessionId, actionable }, sessionId)
+      () => showWebNotification(label, shape, sessionId)
     )
     return
   }
-  showWebNotification(label, { body, tag, sessionId, actionable }, sessionId)
+  showWebNotification(label, shape, sessionId)
 }
 
 function showWebNotification(

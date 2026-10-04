@@ -998,6 +998,25 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       setTimeout(() => process.exit(3), 20);
       return;
     }
+    /* A prompt mentioning "air-incident" fails the way an AIR adapter does
+       it: `end_turn`, with the typed record on the answer's `_meta` — sent
+       only to a client that declared `sessionFailure`, exactly as gated.
+       (Not "fail", which the branch above already answers.) */
+    if (asked.includes("air-incident")) {
+      const air = clientCapabilities?._meta?.jetbrains?.air;
+      const failure = air?.capabilities?.includes("sessionFailure")
+        ? { id: "turn-1:error", revision: 1, category: "limit", severity: "error", title: "You've hit your usage limit.", actions: ["retry"] }
+        : undefined;
+      out({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: {
+          stopReason: "end_turn",
+          ...(failure ? { _meta: { jetbrains: { air: { version: 1, sessionFailure: failure } } } } : {}),
+        },
+      });
+      return;
+    }
     /* A prompt mentioning "compact" runs a context compaction: the in_progress
        upsert, the summary streamed as chunks, then a terminal update carrying
        neither `summary` nor `error` — the shape that proves the client patches

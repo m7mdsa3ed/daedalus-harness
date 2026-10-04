@@ -28,7 +28,7 @@ const FILE_STATUS: Record<ChangedFile["status"], { letter: string; tone: string 
 }
 
 /** The two figures, in the one place they are spelled. */
-function DiffCount({ added, removed }: { added: number; removed: number }) {
+export function DiffCount({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="shrink-0 font-mono text-[11px] tabular-nums">
       <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}

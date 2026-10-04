@@ -16,6 +16,13 @@
    way would compound two errors to answer a question the provider already
    answered exactly.
 
+   The conversation's own division (what the user said, what the model wrote,
+   what the tools answered) is the same bargain one level down: each is counted
+   locally and the *provider's remainder* is shared out in their proportion, so
+   the three always sum to what the provider left once the static parts were
+   taken, and a tokenizer that runs a little long shrinks all three alike
+   instead of landing its error on one.
+
    **This is an estimate and says so everywhere it is drawn.** We speak
    OpenAI-compatible to whatever gateway is configured, so the ranks are only
    exactly right when the serving model is OpenAI's; a different family tokenizes
@@ -41,17 +48,47 @@ export interface PrefixTokens {
   /** The same for the MCP servers' tools (`mcp__<server>__<tool>`), which a
       reader adds and removes — the part of the tool block that is theirs. */
   mcp: number;
+  /** What each of the three is made of — raw local counts, so only their
+      proportions mean anything; the client scales them to the part's figure. */
+  items: PrefixItems;
+}
+
+/** One named piece of the static prefix: a system prompt section (or one of
+    its `##` headings), or one tool's definition. */
+export interface PrefixItem {
+  name: string;
+  tokens: number;
+}
+
+export interface PrefixItems {
+  system: PrefixItem[];
+  tools: PrefixItem[];
+  mcp: PrefixItem[];
 }
 
 /** A request's prompt, divided. `total` and `conversation` are exact (they come
     from the provider); `system` and `tools` are the local estimate. */
-export interface PromptBreakdown extends PrefixTokens {
+export interface PromptBreakdown extends Omit<PrefixTokens, "items"> {
   /** The whole prompt, as the provider billed it. */
   total: number;
-  /** User-role message text counted locally from the exact messages sent. */
-  user: number;
-  /** The remaining history and tool results, derived from the provider total. */
+  /** Everything that is not the static prefix: `total` less the system prompt
+      and the tool blocks, and always `user + assistant + results` unless the
+      messages could not be counted at all (then it is the lone remainder). */
   conversation: number;
+  /** The user's messages' share of `conversation`. */
+  user: number;
+  /** The model's own earlier replies and tool calls' share of it. */
+  assistant: number;
+  /** The tools' results' share of it. */
+  results: number;
+}
+
+/** Locally counted tokens of the history, by who wrote it — proportions only,
+    never a figure that is drawn. */
+export interface HistoryTokens {
+  user: number;
+  assistant: number;
+  results: number;
 }
 
 /* The JSON Schema behind a tool, whatever shape the tool was built in.
@@ -72,26 +109,51 @@ function schemaOf(tool: ToolSet[string]): unknown | null {
   }
 }
 
+/* A tool as the provider is sent it. A description the SDK computes per call is
+   one whose text only exists at the call, which is not this walk — so the tool
+   is counted without it and the figure comes out slightly low rather than
+   invented. Every tool this runtime builds carries a static description; only a
+   third-party one could differ. */
+function functionOf(name: string, tool: ToolSet[string]): ChatCompletionFunctionDefinition | null {
+  const parameters = schemaOf(tool);
+  if (parameters === null) return null;
+  const description = typeof tool.description === "string" ? tool.description : undefined;
+  return {
+    name,
+    ...(description ? { description } : {}),
+    parameters: parameters as ChatCompletionFunctionDefinition["parameters"],
+  };
+}
+
 /** The tool block's own tokens: what a provider has to tokenize on *every*
     step of every turn, whether or not a call is made. */
 export function prefixTools(tools: ToolSet): number {
-  const functions: ChatCompletionFunctionDefinition[] = [];
-  for (const [name, tool] of Object.entries(tools)) {
-    const parameters = schemaOf(tool);
-    if (parameters === null) continue;
-    /* A description the SDK computes per call is one whose text only exists at
-       the call, which is not this walk — so the tool is counted without it and
-       the figure comes out slightly low rather than invented. Every tool this
-       runtime builds carries a static description; only a third-party one
-       could differ. */
-    const description = typeof tool.description === "string" ? tool.description : undefined;
-    functions.push({
-      name,
-      ...(description ? { description } : {}),
-      parameters: parameters as ChatCompletionFunctionDefinition["parameters"],
-    });
-  }
+  const functions = Object.entries(tools).flatMap(([name, tool]) => functionOf(name, tool) ?? []);
   return functions.length ? estimateTokensInFunctions(functions, countTokens) : 0;
+}
+
+/** Each tool's own definition, counted alone, biggest first. */
+function toolItems(tools: [string, ToolSet[string]][]): PrefixItem[] {
+  return tools
+    .flatMap(([name, tool]) => {
+      const fn = functionOf(name, tool);
+      return fn ? [{ name, tokens: estimateTokensInFunctions([fn], countTokens) }] : [];
+    })
+    .sort((x, y) => y.tokens - x.tokens);
+}
+
+/* A section's `##` headings are its own rows: the core instructions are one
+   block of a dozen topics, and "which topic is the long one" is the question. */
+function systemItems(sections: { name: string; text: string }[]): PrefixItem[] {
+  const items: PrefixItem[] = [];
+  for (const { name, text } of sections) {
+    for (const chunk of text.split(/\n(?=## )/)) {
+      const heading = chunk.startsWith("## ") ? chunk.split("\n", 1)[0].slice(3).trim() : "";
+      const tokens = countTokens(chunk);
+      if (tokens > 0) items.push({ name: heading ? `${name} › ${heading}` : name, tokens });
+    }
+  }
+  return items;
 }
 
 /** The system prompt's own tokens, on the same footing the library counts a
@@ -100,35 +162,74 @@ export function prefixSystem(system: string): number {
   return system ? countMessageTokens({ role: "system", content: system }, countTokens) : 0;
 }
 
-/** Text in user-role messages is separate from assistant history and tool
-    results. Non-text media is excluded; text uses the same tokenizer and
-    framing as the system message. */
-export function userMessageTokens(messages: ModelMessage[]): number {
-  return messages.reduce((total, message) => {
-    if (message.role !== "user") return total;
-    const content =
-      typeof message.content === "string"
-        ? message.content
-        : message.content
-            .filter((part) => part.type === "text")
-            .map((part) => (part.type === "text" ? part.text : ""))
-            .join("");
-    return total + countMessageTokens({ role: "user", content }, countTokens);
-  }, 0);
+/* The text of a tool call or result as a provider is sent it. Media is not
+   counted: its cost is the provider's own formula, and an estimate of it would
+   be a guess dressed as a count. */
+function resultText(output: unknown): string {
+  const o = output as { type?: string; value?: unknown } | undefined;
+  if (!o || typeof o !== "object") return String(output ?? "");
+  if (o.type === "content" && Array.isArray(o.value))
+    return o.value.map((part) => (part?.type === "text" ? part.text : "")).join("");
+  return typeof o.value === "string" ? o.value : JSON.stringify(o.value ?? "");
+}
+
+function messageText(message: ModelMessage): string {
+  if (typeof message.content === "string") return message.content;
+  return (message.content as { type: string; [k: string]: unknown }[])
+    .map((part) => {
+      if (part.type === "text") return String(part.text ?? "");
+      if (part.type === "tool-call") return `${String(part.toolName)}${JSON.stringify(part.input ?? {})}`;
+      if (part.type === "tool-result") return resultText(part.output);
+      return "";
+    })
+    .join("");
+}
+
+/* A message's tokens never change, and the same objects come back on every
+   step of a turn, so each is counted once: the walk is then the new messages
+   and not the whole history again per request. */
+const counted = new WeakMap<object, number>();
+
+/** The history of one request, counted by role. A `tool` message is the tools'
+    answers; an `assistant` one is the model's own text and calls. */
+export function historyTokens(messages: ModelMessage[]): HistoryTokens {
+  const total: HistoryTokens = { user: 0, assistant: 0, results: 0 };
+  for (const message of messages) {
+    let tokens = counted.get(message);
+    if (tokens === undefined) {
+      tokens = countMessageTokens({ role: message.role, content: messageText(message) } as never, countTokens);
+      counted.set(message, tokens);
+    }
+    if (message.role === "user") total.user += tokens;
+    else if (message.role === "assistant") total.assistant += tokens;
+    else if (message.role === "tool") total.results += tokens;
+  }
+  return total;
 }
 
 /** Both static parts of the prompt, in one walk — the shape `turn.ts` caches
     per turn, since neither the system prompt nor the tool set changes between
     the steps of one. The MCP share is counted on its own and the built-ins take
     the rest of the whole block, so the block's framing is counted once and the
-    two still sum to it. */
-export function prefixTokens(system: string, tools: ToolSet): PrefixTokens {
+    two still sum to it. `system` is the prompt's named sections where the
+    caller has them (`systemSections`), joined exactly as the prompt joins them. */
+export function prefixTokens(system: string | { name: string; text: string }[], tools: ToolSet): PrefixTokens {
+  const sections = typeof system === "string" ? [{ name: "System prompt", text: system }] : system;
+  const text = sections.map((part) => part.text).join("\n\n");
   const all = prefixTools(tools);
-  const mcp = Math.min(
-    all,
-    prefixTools(Object.fromEntries(Object.entries(tools).filter(([name]) => name.startsWith("mcp__"))) as ToolSet),
-  );
-  return { system: prefixSystem(system), tools: all - mcp, mcp };
+  const entries = Object.entries(tools);
+  const mcpEntries = entries.filter(([name]) => name.startsWith("mcp__"));
+  const mcp = Math.min(all, prefixTools(Object.fromEntries(mcpEntries) as ToolSet));
+  return {
+    system: prefixSystem(text),
+    tools: all - mcp,
+    mcp,
+    items: {
+      system: systemItems(sections),
+      tools: toolItems(entries.filter(([name]) => !name.startsWith("mcp__"))),
+      mcp: toolItems(mcpEntries),
+    },
+  };
 }
 
 /**
@@ -142,38 +243,33 @@ export function prefixTokens(system: string, tools: ToolSet): PrefixTokens {
  * figures under a headline that does not add up to it is worse than no row. So a
  * counted prefix that comes out *larger* than the whole prompt — a real case,
  * since we tokenize with OpenAI's ranks whatever model is serving — is scaled
- * down to fit rather than left to overflow it. Scaling both static parts by the
+ * down to fit rather than left to overflow it. Scaling the static parts by the
  * same factor keeps the one thing the split is for ("the tools cost three times
  * what the system prompt did"), and the alternative — flooring the conversation
  * and leaving the prefix long — draws a system prompt bigger than the request
  * that carried it.
  */
-export function promptBreakdown(
-  total: number,
-  prefix: PrefixTokens,
-  user = 0,
-): PromptBreakdown {
-  const staticTokens = prefix.system + prefix.tools + prefix.mcp;
-  if (staticTokens <= total) {
-    const userTokens = Math.min(user, total - staticTokens);
-    return {
-      total,
-      system: prefix.system,
-      tools: prefix.tools,
-      mcp: prefix.mcp,
-      user: userTokens,
-      conversation: total - staticTokens - userTokens,
-    };
-  }
+export function promptBreakdown(total: number, prefix: PrefixTokens, history?: HistoryTokens): PromptBreakdown {
+  const empty = { user: 0, assistant: 0, results: 0 };
   /* Nothing to divide: no prompt, or a provider that reported nothing. */
-  if (total <= 0) return { total, system: 0, tools: 0, mcp: 0, user: 0, conversation: 0 };
-  /* The estimate overshoots the invoice, so the invoice wins — the parts are
-     the same estimates, so they shrink by one common factor and keep their
-     ratio. `tools` takes the remainder rather than its own rounding, so a
-     fraction of a token can never make the figures miss the total. */
-  const system = Math.round(prefix.system * (total / staticTokens));
-  const mcp = Math.min(total - system, Math.round(prefix.mcp * (total / staticTokens)));
-  const tools = total - system - mcp;
-  const userTokens = Math.min(user, Math.max(0, total - system - tools - mcp));
-  return { total, system, tools, mcp, user: userTokens, conversation: total - system - tools - mcp - userTokens };
+  if (total <= 0) return { total, system: 0, tools: 0, mcp: 0, conversation: 0, ...empty };
+  const staticTokens = prefix.system + prefix.tools + prefix.mcp;
+  if (staticTokens > total) {
+    /* The estimate overshoots the invoice, so the invoice wins — the parts are
+       the same estimates, so they shrink by one common factor and keep their
+       ratio. `tools` takes the remainder rather than its own rounding, so a
+       fraction of a token can never make the figures miss the total. */
+    const system = Math.round(prefix.system * (total / staticTokens));
+    const mcp = Math.min(total - system, Math.round(prefix.mcp * (total / staticTokens)));
+    return { total, system, tools: total - system - mcp, mcp, conversation: 0, ...empty };
+  }
+  const conversation = total - staticTokens;
+  const counted = history ? history.user + history.assistant + history.results : 0;
+  const fixed = { system: prefix.system, tools: prefix.tools, mcp: prefix.mcp };
+  if (!history || counted === 0) return { total, ...fixed, conversation, ...empty };
+  /* The remainder is the provider's; the three shares are only its proportions.
+     The last takes what rounding left, so they add to it exactly. */
+  const user = Math.round((conversation * history.user) / counted);
+  const assistant = Math.min(conversation - user, Math.round((conversation * history.assistant) / counted));
+  return { total, ...fixed, conversation, user, assistant, results: conversation - user - assistant };
 }

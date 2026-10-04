@@ -38,17 +38,14 @@ import type { WorkspaceLayout } from "./db/schema.js";
  * symlinks out from under the thread next to it.
  */
 /**
- * The project's directory, made if it is not there.
- *
- * It used to be made as a *side effect*: the skills sweep ran for every thread
- * and `mkdir -p <cwd>/.claude/skills` created the cwd on the way past. Once a
- * runtime that reads no workspace files writes none, nothing creates it — and a
- * spawn into a directory that does not exist fails as `ENOENT` naming the
- * *command*, which reads as a missing binary and is nothing of the kind. So it
- * is a statement now, made on the same path and before the same spawn.
+ * The project's directory must be there. It is made once, deliberately, when
+ * the project is (`createProject`) — never on a spawn, where a cwd that has
+ * vanished (deleted, an unmounted drive) would be recreated empty and the
+ * agent started in it. A spawn into one fails here in plain words instead of
+ * as `ENOENT` naming the *command*, which reads as a missing binary.
  */
 export function ensureProjectDir(cwd: string): void {
-  mkdirSync(cwd, { recursive: true });
+  if (!existsSync(cwd)) throw new Error(`the project's directory no longer exists: ${cwd}`);
 }
 
 export function materializeWorkspace(

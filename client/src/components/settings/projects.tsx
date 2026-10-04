@@ -23,11 +23,12 @@ import { ProjectIcon } from "@/components/entity-icon"
 import { Notice } from "@/components/notice"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type HelperCommand, type Project, type ServerSettings } from "@/lib/settings"
-import { useInvalidateCatalog, useProjects } from "@/lib/queries/catalog"
+import { useActiveSpace, useInvalidateCatalog, useProjects } from "@/lib/queries/catalog"
 import {
   useAddHelper,
   useAddKnowledge,
@@ -222,6 +223,7 @@ export function ProjectForm({
   const [form, setForm] = React.useState(() => ({
     name: project?.name ?? "",
     cwd: project?.cwd ?? "",
+    spaceId: project?.spaceId ?? "",
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
     previewUrl: project?.previewUrl ?? "",
@@ -229,6 +231,10 @@ export function ProjectForm({
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
+  /* The space this project is filed under. A new project defaults to the space
+     you are in — "make a project while working in Work" means a project in
+     Work" — and the picker is what moves an existing one between spaces. */
+  const { spaces, id: activeSpaceId } = useActiveSpace()
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -242,6 +248,7 @@ export function ProjectForm({
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
         previewUrl: form.previewUrl.trim(),
+        spaceId: form.spaceId || activeSpaceId || undefined,
       }
       const saved = project
         ? await api<Project>(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -267,6 +274,30 @@ export function ProjectForm({
         <Field label="Name">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>
+        {/* The scope above the project: which space this one is filed under, and
+            so which one you find it in. Moved here rather than created on — a
+            project is filed once and repointed when the work moves. */}
+        {spaces.length > 0 && (
+          <Field label="Space" hint="Where this project is filed. Switching spaces switches the projects, and their threads, the sidebar shows.">
+            <Select
+              value={form.spaceId || activeSpaceId || undefined}
+              onValueChange={(value) => set({ spaceId: value ?? "" })}
+            >
+              <SelectTrigger className="h-9 w-full @panel-sm:w-56">
+                <SelectValue>
+                  {spaces.find((space) => space.id === (form.spaceId || activeSpaceId))?.name ?? "Pick a space"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {spaces.map((space) => (
+                  <SelectItem key={space.id} value={space.id}>
+                    {space.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
         <Field label="Working directory" hint="Path on the server, not on this device.">
           <PathInput
             value={form.cwd}

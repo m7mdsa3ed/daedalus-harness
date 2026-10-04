@@ -10,6 +10,7 @@ import { makeAskUserTool, askUserMeta } from "./ask-user.js";
 import { makePlanTool, planMeta } from "./plan.js";
 import { makeTaskTool, taskMeta } from "./task.js";
 import { makeAgentMessageTools } from "./agent-messages.js";
+import { SEARCH_TOOL, searchToolsMeta } from "./tool-search.js";
 
 export type { ToolMeta, ToolRuntime } from "./context.js";
 
@@ -52,6 +53,7 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
     ask_user: askUserMeta,
     write_todos: planMeta,
     task: taskMeta,
+    [SEARCH_TOOL]: searchToolsMeta,
     list_agents: { kind: "other", title: () => "List subagents" },
     send_message: {
       kind: "other",

@@ -22,14 +22,26 @@
 import type { SerializedDockview } from "dockview-react"
 
 import { isPanelKind, parsePanel } from "./panels"
+import { loadActiveSpace } from "../spaces"
 import { IS_POPOUT } from "../popout"
 
 const PREFIX = "daedalus.dock.v2"
 const LEGACY_KEY = "daedalus.sessionDock.v1"
 
-export function layoutKey(serverId: string): string {
-  return `${PREFIX}:${serverId}`
+/** The dock's key for one server **and one space**: each space keeps its own
+    tabs, so switching spaces swaps the desk rather than leaving the other
+    space's panels open. `spaceId` is omitted only by a caller that has already
+    resolved it (`loadActiveSpace`) or by the space-less read a device makes
+    before it has ever chosen one. */
+export function layoutKey(serverId: string, spaceId?: string): string {
+  return spaceId ? `${PREFIX}:${serverId}:${spaceId}` : `${PREFIX}:${serverId}`
 }
+
+/** This device's space for a server, or "" when none is chosen yet — the
+    space-less key, which is what a first boot before the spaces list answers
+    reads and writes, and what adoption then re-files under the first space. */
+const spaceOf = (serverId: string, spaceId?: string): string =>
+  spaceId ?? loadActiveSpace(serverId) ?? ""
 
 type GridNode = { type: "leaf" | "branch"; data: unknown; size?: number; visible?: boolean }
 type LeafData = {
@@ -312,7 +324,7 @@ export function pruneLayout(layout: SerializedDockview): SerializedDockview | nu
  * held only chat panels, whose params this build still parses, and a user who
  * downgrades should find their tabs where they left them.
  */
-export function loadLayout(serverId: string): SerializedDockview | null {
+export function loadLayout(serverId: string, spaceId?: string): SerializedDockview | null {
   const read = (key: string): SerializedDockview | null => {
     try {
       const raw = localStorage.getItem(key)
@@ -324,14 +336,18 @@ export function loadLayout(serverId: string): SerializedDockview | null {
       return null
     }
   }
-  return read(layoutKey(serverId)) ?? read(LEGACY_KEY)
+  const space = spaceOf(serverId, spaceId)
+  /* The v1 key is read only for the space-less case — once a space is chosen,
+     the dock is that space's. Kept in place rather than deleted so a downgrade
+     finds its tabs where it left them. */
+  return read(layoutKey(serverId, space)) ?? (space ? null : read(LEGACY_KEY))
 }
 
-export function saveLayout(serverId: string, layout: SerializedDockview): void {
+export function saveLayout(serverId: string, layout: SerializedDockview, spaceId?: string): void {
   // A popout mounts no dock; this is the backstop that it never writes one.
   if (IS_POPOUT) return
   try {
-    localStorage.setItem(layoutKey(serverId), JSON.stringify(layout))
+    localStorage.setItem(layoutKey(serverId, spaceOf(serverId, spaceId)), JSON.stringify(layout))
   } catch (error) {
     // Quota, or private-mode storage. The dock still works; it just will not
     // come back. Not worth a toast on every layout change.
@@ -339,9 +355,17 @@ export function saveLayout(serverId: string, layout: SerializedDockview): void {
   }
 }
 
+/** Forget every space's dock for a server — a forgotten server's space ids name
+    rows nothing can reach again, so a swept key is the only honest answer. */
 export function clearLayout(serverId: string): void {
   try {
-    localStorage.removeItem(layoutKey(serverId))
+    const prefix = `${PREFIX}:${serverId}`
+    const doomed: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && (key === prefix || key.startsWith(`${prefix}:`))) doomed.push(key)
+    }
+    for (const key of doomed) localStorage.removeItem(key)
   } catch {
     /* nothing to clear */
   }

@@ -4,9 +4,9 @@
 // sidebar), and the active one is what every request in the app talks to.
 
 import { uuid } from "./uuid"
-import type { OffPeakWindow } from "./off-peak"
 import { clearPersistedCache } from "./queries/persist"
 import { clearDraftSessions } from "./draft-sessions"
+import { clearActiveSpace } from "./spaces"
 import { clearLayout } from "./workspace/layout"
 
 export interface ServerSettings {
@@ -129,6 +129,9 @@ export function removeServer(id: string): void {
   const servers = store.servers.filter((s) => s.id !== id)
   write({ servers, activeId: store.activeId === id ? (servers[0]?.id ?? null) : store.activeId })
   clearLayout(id)
+  // The space this device was looking at: an id that names a row on a server
+  // nothing can reach again.
+  clearActiveSpace(id)
   // Its unsent threads too: their ids were minted against that server.
   clearDraftSessions(id)
   // Its cached description goes with its credentials: the rows are no use
@@ -383,8 +386,7 @@ export type McpAuthProbe =
 export interface McpCheckEntry {
   name: string
   description?: string
-  /** A tool's JSON Schema, as the server declared it — what the detail page
-      draws its arguments from. */
+  /** A tool's JSON Schema, as the server declared it. */
   inputSchema?: unknown
   /** A tool's declared output schema, where it declares one. */
   outputSchema?: unknown
@@ -396,12 +398,9 @@ export interface McpCheckEntry {
   mimeType?: string
 }
 
-/** What the playground can run: the three things an MCP server offers. */
-export type McpInvokeKind = "tool" | "prompt" | "resource"
-
-/** One playground call: what the server answered, whole. `error` is the call
-    that never happened — a tool that ran and failed comes back as a result
-    carrying `isError`, which is an answer. */
+/** One MCP call: what the server answered, whole. `error` is the call that
+    never happened — a tool that ran and failed comes back as a result carrying
+    `isError`, which is an answer. */
 export interface McpCallResult {
   ok: boolean
   ms: number
@@ -440,9 +439,6 @@ export interface ThreadMcpServer {
   resourceTemplates: McpCheckEntry[]
   completions: boolean
 }
-
-/** What `completion/complete` is asked about. */
-export type McpCompletionRef = { type: "ref/prompt"; name: string } | { type: "ref/resource"; uri: string }
 
 /** One row of the marketplace (`GET /api/mcp-registry`): a server published to
     an MCP Registry, already mapped to what this library stores. `server` is
@@ -657,6 +653,9 @@ export interface Profile {
       metadata" notice for threads on this profile. Absent = false (servers
       from before the flag existed, and the virtual Default). */
   suppressModelMetadataWarning?: boolean
+  /** Seconds the server waits for this provider's response headers before
+      aborting. Null/absent = the server's default (10 minutes). */
+  upstreamTimeoutSeconds?: number | null
   /** Two selection flags. `hidden`: kept and still resolvable for the threads
       already on it, but not offered when starting a new thread — while the
       usage plan keeps tracking it, which is the point of hiding. `disabled`:
@@ -706,9 +705,6 @@ export interface ModelOption {
   description?: string
   /** USD per million tokens, at full price. */
   pricing?: { input: number; output: number }
-  /** Hours the provider charges less for, by its own clock. Absent = one rate
-      all day; read live by `lib/off-peak.ts`. */
-  offPeak?: OffPeakWindow
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[]
   /** Provenance when enriched: "providerId/modelId" in models.dev. */
@@ -727,11 +723,27 @@ export interface ModelCandidate extends ModelOption {
   providerName?: string
 }
 
+/** A named scope *above* projects — "Personal", "Work". The spaces are the
+    server's (`GET /api/spaces`); which one this device is looking at is
+    device-local (`lib/spaces`), because how you are looking at the work is the
+    reader's property. A profile is a provider and a project is a directory; a
+    space is deliberately neither. */
+export interface Space {
+  id: string
+  name: string
+  sortOrder: number
+  createdAt: number
+}
+
 /** Workspace a session runs in. */
 export interface Project {
   id: string
   name: string
   cwd: string
+  /** The space this project is filed under (a `Space.id`). Absent only on a
+      stub; every row the server answers names one, so the sidebar's filter is a
+      plain equality. */
+  spaceId?: string
   /** Optional free-text notes; null on rows created before the field existed. */
   description: string | null
   /** Logo shown wherever the project is named — a URL. Empty means "no logo",

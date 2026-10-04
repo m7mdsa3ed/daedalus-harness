@@ -126,27 +126,32 @@ export function useFollowStream(enabled: boolean): FollowStream {
     }
   }, [pin, viewport])
 
-  /* Growth. One rAF-coalesced correction per frame at most — a streaming turn
-     resizes the content many times per frame and each write to scrollTop that
-     is not batched is a forced layout. */
+  /* Growth. One correction per frame, made *inside* the observer callback and
+     not on a frame of its own.
+
+     A ResizeObserver callback runs after layout and before paint, so sticking
+     there is painted in the same frame the content grew in. Deferring it by one
+     rAF — which is what "one coalesced write per frame" used to mean — painted
+     the new lines first and only scrolled to them on the next frame, so the
+     viewport showed a frame of new content under a parked `scrollTop` and then
+     snapped. A slow trickle hides that; a fast stream adding whole lines per
+     frame shows every one of them as a stutter, at its worst in the capped
+     thought box, where the box is short and each frame's growth is most of it.
+
+     The observer already batches a frame's resizes into one callback, so the
+     write is still one per frame — and reading `scrollHeight`/`clientHeight`
+     after layout does not force a reflow, which is what the old rAF was there
+     to avoid. */
   React.useEffect(() => {
     if (!enabled || !viewport || !content) return
-    let frame = 0
-    const schedule = () => {
-      if (frame) return
-      frame = requestAnimationFrame(() => {
-        frame = 0
-        if (pinnedRef.current) stick(viewport)
-      })
+    const correct = () => {
+      if (pinnedRef.current) stick(viewport)
     }
-    const observer = new ResizeObserver(schedule)
+    const observer = new ResizeObserver(correct)
     observer.observe(content)
     observer.observe(viewport)
-    schedule()
-    return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
+    correct()
+    return () => observer.disconnect()
   }, [content, enabled, stick, viewport])
 
   /* Turning the switch on is an instruction, not a preference: it means "take

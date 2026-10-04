@@ -28,10 +28,13 @@ import {
   QuestionsDetail,
   SkillDetail,
   TodosDetail,
+  ToolSearchDetail,
 } from "@/components/tool-views/structured"
 import { SubagentDetail } from "@/components/tool-views/subagent"
 import { FetchDetail, WebFetchDetail, WebSearchDetail } from "@/components/tool-views/web"
-import { extractBackgroundTask, toolOutputText, toolViewOf, type ToolView } from "@/lib/tools"
+import { CodeBlock, DetailSection, JsonView } from "@/components/tool-parts"
+import { extractBackgroundTask, safeJson, toolOutputText, toolViewOf, type ToolView } from "@/lib/tools"
+import { useViewOptionsContext } from "@/lib/view-options"
 import type { ToolItem } from "@/lib/store"
 
 /* What the rest of the transcript reaches for: the pieces of a view that are
@@ -74,6 +77,7 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
   findings: { Detail: FindingsDetail, opensByDefault: false },
   plan: { Detail: PlanProposalDetail, opensByDefault: true },
   skill: { Detail: SkillDetail, opensByDefault: false },
+  toolsearch: { Detail: ToolSearchDetail, opensByDefault: false },
   execute: { Detail: RunDetail, opensByDefault: false },
   read: { Detail: ReadDetail, opensByDefault: false },
   search: { Detail: SearchDetail, opensByDefault: false },
@@ -90,7 +94,49 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
  */
 export function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const { Detail } = TOOL_VIEWS[toolViewOf(item)]
-  return <Detail item={item} active={active} />
+  const { showRawToolData } = useViewOptionsContext()
+  if (!showRawToolData) return <Detail item={item} active={active} />
+  return (
+    <div className="space-y-3">
+      {toolHasDetail(item) && <Detail item={item} active={active} />}
+      <RawToolData item={item} />
+    </div>
+  )
+}
+
+/* The call as ACP carried it, under the field names it arrived with — not the
+   merged `ToolItem`, whose `toolKind`/`meta` are ours. Every view above reads a
+   shape; this is where you check the shape. `terminal` is left out: it is the
+   streamed bytes, already the body of a shell step. */
+function RawToolData({ item }: { item: ToolItem }) {
+  const raw = {
+    toolCallId: item.id,
+    name: item.name,
+    title: item.title,
+    kind: item.toolKind,
+    status: item.status,
+    rawInput: item.rawInput,
+    rawOutput: item.rawOutput,
+    content: item.content,
+    locations: item.locations,
+    _meta: item.meta,
+  }
+  /* The text every rendered result above is drawn from (`toolOutputText`),
+     verbatim: in the tree it is one escaped string, `\n` and `\"` and all,
+     which is the one place you cannot read what the tool returned. */
+  const { text: result, truncated } = toolOutputText(item, 200_000)
+  return (
+    <>
+      <DetailSection label="Raw call">
+        <JsonView value={raw} text={safeJson(raw)} preview={1} />
+      </DetailSection>
+      {result.length > 0 && (
+        <DetailSection label={truncated ? "Raw result (first 200,000 characters)" : "Raw result"}>
+          <CodeBlock>{result}</CodeBlock>
+        </DetailSection>
+      )}
+    </>
+  )
 }
 
 /**

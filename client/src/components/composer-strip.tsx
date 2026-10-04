@@ -28,18 +28,13 @@
    plan left for the same reason: it belongs at the point in the conversation
    where it was written — which is the whole of the split, because anything
    about the *turn* is at the foot of the transcript where the next thing will
-   happen, and everything else is here. There used to be one exception, the
-   connection that carries the message, drawn as a box above the shelf; it is a
-   reading on the shelf's floor now (`composer/connection-indicator.tsx`), so
-   every state has exactly one home.
-
-   That reading is the one thing on the floor that can be *wrong*, so it also
-   decides what the shelf's ground is saying (`tone`, and `TONE_GROUND` below):
-   the footer is the surface that is always on screen, so a thread whose
-   connection died with no pile up is nothing but that row and the tone has to
-   reach the ground itself. Nothing here knows what a tone means — it is one key
-   into one table — so the vocabulary is the connection's and this file stays as
-   generic as it was.
+   happen, and everything else is here. The connection that carries the message
+   spent time on both sides of that line — a box above the shelf, then a reading
+   on its floor — and is a `Notice` at the foot of the transcript now
+   (`components/connection-card.tsx`), where a sentence with a button belongs.
+   So the shelf holds no *status*: everything on it is either a fact about the
+   thread (the floor: project, tools, the context ring) or something about the
+   message being typed (the pile), and none of it is ever wrong.
 
    ── The shelf is a selector rail and one reading panel ──
    Several transient concerns used to overlap as a stack of cards, with inactive
@@ -68,6 +63,50 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+
+/* ── The shelf's one horizontal inset ──
+   Card content, the footer's row and the rail's own tab text all start at the
+   same place, and it is one number rather than three. It used to be `px-2` on
+   an attachment card, `px-3` on the footer and a `px-1` rail whose tab added
+   its own `px-2`, so three left edges disagreed by up to 8px and the shelf
+   looked assembled rather than laid out. The rail keeps its 4px of chrome
+   gutter (see the tablist) and the tabs their own `px-2`, which lands their
+   text on this same line while letting a selected tab's ground inset a hair
+   from the corner. Exported so the caller that draws the footer — which lives
+   on the other side of the composer's seam, in `draft-config.tsx` — insets by
+   the same number rather than its own. */
+export const SHELF_PAD = "px-3"
+
+/**
+ * The count a shelf item wears, wherever it wears it.
+ *
+ * One chip for all of them: the rail's numeric badge, the corner bubble a
+ * reading keeps on a narrow panel (`ReadingBubble` in `composer/indicator.tsx`)
+ * and, by the same token, anything else that has to say "how many". It used to
+ * be three sizes of the same idea — `9px` on the rail, `9px` padded wider on a
+ * sliver, `8px` in the bubble — so the same number measured differently
+ * depending on which dress it happened to be in. It is `primary`-tinted and
+ * nothing else: a count is a count, and a second tone on it was a second
+ * meaning that did not exist.
+ */
+export function ChipBadge({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-grid h-3.5 min-w-3.5 shrink-0 place-items-center rounded-full bg-primary/15 px-1 text-[9px] leading-none font-semibold tabular-nums text-primary",
+        className
+      )}
+    >
+      {children}
+    </span>
+  )
+}
 
 /** What a row tells the strip about itself, so the strip can speak for it. */
 type StripSummary = {
@@ -194,28 +233,14 @@ export function useStripSummary(summary: StripSummary | null) {
   }, [strip, id])
 }
 
-/* ── The tone the whole shelf wears ──
-   The shelf's ground is the thesis that nothing in the unit is alarming: it is
-   a step off the composer, and the readings on it are settled facts. A
-   connection that is not well is the one thing that has to say so at a glance
-   rather than on being read — it is drawn in the footer's cluster
-   (`composer/connection-indicator.tsx`), and the surface it stands on takes the
-   same tone, so the mood of the whole unit is one look rather than one read.
-
-   The tones are the ones `Notice` already means by theirs (sky, amber,
-   destructive), and they are *derived* the way `--shelf` is — mixed from the
-   composer toward the tone, per mode, in index.css — so a generated palette or
-   a user-made theme gets them for nothing and no palette needs a new token.
-   `neutral` is the ordinary shelf, and the reason it is spelled as a tone
-   rather than as `null` is that every one of these is one key into one table. */
-export type StripTone = "neutral" | "info" | "warn" | "error"
-
-const TONE_GROUND: Record<StripTone, string> = {
-  neutral: "bg-shelf",
-  info: "bg-shelf-info",
-  warn: "bg-shelf-warn",
-  error: "bg-shelf-error",
-}
+/* The shelf's one ground, everywhere it is seen: the front card, a card behind's
+   sliver, the box itself on the way down, and the floor. It used to be a *tone*
+   the connection could turn (see the header) — the surface of the unit carried
+   the mood of the reading on it — and that went with the reading: a dead
+   connection is a `Notice` in the transcript now, so nothing on the shelf is
+   ever wrong and the shelf has exactly one colour. `--shelf` is derived from
+   `--composer` per mode in index.css, so a generated palette gets it free. */
+const GROUND = "bg-shelf"
 
 /* The narrow layout's horizontal selector rail and the gap before its panel. */
 const RAIL_HEIGHT = 32
@@ -234,7 +259,6 @@ export function ComposerStrip({
   className,
   children,
   footer,
-  tone = "neutral",
   ...props
 }: React.ComponentProps<"div"> & {
   /** The one row that is always there, under the pile: what is permanently
@@ -242,12 +266,6 @@ export function ComposerStrip({
       it registers no sliver, never goes behind, and holds the shelf open when
       the pile is empty. See the note at the top of this file. */
   footer?: React.ReactNode
-  /** What the shelf's ground is saying. `neutral` is the ordinary step behind
-      the composer; a tone is what a reading in the footer needs the surface to
-      say with it (the connection that is not well — see `StripTone`). The
-      caller owns both, because the row that draws the reading is not the box
-      that wears the colour. */
-  tone?: StripTone
 }) {
   const [entries, setEntries] = React.useState<StripEntry[]>([])
   const stripRef = React.useRef<HTMLDivElement>(null)
@@ -256,11 +274,8 @@ export function ComposerStrip({
       remembered underneath, so a command menu that comes and goes gives the
       shelf back. */
   const [picked, setPicked] = React.useState<string | null>(null)
-  /* The surface, once, for the three places a card is seen: the front card, a
-     card behind's sliver, and the box itself on the way down. The footer spells
-     it inline — it is the one that must stay put when there is no signal to
-     give. */
-  const ground = TONE_GROUND[tone]
+  /* The surface every part of the shelf wears — see `GROUND`. */
+  const ground = GROUND
 
   const register = React.useCallback((entry: StripEntry) => {
     setEntries((prev) => {
@@ -464,7 +479,7 @@ export function ComposerStrip({
           "isolate",
           // -mb-4: the shelf's own bottom four units (the `pb-4` on the footer,
           // or on the panel when there is none — TUCK above) sit behind the composer.
-          // The shelf wears its own tone surface against the composer, preserving
+          // The shelf wears its own surface against the composer, preserving
           // the tuck and distinguishing the strip from the input card.
           // Width follows the composer: minus whatever the composer actually is
           // (capped when there is room, 100% of the container when there is not)
@@ -526,9 +541,7 @@ export function ComposerStrip({
                   {Icon && <Icon className="size-3.5 shrink-0" />}
                   <span className="max-w-36 truncate">{entry.label}</span>
                   {entry.badge != null && entry.badge > 0 && (
-                    <span className="rounded-full bg-primary/15 px-1.5 text-[9px] tabular-nums text-primary">
-                      {entry.badge > 99 ? "99+" : entry.badge}
-                    </span>
+                    <ChipBadge>{entry.badge > 99 ? "99+" : entry.badge}</ChipBadge>
                   )}
                 </button>
               )
@@ -555,12 +568,9 @@ export function ComposerStrip({
                  reads as a distinct object under the box it belongs to. No
                  ring: the difference in ground is what separates them.
 
-                 It wears the tone, and so does every card above it — the
-                 footer is the one surface that is always on screen, so the
-                 ordinary case (a thread whose connection went while no pile is
-                 up) is nothing *but* this row, and a tone that only reached the
-                 cards would have been invisible in exactly the case it is for.
-                 Both read the one prop, so they cannot disagree. */
+                 Every card above it wears the same surface, and so does the
+                 box on the way down — one colour for the whole shelf, because
+                 nothing on it is ever wrong (see `GROUND`). */
               ground,
               entries.length === 0 && "rounded-t-xl"
             )}

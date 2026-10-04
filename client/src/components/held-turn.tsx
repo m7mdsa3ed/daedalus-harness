@@ -59,10 +59,9 @@ export function InlineHeldTurn({
   const info = hold.error ? describeError(hold.error) : null
   const reason = info?.title || "The model provider returned an error"
 
-  const resume = () =>
-    void actions
-      .resume(sessionId)
-      .catch((err: unknown) => reportError(err, "Couldn't continue the turn"))
+  /* `actions.resume` records its own failure in the thread, so a toast on top
+     would say it twice. */
+  const resume = () => void actions.resume(sessionId).catch(() => {})
   const stop = () =>
     void actions.stop(sessionId).catch((err: unknown) => reportError(err, "Couldn't stop the turn"))
 

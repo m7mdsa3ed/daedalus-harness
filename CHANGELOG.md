@@ -9,9 +9,25 @@ each bullet on a single line.
 
 ## [Unreleased]
 
+### Added
+
+- **Spaces — a scope above projects.** "Personal", "Work": each space holds its own projects, and its own threads, so switching the space switches what the sidebar shows and which tabs the dock holds (each space keeps its own dock, synced per space). The switcher stands in the header beside the sidebar toggle and in the sidebar footer; a new project is filed into the space you are in, and an existing one is moved from its form. A space is deliberately neither a *profile* (a provider) nor a *workspace* (the dock and file surface).
+
 ### Changed
 
+- **The connection moved out of the composer.** "Reconnecting", "Waiting for the server", "This thread's agent isn't running" and the rest were a reading on the composer's shelf, and the shelf's own ground took its tone — so a dropped socket coloured the whole unit amber above the box you type into. They are a `Notice` at the foot of the transcript now (`components/connection-card.tsx`), with the wait, the working line and the turn's other stops, where the sentence is readable in place with its button rather than behind a press. The shelf has one ground again (no `tone` prop, no `--shelf-info`/`-warn`/`-error`), and the scope row lost the `leading` slot that existed only to carry it.
 - **A project carries the settings its threads start with.** The agent, profile, model, effort, permission mode, persona, tool picks, suggestions and drawn-UI toggles are stored on the project (`projects.default_*`, `PATCH /api/projects/:id/defaults`), so changing the project changes the model — and the pick follows you to every device instead of living in one browser. A project that has never been worked in opens on the profile/agent defaults rather than on an invented value, and a pick publishes only the fields it names, so two devices cannot clobber each other's settings.
+- **A turn notification says what it was about, and offers to open it.** The thread's name is the title and the body is the message you sent that the turn answered (a failure's own line follows it), threaded from the bridge through `onTurnSettled` to the push and the inbox rather than announcing a bare "Turn finished" at a thread you cannot recognise. Every notice — a finished turn included — now carries an explicit "Open" (`NotificationShape.openAction`): a button on the toast and an `actions` entry on the OS notification, both landing on the thread the whole banner already routes to; `requireInteraction` stays with the events the agent is blocked on.
+- **The Agents panel draws each step's real turn parts.** An entry used to fold away a brief, a list of tool *titles* and a report; it now draws the brief, the real rail of rows and tool views, and the report, through the transcript's own `SubagentStep` (`variant="body"`) — for an ordinary agent and a workflow step alike, so the panel and the transcript agree on what a step did. One fold, open while the step works, because a native workflow step fetches its transcript only when it opens.
+
+### Removed
+
+- **The MCP playground is gone; the details page stays as a reading.** Running a tool, prompt or resource from Settings is gone — the ad-hoc `/settings/mcp/playground` page, the library form's "Try it" and the routes behind it (`POST /api/mcp-servers/:id/invoke`, `/api/mcp-servers/:id/complete`, `POST /api/mcp-playground/:op`, `completeMcp`) are removed. The server's own page (`/settings/mcp/:id/tools`) remains, without a Run button: a rail of what the server offers beside each entry's contract — a tool's input fields and output schema, a prompt's arguments, a resource's URI and type — with the raw schema one fold below. A library row still lists what a server offers, and a thread's prompts and resources still reach the composer.
+
+### Fixed
+
+- **A mention chip sits on the line it is typed into.** The pill is an inline-flex box, and with nothing baseline-aligned its baseline is the *bottom edge* of its first item — for an `@` mention, the icon — so the chip rode a few pixels off the text around it in the composer (a project's circular mark, being text, sat the other way). The pill and its face now baseline-align and the icon centres itself, so an `@` mention's own text lands on the line's baseline, in the composer and in the sent bubble alike; the ✕ the composer adds stays centred.
+- **Following the stream no longer lags its content by a frame.** The autoscroll pin corrected its scroll inside a `requestAnimationFrame` scheduled from the resize callback, so the frame that laid the new lines out painted them under a parked `scrollTop` and the next frame snapped to them — invisible at a trickle, a stutter at every frame once a model streams whole lines at once, worst in the capped thought box where each frame's growth is most of the box. The correction is made inside the `ResizeObserver` callback now, which runs after layout and before paint, so the scroll and the content land in the same frame (`hooks/use-follow-stream`).
 
 ## [0.2.0] - 2026-09-13
 
@@ -27,7 +43,6 @@ each bullet on a single line.
 - **A translucent window**: in the Electron app the macOS vibrancy / Windows acrylic shows through the sidebar, the gutters and the top bar. No setting — the platform either has a material or it does not.
 - **An "Opened" sidebar tier** listing the threads that have a tab open, in the dock's own order and out of Recents.
 - **Images and audio ride through a prompt**, so a steer that carries one is still a prompt with an image in it, and a model-less Default thread inlines the attachment rather than vetoing it.
-- **Off-peak pricing** is declared on a model and read back as a live indicator, for providers that price a window of the day rather than a request.
 - **Options come from a live session or a cached probe** — fetching a profile's models and testing one against the endpoint are now real routes the profile form reads.
 
 ### Changed

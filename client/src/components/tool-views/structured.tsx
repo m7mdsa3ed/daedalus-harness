@@ -1,6 +1,6 @@
 /* ── The structured views ──
    Calls whose content is a shape rather than a stream: a checklist, a question
-   and its answer, a review's findings, a proposed plan, a skill load. Each of
+   and its answer, a review's findings, a proposed plan, a skill load, a tool search. Each of
    these was a JSON dump before it had a view, and most of them carry their
    whole content in the call's *input* — which is why `toolHasDetail` in
    `./index.tsx` cannot just ask whether there was output. */
@@ -8,6 +8,7 @@ import {
   CheckIcon,
   FileWarningIcon,
   MessageCircleQuestionIcon,
+  PlugZapIcon,
   SparklesIcon,
 } from "lucide-react"
 import { TodoChecklist } from "@/components/todo-checklist"
@@ -27,8 +28,12 @@ import {
   extractQuestions,
   extractSkill,
   extractTodos,
+  extractToolSearch,
+  formatMcpName,
+  parseMcpToolName,
   shortPath,
   toolOutputText,
+  type LoadedTool,
   type TodoEntry,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
@@ -298,5 +303,46 @@ export function SkillDetail({ item }: { item: ToolItem }) {
       <span className="font-mono text-foreground">{skill.name}</span>
       {skill.args && <span className="font-mono text-muted-foreground/80">{skill.args}</span>}
     </div>
+  )
+}
+
+// ─── Tool search ─────────────────────────────────────────────────────────────
+
+/** A tool search: the tools it loaded, each under the server it belongs to and
+    with what it does, where the runtime said (Claude Code sends names only).
+    The query is the row's heading, so it is not repeated here. */
+export function ToolSearchDetail({ item }: { item: ToolItem }) {
+  const search = extractToolSearch(item)
+  if (!search) return null
+  if (search.tools.length === 0) {
+    if (item.status !== "completed") return null
+    return <p className="text-[11px] text-muted-foreground">No tool matched.</p>
+  }
+  return <LoadedToolList tools={search.tools} />
+}
+
+function LoadedToolList({ tools }: { tools: LoadedTool[] }) {
+  return (
+    <ul className={cn(PANE, "max-h-80 divide-y divide-border/40 overflow-auto")}>
+      {tools.map((tool) => {
+        const mcp = parseMcpToolName(tool.name)
+        return (
+          <li key={tool.name} className="space-y-0.5 px-2.5 py-1.5 text-[11.5px]">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <PlugZapIcon className="size-3 shrink-0 text-muted-foreground/50" />
+              <span className="min-w-0 truncate font-mono text-foreground" title={tool.name}>
+                {mcp?.tool ? formatMcpName(mcp.tool) : tool.name}
+              </span>
+              {mcp && (
+                <span className="shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground/70">
+                  {formatMcpName(mcp.server)}
+                </span>
+              )}
+            </div>
+            {tool.description && <p className="line-clamp-2 text-muted-foreground">{tool.description}</p>}
+          </li>
+        )
+      })}
+    </ul>
   )
 }

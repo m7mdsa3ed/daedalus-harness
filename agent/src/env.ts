@@ -40,6 +40,8 @@ export interface AgentEnv {
       is what the harness spawns a thread with nobody in front of it as, since
       a hold there would wait forever. */
   holdOnError: boolean;
+  /** Name a thread from its first message with the small model (`title.ts`). Off with `0`/`false`. */
+  autoTitle: boolean;
   home: string;
 }
 
@@ -121,6 +123,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     holdOnError: !["0", "false", "off"].includes(
       (str(env.DAEDALUS_AGENT_HOLD_ON_ERROR) ?? "").toLowerCase(),
     ),
+    autoTitle: !["0", "false", "off"].includes((str(env.DAEDALUS_AGENT_TITLES) ?? "").toLowerCase()),
     home: str(env.DAEDALUS_AGENT_HOME) ?? join(homedir(), ".daedalus-agent"),
   };
 }

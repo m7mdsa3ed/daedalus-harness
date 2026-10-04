@@ -272,6 +272,14 @@ export class SessionStore {
     }
   }
 
+  /** The generated title replaces the first-line one `touch` landed. */
+  retitle(sessionId: string, title: string): void {
+    const entry = this.index.get(sessionId);
+    if (!entry) return;
+    entry.title = title;
+    this.flushIndex();
+  }
+
   read(sessionId: string): SessionHistory | null {
     const path = this.file(sessionId);
     const history: SessionHistory = {

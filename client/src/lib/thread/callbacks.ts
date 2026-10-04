@@ -1,8 +1,9 @@
 import { AgentError, type ThreadCallbacks, type ThreadSocket } from "../thread-socket"
 import { optionKey, saveAgentOptions, savePromptCapabilities } from "../agent-options"
 import { appendTaskEvent } from "../task-events"
-import { notifyThreadEvent } from "../notifications"
+import { noticeDetail, notifyThreadEvent } from "../notifications"
 import type { TextItem } from "../store"
+import { splitStderr } from "../errors"
 import { recordThreadError } from "./record-error"
 import { isRecoverableClose } from "./phase"
 import { makeReplaySink } from "./replay-buffer"
@@ -259,6 +260,18 @@ export function makeThreadCallbacks(
         )
         send({ type: "pending-config", id, patch: null })
         host.detach()
+        /* Detach leaves `idle`, which draws nothing: say the thread needs
+           reviving, with the button. The message carries the agent's stderr
+           after a blank line — the sentence is the card's, the stderr its
+           folded, copyable detail. */
+        const said = splitStderr(error?.message ?? "")
+        host.apply({
+          type: "failed",
+          title: "The agent could not be restarted",
+          reason: said.head || "Revive the thread to bring it back.",
+          detail: said.stderr && `Agent stderr:\n${said.stderr}`,
+          recover: "revive",
+        })
         return
       }
       /* Up, on the settings that were asked for — and the log was never
@@ -288,7 +301,11 @@ export function makeThreadCallbacks(
     onTurnChanges: (turn) => send({ type: "turn-changes", id, turn }),
     /* The catalog is TanStack Query's; the row is refetched, not patched
        in from a socket frame (docs/client.md, "one owner per slice"). */
-    onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs, toolDurationMs) => {
+    onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs, toolDurationMs, failure) => {
+      /* A completed turn cannot still be retrying. Clear this from the reliable
+         turn boundary as well as the live-only retry notification, so a missed
+         best-effort clear cannot leave the backoff card stuck after success. */
+      send({ type: "retry", id, retry: null })
       send({ type: "turn-active", id, active: false })
       send({ type: "turn-timing", id, turnId, durationMs, toolDurationMs })
       if (usage) send({ type: "usage", id, usage, turnId, durationMs })
@@ -296,17 +313,29 @@ export function makeThreadCallbacks(
         // Recorded in the transcript either way — a failure that survived a
         // reload is still the answer to the message above it, and carries the
         // text so the row can offer Retry.
-        const info = recordThreadError(send, id, error, "The agent couldn't answer this message", {
-          retryText: promptText,
-          /* Off the user bubble this turn opened — `turn_ended` carries no
-             attachments (Retry is text, deliberately), and the refs the
-             journaled `turn_started` carried are already on that item. */
-          retryAttachments: (
-            getState().threads[id]?.items.find(
-              (item) => item.kind === "user" && item.turnId === turnId
-            ) as TextItem | undefined
-          )?.attachments,
-        })
+        /* The server words a process that ended under the turn in one place
+           (`collapse`, `onError`), and the turn is then the process's casualty,
+           not the model's: said as that, with Continue beside Retry. */
+        const stopped = /The agent process ended|agent failed to start/.test(error.message)
+        const info = recordThreadError(
+          send,
+          id,
+          error,
+          stopped ? "The agent stopped during this turn" : "The agent couldn't answer this message",
+          {
+            stopped,
+            reason: stopped ? splitStderr(error.message).head : undefined,
+            retryText: promptText,
+            /* Off the user bubble this turn opened — `turn_ended` carries no
+               attachments (Retry is text, deliberately), and the refs the
+               journaled `turn_started` carried are already on that item. */
+            retryAttachments: (
+              getState().threads[id]?.items.find(
+                (item) => item.kind === "user" && item.turnId === turnId
+              ) as TextItem | undefined
+            )?.attachments,
+          }
+        )
         /* And on the row, so every list says it too — the transcript is the
            only place a failure was ever visible before, and a thread whose
            last turn failed is one of the two readings worth acting on. Sent
@@ -319,17 +348,22 @@ export function makeThreadCallbacks(
           error: info.kind === "cancelled" ? null : info.title,
         })
         if (!catchingUp && info.kind !== "cancelled") {
-          notifyThreadEvent("turnFailed", id, host.titleOf(), info.title)
+          notifyThreadEvent("turnFailed", id, host.titleOf(), noticeDetail(promptText, info.title))
         }
       } else {
-        send({ type: "turn-verdict", id, error: null })
+        /* An AIR failure ends the turn as `end_turn`, its row already drawn
+           (`onUpdate`); a severity `error` is still a failed turn to the lists
+           and the notification, a `warning` is not. */
+        const failed = failure?.severity === "error" ? failure.title : null
+        send({ type: "turn-verdict", id, error: failed })
+        if (failed && !catchingUp) notifyThreadEvent("turnFailed", id, host.titleOf(), noticeDetail(promptText, failed))
       }
-      if (!error && !catchingUp && !continued) {
+      if (!error && failure?.severity !== "error" && !catchingUp && !continued) {
         // Notifying on replay would re-announce every turn in the thread on
         // every reload — on a phone, as a push. And not for a turn the queue
         // is about to continue: "finished" would announce a pause that is not
         // there.
-        notifyThreadEvent("turnFinished", id, host.titleOf())
+        notifyThreadEvent("turnFinished", id, host.titleOf(), noticeDetail(promptText))
       }
     },
     onQueue: (items) => send({ type: "queue", id, items }),

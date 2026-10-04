@@ -24,6 +24,21 @@ export interface ErrorInfo {
   code?: number
   /** Rough class — callers use it to decide whether a retry makes sense. */
   kind: "rpc" | "http" | "network" | "cancelled" | "unknown"
+  /** The server refused to spawn an agent whose binary is missing (424). The
+      title is then the sentence without its install tail, and `install` is the
+      line that fixes it — absent when the row names none. Drawn as a setup
+      step, never as a generic failure. */
+  notInstalled?: { install?: string }
+}
+
+/** The server splices an agent's stderr after a blank line (`spliceStderr`):
+    a sentence, then what the process said. Split so the sentence can be the
+    headline and the stderr a folded well. */
+export function splitStderr(message: string): { head: string; stderr?: string } {
+  const at = message.indexOf("\n\nagent stderr:\n")
+  return at < 0
+    ? { head: message.trim() }
+    : { head: message.slice(0, at).trim(), stderr: message.slice(at).replace(/^\s*agent stderr:\s*/i, "").trim() }
 }
 
 /** JSON-RPC codes, said in terms of what actually went wrong for the user.
@@ -140,6 +155,28 @@ export function describeError(err: unknown): ErrorInfo {
   }
 
   if (err instanceof ApiError) {
+    const { head, stderr } = splitStderr(err.serverMessage ?? "")
+    if (err.status === 424 && head) {
+      /* `assertInstalled`'s own sentence: "<name> is not installed (missing X)
+         — install it with: <line>". One emitter, so the tail is parsed rather
+         than guessed at; no tail (a row with no install line) shows the whole
+         sentence. */
+      const found = head.match(/^(.*?) — install it with: (.+)$/s)
+      return {
+        title: found ? found[1] : head,
+        code: 424,
+        kind: "http",
+        notInstalled: { install: found?.[2].trim() },
+      }
+    }
+    if (stderr && head) {
+      return {
+        title: head,
+        detail: joinDetail(`Agent stderr:\n${stderr}`, err.status ? err.path : undefined),
+        code: err.status || undefined,
+        kind: "http",
+      }
+    }
     return {
       title: err.status === 0 ? "Can't reach the server" : `${err.title} (${err.status})`,
       detail: joinDetail(issuesDetail(err.body) ?? err.serverMessage, err.status ? err.path : undefined),

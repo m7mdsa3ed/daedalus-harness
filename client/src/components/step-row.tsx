@@ -4,7 +4,7 @@
    (thread-cards) and the recursive row cluster (thread-items) can both use it
    without importing each other. */
 import * as React from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { AnimatePresence, m, useReducedMotion } from "motion/react"
 import { ChevronRightIcon } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
@@ -148,6 +148,7 @@ export const StepRow = React.memo(function StepRow({
   mono = true,
   defaultOpen = false,
   openSetting,
+  autoOpen,
   icon: Icon,
   iconAccent,
   iconChip,
@@ -174,8 +175,9 @@ export const StepRow = React.memo(function StepRow({
   fileRange?: FileRange
   /** The trailing word. Optional: a row whose leading icon already says what
       kind of step it is (every tool, plan and compaction row does) prints
-      nothing here, and only a failure claims the column. */
-  label?: string
+      nothing here, and only a failure claims the column. A node, so a live row
+      can hang a dot off its word (see the thought row's `ThinkingLabel`). */
+  label?: React.ReactNode
   status: string | null
   /** The trailing readings, in the order they are read — a count, a cost, a
       stamp. A LIST, not a node: the row joins them with the one separator and
@@ -208,6 +210,12 @@ export const StepRow = React.memo(function StepRow({
       re-applies `defaultOpen` to a row that is already on screen; see below for
       why that is a separate prop rather than just watching `defaultOpen`. */
   openSetting?: boolean | string
+  /** Open for exactly as long as this is true — the row is a *live view*, read
+      while it is still being written. Unlike `defaultOpen`, whose latch only
+      ever opens, this closes the row again the moment the value goes false; a
+      click still outranks it, so a reader who opened the folded detail keeps it
+      open. `undefined` leaves the row on the ordinary latch. */
+  autoOpen?: boolean
   /** Leading mark. On an expandable row it swaps for a chevron on hover, so
       the disclosure affordance appears where the eye already is instead of at
       the far end of the line. */
@@ -238,7 +246,10 @@ export const StepRow = React.memo(function StepRow({
      stops opening by default never closes a row the reader is reading. */
   const [latched, setLatched] = React.useState(defaultOpen)
   if (defaultOpen && !latched) setLatched(true)
-  const open = chosen ?? latched
+  /* `autoOpen` is a two-way switch where `defaultOpen` is one-way: a live row is
+     open while it is being written and folds the moment it stops, and only a
+     click by the reader holds it past that. */
+  const open = autoOpen === undefined ? (chosen ?? latched) : (chosen ?? autoOpen)
   const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
     setChosen(typeof value === "function" ? value(open) : value)
 
@@ -448,7 +459,7 @@ export const StepRow = React.memo(function StepRow({
       )}
       <AnimatePresence initial={false}>
         {expandable && open && (
-          <motion.div
+          <m.div
             key="step-detail-clip"
             ref={detailClipRef}
             initial={reduceMotion ? false : { opacity: 0, height: 0 }}
@@ -479,7 +490,7 @@ export const StepRow = React.memo(function StepRow({
             >
           {detail}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>

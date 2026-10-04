@@ -28,7 +28,7 @@ import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/li
 import { holdOf } from "@/lib/thread/hold"
 import { isOpening } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
-import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem } from "@/lib/store"
+import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ToolItem } from "@/lib/store"
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext } from "@/components/workspace/dock-context"
 import { useProjects } from "@/lib/queries/catalog"
@@ -42,6 +42,7 @@ import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
 import { InlineApproval } from "@/components/tool-approval"
 import { InlineHeldTurn } from "@/components/held-turn"
+import { ConnectionCard, connectionNote } from "@/components/connection-card"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
 import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
@@ -164,6 +165,11 @@ export function ThreadView({
   /* Whether the connection's own wait is on screen — read by the two rows at
      the foot of the transcript that trade places with it. */
   const waitShown = useWaitShown(thread.phase)
+  /* The connection's own answer, if it has one: a reconnecting, parked, failed,
+     trashed or archive-only thread. It is the card at the head of the tail, and
+     it *suppresses* the wait below — `reconnecting` is the one phase both would
+     speak to, and saying it twice on one screen is the bug this gate closes. */
+  const connNote = connectionNote(thread)
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
@@ -373,8 +379,14 @@ export function ThreadView({
      whole of a tool run. No row matches a hidden tail, which is the right
      answer: the working line above the composer is what says a turn is live. */
   const last = thread.items[thread.items.length - 1]
+  /* A turn the agent's process ended under is resumable the same way: its row
+     is the last thing that happened, and sending "Continue." revives the agent
+     first (`ready`). Unlike an interrupt it stays offered beside a `failed`
+     phase, because that phase is the same crash and its Revive is the other
+     door to the same place. */
   const resumable =
-    last?.kind === "notice" && !thread.turnActive && thread.phase.kind !== "failed"
+    (last?.kind === "notice" && !thread.turnActive && thread.phase.kind !== "failed") ||
+    (last?.kind === "error" && last.stopped && !thread.turnActive)
       ? last.id
       : null
   /* actions.send records its own failure in the transcript (with the text, so
@@ -418,7 +430,7 @@ export function ThreadView({
         ? {
             scope: { projectId, root: projectRoot, worktree },
             open: (file) =>
-              dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file }),
+              dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file, diff: undefined }),
           }
         : null,
     [dock, projectId, projectRoot, worktree]
@@ -858,16 +870,50 @@ export function ThreadView({
                 </MessageScrollerItem>
                 )
               })}
+              {/* The connection, at the head of the tail — a socket that is
+                  gone outranks everything below it, and it was a reading on the
+                  composer's shelf until it moved here. It is a `Notice` with the
+                  one thing to do about it, so it reads in place rather than
+                  behind a press. Drawn above (outside) the wait below, because a
+                  thread that is reconnecting, parked or stopped is not opening:
+                  `StartingLine` is the wait, this is the answer.
+
+                  Only `reconnecting` overlaps the wait's own vocabulary — every
+                  other phase here has no `startingLine` — and the gate below
+                  keeps exactly one of them from saying it. */}
+              {connNote && (
+                <MessageScrollerItem messageId="connection">
+                  <div className="harness-item-in" style={stagger(0)}>
+                    <div className="py-1">
+                      <ConnectionCard thread={thread} sessionId={sessionId} actions={actions} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
               {/* The wait sits at the FOOT of the transcript, not its head: a
                   replay arrives oldest-first and the scroller is pinned to the
                   bottom, so a line at the top is the one place the reader is
                   not looking — it announced the wait above content that was
                   still landing under it, and then vanished from off-screen.
                   Here it is where the next thing to happen will happen, in the
-                  same slot the working line takes once the thread is live. */}
-              {waitShown && (
+                  same slot the working line takes once the thread is live.
+                  Held back while the connection card is up: `reconnecting` is
+                  the one phase both answer, and the card already says it with
+                  the attempt count and the button. */}
+              {waitShown && !connNote && (
                 <MessageScrollerItem messageId="starting">
-                  <StartingLine phase={thread.phase} />
+                  <StartingLine
+                    phase={thread.phase}
+                    /* Only the waits whose request can be abandoned: a create,
+                       and a revive the user's send asked for. A settings
+                       restart is the server's and finishes either way. */
+                    onCancel={
+                      thread.phase.kind === "starting" ||
+                      (thread.phase.kind === "reviving" && thread.phase.because === "revive")
+                        ? () => actions.cancelWait(sessionId)
+                        : undefined
+                    }
+                  />
                 </MessageScrollerItem>
               )}
               {/* Suppressed while the thread is opening: the StartingLine just
@@ -920,7 +966,14 @@ export function ThreadView({
                       other the way a run's steps do. */}
                   <div className="harness-item-in" style={stagger(4 + index)}>
                     <div className="py-1">
-                      <InlineApproval permission={pending} autofocus={index === 0} />
+                      <InlineApproval
+                        permission={pending}
+                        item={thread.items.find(
+                          (i): i is ToolItem =>
+                            i.kind === "tool" && i.id === pending.request.toolCall.toolCallId
+                        )}
+                        autofocus={index === 0}
+                      />
                     </div>
                   </div>
                 </MessageScrollerItem>

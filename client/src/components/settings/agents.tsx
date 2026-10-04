@@ -21,7 +21,7 @@
    installs it. Versions are what the agent reports over ACP (`agentInfo`),
    not a `--version` flag parsed per CLI, so every runtime reads the same. */
 import * as React from "react"
-import { CopyIcon, Cpu, DownloadIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
+import { CopyIcon, Cpu, DownloadIcon, EraserIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,7 +38,7 @@ import { AgentIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ErrorNote } from "@/components/error-note"
 import { useAsyncAction } from "@/hooks/use-async-action"
-import { dropAgentOptionsFor } from "@/lib/agent-options"
+import { clearAgentOptions, dropAgentOptionsFor } from "@/lib/agent-options"
 import { inlineFromQuery, reportError } from "@/lib/errors"
 import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/settings"
 import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
@@ -90,6 +90,7 @@ const envRecord = (text: string): Record<string, string> => {
 
 export function AgentsPage() {
   const meta = sectionMeta("agents")
+  const { settings } = useSettingsPage()
   const profiles = useProfiles()
   const agents = useAgents()
   const { status, loading, error, refresh } = useAgentsStatus()
@@ -112,15 +113,38 @@ export function AgentsPage() {
     }
   }
 
+  /* Both halves of the option cache: the server's probe rows and this
+     device's store. Clearing one alone is undone by the other on the next ask. */
+  const clearOptions = async () => {
+    try {
+      await api(settings, "/api/agent-options", { method: "DELETE" })
+      clearAgentOptions()
+      toast.success("Cached agent options cleared")
+    } catch (err) {
+      reportError(err, "Couldn't clear the cached options")
+    }
+  }
+
   return (
     <>
       <PageHeader
         meta={meta}
         action={
-          <Button variant="outline" size="sm" disabled={checking} onClick={() => void recheck()}>
-            <RefreshCwIcon className={`size-4 ${checking ? "animate-spin" : ""}`} />
-            {checking ? "Checking…" : "Check again"}
-          </Button>
+          <div className="flex flex-col gap-2 @panel-sm:flex-row">
+            <Button
+              variant="outline"
+              size="sm"
+              title="Forget every agent's probed models, modes and options; each is asked again on next use"
+              onClick={() => void clearOptions()}
+            >
+              <EraserIcon className="size-4" />
+              Clear cached options
+            </Button>
+            <Button variant="outline" size="sm" disabled={checking} onClick={() => void recheck()}>
+              <RefreshCwIcon className={`size-4 ${checking ? "animate-spin" : ""}`} />
+              {checking ? "Checking…" : "Check again"}
+            </Button>
+          </div>
         }
       />
       <p className="-mt-3 mb-4 text-xs text-muted-foreground">

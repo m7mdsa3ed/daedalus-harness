@@ -46,6 +46,11 @@ export class PortPool {
     return port;
   }
 
+  /** A port taken and never bound goes back, rather than being lost. */
+  give(port: number): void {
+    if (this.ports.length < this.size) this.ports.push(port);
+  }
+
   private fill(): void {
     if (this.filling || this.ports.length >= this.size) return;
     this.filling = true;

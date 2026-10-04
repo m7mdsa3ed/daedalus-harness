@@ -18,23 +18,17 @@
    — `composer/repo-indicator.tsx`    which branch the work lands on, and the
                                       writes a repository takes from here;
    — `composer/activity-line.tsx`     `workingMessage`, `PhaseLine` and
-                                      `ActivityIndicator`;
-   — `composer/connection-indicator.tsx` this device's connection, in the two
-                                      states a reader has to know about, and
-                                      the tone the shelf's ground wears for
-                                      them.
+                                      `ActivityIndicator`.
 
-   This file is the barrel those importers still resolve through. */
+   This file is the barrel those importers still resolve through. The
+   connection is not among them: it was a reading on the shelf's floor, which
+   made the shelf's own ground wear its tone, and it is a `Notice` at the foot
+   of the transcript now (`components/connection-card.tsx`). */
 export { StripIndicator } from "@/components/composer/indicator"
 export { ConfigIndicator } from "@/components/composer/config-indicator"
 export { ContextIndicator } from "@/components/composer/context-indicator"
 export { TodoIndicator } from "@/components/composer/todo-indicator"
 export { AgentsIndicator, runningAgents } from "@/components/composer/agents-indicator"
 export { ChangesIndicator } from "@/components/composer/changes-indicator"
-export {
-  ConnectionIndicator,
-  connectionNote,
-  connectionTone,
-} from "@/components/composer/connection-indicator"
 export { RepoIndicator } from "@/components/composer/repo-indicator"
 export { ActivityIndicator, PhaseLine, workingMessage } from "@/components/composer/activity-line"

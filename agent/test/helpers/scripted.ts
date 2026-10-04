@@ -36,6 +36,9 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
        test that did not ask for one would hang rather than fail. The hold
        tests turn it on. */
     holdOnError: false,
+    /* Off: a scripted model hands its scripts out in order, and a title call
+       would take the next turn's. title.test.ts turns it on. */
+    autoTitle: false,
     modelPromptsFile: null,
     home: mkdtempSync(join(tmpdir(), "daedalus-agent-test-")),
     ...overrides,

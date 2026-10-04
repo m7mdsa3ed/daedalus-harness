@@ -282,22 +282,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   listing (`mcp-check.ts` → `mcp_catalog`) expires on a TTL like the quota does rather than
   being invalidated, is coalesced per row server-side, and every library row draws its counts
   from the one shared query (`useMcpCatalog`). **Check means connect *now*** — `POST …/check`
-  is the only door that refuses the stored answer. The badge links to the server's own page
-  (`settings/mcp-detail.tsx`, `/settings/mcp/:id/tools`), which draws **both sides of each
-  contract** — a tool's input fields and its `outputSchema`, a prompt's arguments, a resource's
-  URI and type, each as a field list with the raw schema one fold below. **The playground runs
-  anything the server offers, through one door**: `POST …/invoke {kind,name,args}` →
-  `invokeMcp`, where the kind picks an SDK method (`tools/call`, `prompts/get`,
-  `resources/read`) and nothing else, and the page draws all three with the one `EntryRow`.
-  It runs on a **pooled client per row** (the playground, completions and the composer all
-  share it; only Check connects fresh) and hands the answer back verbatim. **Something that ran and failed is
-  an answer, not an error** — only a call that never happened is one. Arguments are typed as
-  JSON beside the field list, never a generated form.
-  **A server that is not a row gets the same playground through a second door**
-  (`POST /api/mcp-playground/:op {server}`, `/settings/mcp/playground`, the form's "Try it"):
-  handed a definition — stdio, streamable HTTP or SSE — never an id, storing nothing, pooled
-  on the definition itself. Not OAuth and not a builtin: both need a row. `McpPlayground` is
-  given a listing and a `call` and knows neither door.
+  is the only door that refuses the stored answer. The row's badge links to the server's own
+  page (`settings/mcp-detail.tsx`, `/settings/mcp/:id/tools`), which draws **both sides of
+  each contract** — a tool's input fields and its `outputSchema`, a prompt's arguments, a
+  resource's URI and type, each as a field list with the raw schema one fold below — as a
+  rail of what the server offers beside one entry's contract. It is a reading and nothing
+  more: running an entry from Settings was the playground, and it is gone. The listing reads
+  on a **pooled client per row** (the composer's reads share it; only Check connects fresh).
+  **Something that ran and failed is an answer, not an error** — only a call that never
+  happened is one.
 - **A thread's MCP prompts and resources reach the composer through the harness's own client,
   for every runtime**: `/server:prompt` is a harness command that *fills* the composer with the
   rendered text, and a resource picked from `@` is read into a `File` and goes the attachment
@@ -833,12 +826,26 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `role` derived from the tone. `Empty` (`components/empty.tsx`) is the dashed box for "there is
   nothing here" (`sm` inline, `lg` page — what `EmptyCard` used to re-spell). Absence and news
   never share a component.
-- **The composer's two surfaces split by subject.** A note above the strip
-  (`components/composer/notices.tsx`) is about *sending*; everything about the *turn* — the wait,
-  the working line, a held turn, an approval, a question, the queue — is at the foot of the
-  transcript (`thread-view.tsx`), where the next thing happens. **A footer reading is a mark that
-  grows words**: icon always, label `@panel-sm` only, and its count as a text badge where the
-  label shows and a bubble on the mark where it does not.
+- **The composer is about what you type; everything about the state of the thread is at the
+  foot of the transcript.** The wait, the working line, a held turn, an approval, a question,
+  the queue — and **this device's connection** — are all at the foot of the transcript
+  (`thread-view.tsx`), where the next thing happens. The connection is a `Notice`
+  (`components/connection-card.tsx`), not a reading: it is a sentence with a button, readable
+  in place, and it used to be one on the shelf's floor, where it took the shelf's own ground
+  with it. **So nothing on the shelf is ever wrong** — no `tone` prop, no `--shelf-*` token,
+  one `GROUND` — and the shelf holds only facts about the thread (`footer`) or about the
+  message being typed (the pile). **A footer reading is a mark that grows words**: icon
+  always, label `@panel-sm` only, and its count as a text badge where the label shows and a
+  bubble on the mark where it does not.
+- **A thread that is not ready or has stopped always says which, and always has a control.**
+  A reconnect is calm (`info`) and an error only once parked; a failed revive, a failed
+  restart and a parked ladder each name themselves, with the cause folded and Copy on the card.
+  A wait that lasts (`CLOCK_MS`) shows its clock and a Cancel (`actions.cancelWait`, which
+  abandons the request — the words go back to the box, the server finishes what it began). A
+  missing agent (424) is a setup step: the install line, Settings › Agents, and a mark in the
+  draft's agent picker from `useAgentsStatus`. A turn the process ended under is "The agent
+  stopped during this turn" with Continue/Retry. **A failure recorded in the thread is never
+  toasted as well** — `resume` and `reconnectThread` record, their callers stay silent.
 
 ## Tasks → `docs/tasks.md`
 

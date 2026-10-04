@@ -164,7 +164,7 @@ async function fire(sessionId: string, text: string, manager: SessionManager): P
     const profile = await getProfile(session.profileId);
     const project = await getProject(session.projectId);
     if (!profile || !project) return;
-    await manager.respawn(sessionId, profile, session.agentId, project, session.model, session.effort);
+    await manager.respawn(sessionId, profile, session.agentId, project, session.model, session.effort, { revive: true });
     const revived = manager.get(sessionId);
     if (revived?.bridge && !revived.exited) {
       await revived.bridge.ready;

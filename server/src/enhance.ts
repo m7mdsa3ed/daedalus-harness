@@ -53,7 +53,14 @@ const BRANCH_SYSTEM = `Name a git branch for the changes shown. Return only the 
 
 Rules: a conventional prefix ("feat/", "fix/", "refactor/", "chore/", "docs/"), then two to four hyphenated lowercase words describing the work. ASCII letters, digits, hyphens and the one slash only. At most 40 characters. Describe what the diff actually does; do not invent work that is not there.`;
 
-export type EnhanceKind = "prompt" | "commit" | "branch";
+/**
+ * The task half: a board task's title and rough notes in, a structured
+ * description out. Markdown, because that is what `tasks.description` stores,
+ * and GFM task lists for the work, because the editor draws them as checkboxes.
+ */
+const TASK_SYSTEM = `Turn a task's title and rough notes into a clear task description in GitHub-flavoured markdown. Open with one or two sentences on the problem and the goal, then a "## Scope" section of "- [ ]" checklist items, then "## Notes" only when the input has context worth keeping. Keep every fact, link, name and already-ticked "- [x]" item from the input; do not invent requirements, numbers or deadlines. With only a title, write the smallest sensible description and checklist for it. Return only the markdown — no preamble, no code fence around it, and do not repeat the title as a heading.`;
+
+export type EnhanceKind = "prompt" | "commit" | "branch" | "task";
 
 /** The style and the words a failure wears, per question. One table, so adding
     a fourth is a row rather than a second `if` chain. */
@@ -61,6 +68,7 @@ const STYLES: Record<EnhanceKind, { system: string; label: string; max: number }
   prompt: { system: ENHANCE_SYSTEM, label: "rewrite", max: MAX_INPUT_CHARS },
   commit: { system: COMMIT_SYSTEM, label: "commit message draft", max: MAX_DIFF_CHARS },
   branch: { system: BRANCH_SYSTEM, label: "branch name draft", max: MAX_DIFF_CHARS },
+  task: { system: TASK_SYSTEM, label: "task description draft", max: MAX_INPUT_CHARS },
 };
 
 export interface EnhanceInput {

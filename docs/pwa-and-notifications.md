@@ -68,6 +68,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   notification. Both exist for the phone that was off overnight: the push service keeps
   only the newest message per topic, so coming back means the state of each thread
   rather than a night of history, and nothing arrives about a turn already read.
+  **The body is the thread and what the turn was about, not the thread alone.**
+  The event is the title ("Turn finished"), and `body` is the thread's name plus
+  the message the user sent that the turn answered — and, for a failure, the
+  failure's own line after it (`notifyBody`, `index.ts`). The words travel from
+  the bridge's `currentTurnPrompt` through `onTurnSettled`/`onTurnEnd`
+  (`acp-bridge.ts`, `bridge-host.ts`, `sessions.ts`): a turn's first prompt is
+  the message, since a steer joins a turn rather than opening one. Each part is
+  flattened to one line and cut at 160 characters, because the OS truncates in
+  silence and the inbox row clamps at three lines. The same parts compose the
+  in-app toast's detail (`noticeDetail`, `lib/notifications.ts`) and the inbox
+  row's body (`addNotification`), so a notice says the same thing on every
+  surface.
 
 ## A click opens the thread's tab, in the page
 
@@ -114,8 +126,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `silent: false` is the only lever a web caller has on whether Chrome peeks a heads-up
   banner over the lock screen or files the line away quietly; and `requireInteraction`
   keeps the ones the agent is blocked on up (honoured on the desktop, a correct no-op on
-  Android). `renotify`, `vibrate` and `timestamp` are all declared in `vite-env.d.ts` —
-  spec'd, shipping, and absent from TS's DOM lib. Whether a notification is *blocking* is
+  Android). `requireInteraction` is the **blocked** set (`ACTIONABLE`), not the same thing
+  as **`actions`**: every event — a finished turn included — carries one "Open" action
+  (`NotificationShape.openAction`), because the banner is tappable anyway and the button
+  says where the tap goes. The worker's `notificationclick` reads `data.sessionId` for
+  both a tap (`event.action === ""`) and the action, so the button needs no routing of its
+  own; the desktop shell's own `Notification` is one banner whose click already routes and
+  draws no action. `renotify`, `vibrate`, `timestamp` and `actions` are all declared in
+  `vite-env.d.ts` — spec'd, shipping, and absent from TS's DOM lib. Whether a notification is *blocking* is
   the server's to say, so `push.send` carries the `ThreadEvent` in `data.event` and the
   worker reads it. What none of it buys, because it is not ours: Android 13+ withholds
   `POST_NOTIFICATIONS` from the installed PWA independently of the site permission, and a

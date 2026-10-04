@@ -208,7 +208,7 @@ export class SessionSocket {
       to,
       resumed,
       earlier: resumed ? 0 : await journal.countTurnsBefore(session.id, from),
-      archived: session.bridge === null,
+      archived: session.exited || !session.bridge,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
       /* The rail's whole table of contents, up front: turns whose messages are
@@ -327,7 +327,7 @@ export class SessionSocket {
       to,
       resumed,
       earlier: resumed ? 0 : await journal.countTurnsBefore(session.id, from),
-      archived: session.bridge === null,
+      archived: session.exited || !session.bridge,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
       // Same table of contents as the socket attach below — see there.
@@ -421,6 +421,14 @@ export class SessionSocket {
           return {};
         });
         return;
+    }
+    /* A respawn in flight has nulled the bridge on purpose; the command is
+       for the process coming up, so it waits for it rather than being told
+       there is no agent. Re-dispatched once the chain settles — a failed
+       respawn then answers below like any thread with no process. */
+    if (!session.bridge && session.respawnChain) {
+      void session.respawnChain.catch(() => {}).then(() => this.onCommand(session, peer, line));
+      return;
     }
     const bridge = session.bridge;
     if (!bridge) {

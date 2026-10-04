@@ -1,58 +1,39 @@
-/* ── The MCP playground ──
-   What a server is *for*: the tools, prompts and resources it puts in front
-   of an agent — what each one takes, what it answers — and a playground that
-   runs any of them.
+/* ── What an MCP server offers ──
+   The library row's own page (`/settings/mcp/:id/tools`): the tools, prompts
+   and resources the server puts in front of an agent — what each one takes,
+   what it answers — read from the stored listing the row already draws its
+   counts from.
 
-   Two pages, one playground. `McpDetailPage` is a library row's (the row's
-   badge links there, and builtins and OAuth rows resolve server-side exactly
-   as a spawn would); `McpPlaygroundPage` is any server at all, typed in or
-   handed over by the form's "Try it", and saved only if somebody asks.
-   `McpPlayground` below them knows neither: it is given a listing and a
-   `call`, and where the call goes is the page's business.
+   It is a *reading*, and deliberately nothing more. Running an entry is not
+   here: a tool call is the agent's, behind its permission gate, and prompting,
+   reading or completing from a settings screen was the playground, which is
+   gone. What is left is the contract — a rail of what the server offers beside
+   the fields of the one picked, with the raw schema a fold below.
 
-   The four sections are one component (`EntryRow`) rather than four, because
-   the only thing that differs between running a tool, a prompt and a resource
-   is the word in the request — the fields, the answer pane and the failure are
-   the same surface. `POST …/invoke` is the same shape on the server for the
-   same reason.
-
-   A chunk of its own (`sections.ts` lazy-loads it), so the library list does
-   not carry the playground. */
+   The sections are one component (`EntryDetail`) rather than four, because the
+   only thing that differs between a tool, a prompt, a resource and a template
+   is the shape of its contract; the tabs and the field list are the same. */
 import * as React from "react"
-import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { PlayIcon, PlugIcon, SaveIcon, SearchCheckIcon, SparklesIcon } from "lucide-react"
+import { ArrowLeftIcon, SearchCheckIcon, SearchIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { McpIcon } from "@/components/entity-icon"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Notice } from "@/components/notice"
 import { Empty } from "@/components/empty"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { useMcpCatalog, useMcpServers, useProjects } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
-import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
-import {
-  api,
-  mcpNeedsAuth,
-  mcpSubtitle,
-  type McpCheckEntry,
-  type McpCheckResult,
-  type McpCompletionRef,
-  type McpCallResult,
-  type McpInvokeKind,
-  type McpServerDef,
-} from "@/lib/settings"
-import { Field, FormPageHeader, Group, PageForm, Row, lines, pairs } from "./primitives"
+import { settingsPath } from "@/lib/router"
+import { api, mcpSubtitle, type McpCheckEntry, type McpCheckResult } from "@/lib/settings"
+import { cn } from "@/lib/utils"
+import { FormPageHeader, Group } from "./primitives"
 import { useSettingsPage } from "./layout"
-
-/** Where a playground's calls go. The page decides — a row's own routes, or
-    the ad-hoc door carrying the definition — and nothing below it knows. */
-type McpCall = <T>(op: "invoke" | "complete", body: Record<string, unknown>) => Promise<T>
 
 export function McpDetailPage() {
   const { entryId = "" } = useParams()
@@ -65,21 +46,13 @@ export function McpDetailPage() {
   const query = useMcpCatalog(entryId)
   const { busy, run } = useAsyncAction({ toast: true })
 
-  /* Which project a call runs against. It matters only for the harness's own
-     servers — a builtin's env carries the calling thread's project, and there
-     is no thread behind this page — so the picker is drawn only for those; for
-     everything else the server is the same server in every directory. */
+  /* Which project a listing is read against. It matters only for the harness's
+     own servers — a builtin's env carries the calling thread's project, and
+     there is no thread behind this page — so the picker is drawn only for
+     those; for everything else the server is the same server in every
+     directory. */
   const [projectId, setProjectId] = React.useState("")
   const project = projectId || projects[0]?.id || ""
-
-  const call = React.useCallback<McpCall>(
-    (op, body) =>
-      api(settings, `/api/mcp-servers/${entryId}/${op}`, {
-        method: "POST",
-        body: JSON.stringify({ ...body, project }),
-      }),
-    [settings, entryId, project]
-  )
 
   const check = () =>
     void run(`Couldn't check ${server?.name ?? "this server"}`, async () => {
@@ -95,7 +68,7 @@ export function McpDetailPage() {
   if (!server) return servers.length === 0 ? null : <Navigate to={settingsPath("mcp")} replace />
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
+    <div className="mx-auto w-full max-w-7xl">
       <FormPageHeader
         title={server.name}
         description={mcpSubtitle(server)}
@@ -106,10 +79,10 @@ export function McpDetailPage() {
           {query.error.message}
         </Notice>
       )}
-      <McpPlayground result={query.data?.deferred ? null : query.data ?? null} call={call}>
+      <Offering result={query.data?.deferred ? null : query.data ?? null}>
         {server.type === "builtin" && projects.length > 1 && (
           <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>
-            <SelectTrigger size="sm" className="w-56" title="Which project a call runs against">
+            <SelectTrigger size="sm" className="w-56" title="Which project a listing is read against">
               <SelectValue>{projects.find((p) => p.id === project)?.name ?? "Project"}</SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -131,265 +104,71 @@ export function McpDetailPage() {
         >
           <SearchCheckIcon className="size-4" /> {busy || query.isFetching ? "Checking…" : "Check"}
         </Button>
-      </McpPlayground>
+      </Offering>
     </div>
   )
-}
-
-/** A server as the playground's form holds it — every field a string, the
-    same shape the library form keeps, so its "Try it" hands its state over
-    whole. `sse` is the one transport the library cannot store yet, and only
-    the playground offers it. */
-export interface McpTransportForm {
-  type: "stdio" | "http" | "sse"
-  command: string
-  args: string
-  env: string
-  url: string
-  headers: string
-}
-
-const BLANK: McpTransportForm = { type: "stdio", command: "", args: "", env: "", url: "", headers: "" }
-
-/** The form as the definition the ad-hoc routes validate. */
-function serverOf(form: McpTransportForm) {
-  return form.type === "stdio"
-    ? { type: "stdio", command: form.command.trim(), args: lines(form.args), env: pairs(form.env, "=") }
-    : { type: form.type, url: form.url.trim(), headers: pairs(form.headers, ":") }
-}
-
-/**
- * Any MCP server, without a library row: typed in here, or handed over by the
- * library form's "Try it" (route state, like Browse's prefill — a reload
- * lands on an empty form, which is right for something that was never saved).
- *
- * Calls go to the server that was *connected*, not to whatever the fields say
- * now: a half-edited command must not be what a Run press spawns. Connecting
- * again is what picks up an edit, and it starts every row afresh (`key`).
- */
-function ConnectedMcpServers() {
-  const servers = useMcpServers().filter((server) => !mcpNeedsAuth(server))
-
-  if (servers.length === 0) return null
-
-  return (
-    <Group label="Saved MCP servers" hint="Open a connected library server directly in the playground.">
-      {servers.map((server) => (
-        <Link
-          key={server.id}
-          to={mcpDetailPath(server.id)}
-          className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Row
-            icon={<McpIcon server={server} className="size-4" />}
-            title={server.name}
-            subtitle={mcpSubtitle(server)}
-          />
-        </Link>
-      ))}
-    </Group>
-  )
-}
-
-export function McpPlaygroundPage() {
-  const { settings } = useSettingsPage()
-  const navigate = useNavigate()
-  const prefill = (useLocation().state as { prefill?: Partial<McpTransportForm> } | null)?.prefill
-  const [form, setForm] = React.useState<McpTransportForm>(() => ({ ...BLANK, ...prefill }))
-  const set = (patch: Partial<McpTransportForm>) => setForm((f) => ({ ...f, ...patch }))
-  const [live, setLive] = React.useState<{ server: ReturnType<typeof serverOf>; result: McpCheckResult } | null>(
-    null
-  )
-  const { busy, run } = useAsyncAction({ toast: true })
-
-  const connect = React.useCallback(
-    (target: McpTransportForm) =>
-      void run("Couldn't reach the playground", async () => {
-        const server = serverOf(target)
-        const result = await api<McpCheckResult>(settings, "/api/mcp-playground/check", {
-          method: "POST",
-          body: JSON.stringify({ server }),
-        })
-        setLive({ server, result })
-      }),
-    [run, settings]
-  )
-
-  /* Handed a server is asked to try it: connect on arrival. Once — a strict
-     mode double effect would spawn a stdio server twice. */
-  const arrived = React.useRef(false)
-  React.useEffect(() => {
-    if (!prefill || arrived.current) return
-    arrived.current = true
-    connect({ ...BLANK, ...prefill })
-  }, [prefill, connect])
-
-  const call = React.useCallback<McpCall>(
-    (op, body) =>
-      api(settings, `/api/mcp-playground/${op}`, {
-        method: "POST",
-        body: JSON.stringify({ ...body, server: live?.server }),
-      }),
-    [settings, live]
-  )
-
-  /* Saving is the ordinary form, prefilled — the same door Browse uses, so the
-     name, the OAuth probe and validation stay the form's. */
-  const save = () => {
-    const server = serverOf(form)
-    const prefillDef = { id: "", name: "", ...server, ...(server.type === "http" ? { auth: "none" } : {}) }
-    void navigate(settingsFormPath("mcp", "new"), { state: { prefill: prefillDef as McpServerDef } })
-  }
-
-  return (
-    <div className="mx-auto w-full max-w-3xl">
-      <FormPageHeader
-        title="MCP playground"
-        description="Connect to any MCP server, saved or not, and run what it offers. Nothing here is stored until you save it to the library."
-        onBack={() => void navigate(settingsPath("mcp"))}
-      />
-      <ConnectedMcpServers />
-      <PageForm
-        className="mb-8"
-        onSubmit={(e) => {
-          e.preventDefault()
-          connect(form)
-        }}
-      >
-        <Field label="Transport">
-          <Select value={form.type} onValueChange={(type) => set({ type: (type as McpTransportForm["type"]) ?? "stdio" })}>
-            <SelectTrigger className="w-full @panel-sm:w-56">
-              <SelectValue>{TRANSPORTS[form.type]}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(TRANSPORTS).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        {form.type === "stdio" ? (
-          <>
-            <Field label="Command" hint="Runs on the server, as a thread's agent would spawn it.">
-              <Input
-                value={form.command}
-                onChange={(e) => set({ command: e.target.value })}
-                placeholder="npx"
-                className="font-mono text-xs"
-                required
-              />
-            </Field>
-            <div className="grid gap-4 @panel-sm:grid-cols-2">
-              <Field label="Arguments" hint="One per line.">
-                <Textarea
-                  value={form.args}
-                  onChange={(e) => set({ args: e.target.value })}
-                  rows={3}
-                  placeholder={"-y\n@modelcontextprotocol/server-everything"}
-                  className="font-mono text-xs"
-                />
-              </Field>
-              <Field label="Environment" hint="One per line: NAME=value">
-                <Textarea
-                  value={form.env}
-                  onChange={(e) => set({ env: e.target.value })}
-                  rows={3}
-                  className="font-mono text-xs"
-                />
-              </Field>
-            </div>
-          </>
-        ) : (
-          <>
-            <Field
-              label="URL"
-              hint="A server that wants OAuth has to be saved and connected from the library first — its token needs a row to belong to."
-            >
-              <Input
-                value={form.url}
-                onChange={(e) => set({ url: e.target.value })}
-                placeholder={form.type === "sse" ? "https://mcp.example.com/sse" : "https://mcp.example.com/mcp"}
-                className="font-mono text-xs"
-                required
-              />
-            </Field>
-            <Field label="Headers" hint="One per line: Name: value">
-              <Textarea
-                value={form.headers}
-                onChange={(e) => set({ headers: e.target.value })}
-                rows={2}
-                className="font-mono text-xs"
-              />
-            </Field>
-          </>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={busy}>
-            <PlugIcon className="size-4" /> {busy ? "Connecting…" : live ? "Reconnect" : "Connect"}
-          </Button>
-          {/* The library cannot store SSE yet, so there is nothing to save it as. */}
-          {form.type !== "sse" && (
-            <Button type="button" variant="outline" onClick={save}>
-              <SaveIcon className="size-4" /> Save to library
-            </Button>
-          )}
-        </div>
-      </PageForm>
-      {live && <McpPlayground key={JSON.stringify(live.server)} result={live.result} call={call} />}
-    </div>
-  )
-}
-
-const TRANSPORTS: Record<McpTransportForm["type"], string> = {
-  stdio: "stdio",
-  http: "Streamable HTTP",
-  sse: "SSE (legacy)",
 }
 
 /**
  * A connected server's surface: what it called itself and declared, its
- * instructions, and every tool, prompt, resource and template as a runnable
- * row. `children` are the page's own controls, drawn at the end of the badge
+ * instructions, and every tool, prompt, resource and template as a row in the
+ * rail. `children` are the page's own controls, drawn at the end of the badge
  * row.
  */
-function McpPlayground({
-  result,
-  call,
-  children,
-}: {
-  result: McpCheckResult | null
-  call: McpCall
-  children?: React.ReactNode
-}) {
+function Offering({ result, children }: { result: McpCheckResult | null; children?: React.ReactNode }) {
   const sections: { kind: EntryKind; label: string; entries: McpCheckEntry[] }[] = [
     { kind: "tool", label: "Tools", entries: result?.tools ?? [] },
     { kind: "prompt", label: "Prompts", entries: result?.prompts ?? [] },
     { kind: "resource", label: "Resources", entries: result?.resources ?? [] },
     { kind: "template", label: "Resource templates", entries: result?.resourceTemplates ?? [] },
   ]
-  const completions = Boolean(result?.capabilities?.completions)
+  /* The filter narrows the rail and never the entry in front of you — it stays
+     open while the collection is searched, as Postman's does. `chosen` is the
+     *explicit* pick, which is what lets a narrow panel tell "the reader opened
+     this" from "this is just the first row". */
+  const [query, setQuery] = React.useState("")
+  const [chosen, setChosen] = React.useState<string | null>(null)
+  const needle = query.trim().toLowerCase()
+
+  /* Every entry the server offers, in the order the sections run. The rail
+     lists these; a filter narrows what is *listed* and a selection is resolved
+     against the whole set, so an entry you have open never vanishes. */
+  const rows = sections.flatMap(({ kind, label, entries }) => entries.map((entry) => ({ kind, label, entry })))
+  const shown = needle ? rows.filter((row) => entryMatches(row.entry, needle)) : rows
+  const groups = sections.map(({ kind, label }) => ({ kind, label, shown: shown.filter((row) => row.kind === kind) }))
+  const current = rows.find((row) => rowKey(row) === chosen) ?? rows[0] ?? null
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {result?.serverInfo && (
-          <Badge variant="outline" className="font-normal">
-            {result.serverInfo.name} {result.serverInfo.version}
-          </Badge>
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-card px-3 py-2 shadow-sm @panel-sm:px-4">
+        {result ? (
+          <>
+            <span className="text-sm font-medium">{result.serverInfo?.name ?? "Connected"}</span>
+            {result.serverInfo?.version && (
+              <Badge variant="outline" className="font-normal">
+                {result.serverInfo.version}
+              </Badge>
+            )}
+            {/* What the server declared it can do — the protocol's own words,
+                so "no prompts" and "prompts it has not listed yet" read apart. */}
+            {Object.keys(result.capabilities ?? {})
+              .filter((key) => key !== "experimental")
+              .map((key) => (
+                <Badge key={key} variant="secondary" className="font-normal">
+                  {key}
+                </Badge>
+              ))}
+            {result.ok && (
+              <span className="text-xs text-muted-foreground tabular-nums">listed in {result.ms}ms</span>
+            )}
+          </>
+        ) : (
+          /* `result` is null both while the listing is being read and when the
+             server defers its first connection until Check, so the line says
+             neither — it just says there is nothing to show yet. */
+          <span className="text-sm text-muted-foreground">Not listed yet.</span>
         )}
-        {/* What the server declared it can do — the protocol's own words,
-            so "no prompts" and "prompts it has not listed yet" read apart. */}
-        {Object.keys(result?.capabilities ?? {})
-          .filter((key) => key !== "experimental")
-          .map((key) => (
-            <Badge key={key} variant="secondary" className="font-normal">
-              {key}
-            </Badge>
-          ))}
-        {result?.ok && <span className="text-xs text-muted-foreground">listed in {result.ms}ms</span>}
-        {children}
+        {children && <div className="ml-auto flex flex-wrap items-center gap-2">{children}</div>}
       </div>
 
       {result && !result.ok && (
@@ -403,68 +182,169 @@ function McpPlayground({
       )}
 
       {result?.ok && (
-        <div className="space-y-6">
+        <>
           {/* The text a client puts in front of its model — the Daedalus agent
-              does, in its system prompt — so it is worth reading here. */}
+              does, in its system prompt — so it is worth reading here, above
+              the two panes rather than in one of them. */}
           {result.instructions && (
             <Group label="Instructions">
               <p className="py-3 text-sm whitespace-pre-wrap">{result.instructions}</p>
             </Group>
           )}
-          {sections.map(({ kind, label, entries }) =>
-            /* Tools are drawn even when there are none — a server offering no
-               tools is the answer somebody came here for. The others are
-               simply absent, since most servers have none. */
-            kind === "tool" || entries.length > 0 ? (
-              <Group key={kind} label={label}>
-                {entries.length === 0 ? (
-                  <Empty size="sm">This server advertises no {label.toLowerCase()}.</Empty>
-                ) : (
-                  entries.map((entry) => (
-                    <EntryRow key={entry.name} kind={kind} entry={entry} call={call} completions={completions} />
-                  ))
-                )}
-              </Group>
-            ) : null
-          )}
-        </div>
+          <div className="mt-3 grid items-start gap-3 @panel-lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+            <Rail
+              groups={groups}
+              total={rows.length}
+              matched={shown.length}
+              query={query}
+              onQuery={setQuery}
+              currentKey={current ? rowKey(current) : null}
+              onPick={setChosen}
+              /* A narrow panel is the rail *or* the entry, never both: the pick
+                 is what swaps them and the entry's Back button is the way
+                 back. */
+              className={chosen ? "hidden @panel-lg:block" : undefined}
+            />
+            <div className={chosen ? "min-w-0" : "hidden min-w-0 @panel-lg:block"}>
+              {current ? (
+                <EntryDetail key={rowKey(current)} kind={current.kind} entry={current.entry} onBack={() => setChosen(null)} />
+              ) : (
+                <Empty size="lg">{NOTHING_TO_RUN}</Empty>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </>
   )
 }
 
-/**
- * One tool, prompt or resource: what it takes, what it answers, and the
- * playground that runs it.
- *
- * `<details>` rather than an accordion component — the browser already has "a
- * heading that opens something", it is keyboard- and screen-reader-correct for
- * free, and a page of forty tools should not mount forty argument boxes.
- *
- * The arguments are a **JSON textarea**, not a form generated from the schema.
- * A generated form has to answer `oneOf`, nested objects, arrays of objects and
- * everything else JSON Schema can say, and it would still be a worse editor
- * than a textarea for the person debugging why a tool rejects their payload.
- * What the schema is *for* here is the field list beside it, which is the part
- * a person actually reads.
- * ponytail: a generated form when a tool's arguments are routinely long, never
- * before.
- */
-/** The page's four sections: the three things a server runs, plus templates,
-    which run as a resource read once their variables are filled in. */
-type EntryKind = McpInvokeKind | "template"
+/** The rail: what the server offers, grouped the way the sections are, under
+    the one filter that narrows it. Postman's collection tree, one level deep —
+    a list of destinations, and the thing you pick stays picked while you search
+    past it. */
+function Rail({
+  groups,
+  total,
+  matched,
+  query,
+  onQuery,
+  currentKey,
+  onPick,
+  className,
+}: {
+  groups: { kind: EntryKind; label: string; shown: { kind: EntryKind; label: string; entry: McpCheckEntry }[] }[]
+  total: number
+  matched: number
+  query: string
+  onQuery: (value: string) => void
+  currentKey: string | null
+  onPick: (key: string) => void
+  className?: string
+}) {
+  return (
+    <nav
+      aria-label="What this server offers"
+      className={cn(
+        "flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm",
+        /* Below `@panel-lg` the rail *is* the page, so it neither sticks nor
+           caps its own height — the frame scrolls it. At `@panel-lg` it holds
+           its place beside the entry and scrolls inside itself. */
+        "@panel-lg:sticky @panel-lg:top-[var(--app-header-h)]",
+        className
+      )}
+    >
+      <div className="border-b p-2">
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+            placeholder="Filter by name or description…"
+            aria-label="Filter what this server offers"
+            className="h-8 pl-7 text-xs"
+          />
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h)-8rem)]">
+        {groups.map(({ kind, label, shown }) =>
+          shown.length === 0 ? null : (
+            <div key={kind} className="mb-1.5 last:mb-0">
+              <p className="px-2 py-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                {label} · {shown.length}
+              </p>
+              {shown.map((row) => {
+                const key = rowKey(row)
+                const active = key === currentKey
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-current={active ? "true" : undefined}
+                    onClick={() => onPick(key)}
+                    className={cn(
+                      "block w-full rounded-md px-2 py-1.5 text-left",
+                      active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                    )}
+                  >
+                    <span className="block font-mono text-xs break-all">{row.entry.name}</span>
+                    {row.entry.description && (
+                      <span className="mt-0.5 line-clamp-2 block text-[11px] text-muted-foreground">
+                        {row.entry.description}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        )}
+        {matched === 0 && (
+          <p className="p-2 text-xs text-muted-foreground">
+            {total === 0 ? NOTHING_TO_RUN : `Nothing matches “${query.trim()}”.`}
+          </p>
+        )}
+      </div>
+    </nav>
+  )
+}
 
-function EntryRow({
+/** The page's four sections: the three things a server offers, plus templates,
+    whose URI is the thing a reader fills in. */
+type EntryKind = "tool" | "prompt" | "resource" | "template"
+
+/** What one entry is called in the header. The protocol's own words,
+    lowercased — a prompt is a prompt in every runtime's vocabulary. */
+const KIND_LABEL: Record<EntryKind, string> = {
+  tool: "Tool",
+  prompt: "Prompt",
+  resource: "Resource",
+  template: "Template",
+}
+
+/** What identifies a row in the rail: its kind *and* its name, because a tool
+    and a prompt may share one ("search" is both, often enough). */
+const rowKey = (row: { kind: EntryKind; entry: McpCheckEntry }) => `${row.kind}:${row.entry.name}`
+
+/** Said by the rail when the server offers nothing at all, and by the pane
+    beside it while nothing has been picked. */
+const NOTHING_TO_RUN = "This server advertises nothing to run."
+
+/**
+ * One tool, prompt, resource or template, drawn as its contract: a bar naming
+ * the entry and its type, then the fields it takes and the schema they are
+ * typed against. Nothing here runs — this is the reading a person opens the
+ * page to make, of what a thread linking this server would be handed.
+ */
+function EntryDetail({
   kind,
   entry,
-  call: send,
-  completions,
+  onBack,
 }: {
   kind: EntryKind
   entry: McpCheckEntry
-  call: McpCall
-  /** The server answers `completion/complete`, so arguments can be suggested. */
-  completions: boolean
+  /** Back to the rail — drawn only where the panel is too narrow for both. */
+  onBack: () => void
 }) {
   const inputs =
     kind === "prompt"
@@ -473,197 +353,81 @@ function EntryRow({
         ? templateFields(entry.uri ?? entry.name)
         : schemaFields(entry.inputSchema)
   const outputs = schemaFields(entry.outputSchema)
-  const [args, setArgs] = React.useState(() => argsSkeleton(inputs))
-  const [result, setResult] = React.useState<McpCallResult | null>(null)
-  const [invalid, setInvalid] = React.useState<string | null>(null)
-  const { busy, run } = useAsyncAction({ toast: true })
-
-  const call = () => {
-    let parsed: unknown = {}
-    if (kind !== "resource") {
-      try {
-        parsed = args.trim() ? JSON.parse(args) : {}
-      } catch (err) {
-        /* Caught here rather than sent: a JSON typo is not a round trip, and
-           the message the parser gives names the character. */
-        setInvalid((err as Error).message)
-        return
-      }
-    }
-    setInvalid(null)
-    const name =
-      kind === "template"
-        ? fillTemplate(entry.uri ?? entry.name, parsed as Record<string, unknown>)
-        : kind === "resource"
-          ? (entry.uri ?? entry.name)
-          : entry.name
-    void run(`Couldn't run ${entry.name}`, async () => {
-      setResult(null)
-      setResult(
-        await send<McpCallResult>("invoke", { kind: kind === "template" ? "resource" : kind, name, args: parsed })
-      )
-    })
-  }
-
-  /* Suggestions for each argument from its current value — the server ranks
-     them (`completion/complete`), and a pick writes the value into the JSON. */
-  const [suggestions, setSuggestions] = React.useState<Record<string, string[]> | null>(null)
-  const ref: McpCompletionRef | null =
-    kind === "prompt"
-      ? { type: "ref/prompt", name: entry.name }
-      : kind === "template"
-        ? { type: "ref/resource", uri: entry.uri ?? entry.name }
-        : null
-  const suggest = () => {
-    let current: Record<string, unknown> = {}
-    try {
-      current = args.trim() ? (JSON.parse(args) as Record<string, unknown>) : {}
-    } catch (err) {
-      setInvalid((err as Error).message)
-      return
-    }
-    setInvalid(null)
-    const context = Object.fromEntries(
-      Object.entries(current).filter(([, v]) => typeof v === "string") as [string, string][]
-    )
-    void run(`Couldn't ask ${entry.name} for suggestions`, async () => {
-      const answers = await Promise.all(
-        inputs.map(async (field) => {
-          const { values } = await send<{ values: string[] }>("complete", {
-            ref,
-            argument: { name: field.name, value: String(current[field.name] ?? "") },
-            context,
-          })
-          return [field.name, values] as const
-        })
-      )
-      setSuggestions(Object.fromEntries(answers))
-    })
-  }
-  const choose = (field: string, value: string) => {
-    let current: Record<string, unknown> = {}
-    try {
-      current = args.trim() ? (JSON.parse(args) as Record<string, unknown>) : {}
-    } catch {
-      // A broken payload is replaced by the one value picked; the rest was unreadable anyway.
-    }
-    setArgs(JSON.stringify({ ...current, [field]: value }, null, 2))
-  }
-
-  const answer = result && JSON.stringify(result.error ?? result.result, null, 2)
-  const images = result?.ok ? imagesIn(result.result) : []
+  /* The entry's own shape picks its tabs: a resource has no payload to type
+     (its URI *is* the request), so it gets the one tab that says what will be
+     read; only a tool declares an output schema. `kind` is fixed for the life
+     of this component — it is part of the row's key. */
+  const tabs = [
+    { id: "input", label: kind === "resource" ? "Reads" : "Input" },
+    ...(kind === "tool" ? [{ id: "output", label: "Output" }] : []),
+  ]
+  const [tab, setTab] = React.useState(tabs[0].id)
 
   return (
-    <details className="group py-3">
-      <summary className="cursor-pointer list-none">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="break-all font-mono text-sm">{entry.name}</span>
-          {entry.mimeType && (
-            <Badge variant="outline" className="font-normal">
-              {entry.mimeType}
-            </Badge>
-          )}
+    <article className="overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="-ml-1 @panel-lg:hidden"
+          aria-label="Back to what this server offers"
+          onClick={onBack}
+        >
+          <ArrowLeftIcon />
+        </Button>
+        <Badge variant="secondary" className="font-normal">
+          {KIND_LABEL[kind]}
+        </Badge>
+        {/* A resource *is* its URI and a template is its fillable one, so the
+            bar says the thing that will be requested rather than the label. */}
+        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={entry.uri ?? entry.name}>
+          {entry.uri ?? entry.name}
         </span>
-        {entry.description && (
-          <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground group-open:line-clamp-none">
-            {entry.description}
-          </span>
-        )}
-      </summary>
-
-      <div className="mt-3 space-y-3">
-        <Fields
-          label={kind === "resource" ? "Reads" : "Input"}
-          fields={inputs}
-          schema={entry.inputSchema}
-          empty={kind === "resource" ? (entry.uri ?? entry.name) : "Takes no arguments."}
-        />
-
-        {kind === "tool" && (
-          <Fields
-            label="Output"
-            fields={outputs}
-            schema={entry.outputSchema}
-            /* No `outputSchema` is not "answers nothing" — it is the default
-               MCP shape, and saying so is the difference between a tool nobody
-               can read and one whose answer simply is not typed. */
-            empty="No output schema — answers content blocks (text, images or embedded resources)."
-          />
-        )}
-
-        {kind !== "resource" && (
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground" htmlFor={`args-${kind}-${entry.name}`}>
-              Arguments (JSON)
-            </label>
-            <Textarea
-              id={`args-${kind}-${entry.name}`}
-              value={args}
-              onChange={(e) => setArgs(e.target.value)}
-              spellCheck={false}
-              className="min-h-24 font-mono text-xs"
-            />
-            {suggestions && (
-              <div className="mt-2 space-y-1">
-                {Object.entries(suggestions).map(([field, values]) => (
-                  <div key={field} className="flex flex-wrap items-center gap-1 text-xs">
-                    <span className="font-mono text-muted-foreground">{field}</span>
-                    {values.length === 0 ? (
-                      <span className="text-muted-foreground">no suggestions</span>
-                    ) : (
-                      values.slice(0, 12).map((value) => (
-                        <Button
-                          key={value}
-                          variant="outline"
-                          size="xs"
-                          className="font-mono"
-                          onClick={() => choose(field, value)}
-                        >
-                          {value}
-                        </Button>
-                      ))
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {invalid && <Notice tone="warn">{invalid}</Notice>}
-
-        <div className="flex items-center gap-2">
-          <Button size="sm" disabled={busy} onClick={call}>
-            <PlayIcon className="size-4" /> {busy ? "Running…" : "Run"}
-          </Button>
-          {completions && ref && inputs.length > 0 && (
-            <Button size="sm" variant="outline" disabled={busy} onClick={suggest}>
-              <SparklesIcon className="size-4" /> Suggest values
-            </Button>
-          )}
-          {result && (
-            <span className="text-xs text-muted-foreground">
-              {result.ok ? "answered" : "failed"} in {result.ms}ms
-            </span>
-          )}
-        </div>
-
-        {/* Something that ran and reported failure is still an answer — the
-            page draws it as one, and only a call that never happened is an
-            error. */}
-        {answer && (
-          <>
-            {!result?.ok && <Notice tone="error">The call didn't complete.</Notice>}
-            {/* An image is drawn as one — base64 in the pane beside it is what
-                the answer *is*, but not what anyone came to look at. */}
-            {images.map((src, i) => (
-              <img key={i} src={src} alt="" className="max-h-80 max-w-full rounded-md border" />
-            ))}
-            <Pane text={answer} />
-          </>
+        {entry.mimeType && (
+          <Badge variant="outline" className="font-normal">
+            {entry.mimeType}
+          </Badge>
         )}
       </div>
-    </details>
+
+      {/* What the entry is for, in the server's own words. */}
+      {entry.description && (
+        <p className="border-b px-3 py-2 text-xs/relaxed text-muted-foreground">{entry.description}</p>
+      )}
+
+      <Tabs value={tab} onValueChange={(value) => setTab(value as string)}>
+        <TabsList variant="line" className="w-full justify-start border-b px-2">
+          {tabs.map((tabItem) => (
+            <TabsTrigger key={tabItem.id} value={tabItem.id} className="flex-none text-xs">
+              {tabItem.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value="input" className="p-3">
+          <Fields
+            label={kind === "resource" ? "Reads" : "Input"}
+            fields={inputs}
+            schema={entry.inputSchema}
+            empty={kind === "resource" ? (entry.uri ?? entry.name) : "Takes no arguments."}
+          />
+        </TabsContent>
+
+        {kind === "tool" && (
+          <TabsContent value="output" className="p-3">
+            <Fields
+              label="Output"
+              fields={outputs}
+              schema={entry.outputSchema}
+              /* No `outputSchema` is not "answers nothing" — it is the default
+                 MCP shape, and saying so is the difference between a tool nobody
+                 can read and one whose answer simply is not typed. */
+              empty="No output schema — answers content blocks (text, images or embedded resources)."
+            />
+          </TabsContent>
+        )}
+      </Tabs>
+    </article>
   )
 }
 
@@ -717,16 +481,23 @@ function Fields({
   )
 }
 
-/** The output pane: preformatted, scrolled, with the Copy every drawn error
-    and every result in this app carries. */
-function Pane({ text }: { text: string }) {
+/** The schema pane: preformatted, scrolled, with the same Copy every drawn
+    error and result in this app carries. */
+function Pane({ text, className }: { text: string; className?: string }) {
   return (
     <div className="relative">
-      <pre className="max-h-80 overflow-auto rounded-md bg-muted/50 p-2.5 pr-9 font-mono text-xs">{text}</pre>
+      <pre className={cn("overflow-auto rounded-md bg-muted/50 p-2.5 pr-9 font-mono text-xs", className ?? "max-h-80")}>
+        {text}
+      </pre>
       <CopyButton text={text} variant="ghost" size="icon" className="absolute top-1 right-1" />
     </div>
   )
 }
+
+/** Whether the filter word is in what an entry is *called* — its name, its
+    description and, for a resource, the URI, which for a resource is the name. */
+const entryMatches = (entry: McpCheckEntry, needle: string) =>
+  `${entry.name} ${entry.description ?? ""} ${entry.uri ?? ""}`.toLowerCase().includes(needle)
 
 /** A JSON Schema object read as the field list it describes. Anything that is
     not an object of properties — a `oneOf`, a bare string — has no field list,
@@ -777,81 +548,12 @@ function typeName(prop: SchemaProp | undefined): string {
   return type ?? "any"
 }
 
-/**
- * A starting payload: the *required* arguments, each at its type's empty
- * value.
- *
- * Only the required ones, because a skeleton carrying every optional field is
- * a payload that says things the caller did not mean — an empty string where
- * the server's own default was wanted.
- */
-function argsSkeleton(fields: Field[]): string {
-  const required = fields.filter((f) => f.required)
-  if (required.length === 0) return "{}"
-  const out: Record<string, unknown> = {}
-  for (const field of required) {
-    out[field.name] = field.type.startsWith("number")
-      ? 0
-      : field.type.startsWith("integer")
-        ? 0
-        : field.type.startsWith("boolean")
-          ? false
-          : field.type.endsWith("[]")
-            ? []
-            : field.type === "object"
-              ? {}
-              : ""
-  }
-  return JSON.stringify(out, null, 2)
-}
-
 /** A template's variables — `{name}`, `{+path}`, `{?q,page}` — as the field
-    list its arguments are typed against. */
+    list its URI is typed against. */
 function templateFields(template: string): Field[] {
   const names = new Set<string>()
   for (const [, expr] of template.matchAll(/\{([^}]+)\}/g)) {
     for (const name of expr.replace(/^[+#./;?&]/, "").split(",")) names.add(name.replace(/[*:].*$/, ""))
   }
   return [...names].map((name) => ({ name, type: "string", required: true }))
-}
-
-/**
- * RFC 6570, the operators servers actually publish: `{x}` is escaped, `{+x}`
- * and `{#x}` keep reserved characters, `{/x}` and `{.x}` prefix, `{?x,y}` and
- * `{&x}` build a query.
- * ponytail: no prefix modifiers (`{x:3}`) or exploded lists (`{x*}`) — the SDK's
- * `UriTemplate` if a server ever needs them.
- */
-function fillTemplate(template: string, values: Record<string, unknown>): string {
-  return template.replace(/\{([^}]+)\}/g, (_, expr: string) => {
-    const op = /^[+#./;?&]/.test(expr) ? expr[0] : ""
-    const names = (op ? expr.slice(1) : expr).split(",").map((n) => n.replace(/[*:].*$/, ""))
-    const present = names.filter((n) => values[n] !== undefined && values[n] !== "")
-    const enc = (v: unknown) => (op === "+" || op === "#" ? encodeURI(String(v)) : encodeURIComponent(String(v)))
-    if (op === "?" || op === "&") {
-      const pairs = present.map((n) => `${n}=${enc(values[n])}`).join("&")
-      return pairs ? `${op}${pairs}` : ""
-    }
-    const joined = present.map((n) => enc(values[n])).join(",")
-    return joined && (op === "/" || op === "." || op === "#") ? op + joined : joined
-  })
-}
-
-/** Every image in an answer — a tool's `image` blocks, a resource's image
-    `blob`s, an embedded resource's — as data URLs. */
-function imagesIn(result: unknown): string[] {
-  const out: string[] = []
-  const walk = (value: unknown) => {
-    if (Array.isArray(value)) return value.forEach(walk)
-    if (!value || typeof value !== "object") return
-    const v = value as Record<string, unknown>
-    const mime = typeof v.mimeType === "string" ? v.mimeType : ""
-    if (mime.startsWith("image/")) {
-      const data = typeof v.data === "string" ? v.data : typeof v.blob === "string" ? v.blob : null
-      if (data) out.push(`data:${mime};base64,${data}`)
-    }
-    for (const key of ["content", "contents", "resource", "messages"]) if (key in v) walk(v[key])
-  }
-  walk(result)
-  return out
 }

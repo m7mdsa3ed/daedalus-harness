@@ -40,8 +40,34 @@ export function threadStatus(
     thread?.phase ?? IDLE_PHASE,
     thread?.turnActive ?? session.promptActive,
     waiting,
-    !!session.lastTurnError
+    !!session.lastTurnError,
+    !!thread && thread.phase.kind === "live" && backgroundRunning(thread.items)
   )
+}
+
+/* A native workflow (Claude Code's Workflow tool) is a background task that
+   outlives the turn that launched it: the turn ends at "launched", and the run
+   streams `async_task_*` for minutes after. It reads as busy in every list, and
+   ONLY here — `turnActive` stays the turn's, because it is what Stop, the queue
+   and the turn footers mean by "running", and none of them apply to a task the
+   agent is no longer waiting on.
+
+   Gated on a live phase: a run dies with its process, and a journal replayed
+   from a retired thread still holds its last `running`.
+   ponytail: a respawn mid-run (same thread, new process) kills the run with no
+   terminal state journaled, so the thread reads busy for good; have the bridge
+   journal a `stopped` for open tasks on respawn if that bites.
+
+   Cached per items array, because `useThreadStatuses` asks this of every thread
+   on every store write and the array only changes for the thread that wrote. */
+const backgroundCache = new WeakMap<ThreadState["items"], boolean>()
+export function backgroundRunning(items: ThreadState["items"]): boolean {
+  let running = backgroundCache.get(items)
+  if (running === undefined) {
+    running = items.some((i) => i.kind === "async-task" && i.state === "running")
+    backgroundCache.set(items, running)
+  }
+  return running
 }
 
 /** The agents dashboard's vocabulary: `threadStatus` folded down to what a

@@ -5,7 +5,7 @@ import { CornerDownRight, ListTree, MessageSquare } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type { BoardStatus } from "@/lib/boards"
-import type { Task } from "@/lib/tasks-board"
+import { PRIORITY_LABEL, type Task, type TaskPriority } from "@/lib/tasks-board"
 import { checklistProgress } from "@/lib/tasks-view"
 import {
   AssigneeAvatar,
@@ -20,6 +20,14 @@ import {
 } from "./fields"
 
 const MAX_LABELS = 3
+
+const PRIORITY_DOT: Record<TaskPriority, string> = {
+  urgent: "bg-red-500",
+  high: "bg-orange-500",
+  medium: "bg-amber-500",
+  low: "bg-sky-500",
+  lowest: "bg-slate-400",
+}
 
 /** Turn a markdown body into a one-line plain-text preview for a clipped card:
     links to their text, emphasis to plain, code fences to nothing. Good enough
@@ -83,7 +91,7 @@ export function TaskCard({
         }
       }}
       className={cn(
-        "group w-full cursor-pointer rounded-xl border bg-card text-left text-sm text-card-foreground shadow-xs transition-colors hover:border-primary/30 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group w-full cursor-pointer rounded-xl border bg-card text-left text-sm text-card-foreground shadow-xs transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isDragging && "z-10 opacity-60 shadow-lg",
         selected && "border-primary/50 bg-primary/5",
         task.archived && "opacity-60",
@@ -97,14 +105,15 @@ export function TaskCard({
             <span className="truncate">{parent.title}</span>
           </p>
         )}
-        <p className={cn("line-clamp-3 font-medium leading-snug", task.completedAt != null && "text-muted-foreground line-through decoration-muted-foreground/50")}>
-          {task.title}
+        <p className={cn("flex items-start gap-2 font-medium leading-snug", task.completedAt != null && "text-muted-foreground line-through decoration-muted-foreground/50")}>
+          <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", PRIORITY_DOT[task.priority])} title={`Priority: ${PRIORITY_LABEL[task.priority]}`} />
+          <span className="line-clamp-3">{task.title}</span>
         </p>
         {task.description && (
-          <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">{stripMarkdown(task.description)}</p>
+          <p className="line-clamp-2 pl-4 text-xs leading-snug text-muted-foreground">{stripMarkdown(task.description)}</p>
         )}
         {task.labels.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1 pl-4">
             {task.labels.slice(0, MAX_LABELS).map((label) => (
               <LabelChip key={label} label={label} />
             ))}
@@ -113,10 +122,9 @@ export function TaskCard({
             )}
           </div>
         )}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 pl-4 text-xs text-muted-foreground">
           <TypeIcon type={task.type} />
           <KeyBadge task={task} boardKey={ctx.boardKey} />
-          <PriorityIcon priority={task.priority} />
           {children > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[10px]" title={`${children} subtasks`}>
               <ListTree className="size-3" />

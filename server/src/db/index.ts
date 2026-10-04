@@ -207,6 +207,32 @@ async function ensureSchema(): Promise<void> {
     )
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS trace_spans_session ON trace_spans(session_id, start)`);
+  /* Spaces (spaces.ts): a named scope above projects. */
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS spaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS space_id TEXT`);
+  /* Every install has at least one space, and every project belongs to one. A
+     project from before spaces existed lands in the first space, which is what
+     lets "is this project in the active space" be a plain equality downstream
+     rather than a null-is-the-default special case in every reader. Idempotent:
+     the insert is guarded on the table being empty, and the update only ever
+     touches nulls. */
+  await db.execute(sql`
+    INSERT INTO spaces (id, name, sort_order, created_at)
+    SELECT ${randomUUID()}, 'Personal', 0, ${Date.now()}
+    WHERE NOT EXISTS (SELECT 1 FROM spaces)
+  `);
+  await db.execute(sql`
+    UPDATE projects
+    SET space_id = (SELECT id FROM spaces ORDER BY sort_order, created_at LIMIT 1)
+    WHERE space_id IS NULL
+  `);
   await ensureSearchIndex();
 }
 

@@ -5,6 +5,7 @@ import { describeCommand } from "./describe"
 import { asRecord, str, vendorMeta } from "./helpers"
 import { extractMcpCall } from "./mcp"
 import { formatMcpName, NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
+import { extractToolSearch } from "./tool-search"
 import { displayUrl, webInput } from "./web"
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | 
  * thing it invoked.
  *
  * Claude Code's `Bash` carries a `description` in its input and repeats it on
- * `_meta.claudeCode.title`, while ACP's `title` and the input's `command` are
+ * `_meta.jetbrains.air.commandTitle` (older adapters: `_meta.claudeCode.title`), while ACP's `title` and the input's `command` are
  * both the raw shell line: "Show recent git history and remote" is what the
  * agent meant to do, `git log --oneline -20 && echo "---BRANCH---" && …` is
  * what it typed. The sentence is the better row title — a 200-character
@@ -138,7 +139,11 @@ export function toolDescription(item: {
   rawInput?: unknown
   title?: string | null
 }): string | null {
-  const meta = str(vendorMeta(item.meta, "claudeCode")?.title)
+  /* claude-agent-acp ≥ 0.84 says it as `_meta.jetbrains.air.commandTitle`
+     for an AIR client; `claudeCode.title` is the older adapters' (and every
+     journal they wrote). */
+  const meta =
+    str(vendorMeta(item.meta, "air")?.commandTitle) ?? str(vendorMeta(item.meta, "claudeCode")?.title)
   const inputDescription = str(asRecord(item.rawInput)?.description)
   const explicit = meta ?? inputDescription
   if (explicit) return explicit
@@ -271,8 +276,19 @@ export function toolHeading(
     meta?: Record<string, unknown>
     toolKind?: ToolItem["toolKind"]
     locations?: acp.ToolCallLocation[]
+    name?: string
+    rawOutput?: unknown
+    content?: ToolItem["content"]
   }
 ): ToolHeading {
+  /* A tool search reads the same from every runtime: what it looked for, or —
+     for a `select:` — that it loaded tools by name, which the list says. */
+  const search = extractToolSearch({ ...item, title: item.title ?? "" })
+  if (search) {
+    return search.query
+      ? { title: "Search tools", detail: search.query, prose: true }
+      : { title: "Load tools", detail: search.selected.map(toolDisplayName).join(", ") || undefined, prose: true }
+  }
   const target = toolTarget({ ...item, title: item.title ?? "" })
   /* The web has its own two verbs, and they beat whatever the agent titled
      the call: Claude Code's built-in `WebSearch` titles itself `"query"` in

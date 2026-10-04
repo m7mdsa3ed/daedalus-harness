@@ -34,7 +34,8 @@ template works either way).
 | `DAEDALUS_AGENT_MODEL` | Model id sent to the endpoint. **Required** — a turn with none fails with a clear error. | — |
 | `DAEDALUS_AGENT_BASE_URL` | OpenAI-compatible base URL (the `/v1` root that serves `/chat/completions`). | `https://api.openai.com/v1` |
 | `DAEDALUS_AGENT_API_KEY` | Sent as `Authorization: Bearer …`. | a placeholder, for gateways that want the header but ignore it |
-| `DAEDALUS_AGENT_SMALL_MODEL` | Model used for compaction summaries. | the main model |
+| `DAEDALUS_AGENT_SMALL_MODEL` | Model used for compaction summaries and thread titles. | the main model |
+| `DAEDALUS_AGENT_TITLES` | Name a thread from its first message. `0`/`false` keeps the first line. | on |
 | `DAEDALUS_AGENT_EFFORT` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` — the AI SDK's unified reasoning level. | provider default |
 | `DAEDALUS_AGENT_CONTEXT_WINDOW` | Token window of the model spawned on, used for the usage readout and the compaction threshold. Reported as an estimate when unset — see `DAEDALUS_AGENT_MODEL_WINDOWS`. | 200000 (flagged estimated) |
 | `DAEDALUS_AGENT_MAX_OUTPUT_TOKENS` | Per-response cap. Also the room reserved out of the compaction threshold, so a prompt never grows into the space the answer needs. | provider default |
@@ -148,6 +149,19 @@ headers}`; the agent advertises `mcpCapabilities: { http, sse }` so a client
 knows both are speakable). Their tools arrive as `mcp__<server>__<tool>`. A
 server that fails to start is reported to the model in the system prompt rather
 than killing the session.
+
+**Deferred MCP tools** (`src/tools/tool-search.ts`): every MCP tool is marked
+`deferLoading`, however few there are, and the AI SDK's `toolSearch()` is added as `search_tools`. The
+SDK leaves deferred tools out of the request until a search finds them, then
+sends each match from the next step on. Two things sit on top of the SDK's
+version. Its discoveries last one `streamText` call, so a tool the conversation
+already loaded (a search result or a call in the history) is built undeferred.
+That is read off the messages, never stored: a reload keeps it, and a compaction
+defers it again. And it works like Claude Code's `ToolSearch`: the search tool's description
+lists every MCP tool by name (all of them, so the list does not change when one
+loads), and `select:a,b` loads named tools outright. Keywords, and `+server
+keywords`, are the fallback. Loading a tool changes the tool block, so that one step
+re-sends the prompt uncached.
 
 What the agent's MCP client does with each server (`src/mcp.ts`,
 `src/mcp-hooks.ts`, tested by `test/mcp-features.test.ts`):

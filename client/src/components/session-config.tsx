@@ -14,34 +14,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { HelperModelRow, MenuRow, MenuRowSkeleton, PILL, selectChoices } from "@/components/config-menu"
+import { HelperModelRow, MenuRow, MenuRowSkeleton, PILL, PillLabel, selectChoices } from "@/components/config-menu"
 import { ThreadToolsSections } from "@/components/thread-tools/menu"
 import { useAddModel, useNewProfile } from "@/lib/catalog-add"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
-import { effectivePricing, formatRate, offPeakLabel, offPeakState } from "@/lib/off-peak"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports } from "@/lib/settings"
 import { useAgents, usePersonas, useProfiles } from "@/lib/queries/catalog"
 import { configView, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
-
-/**
- * The clock, coarse on purpose.
- *
- * An off-peak window turns over at a minute boundary and nothing here is worth
- * a per-second timer, so this ticks once a minute. It runs for as long as the
- * composer's config trigger is mounted, which is the whole point: the chip is a
- * live reading, not a value someone has to re-open the menu to refresh.
- */
-function useMinute(): Date {
-  const [now, setNow] = React.useState(() => new Date())
-  React.useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60_000)
-    return () => clearInterval(timer)
-  }, [])
-  return now
-}
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
@@ -147,8 +129,6 @@ export function SessionConfigPopover({
     if (!unanswered || !meta) return
     void actions.learnAgentOptions(meta.profileId, agentId, meta.projectId)
   }, [actions, unanswered, meta?.profileId, agentId, meta?.projectId])
-  // Called before the return below, for the reason the comment above gives.
-  const now = useMinute()
   const newProfile = useNewProfile()
   const addModel = useAddModel()
   if (!meta || !row || !profile) return null
@@ -187,12 +167,6 @@ export function SessionConfigPopover({
   const overridden = profile.models.length > 0
   const spawnModel = profile.models.find((m) => m.id === (meta.model || profile.defaultModel))
   const spawnEfforts = spawnModel?.reasoningEfforts ?? []
-  /* The provider's cheaper window of the day, if the selected model declares
-     one. Only the profile's own catalog can: the window is model metadata, and
-     a model the agent owns has nowhere to state one. A reading of the clock,
-     not of anything the server sent. */
-  const offPeak = spawnModel?.offPeak
-  const offPeakNow = offPeak ? offPeakState(offPeak, now) : null
   const profileEffort = overridden && spawnEfforts.length > 0
   const liveEffort = profileEffort ? undefined : options.effort
 
@@ -209,16 +183,12 @@ export function SessionConfigPopover({
 
   const persona = personas.find((p) => p.id === meta.personaId)
 
-  /* What the model pill's value cannot say about itself: the cheaper window,
-     and a pick that has not landed yet or waits for the send that will spend
-     the spawn. Effort and mode are their own pills and say their own. */
   /* The same settings as one string, for the collapsed trigger's tooltip and
      its accessible name — and what is true about them that the values alone
      cannot say: a pick that has not landed yet, or one waiting for the send
      that will spend the spawn. */
   const triggerLabel = [
     [persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
-    offPeak ? offPeakLabel(offPeak, now) : "",
     meta.configPending ? "— applying…" : meta.configStaged ? "— when you next send" : "",
   ]
     .filter(Boolean)
@@ -283,18 +253,7 @@ export function SessionConfigPopover({
             )}
             {/* The mode rides along in the trigger: a silently-active "accept
                 edits" is the one setting you must see. */}
-            <span className="max-w-40 truncate">
-              {persona && <span>{persona.name} · </span>}
-              {modelLabel}
-              {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
-              {modeLabel && ` · ${modeLabel}`}
-            </span>
-            {/* Drawn only while it is true — peak is the ordinary state. */}
-            {offPeakNow?.active && (
-              <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
-                Off-peak
-              </span>
-            )}
+            <PillLabel persona={persona?.name} model={modelLabel} effort={effortLabel} mode={modeLabel} />
             {/* Whether the picked value is true yet: a spinner while the change
                 is in flight, a clock while it waits for the send that will
                 spend the spawn, nothing the rest of the time. */}
@@ -413,14 +372,6 @@ export function SessionConfigPopover({
                open. A row that is waiting reads as what it is, and the menu is
                the same height either way. */
             unanswered && <MenuRowSkeleton label="Model" />
-          )}
-          {/* The window in full, under the row that owns it. */}
-          {offPeak && (
-            <div className="px-2 pb-1 text-[11px] leading-snug text-muted-foreground">
-              {offPeakLabel(offPeak, now)}
-              {spawnModel?.pricing &&
-                ` · ${formatRate(effectivePricing(spawnModel.pricing, offPeak, now) ?? spawnModel.pricing)}`}
-            </div>
           )}
           {profileEffort ? (
             <MenuRow

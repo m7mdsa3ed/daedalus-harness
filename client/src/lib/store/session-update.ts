@@ -1,5 +1,5 @@
 import type * as acp from "@daedalus/acp"
-import type { SessionUpdate } from "@daedalus/protocol"
+import type { SessionFailure, SessionUpdate } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import {
@@ -16,6 +16,7 @@ import type {
   AsyncTaskItem,
   AutonomyItem,
   CompactionItem,
+  ErrorItem,
   PlanItem,
   ShellItem,
   SubagentItem,
@@ -61,8 +62,15 @@ const metaOf = (update: object): Record<string, unknown> | undefined =>
 /* Each update's `_meta` carries only what changed alongside it: the launch
    update holds the one-shot `toolResponse`, while later ones repeat constants
    like `toolName` without it — so replacing wholesale would forget the launch
-   record the moment the call completed. Merged one level deep, which is where
-   vendors nest (`_meta.claudeCode.…`); deeper values replace. */
+   record the moment the call completed. Merged all the way down through plain
+   objects: an AIR client is sent `_meta.jetbrains.air` with only the keys that
+   changed, so a merge that stopped one level deep wiped the rest of the `air`
+   object on every update. Arrays and scalars replace. The terminal chunks are
+   not read from here — `applyTerminalMeta` takes each update's own `_meta` —
+   so a merge that keeps the last chunk loses nothing. */
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
 function mergeMeta(
   prev: Record<string, unknown> | undefined,
   next: Record<string, unknown> | undefined
@@ -73,15 +81,50 @@ function mergeMeta(
   for (const key of Object.keys(next)) {
     const a = prev[key]
     const b = next[key]
-    if (
-      a !== null && b !== null &&
-      typeof a === "object" && typeof b === "object" &&
-      !Array.isArray(a) && !Array.isArray(b)
-    ) {
-      merged[key] = { ...a, ...b }
-    }
+    if (isPlainObject(a) && isPlainObject(b)) merged[key] = mergeMeta(a, b)
   }
   return merged
+}
+
+/* The AIR block on an update (`VENDOR_META.air`). */
+const airMetaOf = (update: object): Record<string, unknown> | undefined =>
+  vendorMeta(metaOf(update), "air") ?? undefined
+
+const sessionFailureOf = (update: object): SessionFailure | null => {
+  const raw = airMetaOf(update)?.sessionFailure
+  if (!isPlainObject(raw)) return null
+  if (typeof raw.id !== "string" || typeof raw.title !== "string") return null
+  return raw as unknown as SessionFailure
+}
+
+/* An AIR session failure, as the transcript's error row. One row per failure
+   id, placed where the first record of it arrived; a restatement under the
+   same id replaces it only with a higher revision, so a replay or a stale
+   repeat is a no-op. The actions are the agent's, and only the ones a client
+   door already exists for are kept — `retry` is the row's own Retry, which
+   re-sends the thread's last prompt. `login`/`new_session` have no door on a
+   transcript row yet, and an action is never inferred from `category`. */
+function upsertFailure(items: ThreadItem[], failure: SessionFailure, at?: number): ThreadItem[] {
+  const id = `failure:${failure.id}`
+  const revision = typeof failure.revision === "number" ? failure.revision : 0
+  const index = items.findIndex((i) => i.kind === "error" && i.id === id)
+  const prev = index >= 0 ? (items[index] as ErrorItem) : undefined
+  if (prev && (prev.revision ?? 0) >= revision) return items
+  const prompt = Array.isArray(failure.actions) && failure.actions.includes("retry")
+    ? (items.filter((i) => i.kind === "user" && !i.parentId).at(-1) as TextItem | undefined)
+    : undefined
+  const item: ErrorItem = {
+    kind: "error",
+    id,
+    title: failure.title,
+    ...(failure.details ? { detail: failure.details } : {}),
+    ...(prompt?.text ? { retryText: prompt.text } : {}),
+    ...(prompt?.attachments?.length ? { retryAttachments: prompt.attachments } : {}),
+    ...(failure.severity === "warning" ? { severity: "warning" as const } : {}),
+    revision,
+    at: prev?.at ?? at,
+  }
+  return prev ? items.map((i, n) => (n === index ? item : i)) : [...items, item]
 }
 
 /** Past this an inline image from a replay is described rather than held. */
@@ -277,6 +320,18 @@ export function applySessionUpdate(
               ? { ...base, uri: content.uri }
               : null
       if (!plan) return items
+      /* Except one: an AIR client that declared `planContentDelta` is sent a
+         markdown plan whole once, and after that an empty `content` with the
+         appended text at `_meta.jetbrains.air.contentDelta`. Only an empty
+         content with a delta, onto a plan we hold, appends — anything else is
+         a snapshot and replaces, as above. */
+      const delta = airMetaOf(update)?.contentDelta
+      if (content.type === "markdown" && content.content === "" && typeof delta === "string") {
+        const held = items.find((i): i is PlanItem => i.kind === "plan" && i.id === plan.id)
+        if (held) {
+          return items.map((i) => (i === held ? { ...held, markdown: (held.markdown ?? "") + delta } : i))
+        }
+      }
       return items.some((i) => i.kind === "plan" && i.id === plan.id)
         ? items.map((i) => (i.kind === "plan" && i.id === plan.id ? plan : i))
         : [...items, plan]
@@ -521,6 +576,32 @@ export function applySessionUpdate(
         ...(owner ? { parentId: owner } : {}),
       }
       return index >= 0 ? items.map((i, n) => (n === index ? item : i)) : [...items, item]
+    }
+    /* The AIR failure record rides a `session_info_update` (the rest of which
+       — title, timestamps — is the server's to say, not the transcript's). The
+       failure of a running turn also comes back on the prompt's response,
+       which the server lifts onto `turn_ended.failure`; the socket hands that
+       one here as this same update, so both doors are one reader. */
+    case "session_info_update": {
+      const failure = sessionFailureOf(update)
+      return failure ? upsertFailure(items, failure, at) : items
+    }
+    /* ACP's `notice`: a warning, a deprecation, a config problem the agent
+       reports without a turn failing. The error row in a softer tone. It
+       carries no id, so its words are its key — a `session/load` restating
+       one must not draw it twice, the same bargain task notifications make. */
+    case "notice": {
+      const id = `acp-notice:${update.title}\n${update.description ?? ""}`
+      if (items.some((i) => i.kind === "error" && i.id === id)) return items
+      const item: ErrorItem = {
+        kind: "error",
+        id,
+        title: update.title,
+        ...(update.description ? { reason: update.description } : {}),
+        ...(update.severity === "error" ? {} : { severity: update.severity === "info" ? "info" : "warning" }),
+        at,
+      }
+      return [...items, item]
     }
     /* A child's context occupancy. Session-level for the thread — and dropped
        there — but a step IS a session, so on this side of the fence it is the

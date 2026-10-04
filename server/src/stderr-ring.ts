@@ -67,3 +67,11 @@ export function resetStderr(session: StderrState): void {
   session.stderrCount = 0;
   session.stderrMark = 0;
 }
+
+/** The last of the agent's stderr, bounded, for splicing into a spawn or
+    handshake failure (a thread that never got a turn has no mark to read from). */
+export function spliceStderr(session: StderrState, message: string, maxChars = 2000): string {
+  const tail = session.stderr.join("\n").trim().slice(-maxChars);
+  if (!tail || message.includes(tail.slice(-200))) return message;
+  return `${message}\n\nagent stderr:\n${tail}`;
+}

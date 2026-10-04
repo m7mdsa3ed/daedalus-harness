@@ -24,8 +24,10 @@ import {
   type Project,
   type ServerSettings,
   type SkillDef,
+  type Space,
 } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
+import { setActiveSpace, useActiveSpaceId } from "@/lib/spaces"
 import {
   agentsKey,
   agentsStatusKey,
@@ -41,6 +43,7 @@ import {
   rulesKey,
   scope,
   skillsKey,
+  spacesKey,
 } from "./keys"
 import { useApiQuery, useApiMutation } from "./helpers"
 
@@ -139,11 +142,80 @@ export function useAddProfileModel() {
   )
 }
 
+/** Every project on this server. Deliberately *not* narrowed to the active
+    space: the same list is what a thread's project name, the project page and
+    the "does this project still exist" guard are read through, and a space
+    filter would hide the very row they are looking for. The readers that *are*
+    about the space in front of you filter this list themselves. */
 export function useProjects(): Project[] {
   const settings = useServer()
   return list<Project>(useApiQuery<Project[]>(projectsKey(settings), "/api/projects", {
     staleTime: CATALOG_STALE_MS,
   }).data)
+}
+
+/** The spaces this server holds, in their switcher order. */
+export function useSpaces(): Space[] {
+  const settings = useServer()
+  return list<Space>(useApiQuery<Space[]>(spacesKey(settings), "/api/spaces", {
+    staleTime: CATALOG_STALE_MS,
+  }).data)
+}
+
+/**
+ * The space the app is showing: this device's choice when it names one of the
+ * server's spaces, else the first. The fallback is *adopted* on read, so a
+ * device that has never chosen — and one whose chosen space was deleted on
+ * another device — lands on a space that exists rather than on nothing.
+ */
+export function useActiveSpace(): {
+  spaces: Space[]
+  id: string | null
+  active: Space | null
+  setActive: (id: string) => void
+} {
+  const settings = useServer()
+  const spaces = useSpaces()
+  const chosen = useActiveSpaceId(settings.id)
+  const active = spaces.find((s) => s.id === chosen) ?? spaces[0] ?? null
+  React.useEffect(() => {
+    if (active && active.id !== chosen) setActiveSpace(settings.id, active.id)
+  }, [active, chosen, settings.id])
+  return {
+    spaces,
+    id: active?.id ?? null,
+    active,
+    setActive: React.useCallback((id: string) => setActiveSpace(settings.id, id), [settings.id]),
+  }
+}
+
+/** A new space. It lands at the end of the switcher; the caller usually makes
+    it the active one straight after — so it is written into the cache before
+    the mutation resolves. The invalidation alone refetches *after*, and
+    `useActiveSpace` would read the new id as a deleted one and adopt the
+    first space in its place. */
+export function useCreateSpace() {
+  const settings = useServer()
+  const qc = useQueryClient()
+  return useApiMutation<{ name: string }, Space>(
+    [spacesKey(settings)],
+    (s, input) => api<Space>(s, "/api/spaces", { method: "POST", body: JSON.stringify(input) }),
+    (space) => qc.setQueryData<Space[]>(spacesKey(settings), (old) => [...(old ?? []), space])
+  )
+}
+
+export function useUpdateSpace() {
+  const settings = useServer()
+  return useApiMutation<{ id: string; name: string }, Space>([spacesKey(settings)], (s, { id, ...input }) =>
+    api<Space>(s, `/api/spaces/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) })
+  )
+}
+
+export function useDeleteSpace() {
+  const settings = useServer()
+  return useApiMutation<{ id: string }, { ok: boolean }>([spacesKey(settings)], (s, { id }) =>
+    api<{ ok: boolean }>(s, `/api/spaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  )
 }
 
 export function useMcpServers(): McpServerDef[] {

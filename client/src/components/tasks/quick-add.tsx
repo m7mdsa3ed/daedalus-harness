@@ -16,13 +16,23 @@ export function QuickAdd({
   placeholder = "What needs doing?",
   className,
   compact,
+  open: openProp,
+  onOpenChange,
 }: {
   onCreate: (title: string) => Promise<void>
   placeholder?: string
   className?: string
   compact?: boolean
+  /** Controlled open state, for a header "+" that opens the same field. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
-  const [open, setOpen] = React.useState(false)
+  const [openState, setOpenState] = React.useState(false)
+  const open = openProp ?? openState
+  const setOpen = (next: boolean) => {
+    setOpenState(next)
+    onOpenChange?.(next)
+  }
   const [title, setTitle] = React.useState("")
   const [busy, setBusy] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)

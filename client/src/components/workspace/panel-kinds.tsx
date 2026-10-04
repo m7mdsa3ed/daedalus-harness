@@ -94,7 +94,7 @@ export function PanelIcon({
   return <Icon className={cn("shrink-0", className)} />
 }
 
-function ChatPanelIcon({
+export function ChatPanelIcon({
   agentId,
   projectId,
   className,

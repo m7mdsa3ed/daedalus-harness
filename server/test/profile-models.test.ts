@@ -11,7 +11,16 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { profiles as profilesTable, db } from "../src/db/index.js";
-import { createProfile, duplicateProfile, exportProfile, getProfile, redact, syncProfile, updateProfile } from "../src/profiles.js";
+import {
+  ProfileInputSchema,
+  createProfile,
+  duplicateProfile,
+  exportProfile,
+  getProfile,
+  redact,
+  syncProfile,
+  updateProfile,
+} from "../src/profiles.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -92,6 +101,24 @@ await test("the redacted answer the client gets carries no key", async () => {
   assert.equal(body.apiKey, undefined);
   assert.equal(body.hasApiKey, true);
   assert.deepEqual((body.usage as { hasApiKey: boolean }).hasApiKey, true);
+});
+
+await test("the save schema keeps a model's user-written picker fields", async () => {
+  /* The routes parse the form's body through ProfileInputSchema before it
+     reaches updateProfile/createProfile, and a Zod object strips what it does
+     not name — so a field the client sends and the schema omits is dropped on
+     save with no error at all. A model's `group` (the picker heading) and
+     `iconUrl` are exactly that: declared here or the group a user typed never
+     reaches the row. */
+  const parsed = ProfileInputSchema.parse({
+    name: "gateway",
+    agents: { "claude-code": {} },
+    models: [
+      { id: "fast", label: "Fast", reasoningEfforts: [], group: "Speed", iconUrl: "https://models.dev/logos/x.svg" },
+    ],
+  });
+  assert.equal(parsed.models[0]?.group, "Speed", "a typed group survives the parse");
+  assert.equal(parsed.models[0]?.iconUrl, "https://models.dev/logos/x.svg");
 });
 
 /* Duplicating has the same credential bargain: the copy is made server-side

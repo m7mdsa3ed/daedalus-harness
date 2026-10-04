@@ -22,33 +22,32 @@
  * when the upstream source has moved on. Re-run it after every adapter
  * upgrade — `pnpm patch:acp` — until the passthrough lands upstream.
  */
-import { createRequire } from "node:module";
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 
 const PACKAGE = "@agentclientprotocol/claude-agent-acp";
 
-/** Where the adapter is installed. It is a global install (see registry.ts),
-    so resolution falls back to the paths node itself would search. */
+/** Where the adapter is installed: the package behind the `claude-agent-acp`
+    binary on PATH, since that is exactly what the harness spawns (registry.ts —
+    global binary, never npx). Not `require.resolve` or `npm root -g`: the dev
+    shell points npm_config_prefix at server/, so both can land inside the repo.
+    `CLAUDE_AGENT_ACP_DIR` overrides it. */
 function adapterDir() {
-  const require = createRequire(import.meta.url);
-  for (const specifier of [`${PACKAGE}/package.json`, PACKAGE]) {
-    try {
-      return dirname(require.resolve(specifier));
-    } catch {
-      /* try the next spelling */
-    }
-  }
-  const roots = (process.env.NODE_PATH ?? "")
-    .split(process.platform === "win32" ? ";" : ":")
-    .filter(Boolean);
-  for (const root of roots) {
-    const candidate = join(root, ...PACKAGE.split("/"), "package.json");
-    try {
-      readFileSync(candidate, "utf8");
-      return dirname(candidate);
-    } catch {
-      /* keep looking */
+  if (process.env.CLAUDE_AGENT_ACP_DIR) return process.env.CLAUDE_AGENT_ACP_DIR;
+  for (const bin of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    for (const name of ["claude-agent-acp", "claude-agent-acp.cmd"]) {
+      let target;
+      try {
+        target = realpathSync(join(bin, name));
+      } catch {
+        continue;
+      }
+      // .../claude-agent-acp/dist/index.js -> the package root holding package.json.
+      for (let dir = dirname(target); dir !== dirname(dir); dir = dirname(dir)) {
+        if (!existsSync(join(dir, "package.json"))) continue;
+        const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+        if (pkg.name === PACKAGE) return dir;
+      }
     }
   }
   return null;
@@ -87,11 +86,14 @@ const edits = [
   {
     file: AGENT_FILE,
     what: "acp-agent.js: carry workflow_progress into the async-task runtime",
+    // 0.82+ added tool_use_id after usage; the anchor is the whole task_progress call's tail.
     needle: `                                    last_tool_name: message.last_tool_name,
                                     usage: message.usage,
+                                    tool_use_id: message.tool_use_id,
                                 });`,
     replacement: `                                    last_tool_name: message.last_tool_name,
                                     usage: message.usage,
+                                    tool_use_id: message.tool_use_id,
                                     workflow_progress: message.workflow_progress,
                                 });`,
     done: "workflow_progress: message.workflow_progress,",
