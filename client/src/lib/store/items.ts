@@ -43,6 +43,8 @@ export interface TextItem {
       whole user side of the thread across the reset and put it back at the
       bottom. */
   local?: boolean
+  /** This device's optimistic user bubble is awaiting server acceptance. */
+  sending?: boolean
   /** The item this belongs to when it is a subagent's, not the thread's — see
       `SubagentItem`. */
   parentId?: string
@@ -214,6 +216,12 @@ export interface ErrorItem {
       AIR `sessionFailure` of severity `warning`, and the ACP `notice` update
       (`warning`/`info`). Same row, same Copy — only the card's tone moves. */
   severity?: "warning" | "info"
+  /** A status, not a record: an AIR warning that says what the agent is doing
+      right now ("Reconnecting to Claude, attempt 1 of 10."). Drawn once, in the
+      working line, for as long as it is the newest thing in the thread — never
+      as a transcript row, which would be a permanent line about a passing
+      condition. */
+  transient?: boolean
   /** The create was refused because the agent's binary is missing — a setup
       step, drawn with the install line and a door to Settings › Agents. */
   notInstalled?: { install?: string }
@@ -365,6 +373,27 @@ export interface ShellItem {
   parentId?: string
 }
 
+/**
+ * One finished line of a voice conversation held in front of the thread, from
+ * the journaled `_daedalus/voice` update — what the person said, or what the
+ * voice model said back.
+ *
+ * The `!` row's bargain: part of the conversation, back on a reload, but never
+ * a prompt. The agent did not read it; what the voice model handed the agent
+ * arrived as an ordinary user message beside it.
+ */
+export interface VoiceItem {
+  kind: "voice"
+  /** `voice:<voiceId>` — the caller's id, so the fan-out and this device's own
+      dispatch of one line are one row. */
+  id: string
+  role: "user" | "assistant"
+  text: string
+  at?: number
+  /** Never set — a voice line is the thread's — but every item carries it. */
+  parentId?: string
+}
+
 export type ThreadItem =
   | TextItem
   | ToolItem
@@ -375,6 +404,7 @@ export type ThreadItem =
   | AutonomyItem
   | AsyncTaskItem
   | ShellItem
+  | VoiceItem
 
 export interface PendingPermission {
   /** The server's id for the question, so an answer from another device can be

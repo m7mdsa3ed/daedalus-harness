@@ -4,7 +4,10 @@
    the row. The two hidden pickers are here rather than in the card because
    this menu is the only thing that clicks them. */
 import * as React from "react"
-import { AtSign, Camera, Code, Paperclip, Plus, Slash, SquareTerminal, Trash2 } from "lucide-react"
+import { AtSign, Camera, Code, FolderOpen, Paperclip, Plus, Slash, SquareTerminal, Trash2 } from "lucide-react"
+import { FilePicker } from "@/components/files/file-picker"
+import { useFileActions } from "@/lib/files"
+import { reportError } from "@/lib/errors"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -26,6 +29,7 @@ export function ComposerAddMenu({
   className,
   coarse,
   onFiles,
+  onLibraryFile,
   canMention,
   hasCommands,
   hasProjectCommands,
@@ -44,7 +48,8 @@ export function ComposerAddMenu({
   /** The row's one scale — see `iconFit` in the composer. */
   className?: string
   coarse: boolean
-  onFiles: (files: FileList) => void
+  onFiles: (files: Iterable<File>) => void
+  onLibraryFile: (files: Iterable<File>) => void
   /** A file can only be mentioned where there is a project to resolve it in. */
   canMention: boolean
   hasCommands: boolean
@@ -64,6 +69,8 @@ export function ComposerAddMenu({
   const historyChords = useChords("historyPrev")
   const filePicker = React.useRef<HTMLInputElement>(null)
   const cameraPicker = React.useRef<HTMLInputElement>(null)
+  const [library, setLibrary] = React.useState(false)
+  const fileActions = useFileActions()
 
   return (
     <>
@@ -91,6 +98,13 @@ export function ComposerAddMenu({
           <DropdownMenuItem onClick={() => filePicker.current?.click()}>
             <Paperclip />
             Attach files
+          </DropdownMenuItem>
+          {/* The library's files, picked rather than re-uploaded from disk:
+              the bytes come back as a `File` and take the same road as any
+              other attachment. */}
+          <DropdownMenuItem onClick={() => setLibrary(true)}>
+            <FolderOpen />
+            From library
           </DropdownMenuItem>
           {/* The camera is a touch thing: a laptop's webcam is not what
               "take a photo" means, and the picker on a desktop already
@@ -153,6 +167,17 @@ export function ComposerAddMenu({
           gallery, which is right for "take a photo" and wrong for
           "attach". Cleared after each pick, or choosing the same file twice
           fires no change event. */}
+      <FilePicker
+        open={library}
+        onOpenChange={setLibrary}
+        title="Attach from library"
+        onPick={(record) =>
+          void fileActions
+            .fetchFile(record)
+            .then((file) => onLibraryFile([file]))
+            .catch((err) => reportError(err, "Couldn't attach that file"))
+        }
+      />
       <input
         ref={filePicker}
         type="file"

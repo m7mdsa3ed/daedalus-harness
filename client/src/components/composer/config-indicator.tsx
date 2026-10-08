@@ -1,7 +1,7 @@
 /* ── The settings change this thread is carrying ──
    A reading of the thread like the four beside it, but about what the thread
    is *about to be* on rather than what it is doing. */
-import { ClockIcon, LoaderCircleIcon, XIcon } from "lucide-react"
+import { CheckIcon, ClockIcon, LoaderCircleIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { READING_MARK, StripIndicator } from "@/components/composer/indicator"
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { describeConfig } from "@/lib/actions"
 import { useProfiles } from "@/lib/queries/catalog"
+import { reportError } from "@/lib/errors"
 import type { ThreadState } from "@/lib/store"
 
 /**
@@ -52,13 +53,13 @@ export function ConfigIndicator({
         icon={<LoaderCircleIcon className={cn(READING_MARK, "animate-spin")} />}
         label="Applying…"
         heading="Applying this change"
-        title={`Applying — ${describeConfig(pending, profiles)}`}
+        title={`Applying — ${describeConfig(pending, profiles, thread)}`}
       >
         <p className="text-xs text-muted-foreground">
           A change that costs the process restarts the agent; one that does not moves on the running
           turn. Either way nothing is lost — the conversation comes back through a load.
         </p>
-        <p className="text-xs text-foreground">{describeConfig(pending, profiles)}</p>
+        <p className="text-xs text-foreground">{describeConfig(pending, profiles, thread)}</p>
       </StripIndicator>
     )
   }
@@ -71,25 +72,40 @@ export function ConfigIndicator({
       icon={<ClockIcon className={READING_MARK} />}
       label="Applies on send"
       heading="Applies with your next message"
-      title={`Applies with your next message — ${describeConfig(held, profiles)}`}
+      title={`Applies with your next message — ${describeConfig(held, profiles, thread)}`}
       tone="text-amber-600 hover:text-amber-600 dark:text-amber-400"
       action={
-        <Button
-          size="xs"
-          variant="outline"
-          className="w-full"
-          onClick={() => void actions.cancelStagedConfig(sessionId)}
-        >
-          <XIcon className="size-3.5" />
-          Cancel the change
-        </Button>
+        <div className="flex w-full gap-1.5">
+          <Button
+            size="xs"
+            className="flex-1"
+            onClick={() =>
+              void actions
+                .applyStagedConfig(sessionId)
+                .catch((err) => reportError(err, "Couldn't apply that change"))
+            }
+          >
+            <CheckIcon className="size-3.5" />
+            {thread.turnActive ? "Steer now" : "Apply now"}
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            className="flex-1"
+            onClick={() => void actions.cancelStagedConfig(sessionId)}
+          >
+            <XIcon className="size-3.5" />
+            Cancel
+          </Button>
+        </div>
       }
     >
       <p className="text-xs text-muted-foreground">
-        A change that costs the process is taken by the next spawn — which is the next message you
-        send. Nothing is waiting for a turn boundary, and nothing is applied before you ask.
+        Picks are held until a turn starts — or a spawn, for what only a restart can place. Nothing
+        is applied before you ask. {thread.turnActive ? "Steer now" : "Apply now"} takes what the
+        running agent can take as it is{thread.turnActive ? ", and the rest waits for the next turn" : ""}.
       </p>
-      <p className="text-xs text-foreground">{describeConfig(held, profiles)}</p>
+      <p className="text-xs text-foreground">{describeConfig(held, profiles, thread)}</p>
     </StripIndicator>
   )
 }

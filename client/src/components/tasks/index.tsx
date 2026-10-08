@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils"
 import { inlineFromQuery, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
+import type { Actions } from "@/lib/actions"
 import { boardPath } from "@/lib/router"
 import { useServer } from "@/lib/server-context"
 import { loadNewTaskDraft } from "@/lib/task-drafts"
@@ -255,8 +256,8 @@ function BulkBar({ count, statuses, sprints, facets, onPatch, onDelete, onClear 
 /** The board as a page: the location is the URL, so a board and a task are
     both things that can be linked to and reloaded. The dock's own host is
     `components/workspace/tasks-panel.tsx`; both render the workspace below. */
-export function TasksWorkspace() {
-  return <BoardWorkspace location={useRouteBoardLocation()} />
+export function TasksWorkspace({ actions }: { actions: Actions }) {
+  return <BoardWorkspace location={useRouteBoardLocation()} actions={actions} />
 }
 
 /** The route's answer to "where am I": `/board/:boardId`, with the open task
@@ -338,7 +339,7 @@ function BoardRowsSkeleton() {
 }
 
 /** One board, however it is being hosted. */
-export function BoardWorkspace({ location }: { location: BoardLocation }) {
+export function BoardWorkspace({ location, actions }: { location: BoardLocation; actions: Actions }) {
   const server = useServer()
   const projects = useProjects()
 
@@ -759,6 +760,7 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
       </div>
 
       <TaskDetailDialog
+        actions={actions}
         taskId={openTaskId}
         onClose={() => openTask(null)}
         board={board}

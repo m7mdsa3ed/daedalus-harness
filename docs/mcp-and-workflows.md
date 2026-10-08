@@ -554,6 +554,66 @@ beside Import in Settings › MCP.
   handed it. Four asks per thread at once, counted apart from `MAX_RUNS_PER_PARENT` so
   consulting two agents never locks a thread out of a workflow.
 
+## Driving the preview
+
+- **`builtin:browser` is Google's `chrome-devtools-mcp`, pointed at the thread's Preview —
+  never at a browser of its own.** At spawn the row resolves to the globally installed
+  `chrome-devtools-mcp` (a PATH scan; not installed → not advertised, and the log says the
+  install line) with `--wsEndpoint ws://127.0.0.1:<port>/cdp/<key>/<sessionId>`, the
+  workflow runner's per-boot key as the credential, plus `--no-usage-statistics
+  --no-performance-crux` because the URLs are someone's dev server. Top-level threads only.
+  It is advertised whenever linked: Drive comes and goes long after `session/new`, and the
+  MCP connects on its first call and again after any drop.
+- **The server is a pipe and interprets no CDP** (`browser-hosts.ts`). The desktop window
+  whose thread-dock Preview has **Drive** on holds `/browser?sessionId=`; a `/cdp` client is
+  piped to it frame for frame (`open`/`cdp`/`close` down, `cdp`/`closed` up). One host per
+  thread and one client per host, newest wins both — the terminal's rule, 4009 to the loser.
+  With no host the `/cdp` upgrade is refused over HTTP (409), so the MCP's error says so.
+- **Electron main answers as a browser of one page** (`electron/cdp-shim.cjs`). Puppeteer
+  wants a *browser* endpoint (contexts, discovery, auto-attach) and a `<webview>` offers only
+  its page's `webContents.debugger`, so the browser-level methods are answered there with a
+  single target and everything on that page's session — or a child's: iframe, worker — goes
+  to the debugger verbatim. Opening, closing or selecting another page is refused. **Not
+  `--remote-debugging-port`**: that exposes every window of the app, the harness page and its
+  token included, to anything local; here the only page to find is the one Drive was turned
+  on for, and a window may only drive a guest it embeds (`hostWebContents`).
+- **The preview is a `<webview>` in the desktop shell and an iframe everywhere else**
+  (`web-panel.tsx`). `will-attach-webview` pins every guest down as the sandbox pinned the
+  frame — no preload, no Node, sandboxed, its own `persist:preview` session, http(s) only —
+  and buys history, a real reload and a `webContents` to attach to.
+
+## Managing the harness
+
+- **The `harness` server (`builtin:harness`) lets an agent do what the client can.** A
+  library row like the others — linked to a profile or picked on a thread — it reaches the
+  whole harness's own resources: agents, profiles and models, projects and helpers, spaces,
+  the library (MCP servers, skills, commands, personas, model prompts), rules, themes,
+  knowledge, boards/columns/sprints/lists/views and tasks/comments/links, routines and their
+  triggers and runs, scheduled messages, threads and their pending questions, plus quota and
+  registry readouts.
+- **Two tools, not one per operation.** One MCP tool per operation was 106 names costing
+  **~14.5k tokens in every thread that links the server**, before the model does anything.
+  So the child registers `harness_help` (find an operation, its fields, or `search` a name)
+  and `harness_run` (`tool` + `args`), and answers discovery *from the catalog it already
+  imports* — no round trip. Two definitions cost **~0.4k tokens**, and the catalog is read
+  only when asked for (a search is ~0.5k, one operation's fields ~0.1k). `args` is one flat
+  object: the catalog says which keys are path, which are query, and the rest are the body.
+- **The catalog is data, and the server is one proxy.** `harness-tools.ts` is a pure table
+  (`HARNESS_TOOLS`: name, method, path, params/query, whether it takes a free-form body) —
+  `harness_run` builds the request from it and appends to `HARNESS_URL`, the workflow
+  runner's loopback under `/hm/<key>/<sessionId>`. The route (`routes/harness.ts`) is a
+  single `app.all` that verifies the key, re-attaches the server's bearer, and re-dispatches
+  *in-process* to `/api/<rest>` — the app's own fetch. So a call is the same route the
+  browser calls, side effects and all; adding a capability is one catalog entry plus the
+  route that already exists. A write's fields are free-form (`data: true` on the entry),
+  validated by the route's own schema — the catalog never holds a second copy. Secrets never
+  leave the server (`redact` is the routes' own), and absent on purpose are the streaming
+  reads (replay/spans/watch), the file, terminal and git workspace routes, attachments and
+  the OAuth callbacks. `pnpm test:harness` drives the proxy against real routes and a real
+  (temp) database.
+- **One level, like `agents`**: a child thread — a workflow step or a subagent — is never
+  handed it.
+
 ## Pausing a run
 
 - **A run pauses as a state of the run, never as a cancel-and-restart.** The Codex

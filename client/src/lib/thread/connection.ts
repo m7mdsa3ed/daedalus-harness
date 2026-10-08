@@ -642,30 +642,8 @@ export class ThreadConnection {
       return
     }
     if (meta.exited) {
-      /* Putting a process back is the seconds-long part, exactly as spawning one
-         is, and it is worth saying so: without this the thread reads "Reading
-         this conversation…" through a wait that is not a read at all. */
-      this.apply({ type: "revive-begin", because: "revive" })
-      const abort = (this.waitAbort = new AbortController())
-      try {
-        await api(this.deps.settings, `/api/sessions/${this.id}/respawn`, {
-          method: "POST",
-          signal: abort.signal,
-          body: JSON.stringify({
-            profileId: meta.profileId,
-            model: meta.model || undefined,
-            effort: meta.effort || undefined,
-          }),
-        })
-      } finally {
-        if (this.waitAbort === abort) this.waitAbort = null
-      }
-      await this.deps.refreshSessions()
+      await this.reviveProcess(meta)
       if (this.disposed) return
-      /* Respawn cleared the server's journal; a saved cursor now points past its
-         end. Dropping it makes the attach below a clean `from: 0` rebuild rather
-         than leaning on the server's clamp. */
-      this.state.cursor = 0
     }
 
     /* Already read, and the only thing missing is the peer. The document is on
@@ -681,7 +659,30 @@ export class ThreadConnection {
       await this.socket.connect({ cursor: this.state.cursor })
       return
     }
-    await this.start(this.resumeCursor(meta), opts.revive ?? false, opts.fresh ?? false)
+    const live = opts.revive ?? false
+    const archived = await this.start(this.resumeCursor(meta), live, opts.fresh ?? false)
+    /* The row said this thread's process was up, and the server's own answer —
+       the authority, because the row is a list read a moment ago and a process
+       can die in between — says there is none. Trust the server: put one back
+       rather than hand the caller a thread that will refuse every command. This
+       gap is what surfaced as "stuck reading from the archive with no agent
+       running", a sentence about this loop rather than about the thread, and it
+       came with advice the client could take itself. Asked for only on a
+       `revive` open, so an automatic rung still never respawns behind the
+       reader's back (`attemptReconnect` asks with `revive: false`). */
+    if (live && archived && !this.disposed) {
+      await this.reviveProcess(meta)
+      if (this.disposed) return
+      /* One retry, then a real error. A second `archived` answer means the
+         server took the spawn and still has no process behind the thread —
+         something a third request cannot fix, and a state that deserves to be
+         said rather than retried in a circle. */
+      if (await this.start(0, true)) {
+        throw new Error(
+          "The agent did not come back up, so this thread is still reading from its archive."
+        )
+      }
+    }
   }
 
   /** Where a reattach picks up. 0 when this device has never folded this
@@ -690,6 +691,42 @@ export class ThreadConnection {
       much; give me the rest." */
   private resumeCursor(meta: SessionMeta): number {
     return meta.exited ? 0 : this.state.cursor
+  }
+
+  /**
+   * Put a process back under this thread — the revive half of `openNow`, and
+   * the only door that spawns one outside a create.
+   *
+   * `meta` is the row the server last answered with: the profile and the
+   * model/effort it names are what the spawn runs on, and the server takes
+   * whatever change is staged on top of them.
+   *
+   * Announced as `reviving` first, because putting a process back is the
+   * seconds-long part — without it the thread reads "Reading this
+   * conversation…" through a wait that is not a read at all, and a failure
+   * would land with no phase for `open`'s catch to turn into a failure card.
+   */
+  private async reviveProcess(meta: SessionMeta): Promise<void> {
+    this.apply({ type: "revive-begin", because: "revive" })
+    const abort = (this.waitAbort = new AbortController())
+    try {
+      await api(this.deps.settings, `/api/sessions/${this.id}/respawn`, {
+        method: "POST",
+        signal: abort.signal,
+        body: JSON.stringify({
+          profileId: meta.profileId,
+          model: meta.model || undefined,
+          effort: meta.effort || undefined,
+        }),
+      })
+    } finally {
+      if (this.waitAbort === abort) this.waitAbort = null
+    }
+    await this.deps.refreshSessions()
+    /* Respawn cleared the server's journal; a saved cursor now points past its
+       end. Dropping it makes the attach that follows a clean `from: 0` rebuild
+       rather than leaning on the server's clamp. */
+    this.state.cursor = 0
   }
 
   /**
@@ -719,8 +756,15 @@ export class ThreadConnection {
    * running *is* something live to connect to, and its answer arrives on a
    * socket or not at all. `caught_up` says so (`promptActive`), so a read that
    * lands mid-turn attaches on the strength of it.
+   *
+   * Returns whether the thread was left **archived** — the server's own answer
+   * that there is no process behind it. That is not something this device's row
+   * is allowed to override: a `live` open that comes back archived was asked to
+   * revive a thread the row believed was up, and `openNow` is the caller that
+   * puts the process back rather than handing a caller a document it cannot
+   * send to.
    */
-  private async start(cursor: number, live: boolean, fresh = false): Promise<void> {
+  private async start(cursor: number, live: boolean, fresh = false): Promise<boolean> {
     /* The HTTP read starts here. `open-begin` deliberately leaves a ladder's
        phase alone (see `reduceConn`): a reconnect attempt *is* an open, and
        while one runs the thread is still recovering rather than merely loading
@@ -753,7 +797,7 @@ export class ThreadConnection {
        replacement owns the session now — the callbacks already drop anything
        this object says once it is not the registered one — so connecting here
        would put a second peer on the same session. */
-    if (this.socket !== socket) return
+    if (this.socket !== socket) return false
     if (read && !live && !this.state.promptActiveAtLoad) {
       /* Read, and nothing asked for a peer. `read` rather than a dressed-up
          "connected": the composer takes words exactly as it does on an archived
@@ -766,13 +810,18 @@ export class ThreadConnection {
          (an older server has no replay route) and the only thing left that can
          either serve the thread or say why it cannot. */
       if (!archived) this.apply({ type: "read" })
-      return
+      return archived
     }
     if (archived) {
       /* Nothing to connect to, and nothing coming — `onCaughtUp` has already
          moved the phase to `archived`, which is a state of its own rather than
-         a dressed-up "connected". Sending is what revives it. */
-      return
+         a dressed-up "connected". Sending is what revives it.
+
+         Reported rather than merely stopped at, because "sending revives it" is
+         true of an *open* and not of a revive: a caller that came here with
+         `live` asked for the process already, and returning silently is how
+         `openNow` handed `ready` a thread it could not bring up. */
+      return true
     }
     /* Where the socket picks up: the end of the document, so a turn journaled
        while it was streaming arrives as the delta it is. Read from the cursor
@@ -780,6 +829,7 @@ export class ThreadConnection {
        the right answer when the read failed *part way* — those events are on
        screen, and resuming from before them would fold them a second time. */
     await socket.connect({ cursor: Math.max(cursor, this.state.cursor) })
+    return false
   }
 
   // ---- recovery ----

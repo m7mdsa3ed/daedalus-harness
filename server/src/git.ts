@@ -48,7 +48,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { copyFile, rm, unlink } from "node:fs/promises";
+import { copyFile, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -1367,27 +1367,54 @@ export async function branchBase(dir: string): Promise<{ base: string } | { unav
  * Refused — answered with the paths, nothing written — when any of those
  * paths has changed since `end` (a later turn, the user, an editor), unless
  * `force`, because reverting over that would silently take their work too.
+ *
+ * `partial` names paths another thread also wrote while the turn ran: those
+ * are not restored whole (that would take the peer's lines too) but have the
+ * turn's own edits taken back out of the file as it is now, newest first. An
+ * edit whose text is not found exactly once cannot be placed, and refuses the
+ * path like any conflict — `force` then falls back to the whole-file restore.
  */
+export interface OwnEdit {
+  oldText: string;
+  newText: string;
+}
+
 export async function revertTurn(
   dir: string,
   start: string,
   end: string,
   force: boolean,
+  partial: Record<string, OwnEdit[]> = {},
 ): Promise<{ reverted: string[]; conflicts: string[] }> {
   /* Renames as their two halves: the new name goes, the old one comes back. */
   const paths = names((await run(dir, ["diff", "--relative", "--name-only", "--no-renames", "-z", start, end])).stdout);
   if (paths.length === 0) return { reverted: [], conflicts: [] };
   const now = await snapshotTree(dir);
-  const conflicts = names(
-    (await run(dir, ["diff", "--relative", "--name-only", "--no-renames", "-z", end, now, "--", ...paths.map(literal)])).stdout,
-  );
+  const whole = paths.filter((path) => !partial[path]);
+  const conflicts = whole.length
+    ? names(
+        (await run(dir, ["diff", "--relative", "--name-only", "--no-renames", "-z", end, now, "--", ...whole.map(literal)])).stdout,
+      )
+    : [];
+  const unplaced: string[] = [];
+  const rewritten = new Map<string, string>();
+  for (const path of paths.filter((p) => partial[p])) {
+    const text = await readFile(join(dir, path), "utf8").catch(() => null);
+    const back = text === null ? null : takeOut(text, partial[path]);
+    if (back === null) unplaced.push(path);
+    else rewritten.set(path, back);
+  }
+  conflicts.push(...unplaced);
   if (conflicts.length > 0 && !force) return { reverted: [], conflicts };
+  for (const [path, text] of rewritten) await writeFile(join(dir, path), text);
+  /* Forced past a path whose edits could not be placed: the whole-file restore. */
+  const restoring = paths.filter((path) => !rewritten.has(path));
 
   const present = new Set(
     names((await run(dir, ["ls-tree", "-r", "--name-only", "-z", start, "--", ...paths.map(literal)])).stdout),
   );
-  const restore = paths.filter((path) => present.has(path));
-  for (const path of paths) if (!present.has(path)) await rm(join(dir, path), { force: true });
+  const restore = restoring.filter((path) => present.has(path));
+  for (const path of restoring) if (!present.has(path)) await rm(join(dir, path), { force: true });
   if (restore.length > 0) {
     const scratch = join(tmpdir(), `daedalus-index-${randomBytes(6).toString("hex")}`);
     try {
@@ -1399,6 +1426,17 @@ export async function revertTurn(
     }
   }
   return { reverted: paths, conflicts };
+}
+
+/** `text` with a turn's edits taken back out, newest first; null when one of
+    them cannot be found exactly once (gone, changed, or ambiguous). */
+export function takeOut(text: string, edits: OwnEdit[]): string | null {
+  for (const { oldText, newText } of [...edits].reverse()) {
+    const at = newText ? text.indexOf(newText) : -1;
+    if (at < 0 || text.indexOf(newText, at + 1) >= 0) return null;
+    text = text.slice(0, at) + oldText + text.slice(at + newText.length);
+  }
+  return text;
 }
 
 /** A path as a pathspec that means exactly itself — no globbing. */

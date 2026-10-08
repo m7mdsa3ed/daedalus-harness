@@ -24,9 +24,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **Storage is PostgreSQL via Drizzle** (`server/src/db/`), not JSON files.
   `data/config.json` (or `DATABASE_URL`) selects the database. Every query goes through the
   `db` exported by `db/index.ts`, and database work is asynchronous. **The schema is
-  `db/schema.ts`, pushed — there are no migration files.** `pnpm db:push` first writes a
-  complete `pg_dump` to `server/data/backups/pre-push-<timestamp>.sql`, then runs Drizzle's
-  schema diff. If `pg_dump` is unavailable or fails, no schema change is attempted. A fresh
+  `db/schema.ts`, pushed — there are no migration files.** `pnpm db:push` runs Drizzle's
+  schema diff directly, with no backup first. A fresh
   database gets the whole schema at boot (`ensureSchema` in `db/index.ts`); an existing one
   is never pushed silently by the server. A pre-Postgres install's SQLite database is
   imported once on first boot and retained as `daedalus.db.migrated`. Two things the JSON could not
@@ -213,11 +212,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** That is the whole
   path — no migration files are generated or committed, and nothing applies SQL at boot to an
-  existing database (`ensureSchema` creates the initial schema only). The `db:push` wrapper
-  (`server/scripts/db-push.mjs`) first writes a complete `pg_dump` under
-  `server/data/backups/pre-push-<timestamp>.sql`; it refuses to push if the backup fails, then
-  invokes Drizzle's interactive diff. Restore with `pnpm db:import <dump.sql>` (replacement,
-  not merge). Two objects sit outside the schema: the full-text search index is maintained in
+  existing database (`ensureSchema` creates the initial schema only). `db:push` is plain
+  `drizzle-kit push` (interactive diff) and takes no backup first; `pnpm db:export` makes one
+  on demand, and `pnpm db:import <dump.sql>` restores it (replacement, not merge). Two objects sit outside the schema: the full-text search index is maintained in
   `db/index.ts`/`search.ts` and hidden from Drizzle's push, and the table push does not know
   about may be **dropped**, so every table the server reads must be declared in `schema.ts`.
   Custom migration files are for changes that cannot be expressed as a schema diff — a data

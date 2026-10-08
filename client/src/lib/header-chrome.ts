@@ -34,18 +34,17 @@ export const HEADER_BADGE =
  * the tab beside them taking the whole strip they are the only things in the
  * row without a shape.
  *
- * **The active tab's material, not a frosted capsule of its own**: `--background`
- * and the card's `shadow-sm`, which is what the tab beside them is made of
- * (`html .dock-tab[data-active]`, `index.css`). They stand in that tab's row, so
- * one material is what makes the row one bar — a translucent ring-and-blur
- * beside an opaque slab is two kinds of chrome sharing a line. No ring, for the
- * same reason the tab has none: the ground *is* the edge.
+ * **The tab item's mobile material** (`--dock-mobile-tab-ground`, `index.css`),
+ * shared with the tab fills rather than a second frosted capsule. They stand in
+ * the same row as the tabs, so matching their fill keeps the controls visually
+ * part of that row. The hover/pressed state adds a stronger foreground wash.
  *
  * Shared by the header's own two controls and the strip's (`STRIP_CONTROL`,
  * `tab-actions.tsx`). Round rather than the tab's `calc(--radius - 2px)`: these
  * are 28px icon buttons, and a square-ish corner on a glyph that size reads as a
  * tab that failed to grow. */
-export const STRIP_GROUND = "max-md:rounded-full max-md:bg-background max-md:shadow-sm"
+export const STRIP_GROUND =
+  "max-md:rounded-full max-md:bg-[var(--dock-mobile-tab-ground)] max-md:shadow-sm"
 
 /** The header's icon buttons — the sidebar toggle and the view-settings
     sliders beside it. Bare ghost buttons, no ground: the row stands on the

@@ -3,8 +3,8 @@
 The harness's own task workspace: `/board/<boardId>`, backed by
 `server/src/boards.ts` + `server/src/tasks-board.ts` + `server/src/routes/tasks.ts`
 on the server and `client/src/components/tasks/` on the client. Standalone — no
-foreign keys to sessions or agents, and the routine `task` action is the one
-place an agent writes to it.
+foreign keys to sessions or agents. Two things write to it from the agent side:
+the routine `task` action, and a thread started on a task (below).
 
 ## Model
 
@@ -66,6 +66,36 @@ place an agent writes to it.
   `deleteList`), because a column delete is a question ("where do its tasks
   go?") and a task delete must not take its children. `reconcileTaskStatuses`
   repairs what a backup import can leave dangling (column, sprint, parent, list).
+
+## Agents and tasks
+
+`sessions.task_id` is a plain pointer (no foreign key, like everything here) set
+when a thread is created on a task — the task detail's **Work on this** mints a
+draft with it. Everything else is the thread's side of the seam
+(`server/src/task-threads.ts`); `tasks-board.ts` still never learns what a thread
+is.
+
+- **The agent reaches the board through `builtin:harness`**, never a bespoke
+  tool: `POST /api/sessions` with a `taskId` puts that row in the library if it
+  never was and in the thread's own picks, because instructions naming tools the
+  thread cannot call are worse than none.
+- **The spawn trailer names the task** (`taskInstructions`, `personas.ts`): key,
+  title, id, the column the card is in, and every column id of its board, so
+  moving it costs no lookup. It is resolved at *every* spawn, so a respawn sees
+  the card as it is now. A workflow step is told nothing — it has no harness MCP.
+- **Who wrote it is said by the harness, never by the agent.** The `/hm` loopback
+  sets `x-harness-actor` (`"<agent name> · <thread title>"`); `routes/tasks.ts`
+  hands it to `createTask`/`updateTask`/`bulkUpdate`/`addComment`/`addLink`, which
+  write it as `task_comments.author` (outranking a claimed `author` in the body)
+  and `task_activity.actor`. The browser sends no such header, so null = a person.
+- **A card moves when work starts, and not when it ends.** The first `turn_started`
+  moves a to-do card to the board's first in-progress column (`noteTurnStarted`);
+  anything else — already moving, done, no such column — is left where the person
+  put it. Completing is the agent's call through `tasks_update`, on the trailer's
+  instruction: a turn ending is not the work being done.
+- The thread is marked in the task's history (`field: "thread"`, `to.sessionId`),
+  and the detail's Threads section is a read of the sessions the client already
+  holds.
 
 ## API
 

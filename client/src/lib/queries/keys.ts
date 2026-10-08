@@ -121,3 +121,8 @@ export const spanDetailKey = (s: ServerSettings, sessionId: string, spanId: stri
 export const sessionChangesKey = (s: ServerSettings, sessionId: string, changeScope?: string) =>
   scope(s).concat(["session-changes", sessionId], changeScope === undefined ? [] : [changeScope])
 
+
+/** A folder of the file library (`GET /api/files?parent=`); `null` is the root.
+    One family, so a write invalidates every open level of the tree at once. */
+export const filesKey = (s: ServerSettings, parentId?: string | null) =>
+  scope(s).concat(parentId === undefined ? ["files"] : ["files", parentId ?? "root"])

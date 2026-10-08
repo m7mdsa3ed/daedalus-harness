@@ -22,6 +22,7 @@ import { pushRegistration } from "./pwa"
 import { currentThreadId, navigateTo, threadPath } from "./router"
 import { loadSettings } from "./settings"
 import { IS_POPOUT } from "./popout"
+import { playCue } from "./sounds"
 
 export type ThreadEvent = "turnFinished" | "turnFailed" | "permissionNeeded" | "questionAsked"
 
@@ -36,6 +37,14 @@ export interface NotificationPrefs {
   questionAsked: boolean
   /** Also raise an OS notification when the window is hidden or unfocused. */
   system: boolean
+  /** Play a short cue for each enabled event — including on the thread you are reading. */
+  sound: boolean
+  /** Play a quiet tick when a tool call starts. */
+  toolStartedSound: boolean
+  /** Play a low blip when a tool call fails. */
+  toolFailedSound: boolean
+  /** Vibrate for thread activity while this page is active, where supported. */
+  vibration: boolean
 }
 
 export const NOTIFICATION_DEFAULTS: NotificationPrefs = {
@@ -44,6 +53,10 @@ export const NOTIFICATION_DEFAULTS: NotificationPrefs = {
   permissionNeeded: true,
   questionAsked: true,
   system: true,
+  sound: false,
+  toolStartedSound: false,
+  toolFailedSound: false,
+  vibration: false,
 }
 
 const EVENT_LABELS: Record<ThreadEvent, string> = {
@@ -88,9 +101,14 @@ const STORAGE_KEY = "ui.notifications"
 function read(): NotificationPrefs {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as unknown
-    return raw && typeof raw === "object" && !Array.isArray(raw)
-      ? { ...NOTIFICATION_DEFAULTS, ...(raw as Partial<NotificationPrefs>) }
-      : { ...NOTIFICATION_DEFAULTS }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...NOTIFICATION_DEFAULTS }
+    const { toolSound, ...stored } = raw as Partial<NotificationPrefs> & { toolSound?: boolean }
+    return {
+      ...NOTIFICATION_DEFAULTS,
+      ...stored,
+      toolStartedSound: stored.toolStartedSound ?? toolSound ?? false,
+      toolFailedSound: stored.toolFailedSound ?? toolSound ?? false,
+    }
   } catch {
     return { ...NOTIFICATION_DEFAULTS }
   }
@@ -323,6 +341,10 @@ export function notifyThreadEvent(
   // The main window announces; a popout of the same thread would say it twice.
   if (!force && IS_POPOUT) return
   if (!force && !cache[event]) return
+  // Sound and vibration still speak on the thread being read: they prompt a
+  // glance when the transcript itself cannot interrupt.
+  if (cache.sound) playCue(event)
+  if (cache.vibration) vibrate(event)
   if (!force && isViewing(sessionId)) return
 
   const label = EVENT_LABELS[event]
@@ -350,6 +372,36 @@ export function notifyThreadEvent(
   const wanted = force || (cache.system && (document.visibilityState === "hidden" || !document.hasFocus()))
   const quiet = !force && Date.now() < systemQuietUntil
   if (wanted && !quiet) raiseSystemNotification(event, sessionId, label, body)
+}
+
+const VIBRATION_PATTERNS: Record<ThreadEvent | "toolStarted" | "toolFailed", number[]> = {
+  turnFinished: [40],
+  turnFailed: [80, 40, 80],
+  permissionNeeded: [50, 40, 50],
+  questionAsked: [35, 35, 55],
+  toolStarted: [20],
+  toolFailed: [70, 35, 70],
+}
+
+function vibrate(activity: ThreadEvent | "toolStarted" | "toolFailed"): void {
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    navigator.vibrate(VIBRATION_PATTERNS[activity])
+  }
+}
+
+/** A live tool-call update's cues: a tick when a step starts, a blip when one
+    fails. The caller passes live updates only — a replay would tick through
+    every step the thread ever ran. Sound/vibration only, never a toast: a turn
+    runs too many steps for anything that stays on screen. */
+export function toolStepCue(update: { sessionUpdate: string; status?: string | null }): void {
+  if (IS_POPOUT) return
+  let activity: "toolStarted" | "toolFailed" | null = null
+  if (update.sessionUpdate === "tool_call") activity = update.status === "failed" ? "toolFailed" : "toolStarted"
+  // `tool_call_update` is a delta, so a status on it is a transition, said once.
+  else if (update.sessionUpdate === "tool_call_update" && update.status === "failed") activity = "toolFailed"
+  if (!activity) return
+  if (activity === "toolStarted" ? cache.toolStartedSound : cache.toolFailedSound) playCue(activity)
+  if (cache.vibration) vibrate(activity)
 }
 
 /** The OS layer: the desktop shell's native notification, else the web one.

@@ -33,7 +33,8 @@ import {
   UnplugIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { McpIcon } from "@/components/entity-icon"
+import { EntityIcon, McpIcon } from "@/components/entity-icon"
+import { ImageIcon } from "lucide-react"
 import { ErrorNote } from "@/components/error-note"
 import {
   DropdownMenu,
@@ -47,7 +48,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useStoreSelect } from "@/lib/store"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
-import { EmptyCard, FormPageHeader, PageForm, Field, FormActions, INSET, lines, pairs } from "./primitives"
+import { EmptyCard, FormPageHeader, PageForm, Field, FormActions, INSET, LogoUpload, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
@@ -56,7 +57,7 @@ import { useAsyncAction } from "@/hooks/use-async-action"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
-type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents"
+type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser"
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
    phrase the list needs to identify a row already there. */
@@ -70,6 +71,8 @@ const BUILTINS: {
   { kind: "knowledge", label: "Knowledge base", detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
   { kind: "workflow", label: "Workflows", detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
   { kind: "agents", label: "Ask agents", detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
+  { kind: "harness", label: "Harness", detail: "manage the harness", hint: "Let the agent manage the harness itself — read and write tasks on the board, list projects, and add profiles" },
+  { kind: "browser", label: "Preview browser", detail: "drive the thread's preview", hint: "Chrome DevTools MCP on the thread's Preview in the desktop app, once you turn on Drive there (needs npm i -g chrome-devtools-mcp on the server)" },
 ]
 
 const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
@@ -794,14 +797,22 @@ function McpForm({
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>
-        <Field label="Logo URL" hint="Optional image URL override. HTTP server URLs use the host favicon when no logo is set.">
-          <Input
-            type="url"
-            value={form.logoUrl}
-            onChange={(e) => set({ logoUrl: e.target.value })}
-            placeholder="https://example.com/logo.png"
-            className="font-mono text-xs"
-          />
+        <Field label="Logo" hint="Paste an image URL or upload one. With none, the harness uses the server's own logo or favicon.">
+          <div className="flex items-center gap-2">
+            <EntityIcon
+              src={form.logoUrl}
+              className="size-8"
+              fallback={<span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"><ImageIcon className="size-4" /></span>}
+            />
+            <Input
+              type="url"
+              value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
+              onChange={(e) => set({ logoUrl: e.target.value })}
+              placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.png"}
+              className="min-w-0 flex-1 font-mono text-xs"
+            />
+            <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
+          </div>
         </Field>
         <Field label="Transport">
           <Select value={form.type} onValueChange={(type) => set({ type: (type as "stdio" | "http") ?? "stdio" })}>

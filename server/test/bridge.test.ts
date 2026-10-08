@@ -428,15 +428,18 @@ await waitFor(() => lastQueue(a).length === 2, "queue_add appends");
 send(b, { id: 23, cmd: "queue_update", itemId: lastQueue(a)[0].id, text: "queued one!" });
 await waitFor(() => lastQueue(a)[0]?.text === "queued one!", "an edit reaches every peer");
 assert.deepEqual(lastQueue(a).map((i) => i.text), ["queued one!", "queued two"], "in order");
-// The turn ends cleanly: everything queued goes out as ONE prompt, with no
-// origin peer — so both peers draw the bubble from turn_started.
+// The turn ends cleanly: the queue is a real one — the OLDEST row goes out as its
+// own turn (no origin peer, so both peers draw the bubble from turn_started),
+// and the next follows when that one ends.
 send(b, { cmd: "answer_permission", requestId: permission, response: allow });
-await waitFor(() => a.of("turn_ended").length >= qEnded + 2, "the parked turn and the drained turn end");
+await waitFor(() => a.of("turn_ended").length >= qEnded + 3, "the parked turn and both drained turns end");
 const ended = a.of("turn_ended").slice(qEnded);
 assert.equal(ended[0].continued, true, "the turn before a drain says the queue follows it");
-assert.equal(ended[1].continued, undefined, "the drained turn is followed by nothing");
-assert.equal(a.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "combined, blank-line separated");
-assert.equal(b.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "…on every peer");
+assert.equal(ended[1].continued, true, "…and so does the first drained turn, with a row still waiting");
+assert.equal(ended[2].continued, undefined, "the last drained turn is followed by nothing");
+const drained = a.of("turn_started").slice(-2).map((e) => e.text);
+assert.deepEqual(drained, ["queued one!", "queued two"], "one message per turn, in order");
+assert.deepEqual(b.of("turn_started").slice(-2).map((e) => e.text), drained, "…on every peer");
 /* Awaited for the reason the prompt's reply is: the rows are deleted *after*
    the drained prompt is dispatched — deliberately, so nothing can be lost — and
    the delete is a round trip to Postgres, which the fake agent's whole turn can

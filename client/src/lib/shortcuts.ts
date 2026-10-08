@@ -76,6 +76,8 @@ const SYMBOLS: Record<string, string> = {
   enter: APPLE ? "↩" : "Enter",
   up: "↑",
   down: "↓",
+  left: "←",
+  right: "→",
   space: "Space",
 }
 
@@ -148,6 +150,8 @@ const RESERVED: Record<string, ReservedChord> = {
   "mod+l": { action: "Focus the address bar", reserved: "hard" },
   "mod+tab": { action: "Switch browser tabs", reserved: "hard" },
   "mod+shift+tab": { action: "Switch browser tabs", reserved: "hard" },
+  "alt+left": { action: "Go back", reserved: "soft" },
+  "alt+right": { action: "Go forward", reserved: "soft" },
   "mod+s": { action: "Save the page", reserved: "soft" },
   "mod+p": { action: "Print", reserved: "soft" },
   "mod+f": { action: "Find in page", reserved: "soft" },
@@ -195,6 +199,9 @@ export type ShortcutId =
   | "splitRight"
   | "splitDown"
   | "fillPanel"
+  | "nextPane"
+  | "prevPane"
+  | "resizePane"
   | "reopenPanel"
   | "terminal"
   | "changeModel"
@@ -202,6 +209,7 @@ export type ShortcutId =
   | "threadSearch"
   | "sendReview"
   | "viewOptions"
+  | "sidebarFilter"
   | "send"
   | "steer"
   | "historyPrev"
@@ -277,6 +285,13 @@ export const KEYS = {
   /** Make the panel in front fill the dock. Not `mod+shift+f` — that is Search
       across files — and not ⌘↩, which the composer owns. */
   fillPanel: "mod+shift+m",
+  /** The columns of a split. Alt+←/→ is the sideways sibling of the tab walk's
+      Alt+↓/↑ (a strip is a list, a split is a row), and Alt+Shift+arrows moves
+      the divider the way the arrow points. Neither is ⌘/Ctrl+Shift+arrow: that
+      selects by word in the composer, which has the caret nearly always. */
+  nextPane: "alt+right",
+  prevPane: "alt+left",
+  resizePane: ["alt+shift+left", "alt+shift+right", "alt+shift+up", "alt+shift+down"],
   /** VS Code's panel chord, not its ⌃` terminal one: `matchesChord` folds Ctrl
       into `mod` by design (⌘ on Apple, Ctrl elsewhere), so a standalone `ctrl`
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
@@ -290,6 +305,8 @@ export const KEYS = {
   changeProject: "alt+p",
   threadSearch: "mod+f",
   viewOptions: "alt+v",
+  /** Filter the sidebar's loaded threads. Alt+T for Threads: ⌘F is the transcript's find, and ⌘⇧F the file search. */
+  sidebarFilter: "alt+t",
   /** Send the pending review comments — answered only while the focus is in
       the inspector, so the composer keeps its own ⌘↵. */
   sendReview: "mod+enter",
@@ -354,6 +371,29 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "Takes back the split: the column in front of you fills the dock, and switching to another column empties it again.",
   },
   {
+    id: "nextPane",
+    scope: "Global",
+    label: "Next pane of a split",
+    chords: [KEYS.nextPane],
+    rebindable: true,
+    note: "Moves to the next column or row, wrapping at the end. The browser has Back and Forward on these keys; the app takes them unless Override is off.",
+  },
+  {
+    id: "prevPane",
+    scope: "Global",
+    label: "Previous pane of a split",
+    chords: [KEYS.prevPane],
+    rebindable: true,
+  },
+  {
+    id: "resizePane",
+    scope: "Global",
+    label: "Resize the pane you are in",
+    chords: [...KEYS.resizePane],
+    display: [`${SYMBOLS.alt}+${SYMBOLS.shift}+←↑↓→`],
+    note: "Moves the divider the way the arrow points: the pane grows toward a neighbour, and shrinks away from the edge. Hold the keys to keep going.",
+  },
+  {
     id: "terminal",
     scope: "Global",
     label: "Open a terminal",
@@ -370,6 +410,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "Walks back through the last ten, the way a browser reopens tabs.",
   },
   { id: "help", scope: "Global", label: "Keyboard shortcuts", chords: [...KEYS.help], rebindable: true },
+  {
+    id: "sidebarFilter",
+    scope: "Global",
+    label: "Filter threads in the sidebar",
+    chords: [KEYS.sidebarFilter],
+    rebindable: true,
+    note: "Narrows the threads already loaded by title, project or agent; the command palette is the deep search.",
+  },
   {
     id: "viewOptions",
     scope: "Global",

@@ -109,7 +109,7 @@ export interface ThreadCallbacks {
   /** `historyReplay` is true for the updates a `session/load` streamed back —
       the reducer takes user chunks only then. `sessionId` is set when the
       update is a subagent's (see the `update` event in the protocol). */
-  onUpdate: (update: SessionUpdate, historyReplay: boolean, sessionId?: string) => void
+  onUpdate: (update: SessionUpdate, historyReplay: boolean, sessionId?: string, at?: number) => void
   onSessionTitle: (title: string) => void
   /** The agent is asking something. Answer with `answerPermission`. */
   onPermission: (requestId: string, request: acp.RequestPermissionRequest) => void
@@ -182,7 +182,10 @@ export interface ThreadCallbacks {
     catchingUp: boolean,
     /** What the prompt carried. Journaled, so a replayed bubble draws the same
         chips a live one did. */
-    attachments: AttachmentRef[] | undefined
+    attachments: AttachmentRef[] | undefined,
+    /** The journal's stamp, replay only: when the words were really sent. A live
+        turn is stamped by this device's own clock. */
+    at?: number
   ) => void
   /** `continued` says the queue is draining into a new turn right behind this
       one — nothing to announce as finished. */
@@ -739,7 +742,15 @@ export class ThreadSocket {
   private fold(event: JournaledEvent): void {
     switch (event.ev) {
       case "update":
-        this.callbacks.onUpdate(event.update, event.historyReplay, event.sessionId)
+        /* Only a replay takes the journal's stamp: it is when the step really began.
+           A live update is stamped by this device's own clock, which is the one
+           the elapsed counter subtracts from. */
+        this.callbacks.onUpdate(
+          event.update,
+          event.historyReplay,
+          event.sessionId,
+          this.catchingUp ? event.at : undefined
+        )
         return
       case "session_config":
         this.callbacks.onSessionConfig(
@@ -755,7 +766,13 @@ export class ThreadSocket {
         this.callbacks.onConfigNotice(event.text)
         return
       case "turn_started":
-        this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp, event.attachments)
+        this.callbacks.onTurnStarted(
+          event.turnId,
+          event.text,
+          this.catchingUp,
+          event.attachments,
+          this.catchingUp ? event.at : undefined
+        )
         return
       case "turn_ended":
         /* A turn the agent ended on an AIR `sessionFailure` (stopReason
@@ -809,9 +826,8 @@ export class ThreadSocket {
     }))) as PromptReply
   }
 
-  /** Stop the running turn. `reclaim` also asks for the newest message that
-      has not landed — a queued row, or a steer the running step never read —
-      to be taken back and handed here, so the caller can put it in the
+  /** Stop the running turn. `reclaim` also asks for the newest queued row to
+      be taken back and handed here (a steer is never: the agent has it), so the caller can put it in the
       composer. `reclaimed` absent means there was nothing to take. Only a
       caller with somewhere to put the words may ask: the message is gone from
       the queue by the time this resolves. */
@@ -867,6 +883,11 @@ export class ThreadSocket {
     }))
   }
 
+  /** Put the queue in this order, without touching the running turn. */
+  async queueReorder(ids: string[]): Promise<void> {
+    await this.request((id) => ({ id, cmd: "queue_reorder", ids }))
+  }
+
   async queueRemove(itemId: string): Promise<void> {
     await this.request((id) => ({ id, cmd: "queue_remove", itemId }))
   }
@@ -875,13 +896,13 @@ export class ThreadSocket {
     await this.request((id) => ({ id, cmd: "queue_clear" }))
   }
 
-  /** Interrupt the running turn and send what is queued in its place — one
-      item, or everything combined. Atomic on the server. */
-  async queueSendNow(itemId?: string): Promise<string> {
+  /** Interrupt the running turn and send what is queued in its place — the
+      picked items, or everything when none are named, combined. Atomic on the server. */
+  async queueSendNow(itemIds?: string[]): Promise<string> {
     const result = await this.request((id) => ({
       id,
       cmd: "queue_send_now",
-      ...(itemId ? { itemId } : {}),
+      ...(itemIds?.length ? { itemIds } : {}),
     }))
     return (result as { turnId: string }).turnId
   }

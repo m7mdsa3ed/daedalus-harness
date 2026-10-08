@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { cn } from "@/lib/utils"
-import { Field, INSET, Picker } from "./primitives"
+import { Field, INSET, LogoUpload, Picker } from "./primitives"
 
 /* ── model rows (reference: profile-models.ts) ──
    The form edits rows and converts to ModelOption[] on save. Numbers live as
@@ -533,11 +533,12 @@ function ModelEditorFields({
                 className="size-5 shrink-0"
               />
               <Input
-                value={row.iconUrl}
+                value={row.iconUrl.startsWith("data:") ? "" : row.iconUrl}
                 onChange={(e) => onPatch({ iconUrl: e.target.value })}
-                placeholder="https://models.dev/logos/anthropic.svg"
+                placeholder={row.iconUrl.startsWith("data:") ? "Uploaded image" : "https://models.dev/logos/anthropic.svg"}
                 className="font-mono text-xs min-w-0 flex-1"
               />
+              <LogoUpload value={row.iconUrl} onChange={(iconUrl) => onPatch({ iconUrl })} />
             </div>
           </Field>
         </div>

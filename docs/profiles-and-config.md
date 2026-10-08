@@ -145,6 +145,25 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## What a change costs, and who waits for it
 
+- **Live-capable picks are staged too, and approving them is a steer.** The paragraphs below
+  were written when staging was for what costs the process; it is now the rule for every pick
+  on a started thread, because the live path moved model, effort and permission mode under an
+  answer being written with nobody having approved it. `applyConfig` stages before it tries
+  `applyConfigLive` (still taken straight away for `defer:false`, a held turn and an agent
+  change). The agent's own selectors — the mode and every option, its model/effort pickers
+  included — are `StagedConfig.modeId`/`options`, staged by `{pick}` on the config route
+  (`stagePick`) and handed to `AcpBridge.applyPicks` by `takePicks`, which says each one in
+  the transcript like a live pick and drops a refusal with a notice rather than failing the
+  send. **Approving** is `{applyStaged}` → `approveStaged`: with a turn running it is
+  `steerStaged` — picks, plus a profile/model/effort move `applyConfigLive` accepts, and
+  never a respawn — so a persona or follow-ups pick stays staged for the next turn; on an
+  idle thread it is the whole flush a send would make. The queue drain calls `steerStaged`
+  before `startTurn`: live-capable picks land at the next turn, still no restart between two
+  messages sent together. A patch holding only selectors never reaches `applyConfig`
+  (`hasSpawnFields`), or a runtime with no live path would restart for a mode. The client
+  draws them through `stagedPicks` (the layering `configView` does for the row) and the
+  config reading's popover carries **Apply now** / **Steer now** beside Cancel.
+
 - **A change that costs the process is staged when it is picked; the next spawn takes it.**
   This is the third answer `POST /api/sessions/:id/config` can give — `{live:false, staged}`
   — and it is now the *ordinary* one rather than a mid-turn exception. The reasoning that
@@ -275,19 +294,24 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   like `session_config`, never a delta, fanned to
   every peer *including* the origin because the ids are minted here — and is not journaled: it
   is current state, handed over on `caught_up` the way a pending permission is handed over
-  after the replay. A drain combines **everything** queued into one blank-line-separated
-  prompt and starts one turn on it with no origin peer, so every device draws the user bubble
+  after the replay. **It is a real queue: a drain sends the oldest row only**, one message per
+  turn, and the turn's own `continued` re-drains for the next — it used to combine everything
+  queued into one blank-line-separated prompt. It starts one turn with no origin peer, so every device draws the user bubble
   from `turn_started`. It hooks `AcpBridge.settleTurn` → `host.onTurnSettled`, after
   `turn_ended` is journaled, and only after a turn that ended **cleanly**: a Stop or a failure
   parks the queue on the shelf (`stopReason: "cancelled"` is a *success* on the wire, which is
   why the bridge reads it now), and nothing drains on revive either — a profile-change respawn
   must not fire a parked queue. The `turn_ended` before a drain carries `continued: true`, so
   neither the toast nor the push says "Turn finished" about a turn that is about to continue.
-  "Send now" (one item, or all) is atomic and server-side like respawn — `cancel()` (which now
+  "Send now" (`itemIds` — one row, a picked few, or none for all, combined into one prompt
+  in queue order; the rest stay queued and drain one by one after it) is atomic and server-side like respawn — `cancel()` (which now
   also `settleAll()`s the open questions, as ACP asks of a cancelling client), `whenIdle()`,
   prompt — serialised on `session.queueChain`, which also stands the auto-drain down so nothing
   goes twice; rows are deleted only after the prompt is dispatched, so a process dying mid-wait
-  leaves the queue as it was. The three edits (`queue_update/remove/clear`) are answered with no
+  leaves the queue as it was. **Dragging a row reorders** (`queue_reorder {ids}`, on the chain because it rewrites the
+  positions `enqueue` reads): it interrupts nothing — the next drain takes whichever row is
+  first — and a row the order does not name keeps its place after the named ones. The edits
+  (`queue_update/remove/reorder/clear`) are answered with no
   bridge, like `load_earlier`: a parked queue on an archived thread is the user's words, and
   taking one back must not cost a spawn. The scheduler gets the rule for free: a scheduled
   prompt that lands mid-turn waits its turn. The row is `components/composer-queue.tsx` on the
@@ -304,18 +328,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   takes the message back *before* it cancels. Two round trips from a browser could not
   guarantee that.
 
-  **Exactly one message, the newest by `createdAt`**, because the composer is one box; a steer
-  and a queued row are weighed against each other rather than by which list they are in.
+  **Exactly one message, the newest by `createdAt`**, because the composer is one box.
   Everything older stays parked with its own Edit and ✕.
 
-  A **queued** row never left this server, so taking it back is total. A **held steer** is the
-  one that carries the "unless a new step read it" rule: its words went out at send, but its
-  `turn_started` sits in `bridge.pendingSteers` until a step boundary, and while it is there
-  `AcpBridge.takeSteer` unwinds it with no bubble and no journal row. Past that boundary
-  nothing comes back — the words are in the transcript, which is where they belong — and that
-  is an answer, never a reason to reach past it for an older message. (`ponytail`: the runtime
-  still has the steer buffered from the `session/prompt`; making the take-back total on its
-  side needs a withdraw it participates in, i.e. an `AgentDef` column.)
+  A **queued** row never left this server, so taking it back is total. A **held steer** is
+  never taken back, by a reclaim or a plain stop: its words went out at send, and the runtimes
+  keep them through a cancel (ours persists them as context, Claude's SDK runs them as an
+  orphan turn). So the stop leaves `bridge.pendingSteers` alone, the cancel's `settleTurn` is
+  its step boundary, and `flushSteers` draws it as the bubble it is. Stopping used to re-queue
+  it, which showed the user a message waiting that the agent already had and then sent it a
+  second time.
 
   **`reclaim` is opt-in, and only a caller with somewhere to put the words may ask**: the
   message is gone from the queue when it is answered, so `actions.stop(id, {onReclaim})` is

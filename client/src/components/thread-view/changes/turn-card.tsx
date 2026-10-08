@@ -12,7 +12,7 @@
    server refuses when one of them changed since the turn ended and names
    them; "Revert anyway" is the same call with `force`. */
 import * as React from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQueries, useQueryClient } from "@tanstack/react-query"
 import { ChevronRightIcon, Undo2Icon } from "lucide-react"
 
 import { useConfirm } from "@/components/confirm-dialog"
@@ -26,7 +26,8 @@ import { useServer } from "@/lib/server-context"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
-import { revertConflicts, revertTurn, type ChangedFile } from "@/lib/workspace/git-api"
+import { editsExplain } from "@/lib/tools/edits"
+import { revertConflicts, revertTurn, scopeFileSide, type ChangedFile } from "@/lib/workspace/git-api"
 import type { TimelineTurn } from "../turn-footers"
 import { CountBadge, FileList, HoverActions, RowAction, type FileListContext } from "./file-list"
 
@@ -85,7 +86,7 @@ export function SectionHeader({
 export function TurnCard({
   ctx,
   turn,
-  files,
+  files: measured,
   unavailable,
   open,
   onToggle,
@@ -99,12 +100,23 @@ export function TurnCard({
 }) {
   const { changes } = turn
   const running = !changes.ended
+  const files = useOwnFiles(ctx.sessionId, turn, measured)
   const title =
     turn.prompt?.split("\n").find((line) => line.trim())?.trim() || (changes.sessionId ? "A step it started" : "An earlier turn")
   const sentence = changes.unavailable
     ? "Not measured — the project was not a git repository when this turn ran."
     : unavailable
-  const revert = useRevertTurn(ctx, changes.turnId, files.length)
+  /* A file still `shared` after `useOwnFiles` has a peer's lines in it: revert
+     only what this thread's edits wrote there. */
+  const partial = React.useMemo(() => {
+    const out: Record<string, { oldText: string; newText: string }[]> = {}
+    for (const file of files) {
+      const ours = turn.edits.filter((e) => e.path && (e.path === file.path || e.path.endsWith(`/${file.path}`)))
+      if (file.shared && file.status === "modified" && ours.length > 0) out[file.path] = ours
+    }
+    return out
+  }, [files, turn.edits])
+  const revert = useRevertTurn(ctx, changes.turnId, files.length, partial)
 
   return (
     <li>
@@ -166,7 +178,12 @@ export function TurnCard({
 
 /** The revert's confirm, and what it has to say when the server refuses —
     the header holds the button, the section holds the answer. */
-function useRevertTurn(ctx: FileListContext, turnId: string, count: number) {
+function useRevertTurn(
+  ctx: FileListContext,
+  turnId: string,
+  count: number,
+  partial: Record<string, { oldText: string; newText: string }[]>
+) {
   const settings = useServer()
   const queryClient = useQueryClient()
   const confirm = useConfirm()
@@ -178,7 +195,7 @@ function useRevertTurn(ctx: FileListContext, turnId: string, count: number) {
     setBusy(true)
     setError(null)
     try {
-      const { reverted } = await revertTurn(settings, ctx.sessionId, turnId, force)
+      const { reverted } = await revertTurn(settings, ctx.sessionId, turnId, force, partial)
       setConflicts(null)
       void queryClient.invalidateQueries({ queryKey: sessionChangesKey(settings, ctx.sessionId) })
       toast.success(`Reverted ${reverted.length} ${reverted.length === 1 ? "file" : "files"} from this turn`)
@@ -211,7 +228,7 @@ function useRevertTurn(ctx: FileListContext, turnId: string, count: number) {
             title="Changed since this turn ended"
             action={<CopyButton text={conflicts.join("\n")} size="icon-xs" />}
           >
-            <p>Reverting would also undo later edits to:</p>
+            <p>Reverting would also undo other edits to:</p>
             <ul className="mt-1 font-mono text-[10px]">
               {conflicts.slice(0, 12).map((path) => (
                 <li key={path} className="truncate">
@@ -239,4 +256,35 @@ function useRevertTurn(ctx: FileListContext, turnId: string, count: number) {
     ) : null
 
   return { busy, ask, panel }
+}
+
+/**
+ * Break the server's `shared` tie with content, not names. A shared file is
+ * one written while another thread's turn ran in the repository, so git's diff
+ * of it holds every writer's lines. Replay this thread's own edits over the
+ * turn's start text: if they alone reproduce the end text, the file is ours
+ * and loses the flag; otherwise a hunk is someone else's (or a shell's, which
+ * names nothing) and it stays `shared`. Read only once a turn has ended.
+ */
+function useOwnFiles(sessionId: string, turn: TimelineTurn, files: ChangedFile[]): ChangedFile[] {
+  const { changes, edits } = turn
+  const shared = changes.ended ? files.filter((file) => file.shared && file.status === "modified") : []
+  const verdicts = useQueries({
+    queries: shared.map((file) => ({
+      queryKey: ["own-file", sessionId, changes.turnId, file.path, file.additions, file.deletions],
+      staleTime: Infinity,
+      queryFn: async () => {
+        const scope = `turn:${changes.turnId}`
+        const [before, after] = await Promise.all([
+          scopeFileSide(sessionId, scope, file.path, "before"),
+          scopeFileSide(sessionId, scope, file.path, "after"),
+        ])
+        const ours = edits.filter((e) => e.path && (e.path === file.path || e.path.endsWith(`/${file.path}`)))
+        return ours.length > 0 && editsExplain(before.content, after.content, ours)
+      },
+    })),
+  })
+  const own = new Set(shared.filter((_, i) => verdicts[i]?.data === true).map((file) => file.path))
+  if (own.size === 0) return files
+  return files.map((file) => (own.has(file.path) ? { ...file, shared: undefined } : file))
 }

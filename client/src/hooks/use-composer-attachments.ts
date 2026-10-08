@@ -1,6 +1,7 @@
 import * as React from "react"
 
-import { captureError } from "@/lib/errors"
+import { captureError, reportError } from "@/lib/errors"
+import { useFileActions } from "@/lib/files"
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -37,6 +38,7 @@ import { uuid } from "@/lib/uuid"
  */
 export function useComposerAttachments(sessionId: string) {
   const settings = useServer()
+  const fileActions = useFileActions()
   const [attachments, setAttachments] = React.useState<DraftAttachment[]>(() =>
     loadDraftAttachments(sessionId)
   )
@@ -46,6 +48,7 @@ export function useComposerAttachments(sessionId: string) {
   /** The bytes behind each chip, for a retry. Not state: nothing renders from
       it, and a `File` in state would be copied on every keystroke. */
   const files = React.useRef(new Map<string, File>())
+  const started = React.useRef(new Set<string>())
 
   const patch = React.useCallback((id: string, next: Partial<DraftAttachment>) => {
     setAttachments((prev) =>
@@ -74,7 +77,7 @@ export function useComposerAttachments(sessionId: string) {
   /** Take on whatever was picked, dropped or pasted. Refusals are toasts, not
       chips: a file that was never accepted has no chip to put an error on. */
   const add = React.useCallback(
-    (picked: Iterable<File>) => {
+    (picked: Iterable<File>, saveToLibrary = true) => {
       const list = [...picked]
       if (list.length === 0) return
       setAttachments((prev) => {
@@ -109,20 +112,33 @@ export function useComposerAttachments(sessionId: string) {
         /* Started outside the updater: it is a side effect, and React may run
            an updater twice. The chips it patches are the ones just added. */
         queueMicrotask(() => {
+          const accepted: File[] = []
           for (const entry of next) {
+            if (started.current.has(entry.id)) continue
             const file = files.current.get(entry.id)
-            if (file) upload(entry.id, file)
+            if (!file) continue
+            started.current.add(entry.id)
+            accepted.push(file)
+            upload(entry.id, file)
+          }
+          if (saveToLibrary && accepted.length > 0) {
+            void fileActions.upload(accepted, null).catch((error: unknown) => {
+              reportError(error, "Couldn't save the uploaded files to the library")
+            })
           }
         })
         return next.length > 0 ? [...prev, ...next] : prev
       })
     },
-    [upload]
+    [fileActions, upload]
   )
+
+  const addFromLibrary = React.useCallback((picked: Iterable<File>) => add(picked, false), [add])
 
   const remove = React.useCallback((id: string) => {
     setAttachments((prev) => prev.filter((entry) => entry.id !== id))
     files.current.delete(id)
+    started.current.delete(id)
     /* Fire and forget, and 404 is fine: the row may never have been created
        (a failed upload), and one that exists but is never claimed is swept. */
     void deleteAttachment(settings, id).catch(() => {})
@@ -141,6 +157,7 @@ export function useComposerAttachments(sessionId: string) {
   const clear = React.useCallback(() => {
     setAttachments([])
     files.current.clear()
+    started.current.clear()
     clearDraftAttachments(sessionId)
   }, [sessionId])
 
@@ -162,5 +179,5 @@ export function useComposerAttachments(sessionId: string) {
     [attachments]
   )
 
-  return { attachments, ready, uploading, add, remove, retry, clear, restore }
+  return { attachments, ready, uploading, add, addFromLibrary, remove, retry, clear, restore }
 }

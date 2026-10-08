@@ -64,7 +64,7 @@ export class SessionJournal {
   /** Append one event to the session's log and stamp it with its seq. */
   append(session: JournalOwner, event: ThreadEvent): ThreadEvent {
     const seq = session.eventCount++;
-    const stamped = { ...event, seq } as ThreadEvent;
+    const stamped = { ...event, seq, ...((event.ev === "update" || event.ev === "turn_started") && { at: Date.now() }) } as ThreadEvent;
     /* Postgres cannot represent a NUL in `text` or inside a `jsonb` string
        (22P05), and a transcript quoting code carries them as data - a NUL
        separator in a tool result is enough. Unscrubbed, the insert throws, the

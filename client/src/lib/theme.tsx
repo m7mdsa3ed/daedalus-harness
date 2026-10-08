@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react"
 import { BOOT_COLORS } from "./boot-colors"
+import type { ConsoleEntry, GuestConsoleMessage, PickedElement } from "./browser-preview"
 import { BUILTIN_THEMES, type BuiltinTheme } from "./builtin-themes"
 import {
   customThemeId,
@@ -302,6 +303,23 @@ declare global {
       setWindowMaterial?: (material: "acrylic" | "mica") => Promise<{ ok: true } | { ok: false; error: string }>
       /** A thread in a window of its own, drawn with no shell (`lib/popout.ts`). */
       openThreadWindow?: (sessionId: string) => Promise<boolean>
+      /** Drive: a CDP connection to a `<webview>` guest of this window (lib/browser-host.ts). */
+      cdp?: {
+        reset: (guestId: number) => void
+        send: (guestId: number, data: string) => void
+        onMessage: (handler: (guestId: number, data: string) => void) => () => void
+        onClosed: (handler: (guestId: number, reason: string) => void) => () => void
+      }
+      /** The Preview's page console (lib/browser-preview.ts). */
+      guestConsole?: {
+        read: (guestId: number) => Promise<ConsoleEntry[]>
+        onMessage: (handler: (guestId: number, message: GuestConsoleMessage) => void) => () => void
+      }
+      /** The Preview's "Pick element" (lib/browser-preview.ts). */
+      previewPicker?: {
+        pick: (guestId: number) => Promise<PickedElement | null>
+        cancel: (guestId: number) => void
+      }
       /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */
       onShortcut?: (handler: (id: string) => void) => () => void
     }

@@ -2,8 +2,8 @@ import { defineConfig } from "drizzle-kit";
 import { databaseUrl } from "./src/config.js";
 
 /*
- * The schema is pushed, never migrated: `pnpm db:push` creates a full
- * PostgreSQL dump under data/backups before running the schema diff. A fresh
+ * The schema is pushed, never migrated: `pnpm db:push` runs the schema
+ * diff directly, with no backup first. A fresh
  * database is initialized by src/db/index.ts. There are no migration files.
  *
  * Which server is `config.ts`'s answer and not a second one written here:

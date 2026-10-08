@@ -116,7 +116,7 @@ export function sendActions(
            for the full server round-trip — the agent spawn, handshake and
            WebSocket replay can take seconds. On failure, clean up the
            optimistic state and record a Retry-able error. */
-        dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
+        dispatch({ type: "user-message", id: sessionId, text, local: true, sending: true, attachments })
         /* Only when there are words to take it from: an image with no
            sentence is a real prompt, and the server's own title sniff skips
            an empty one too — a thread called "" is worse than "New thread". */
@@ -127,7 +127,11 @@ export function sendActions(
            before Enter is already on the draft row the create reads. */
         let created
         try {
-          created = await createSession(draft, { text, attachmentIds })
+          created = await createSession(
+            draft,
+            { text, attachmentIds },
+            () => dispatch({ type: "settle-user-message", id: sessionId })
+          )
         } catch (error) {
           threads.for(sessionId).markIdle()
           dispatch({ type: "drop-user-message", id: sessionId })
@@ -292,6 +296,7 @@ export function sendActions(
         }
         dispatch({ type: "tag-user-turn", id: sessionId, turnId: reply.turnId })
       } catch (error) {
+        dispatch({ type: "settle-user-message", id: sessionId })
         /* Where alreadyRunning was true, another turn is genuinely active
            and must not be disturbed. */
         if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })
@@ -323,6 +328,15 @@ export function sendActions(
       }
     },
 
+    async queueReorder(sessionId: string, ids: string[]) {
+      try {
+        await requireLive(sessionId).queueReorder(ids)
+      } catch (error) {
+        recordError(sessionId, error, "Couldn't reorder the queue")
+        throw error
+      }
+    },
+
     async queueRemove(sessionId: string, itemId: string) {
       try {
         await requireLive(sessionId).queueRemove(itemId)
@@ -342,12 +356,12 @@ export function sendActions(
     },
 
     /** Interrupt the running turn and send the queue (or one item) in its
-        place. No "interrupted" notice: `turn_ended` → `turn_started` says
+        place — the picked rows, or all of them with no ids. No "interrupted" notice: `turn_ended` → `turn_started` says
         it, and the server does all three steps whether or not this tab
         stays open. */
-    async queueSendNow(sessionId: string, itemId?: string) {
+    async queueSendNow(sessionId: string, itemIds?: string[]) {
       try {
-        await requireLive(sessionId).queueSendNow(itemId)
+        await requireLive(sessionId).queueSendNow(itemIds)
       } catch (error) {
         recordError(sessionId, error, "Couldn't send the queued message")
         throw error

@@ -7,7 +7,9 @@ import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
 import { getAgent, profileHasAgent } from "../registry.js";
 import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
+import { mcpServers } from "../library.js";
 import { getProject } from "../projects.js";
+import { getTask } from "../tasks-board.js";
 import { listAgentSessions } from "../session-list.js";
 import { threadCwd, type SessionManager } from "../sessions.js";
 import * as git from "../git.js";
@@ -108,6 +110,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       commandIds,
       worktree,
       aside,
+      taskId,
       prompt,
     } = await c.req.json();
     // The thread's own picks, on top of the project's and the profile's. Stale
@@ -137,16 +140,29 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       if (pending) return c.json(await pending, 201);
       if (sessions.get(id)) return c.json({ error: "session already exists" }, 409);
     }
+    /* A thread started on a task: the card has to exist, and the thread has to
+       carry the harness MCP or its instructions would name tools it cannot
+       call. The row is put in the library if it never was, and added to the
+       thread's own picks — the user's picks are kept, nothing is removed. */
+    let task: string | undefined;
+    const linkedIds = ids(mcpServerIds);
+    if (typeof taskId === "string" && taskId) {
+      if (!(await getTask(taskId))) return c.json({ error: "unknown task" }, 404);
+      task = taskId;
+      const harness = await mcpServers.ensureBuiltin("harness");
+      if (!linkedIds.includes(harness.id)) linkedIds.push(harness.id);
+    }
     const first =
       prompt && typeof prompt === "object" && typeof prompt.text === "string"
         ? { text: prompt.text as string, attachmentIds: ids(prompt.attachmentIds) }
         : null;
     const run = async (): Promise<Created> => {
       const session = await sessions.create(profile, agentId, project, model, effort, id, configChoices, {
-        mcpServerIds: ids(mcpServerIds),
+        mcpServerIds: linkedIds,
         skillIds: ids(skillIds),
         commandIds: ids(commandIds),
       }, {
+        taskId: task,
         // Not validated: a persona id naming a row that is gone resolves to no
         // persona at spawn, which is what "gone" should mean — see
         // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
@@ -384,6 +400,23 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       sessions.cancelStaged(session);
       return c.json({ ok: true, live: false, staged: null });
     }
+    /* The agent's own selectors — the mode, and every option it advertises —
+       staged like the spawn settings are: nothing is placed on the process
+       until a turn starts or `applyStaged` approves it. */
+    if (body.pick && typeof body.pick === "object") {
+      const { modeId, options } = body.pick;
+      const staged = sessions.stagePick(session.id, {
+        modeId: typeof modeId === "string" ? modeId : undefined,
+        options: options && typeof options === "object" ? options : undefined,
+      });
+      return c.json({ ok: true, live: false, staged });
+    }
+    /* "Apply now": the reader's approval of what is staged. A running turn is
+       steered with what the process can take; the rest stays staged. */
+    if (body.applyStaged === true) {
+      const staged = await sessions.approveStaged(session.id);
+      return c.json({ ok: true, live: true, staged });
+    }
     /* The floor under "apply now": the staged change, for any field this body
        does not name. The client sends the staged patch back explicitly (it
        holds it — `staged_config` is absolute and reaches every peer), because a
@@ -606,10 +639,18 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.post("/api/sessions/:id/turn-changes/:turnId/revert", async (c) => {
     const id = c.req.param("id");
     if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as { force?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { force?: unknown; partial?: unknown };
+    /* Paths to take this thread's edits out of, not restore whole (a peer wrote them too). */
+    const partial: Record<string, { oldText: string; newText: string }[]> = {};
+    if (body.partial && typeof body.partial === "object")
+      for (const [path, edits] of Object.entries(body.partial))
+        if (Array.isArray(edits))
+          partial[path] = edits.filter(
+            (e): e is { oldText: string; newText: string } => typeof e?.oldText === "string" && typeof e?.newText === "string",
+          );
     /* Refusals are HttpErrors (git's are WorkspaceErrors), which app.onError
        shapes with their status. */
-    const result = await sessions.revertTurn(id, c.req.param("turnId"), body.force === true);
+    const result = await sessions.revertTurn(id, c.req.param("turnId"), body.force === true, partial);
     if (result.reverted.length === 0 && result.conflicts.length > 0)
       return c.json(
         { error: `${result.conflicts.length} of this turn's files changed since it ended`, conflicts: result.conflicts },

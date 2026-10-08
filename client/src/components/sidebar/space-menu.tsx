@@ -1,26 +1,31 @@
 /* ── The spaces switcher ──
-   The scope above projects: "Personal", "Work". One card, two triggers — the
+   The scope above projects: "Personal", "Work". One menu, two triggers — the
    chip beside the sidebar toggle in the app header, and an icon in the
-   sidebar's footer (which is what a phone reaches, inside the drawer). The card
-   is the same popover the server list uses (`sidebar/server-menu.tsx`): same
-   glass, same header/list/footer, one voice for the furniture. */
-import * as React from "react"
-import { Boxes, Check, ChevronDownIcon, Plus } from "lucide-react"
+   sidebar's footer (which is what a phone reaches, inside the drawer). It is
+   the app's dropdown menu, so it reads and keys like every other picker. */
+import { Boxes, ChevronDownIcon, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useSidebar } from "@/components/ui/sidebar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { usePrompt } from "@/components/prompt-dialog"
-import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { describeError } from "@/lib/errors"
 import { useActiveSpace, useCreateSpace } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
-import { FOOTER_ICON } from "./scale"
+import { FooterMenuButton } from "./footer-menu"
 
-/** The card both triggers open. `onDone` closes the popover (and, on a phone,
-    the drawer) after a switch or a create — both are a "now show me that
-    space" gesture. */
-function SpaceMenuCard({ onDone }: { onDone: () => void }) {
+/** The rows both triggers open. The menu closes itself on a pick; `onDone`
+    is for what else should close with it (the drawer, on a phone). */
+function SpaceMenuItems({ onDone }: { onDone?: () => void }) {
   const { spaces, id, setActive } = useActiveSpace()
   const createSpace = useCreateSpace()
   const prompt = usePrompt()
@@ -31,80 +36,55 @@ function SpaceMenuCard({ onDone }: { onDone: () => void }) {
     try {
       const space = await createSpace.mutateAsync({ name })
       setActive(space.id)
-      onDone()
+      onDone?.()
     } catch (err) {
       toast.error(describeError(err).title)
     }
   }
 
   return (
-    <div className="flex max-h-[min(26rem,var(--panel-h,100svh))] flex-col overflow-hidden rounded-2xl">
-      <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
-        <Boxes aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] leading-5 font-semibold">Spaces</p>
-          <p className="text-[11px] leading-4 text-muted-foreground">
-            {spaces.length} {spaces.length === 1 ? "space" : "spaces"}
-          </p>
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto py-1">
-        {spaces.map((space) => {
-          const isActive = space.id === id
-          return (
-            <button
-              key={space.id}
-              type="button"
-              aria-current={isActive || undefined}
-              onClick={() => {
-                setActive(space.id)
-                onDone()
-              }}
-              className={cn(
-                "flex w-full cursor-default items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm outline-hidden select-none",
-                !isActive &&
-                  "hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
-                isActive && "opacity-60"
-              )}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md bg-sidebar-accent/70">
-                <Boxes className="size-3.5" />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm leading-tight">{space.name}</span>
-              {isActive && <Check className="size-4 shrink-0 text-foreground" />}
-            </button>
-          )
-        })}
-      </div>
-      <div className="border-t border-border/60 p-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-between text-muted-foreground"
-          disabled={createSpace.isPending}
-          onClick={() => void add()}
+    <>
+      {/* GroupLabel throws outside a group, so the label rides inside one. */}
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>Spaces</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={id}
+          onValueChange={(next) => {
+            if (!next || next === id) return
+            setActive(next)
+            onDone?.()
+          }}
         >
-          New space…
-          <Plus />
-        </Button>
-      </div>
-    </div>
+          {spaces.map((space) => (
+            <DropdownMenuRadioItem key={space.id} value={space.id}>
+              <Boxes />
+              <span className="min-w-0 truncate">{space.name}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem disabled={createSpace.isPending} onClick={() => void add()}>
+        <Plus />
+        New space…
+      </DropdownMenuItem>
+    </>
   )
 }
 
 /** The header chip, beside the sidebar toggle: the one control here that says
     *where* you are. */
 export function SpaceSwitcher({ className }: { className?: string }) {
-  const [open, setOpen] = React.useState(false)
   const { active } = useActiveSpace()
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
+    <DropdownMenu>
+      <DropdownMenuTrigger
         render={
           <Button
             variant="ghost"
             size="sm"
             title={active ? `Space: ${active.name}` : "Spaces"}
+            aria-label={active ? `Space: ${active.name}` : "Spaces"}
             className={cn(className, "pointer-events-auto min-w-0 gap-1")}
           >
             <Boxes className="size-3.5 shrink-0" />
@@ -114,51 +94,26 @@ export function SpaceSwitcher({ className }: { className?: string }) {
           </Button>
         }
       />
-      <PopoverContent
-        align="start"
-        sideOffset={8}
-        className={cn(GLASS_SURFACE, "w-[min(20rem,calc(100vw-1rem))] p-0")}
-      >
-        <SpaceMenuCard onDone={() => setOpen(false)} />
-      </PopoverContent>
-    </Popover>
+      <DropdownMenuContent align="start" sideOffset={8} className="w-56">
+        <SpaceMenuItems />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-/** The sidebar footer's icon — the same card, reached inside the mobile drawer
+/** The sidebar footer's icon — the same menu, reached inside the mobile drawer
     where the header chip is not the thing to hand. */
 export function SpaceIconButton() {
-  const [open, setOpen] = React.useState(false)
-  const { isMobile, setOpenMobile } = useSidebar()
   const { active } = useActiveSpace()
-  const done = () => {
-    setOpen(false)
-    if (isMobile) setOpenMobile(false)
-  }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title={active ? `Space: ${active.name}` : "Spaces"}
-            className={FOOTER_ICON}
-          >
-            <Boxes />
-          </Button>
-        }
-      />
-      {/* Upward on the rail, downward on a phone — the same placement the server
-          and usage popovers beside it use. */}
-      <PopoverContent
-        align="start"
-        side={isMobile ? "bottom" : "top"}
-        sideOffset={8}
-        className={cn(GLASS_SURFACE, "w-[min(22rem,calc(100vw-1rem))] p-0")}
-      >
-        <SpaceMenuCard onDone={done} />
-      </PopoverContent>
-    </Popover>
+    <FooterMenuButton
+      title={active ? `Space: ${active.name}` : "Spaces"}
+      icon={<Boxes />}
+      contentClassName="w-56"
+    >
+      {({ isMobile, setOpenMobile }) => (
+        <SpaceMenuItems onDone={isMobile ? () => setOpenMobile(false) : undefined} />
+      )}
+    </FooterMenuButton>
   )
 }

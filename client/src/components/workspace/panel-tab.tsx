@@ -451,7 +451,7 @@ function TabMark({ descriptor }: { descriptor: Descriptor }) {
    in a 28px chip is a button, and two rounded squares at the end of a rounded
    rectangle is a tab made of three rounded rectangles. */
 const TAB_CONTROL =
-  "size-[var(--dock-control-h)] shrink-0 rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+  "size-[var(--dock-control-h)] shrink-0 rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:bg-foreground/15"
 
 /**
  * A tab's close / unpin control.

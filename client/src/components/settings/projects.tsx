@@ -39,7 +39,7 @@ import {
   useUpdateHelper,
 } from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
-import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, INSET } from "./primitives"
+import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, INSET, LogoUpload } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
@@ -320,11 +320,12 @@ export function ProjectForm({
             {/* Live preview — the same component the sidebar renders. */}
             <ProjectIcon project={{ name: form.name, logoUrl: form.logoUrl }} className="size-5" />
             <Input
-              value={form.logoUrl}
               onChange={(e) => set({ logoUrl: e.target.value })}
-              placeholder="https://example.com/logo.svg"
-              className="font-mono text-xs"
+              value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
+              placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.svg"}
+              className="min-w-0 flex-1 font-mono text-xs"
             />
+            <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
           </div>
         </Field>
         <Field

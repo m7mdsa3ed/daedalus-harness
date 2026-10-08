@@ -13,7 +13,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { couldTouchFiles } from "@/lib/tools"
-import { extractEdits } from "@/lib/tools/edits"
+import { extractEdits, type EditInputDiff } from "@/lib/tools/edits"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { turnSuggestions } from "@/lib/suggestions"
 import { isAnswerItem } from "@/lib/transcript-rows"
@@ -105,7 +105,8 @@ function walkFinishedTurns(
   const turns = splitTurns(items)
   const out: { turn: ThreadItem[]; tailId: string }[] = []
   const hidden = (item: ThreadItem): boolean =>
-    item.kind === "notice" && item.config === true && !showConfigNotices
+    (item.kind === "notice" && item.config === true && !showConfigNotices) ||
+    (item.kind === "error" && item.transient === true)
   const tailOf = (turn: ThreadItem[]): ThreadItem | undefined => {
     for (let i = turn.length - 1; i >= 0; i--) {
       const item = turn[i]
@@ -114,7 +115,7 @@ function walkFinishedTurns(
          strip would sit under the command instead of under the answer) and not
          when it is hidden (the anchor would be a row nothing draws, and the
          footer would vanish with it). */
-      if (item.kind === "shell") continue
+      if (item.kind === "shell" || item.kind === "voice") continue
       if (hidden(item)) continue
       if (!answersOnly || isAnswerItem(item)) return item
     }
@@ -255,6 +256,9 @@ export interface TimelineTurn {
   changes: TurnChanges
   /** The turn's message, when the transcript window holds it. */
   prompt?: string
+  /** This thread's own edits in the turn, in order — what `editsExplain`
+      replays to tell a peer's hunks from ours in a `shared` file. */
+  edits: EditInputDiff[]
 }
 
 /**
@@ -270,16 +274,16 @@ export function changesTimeline(
   items: ThreadItem[],
   turnChanges: Record<string, TurnChanges>
 ): TimelineTurn[] {
-  const seen = new Map<string, { prompt: string; touches: boolean; named: string[] }>()
-  let current: { prompt: string; touches: boolean; named: string[] } | undefined
+  const seen = new Map<string, { prompt: string; touches: boolean; edits: EditInputDiff[] }>()
+  let current: { prompt: string; touches: boolean; edits: EditInputDiff[] } | undefined
   for (const item of items) {
     if (item.kind === "user") {
       /* A steer joins the turn it lands in; a replayed bubble has no id. */
-      current = item.turnId ? (seen.get(item.turnId) ?? { prompt: item.text, touches: false, named: [] }) : undefined
+      current = item.turnId ? (seen.get(item.turnId) ?? { prompt: item.text, touches: false, edits: [] }) : undefined
       if (item.turnId && current) seen.set(item.turnId, current)
     } else if (current && item.kind === "tool" && couldTouchFiles(item)) {
       current.touches = true
-      current.named.push(...namedPaths(item))
+      current.edits.push(...extractEdits(item))
     }
   }
   return Object.values(turnChanges)
@@ -291,31 +295,8 @@ export function changesTimeline(
     .sort((a, b) => b.startedAt - a.startedAt)
     .map((changes) => {
       const turn = seen.get(changes.turnId)
-      return { changes: turn ? claimShared(changes, turn.named) : changes, prompt: turn?.prompt }
+      return { changes, prompt: turn?.prompt, edits: turn?.edits ?? [] }
     })
-}
-
-/** The paths a tool call says it wrote — its edits and its locations. */
-function namedPaths(item: Extract<ThreadItem, { kind: "tool" }>): string[] {
-  return [...extractEdits(item).map((edit) => edit.path), ...item.locations.map((l) => l.path)].filter(
-    (path): path is string => !!path
-  )
-}
-
-/**
- * Break the server's tie with the transcript. A `shared` file is one written
- * while another thread's turn ran in the same repository — git and the
- * watcher cannot say which wrote it. This thread's own tool calls can: a path
- * one of them named is this thread's. A shell edit names nothing and stays
- * shared, which is the honest answer.
- */
-function claimShared(changes: TurnChanges, named: string[]): TurnChanges {
-  if (named.length === 0 || !changes.files.some((file) => file.shared)) return changes
-  const ours = (path: string) => named.some((n) => n === path || n.endsWith(`/${path}`))
-  return {
-    ...changes,
-    files: changes.files.map((file) => (file.shared && ours(file.path) ? { ...file, shared: undefined } : file)),
-  }
 }
 
 /** Each finished turn's suggestion card, keyed by the id of the answer that

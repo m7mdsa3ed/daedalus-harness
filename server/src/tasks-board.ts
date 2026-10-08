@@ -239,12 +239,21 @@ async function columnTail(boardId: string, statusId: string): Promise<number> {
   ).length;
 }
 
-async function record(taskId: string, at: number, field: string, from: unknown, to: unknown): Promise<void> {
+/** `actor` is who made the change when it was not the person at the board — an
+    agent's thread, named by the harness loopback (`routes/harness.ts`). */
+export async function record(
+  taskId: string,
+  at: number,
+  field: string,
+  from: unknown,
+  to: unknown,
+  actor?: string,
+): Promise<void> {
   await conn().insert(taskActivity)
-    .values({ id: randomUUID(), taskId, at, field, from: from ?? null, to: to ?? null });
+    .values({ id: randomUUID(), taskId, at, field, from: from ?? null, to: to ?? null, actor: actor ?? null });
 }
 
-export async function createTask(input: CreateTaskInput): Promise<Task> {
+export async function createTask(input: CreateTaskInput, actor?: string): Promise<Task> {
   const id = randomUUID();
   const now = Date.now();
   const { boardId, statusId } = await resolvePlacement(input);
@@ -292,7 +301,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
         createdAt: now,
         updatedAt: now,
       });
-    await record(id, now, "created", null, null);
+    await record(id, now, "created", null, null, actor);
   });
   return (await getTask(id))!;
 }
@@ -321,7 +330,7 @@ const TRACKED: (keyof Task)[] = [
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
-export async function updateTask(id: string, input: UpdateTaskInput): Promise<Task | null> {
+export async function updateTask(id: string, input: UpdateTaskInput, actor?: string): Promise<Task | null> {
   const existing = await getTask(id);
   if (!existing) return null;
   const now = Date.now();
@@ -398,17 +407,17 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
       const before = existing[field];
       const after = patch[field];
       if (same(before, after)) continue;
-      await record(id, now, field, before, after);
+      await record(id, now, field, before, after, actor);
     }
     if (input.description !== undefined && !same(existing.description, input.description)) {
-      await record(id, now, "description", null, null);
+      await record(id, now, "description", null, null, actor);
     }
   });
   return (await getTask(id)) ?? null;
 }
 
 /** The same patch on many tasks, one transaction, one activity row each. */
-export async function bulkUpdate(input: BulkUpdateInput): Promise<Task[]> {
+export async function bulkUpdate(input: BulkUpdateInput, actor?: string): Promise<Task[]> {
   const rows = await conn().select().from(tasksTable).where(inArray(tasksTable.id, input.ids));
   if (rows.length === 0) return [];
   let out: Task[] = [];
@@ -431,7 +440,7 @@ export async function bulkUpdate(input: BulkUpdateInput): Promise<Task[]> {
         const parent = await getTask(patch.parentId);
         if (!parent || parent.boardId !== row.boardId || parent.id === row.id) delete patch.parentId;
       }
-      const updated = await updateTask(row.id, patch);
+      const updated = await updateTask(row.id, patch, actor);
       if (updated) out.push(updated);
     }
   });
@@ -540,15 +549,21 @@ export async function getTaskDetail(id: string): Promise<TaskDetail | undefined>
   };
 }
 
-export async function addComment(taskId: string, input: z.infer<typeof CommentSchema>): Promise<TaskComment> {
+export async function addComment(
+  taskId: string,
+  input: z.infer<typeof CommentSchema>,
+  /** The harness's own word for who wrote it; it outranks `input.author`, which
+      a caller can claim for itself. */
+  actor?: string,
+): Promise<TaskComment> {
   if (!await getTask(taskId)) throw new BoardError("unknown task", 404);
   const id = randomUUID();
   const now = Date.now();
   await transaction(async () => {
     await conn().insert(taskComments)
-      .values({ id, taskId, body: input.body, author: input.author ?? null, createdAt: now, updatedAt: now });
+      .values({ id, taskId, body: input.body, author: actor ?? input.author ?? null, createdAt: now, updatedAt: now });
     await conn().update(tasksTable).set({ updatedAt: now }).where(eq(tasksTable.id, taskId));
-    record(taskId, now, "commented", null, id);
+    await record(taskId, now, "commented", null, id, actor);
   });
   return (await conn().select().from(taskComments).where(eq(taskComments.id, id)).limit(1))[0]!;
 }
@@ -566,7 +581,7 @@ export async function deleteComment(id: string): Promise<boolean> {
 
 /** Link `fromId` to `toId`. A duplicate pair (either direction for `relates`)
     is answered with the existing row rather than a second one. */
-export async function addLink(fromId: string, input: z.infer<typeof LinkSchema>): Promise<TaskLink> {
+export async function addLink(fromId: string, input: z.infer<typeof LinkSchema>, actor?: string): Promise<TaskLink> {
   if (fromId === input.toId) throw new BoardError("a task cannot link to itself");
   if (!await getTask(fromId) || !await getTask(input.toId)) throw new BoardError("unknown task", 404);
   const existing = (await conn()
@@ -584,8 +599,8 @@ export async function addLink(fromId: string, input: z.infer<typeof LinkSchema>)
   const now = Date.now();
   await transaction(async () => {
     await conn().insert(taskLinks).values({ id, fromId, toId: input.toId, kind: input.kind, createdAt: now });
-    record(fromId, now, "linked", null, { kind: input.kind, taskId: input.toId });
-    record(input.toId, now, "linked", null, { kind: input.kind, taskId: fromId, inbound: true });
+    await record(fromId, now, "linked", null, { kind: input.kind, taskId: input.toId }, actor);
+    await record(input.toId, now, "linked", null, { kind: input.kind, taskId: fromId, inbound: true }, actor);
   });
   return (await conn().select().from(taskLinks).where(eq(taskLinks.id, id)).limit(1))[0]!;
 }

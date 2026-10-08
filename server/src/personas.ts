@@ -8,6 +8,7 @@ import { db, personas as personasTable } from "./db/index.js";
 import { OPENUI_PROMPT } from "./openui-prompt.js";
 import { usesPersonaFile, type AgentDef } from "./registry.js";
 import { globalRules, projectRules, type Rule } from "./rules.js";
+import type { TaskBrief } from "./task-threads.js";
 
 /**
  * A persona is how a thread wants to be worked on.
@@ -411,7 +412,7 @@ export async function resolvePersonaSpawn(
   agent: AgentDef | undefined,
   /** The thread's behaviour toggles — neither is a persona, both are folded
       into the same instruction text below. See `withInstructionTrailers`. */
-  behaviour: { suggestFollowups?: boolean | null; uiBlocks?: boolean | null } = {},
+  behaviour: ThreadBehaviour = {},
   rules?: Rule[],
 ): Promise<PersonaSpawn | undefined> {
   const rulesText = rules?.length ? rules.map((r) => r.content).join("\n\n") : undefined;
@@ -495,6 +496,30 @@ Every prompt is a message the USER would type next, written so it can be sent as
     (`tool-parts.tsx`), which also accepts the bare `openui`. */
 export const OPENUI_FENCE = "openui-lang";
 
+/** What a thread's behaviour toggles and task fold into its instructions. */
+export interface ThreadBehaviour {
+  suggestFollowups?: boolean | null;
+  uiBlocks?: boolean | null;
+  /** The task the thread was started on, resolved at spawn so a respawn sees
+      the card as it is now. */
+  task?: TaskBrief | null;
+}
+
+/**
+ * Trailer for a thread started on a board task. The task's own fields travel
+ * through the `harness` MCP, so this says which task, which tools and when to
+ * use them — and carries the column ids so moving the card needs no lookup.
+ */
+export function taskInstructions(task: TaskBrief): string {
+  const columns = task.columns.map((c) => `${c.name} (${c.category}) = ${c.id}`).join("; ");
+  return `## Your task on the board
+This thread is working on task ${task.key}, "${task.title}" (id ${task.id}), now in "${task.status}". Use the harness MCP's harness_run:
+- tasks_get {id} reads the description, checklist, comments and links. Read it before you start.
+- tasks_comment {id, body} reports to the task: a short note when you hit something that changes the plan, and always one summary of what you did when you finish. Your name is added for you.
+- tasks_update {id, statusId, ...} moves it. Columns: ${columns}. It moves to in-progress when you start; when the work is finished, move it to a done column, and never mark it done if you were stopped or are blocked (comment why instead).
+Keep to this task. File a new one with tasks_create only for work you found that it does not cover.`;
+}
+
 /**
  * Trailer appended to the spawn instructions while a thread wants drawn answers.
  *
@@ -523,9 +548,10 @@ ${OPENUI_PROMPT}`;
  */
 export function withInstructionTrailers(
   persona: PersonaSpawn | undefined,
-  behaviour: { suggestFollowups?: boolean | null; uiBlocks?: boolean | null },
+  behaviour: ThreadBehaviour,
 ): PersonaSpawn | undefined {
   const trailers: { id: string; text: string }[] = [];
+  if (behaviour.task) trailers.push({ id: "task", text: taskInstructions(behaviour.task) });
   if (behaviour.uiBlocks) trailers.push({ id: "openui", text: OPENUI_INSTRUCTIONS });
   if (behaviour.suggestFollowups)
     trailers.push({ id: "suggestions", text: SUGGEST_FOLLOWUPS_INSTRUCTIONS });

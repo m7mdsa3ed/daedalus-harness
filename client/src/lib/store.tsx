@@ -36,13 +36,14 @@ export type {
   AutonomyItem,
   AsyncTaskItem,
   ShellItem,
+  VoiceItem,
   ThreadItem,
   PendingPermission,
   PendingElicitation,
 } from "./store/items"
 
 export type { ThreadState, State } from "./store/thread"
-export { emptyThread, configView, threadIsEmpty } from "./store/thread"
+export { emptyThread, configView, stagedPicks, threadIsEmpty } from "./store/thread"
 
 export { applySessionUpdate } from "./store/session-update"
 

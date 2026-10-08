@@ -15,6 +15,15 @@
 @import "@fontsource-variable/source-serif-4";
 @import "@fontsource/newsreader";
 @import "./styles/themes.css";
+
+/* IPTV's Kaushan wordmark face, bundled locally for splash and app branding. */
+@font-face {
+  font-family: "Kaushan Script";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/kaushan-script-latin-400-normal.woff2") format("woff2");
+}
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
@@ -408,25 +417,20 @@
   --harness-composer-width: calc(var(--harness-chat-width) - 2rem);
 
   /* ── The device insets the shell pads by ──
-     `--app-inset-top` is the status bar's, less a hair, and is the *sidebar
-     panels'* own padding (ui/sidebar.tsx): Chrome reports the full cutout
-     height and padding by all of it leaves a visibly empty band under an
-     already-tall bar. The main column's top is the floating header
-     (app-shell.tsx), measured by `--app-header-h` — and it pads by **this**
-     inset, not the raw `env()`, for the same reason: installed to the home
-     screen the app draws behind the status bar (`viewport-fit=cover`), so the
-     full inset plus a row of its own is a bar of chrome the height of two,
-     most of it empty. Trimmed by the same hair the panels take.
-     Every route that scrolls under that header pads by it, so content starts
-     where it always did and, once scrolled, passes beneath the header's
-     transparent row. `--keyboard-inset` is published by lib/keyboard-inset.ts
-     and named here only so every reader gets a 0 before the first
-     measurement.
+     `--app-inset-top` is the full safe-area inset. With `viewport-fit=cover`,
+     content draws behind the status bar; shell controls, tabs and panels must
+     clear the entire reported area rather than assuming a fixed status-bar
+     height. The main column's top is the floating header (app-shell.tsx),
+     measured by `--app-header-h`, and every route that scrolls under that
+     header pads by the same height. Once scrolled, content passes beneath the
+     header's transparent row. `--keyboard-inset` is published by
+     lib/keyboard-inset.ts and named here only so every reader gets a 0 before
+     the first measurement.
 
      The **row** is named separately from the box because a dock group can join
      it: a tab strip in the header's band is as tall as the header's own row and
      starts below the inset, never level with the notch (`data-header-band`). */
-  --app-inset-top: max(0px, calc(env(safe-area-inset-top, 0px) - 0.375rem));
+  --app-inset-top: env(safe-area-inset-top, 0px);
   /* 2rem: the row only has to clear the 28px the chips and tabs are
      (`size-7` / `h-7`), and 32px leaves 2px of air above and below them — the
      40px it was held a bar with a band of nothing in it. Everything else
@@ -749,17 +753,12 @@
     @apply font-sans;
   }
 
-  /* The wordmark's face — the same one the boot splash writes in (inlined in
-     index.html; falls back to system serifs). Only the brand name wears it,
-     never UI copy. */
+  /* The brand uses the same Kaushan script as the boot splash. */
   .brand-script {
-    /* The face is the Playfair Display Italic subset inlined in index.html —
-       boot-critical for the splash, and shared here so the wordmark matches it.
-       (It used to name Cormorant Garamond, which nothing loads: Georgia.) */
-    font-family: "Playfair Display", Georgia, "Times New Roman", serif;
-    font-style: italic;
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    font-family: "Kaushan Script", cursive;
+    font-style: normal;
+    font-weight: 400;
+    letter-spacing: 0;
   }
   :focus-visible {
     outline: 1px solid var(--focus-ring, #6B97FF);
@@ -894,6 +893,19 @@
   /* Where the newest word starts. Not 0: it has already been *revealed*, and a
      word that arrives invisible reads as the text running behind itself. */
   --stream-sweep-floor: 0.18;
+}
+
+/* A skill's own loading rail, constrained to its accent and stopped for
+   readers who prefer reduced motion. */
+@keyframes skill-load-rail {
+  0% { transform: translateY(-110%); }
+  100% { transform: translateY(220%); }
+}
+.skill-load-rail {
+  animation: skill-load-rail 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skill-load-rail { animation: none; }
 }
 
 /* Running-turn label: a pale band sweeps through the glyphs. */
@@ -1742,6 +1754,43 @@ html[data-window-controls-overlay="true"] {
   }
 }
 
+/* The foot's status: tone is a left rule that changes colour, and the body
+   under the headline opens with a grid-rows transition when a new family of
+   status mounts it (no measuring). A headline change inside one family keeps
+   the same body element, so nothing re-enters. */
+.harness-status {
+  margin-left: -0.625rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid transparent;
+  transition: border-color 260ms var(--stream-ease);
+}
+.harness-status[data-tone="error"] {
+  border-left-color: color-mix(in oklab, var(--destructive) 55%, transparent);
+}
+.harness-status[data-tone="warn"] {
+  border-left-color: color-mix(in oklab, var(--color-amber-500) 55%, transparent);
+}
+.harness-status-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 260ms var(--stream-ease),
+    opacity 260ms var(--stream-ease);
+}
+/* 2px of padding undone by margin, so the clip does not eat a focus ring. */
+.harness-status-body > * {
+  min-height: 0;
+  overflow: hidden;
+  padding: 2px;
+  margin: -2px;
+}
+@starting-style {
+  .harness-status-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .harness-item-in,
   .harness-fade-in,
@@ -1759,7 +1808,9 @@ html[data-window-controls-overlay="true"] {
   /* A transition, so it is stopped rather than cancelled — and with nothing to
      transition, `@starting-style` has no effect to begin with, so the sentence
      simply appears at rest. */
-  .harness-phase-swap {
+  .harness-phase-swap,
+  .harness-status,
+  .harness-status-body {
     transition: none;
   }
   /* Named separately from the classes above: these are the pseudo-elements'
@@ -1789,7 +1840,9 @@ html[data-window-controls-overlay="true"] {
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-part-in {
   animation: none;
 }
-[data-slot="message-scroller-content"][data-motion="calm"] .harness-phase-swap {
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-phase-swap,
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-status,
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-status-body {
   transition: none;
 }
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-rail-draw::before,
@@ -2511,7 +2564,7 @@ html {
      pressed with a thumb, so it takes what the 28px chip can give it rather than
      a mouse's 20px. The fade is calc'd off this, so the title follows. */
   html .dv-groupview > .dv-tabs-and-actions-container {
-    --dock-control-h: 1.625rem;
+    --dock-control-h: var(--dock-chip-h);
   }
 }
 
@@ -2654,6 +2707,30 @@ html .dock-tab[data-active] {
   box-shadow:
     0 1px 3px 0 rgb(0 0 0 / 0.1),
     0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+@media (width < 48rem) {
+  /* One mobile tab/control material keeps the controls on this row in the same
+     visual family as the tab items. The inactive item uses a softer mix below;
+     the shared ground matches the active item. */
+  html {
+    --dock-mobile-tab-ground: color-mix(in oklch, var(--foreground) 16%, var(--background));
+  }
+
+  /* On phones, tabs sit over the thread itself. Give each item a distinct fill
+     so adjacent tabs in the nested thread dock remain easy to pick out; raise
+     the active item another step without painting the strip behind them. */
+  html .dock-tab:not([data-active]) {
+    background-color: color-mix(in oklch, var(--foreground) 10%, var(--background));
+  }
+
+  html .dock-tab[data-active] {
+    background-color: var(--dock-mobile-tab-ground);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent),
+      0 1px 3px 0 rgb(0 0 0 / 0.1),
+      0 1px 2px -1px rgb(0 0 0 / 0.1);
+  }
 }
 
 /* ── Where the keyboard is ──
@@ -3131,4 +3208,21 @@ html .dock-tab [data-tab-action="pin"] {
 .task-editor ul[data-type="taskList"] li[data-checked="true"] > div {
   color: var(--muted-foreground);
   text-decoration: line-through;
+}
+
+/* The device's safe-area insets as padding utilities — the home indicator, a
+   landscape notch, a status bar drawn under (`viewport-fit=cover`). Tailwind
+   has no `pb-safe` of its own, and a class that names one and resolves to
+   nothing is a bar sitting under the home indicator with no error to say so. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
 }

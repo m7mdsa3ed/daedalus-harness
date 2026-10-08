@@ -3,6 +3,7 @@
    here is imported back. */
 import type { ToolItem } from "../store"
 import { diffStats, extractEdits } from "./edits"
+import { extractHarnessCall, harnessSummary } from "./harness"
 import { extractMcpCall } from "./mcp"
 import { toolKindOf } from "./naming"
 import { toolOutputText } from "./output"
@@ -37,6 +38,16 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
       return line.length > 44 ? `${line.slice(0, 44)}…` : line
     }
   }
+
+  /* A skill load's story is which skill came in — its arguments too, when it
+     took any. The call's output is the skill's own text, whose first line is
+     never a fact *about* the load. */
+  const skill = extractSkill(item)
+  if (skill) return skill.args ? `${skill.name} ${skill.args}` : skill.name
+
+  /* The harness meta-tools reach every part of the harness, so their row says
+     which operation ran, not the first line of its JSON result. */
+  if (extractHarnessCall(item)) return harnessSummary(item)
 
   const diffs = item.content.filter(
     (block): block is Extract<typeof block, { type: "diff" }> => block.type === "diff"
@@ -101,6 +112,7 @@ export type ToolView =
   | "edit"
   | "terminal"
   | "mcp"
+  | "harness"
   | "subagent"
   | "websearch"
   | "webfetch"
@@ -145,6 +157,9 @@ function computeToolView(item: ToolItem): ToolView {
   if (extractToolSearch(item)) return "toolsearch"
   if (extractWebSearch(item)) return "websearch"
   if (extractWebFetch(item)) return "webfetch"
+  // The harness server's two tools are MCP calls, but they reach the harness
+  // itself, so they get their own layout before the generic MCP one.
+  if (extractHarnessCall(item)) return "harness"
   if (extractMcpCall(item)) return "mcp"
   // Only after the specialised views: Codex files a terminal under `execute`
   // and an MCP call under `execute` too, and both want their own layout.

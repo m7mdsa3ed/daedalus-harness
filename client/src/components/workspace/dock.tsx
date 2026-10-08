@@ -47,6 +47,8 @@ import {
   loadLayout,
   readSavedLayout,
   saveLayout,
+  stashPanels,
+  takeStashedPanels,
   saveNamedLayout,
 } from "@/lib/workspace/layout"
 import { loadActiveSpace } from "@/lib/spaces"
@@ -61,6 +63,18 @@ const REOPEN_DEPTH = 10
     arrives a navigation later. Panels never use it — they pass `into`.
     ponytail: 2s window, thread `into` through the draft route if it misfires. */
 const AIM_MS = 2000
+/** How far one press of ⌥⇧+arrow moves a divider, as a share of the dock. A held
+    key repeats, so a press is a nudge and a hold is a drag. */
+const RESIZE_STEP = 0.03
+
+/** `KeyboardEvent.key` → where the divider is pushed, and the side it comes
+    from when there is nothing that way. */
+const PUSH = {
+  ArrowLeft: ["left", "right"],
+  ArrowRight: ["right", "left"],
+  ArrowUp: ["up", "down"],
+  ArrowDown: ["down", "up"],
+} as const
 
 const isNarrow = () => window.innerWidth < MOBILE_BREAKPOINT
 
@@ -112,8 +126,14 @@ function freeColour(api: DockviewApi, groups: DockviewGroupPanel[]): string {
 export interface DockController extends WorkspaceDock {
   apiRef: React.RefObject<DockviewApi | null>
   onReady: (api: DockviewApi) => void
-  /** Drop panels whose session or project no longer exists. */
-  prunePanels: (live: { sessions: Iterable<string>; projects: Iterable<string> }) => void
+  /** Drop panels whose session or project no longer exists. A panel that is
+      live but `foreign` (its project is in another space, answered as that
+      space's id) is filed under that space instead — reopened by `switchSpace`
+      when the space comes in front — and never on the reopen stack. */
+  prunePanels: (
+    live: { sessions: Iterable<string>; projects: Iterable<string> },
+    foreign?: (panel: PanelDescriptor) => string | null
+  ) => void
   /** Swap the dock to another space's tabs (`layout.ts` files each space's dock
       under its own key). `from`/`to` are space ids; `from` null is the first
       resolution, which adopts what is on screen rather than swapping it. */
@@ -431,6 +451,38 @@ export function useWorkspaceDock(): DockController {
     [panelFor]
   )
 
+  /* Dockview's sashes take the mouse and nothing else, but `setSize` is a resize
+     by any other name: along its parent's axis it moves the group's own edge,
+     across it the branch the group sits in, so a nested split moves as well as
+     a plain row. The arrow says where the divider goes — a pane with a
+     neighbour that way grows toward it, one at the edge gives way and shrinks.
+     With nothing on either side the key is declined, so ⌥⇧← still selects by
+     word in a composer on a Mac when there is no split to resize. */
+  const resizeActive = React.useCallback((key: string) => {
+    const push = PUSH[key as keyof typeof PUSH]
+    const api = apiRef.current
+    const group = api?.activeGroup
+    if (!push || !api || !group || !isGrid(group) || api.hasMaximizedGroup()) return false
+    const [direction, opposite] = push
+    const toward = api.adjacentGroupInDirection(group, direction)
+    if (!toward && !api.adjacentGroupInDirection(group, opposite)) return false
+    const horizontal = direction === "left" || direction === "right"
+    const step = Math.round((horizontal ? api.width : api.height) * RESIZE_STEP)
+    const delta = toward ? step : -step
+    if (horizontal) group.api.setSize({ width: group.api.width + delta })
+    else group.api.setSize({ height: group.api.height + delta })
+  }, [])
+
+  /* Focus walks the grid's panes, wrapping — a float is not a column. Declined
+     with fewer than two, so ⌥←/→ stays the browser's Back and Forward until
+     there is a split to walk. */
+  const walkPanes = React.useCallback((forward: boolean) => {
+    const api = apiRef.current
+    if (!api || !isGrid(api.activeGroup) || api.groups.filter(isGrid).length < 2) return false
+    if (forward) api.activateNext()
+    else api.activatePrevious()
+  }, [])
+
   /** Everything into one strip of the grid, in the order it is laid out — the
       floats and the bottom panel included, which is what a phone needs. The
       tab in front stays in front. */
@@ -713,11 +765,13 @@ export function useWorkspaceDock(): DockController {
   const hasClosedPanels = React.useCallback(() => closedRef.current.length > 0, [])
 
   const prunePanels = React.useCallback(
-    (live: { sessions: Iterable<string>; projects: Iterable<string> }) => {
+    (live: { sessions: Iterable<string>; projects: Iterable<string> }, foreign?: (panel: PanelDescriptor) => string | null) => {
       const api = apiRef.current
       if (!api) return
+      const serverId = serverIdRef.current ?? "none"
       const sessions = new Set(live.sessions)
       const projects = new Set(live.projects)
+      const filed = new Map<string, PanelDescriptor[]>()
       /* An empty project list is indistinguishable from one that has not loaded,
          and pruning on it would close every project panel on a slow boot. */
       const pruneProjects = projects.size > 0
@@ -736,15 +790,19 @@ export function useWorkspaceDock(): DockController {
                 : descriptor.kind === "web"
                   ? descriptor.trust === "project" && !!descriptor.projectId && !projects.has(descriptor.projectId)
                   : !projects.has(descriptor.projectId)
+          /* Not gone, but another space's: closed here and owed there. */
+          const owner = !gone && descriptor ? foreign?.(descriptor) : null
+          if (owner && descriptor) filed.set(owner, [...(filed.get(owner) ?? []), descriptor])
           /* A pruned panel takes its guard and pin with it, or they would veto
              or pin a future panel that reuses the id. */
-          if (gone) {
+          if (gone || owner) {
             guardsRef.current.delete(panel.id)
             forgetPanelPin(panel.id)
             api.removePanel(panel)
           }
         }
       })
+      for (const [space, panels] of filed) stashPanels(serverId, space, panels)
     },
     [silently]
   )
@@ -803,8 +861,14 @@ export function useWorkspaceDock(): DockController {
       saveTimerRef.current = undefined
       heldSpaceRef.current = to ?? ""
       const outgoing = api.toJSON()
+      /* Tabs a prune filed under this space while another was in front. Opened
+         through the ordinary door so they land where a new tab lands. */
+      const owed = () => {
+        for (const panel of takeStashedPanels(serverId, to ?? "")) openPanel(panel, { newTab: true })
+      }
       if (!from) {
         saveLayout(serverId, outgoing, to ?? "")
+        owed()
         return
       }
       saveLayout(serverId, outgoing, from)
@@ -818,6 +882,7 @@ export function useWorkspaceDock(): DockController {
           api.clear()
         }
       })
+      owed()
       /* The front tab writes the URL only when it has a route (a terminal has
          none), and a URL still naming the last space's thread pulls a reload
          back there. Point it at a tab this space holds; an empty dock is the
@@ -826,7 +891,7 @@ export function useWorkspaceDock(): DockController {
       if (routes[0] && !routes.includes(location.pathname + location.search))
         navigateTo(routes[0], { replace: true })
     },
-    [silently]
+    [silently, openPanel]
   )
 
   const cleanupRef = React.useRef<(() => void) | null>(null)
@@ -930,6 +995,11 @@ export function useWorkspaceDock(): DockController {
   useShortcut("prevTab", () => cycleTab(-1))
   useShortcut("closeTab", () => void closeActiveTab())
   useShortcut("splitRight", () => splitActive("right"))
+  useShortcut("splitDown", () => splitActive("below"))
+  useShortcut("fillPanel", () => toggleMaximize())
+  useShortcut("nextPane", () => walkPanes(true))
+  useShortcut("prevPane", () => walkPanes(false))
+  useShortcut("resizePane", (event) => resizeActive(event.key), { allowRepeat: true })
   useShortcut("reopenPanel", () => reopenClosed())
 
   React.useEffect(

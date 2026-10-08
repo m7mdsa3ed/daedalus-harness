@@ -21,7 +21,9 @@ import {
   ArrowUpRightIcon,
   BotIcon,
   ListTodoIcon,
+  LoaderCircleIcon,
   PlayIcon,
+  SparklesIcon,
   WrenchIcon,
 } from "lucide-react"
 import { ChevronRightIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
@@ -43,6 +45,7 @@ import {
   THOUGHT_MAX_H,
   Timestamp,
 } from "@/components/tool-parts"
+import { HarnessPreview, harnessMark as harnessMarkOf } from "@/components/tool-views/harness"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import {
   BriefSection,
@@ -79,6 +82,7 @@ import {
   PlanStep,
   ShellRun,
   ShellStep,
+  VoiceStep,
   StreamedAgentText,
   StreamedProse,
   TaskNotificationCard,
@@ -103,6 +107,7 @@ import {
   childToolTitle,
   extractSubagent,
   fileRangeOf,
+  harnessSummary,
   parseTaskNotification,
   toolHeading,
   toolKindOf,
@@ -328,8 +333,10 @@ export const RowView = React.memo(function RowView({
   onFork,
   showTimestamps,
   streaming,
+  compactError,
 }: {
   row: Row
+  compactError?: boolean
   onContinue?: () => void
   onRetry?: () => void
   onRetryAsPaths?: () => void
@@ -368,6 +375,7 @@ export const RowView = React.memo(function RowView({
       onFork={onFork}
       showTimestamps={showTimestamps}
       streaming={streaming}
+      compactError={compactError}
     />
   )
 })
@@ -728,8 +736,11 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   onFork,
   showTimestamps = false,
   streaming = false,
+  compactError = false,
 }: {
   item: ThreadItem
+  /** The foot's status line is standing in for this failure — see ErrorRow. */
+  compactError?: boolean
   /** Present only on the transcript's last interrupt notice — see ThreadView. */
   onContinue?: () => void
   /** Present on an error row that knows the prompt it killed. */
@@ -764,6 +775,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           onContinue={onContinue}
           onDismiss={onDismiss}
           showTimestamp={showTimestamps}
+          compact={compactError}
         />
       )
     case "user":
@@ -811,6 +823,12 @@ export const ThreadItemView = React.memo(function ThreadItemView({
                 </BubbleContent>
               </Bubble>
             </MessageContent>
+            {item.sending && (
+              <span role="status" className="flex items-center gap-1.5 pr-1 text-[11px] text-muted-foreground">
+                <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                Sending…
+              </span>
+            )}
             {showTimestamps && <Timestamp at={item.at} className="pr-1" />}
           </Message>
         </ItemContextMenu>
@@ -933,6 +951,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       return <AutonomyStep item={item} showTimestamp={showTimestamps} />
     case "shell":
       return <ShellStep item={item} showTimestamp={showTimestamps} />
+    case "voice":
+      return <VoiceStep item={item} showTimestamp={showTimestamps} />
     case "subagent":
       // An announced session with nothing filed under it yet — `buildRows`
       // wraps every one it sees, so this is the bare item reaching a row view
@@ -1015,7 +1035,19 @@ const ToolStep = React.memo(function ToolStep({
   const toolView = toolViewOf(item)
   const webSearch = toolView === "websearch"
   const isTodoTool = toolView === "todos"
-  const KindIcon = isTodoTool ? ListTodoIcon : KIND_ICONS[kind] ?? WrenchIcon
+  /* The harness server's own two tools get their own mark, like a checklist —
+     and a skill load gets a sparkle, so it reads as handing the agent a
+     capability rather than as another generic call. */
+  const isHarnessTool = toolView === "harness"
+  const isSkillTool = toolView === "skill"
+  const harnessMark = isHarnessTool ? harnessMarkOf(item) : null
+  const KindIcon = isTodoTool
+    ? ListTodoIcon
+    : harnessMark
+      ? harnessMark.Icon
+      : isSkillTool
+        ? SparklesIcon
+        : KIND_ICONS[kind] ?? WrenchIcon
   const view = useViewOptionsContext()
   /* Both of these are `tool-views`' to answer, not this row's: whether an
      expansion would hold anything, and whether it should start open, both
@@ -1039,8 +1071,24 @@ const ToolStep = React.memo(function ToolStep({
     <StepRow
       status={item.status}
       icon={KindIcon}
-      iconAccent={isTodoTool ? "text-primary" : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other}
-      iconChip={isTodoTool ? "bg-primary/12" : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other}
+      iconAccent={
+        harnessMark
+          ? harnessMark.accent
+          : isTodoTool
+            ? "text-primary"
+            : isSkillTool
+              ? "text-purple-600 dark:text-purple-400"
+              : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other
+      }
+      iconChip={
+        harnessMark
+          ? harnessMark.chip
+          : isTodoTool
+            ? "bg-primary/12"
+            : isSkillTool
+              ? "bg-purple-500/12"
+              : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
+      }
       toolLayout={view.toolLayout}
       target={heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
@@ -1058,13 +1106,20 @@ const ToolStep = React.memo(function ToolStep({
          output, the matches — where it is the thing being read rather than a
          teaser for it. `failed` still reaches the row, as the label. */
       metric={[
+        isHarnessTool && item.status !== "failed" ? harnessSummary(item) : null,
         tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null,
         showTimestamp ? <Timestamp at={item.at} /> : null,
       ]}
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       firstRow={view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
-      below={!view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
+      below={
+        isHarnessTool
+          ? <HarnessPreview item={item} />
+          : !view.showToolSourcesOnFirstRow
+            ? <ToolSources item={item} />
+            : undefined
+      }
       defaultOpen={view.showToolDetails || toolOpensByDefault(item, view.expandEdits)}
       openSetting={`${view.showToolDetails}:${view.expandEdits}`}
     />

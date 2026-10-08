@@ -11,7 +11,6 @@ import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { ChevronUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ActivityIndicator } from "@/components/composer-status"
 import { ComposerQueue } from "@/components/composer-queue"
 import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
 import {
@@ -37,12 +36,14 @@ import { useLocation } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn, stagger } from "@/lib/utils"
+import { ThreadIdContext } from "@/lib/thread-id-context"
 import { StepTokensProvider } from "@/components/token-usage"
 import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
 import { InlineApproval } from "@/components/tool-approval"
 import { InlineHeldTurn } from "@/components/held-turn"
-import { ConnectionCard, connectionNote } from "@/components/connection-card"
+import { ThreadStatus } from "@/components/thread-view/thread-status"
+import { useThreadStatus } from "@/lib/thread/status"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
 import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
@@ -69,10 +70,15 @@ import {
   type InspectorTab,
 } from "@/lib/inspector"
 import { useServer } from "@/lib/server-context"
+import { defaultVoice, useVoiceProviders } from "@/lib/queries/voice"
+import { useVoiceCallActive } from "@/lib/voice-call"
+
+/* The provider packages ride this chunk: a thread with no call never loads them. */
+const VoiceCall = React.lazy(() => import("./voice-call"))
 import { sessionChanges } from "@/lib/workspace/git-api"
 import { useEarlierAnchor } from "@/components/thread-view/earlier-anchor"
 import { useThreadKeys } from "@/components/thread-view/thread-keys"
-import { StartingLine, useWaitShown } from "@/components/thread-view/starting-line"
+import { useWaitShown } from "@/components/thread-view/starting-line"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
 import { ThreadInspector } from "@/components/thread-view/thread-inspector"
@@ -169,7 +175,7 @@ export function ThreadView({
      trashed or archive-only thread. It is the card at the head of the tail, and
      it *suppresses* the wait below — `reconnecting` is the one phase both would
      speak to, and saying it twice on one screen is the bug this gate closes. */
-  const connNote = connectionNote(thread)
+  const status = useThreadStatus(sessionId, waitShown)
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
@@ -247,6 +253,7 @@ export function ThreadView({
       thread.items.filter(
         (item) =>
           (!options.answersOnly || isAnswerItem(item)) &&
+          !(item.kind === "error" && item.transient) &&
           (options.showShellCommands || item.kind !== "shell") &&
           (options.showConfigNotices || item.kind !== "notice" || item.config !== true)
       ),
@@ -335,6 +342,8 @@ export function ThreadView({
      transcript opened cold seeds them once here. Failure is silence: the
      reading is ambient, and a thread with no project has nothing to read. */
   const server = useServer()
+  const voiceActive = useVoiceCallActive(sessionId)
+  const voiceProvider = defaultVoice(useVoiceProviders().data)
   React.useEffect(() => {
     const controller = new AbortController()
     sessionChanges(server, sessionId, controller.signal)
@@ -503,6 +512,22 @@ export function ThreadView({
     handlerCache.current.set(id, handlers)
     return handlers
   }
+  /* The newest failure's doors, when the foot is standing in for its row: the
+     same handlers `ErrorRow` is given, so the two cannot disagree. */
+  const failedRow =
+    status?.kind === "turn-failed"
+      ? (thread.items.find((i) => i.id === status.itemId && i.kind === "error") as
+          | Extract<ThreadItem, { kind: "error" }>
+          | undefined)
+      : undefined
+  const onStatusAction = (kind: string, itemId?: string) => {
+    if (!itemId) return
+    const h = handlersFor(itemId)
+    if (kind === "continue") h.resume()
+    else if (kind === "retry") h.retry()
+    else if (kind === "retryAsPaths") h.retryAsPaths()
+    else if (kind === "dismiss") h.dismiss()
+  }
   const pickSuggestion = React.useCallback((prompt: string) => composerApiRef.current?.fill(prompt), [])
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
@@ -659,6 +684,7 @@ export function ThreadView({
         the turn rail needs the scroller's `scrollToMessage`/`currentAnchorId`
         as much as the transcript does. The provider renders no DOM of its own
         — context only — so this changes nothing about the layout. */}
+    <ThreadIdContext.Provider value={sessionId}>
     <FilePreviewContext.Provider value={filePreview}>
     <InspectorContext.Provider value={docked ? dockOpen : meta ? openInspector : null}>
     {docked && <PublishJump locate={locate} sessionId={sessionId} actions={actions} />}
@@ -855,6 +881,9 @@ export function ThreadView({
                         row.kind === "error" && wentInline(row, delivery) ? handlers.retryAsPaths : undefined
                       }
                       onDismiss={row.kind === "error" ? handlers.dismiss : undefined}
+                      /* The newest failure is the foot's own while it is live;
+                         older ones are history and stay whole rows. */
+                      compactError={status?.kind === "turn-failed" && status.itemId === row.id}
                       showTimestamps={options.showTimestamps}
                       streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
                     />
@@ -870,72 +899,26 @@ export function ThreadView({
                 </MessageScrollerItem>
                 )
               })}
-              {/* The connection, at the head of the tail — a socket that is
-                  gone outranks everything below it, and it was a reading on the
-                  composer's shelf until it moved here. It is a `Notice` with the
-                  one thing to do about it, so it reads in place rather than
-                  behind a press. Drawn above (outside) the wait below, because a
-                  thread that is reconnecting, parked or stopped is not opening:
-                  `StartingLine` is the wait, this is the answer.
-
-                  Only `reconnecting` overlaps the wait's own vocabulary — every
-                  other phase here has no `startingLine` — and the gate below
-                  keeps exactly one of them from saying it. */}
-              {connNote && (
-                <MessageScrollerItem messageId="connection">
-                  <div className="harness-item-in" style={stagger(0)}>
-                    <div className="py-1">
-                      <ConnectionCard thread={thread} sessionId={sessionId} actions={actions} />
-                    </div>
-                  </div>
-                </MessageScrollerItem>
-              )}
-              {/* The wait sits at the FOOT of the transcript, not its head: a
-                  replay arrives oldest-first and the scroller is pinned to the
-                  bottom, so a line at the top is the one place the reader is
-                  not looking — it announced the wait above content that was
-                  still landing under it, and then vanished from off-screen.
-                  Here it is where the next thing to happen will happen, in the
-                  same slot the working line takes once the thread is live.
-                  Held back while the connection card is up: `reconnecting` is
-                  the one phase both answer, and the card already says it with
-                  the attempt count and the button. */}
-              {waitShown && !connNote && (
-                <MessageScrollerItem messageId="starting">
-                  <StartingLine
-                    phase={thread.phase}
-                    /* Only the waits whose request can be abandoned: a create,
-                       and a revive the user's send asked for. A settings
-                       restart is the server's and finishes either way. */
-                    onCancel={
-                      thread.phase.kind === "starting" ||
-                      (thread.phase.kind === "reviving" && thread.phase.because === "revive")
-                        ? () => actions.cancelWait(sessionId)
-                        : undefined
-                    }
-                  />
-                </MessageScrollerItem>
-              )}
-              {/* Suppressed while the thread is opening: the StartingLine just
-                  above already owns the wait, and two animated lines over one
-                  message read as "we don't know what is happening" rather than
-                  as progress. Reaching `live` hands the wait back here.
-                  Suppressed again for a turn held on a failure, for the same
-                  reason from the other end: the card below says the same
-                  sentence with the buttons that act on it, and a line above it
-                  repeating the reason is the wait announced twice. A *user's*
-                  pause keeps the line, because it has no card. */}
-              {thread.turnActive && !waitShown && !hold.byError && (
-                <MessageScrollerItem messageId="working">
-                  {/* The turn's foot is its own five-slot cascade, counted from
-                      the working line down: these mount together far more often
-                      than the row footer above does — a turn that starts with a
-                      plan and a queue behind it raises three of them on one
-                      frame, and a hold raises the fourth over the top. */}
-                  <div className="harness-item-in" style={stagger(0)}>
-                    <div className="py-0.5">
-                      <ActivityIndicator thread={thread} />
-                    </div>
+              {/* One slot for what the thread says about itself — the
+                  connection, an archived stop, the opening wait, the working
+                  line (`statusFor` is the ladder, in the order the four rows
+                  here used to gate each other). It sits at the FOOT, where the
+                  next thing happens: a replay arrives oldest-first and the
+                  scroller is pinned to the bottom. The failure-held card, the
+                  approvals and the queue below keep their own rows. */}
+              {status && (
+                <MessageScrollerItem messageId="status">
+                  <div
+                    className={status.tone === "progress" && status.step ? undefined : "harness-item-in"}
+                    style={stagger(0)}
+                  >
+                    <ThreadStatus
+                      status={status}
+                      sessionId={sessionId}
+                      actions={actions}
+                      onAction={onStatusAction}
+                      canRetryAsPaths={failedRow ? wentInline(failedRow, delivery) : false}
+                    />
                   </div>
                 </MessageScrollerItem>
               )}
@@ -1010,6 +993,23 @@ export function ThreadView({
 
                   Gated outside the component: a `MessageScrollerItem` that
                   renders nothing still reserves `contain-intrinsic-size`. */}
+              {/* The call is thread state, so it is at the foot with the rest —
+                  above the queue, which stays the conversation's future. */}
+              {voiceActive && voiceProvider && (
+                <MessageScrollerItem messageId="voice-call">
+                  <div className="py-1">
+                    <React.Suspense fallback={null}>
+                      <VoiceCall
+                        sessionId={sessionId}
+                        thread={thread}
+                        actions={actions}
+                        settings={server}
+                        provider={voiceProvider}
+                      />
+                    </React.Suspense>
+                  </div>
+                </MessageScrollerItem>
+              )}
               {thread.queue.length > 0 && (
                 <MessageScrollerItem messageId="queue">
                   <ComposerQueue
@@ -1147,6 +1147,7 @@ export function ThreadView({
     </div>
     </InspectorContext.Provider>
     </FilePreviewContext.Provider>
+    </ThreadIdContext.Provider>
     {rewindTarget && (
       <RewindDialog
         open={rewindTarget !== null}

@@ -35,6 +35,7 @@ import {
   InfoIcon,
   ListChecksIcon,
   CoinsIcon,
+  ClapperboardIcon,
   PlusIcon,
   RouteIcon,
   SquareTerminalIcon,
@@ -88,6 +89,9 @@ const WebPanel = React.lazy(async () => ({
 const Trajectory = React.lazy(async () => ({
   default: (await import("@/components/trajectory/trajectory")).Trajectory,
 }))
+const VideoPanel = React.lazy(async () => ({
+  default: (await import("@/components/thread-view/video-panel")).VideoPanel,
+}))
 
 const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }> = {
   transcript: { title: "Thread", icon: null },
@@ -99,6 +103,7 @@ const KINDS: Record<ThreadPanelKind, { title: string; icon: LucideIcon | null }>
   terminal: { title: "Terminal", icon: SquareTerminalIcon },
   web: { title: "Preview", icon: AppWindowIcon },
   trajectory: { title: "Trajectory", icon: RouteIcon },
+  video: { title: "Video", icon: ClapperboardIcon },
 }
 
 /** The readings — one panel each, the id is the kind. */
@@ -117,6 +122,7 @@ const SLOT: Record<Exclude<ThreadPanelKind, "transcript">, Slot> = {
   tokens: "side",
   web: "beside",
   trajectory: "beside",
+  video: "beside",
   terminal: "below",
 }
 
@@ -187,6 +193,18 @@ interface ThreadDockValue {
   handle: ThreadDockHandle
 }
 const ThreadDockContext = React.createContext<ThreadDockValue | null>(null)
+
+/** The thread whose dock this panel is in, or null in the outer dock. */
+export function useThreadDockSession(): string | null {
+  return React.useContext(ThreadDockContext)?.sessionId ?? null
+}
+
+/** The dock's own handle, so a panel can bring a sibling pane forward — the
+    Preview's "Send to agent" shows the transcript it just filled. Null in the
+    outer dock. */
+export function useThreadDockHandle(): ThreadDockHandle | null {
+  return React.useContext(ThreadDockContext)?.handle ?? null
+}
 
 export function ThreadDock({ sessionId, actions }: { sessionId: string; actions: Actions }) {
   const outer = useDock()
@@ -364,6 +382,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       terminal: contained(TerminalPanel),
       web: contained(WebPanel),
       trajectory: contained(() => <Trajectory sessionId={sessionId} variant="panel" />),
+      video: contained(() => <VideoPanel sessionId={sessionId} />),
     }
     for (const section of SECTIONS)
       map[section] = contained(() => <SectionPanel section={section} sessionId={sessionId} actions={actions} />)
@@ -546,6 +565,7 @@ function ThreadPanelsMenu() {
           {row("terminal", "New terminal")}
           {row("web")}
           {row("trajectory")}
+          {row("video")}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

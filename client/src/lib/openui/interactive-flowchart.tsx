@@ -158,6 +158,7 @@ export function InteractiveFlowchart({
   readOnly = false,
   onNodeClick,
   selectedId,
+  fill = false,
 }: {
   nodes: FlowchartNode[]
   edges: FlowchartEdge[]
@@ -169,6 +170,8 @@ export function InteractiveFlowchart({
   /** Read-only: the node drawn as selected — the caller's pick, since a
       derived node list has no selection state of its own to keep. */
   selectedId?: string | null
+  /** Take the height of a flex column instead of the inline figure's own. */
+  fill?: boolean
 }) {
   const [nodes, setNodes] = React.useState<FlowNode[]>(() => layoutNodes(inputNodes, inputEdges, direction))
   const [edges, setEdges] = React.useState<Edge[]>(() => toEdges(inputNodes, inputEdges))
@@ -202,7 +205,12 @@ export function InteractiveFlowchart({
   }, [])
 
   return (
-    <div className="relative h-[min(55vh,390px)] min-h-64 w-full min-w-0 self-stretch overflow-hidden rounded-md bg-background" aria-label="Interactive flowchart">
+    <div
+      className={`relative w-full min-w-0 self-stretch overflow-hidden bg-background ${fill ? "min-h-0 flex-1" : "h-[min(55vh,390px)] min-h-64 rounded-md"}`}
+      aria-label="Interactive flowchart"
+    >
+      {/* Absolute, so the canvas has a definite size whichever way the box got its own. */}
+      <div className="absolute inset-0">
       <ReactFlow
         nodes={liveNodes ?? nodes}
         edges={liveEdges ?? edges}
@@ -223,6 +231,7 @@ export function InteractiveFlowchart({
         <Background color="var(--border)" gap={18} size={1} />
         <Controls showInteractive={false} className="!overflow-hidden !rounded-md !border !border-border !bg-card !shadow-sm [&>button]:!border-border [&>button]:!bg-card [&>button]:!fill-foreground [&>button:hover]:!bg-muted" />
       </ReactFlow>
+      </div>
     </div>
   )
 }

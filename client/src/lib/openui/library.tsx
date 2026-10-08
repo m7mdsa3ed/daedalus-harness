@@ -30,7 +30,7 @@
    (`scripts/gen-openui.mjs`). */
 import { z } from "zod/v4"
 import { createContext, useContext, useId, useState, type CSSProperties, type ReactNode } from "react"
-import { Check, ChevronRight, Minus, Plus, X } from "lucide-react"
+import { Check, ChevronRight, Maximize2, Minus, Plus, X } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -56,6 +56,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { DiffView } from "@/components/ui/diff-view"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import {
+  MorphingDialog,
+  MorphingDialogContent,
+  MorphingDialogOpen,
+  MorphingDialogSource,
+} from "@/components/ui/morphing-dialog"
 import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Notice } from "@/components/notice"
 import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
@@ -795,17 +801,35 @@ const graphProps = z.object({
 })
 
 function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
+  const chartKey = JSON.stringify([props.nodes, props.edges, props.direction])
+  const chart = {
+    nodes: props.nodes,
+    edges: props.edges,
+    direction: props.direction ?? "down",
+  } as const
   return (
     <Box
       className={cn("col-span-full w-full self-stretch", PAD, "space-y-1")}
       style={{ gridColumn: "1 / -1", width: "100%", minWidth: 0 }}
     >
-      <InteractiveFlowchart
-        key={JSON.stringify([props.nodes, props.edges, props.direction])}
-        nodes={props.nodes}
-        edges={props.edges}
-        direction={props.direction ?? "down"}
-      />
+      {/* The figure opens into a reader: two charts, so the one in the panel
+          is a fresh sketch — an arrangement made there is gone on close, the
+          same as a reload. */}
+      <MorphingDialog>
+        <MorphingDialogSource className="relative rounded-md">
+          <InteractiveFlowchart key={chartKey} {...chart} />
+          <MorphingDialogOpen
+            title="Full screen"
+            className="absolute top-2 right-2 z-10 inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+          >
+            <Maximize2 aria-hidden className="size-3.5" />
+            <span className="sr-only">Full screen</span>
+          </MorphingDialogOpen>
+        </MorphingDialogSource>
+        <MorphingDialogContent label={props.caption ?? "Flowchart"}>
+          <InteractiveFlowchart key={chartKey} {...chart} fill />
+        </MorphingDialogContent>
+      </MorphingDialog>
       {props.caption && <p className={cn(META, "px-1")}>{props.caption}</p>}
       <p className="px-1 text-[10px] text-muted-foreground/75">
         Drag nodes; drag between handles to connect. Select an edge or node and press Delete to remove it.

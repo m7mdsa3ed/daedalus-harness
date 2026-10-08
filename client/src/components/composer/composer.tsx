@@ -61,13 +61,14 @@
    `enhance-button.tsx` (the rewrite and every read behind it), `keys.ts` (the
    one ordering of Enter and the completers), `prompt-history.ts` (the Up
    walk). Nothing about the *connection* is here at all — it is a `Notice` at
-   the foot of the transcript (`components/connection-card.tsx`). */
+   the foot of the transcript (`components/thread-view/thread-status.tsx`). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowUp, Mic, Pause, Play, Square } from "lucide-react"
+import { ArrowUp, AudioLines, Mic, Pause, Play, Square } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { McpSelected } from "@/components/composer/mcp-avatars"
 import {
   AgentsIndicator,
   ChangesIndicator,
@@ -86,8 +87,8 @@ import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
 import { PromptHistoryWalk } from "@/components/composer/history-menu"
 import { selectionOf, textInsertions } from "@/components/composer/text-insertions"
-import { DraftConfigPopover, DraftScopeRow, SelectedMcpIndicator } from "@/components/draft-config"
-import { SessionConfigPopover } from "@/components/session-config"
+import { DraftScopeRow } from "@/components/draft-config"
+import { ConfigPopover } from "@/components/session-config"
 import { FileMentionMenu, useFileMentions } from "@/components/file-mentions"
 import {
   HARNESS_COMMANDS,
@@ -99,10 +100,13 @@ import { ProjectCommandMenu, shellLineFor, useProjectCommands } from "@/componen
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
 import { useVoice } from "@/hooks/use-voice"
+import { defaultVoice, useVoiceProviders } from "@/lib/queries/voice"
+import { endVoiceCall, startVoiceCall, useVoiceCallActive } from "@/lib/voice-call"
 import type { Actions } from "@/lib/actions"
 import { useComposerPrefs } from "@/lib/composer-prefs"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { consumeComposerFocusRequest, useComposerFocusRequest } from "@/lib/composer-focus"
+import { consumeComposerInsertRequest, useComposerInsertRequest } from "@/lib/composer-insert"
 import { reportError } from "@/lib/errors"
 import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
 import { useServer } from "@/lib/server-context"
@@ -247,6 +251,10 @@ export function Composer({
      thread is opening — which is what stops a second Enter on a draft from
      POSTing the same session id twice. */
   const draft = meta?.draft === true
+  /* Voice mode, beside dictation: offered once a backend is set up, and not on
+     a draft — a draft has no row for the call's lines to land on. */
+  const voiceBackend = defaultVoice(useVoiceProviders().data)
+  const inCall = useVoiceCallActive(sessionId)
   /* The thread's MCP servers, read by the harness's own client: their prompts
      join the `/` menu and their resources the `@` one, for every runtime. */
   const server = useServer()
@@ -618,6 +626,20 @@ export function Composer({
     [applySuggestion, text]
   )
 
+  /* Text handed in from outside the transcript — the Preview's "Pick element" —
+     added *under* what is typed rather than replacing it, the way a quote is.
+     Consumed by revision, so a request never lands twice. */
+  const insertRequest = useComposerInsertRequest(sessionId)
+  React.useEffect(() => {
+    if (!insertRequest) return
+    consumeComposerInsertRequest(sessionId, insertRequest.revision)
+    const typed = textRef.current.replace(/\s+$/, "")
+    const next = typed ? `${typed}\n\n${insertRequest.text}` : insertRequest.text
+    setText(next)
+    mentions.requestCaret(next.length)
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [sessionId, insertRequest, mentions.requestCaret])
+
   /* A long paste is parked rather than pasted: the token goes in at the caret
      and the body waits in the sidecar until send. Below the threshold nothing
      happens at all — the affordance has to be invisible for the pastes people
@@ -700,7 +722,7 @@ export function Composer({
            while the one whose tone the shelf's whole ground wore; a dead
            connection is a sentence with a button rather than a number glanced
            at, so it is a `Notice` at the foot of the transcript with the other
-           things the thread is doing (`ConnectionCard`). */
+           things the thread is doing (`ThreadStatus`). */
         footer={
           meta && (
             <DraftScopeRow
@@ -892,6 +914,7 @@ export function Composer({
             className={iconFit}
             coarse={coarse}
             onFiles={files.add}
+            onLibraryFile={files.addFromLibrary}
             canMention={Boolean(meta?.projectId)}
             hasCommands={hasCommands}
             hasProjectCommands={helpers.length > 0 || scripts.length > 0}
@@ -915,14 +938,12 @@ export function Composer({
             onClear={clearAll}
           />
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* Who answers and the MCPs this thread carries sit together as
-                compact choices, while the footer stays focused on scope. */}
-            {draft && meta ? (
-              <DraftConfigPopover meta={meta} actions={actions} />
-            ) : (
-              <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
-            )}
-            {meta && <SelectedMcpIndicator meta={meta} />}
+            {/* Who answers. The MCPs this thread carries are a reading, and
+                live in the footer's cluster. */}
+            {meta && <ConfigPopover meta={meta} sessionId={sessionId} actions={actions} thread={thread} />}
+            {/* The MCPs it will carry, read here beside the model; picked in that
+                menu's Tools section. */}
+            {meta && <McpSelected meta={meta} />}
           </div>
           {/* How long the prompt is, once that is worth knowing. The token
               figure is an estimate and is printed as one (the tilde); it is
@@ -953,6 +974,22 @@ export function Composer({
               aria-pressed={voice.listening}
             >
               <Mic />
+            </Button>
+          )}
+          {voiceBackend && !draft && (
+            <Button
+              variant="ghost"
+              size={iconSize}
+              className={cn(
+                "shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground dark:bg-muted dark:hover:bg-muted/70",
+                iconFit,
+                inCall && "text-primary hover:text-primary"
+              )}
+              onClick={() => (inCall ? endVoiceCall(sessionId) : startVoiceCall(sessionId))}
+              title={inCall ? "End voice call" : "Voice call"}
+              aria-pressed={inCall}
+            >
+              <AudioLines />
             </Button>
           )}
           {/* Pause is the harness's own agent's, not ACP's: the runtime holds

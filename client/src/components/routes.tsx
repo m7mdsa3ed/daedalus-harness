@@ -250,7 +250,7 @@ export function pageRoutes({
              — under its tint the flat surface reads exactly as a solid
              band would. */
           <div className="flex min-h-0 flex-1 flex-col pt-[var(--app-header-h)]">
-            <TasksWorkspace />
+            <TasksWorkspace actions={actions} />
           </div>
         }
       />

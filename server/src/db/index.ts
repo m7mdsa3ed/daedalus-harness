@@ -158,6 +158,41 @@ async function ensureSchema(): Promise<void> {
   await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS rules TEXT`);
   /* A thread's git worktree (worktree.ts). */
   await db.execute(sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS worktree TEXT`);
+  /* Thread-owned declarative video plans, render snapshots and TTS credentials. */
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS video_tts_providers (
+      provider TEXT PRIMARY KEY,
+      api_key TEXT NOT NULL,
+      model TEXT NOT NULL,
+      voice TEXT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS session_videos (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      document JSONB NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1,
+      updated_at BIGINT NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS session_videos_updated ON session_videos(updated_at)`);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS session_video_renders (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      document JSONB NOT NULL,
+      status TEXT NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0,
+      output_path TEXT,
+      error TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )
+  `);
+  await db.execute(sql`ALTER TABLE session_video_renders ADD COLUMN IF NOT EXISTS document JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS session_video_renders_session ON session_video_renders(session_id, created_at)`);
   /* The rules table (rules.ts). */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS rules (
@@ -689,4 +724,38 @@ async function importLegacyJson(): Promise<void> {
     `[db] imported ${present.length} legacy JSON file(s) into ${redact(CONNECTION_STRING)}; ` +
       `originals kept as *.json.imported`,
   );
+}
+
+/**
+ * One read-only statement, for the harness MCP's `sql_query`.
+ *
+ * The statement is wrapped as a subquery, which is the whole guard against a
+ * second statement: `COMMIT; DROP ...` is a syntax error inside parentheses (the
+ * newline stops a trailing `--` from swallowing the closing one). READ ONLY and
+ * the timeout are the other two — a write inside a CTE fails, a slow scan stops.
+ */
+export async function readOnlyQuery(text: string, limit: number): Promise<{ fields: string[]; rows: unknown[][] }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL statement_timeout = 10000");
+    const body = text.trim().replace(/;+\s*$/, "");
+    const result = await client.query({ text: `SELECT * FROM (\n${body}\n) AS q LIMIT ${Math.trunc(limit)}`, rowMode: "array" });
+    return { fields: result.fields.map((f) => f.name), rows: result.rows };
+  } finally {
+    await client.query("ROLLBACK").catch(() => {});
+    client.release();
+  }
+}
+
+/** Public-schema tables and their columns, optionally one table. */
+export async function describeTables(table?: string): Promise<Record<string, string[]>> {
+  const { rows } = await pool.query<{ t: string; c: string; ty: string; n: string }>(
+    `SELECT table_name t, column_name c, data_type ty, is_nullable n FROM information_schema.columns
+     WHERE table_schema = 'public' AND ($1::text IS NULL OR table_name = $1) ORDER BY table_name, ordinal_position`,
+    [table ?? null],
+  );
+  const out: Record<string, string[]> = {};
+  for (const r of rows) (out[r.t] ??= []).push(`${r.c} ${r.ty}${r.n === "YES" ? "" : " not null"}`);
+  return out;
 }

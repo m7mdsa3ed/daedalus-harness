@@ -158,8 +158,8 @@ export function FileList({
 }
 
 /** Another thread had a turn running in this repository when the file was
-    written, and nothing this thread ran names it (turn-changes.ts `annotate`,
-    `claimShared`) — which of them wrote it is not known. */
+    written, and this thread's own edits do not reproduce it (turn-changes.ts `annotate`,
+    `useOwnFiles`) — which of them wrote it is not known. */
 function SharedBadge({ threads }: { threads: string[] }) {
   const names = useStoreSelect((state) =>
     threads.map((id) => state.sessions.find((s) => s.id === id)?.title || "another thread").join(", ")

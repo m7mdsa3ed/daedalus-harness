@@ -65,12 +65,20 @@ export function scopeFileSide(sessionId: string, scope: string, path: string, si
 
 /** Put one ended turn's files back as they were before it, in the working
     tree only. A 409 whose body carries `conflicts` is a refusal: those paths
-    changed since the turn ended, and `force` reverts over them. */
-export function revertTurn(settings: ServerSettings, sessionId: string, turnId: string, force = false) {
+    changed since the turn ended, and `force` reverts over them. `partial`
+    names files a peer thread also wrote: this thread's edits are taken back
+    out of them, not the whole file restored. */
+export function revertTurn(
+  settings: ServerSettings,
+  sessionId: string,
+  turnId: string,
+  force = false,
+  partial: Record<string, { oldText: string; newText: string }[]> = {}
+) {
   return api<{ reverted: string[]; conflicts: string[] }>(
     settings,
     `/api/sessions/${encodeURIComponent(sessionId)}/turn-changes/${encodeURIComponent(turnId)}/revert`,
-    { method: "POST", body: JSON.stringify({ force }) }
+    { method: "POST", body: JSON.stringify({ force, partial }) }
   )
 }
 

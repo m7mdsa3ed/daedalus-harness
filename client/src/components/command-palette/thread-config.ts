@@ -12,7 +12,7 @@ import type * as acp from "@daedalus/acp"
 import { reportError } from "@/lib/errors"
 import { flattenSelectOptions, partitionSessionOptions } from "@/lib/session-options"
 import { currentThreadId } from "@/lib/router"
-import { useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
+import { stagedPicks, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 import type { SessionMeta } from "@/lib/settings"
 import type { Actions } from "@/lib/actions"
 
@@ -35,10 +35,11 @@ export function useThreadTarget(): ThreadTarget {
   const thread = useStoreSelect((store) =>
     sessionId ? store.threads[sessionId] : undefined
   ) as ThreadState | undefined
-  const modes = thread?.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
+  const view = stagedPicks(thread)
+  const modes = view.modes && view.modes.availableModes.length > 1 ? view.modes : null
   const options = partitionSessionOptions(
-    thread?.configOptions ?? [],
-    new Set(thread?.modes?.availableModes.map((mode) => mode.id) ?? [])
+    view.configOptions,
+    new Set(view.modes?.availableModes.map((mode) => mode.id) ?? [])
   )
   return {
     sessionId,

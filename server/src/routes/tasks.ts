@@ -279,10 +279,23 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
+  /* Who is writing, when it is a thread rather than the person at the board:
+     the harness loopback (`routes/harness.ts`) sets this header and the browser
+     never does, so an agent cannot claim to be someone else in a comment body. */
+  const actorOf = (c: Context): string | undefined => {
+    const raw = c.req.header("x-harness-actor");
+    if (!raw) return undefined;
+    try {
+      return decodeURIComponent(raw).slice(0, 200) || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   app.post("/api/tasks", async (c) => {
     const parsed = CreateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return guard(c, async () => c.json(await createTask(parsed.data), 201));
+    return guard(c, async () => c.json(await createTask(parsed.data, actorOf(c)), 201));
   });
 
   /* Whole-board reorder + status moves, one request. The body is the board's new
@@ -302,7 +315,7 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
   app.post("/api/tasks/bulk", async (c) => {
     const parsed = BulkUpdateSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return guard(c, async () => c.json(await bulkUpdate(parsed.data)));
+    return guard(c, async () => c.json(await bulkUpdate(parsed.data, actorOf(c))));
   });
 
   /** The task with its comments, activity, links and children — what the
@@ -316,7 +329,7 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
     const parsed = UpdateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     return guard(c, async () => {
-      const row = await updateTask(c.req.param("id"), parsed.data);
+      const row = await updateTask(c.req.param("id"), parsed.data, actorOf(c));
       return row ? c.json(row) : c.json({ error: "not found" }, 404);
     });
   });
@@ -328,7 +341,7 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
   app.post("/api/tasks/:id/comments", async (c) => {
     const parsed = CommentSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return guard(c, async () => c.json(await addComment(c.req.param("id"), parsed.data), 201));
+    return guard(c, async () => c.json(await addComment(c.req.param("id"), parsed.data, actorOf(c)), 201));
   });
 
   app.patch("/api/comments/:id", async (c) => {
@@ -345,7 +358,7 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
   app.post("/api/tasks/:id/links", async (c) => {
     const parsed = LinkSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return guard(c, async () => c.json(await addLink(c.req.param("id"), parsed.data), 201));
+    return guard(c, async () => c.json(await addLink(c.req.param("id"), parsed.data, actorOf(c)), 201));
   });
 
   app.delete("/api/links/:id", async (c) =>

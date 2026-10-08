@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import { db, sessionQueue as queueTable } from "./db/index.js";
 import { listAttachments, refOf } from "./attachments.js";
 import type { AttachmentRef, QueuedMessage } from "./protocol.js";
@@ -71,77 +71,13 @@ export async function enqueue(
   text: string,
   attachments: AttachmentRef[] = [],
 ): Promise<QueuedMessage> {
-  const row = await insertQueued(sessionId, text, attachments, Date.now(), null);
-  return {
-    id: row.id,
-    text: row.text,
-    createdAt: row.createdAt,
-    ...(attachments.length > 0 ? { attachments } : {}),
-  };
-}
-
-/**
- * Held steers becoming rows again (`SessionQueue.stop`), at the place their
- * `createdAt` names among the rows already parked — a steer typed at t1 and a
- * row queued at t2> t1 drain as "steer, then row", the order they were meant
- * in. The list is ordered by `position`, and position order has been
- * createdAt order since enqueue learned to append; each insert shifts the
- * rows from the insertion point up by one to open a slot, steers oldest first
- * so earlier inserts stay put. Rows the user deleted meanwhile are simply not
- * there to be counted. The row KEEPS the steer's id: it is the same message,
- * and the held row every peer was shown converts rather than being replaced.
- */
-export async function requeueSteers(sessionId: string, steers: QueuedMessage[]): Promise<void> {
-  const parked = await db
-    .select({ createdAt: queueTable.createdAt, position: queueTable.position })
-    .from(queueTable)
-    .where(eq(queueTable.sessionId, sessionId))
-    .orderBy(asc(queueTable.position));
-  const order = parked.map((entry) => entry.createdAt);
-  for (const steer of [...steers].sort((a, b) => a.createdAt - b.createdAt)) {
-    const index = order.filter((createdAt) => createdAt <= steer.createdAt).length;
-    if (index < parked.length) {
-      const target = parked[index]!.position;
-      await db
-        .update(queueTable)
-        .set({ position: sql`${queueTable.position} + 1` })
-        .where(and(eq(queueTable.sessionId, sessionId), gte(queueTable.position, target)));
-      await insertQueued(
-        sessionId,
-        steer.text,
-        steer.attachments ?? [],
-        steer.createdAt,
-        target,
-        steer.id,
-      );
-    } else {
-      await insertQueued(sessionId, steer.text, steer.attachments ?? [], steer.createdAt, null, steer.id);
-    }
-    order.splice(index, 0, steer.createdAt);
-  }
-}
-
-/** One insert, two callers: `enqueue` appends at MAX+1, `requeueSteers` names
-    an explicit position between the rows already parked. `position: null`
-    means append; `id` omitted means a fresh one. */
-async function insertQueued(
-  sessionId: string,
-  text: string,
-  attachments: AttachmentRef[],
-  createdAt: number,
-  position: number | null,
-  id: string = randomUUID(),
-) {
-  const body = requireText(text, attachments);
   const row = {
-    id,
+    id: randomUUID(),
     sessionId,
-    text: body,
+    text: requireText(text, attachments),
     attachmentIds: attachments.length > 0 ? attachments.map((ref) => ref.id) : null,
-    createdAt,
-    position:
-      position ??
-      sql`(SELECT COALESCE(MAX(${queueTable.position}), 0) + 1 FROM ${queueTable} WHERE ${queueTable.sessionId} = ${sessionId})`,
+    createdAt: Date.now(),
+    position: sql`(SELECT COALESCE(MAX(${queueTable.position}), 0) + 1 FROM ${queueTable} WHERE ${queueTable.sessionId} = ${sessionId})`,
   };
   /*
    * The position is read *inside* the insert, not before it.
@@ -159,7 +95,12 @@ async function insertQueued(
    * (session_id, position) with a retry is the upgrade if one is ever observed.
    */
   await db.insert(queueTable).values(row);
-  return row;
+  return {
+    id: row.id,
+    text: row.text,
+    createdAt: row.createdAt,
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
 }
 
 /** `attachmentIds` omitted means "leave them alone"; an empty array clears
@@ -185,6 +126,25 @@ export async function updateQueued(
       .where(sql`${queueTable.id} = ${itemId} and ${queueTable.sessionId} = ${sessionId}`)
       ).rowCount ?? 0) > 0
   );
+}
+
+/** Write the queue in this order. `ids` is the order the reader dragged into;
+    a row it does not name (queued since the reader looked) keeps its place
+    after them, and an id that is gone is ignored — a reorder never loses a
+    message or resurrects one. Positions are rewritten 1..n; `enqueue` only
+    reads the MAX, so compacting is safe as long as the two cannot interleave,
+    which `SessionQueue.reorder` sees to by running on the chain. */
+export async function reorderQueue(sessionId: string, ids: string[]): Promise<void> {
+  const current = (await listQueue(sessionId)).map((item) => item.id);
+  const named = ids.filter((id) => current.includes(id));
+  const order = [...named, ...current.filter((id) => !named.includes(id))];
+  // ponytail: one UPDATE per row — a queue is a handful of messages.
+  for (const [index, id] of order.entries()) {
+    await db
+      .update(queueTable)
+      .set({ position: index + 1 })
+      .where(sql`${queueTable.id} = ${id} and ${queueTable.sessionId} = ${sessionId}`);
+  }
 }
 
 export async function removeQueued(sessionId: string, itemId: string): Promise<boolean> {

@@ -209,6 +209,21 @@ export class WorkflowRunner {
     return `http://127.0.0.1:${this.opts.port}/wf/${this.key}/${session.id}`;
   }
 
+  /** The same loopback key under `/hm`, for the `harness` MCP server. Managing
+      the harness is not running a workflow, but it is the same per-session
+      credential and the same rule — the path names exactly one thread, and
+      `resolveCaller` is the one door that checks it for both. */
+  harnessUrlFor(session: Pick<Session, "id">): string {
+    return `http://127.0.0.1:${this.opts.port}/hm/${this.key}/${session.id}`;
+  }
+
+  /** The same key under `/cdp`, as a WebSocket: what `chrome-devtools-mcp`
+      is handed as its `--wsEndpoint`, piped to the thread's driving preview
+      (browser-hosts.ts). */
+  cdpUrlFor(session: Pick<Session, "id">): string {
+    return `ws://127.0.0.1:${this.opts.port}/cdp/${this.key}/${session.id}`;
+  }
+
   /** The thread a `/wf/<key>/<sessionId>` path speaks for, or null. */
   resolveCaller(key: string, sessionId: string): Session | null {
     if (!safeKeyEqual(key, this.key)) return null;

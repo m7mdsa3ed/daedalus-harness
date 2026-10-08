@@ -73,7 +73,20 @@ const project = {
    read as deleted, drop the patch for, and let the send proceed on. Which is
    the right behaviour, and the reason these rows have to exist. */
 {
-  const { db, profiles: profilesTable, projects: projectsTable } = await import("../src/db/index.js");
+  const {
+    db,
+    mcpServers: mcpServersTable,
+    profiles: profilesTable,
+    projects: projectsTable,
+    skills: skillsTable,
+  } = await import("../src/db/index.js");
+  await db.insert(mcpServersTable).values({
+    id: "builtin:workflow",
+    type: "builtin",
+    name: "Workflow",
+    builtin: "workflow",
+  });
+  await db.insert(skillsTable).values({ id: "skill-one", name: "Skill One", path: "/tmp/skill-one" });
   await db.insert(projectsTable).values({
     id: project.id,
     name: project.name,
@@ -143,6 +156,8 @@ assert.deepEqual(
   "m2",
   "every peer was told what is waiting",
 );
+manager.stageLinks(session.id, "mcpServerIds", ["builtin:workflow"]);
+manager.stageLinks(session.id, "skillIds", ["skill-one"]);
 
 // ---- the next turn takes it, in one spawn, and says so first ----
 
@@ -153,6 +168,9 @@ await waitFor(() => peer.of("turn_ended").length === 2, "the second turn to end"
 assert.equal(spawns(), idle + 1, "the send spent exactly one spawn");
 assert.equal(session.model, "m2", "…and the process came up on the staged model");
 assert.equal(manager.stagedRequest(session.id), null, "the patch was consumed, not left behind");
+assert.deepEqual(session.links.mcpServerIds, ["builtin:workflow"], "the selected MCP was stored on the thread");
+assert.deepEqual(session.links.skillIds, ["skill-one"], "the selected skill was stored on the thread");
+assert.equal(spawns(), idle + 1, "model and link changes share exactly one spawn");
 
 const since = (await manager.journal(session.id))!.events.slice(journalBefore);
 const noticeAt = since.findIndex((e) => e.ev === "config_notice" && e.text.startsWith("Model:"));
@@ -229,6 +247,34 @@ assert.equal(spawns(), beforeRevive + 1, "the revive is ONE spawn, not a revive 
 assert.equal(session.model, "m2", "…and it came up on the staged model, not the row's");
 assert.equal(manager.stagedRequest(session.id), null, "the patch was consumed by the fold");
 
+// ---- Apply now respawns a live idle thread to apply staged links ----
+
+const applyNow = await manager.create(profile, "fake", project, "m1");
+await applyNow.bridge!.ready;
+manager.stageLinks(applyNow.id, "mcpServerIds", ["builtin:workflow"]);
+manager.stageLinks(applyNow.id, "skillIds", ["skill-one"]);
+const beforeLiveApplyNow = spawns();
+assert.equal(await manager.approveStaged(applyNow.id), null, "Apply now consumes the link patch");
+assert.equal(spawns(), beforeLiveApplyNow + 1, "Apply now respawns a live idle thread for new links");
+assert.deepEqual(applyNow.links.mcpServerIds, ["builtin:workflow"], "Apply now stores the MCP selection");
+assert.deepEqual(applyNow.links.skillIds, ["skill-one"], "Apply now stores the skill selection");
+
+// ---- Apply now revives a retired thread instead of requiring a live bridge ----
+
+await manager.applyConfig(applyNow.id, {
+  profile,
+  agentId: "fake",
+  project,
+  model: "m2",
+});
+manager.retireAll([applyNow.id]);
+assert.equal(applyNow.exited, true, "the staged thread has no running agent");
+const beforeApplyNow = spawns();
+assert.equal(await manager.approveStaged(applyNow.id), null, "Apply now consumes the patch");
+assert.equal(spawns(), beforeApplyNow + 1, "Apply now revives with one spawn");
+assert.equal(applyNow.model, "m2", "the revived agent starts on the staged model");
+assert.ok(applyNow.bridge && !applyNow.exited, "the revived thread has a running agent");
+
 // ---- a held turn takes it, on Continue and on a send into the hold ----
 
 /* The hold is the harness's promise that a failed turn waits for a model change
@@ -294,6 +340,25 @@ assert.equal(
   "StagedConfig cannot carry an agent, so staging one would silently drop it",
 );
 
+// ---- the agent's own selectors are staged too; approving takes them without a restart ----
+
+const picker = await manager.create(profile, "fake", project, "m1");
+await picker.bridge!.ready;
+const modeOf = () => picker.bridge!.modes?.currentModeId;
+const first = modeOf();
+const stagedMode = manager.stagePick(picker.id, { modeId: "acceptEdits" });
+assert.equal(stagedMode.modeId, "acceptEdits", "a mode pick is staged");
+assert.equal(modeOf(), first, "…and the agent is still on the mode it was on");
+const beforePick = spawns();
+assert.equal((await manager.approveStaged(picker.id)), null, "approving takes it, and nothing is left");
+assert.equal(modeOf(), "acceptEdits", "the agent took the mode");
+assert.equal(spawns(), beforePick, "a mode costs no spawn, even when approved on a runtime with no live path");
+
+manager.stagePick(picker.id, { modeId: "bypassPermissions" });
+await manager.prompt(picker.id, "next turn takes it");
+assert.equal(modeOf(), "bypassPermissions", "a starting turn takes a staged mode");
+assert.equal(manager.stagedRequest(picker.id), null, "…and consumes it");
+
 // ---- a flush that fails keeps the patch and sends nothing ----
 
 const doomed = await manager.create(profile, "fake", project, "m1");
@@ -305,6 +370,7 @@ const held = await manager.applyConfig(doomed.id, {
   model: "m2",
 });
 assert.deepEqual(held.staged?.model, "m2", "staged, ready to be flushed by the next send");
+manager.stageLinks(doomed.id, "skillIds", ["skill-one"]);
 
 {
   /* Break the spawn under it: the respawn the flush asks for cannot come up.
@@ -329,6 +395,8 @@ assert.deepEqual(
   "m2",
   "the patch went back — `applyConfig` drops it before it restarts, so the flush must restore it",
 );
+assert.deepEqual(manager.stagedRequest(doomed.id)?.skillIds, ["skill-one"], "the failed flush retains the link patch");
+assert.deepEqual(doomed.links.skillIds, [], "the failed flush restores the previously active links");
 
 peer.close();
 console.log("staged-config: all assertions passed");

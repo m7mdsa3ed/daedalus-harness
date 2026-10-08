@@ -8,6 +8,7 @@ import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { markFor, type ThreadActivity } from "@/lib/thread/phase"
 import { backgroundRunning } from "@/lib/thread/statuses"
+import { cn } from "@/lib/utils"
 import { usePublishPanelStatus, type PanelStatus } from "@/lib/workspace/panel-status"
 import { useThreadConnection } from "@/lib/thread/use-thread-connection"
 import { ThreadLinksProvider } from "@/lib/workspace/thread-links"
@@ -115,7 +116,14 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {visible && (
+      {/* Kept mounted and hidden with `display: none`, never unmounted. Dockview
+          hides an inactive panel with `visibility`, which the thread dock's own
+          `always` overlays escape — every thread drew over the others. `display:
+          none` cannot be escaped, and it is what lets a Preview's page and a
+          shell come back to what they were: unmounting this on every tab switch
+          threw the `<webview>` (or iframe) away and rebuilt it on the way back,
+          so a page you were reading reloaded and its state went. */}
+      <div className={cn("flex h-full min-h-0 flex-col", !visible && "hidden")}>
         <ErrorBoundary name="this thread" resetKeys={[meta.id]}>
           <ThreadLinksProvider value={links}>
             {/* The tab is a dock of the thread's own panels (`thread-dock.tsx`) —
@@ -123,7 +131,7 @@ export function ChatPanel({
             <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
           </ThreadLinksProvider>
         </ErrorBoundary>
-      )}
+      </div>
     </div>
   )
 }

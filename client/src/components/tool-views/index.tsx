@@ -21,6 +21,7 @@
    either declared or re-exported here. */
 import * as React from "react"
 import { EditDetail, ReadDetail, RunDetail, SearchDetail, TerminalDetail } from "@/components/tool-views/files"
+import { HarnessDetail } from "@/components/tool-views/harness"
 import { GenericDetail, McpDetail } from "@/components/tool-views/mcp"
 import {
   FindingsDetail,
@@ -70,6 +71,7 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
   todos: { Detail: TodosDetail, opensByDefault: true },
   terminal: { Detail: TerminalDetail, opensByDefault: false },
   mcp: { Detail: McpDetail, opensByDefault: false },
+  harness: { Detail: HarnessDetail, opensByDefault: false },
   subagent: { Detail: SubagentDetail, opensByDefault: false },
   websearch: { Detail: WebSearchDetail, opensByDefault: false },
   webfetch: { Detail: WebFetchDetail, opensByDefault: false },

@@ -46,6 +46,18 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     description:
       "Ask another profile and agent pair — Codex, Claude Code, the Daedalus agent, on any provider — to do a task in a new thread of this project; its answer comes back to the caller, drawn as a subagent.",
   },
+  harness: {
+    id: "builtin:harness",
+    name: "Harness",
+    description:
+      "Manage this harness from the agent — projects, spaces, profiles and agents, the task board, the library (MCP servers, skills, commands, personas, model prompts), rules, themes, knowledge, routines, schedules and threads, on the same routes the app itself calls.",
+  },
+  browser: {
+    id: "builtin:browser",
+    name: "Preview browser",
+    description:
+      "Google's chrome-devtools-mcp, connected to the thread's Preview in the desktop app instead of a browser of its own — snapshot, click, fill, navigate, screenshot, console, network, performance. Answers while that panel's Drive toggle is on. Needs `npm i -g chrome-devtools-mcp` on the server.",
+  },
 };
 
 /**
@@ -68,12 +80,12 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge", "workflow", "agents"]),
+    builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser"]),
   }),
   z.object({
     type: z.literal("http"),
     name: z.string().min(1),
-    logoUrl: z.string().url().optional(),
+    logoUrl: z.string().url().max(150_000).optional(),
     url: z.string().url(),
     headers: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
     /* How the row authenticates. A stored answer, not a typed one: the client
@@ -87,7 +99,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("stdio").default("stdio"),
     name: z.string().min(1),
-    logoUrl: z.string().url().optional(),
+    logoUrl: z.string().url().max(150_000).optional(),
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
     env: z.array(z.object({ name: z.string(), value: z.string() })).default([]),

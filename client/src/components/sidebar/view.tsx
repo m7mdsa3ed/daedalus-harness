@@ -3,7 +3,6 @@
    conversation's: the harness's session list is shared, and one person's
    sidebar must not reorder another's. The store below and the menu that writes
    it are one file because they are one setting. */
-import * as React from "react"
 import { ListFilter } from "lucide-react"
 import {
   DropdownMenu,
@@ -14,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { createLocalStore } from "@/lib/local-store"
 import { cn } from "@/lib/utils"
 
 export type SidebarSort = "recent" | "project"
@@ -22,45 +22,22 @@ export interface SidebarView {
   sort: SidebarSort
   filter: SidebarFilter
 }
-const VIEW_KEY = "ui.sidebarView"
-const VIEW_DEFAULT: SidebarView = { sort: "recent", filter: "all" }
-const viewListeners = new Set<() => void>()
-let viewCache: SidebarView | null = null
-
-function readView(): SidebarView {
-  if (viewCache) return viewCache
-  try {
-    const raw = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null") as Partial<SidebarView> | null
-    viewCache = {
-      sort: raw?.sort === "project" ? "project" : "recent",
-      filter: raw?.filter === "running" || raw?.filter === "waiting" ? raw.filter : "all",
-    }
-  } catch {
-    viewCache = VIEW_DEFAULT
+function parseView(raw: unknown): SidebarView {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<SidebarView>
+  return {
+    sort: r.sort === "project" ? "project" : "recent",
+    filter: r.filter === "running" || r.filter === "waiting" ? r.filter : "all",
   }
-  return viewCache
 }
+// Same key and JSON shape as before, so a stored choice carries over.
+const viewStore = createLocalStore<SidebarView>("ui.sidebarView", parseView, parseView(null))
 
 function writeView(patch: Partial<SidebarView>) {
-  viewCache = { ...readView(), ...patch }
-  try {
-    localStorage.setItem(VIEW_KEY, JSON.stringify(viewCache))
-  } catch {
-    // A forgotten preference is not worth throwing out of a click handler.
-  }
-  viewListeners.forEach((fn) => fn())
+  viewStore.set({ ...viewStore.get(), ...patch })
 }
 
-export function useSidebarView(): SidebarView {
-  return React.useSyncExternalStore(
-    (fn) => {
-      viewListeners.add(fn)
-      return () => viewListeners.delete(fn)
-    },
-    readView,
-    readView
-  )
-}
+export const useSidebarView = viewStore.use
+export const setSidebarFilter = (filter: SidebarFilter) => writeView({ filter })
 
 /** Sort and filter, in one small menu on the Threads label — the controls
     Claude Code desktop puts at the top of its session list. The trigger

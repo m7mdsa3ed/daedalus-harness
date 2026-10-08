@@ -2,6 +2,7 @@
    The reading, and the one place that decides which of the thread's items IS
    the checklist — a `todos` tool call, or failing that the thread's own ACP
    plan. */
+import { formatCount } from "@/components/composer-strip"
 import { useMemo, useState } from "react"
 
 import { TodoChecklist } from "@/components/todo-checklist"
@@ -100,7 +101,7 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
             <ReadingFace
               icon={<Ring percent={percent} className={READING_MARK} />}
               label={`${completed}/${total}`}
-              after={<ReadingBubble>{completed}</ReadingBubble>}
+              after={<ReadingBubble>{formatCount(completed)}</ReadingBubble>}
             />
           </Button>
         }

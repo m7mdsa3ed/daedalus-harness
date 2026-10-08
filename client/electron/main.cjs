@@ -1,8 +1,9 @@
-const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard, globalShortcut } = require("electron")
+const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard, globalShortcut, webContents } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
 const { installTray, setActivity, refreshTray } = require("./tray.cjs")
+const { createCdpShim } = require("./cdp-shim.cjs")
 
 const DEV_URL = process.env.ELECTRON_DEV_URL || ""
 
@@ -355,6 +356,239 @@ const webPreferences = () => ({
   contextIsolation: true,
   nodeIntegration: false,
   spellcheck: true,
+  /* The Preview panel's `<webview>` (web-panel.tsx). Every guest is pinned
+     down by `guardWebview` before it attaches, whatever the page asked for. */
+  webviewTag: true,
+})
+
+/* A previewed page is code someone is writing, or a third-party site, and it
+   must not reach the app that embeds it — the guarantee the sandboxed iframe
+   gave. So: no preload (no `window.desktop`), no Node, its own sandboxed
+   process, and its own session (`persist:preview`), so the app's storage and
+   bearer token are not in the guest's jar. http(s) only, as the address bar
+   already insists. */
+const PREVIEW_PARTITION = "persist:preview"
+const isWebUrl = (url) => /^https?:\/\//i.test(url)
+
+/* ── The Preview's console ──
+   A `<webview>`'s page is the one console this app can honestly read — a
+   sandboxed iframe's is cross-origin and silent. Main listens on each guest and
+   relays to the window that embeds it, keyed by the guest's webContents id (the
+   same id Drive uses), and keeps a bounded backlog per guest so a panel opened
+   after a page has already logged still gets the earlier lines: the renderer's
+   subscription starts at mount, and a console that is empty because it began
+   three seconds late is worse than none. */
+const CONSOLE_LIMIT = 500
+const consoleBuffers = new Map()
+function normalizeConsoleLevel(level) {
+  if (level === "info" || level === "warning" || level === "error" || level === "debug") return level
+  return ["debug", "info", "warning", "error"][level] ?? "info"
+}
+
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-attach-webview", (event, prefs, params) => {
+    delete prefs.preload
+    prefs.nodeIntegration = false
+    prefs.nodeIntegrationInSubFrames = false
+    prefs.contextIsolation = true
+    prefs.sandbox = true
+    params.partition = PREVIEW_PARTITION
+    if (!isWebUrl(params.src)) event.preventDefault()
+  })
+  contents.on("did-attach-webview", (_e, guest) => {
+    /* A popup is a link the person followed out of the page: the real
+       browser, never a window of the app shell. */
+    guest.setWindowOpenHandler(({ url }) => {
+      if (isWebUrl(url)) shell.openExternal(url)
+      return { action: "deny" }
+    })
+    guest.on("will-navigate", (event, url) => {
+      if (!isWebUrl(url)) event.preventDefault()
+    })
+
+    /* The page's console, buffered per guest and streamed to its window. A new
+       document starts a new console, so a main-frame navigation clears what was
+       there — the log belongs to the page you are looking at, not to the tab. */
+    const guestId = guest.id
+    const buffer = []
+    consoleBuffers.set(guestId, buffer)
+    /* Electron 35+ hands the details object first and keeps the old positional
+       arguments after it; read the object and fall back so this holds on either. */
+    guest.on("console-message", (details, level, message, line, sourceId) => {
+      const entry =
+        details && typeof details === "object" && "message" in details
+          ? { level: normalizeConsoleLevel(details.level), message: String(details.message), line: details.lineNumber, source: details.sourceId }
+          : { level: normalizeConsoleLevel(level), message: String(message ?? ""), line, source: sourceId }
+      buffer.push(entry)
+      if (buffer.length > CONSOLE_LIMIT) buffer.shift()
+      if (!contents.isDestroyed()) contents.send("guest-console", guestId, { type: "entry", entry })
+    })
+    guest.on("did-navigate", () => {
+      buffer.length = 0
+      if (!contents.isDestroyed()) contents.send("guest-console", guestId, { type: "clear" })
+    })
+    guest.on("destroyed", () => {
+      consoleBuffers.delete(guestId)
+      if (!contents.isDestroyed()) contents.send("guest-console", guestId, { type: "gone" })
+    })
+  })
+})
+
+/* ── Drive: chrome-devtools-mcp on a preview ──
+   The renderer relays a CDP connection from the server (lib/browser-host.ts)
+   and this end answers it as a browser of one page (cdp-shim.cjs). Keyed by
+   the guest's webContents id. Fire-and-forget `send`s, never `invoke`, so a
+   reset and the messages after it arrive in the order they were sent. A
+   window may only drive a guest it embeds. */
+const cdpShims = new Map()
+ipcMain.on("cdp-reset", (_event, guestId) => cdpShims.get(guestId)?.end("reset"))
+ipcMain.on("cdp-send", (event, guestId, data) => {
+  const host = event.sender
+  let shim = cdpShims.get(guestId)
+  if (!shim) {
+    const guest = webContents.fromId(guestId)
+    if (!guest || guest.hostWebContents !== host) {
+      host.send("cdp-closed", guestId, "not a preview in this window")
+      return
+    }
+    try {
+      shim = createCdpShim(
+        guest,
+        (message) => {
+          if (!host.isDestroyed()) host.send("cdp-message", guestId, message)
+        },
+        (reason) => {
+          cdpShims.delete(guestId)
+          if (!host.isDestroyed()) host.send("cdp-closed", guestId, reason)
+        }
+      )
+    } catch (error) {
+      host.send("cdp-closed", guestId, error.message)
+      return
+    }
+    cdpShims.set(guestId, shim)
+  }
+  shim.handle(data)
+})
+
+/* ── Point at an element ──
+   The Preview's "Pick element": the person clicks the page, and the element
+   they clicked comes back as a selector and its facts, for the composer to hand
+   to an agent. Run in the guest's own world (`executeJavaScript`, not the
+   debugger) so it never fights Drive for the one debugger a page has. The
+   script draws its own highlight, swallows the click it is told to pick, and
+   resolves null on Escape or when the panel says stop. */
+const PICK_SCRIPT = `
+(function () {
+  if (window.__daedalusPicker) return Promise.resolve(null)
+  var overlay = document.createElement("div")
+  overlay.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;box-sizing:border-box;background:rgba(59,130,246,0.22);outline:2px solid rgb(59,130,246);border-radius:2px"
+  document.documentElement.appendChild(overlay)
+  var current = null
+  function esc(value) {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(String(value))
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, function (c) { return "\\\\" + c })
+  }
+  function selectorFor(el) {
+    if (!el || !(el instanceof Element)) return ""
+    if (el.id) return "#" + esc(el.id)
+    var parts = []
+    var node = el
+    var depth = 0
+    while (node && node.nodeType === 1 && depth < 6) {
+      if (node.id) { parts.unshift("#" + esc(node.id)); break }
+      var part = node.tagName.toLowerCase()
+      if (node.classList && node.classList.length) {
+        var classes = [].slice.call(node.classList, 0, 2)
+        for (var i = 0; i < classes.length; i++) part += "." + esc(classes[i])
+      }
+      var parent = node.parentElement
+      if (parent) part += ":nth-child(" + ([].slice.call(parent.children).indexOf(node) + 1) + ")"
+      parts.unshift(part)
+      node = parent
+      depth++
+    }
+    return parts.join(" > ")
+  }
+  function describe(el) {
+    if (!el || !(el instanceof Element)) return null
+    var rect = el.getBoundingClientRect()
+    return {
+      selector: selectorFor(el),
+      tag: el.tagName.toLowerCase(),
+      id: el.id || "",
+      classes: [].slice.call(el.classList || []),
+      text: (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 140),
+      role: el.getAttribute("role") || "",
+      ariaLabel: el.getAttribute("aria-label") || "",
+      href: el.getAttribute("href") || "",
+      name: el.getAttribute("name") || "",
+      rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
+    }
+  }
+  return new Promise(function (resolve) {
+    var cleanup = null
+    function done(value) {
+      if (cleanup) cleanup()
+      resolve(value)
+    }
+    var onMove = function (event) {
+      var el = event.target
+      if (!el || el === overlay || !(el instanceof Element)) return
+      current = el
+      var rect = el.getBoundingClientRect()
+      overlay.style.left = rect.left + "px"
+      overlay.style.top = rect.top + "px"
+      overlay.style.width = rect.width + "px"
+      overlay.style.height = rect.height + "px"
+    }
+    var onClick = function (event) {
+      event.preventDefault()
+      event.stopPropagation()
+      done(describe(current || event.target))
+    }
+    var onKey = function (event) {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        event.stopPropagation()
+        done(null)
+      }
+    }
+    cleanup = function () {
+      document.removeEventListener("mousemove", onMove, true)
+      document.removeEventListener("click", onClick, true)
+      document.removeEventListener("keydown", onKey, true)
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay)
+      delete window.__daedalusPicker
+      delete window.__daedalusPickerCleanup
+      cleanup = null
+    }
+    document.addEventListener("mousemove", onMove, true)
+    document.addEventListener("click", onClick, true)
+    document.addEventListener("keydown", onKey, true)
+    window.__daedalusPicker = true
+    window.__daedalusPickerCleanup = function () { done(null) }
+  })
+})()
+`
+ipcMain.handle("preview-pick", async (event, guestId) => {
+  const guest = webContents.fromId(guestId)
+  if (!guest || guest.isDestroyed() || guest.hostWebContents !== event.sender) return null
+  try {
+    return await guest.executeJavaScript(PICK_SCRIPT, true)
+  } catch {
+    return null
+  }
+})
+ipcMain.handle("preview-pick-cancel", (event, guestId) => {
+  const guest = webContents.fromId(guestId)
+  if (!guest || guest.isDestroyed() || guest.hostWebContents !== event.sender) return
+  guest.executeJavaScript("window.__daedalusPickerCleanup && window.__daedalusPickerCleanup()", true).catch(() => {})
+})
+ipcMain.handle("preview-console-read", (event, guestId) => {
+  const guest = webContents.fromId(guestId)
+  if (!guest || guest.hostWebContents !== event.sender) return []
+  return consoleBuffers.get(guestId) ?? []
 })
 
 /* The window's own material — see the long note in createWindow. Shared with a

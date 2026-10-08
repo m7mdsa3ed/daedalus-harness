@@ -9,7 +9,8 @@ export function pushUserMessage(
   at?: number,
   turnId?: string,
   local?: boolean,
-  attachments?: TextItem["attachments"]
+  attachments?: TextItem["attachments"],
+  sending?: boolean
 ): ThreadItem[] {
   return [
     ...items,
@@ -20,6 +21,7 @@ export function pushUserMessage(
       at,
       turnId,
       local,
+      sending,
       ...(attachments?.length ? { attachments } : {}),
     },
   ]

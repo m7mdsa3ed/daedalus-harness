@@ -46,7 +46,7 @@ import {
 } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
-import { FormPageHeader, PageForm, PageHeader, EmptyCard, Field, FormActions, FormSection, INSET } from "./primitives"
+import { FormPageHeader, PageForm, PageHeader, EmptyCard, Field, FormActions, FormSection, INSET, LogoUpload } from "./primitives"
 import { SettingsList } from "./list"
 import {
   ModelsSection,
@@ -790,11 +790,12 @@ export function ProfileForm({
               className="size-5 shrink-0"
             />
             <Input
-              value={form.logoUrl}
+              value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
               onChange={(e) => set({ logoUrl: e.target.value })}
-              placeholder="https://models.dev/logos/openrouter.svg"
+              placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://models.dev/logos/openrouter.svg"}
               className="font-mono text-xs min-w-0 flex-1"
             />
+            <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
           </div>
         </Field>
       </div>

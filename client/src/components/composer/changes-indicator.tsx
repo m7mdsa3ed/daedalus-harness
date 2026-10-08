@@ -1,8 +1,9 @@
 /* ── What the last turn that wrote anything did to the worktree ──
    The count in the footer's cluster, the file list its popover holds, and the
    way back into source control narrowed to those paths. */
+import { formatCount } from "@/components/composer-strip"
 import { useState } from "react"
-import { GitCompareIcon } from "lucide-react"
+import { FileDiffIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -83,9 +84,9 @@ export function ChangesIndicator({
                 it where it does not — one count, two dresses, never both, both
                 shared with the four beside it. */}
             <ReadingFace
-              icon={<GitCompareIcon className={READING_MARK} />}
+              icon={<FileDiffIcon className={READING_MARK} />}
               label={label}
-              after={<ReadingBubble>{count > 9 ? "9+" : count}</ReadingBubble>}
+              after={<ReadingBubble>{formatCount(count)}</ReadingBubble>}
             />
           </Button>
         }

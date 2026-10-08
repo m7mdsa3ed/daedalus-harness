@@ -6,6 +6,7 @@
    behaviours compose, that the order is the one the client's parser needs
    (the follow-up block last), and that a respawn does not append a trailer it
    already carries. */
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import {
   OPENUI_FENCE,
@@ -78,6 +79,25 @@ const persona = { id: "p1", prompt: "PERSONA TEXT", thinking: null };
     "and carries the generated component table, so every runtime gets the same one",
   );
   console.log("openui-trailer: instructions ok");
+}
+
+// --- a task: named, with its column ids, ahead of the other trailers, once ---
+{
+  const task = {
+    id: "t1",
+    key: "WEB-12",
+    title: "Fix login",
+    status: "To do",
+    columns: [
+      { id: "todo", name: "To do", category: "todo" },
+      { id: "done", name: "Done", category: "done" },
+    ],
+  };
+  const out = withInstructionTrailers(persona, { task, uiBlocks: true });
+  assert.ok(out!.prompt.includes("WEB-12") && out!.prompt.includes("Done (done) = done"), "names the task and its columns");
+  assert.ok(out!.prompt.indexOf("WEB-12") < out!.prompt.indexOf(OPENUI_INSTRUCTIONS), "the task comes first");
+  assert.equal(withInstructionTrailers(out, { task, uiBlocks: true })!.prompt, out!.prompt, "and a respawn does not repeat it");
+  console.log("openui-trailer: task ok");
 }
 
 console.log("openui-trailer.test.ts passed");

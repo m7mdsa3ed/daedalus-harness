@@ -19,15 +19,17 @@
    plain black SVGs, invisible on a dark theme without it. */
 import * as React from "react"
 import {
+  AppWindowIcon,
   BookOpenIcon,
   BotIcon,
   GlobeIcon,
   TerminalIcon,
   UsersIcon,
   WorkflowIcon,
+  WrenchIcon,
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
-import { useAgents } from "@/lib/queries/catalog"
+import { useAgents, useMcpCatalog } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import type { McpServerDef } from "@/lib/settings"
 
@@ -134,22 +136,19 @@ const BUILTIN_MCP_MARKS = {
   knowledge: BookOpenIcon,
   workflow: WorkflowIcon,
   agents: UsersIcon,
+  harness: WrenchIcon,
+  browser: AppWindowIcon,
 } as const
 
-function mcpFaviconUrl(server: McpServerDef): string | undefined {
-  if (server.type !== "http") return undefined
-  try {
-    const url = new URL(server.url)
-    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined
-    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(url.hostname)}&sz=64`
-  } catch {
-    return undefined
-  }
-}
-
-/** A server's own image when supplied, otherwise the host favicon for HTTP
-    endpoints; transport and built-in marks remain the fallback. */
+/** A server's own image when supplied, otherwise the one the harness fetched
+    for it (`mcp-logo.ts`, inline in the listing — the browser asks nobody);
+    transport and built-in marks remain the fallback. */
 export function McpIcon({ server, className }: { server?: McpServerDef | null; className?: string }) {
+  /* Three sources, in the order they are trusted: what the row says, what the
+     server said about itself when it was last read (the initialize answer's
+     `icons`, remembered in the shared catalog query — never a connect of its
+     own), and nothing else: the favicon is fetched by the server now. */
+  const catalog = useMcpCatalog(server?.id ?? "", !!server && server.type !== "builtin").data
   const Icon = server?.type === "builtin"
     ? BUILTIN_MCP_MARKS[server.builtin]
     : server?.type === "http"
@@ -157,7 +156,7 @@ export function McpIcon({ server, className }: { server?: McpServerDef | null; c
       : TerminalIcon
   return (
     <EntityIcon
-      src={server?.type === "builtin" ? undefined : server?.logoUrl || (server ? mcpFaviconUrl(server) : undefined)}
+      src={server?.type === "builtin" ? undefined : server?.logoUrl || catalog?.serverInfo?.icon}
       className={className}
       fallback={<Icon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />}
     />

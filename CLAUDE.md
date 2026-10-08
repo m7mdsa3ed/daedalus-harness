@@ -36,8 +36,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - `tsconfig` uses `erasableSyntaxOnly` — no TS constructor parameter properties.
 - eslint crashes at startup (typescript-eslint vs typescript 7 — pre-existing).
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** No migration files
-  exist. The wrapper writes a full `pg_dump` to `server/data/backups/` before Drizzle's
-  interactive push; it refuses to change schema if backup fails. Restore with
+  exist, and **`db:push` is plain `drizzle-kit push` — it takes no backup first**; export
+  one yourself with `pnpm db:export` if a change is risky, and restore with
   `pnpm db:import <dump.sql>` (replacement). **A table push does not know about is a table
   push drops** — anything the server reads must be declared there. The FTS index is maintained
   outside Drizzle.
@@ -196,6 +196,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Being env at spawn does not mean being env forever.** `POST /api/sessions/:id/config` is
   the one door; it answers `{live}` and falls through to respawn when it cannot. **Respawn is
   atomic and server-side**, never driven from the browser.
+- **Every pick on a started thread is staged, never taken** — live-capable ones too (model,
+  effort, and the agent's own mode/options, `StagedConfig.modeId`/`options`, door
+  `{pick}` on `POST …/config`). A steer nobody approved moved the permission mode and the
+  model under an answer being written. What takes a patch is a turn starting (`prompt`), a
+  spawn (`respawnNow`'s fold), or the reader's **Apply now** (`{applyStaged}` →
+  `approveStaged`): a running turn is **steered** with only what the process can take as it
+  is (`steerStaged`: picks + a live model/effort move; never a respawn, never throws) and the
+  rest stays staged; an idle thread takes the whole patch. A queue drain steers too, and
+  still never restarts. → `docs/profiles-and-config.md` "What a change costs".
 - **A change that costs the process is staged when it is picked, and the next spawn takes
   it** — held in `session.stagedConfig`, fanned as the absolute live-only `staged_config`.
   **Two mechanisms, no third and no timer**: `respawnNow` *folds* the patch into any spawn
@@ -243,8 +252,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   absolute and reaches every peer including the origin.
 - **Escape stops the turn and can take back the newest queued row** (`cancel {reclaim:true}`),
   one only, back into an empty composer. Atomic and server-side, and **the take-back comes
-  before the cancel**: a queued row never left the server. A composer steer is already on the
-  wire; if still held when stopped, it returns to the queue to run next. Opt-in, because the
+  before the cancel**: a queued row never left the server. A steer is already on the wire and
+  **the runtime keeps it through a cancel**, so a stop never re-queues one — the cancel's settle
+  is its step boundary and it lands as a bubble (re-queueing showed a message waiting that the
+  agent already had, then sent it twice). Opt-in, because the
   reclaimed message leaves the queue: only a caller with somewhere to put the words may ask.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
@@ -307,6 +318,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   speaks the rest — media, instructions, `list_changed`, elicitation, sampling (behind a
   permission), roots, progress — and joins a tool's images to the next step as a user message,
   because an OpenAI-compatible tool message is text only.
+- **`builtin:browser` is `chrome-devtools-mcp` on the thread's Preview, never a browser of its
+  own**: `--wsEndpoint` is the `/cdp/<key>/<sessionId>` loopback, the server pipes it to the
+  desktop window whose Preview has **Drive** on (`browser-hosts.ts`) and interprets no CDP,
+  and Electron main answers as a browser of one page (`electron/cdp-shim.cjs`) — **never
+  `--remote-debugging-port`**, which hands every window and the token to anything local.
+  The preview is a `<webview>` only in the desktop shell; the PWA keeps the sandboxed iframe.
 - **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
   Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
   `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one
@@ -839,7 +856,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   foot of the transcript.** The wait, the working line, a held turn, an approval, a question,
   the queue — and **this device's connection** — are all at the foot of the transcript
   (`thread-view.tsx`), where the next thing happens. The connection is a `Notice`
-  (`components/connection-card.tsx`), not a reading: it is a sentence with a button, readable
+  (`components/thread-view/thread-status.tsx`), not a reading: it is a sentence with a button, readable
   in place, and it used to be one on the shelf's floor, where it took the shelf's own ground
   with it. **So nothing on the shelf is ever wrong** — no `tone` prop, no `--shelf-*` token,
   one `GROUND` — and the shelf holds only facts about the thread (`footer`) or about the
@@ -864,6 +881,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **The tree is `parent_id`**, same board only, never a descendant; deleting a parent
   *detaches*. Every change is written to `task_activity` — **history is recorded, not
   diffed**. **No foreign keys**; every cascade is by hand.
+- **A thread started on a task carries `sessions.task_id`, and the agent writes back through
+  `builtin:harness`.** Who wrote a comment or an activity row is said by the loopback
+  (`x-harness-actor`), never by the agent's own `author`. The card moves to in-progress when
+  the first turn starts and is **never** completed by a turn ending — that is the agent's call.
+  → `docs/tasks.md` "Agents and tasks".
 - `lib/tasks-view.ts` is the pure half; how a board is *read* is device-local, a *saved* view
   is the server's. Every view takes the one `ViewProps` contract and never touches the cache.
 
@@ -896,6 +918,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   repository root, ignored via `.git/info/exclude` — **never the user's `.gitignore`**. The
   column never moves; archiving leaves the checkout, removing it is its own route and refuses
   uncommitted work unless forced.
+- **The file library is one `files` table: folders and files in a tree, `parent_id` NULL is the
+  root** (`server/src/files.ts`, `routes/files.ts`, Settings › Files). **Bytes are a
+  `StorageProvider`'s** (`storage/provider.ts`: `local` default, others implement the one
+  interface and a line in `PROVIDERS`); a row records its provider, so they mix. No FK on
+  `parent_id` — delete is a recursive walk that releases bytes only when no other row shares
+  them. The client's one chooser is `FilePicker` over `FileExplorer`: the composer's "From
+  library" (bytes → `File` → the ordinary attachment path) and every logo field's Upload
+  (→ `logoFromFile` → a small `data:` URL on the row) use it.
 - **Backup is one JSON document and import is one transaction.** Never exported: the server
   token/host/port, the probe cache, `history_*` rows.
 - **Subscription quota is read by asking the runtime's own CLI, out of band**, naming the

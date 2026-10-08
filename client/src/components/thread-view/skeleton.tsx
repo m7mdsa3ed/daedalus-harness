@@ -8,7 +8,7 @@
    that are gated here instead of argued away — it is never drawn for a draft
    (which has no transcript to load), and it never outlives the first real row,
    so the only thread it can lie about is one whose journal comes back empty.
-   The wait at the foot (`StartingLine`) still owns the *words*; this owns the
+   The wait at the foot (`ThreadStatus`) still owns the *words*; this owns the
    fact that the pane is not blank while they are said. */
 import { Skeleton } from "@/components/ui/skeleton"
 

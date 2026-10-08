@@ -32,6 +32,10 @@ import { ArrowLeft, type LucideIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
+import { FilePicker } from "@/components/files/file-picker"
+import { useFileActions } from "@/lib/files"
+import { logoFromFile } from "@/lib/logo-file"
+import { reportError } from "@/lib/errors"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -414,5 +418,39 @@ export function FormActions({
         </Button>
       </div>
     </footer>
+  )
+}
+
+/** Upload and Clear for a logo field that is otherwise a pasted URL. The image
+    is chosen from the file library (which uploads too), scaled to a small
+    `data:` URL (`logoFromFile`) and written into the same string the URL input
+    edits, so the row needs no file store of its own. */
+export function LogoUpload({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = React.useState(false)
+  const files = useFileActions()
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Upload
+      </Button>
+      {value && (
+        <Button type="button" variant="ghost" size="sm" onClick={() => onChange("")}>
+          Clear
+        </Button>
+      )}
+      <FilePicker
+        open={open}
+        onOpenChange={setOpen}
+        accept="image/*"
+        title="Choose a logo"
+        onPick={(record) =>
+          void files
+            .fetchFile(record)
+            .then(logoFromFile)
+            .then(onChange)
+            .catch((err) => reportError(err, "Couldn't use that image"))
+        }
+      />
+    </>
   )
 }

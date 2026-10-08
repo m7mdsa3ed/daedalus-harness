@@ -1,6 +1,6 @@
 /* ── Folders and foldable tiers ── the group primitives the sidebar stacks. */
 import * as React from "react"
-import { ChevronRight, FolderIcon, PanelsTopLeft, Plus } from "lucide-react"
+import { ChevronRight, FolderIcon, Loader2, PanelsTopLeft, Plus } from "lucide-react"
 import { useLocation } from "react-router"
 import {
   Collapsible,
@@ -15,40 +15,45 @@ import {
   SidebarMenuButton,
 } from "@/components/ui/sidebar"
 import { ProjectIcon } from "@/components/entity-icon"
-import type { Actions } from "@/lib/actions"
+import { createLocalStore } from "@/lib/local-store"
 import { projectPath } from "@/lib/router"
 import { useActiveChat } from "@/lib/workspace/open-threads"
 import { type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { ACTION, GROUP, GROUP_LABEL, NEST, PROJECT_PAGE_SIZE, ROW, TIER } from "./scale"
+import { useSidebarEnv } from "./env"
 import { ThreadList } from "./thread-list"
-import type { ThreadStatus } from "./thread-row"
 
 /* Which groups are folded, on this device. One list for every foldable thing —
    a project folder is keyed by its id, Trash by a name no project can have —
    so the sidebar has one fold memory rather than one per kind of group. */
 const COLLAPSED_KEY = "ui.collapsedProjects"
 
-function collapsedGroups(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown
-    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []
-  } catch {
-    return []
-  }
-}
+const collapsedStore = createLocalStore<string[]>(
+  COLLAPSED_KEY,
+  (raw) => (Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []),
+  []
+)
 
-function rememberFold(key: string, open: boolean, defaultOpen: boolean) {
-  /* Only the *departure* from the default is stored, so a group that defaults
-     closed (Trash) does not need a row in the list to stay closed — and one
-     that defaults open does not need one to stay open. */
-  const collapsed = collapsedGroups().filter((id) => id !== key)
-  if (open !== defaultOpen) collapsed.push(key)
-  try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
-  } catch {
-    // A forgotten fold is not worth throwing out of a click handler.
-  }
+/* Reactive across every instance (and tab): a fold written here is what each
+   other reader of the key sees, with no re-read of localStorage per toggle. */
+function useFold(key: string, defaultOpen: boolean): [boolean, (open: boolean) => void] {
+  const open = React.useSyncExternalStore(
+    collapsedStore.subscribe,
+    () => collapsedStore.get().includes(key) !== defaultOpen
+  )
+  const setOpen = React.useCallback(
+    (next: boolean) => {
+      /* Only the *departure* from the default is stored, so a group that defaults
+         closed (Trash) does not need a row in the list to stay closed — and one
+         that defaults open does not need one to stay open. */
+      const collapsed = collapsedStore.get().filter((id) => id !== key)
+      if (next !== defaultOpen) collapsed.push(key)
+      collapsedStore.set(collapsed)
+    },
+    [key, defaultOpen]
+  )
+  return [open, setOpen]
 }
 
 /** A project as a folder row: chevron, name, thread count; its threads
@@ -62,8 +67,6 @@ export function ProjectFolder({
   sessions,
   onNewThread,
   onOpenProject,
-  actions,
-  status,
 }: {
   id: string
   name: string
@@ -73,13 +76,18 @@ export function ProjectFolder({
   onNewThread?: () => void
   /** Opens the project's own page. Absent for "Other", for the same reason. */
   onOpenProject?: () => void
-  actions: Actions
-  status: (session: SessionMeta) => ThreadStatus
 }) {
-  const [open, setOpen] = React.useState(() => !collapsedGroups().includes(id))
-  const toggle = (next: boolean) => {
-    setOpen(next)
-    rememberFold(id, next, true)
+  const [open, toggle] = useFold(id, true)
+  /* Rollups: what the folder holds that is moving or asking, said on the
+     folder itself so a closed one is still a reading. Same words as the
+     filter ("Needs you" is waiting *and* failed). */
+  const { status } = useSidebarEnv()
+  let running = 0
+  let needsYou = 0
+  for (const session of sessions) {
+    const state = status(session)
+    if (state === "running") running++
+    else if (state === "waiting" || state === "failed") needsYou++
   }
   const location = useLocation()
   const activeThreadId = useActiveChat()
@@ -119,17 +127,24 @@ export function ProjectFolder({
                  `right-8` (32–52px) sat exactly on the count. The same `!` the
                  scale's `FLOAT_ROW` and `ACTION` already carry, for the same
                  reason. */
-              className={cn(ROW, "text-sidebar-foreground/90", onOpenProject && "pr-14!")}
+              className={cn(
+                ROW,
+                /* A folder is a heading over rows, not a row: heavier type and
+                   a faint ground of its own, so a column of them reads apart
+                   from the two-line threads beneath. */
+                "bg-sidebar-accent/30 font-semibold text-sidebar-foreground",
+                onOpenProject && "pr-14!"
+              )}
             />
           }
         >
           {/* Chevron leads, as in a file tree: it is the fold control, and
               leading keeps the trailing corner free for the count and the
-              hover +. In the icon rail only the folder survives. */}
+              hover +. */}
           <ChevronRight
             aria-hidden
             className={cn(
-              "text-muted-foreground transition-transform duration-200 group-data-[collapsible=icon]:hidden",
+              "text-muted-foreground transition-transform duration-200",
               open && "rotate-90"
             )}
           />
@@ -142,8 +157,25 @@ export function ProjectFolder({
             <FolderIcon className="text-muted-foreground" />
           )}
           <span className="min-w-0 flex-1 truncate">{name}</span>
+          {!open && needsYou > 0 && (
+            <span
+              title={`${needsYou} need${needsYou === 1 ? "s" : ""} you`}
+              className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400"
+            >
+              {needsYou}
+            </span>
+          )}
+          {!open && running > 0 && (
+            <span
+              title={`${running} running`}
+              className="flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-muted-foreground tabular-nums"
+            >
+              <Loader2 aria-hidden className="size-2.5! animate-spin" />
+              {running}
+            </span>
+          )}
           {sessions.length > 0 && (
-            <span className="shrink-0 text-[11px] text-muted-foreground/70 tabular-nums transition-opacity group-hover/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+            <span className="shrink-0 text-[11px] text-muted-foreground/70 tabular-nums transition-opacity group-hover/menu-item:opacity-0">
               {sessions.length}
             </span>
           )}
@@ -174,7 +206,7 @@ export function ProjectFolder({
           </SidebarMenuAction>
         )}
         </div>
-        <CollapsibleContent className="harness-collapse group-data-[collapsible=icon]:hidden">
+        <CollapsibleContent className="harness-collapse">
           <div className={NEST}>
             {sessions.length === 0 ? (
               <p className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">
@@ -183,8 +215,6 @@ export function ProjectFolder({
             ) : (
               <ThreadList
                 sessions={sessions}
-                actions={actions}
-                status={status}
                 limit={PROJECT_PAGE_SIZE}
                 /* A folder is the whole history of one project, so it reads by
                    period — Today, Yesterday, Previous 7 days — the way the
@@ -200,12 +230,6 @@ export function ProjectFolder({
   )
 }
 
-/** A group-header control: the ✎ and + that sit beside a tier's label. One
-    class rather than one per group, because two tiers whose header buttons are
-    a pixel apart is exactly what the spacing scale exists to prevent. */
-export const HEADER_BUTTON =
-  "grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-
 /** A foldable sidebar tier. Open/closed is remembered per key. */
 export function FoldableGroup({
   groupKey,
@@ -213,7 +237,6 @@ export function FoldableGroup({
   icon,
   count,
   defaultOpen = true,
-  action,
   expandOn,
   children,
 }: {
@@ -223,46 +246,30 @@ export function FoldableGroup({
   /** Printed next to the label when the number is something you act on. */
   count?: number
   defaultOpen?: boolean
-  /** A control that belongs to the group itself, not to a row in it — a
-      folder's "+ new thread". Rendered only on hover, in the slot just
-      before the chevron (where the count sits, which yields to it exactly as
-      a project folder's count yields to its hover +), so the chevron itself
-      stays put and behaves like every other group's. It cannot live inside
-      the label, because the label is the fold trigger and a button in a
-      button folds and fires at once. */
-  action?: React.ReactNode
   /** Open the tier when this key changes, without changing its saved fold preference. */
   expandOn?: string | null
   children: React.ReactNode
 }) {
-  const [open, setOpen] = React.useState(
-    () => collapsedGroups().includes(groupKey) !== defaultOpen
-  )
+  const [stored, setFold] = useFold(groupKey, defaultOpen)
+  /* expandOn opens the tier for now without touching the saved preference. */
+  const [forced, setForced] = React.useState(false)
+  const open = stored || forced
   const previousExpandOn = React.useRef<string | null>(null)
 
   React.useEffect(() => {
-    if (expandOn && expandOn !== previousExpandOn.current) setOpen(true)
+    if (expandOn && expandOn !== previousExpandOn.current) setForced(true)
     previousExpandOn.current = expandOn ?? null
   }, [expandOn])
 
   const toggle = (next: boolean) => {
-    setOpen(next)
-    rememberFold(groupKey, next, defaultOpen)
+    setForced(false)
+    setFold(next)
   }
 
   return (
     <Collapsible open={open} onOpenChange={toggle}>
       <SidebarGroup className={cn(TIER, GROUP)}>
-        {/* The header row is the hover group, not the label: the action is
-            the label's sibling (see above), and a `group-hover` on the label
-            alone never reached it. */}
-        <div className="group/label relative">
-          {action && (
-            /* right = label px-2 + chevron size-4 + label gap-1.5. */
-            <div className="absolute top-1.5 right-[30px] z-10 flex opacity-0 transition-opacity duration-150 group-hover/label:opacity-100 focus-within:opacity-100 group-data-[collapsible=icon]:hidden">
-              {action}
-            </div>
-          )}
+        <div className="relative">
           <CollapsibleTrigger
             render={
               <SidebarGroupLabel
@@ -274,10 +281,7 @@ export function FoldableGroup({
             <span className="truncate">{label}</span>
             {count != null && (
               <span
-                className={cn(
-                  "ml-auto tabular-nums opacity-70 transition-opacity duration-150",
-                  action && "group-hover/label:opacity-0 group-focus-within/label:opacity-0"
-                )}
+                className="ml-auto tabular-nums opacity-70"
               >
                 {count}
               </span>

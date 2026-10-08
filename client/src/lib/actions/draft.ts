@@ -170,6 +170,8 @@ export function draftActions(core: ActionsCore) {
     id?: string
     /** Start it as an aside of that thread, on that passage. */
     aside?: { of: string; quote: string }
+    /** Start it on a board task (`sessions.taskId`). */
+    taskId?: string
   }): string => {
     const { project, profile, model, effort } = opts
     const id = opts.id ?? uuid()
@@ -206,6 +208,7 @@ export function draftActions(core: ActionsCore) {
       draft: true,
       ...tools,
       ...(opts.aside ? { forkedFromSessionId: opts.aside.of, asideQuote: opts.aside.quote } : {}),
+      ...(opts.taskId ? { taskId: opts.taskId } : {}),
     }
     dispatch({ type: "draft-session", session })
     dispatch({ type: "thread-reset", id, thread: { ...emptyThread } })
@@ -229,7 +232,7 @@ export function draftActions(core: ActionsCore) {
      * thread the server never heard of, which is what an unsent draft looks
      * like from a fresh page.
      */
-    startThreadIn(opts: { projectId?: string; id?: string } = {}): string | null {
+    startThreadIn(opts: { projectId?: string; id?: string; taskId?: string; text?: string } = {}): string | null {
       /* A caller that names a project gets it; the fallbacks stay inside the
          space in front of you, then anywhere rather than nowhere. */
       const space = loadActiveSpace(settings.id)
@@ -243,7 +246,10 @@ export function draftActions(core: ActionsCore) {
       if (!project) return null
       const start = resolveThreadStart(project.defaults ?? emptyDefaults(), catalog.profiles())
       if (!start) return null
-      return newDraftThread({ project, ...start, id: opts.id })
+      const id = newDraftThread({ project, ...start, id: opts.id, taskId: opts.taskId })
+      // Words the person can send as they are, or change first.
+      if (opts.text) saveDraft(id, opts.text)
+      return id
     },
 
     newDraftThread,

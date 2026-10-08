@@ -31,7 +31,7 @@
    happen, and everything else is here. The connection that carries the message
    spent time on both sides of that line — a box above the shelf, then a reading
    on its floor — and is a `Notice` at the foot of the transcript now
-   (`components/connection-card.tsx`), where a sentence with a button belongs.
+   (`components/thread-view/thread-status.tsx`), where a sentence with a button belongs.
    So the shelf holds no *status*: everything on it is either a fact about the
    thread (the floor: project, tools, the context ring) or something about the
    message being typed (the pile), and none of it is ever wrong.
@@ -76,6 +76,14 @@ import { cn } from "@/lib/utils"
    on the other side of the composer's seam, in `draft-config.tsx` — insets by
    the same number rather than its own. */
 export const SHELF_PAD = "px-3"
+
+/** One rule for how a count is written wherever the strip draws one — the
+    sliver, the footer bubble, the send row's picker. A bubble is 14px, so it
+    caps at `9+`; a sliver has the room for `99+`. Never an inline ternary at a
+    call site: three of them had already drifted apart. */
+export function formatCount(count: number, cap: 9 | 99 = 9): string {
+  return count > cap ? `${cap}+` : String(count)
+}
 
 /**
  * The count a shelf item wears, wherever it wears it.
@@ -541,7 +549,7 @@ export function ComposerStrip({
                   {Icon && <Icon className="size-3.5 shrink-0" />}
                   <span className="max-w-36 truncate">{entry.label}</span>
                   {entry.badge != null && entry.badge > 0 && (
-                    <ChipBadge>{entry.badge > 99 ? "99+" : entry.badge}</ChipBadge>
+                    <ChipBadge>{formatCount(entry.badge, 99)}</ChipBadge>
                   )}
                 </button>
               )

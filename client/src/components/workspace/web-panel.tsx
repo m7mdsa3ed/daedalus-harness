@@ -27,14 +27,20 @@ import type { IDockviewPanelProps } from "dockview-react"
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  CrosshairIcon,
+  EraserIcon,
   ExternalLinkIcon,
+  MousePointerClickIcon,
   MonitorIcon,
   RefreshCwIcon,
   SmartphoneIcon,
   TabletIcon,
+  TerminalIcon,
+  XIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { PanelToolbar } from "@/components/workspace/primitives"
 import { WebFrameHint, WebProblemView, type WebProblem } from "@/components/workspace/web-state"
@@ -49,6 +55,15 @@ import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { FilePreview } from "@/components/workspace/file-preview"
 import type { WebDiff } from "@/lib/workspace/panels"
 import { DiffTab } from "@/components/workspace/diff-tab"
+import { useThreadDockHandle, useThreadDockSession } from "@/components/workspace/thread-dock"
+import { hostBrowser } from "@/lib/browser-host"
+import {
+  elementPrompt,
+  useGuestConsole,
+  type ConsoleEntry,
+  type PickedElement,
+} from "@/lib/browser-preview"
+import { requestComposerInsert } from "@/lib/composer-insert"
 
 /**
  * A typed address → a URL this panel will open, or a throw.
@@ -90,6 +105,110 @@ function normalizeUrl(raw: string): string {
     can address. `allow-top-navigation` is likewise absent, so a page cannot
     navigate the app out from under itself. */
 const SANDBOX = "allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+
+/* ── The desktop shell's guest ──
+   In Electron the page is a `<webview>`, not an iframe: its own process and
+   `webContents`, in its own session, pinned down by main.cjs
+   (`will-attach-webview`) exactly as the sandbox pins the frame — no preload,
+   no Node, nothing of the app's storage. What it buys is what a sandboxed
+   frame cannot give: history (back/forward), a real reload, no
+   `X-Frame-Options` refusal, no mixed-content block, and a `webContents` the
+   shell can attach a debugger to. A browser keeps the iframe. */
+const GUEST = typeof window !== "undefined" && !!window.desktop?.isElectron
+
+/** The part of Electron's `WebviewTag` this panel touches. */
+interface WebviewElement extends HTMLElement {
+  loadURL(url: string): Promise<void>
+  reload(): void
+  goBack(): void
+  goForward(): void
+  canGoBack(): boolean
+  canGoForward(): boolean
+  getURL(): string
+  getWebContentsId(): number
+}
+
+interface GuestNav {
+  url: string
+  back: boolean
+  forward: boolean
+}
+
+/**
+ * The `<webview>`. Mounted once per address bar's life: `src` is only the
+ * first address, and every later one — a new address, the same one again, the
+ * reload after a dev server came up — is `loadURL`, because re-keying would
+ * throw the guest away and its history with it, and moving `src` as well would
+ * navigate twice.
+ */
+function GuestView({
+  url,
+  reloadKey,
+  viewRef,
+  onLoaded,
+  onNavigated,
+  onGuest,
+}: {
+  url: string
+  reloadKey: number
+  viewRef: React.RefObject<WebviewElement | null>
+  onLoaded: () => void
+  onNavigated: (nav: GuestNav) => void
+  /** The guest's webContents id once it is attached — what Drive addresses —
+      and null when it goes. */
+  onGuest: (id: number | null) => void
+}) {
+  const [initial] = React.useState(url)
+  const ready = React.useRef(false)
+  const loaded = React.useRef(onLoaded)
+  const navigated = React.useRef(onNavigated)
+  const guest = React.useRef(onGuest)
+  React.useLayoutEffect(() => {
+    loaded.current = onLoaded
+    navigated.current = onNavigated
+    guest.current = onGuest
+  })
+
+  React.useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const onReady = () => {
+      if (ready.current) return
+      ready.current = true
+      guest.current(view.getWebContentsId())
+    }
+    const onFinish = () => loaded.current()
+    const onNav = () => navigated.current({ url: view.getURL(), back: view.canGoBack(), forward: view.canGoForward() })
+    view.addEventListener("dom-ready", onReady)
+    view.addEventListener("did-finish-load", onFinish)
+    view.addEventListener("did-navigate", onNav)
+    view.addEventListener("did-navigate-in-page", onNav)
+    return () => {
+      view.removeEventListener("dom-ready", onReady)
+      view.removeEventListener("did-finish-load", onFinish)
+      view.removeEventListener("did-navigate", onNav)
+      view.removeEventListener("did-navigate-in-page", onNav)
+      guest.current(null)
+    }
+  }, [viewRef])
+
+  const first = React.useRef(true)
+  React.useEffect(() => {
+    if (first.current) {
+      first.current = false
+      return
+    }
+    const view = viewRef.current
+    if (!view) return
+    /* Before the guest is attached its methods throw; the attribute is the
+       one door that works then. An aborted load (ERR_ABORTED — the person
+       navigated again) rejects, and is not a failure. */
+    if (!ready.current) view.setAttribute("src", url)
+    else view.loadURL(url).catch(() => {})
+  }, [url, reloadKey, viewRef])
+
+  return <webview ref={viewRef as unknown as React.Ref<HTMLWebViewElement>} src={initial} className="flex h-full w-full bg-white" />
+}
 
 const VIEWPORTS = [
   { id: "desktop", label: "Desktop", icon: MonitorIcon, width: null },
@@ -142,6 +261,71 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   /* Whether anything is answering at the address. `null` is "not asked yet",
      which is why it is not `false`: an unanswered question is not a failure. */
   const [reachable, setReachable] = React.useState<boolean | null>(null)
+  /* The guest's own history, which only the desktop shell's `<webview>` has. */
+  const viewRef = React.useRef<WebviewElement | null>(null)
+  const [nav, setNav] = React.useState<GuestNav | null>(null)
+
+  /* ── Drive ──
+     The agent's `chrome-devtools-mcp` (the `builtin:browser` row) connects to
+     *this* page while Drive is on: the thread's own Preview, in the desktop
+     shell, at project trust. Off by default and per panel — it is a hand on
+     the page the person is looking at, given each time. */
+  const threadId = useThreadDockSession()
+  const [guestId, setGuestId] = React.useState<number | null>(null)
+  const [drive, setDrive] = React.useState(false)
+  const canDrive = GUEST && !!window.desktop?.cdp && !!threadId && trust === "project"
+  React.useEffect(() => {
+    if (!drive || !canDrive || !threadId || guestId === null) return
+    return hostBrowser(settings, threadId, guestId, () => setDrive(false))
+  }, [drive, canDrive, threadId, guestId, settings])
+
+  /* ── Pick element ──
+     The person points at something on the page, and the panel turns the click
+     into a line for the composer — the way to tell an agent *which* element
+     without describing it. The click itself is what does the picking (the page
+     swallows it), so the toggle is on only while someone is aiming. */
+  const dockHandle = useThreadDockHandle()
+  const canInspect = GUEST && !!window.desktop?.previewPicker && !!threadId && guestId !== null
+  const [picking, setPicking] = React.useState(false)
+  const [picked, setPicked] = React.useState<PickedElement | null>(null)
+  React.useEffect(() => {
+    if (!picking || guestId === null) return
+    const api = window.desktop?.previewPicker
+    if (!api) return
+    let live = true
+    api.pick(guestId).then(
+      (element) => {
+        if (!live) return
+        setPicked(element)
+        setPicking(false)
+      },
+      () => {
+        if (live) setPicking(false)
+      }
+    )
+    return () => {
+      live = false
+      api.cancel(guestId)
+    }
+  }, [picking, guestId])
+
+  /* ── Console ──
+     The page's own log, read from the guest. `read` gives back what the page
+     logged before the drawer was opened; the subscription carries the rest.
+     A main-frame navigation clears it, because the console belongs to the page
+     in front of you. */
+  const [consoleOpen, setConsoleOpen] = React.useState(false)
+  const consoleEntries = useGuestConsole(guestId, consoleOpen && GUEST)
+  const problems = React.useMemo(
+    () => consoleEntries.entries.filter((entry) => entry.level === "error" || entry.level === "warning").length,
+    [consoleEntries.entries]
+  )
+
+  const sendToAgent = () => {
+    if (!picked || !threadId) return
+    requestComposerInsert(threadId, elementPrompt(picked, url || undefined))
+    dockHandle?.open("transcript")
+  }
 
   /* ── The project preview ──
      Trust-level "project" polls the server's own answer while it has a URL:
@@ -250,6 +434,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
       const normalized = normalizeUrl(next)
       setUrl(normalized)
       setTyped(normalized)
+      setPicked(null)
       setReloadKey((current) => current + 1)
     } catch (err) {
       reportError(err, "That isn't a URL this can open")
@@ -262,7 +447,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
      case on a phone, not an edge one. `WebProblemView` says it *and* the way
      out, which is the half the old line was missing. */
   const mixedContent =
-    window.location.protocol === "https:" && url.startsWith("http://")
+    !GUEST && window.location.protocol === "https:" && url.startsWith("http://")
 
   /* ── Is anything listening there? ──
      The one question a sandboxed frame cannot answer. A blocked or refused
@@ -360,8 +545,9 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           variant="ghost"
           aria-label="Back"
           className="size-6"
-          disabled
-          title="A sandboxed frame does not expose its history"
+          disabled={!nav?.back}
+          title={GUEST ? "Back" : "A sandboxed frame does not expose its history"}
+          onClick={() => viewRef.current?.goBack()}
         >
           <ArrowLeftIcon className="size-3.5" />
         </Button>
@@ -370,8 +556,9 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           variant="ghost"
           aria-label="Forward"
           className="size-6"
-          disabled
-          title="A sandboxed frame does not expose its history"
+          disabled={!nav?.forward}
+          title={GUEST ? "Forward" : "A sandboxed frame does not expose its history"}
+          onClick={() => viewRef.current?.goForward()}
         >
           <ArrowRightIcon className="size-3.5" />
         </Button>
@@ -440,6 +627,54 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           </Button>
         ))}
 
+        {canDrive && (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Let the agent drive this preview"
+            aria-pressed={drive}
+            title={drive ? "The agent can drive this preview — click to stop" : "Let the agent drive this preview (Preview browser tools)"}
+            className={cn("size-6", drive && "text-primary")}
+            onClick={() => setDrive((on) => !on)}
+          >
+            <MousePointerClickIcon className="size-3.5" />
+          </Button>
+        )}
+
+        {canInspect && (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Pick an element"
+            aria-pressed={picking}
+            title={picking ? "Click an element on the page (Escape to cancel)" : "Pick an element to tell the agent about"}
+            className={cn("size-6", picking && "text-primary")}
+            onClick={() => setPicking((on) => !on)}
+          >
+            <CrosshairIcon className="size-3.5" />
+          </Button>
+        )}
+
+        {GUEST && !!window.desktop?.guestConsole && (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Console"
+            aria-pressed={consoleOpen}
+            title={consoleOpen ? "Hide the page console" : "Show the page console"}
+            className={cn("relative size-6", consoleOpen && "text-primary")}
+            onClick={() => setConsoleOpen((on) => !on)}
+          >
+            <TerminalIcon className="size-3.5" />
+            {problems > 0 && (
+              <span
+                aria-hidden
+                className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-amber-500"
+              />
+            )}
+          </Button>
+        )}
+
         <Button
           size="icon-xs"
           variant="ghost"
@@ -452,6 +687,42 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           <ExternalLinkIcon className="size-3.5" />
         </Button>
       </PanelToolbar>
+
+      {/* ── The element you picked ──
+          A strip rather than a dialog: it is one line about the page, and it
+          goes to the composer in one click. The selector truncates because a
+          deep DOM path is long and the buttons beside it are the point. */}
+      {picking && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-primary/5 px-2 py-1.5 text-[11px] text-primary">
+          <CrosshairIcon className="size-3.5 shrink-0" />
+          <span>Click an element on the page. Escape cancels.</span>
+        </div>
+      )}
+      {picked && !picking && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-muted/40 px-2 py-1.5">
+          <CrosshairIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <code className="min-w-0 flex-1 truncate font-mono text-[11px]" title={picked.selector}>
+            {picked.selector}
+          </code>
+          <span className="hidden min-w-0 max-w-[14rem] truncate text-[11px] text-muted-foreground @panel-sm:inline">
+            {picked.tag}
+            {picked.text ? ` "${picked.text}"` : ""}
+          </span>
+          <Button size="xs" variant="outline" onClick={sendToAgent} disabled={!threadId}>
+            Send to agent
+          </Button>
+          <CopyButton text={elementPrompt(picked, url || undefined)} size="xs" />
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Dismiss"
+            className="size-6"
+            onClick={() => setPicked(null)}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        </div>
+      )}
 
       {/* ── One failure at a time ──
           Every reason this panel can be showing no page is derived once, here,
@@ -498,8 +769,28 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
                 the frame is *unproven*, and it goes the moment the frame
                 reports that it loaded (`onLoad`). A page already drawing needs
                 no warning about the pages that might not have. */}
-            {hint && <WebFrameHint onDismiss={() => setHint(false)} />}
+            {hint && !GUEST && <WebFrameHint onDismiss={() => setHint(false)} />}
             <div className="mx-auto h-full" style={width ? { width, maxWidth: "100%" } : undefined}>
+              {GUEST ? (
+                <GuestView
+                  url={url}
+                  reloadKey={reloadKey}
+                  viewRef={viewRef}
+                  onLoaded={() => setHint(false)}
+                  /* Where the page went is the bar's to show; `url` stays the
+                     address that was *asked for*, or following a link would
+                     load it a second time. */
+                  onNavigated={(next) => {
+                    setNav(next)
+                    setTyped(next.url)
+                    /* A picked element is about the page it was picked on, and
+                       an injected picker does not survive a navigation. */
+                    setPicked(null)
+                    setPicking(false)
+                  }}
+                  onGuest={setGuestId}
+                />
+              ) : (
               <iframe
                 key={reloadKey}
                 src={url}
@@ -518,10 +809,85 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
                 sandbox={SANDBOX}
                 referrerPolicy="no-referrer"
               />
+              )}
             </div>
           </>
         ) : null}
       </div>
+
+      {/* ── The page's console ──
+          Below the page, the way a browser does it: the page keeps the room it
+          had and the log is a drawer under it. Denser than a terminal, because
+          a console is scanned rather than read, and errors and warnings wear
+          the ink they earn. */}
+      {consoleOpen && GUEST && (
+        <div className="flex h-44 shrink-0 flex-col border-t border-border/60 bg-muted/30">
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-2 py-1">
+            <TerminalIcon className="size-3.5 text-muted-foreground" />
+            <span className="text-[11px] font-medium">Console</span>
+            <span className="text-[11px] text-muted-foreground">
+              {consoleEntries.entries.length === 0
+                ? "no messages"
+                : `${consoleEntries.entries.length} message${consoleEntries.entries.length === 1 ? "" : "s"}`}
+            </span>
+            <div className="flex-1" />
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Clear console"
+              title="Clear"
+              className="size-6"
+              onClick={consoleEntries.clear}
+            >
+              <EraserIcon className="size-3.5" />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Hide console"
+              title="Hide"
+              className="size-6"
+              onClick={() => setConsoleOpen(false)}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto py-1 font-mono text-[11px] leading-relaxed">
+            {consoleEntries.entries.length === 0 ? (
+              <p className="px-2 py-0.5 text-muted-foreground">Nothing logged yet.</p>
+            ) : (
+              consoleEntries.entries.map((entry, index) => <ConsoleLine key={index} entry={entry} />)
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** One line of the page's console. A glyph carries the level at a glance; the
+    source only when the page named one. */
+function ConsoleLine({ entry }: { entry: ConsoleEntry }) {
+  const tone =
+    entry.level === "error"
+      ? "text-red-600 dark:text-red-400"
+      : entry.level === "warning"
+        ? "text-amber-600 dark:text-amber-400"
+        : entry.level === "debug"
+          ? "text-muted-foreground"
+          : "text-foreground/80"
+  return (
+    <div className={cn("flex gap-2 px-2 py-0.5", tone)}>
+      <span aria-hidden className="shrink-0 select-none opacity-70">
+        {entry.level === "error" ? "x" : entry.level === "warning" ? "!" : entry.level === "debug" ? "-" : ">"}
+      </span>
+      <span className="min-w-0 whitespace-pre-wrap break-words">{entry.message}</span>
+      {entry.source && (
+        <span className="ml-auto shrink-0 pl-2 text-muted-foreground">
+          {entry.source.slice(entry.source.lastIndexOf("/") + 1)}
+          {entry.line !== undefined ? `:${entry.line}` : ""}
+        </span>
+      )}
     </div>
   )
 }

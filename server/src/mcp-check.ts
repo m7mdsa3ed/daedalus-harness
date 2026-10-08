@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { eq } from "drizzle-orm";
 import type * as acp from "./acp.js";
 import { db } from "./db/index.js";
+import { resolveMcpLogo } from "./mcp-logo.js";
 import { mcpCatalog } from "./db/schema.js";
 
 /**
@@ -55,7 +56,7 @@ export interface McpCheckResult {
   /** How long the connect plus the listings took, for a server that is merely slow. */
   ms: number;
   /** What the server called itself in the initialize answer — not the row's name. */
-  serverInfo?: { name: string; version: string };
+  serverInfo?: { name: string; version: string; /** The server's own logo from the initialize answer (`icons`), https or data: only. */ icon?: string };
   tools: McpCheckEntry[];
   prompts: McpCheckEntry[];
   resources: McpCheckEntry[];
@@ -119,10 +120,18 @@ export async function checkMcpServer(def: acp.McpServer): Promise<McpCheckResult
   const started = Date.now();
   const client = new Client({ name: "daedalus-harness", version: "0.1.0" });
   const result: McpCheckResult = { ok: false, ms: 0, tools: [], prompts: [], resources: [] };
+  let logo: Promise<string | null> | undefined;
   try {
     await connect(client, def);
     const info = client.getServerVersion();
-    if (info) result.serverInfo = { name: String(info.name), version: String(info.version ?? "") };
+    if (info) {
+      const icon = info.icons?.map((i) => i.src).find((src) => /^(https:\/\/|data:image\/)/.test(src));
+      result.serverInfo = { name: String(info.name), version: String(info.version ?? ""), ...(icon ? { icon } : {}) };
+    }
+    /* The logo is read once, here, and kept in the listing — see mcp-logo.ts.
+       Not awaited ahead of the listings below: a slow favicon host must not
+       make a server look slow. */
+    logo = resolveMcpLogo(result.serverInfo?.icon, "type" in def && (def.type === "http" || def.type === "sse") ? def.url : undefined);
     /* Each listing is guarded by the capability the handshake declared: asking
        a server that does not serve prompts is a -32601, which would read as a
        broken server rather than a server without prompts. */
@@ -169,6 +178,8 @@ export async function checkMcpServer(def: acp.McpServer): Promise<McpCheckResult
         mimeType: t.mimeType,
       }));
     }
+    const inline = await logo;
+    if (inline) result.serverInfo = { name: result.serverInfo?.name ?? def.name, version: result.serverInfo?.version ?? "", icon: inline };
     result.ok = true;
   } catch (err) {
     result.error = (err as Error).message;

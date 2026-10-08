@@ -307,7 +307,9 @@ export function AppShell({
      A thread is its project's, and a project is its space's, so the tabs of
      the space in front of you are exactly those — anything else in the dock is
      a tab that landed in the wrong space (or was filed there when spaces
-     arrived) and is closed. A thread or project with no space is everyone's,
+     arrived) and is *filed under its own space*, not closed — a project moved
+     to another space takes its tabs with it, and they open when that space is
+     next in front (`switchSpace`). A thread or project with no space is everyone's,
      as in the sidebar. `spaceRef` is the space the *dock* holds: moved only by
      the switch effect, never by the click, so a prune between the click and
      the swap cannot close the outgoing space's tabs before they are filed. */
@@ -318,14 +320,24 @@ export function AppShell({
     const live = storeHandle.getState().sessions
     if (live.length === 0) return
     const space = spaceRef.current
-    const here = (projectId?: string) => {
+    /* The space a tab's project is filed under when it is not this one — the
+       dock files the tab there rather than closing it (`prunePanels`). */
+    const elsewhere = (projectId?: string) => {
       const owner = projects.find((project) => project.id === projectId)?.spaceId
-      return !space || !owner || owner === space
+      return space && owner && owner !== space ? owner : null
     }
-    dock.prunePanels({
-      sessions: live.filter((session) => here(session.projectId)).map((session) => session.id),
-      projects: [HOME_PROJECT_ID, ...projects.filter((project) => here(project.id)).map((project) => project.id)],
-    })
+    dock.prunePanels(
+      {
+        sessions: live.map((session) => session.id),
+        projects: [HOME_PROJECT_ID, ...projects.map((project) => project.id)],
+      },
+      (panel) =>
+        panel.kind === "chat"
+          ? elsewhere(live.find((session) => session.id === panel.sessionId)?.projectId)
+          : panel.kind === "terminal" || panel.kind === "web"
+            ? elsewhere(panel.projectId)
+            : null
+    )
   }, [projects, dock, storeHandle])
 
   React.useEffect(() => {
@@ -517,7 +529,9 @@ export function AppShell({
       style={{
         "--sidebar-width": sidebar.width,
         height: "100dvh",
+        // Both sides: a landscape notch is on the right as often as the left.
         paddingLeft: "env(safe-area-inset-left, 0px)",
+        paddingRight: "env(safe-area-inset-right, 0px)",
       } as React.CSSProperties}
     >
       {/* First in the tree so its effect runs before any sibling subtree's:
@@ -734,7 +748,12 @@ export function AppShell({
                 you can go. */}
             {/* Height of the chip, width of its label: HEADER_CHIP is a square,
                 which clipped the name down to the glyph. */}
-            <SpaceSwitcher className={cn("h-[var(--dock-chip-h)] shrink-0 px-2.5", STRIP_GROUND)} />
+            <SpaceSwitcher
+              className={cn(
+                "h-[var(--dock-chip-h)] shrink-0 px-2.5 max-md:size-[var(--dock-chip-h)] max-md:justify-center max-md:gap-0 max-md:px-0",
+                STRIP_GROUND
+              )}
+            />
             {/* How transcripts are drawn, on this device — beside the one other
                 control that is also this device's and not this route's.
                 Sliders, not a cog: a cog in this app means the *server's*

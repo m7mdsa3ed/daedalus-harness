@@ -28,6 +28,13 @@ import { z } from "zod";
 export const WORKFLOW_SERVER_NAME = "workflow";
 /** The `agents` MCP server: one thread asking another (profile, agent) pair. */
 export const AGENTS_SERVER_NAME = "agents";
+/** The `harness` MCP server: the agent managing this harness (tasks, boards,
+    profiles, projects). */
+export const HARNESS_SERVER_NAME = "harness";
+/** The `builtin:browser` row's server: Google's `chrome-devtools-mcp`, pointed
+    at the thread's preview. Its own name, so the tools read as models know
+    them (`mcp__chrome-devtools__take_snapshot`). */
+export const BROWSER_SERVER_NAME = "chrome-devtools";
 
 export const STEP_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/i;
 

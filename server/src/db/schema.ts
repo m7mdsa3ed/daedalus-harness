@@ -509,7 +509,7 @@ export const projects = pgTable("projects", {
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents";
+export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser";
 
 export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
@@ -518,7 +518,7 @@ export const mcpServers = pgTable("mcp_servers", {
   /** Optional registry-provided logo for the library list. */
   logoUrl: text("logo_url"),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents", "harness", "browser"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: jsonb("headers").$type<NameValue[]>(),
@@ -745,6 +745,31 @@ export const themes = pgTable("themes", {
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 
+/** A realtime voice backend — OpenAI Realtime or Gemini Live — that the voice
+    mode talks through (`voice.ts`). One row per provider, keyed by its name,
+    because the provider IS the identity: there is nothing a second OpenAI row
+    could mean. The key is the server's alone: the browser is handed a
+    short-lived token minted from it per call, never the key. `isDefault` is
+    the one the voice button uses; with one row it is that row. */
+export const voiceProviders = pgTable("voice_providers", {
+  provider: text("provider").$type<"openai" | "google">().primaryKey(),
+  apiKey: text("api_key").notNull(),
+  model: text("model").notNull(),
+  voice: text("voice").notNull().default(""),
+  isDefault: boolean("is_default").notNull().default(false),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
+/** Batch speech generation providers. Keys remain server-side and provider ids
+    are data, so adding a TTS adapter does not require a schema migration. */
+export const videoTtsProviders = pgTable("video_tts_providers", {
+  provider: text("provider").primaryKey(),
+  apiKey: text("api_key").notNull(),
+  model: text("model").notNull(),
+  voice: text("voice").notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+
 /** A titled knowledge-base entry, keyed to a project. The agent's `knowledge`
     MCP server reads and writes these; `project_id` scopes every query so
     nothing a workspace learns leaks into another. Search is substring `LIKE`
@@ -954,6 +979,11 @@ export const sessions = pgTable(
        thread it was selected in, turn null). Non-null is the flag: the sidebar
        badges it and the parent highlights the passage. */
     asideQuote: text("aside_quote"),
+    /* The task this thread was started on (`tasks.id`). Not a foreign key, like
+       every task reference: the board is standalone, and a deleted task reads
+       as a thread whose link points at nothing — which the spawn trailer and
+       the turn hook both treat as "no task". */
+    taskId: text("task_id"),
   },
   (t) => [
     index("sessions_live").on(t.deletedAt, t.createdAt),
@@ -983,6 +1013,41 @@ export const sessions = pgTable(
  * points at a deleted run. Step threads themselves are ordinary `sessions`
  * rows carrying `parent_session_id`.
  */
+/** Thread-owned video document. Scenes stay declarative JSON so agents can
+    propose edits without ever supplying executable render code. */
+export const sessionVideos = pgTable(
+  "session_videos",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    document: jsonb("document").$type<Record<string, unknown>>().notNull(),
+    revision: integer("revision").notNull().default(1),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("session_videos_updated").on(t.updatedAt)],
+);
+
+/** Immutable render attempts and outputs for a thread's video document. */
+export const sessionVideoRenders = pgTable(
+  "session_video_renders",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    document: jsonb("document").$type<Record<string, unknown>>().notNull(),
+    status: text("status", { enum: ["queued", "rendering", "completed", "failed"] }).notNull(),
+    progress: integer("progress").notNull().default(0),
+    outputPath: text("output_path"),
+    error: text("error"),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("session_video_renders_session").on(t.sessionId, t.createdAt)],
+);
+
 export const workflowRuns = pgTable(
   "workflow_runs",
   {
@@ -1809,6 +1874,45 @@ export const attachments = pgTable(
 );
 
 /**
+ * The file library: a tree of folders and files, Drive-shaped.
+ *
+ * One table for both kinds. `parent_id` NULL is the root; a folder is a row
+ * with `kind = "folder"` and no bytes, a file has `provider` + `key` naming
+ * where its bytes live (`storage/`: local by default, anything that implements
+ * `StorageProvider` beside it). `mime_type` is recorded on both — a folder's is
+ * the conventional `inode/directory`, so a listing sorts and filters on one
+ * column.
+ *
+ * **No foreign key on `parent_id`**, like `tasks.parent_id`: deleting a folder
+ * is a recursive walk by hand (`files.ts`), because the bytes behind each file
+ * must be released through *its* provider, which no SQL cascade can call.
+ * `(parent_id, name)` is unique in practice — `files.ts` enforces it by
+ * renaming a collision `name (2).ext` — but is not an index constraint, since a
+ * NULL parent would not collide in one.
+ */
+export const files = pgTable(
+  "files",
+  {
+    id: text("id").primaryKey(),
+    /** NULL is the root. */
+    parentId: text("parent_id"),
+    kind: text("kind").$type<"folder" | "file">().notNull(),
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: bigint("size", { mode: "number" }).notNull().default(0),
+    /** Content hash — what makes a re-upload of the same bytes free. */
+    sha256: text("sha256"),
+    /** Which `StorageProvider` holds the bytes; null for a folder. */
+    provider: text("provider"),
+    /** The provider's own address for them. Opaque to everything else. */
+    key: text("key"),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("files_parent").on(t.parentId), index("files_sha").on(t.sha256)],
+);
+
+/**
  * One-row bookkeeping for the boot-time backfill of the search index
  * (`search.ts`), keyed so a future index rebuild can add its own marker. The
  * FTS5 table it tracks is not here — drizzle cannot model a virtual table —
@@ -2113,6 +2217,9 @@ export const taskActivity = pgTable(
     field: text("field").notNull(),
     from: jsonb("from").$type<unknown>(),
     to: jsonb("to").$type<unknown>(),
+    /** Who made the change when it was not the person at the board — an
+        agent's thread, named by the harness loopback. Null = the UI. */
+    actor: text("actor"),
   },
   (t) => [index("task_activity_task").on(t.taskId, t.at)],
 );

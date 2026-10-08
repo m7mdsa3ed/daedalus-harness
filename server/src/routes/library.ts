@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -29,7 +31,7 @@ import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
 import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
 import { searchRegistry } from "../mcp-registry.js";
-import { mcpServersFor, type SessionManager } from "../sessions.js";
+import { mcpServersFor, threadCwd, type SessionManager } from "../sessions.js";
 import { getProject, listProjects, type Project } from "../projects.js";
 
 /** The library: MCP servers, skills, slash commands, personas and model
@@ -76,6 +78,29 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       (await reg.remove(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
     );
   }
+
+  /** The SKILL.md a thread's "Load skill" row loaded, found by name — the tool's own output is
+      only an acknowledgement. Looked for where a runtime would have: the thread's own workspace,
+      the library, then the agents' own skill directories (`~/.claude/skills`, …). */
+  app.get("/api/sessions/:id/skills/:name/content", async (c) => {
+    const session = deps.sessions.get(c.req.param("id"));
+    if (!session) return c.json({ error: "no such thread" }, 404);
+    const project: Project | undefined = session.project ?? (await getProject(session.projectId));
+    const name = c.req.param("name");
+    const bare = name.slice(name.lastIndexOf(":") + 1); // plugin skills are `plugin:skill`
+    const dirs = [
+      ...(project ? [".claude", ".opencode"].map((d) => join(threadCwd(session, project), d, "skills", bare)) : []),
+      ...[...(await skills.list()), ...(await discoverSkills())].filter((s) => s.name === name || s.name === bare).map((s) => s.path),
+    ];
+    for (const dir of dirs) {
+      try {
+        return c.json({ content: await readFile(join(dir, "SKILL.md"), "utf8") });
+      } catch {
+        /* not here — next candidate */
+      }
+    }
+    return c.json({ error: "skill not found" }, 404);
+  });
 
   /** Put one of the harness's own MCP servers in the library. Idempotent — the
       row has a fixed id — so the button is safe to press again. */

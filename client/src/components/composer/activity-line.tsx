@@ -1,63 +1,15 @@
 /* ── The one line a thread says about itself ──
    `workingMessage` reads what the turn is doing off the thread; `PhaseLine`
    draws that sentence (and the six the connection ladder reaches it with);
-   `ActivityIndicator` is the turn's own caller. Not a reading in the footer's
+   `ThreadStatus` is the turn's caller. Not a reading in the footer's
    cluster — this one lives in the transcript, where the turn is. */
-import * as React from "react"
-import { LoaderCircleIcon } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
-import { CopyButton } from "@/components/ui/copy-button"
 import { runningAgents } from "@/components/composer/agents-indicator"
-import { CARD, Disclosure } from "@/components/tool-parts"
 import { toolHeading } from "@/lib/tools"
 import { type ThreadState } from "@/lib/store"
 import { describeError } from "@/lib/errors"
 import { holdOf } from "@/lib/thread/hold"
 import { cn } from "@/lib/utils"
-
-function RetryStatus({ retry }: { retry: NonNullable<ThreadState["retry"]> }) {
-  const [detailsOpen, setDetailsOpen] = React.useState(false)
-  const errorText = retry.error ? retryErrorText(retry.error) : null
-  const cause = retry.error ? retryWhy(retry.error) : null
-  const attempts = retry.of ? `${retry.attempt} of ${retry.of} attempts` : `Attempt ${retry.attempt}`
-
-  return (
-    <section
-      aria-label="Agent retrying"
-      aria-live="polite"
-      className={cn(CARD, "border-destructive/25 bg-destructive/5 text-xs")}
-      role="status"
-    >
-      <div className="flex min-w-0 items-start gap-2">
-        <LoaderCircleIcon className="mt-0.5 size-4 shrink-0 animate-spin text-destructive" aria-hidden />
-        <div className="min-w-0 flex-1 space-y-1.5">
-          {/* One row that never wraps: the title gives way (truncates), the badge
-              and Copy keep their size, so neither drops onto a line of its own. */}
-          <div className="flex min-w-0 items-center gap-2">
-            <p className="min-w-0 flex-1 truncate font-medium text-foreground">Retrying request</p>
-            <span className="shrink-0 rounded-pill bg-destructive/10 px-2 py-0.5 text-[10px] font-medium whitespace-nowrap text-destructive">
-              {attempts}
-            </span>
-            {errorText && (
-              <CopyButton text={errorText} size="icon-xs" className="-my-1 -mr-1 size-6 shrink-0" label="Copy error" />
-            )}
-          </div>
-          {cause && <p className="line-clamp-2 break-words leading-5 text-muted-foreground">{cause}</p>}
-          {errorText && (
-            <Disclosure open={detailsOpen} onToggle={() => setDetailsOpen((open) => !open)}>
-              {detailsOpen ? "Hide error details" : "Show error details"}
-            </Disclosure>
-          )}
-          {detailsOpen && errorText && (
-            <pre className="max-h-40 overflow-auto rounded-md border border-border/50 bg-background/60 p-2 font-mono text-[11px] leading-4 whitespace-pre-wrap break-words text-muted-foreground">
-              {errorText}
-            </pre>
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
 
 /**
  * What the working line says, read off the thread: the one thing the turn is
@@ -83,15 +35,10 @@ function RetryStatus({ retry }: { retry: NonNullable<ThreadState["retry"]> }) {
  * first line of `detail`. A bare title is the fallback for failures with
  * nothing more specific to say.
  */
-function retryWhy(error: unknown): string {
+export function retryWhy(error: unknown): string {
   const info = describeError(error)
   const first = info.detail?.split("\n")[0]?.trim()
   return first || info.title
-}
-
-function retryErrorText(error: unknown): string {
-  const info = describeError(error)
-  return [info.title, info.detail].filter(Boolean).join("\n\n")
 }
 
 export function workingMessage(thread: ThreadState): string {
@@ -146,6 +93,13 @@ export function workingMessage(thread: ThreadState): string {
            real stage of a turn (the model is reading the prompt), and naming it
            is what stops the line reading as "Working" from send to finish. */
         return "Starting the turn"
+      case "error":
+        /* A retry the agent is reporting: the line says it while nothing newer
+           has arrived — and only then. A step that lands after it, or settles
+           after it, is the turn moving again, and the walk must not step back
+           past that to find it. */
+        if (item.transient && items.slice(i + 1).every((later) => later.parentId)) return item.title
+        continue
       default:
         // A notice or an error is not what the turn is doing; keep walking.
         continue
@@ -173,12 +127,14 @@ export function workingMessage(thread: ThreadState): string {
 export function PhaseLine({
   text,
   still = false,
+  tone = "normal",
   label,
 }: {
   text: string
-  /** Nothing is moving — a held turn. Motion here would say the agent is
-      working when it is in fact waiting for the reader. */
+  /** Nothing is moving — a held turn or a stopped connection. */
   still?: boolean
+  /** A connection failure uses the same transcript line with destructive color. */
+  tone?: "normal" | "error"
   label: string
 }) {
   return (
@@ -189,12 +145,12 @@ export function PhaseLine({
       // heading (a whole bash command, a long path) ran off the transcript.
       className={cn(
         "flex min-w-0 max-w-full items-center gap-2",
-        still ? "text-muted-foreground" : "text-primary",
+        tone === "error" ? "text-destructive" : still ? "text-muted-foreground" : "text-primary",
       )}
       role="status"
     >
       {/* size-4 sits on the step row's 1.5rem line box. */}
-      <Logo working={!still} className="size-4 shrink-0" />
+      <Logo working={!still && tone === "normal"} className="size-4 shrink-0" />
       {/* ponytail: one flat text node — the shimmer paints a background clipped to
           text, and background-image doesn't inherit, so a nested span goes blank.
           That constraint is also why the swap below is a transition and not an
@@ -214,23 +170,6 @@ export function PhaseLine({
       >
         {text}
       </span>
-    </div>
-  )
-}
-
-export function ActivityIndicator({ thread }: { thread: ThreadState }) {
-  const message = workingMessage(thread)
-  /* A retry owns this slot while waiting out a backoff. Keeping it in the
-     transcript's card vocabulary makes the cause readable without duplicating
-     it in both a shimmer line and a raw payload. */
-  if (thread.retry) return <RetryStatus retry={thread.retry} />
-
-  /* A held turn is stopped. The line stays in the same slot, which is the
-     point — the turn is still open and the composer still belongs to it. */
-  const held = thread.paused
-  return (
-    <div className="min-w-0 max-w-full">
-      <PhaseLine text={held ? message : `${message}…`} still={held} label={held ? "Turn held" : "Agent working"} />
     </div>
   )
 }

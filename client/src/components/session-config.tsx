@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { BotIcon, ClockIcon, Loader2Icon, XIcon } from "lucide-react"
+import { BotIcon, CheckIcon, ClockIcon, Loader2Icon, XIcon } from "lucide-react"
 import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -14,16 +14,21 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { HelperModelRow, MenuRow, MenuRowSkeleton, PILL, PillLabel, selectChoices } from "@/components/config-menu"
+import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons"
+import { type ChoicePick, HelperModelRow, MenuRow, MenuRowSkeleton, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
+import { DraftConfigPopover } from "@/components/draft-config"
 import { ThreadToolsSections } from "@/components/thread-tools/menu"
+import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows"
+import { ConfigDrawer, type DrawerRow, type DrawerRows } from "@/components/config-drawer"
+import { useIsMobile } from "@/hooks/use-device"
 import { useAddModel, useNewProfile } from "@/lib/catalog-add"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
-import { profileSupports } from "@/lib/settings"
+import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { useAgents, usePersonas, useProfiles } from "@/lib/queries/catalog"
-import { configView, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
+import { configView, stagedPicks, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
@@ -67,10 +72,13 @@ export function SessionConfigPopover({
   actions,
   thread,
   trigger,
+  shell,
 }: {
   sessionId: string
   actions: Actions
   thread: ThreadState
+  /** Open state owned by `ConfigPopover`, so it survives the draft's swap. */
+  shell?: PopoverShell
   /** Something other than the composer chip to open this menu with. One menu,
       two doors: the held card needs the same model list, and a second copy of
       the catalog resolution above is a second place for it to go wrong. The
@@ -131,9 +139,17 @@ export function SessionConfigPopover({
   }, [actions, unanswered, meta?.profileId, agentId, meta?.projectId])
   const newProfile = useNewProfile()
   const addModel = useAddModel()
+  // On a phone the whole menu is a sheet (`ConfigDrawer`).
+  const isMobile = useIsMobile()
+  const local = React.useState(false)
+  const [drawerOpen, setDrawerOpen] = shell ? [shell.drawerOpen, shell.setDrawerOpen] : local
+  const toolRows = useToolDrawerRows(row ?? ({} as SessionMeta), actions)
   if (!meta || !row || !profile) return null
 
-  const modeIds = new Set(thread.modes?.availableModes.map((m) => m.id) ?? [])
+  /* The agent's own selectors, under what is staged for the next turn — so a
+     pick reads as picked, and the clock above says it is not yet true. */
+  const picks = stagedPicks(thread)
+  const modeIds = new Set(picks.modes?.availableModes.map((m) => m.id) ?? [])
   /* A live session is the authority on its own settings — but it is not always
      able to say. `session/new` returns the option set; a plain reattach makes
      no call that carries one, and a `session/load` on revive is free to answer
@@ -141,7 +157,7 @@ export function SessionConfigPopover({
      used to go blank, while the new-thread menu — reading the same agent's
      remembered set — showed everything. Same source, same fallback: what the
      profile's agent last advertised, replaced the moment the session speaks. */
-  const live = thread.configOptions.length > 0
+  const live = picks.configOptions.length > 0
   /* The fallback is `shownOptions` — the *same* derivation the new-thread menu
      draws with — rather than the remembered set alone: the row records the
      model and effort this thread is on, and a menu that fell back to whatever
@@ -151,11 +167,11 @@ export function SessionConfigPopover({
      is replaced. */
   const options = partitionSessionOptions(
     live
-      ? thread.configOptions
+      ? picks.configOptions
       : shownOptions(remembered, meta.configChoices, meta.model, meta.effort),
     modeIds
   )
-  const modes = thread.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
+  const modes = picks.modes && picks.modes.availableModes.length > 1 ? picks.modes : null
   const modeLabel = modes?.availableModes.find((m) => m.id === modes.currentModeId)?.name
 
   /* The profile's catalog wins where it has one; where it does not, the agent's.
@@ -201,13 +217,177 @@ export function SessionConfigPopover({
       .setConfigOption(sessionId, option.id, value)
       .catch((err) => reportError(err, `Couldn't change ${option.name}`))
 
+  const profilePick: ChoicePick = {
+    label: "Profile",
+    value: profile.id,
+    choices: agentProfiles.map((p) => ({
+      value: p.id,
+      name: p.name,
+      icon: <ProfileIcon profile={p} agentId={agent?.id ?? agentId} className="size-4" />,
+    })),
+    onSelect: (value) => actions.changeProfile(row, value),
+    add: {
+      // Adding one moves the thread onto it — that is why it was made.
+      label: "New profile…",
+      onSelect: () => newProfile((id) => actions.changeProfile(row, id)),
+    },
+  }
+  const effortPick: ChoicePick | null = profileEffort
+    ? {
+        label: "Effort",
+        value: meta.effort || DEFAULT_CHOICE,
+        choices: withEffortIcons([
+          { value: DEFAULT_CHOICE, name: "Default" },
+          ...spawnEfforts.map((effort) => ({ value: effort, name: effort })),
+        ]),
+        onSelect: (value) =>
+          actions.changeSpawnConfig(row, { effort: value === DEFAULT_CHOICE ? "" : value }),
+      }
+    : liveEffort
+      ? {
+          label: "Effort",
+          value: liveEffort.type === "select" ? liveEffort.currentValue : "",
+          choices: withEffortIcons(selectChoices(liveEffort)),
+          onSelect: (value) => set(liveEffort, value),
+        }
+      : null
+
+  /* The model's choices, whichever source owns them — one object for the row
+     and the sheet it opens, so the two cannot disagree about what is listed. */
+  const modelPick: ChoicePick | null = overridden
+    ? {
+        label: "Model",
+        value: meta.model || DEFAULT_CHOICE,
+        choices: [
+          { value: DEFAULT_CHOICE, name: "Profile default" },
+          ...profile.models.map((m) => ({
+            value: m.id,
+            name: m.label,
+            icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
+            group: m.group || undefined,
+          })),
+        ],
+        /* A new model brings its own effort list, and the one you were on
+           may not be in it — clear rather than carry a stale value. */
+        onSelect: (value) =>
+          actions.changeSpawnConfig(row, {
+            model: value === DEFAULT_CHOICE ? "" : value,
+            effort: "",
+          }),
+        add: profile.virtual
+          ? undefined
+          : {
+              label: "Add model…",
+              onSelect: () =>
+                addModel(profile.id, (id) =>
+                  actions.changeSpawnConfig(row, { model: id, effort: "" })
+                ),
+            },
+      }
+    : options.model
+      ? {
+          label: "Model",
+          value: options.model.type === "select" ? options.model.currentValue : "",
+          /* Agent-driven options carry no art — every row gets the neutral
+             glyph so the list reads like the catalog one. */
+          choices: selectChoices(options.model).map((c) => ({
+            ...c,
+            icon: <BotIcon className="size-4 text-muted-foreground" />,
+          })),
+          onSelect: (value) => set(options.model!, value),
+        }
+      : null
+
+  /* The same settings as the dropdown below, as the phone's sheet reads them. */
+  const drawerRows: DrawerRows = [
+    thread.stagedConfig && { type: "label", text: "Applies when you next send" },
+    thread.stagedConfig && {
+      type: "action",
+      label: thread.turnActive ? "Steer now" : "Apply now",
+      icon: <CheckIcon className="size-4" />,
+      onClick: () =>
+        void actions.applyStagedConfig(sessionId).catch((err) => reportError(err, "Couldn't apply that change")),
+    },
+    thread.stagedConfig && {
+      type: "action",
+      label: "Cancel the change",
+      icon: <XIcon className="size-4" />,
+      onClick: () =>
+        void actions.cancelStagedConfig(sessionId).catch((err) => reportError(err, "Couldn't cancel that change")),
+    },
+    { type: "label", text: "Session" },
+    personas.length > 0 && {
+      type: "pick",
+      pick: {
+        label: "Persona",
+        value: meta.personaId || NO_PERSONA,
+        choices: [{ value: NO_PERSONA, name: "None" }, ...personas.map((p) => ({ value: p.id, name: p.name }))],
+        onSelect: (value) => actions.changeThreadPersona(row, value === NO_PERSONA ? "" : value),
+      },
+    },
+    { type: "pick", pick: profilePick },
+    modelPick && { type: "pick", pick: modelPick },
+    effortPick && { type: "pick", pick: effortPick },
+    ...toolRows,
+    { type: "label", text: "Session settings" },
+    {
+      type: "switch",
+      label: "Suggest follow-ups",
+      checked: meta.suggestFollowups === true,
+      onChange: (checked) => actions.changeThreadSuggestions(row, checked),
+    },
+    {
+      type: "switch",
+      label: "Draw answers as UI",
+      checked: meta.uiBlocks !== false,
+      onChange: (checked) => actions.changeThreadUiBlocks(row, checked),
+    },
+    (modes || options.rest.length > 0) && { type: "label", text: "Agent options" },
+    modes && {
+      type: "pick",
+      pick: {
+        label: "Mode",
+        value: modes.currentModeId,
+        choices: withModeIcons(modes.availableModes.map((mode) => ({ value: mode.id, name: mode.name }))),
+        onSelect: (modeId) =>
+          void actions.setMode(sessionId, modeId).catch((err) => reportError(err, "Couldn't switch mode")),
+      },
+    },
+    ...options.rest.map((option): DrawerRow =>
+      option.type === "select"
+        ? {
+            type: "pick",
+            pick: {
+              label: option.name,
+              value: option.currentValue,
+              choices: selectChoices(option),
+              onSelect: (value) => set(option, value),
+            },
+          }
+        : {
+            type: "switch",
+            label: option.name,
+            checked: option.currentValue,
+            onChange: (checked) => set(option, checked),
+          }
+    ),
+  ]
+
   return (
+    <>
     <DropdownMenu
       /* The picks are buffered and sent as one request, and closing the menu is
          what says the user is done picking — model then effort is one restart
          instead of two, the second queued behind the first. See
          `actions.changeThreadConfig`. */
+      open={isMobile ? false : shell?.open}
       onOpenChange={(open) => {
+        // A phone opens the sheet instead; the menu itself never shows.
+        if (isMobile) {
+          if (open) setDrawerOpen(true)
+          return
+        }
+        shell?.setOpen(open)
         if (!open) void actions.flushThreadConfig(sessionId)
       }}
     >
@@ -253,7 +433,23 @@ export function SessionConfigPopover({
             )}
             {/* The mode rides along in the trigger: a silently-active "accept
                 edits" is the one setting you must see. */}
-            <PillLabel persona={persona?.name} model={modelLabel} effort={effortLabel} mode={modeLabel} />
+            <PillLabel
+              persona={persona?.name}
+              model={modelLabel}
+              effort={effortLabel}
+              effortLevel={
+                profileEffort
+                  ? levelOf(spawnEfforts, meta.effort)
+                  : liveEffort
+                    ? levelOf(
+                        selectChoices(liveEffort).map((c) => c.value),
+                        liveEffort.type === "select" ? liveEffort.currentValue : undefined
+                      )
+                    : null
+              }
+              mode={modeLabel}
+              modeId={modes?.currentModeId}
+            />
             {/* Whether the picked value is true yet: a spinner while the change
                 is in flight, a clock while it waits for the send that will
                 spend the spawn, nothing the rest of the time. */}
@@ -276,6 +472,16 @@ export function SessionConfigPopover({
               <DropdownMenuLabel className="text-muted-foreground">
                 Applies when you next send
               </DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() =>
+                  void actions
+                    .applyStagedConfig(sessionId)
+                    .catch((err) => reportError(err, "Couldn't apply that change"))
+                }
+              >
+                <CheckIcon className="size-4" />
+                {thread.turnActive ? "Steer now" : "Apply now"}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() =>
                   void actions
@@ -307,91 +513,17 @@ export function SessionConfigPopover({
           )}
           {/* Drawn on a single profile too — the row is also the door to
               making another. */}
-          <MenuRow
-            label="Profile"
-            value={profile.id}
-            choices={agentProfiles.map((p) => ({
-              value: p.id,
-              name: p.name,
-              icon: <ProfileIcon profile={p} agentId={agent?.id ?? agentId} className="size-4" />,
-            }))}
-            onSelect={(value) => actions.changeProfile(row, value)}
-            add={{
-              // Adding one moves the thread onto it — that is why it was made.
-              label: "New profile…",
-              onSelect: () => newProfile((id) => actions.changeProfile(row, id)),
-            }}
-          />
-          {overridden ? (
-            <MenuRow
-              label="Model"
-              value={meta.model || DEFAULT_CHOICE}
-              choices={[
-                { value: DEFAULT_CHOICE, name: "Profile default" },
-                ...profile.models.map((m) => ({
-                  value: m.id,
-                  name: m.label,
-                  icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
-                  group: m.group || undefined,
-                })),
-              ]}
-              /* A new model brings its own effort list, and the one you were on
-                 may not be in it — clear rather than carry a stale value. */
-              onSelect={(value) =>
-                actions.changeSpawnConfig(row, {
-                  model: value === DEFAULT_CHOICE ? "" : value,
-                  effort: "",
-                })
-              }
-              add={
-                profile.virtual
-                  ? undefined
-                  : {
-                      label: "Add model…",
-                      onSelect: () =>
-                        addModel(profile.id, (id) =>
-                          actions.changeSpawnConfig(row, { model: id, effort: "" })
-                        ),
-                    }
-              }
-            />
-          ) : options.model ? (
-            <MenuRow
-              label="Model"
-              value={options.model.type === "select" ? options.model.currentValue : ""}
-              /* Agent-driven options carry no art — every row gets the
-                 neutral glyph so the submenu reads like the catalog one. */
-              choices={selectChoices(options.model).map((c) => ({
-                ...c,
-                icon: <BotIcon className="size-4 text-muted-foreground" />,
-              }))}
-              onSelect={(value) => set(options.model!, value)}
-            />
+          <MenuRow {...profilePick} />
+          {modelPick ? (
+            <MenuRow {...modelPick} />
           ) : (
             /* Nothing has said what this agent offers yet — the probe fired on
                open. A row that is waiting reads as what it is, and the menu is
                the same height either way. */
             unanswered && <MenuRowSkeleton label="Model" />
           )}
-          {profileEffort ? (
-            <MenuRow
-              label="Effort"
-              value={meta.effort || DEFAULT_CHOICE}
-              choices={[
-                { value: DEFAULT_CHOICE, name: "Default" },
-                ...spawnEfforts.map((effort) => ({ value: effort, name: effort })),
-              ]}
-              onSelect={(value) =>
-                actions.changeSpawnConfig(row, { effort: value === DEFAULT_CHOICE ? "" : value })
-              }
-            />
-          ) : liveEffort ? (
-            <MenuRow
-              label="Effort"
-              value={liveEffort.type === "select" ? liveEffort.currentValue : ""}
-              choices={selectChoices(liveEffort)}
-              onSelect={(value) => set(liveEffort, value)}
-            />
+          {effortPick ? (
+            <MenuRow {...effortPick} />
           ) : (
             unanswered && <MenuRowSkeleton label="Effort" />
           )}
@@ -403,24 +535,25 @@ export function SessionConfigPopover({
         {/* Its own group: how the thread's answers should behave, not who
             answers nor the agent's own selectors. */}
         <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Session settings</DropdownMenuLabel>
-          <DropdownMenuCheckboxItem
-            checked={meta.suggestFollowups === true}
-            onCheckedChange={(checked) => actions.changeThreadSuggestions(row, checked === true)}
-          >
-            Suggest follow-ups
-          </DropdownMenuCheckboxItem>
-          {/* The lane is system-prompt text, so a flip costs a respawn. Off,
-              the model is never *asked* for one — a fence that arrives anyway
-              still draws, because the renderer reads no toggle. */}
-          <DropdownMenuCheckboxItem
-            checked={meta.uiBlocks !== false}
-            onCheckedChange={(checked) => actions.changeThreadUiBlocks(row, checked === true)}
-          >
-            Draw answers as UI
-          </DropdownMenuCheckboxItem>
-        </DropdownMenuGroup>
+        {/* Its own submenu: how the thread's answers should behave, not who
+            answers nor the agent's own selectors. The UI lane is system-prompt
+            text, so a flip costs a respawn; off, the model is never *asked* for
+            one — a fence that arrives anyway still draws, because the renderer
+            reads no toggle. */}
+        <SessionSettingsSub
+          items={[
+            {
+              label: "Suggest follow-ups",
+              checked: meta.suggestFollowups === true,
+              onChange: (checked) => actions.changeThreadSuggestions(row, checked),
+            },
+            {
+              label: "Draw answers as UI",
+              checked: meta.uiBlocks !== false,
+              onChange: (checked) => actions.changeThreadUiBlocks(row, checked),
+            },
+          ]}
+        />
         {(modes || options.rest.length > 0) && (
           <>
             <DropdownMenuSeparator />
@@ -432,10 +565,12 @@ export function SessionConfigPopover({
                 <MenuRow
                   label="Mode"
                   value={modes.currentModeId}
-                  choices={modes.availableModes.map((mode) => ({
-                    value: mode.id,
-                    name: mode.name,
-                  }))}
+                  choices={withModeIcons(
+                    modes.availableModes.map((mode) => ({
+                      value: mode.id,
+                      name: mode.name,
+                    }))
+                  )}
                   onSelect={(modeId) =>
                     actions
                       .setMode(sessionId, modeId)
@@ -467,5 +602,55 @@ export function SessionConfigPopover({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+    {isMobile && (
+      <ConfigDrawer
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open)
+          if (!open) void actions.flushThreadConfig(sessionId)
+        }}
+        title="Thread settings"
+        rows={drawerRows}
+      />
+    )}
+    </>
+  )
+}
+
+/** Menu open state lifted out of the two bodies, so a flip between them keeps it. */
+export type PopoverShell = {
+  open: boolean
+  setOpen: (open: boolean) => void
+  drawerOpen: boolean
+  setDrawerOpen: (open: boolean) => void
+}
+
+/**
+ * The composer's one config picker. It holds the open state and picks the draft
+ * or the session body, so the first send (`meta.draft` flipping false) does not
+ * close a menu the reader has open. The bodies themselves are still two
+ * components, so their DOM remounts; only the state is continuous.
+ * Renders the draft body until the session row and its profile exist.
+ */
+export function ConfigPopover({
+  meta,
+  sessionId,
+  actions,
+  thread,
+}: {
+  meta: SessionMeta
+  sessionId: string
+  actions: Actions
+  thread: ThreadState
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [drawerOpen, setDrawerOpen] = React.useState(false)
+  const profiles = useProfiles()
+  const shell = { open, setOpen, drawerOpen, setDrawerOpen }
+  const ready = !meta.draft && profiles.some((p) => p.id === meta.profileId)
+  return ready ? (
+    <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} shell={shell} />
+  ) : (
+    <DraftConfigPopover meta={meta} actions={actions} shell={shell} />
   )
 }

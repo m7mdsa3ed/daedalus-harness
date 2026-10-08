@@ -6,8 +6,9 @@
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@daedalus/acp"
 import * as React from "react"
-import { PlusIcon } from "lucide-react"
+import { CheckIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon } from "lucide-react"
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuPortal,
@@ -23,6 +24,7 @@ import { reportError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { useSetProfileFlags } from "@/lib/queries/catalog"
 import type { Profile } from "@/lib/settings"
+import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
 
 export interface Choice {
   value: string
@@ -132,20 +134,106 @@ export function MenuAddItem({ add }: { add: MenuAdd }) {
   )
 }
 
-export function MenuRow({
-  label,
-  value,
-  choices,
-  onSelect,
-  add,
-}: {
+/** What a row picks from — shared by the submenu (`MenuRow`) and the drawer
+    (`ChoiceList`, a page of the mobile `ConfigDrawer`), so a picker keeps its
+    props. */
+export interface ChoicePick {
   label: string
   value: string
   choices: Choice[]
   onSelect: (value: string) => void
   /** When the catalog this row draws can be added to from here. */
   add?: MenuAdd
-}) {
+}
+
+/**
+ * A picker's choices as a plain list: a search box that is always there, the
+ * groups with their headings, the current pick ticked, and the "Add…" row at
+ * the foot. It is a page of the mobile settings drawer (`ConfigDrawer`), where a
+ * nested flyout is the one thing a thumb cannot hit reliably.
+ */
+export function ChoiceList({
+  value,
+  choices,
+  onSelect,
+  add,
+  label,
+}: ChoicePick) {
+  const [query, setQuery] = React.useState("")
+  const shown = menuFilter(choices, query)
+  let prevGroup: string | undefined
+  return (
+    <div className="flex flex-col">
+      <div className="relative pb-2">
+        <SearchIcon className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={`Search ${label.toLowerCase()}…`}
+          aria-label={`Search ${label.toLowerCase()}`}
+          className="w-full rounded-lg bg-muted/50 py-2 pr-3 pl-9 text-sm outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      <div className="pb-2">
+        {shown.map((choice) => {
+          const heading = choice.group && choice.group !== prevGroup ? choice.group : null
+          prevGroup = choice.group
+          return (
+            <React.Fragment key={choice.value}>
+              {heading && (
+                <div className="px-2 pt-3 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                  {heading}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => choice.value !== value && onSelect(choice.value)}
+                className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+              >
+                {choice.icon}
+                <span className="min-w-0 flex-1 truncate">{choice.name}</span>
+                {(choice.note || choice.recommended) && (
+                  <span
+                    className={cn(
+                      "shrink-0 text-[11px]",
+                      choice.note ? "text-destructive" : "text-muted-foreground"
+                    )}
+                  >
+                    {choice.note ?? "Recommended"}
+                  </span>
+                )}
+                <CheckIcon
+                  className={cn("size-4 shrink-0", choice.value === value ? "opacity-100" : "opacity-0")}
+                />
+              </button>
+            </React.Fragment>
+          )
+        })}
+        {shown.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">No match</p>}
+      </div>
+      {add && (
+        <div className="border-t pt-2">
+          <button
+            type="button"
+            onClick={add.onSelect}
+            className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted"
+          >
+            <PlusIcon className="size-4 text-muted-foreground" />
+            {add.label}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function MenuRow({
+  label,
+  value,
+  choices,
+  onSelect,
+  add,
+}: ChoicePick) {
   const current = choices.find((choice) => choice.value === value)
   const [submenuOpen, setSubmenuOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
@@ -251,6 +339,46 @@ export function MenuRow({
 }
 
 /**
+ * The session's on/off settings as one submenu — the same shape as every other
+ * row, with how many are on beside the label. They were a labelled group of
+ * checkboxes, which made a menu of selectors end in a block of a different
+ * kind. Toggling keeps the submenu open: these are flags, often flipped
+ * together.
+ */
+export function SessionSettingsSub({
+  items,
+}: {
+  items: { label: string; checked: boolean; onChange: (checked: boolean) => void }[]
+}) {
+  const on = items.filter((i) => i.checked).length
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <SlidersHorizontalIcon className="size-4 text-muted-foreground" />
+        <span className="flex-1">Session settings</span>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {on} of {items.length}
+        </span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuPortal>
+        <DropdownMenuSubContent className="max-w-80">
+          {items.map((item) => (
+            <DropdownMenuCheckboxItem
+              key={item.label}
+              checked={item.checked}
+              closeOnClick={false}
+              onCheckedChange={(checked) => item.onChange(checked === true)}
+            >
+              {item.label}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuPortal>
+    </DropdownMenuSub>
+  )
+}
+
+/**
  * The same row, for a setting whose choices have not been learned yet.
  *
  * A menu that simply leaves the row out until the probe answers is a menu that
@@ -285,33 +413,51 @@ export const PILL =
 
 /**
  * The words on the settings chip, shared by the draft's trigger and the started
- * thread's so the two cannot drift.
+ * thread's so the two cannot drift. One line: the model (the only piece that
+ * ellipsizes), then effort as a compact meter and the permission mode as an
+ * icon.
  *
- * The model is the part the reader is looking for, so it is the only piece
- * that gives way: effort and mode are `shrink-0` and the model ellipsizes
- * first, instead of one string being cut wherever the cap lands. The persona
- * is a prefix that pushes the model out of a narrow chip, so it waits for
- * `@panel-sm` (the panel's width, never the device's) — the title and the menu
- * still carry it. The mode stays at every width: a silently-active "accept
- * edits" is the one setting you must see.
+ * `effortLevel` is the pick's position in the agent's own ordered list, so the
+ * meter needs no vocabulary; its word waits for `@panel-sm` (the panel's width,
+ * never the device's). The mode is an icon alone — its name rides the title and
+ * the accessible name, and the keyword icon falls back to a neutral shield, so a
+ * miss is never a wrong claim. The persona is a prefix that also waits for
+ * `@panel-sm`.
  */
 export function PillLabel({
   persona,
   model,
   effort,
+  effortLevel,
   mode,
+  modeId,
 }: {
   persona?: string
   model: string
   effort?: string | null
+  effortLevel?: { index: number; count: number } | null
   mode?: string
+  modeId?: string
 }) {
   return (
-    <span className="flex min-w-0 max-w-52 items-baseline gap-1 @panel-sm:max-w-64">
-      {persona && <span className="hidden shrink-0 @panel-sm:inline">{persona} ·</span>}
-      <span className="min-w-0 truncate font-medium text-foreground/90">{model}</span>
-      {effort && <span className="shrink-0 capitalize">· {effort}</span>}
-      {mode && <span className="shrink-0">· {mode}</span>}
+    <span className="flex min-w-0 max-w-52 items-center gap-1.5 @panel-sm:max-w-80">
+      <span className="flex min-w-0 items-baseline gap-1">
+        {persona && <span className="hidden shrink-0 @panel-sm:inline">{persona} ·</span>}
+        <span className="min-w-0 truncate font-medium text-foreground/90">{model}</span>
+      </span>
+      {effort && (
+        <span className="flex shrink-0 items-center gap-1 capitalize" title={`Effort: ${effort}`}>
+          {effortLevel ? (
+            <EffortMeter index={effortLevel.index} count={effortLevel.count} />
+          ) : null}
+          <span className={cn(effortLevel && "hidden @panel-sm:inline")}>{effort}</span>
+        </span>
+      )}
+      {mode && (
+        <span className="flex shrink-0" title={`Mode: ${mode}`} aria-label={`Mode: ${mode}`}>
+          <ModeIcon id={modeId} name={mode} />
+        </span>
+      )}
     </span>
   )
 }

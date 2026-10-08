@@ -26,7 +26,8 @@ export async function generateTitle(
       abortSignal: signal,
     });
     const title = text.trim().split("\n")[0]!.replace(/^["'`]+|["'`.]+$/g, "").trim();
-    return title ? title.slice(0, 80) : null;
+    const words = title.split(/\s+/);
+    return words.length >= 3 && words.length <= 7 ? title.slice(0, 80) : null;
   } catch {
     return null; // ponytail: no title is a fine answer; the first-line one stands
   }

@@ -3,8 +3,10 @@ import type * as acp from "@daedalus/acp"
 import type { ToolItem } from "../store"
 import { describeCommand } from "./describe"
 import { asRecord, str, vendorMeta } from "./helpers"
+import { extractHarnessCall, harnessOperationLabel, harnessSubject } from "./harness"
 import { extractMcpCall } from "./mcp"
 import { formatMcpName, NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
+import { extractSkill } from "./structured"
 import { extractToolSearch } from "./tool-search"
 import { displayUrl, webInput } from "./web"
 
@@ -73,6 +75,10 @@ const TARGET_KEYS = [
  * repeating "bash" before the command only costs horizontal space.
  */
 export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | "toolKind">): string {
+  /* A skill's target is the skill, whichever runtime loaded it — a skill tool
+     names it in its input, a read names it in the file's directory. */
+  const skill = extractSkill(item)
+  if (skill) return skill.args ? `${skill.name} ${skill.args}` : skill.name
   /* A web search is about its query and a fetch about its page, whichever
      server answered — these come before the MCP rule below, which would
      otherwise print `web-search · web search` for every one of them. */
@@ -288,6 +294,30 @@ export function toolHeading(
     return search.query
       ? { title: "Search tools", detail: search.query, prose: true }
       : { title: "Load tools", detail: search.selected.map(toolDisplayName).join(", ") || undefined, prose: true }
+  }
+  /* The harness server's two tools reach every part of the harness, so the row
+     names the operation rather than the server-and-tool pair it arrived as. */
+  const harness = extractHarnessCall({ ...item, title: item.title ?? "" })
+  if (harness) {
+    if (harness.verb === "help") {
+      return {
+        title: "Find a harness operation",
+        detail: harness.search ?? harness.operation ?? undefined,
+        prose: true,
+      }
+    }
+    return {
+      title: harness.operation ? harnessOperationLabel(harness.operation) : "Run a harness operation",
+      detail: harnessSubject(harness) ?? harness.operation ?? undefined,
+      prose: true,
+    }
+  }
+  /* A skill load leads with its name: the call is "load this skill", and which
+     skill is the whole fact — so it goes in the title rather than the caption,
+     which the reader can turn off. */
+  const skill = extractSkill({ ...item, title: item.title ?? "" })
+  if (skill) {
+    return { title: `Load skill: ${skill.name}`, detail: skill.args || undefined, prose: true }
   }
   const target = toolTarget({ ...item, title: item.title ?? "" })
   /* The web has its own two verbs, and they beat whatever the agent titled

@@ -111,7 +111,7 @@ export type Action =
   | { type: "thread-carry"; id: string; items: ThreadItem[] }
   /** `sessionId` names a subagent's session when the update is a child's —
       see the `update` event in protocol.ts. Absent = the thread's own. */
-  | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string }
+  | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string; at?: number }
   /** `local` = this device typed it (see `TextItem.local`); the replay's own
       user bubbles and the ones a `turn_started` mints are not. */
   | {
@@ -120,9 +120,13 @@ export type Action =
       text: string
       turnId?: string
       local?: boolean
+      sending?: boolean
       attachments?: TextItem["attachments"]
+      /** The journal's stamp on a replayed turn; absent = now. */
+      at?: number
     }
   | { type: "tag-user-turn"; id: string; turnId: string }
+  | { type: "settle-user-message"; id: string }
   /** Take back an optimistic user bubble: the server queued the words instead
       of sending them, and the queue row is where they show now. */
   | { type: "drop-user-message"; id: string }
@@ -161,6 +165,9 @@ export type Action =
   | { type: "session-title"; id: string; title: string }
   | { type: "agent-session-title"; id: string; title: string }
   | { type: "rename-session"; id: string; title: string }
+  /** The create call was accepted: the row stops being a draft now, not after
+      the list read that replaces it with the server's own. */
+  | { type: "promote-draft"; id: string }
   | { type: "pin-session"; id: string; pinnedAt: number | null }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
@@ -402,7 +409,8 @@ export function reducer(state: State, action: Action): State {
             thread(state, action.id),
             action.update,
             action.allowUserChunks,
-            action.sessionId
+            action.sessionId,
+            action.at
           ),
         },
       }
@@ -411,21 +419,46 @@ export function reducer(state: State, action: Action): State {
         items: pushUserMessage(
           thread(state, action.id).items,
           action.text,
-          Date.now(),
+          action.at ?? Date.now(),
           action.turnId,
           action.local,
-          action.attachments
+          action.attachments,
+          action.sending
         ),
       })
     case "tag-user-turn": {
       const items = thread(state, action.id).items
-      /* The bubble this device drew and is now being told the turn id of —
-         `local`, or a load replay's own untagged bubbles would be tagged
-         instead, oldest first, leaving the real one untagged forever. */
-      const index = items.findIndex((item) => item.kind === "user" && !item.turnId && item.local)
+      /* The server reply acknowledges the newest optimistic bubble this device
+         sent. Older untagged local rows may have survived a reconnect while a
+         previous reply was in flight. */
+      let index = -1
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i]
+        if (item.kind === "user" && !item.turnId && item.local) {
+          index = i
+          break
+        }
+      }
       if (index < 0) return state
       return withThread(state, action.id, {
-        items: items.map((item, i) => i === index && item.kind === "user" ? { ...item, turnId: action.turnId } : item),
+        items: items.map((item, i) =>
+          i === index && item.kind === "user" ? { ...item, turnId: action.turnId, sending: false } : item
+        ),
+      })
+    }
+    case "settle-user-message": {
+      const items = thread(state, action.id).items
+      let index = -1
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i]
+        if (item.kind === "user" && !item.turnId && item.local && item.sending) {
+          index = i
+          break
+        }
+      }
+      if (index < 0) return state
+      return withThread(state, action.id, {
+        items: items.map((item, i) => i === index && item.kind === "user" ? { ...item, sending: false } : item),
       })
     }
     case "drop-user-message": {
@@ -542,6 +575,11 @@ export function reducer(state: State, action: Action): State {
       }
     /* The sniff above yields to a name that was chosen; this one is that name,
        so it replaces whatever the title was. */
+    case "promote-draft":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) => (s.id === action.id ? { ...s, draft: false } : s)),
+      }
     case "rename-session":
       return {
         ...state,

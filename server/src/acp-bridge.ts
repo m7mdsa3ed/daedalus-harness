@@ -534,9 +534,7 @@ interface HeldSteer {
   origin: Peer | undefined;
 }
 
-/** A held entry as the queue row every peer draws it as. One mapping, so the
-    list (`heldSteers`) and the take-back (`takeSteer`) cannot disagree about
-    what a row is. */
+/** A held entry as the queue row every peer draws it as. */
 function steerRow({ id, createdAt, event }: HeldSteer): QueuedMessage {
   return {
     id,
@@ -1486,9 +1484,9 @@ export class AcpBridge implements ConnectionRoute {
   }
 
   /** Emit every steer whose step has now finished, oldest first. Also called
-      when the turn settles: a turn ending is a boundary like any other, and a
-      steer still held there must not be lost — it reached the agent, and for
-      the runtimes that keep it as context the next turn will answer it. */
+      when the turn settles — a cancel included: a turn ending is a boundary
+      like any other, and a steer still held there must not be lost — it
+      reached the agent, and the runtimes keep it (`SessionQueue.stop`). */
   private flushSteers(): void {
     if (this.pendingSteers.length === 0) return;
     for (const { event, origin } of this.pendingSteers.splice(0)) this.host.emit(event, origin);
@@ -1499,31 +1497,6 @@ export class AcpBridge implements ConnectionRoute {
       said and has not yet seen land. */
   heldSteers(): QueuedMessage[] {
     return this.pendingSteers.map(steerRow);
-  }
-
-  /**
-   * Take every held MESSAGE steer off the bridge, oldest first — the stop's
-   * half of the bargain in `SessionQueue.stop`: the turn ends, the words the
-   * user aimed at it do not, and the queue is where they wait for the next
-   * one. `flushSteers` must not go on to emit what this returned.
-   *
-   * A mode/model/effort change waits at the same boundary
-   * (`holdConfigNotice`) but is bookkeeping, not words anyone can re-queue —
-   * it stays held for its ordinary flush.
-   *
-   * The caller emits the queue: this is half of a stop, not a step of its
-   * own, and one absolute `queue` event covers both halves.
-   */
-  takeSteers(): QueuedMessage[] {
-    const taken: HeldSteer[] = [];
-    this.pendingSteers = this.pendingSteers.filter((entry) => {
-      if (entry.event.ev !== "turn_started") return true;
-      taken.push(entry);
-      return false;
-    });
-    if (taken.length === 0) return [];
-    this.host.onHeldSteersChanged();
-    return taken.map(steerRow);
   }
 
   /**
@@ -1915,7 +1888,29 @@ export class AcpBridge implements ConnectionRoute {
     this.host.onTurnSettled({ error: failed, interrupted, continued, turnId, promptText: promptText ?? undefined });
   }
 
-  async setMode(modeId: string, origin?: Peer): Promise<void> {
+  /** A staged pick, taken — `say` is "a person asked for this" for a caller
+      with no peer to name (the staged change reaches here at a turn's start,
+      long after the socket that picked it). Per pick, never thrown: a setting
+      the agent has since renamed must not fail the message it rode in on. */
+  async applyPicks(picks: { modeId?: string; options?: Record<string, string | boolean> }): Promise<void> {
+    if (picks.modeId !== undefined && picks.modeId !== this.modes?.currentModeId) {
+      await this.setMode(picks.modeId, undefined, true).catch((error) => this.pickRefused("Mode", error));
+    }
+    for (const [id, value] of Object.entries(picks.options ?? {})) {
+      const current = this.configOptions.find((o) => o.id === id);
+      if (current && current.currentValue === value) continue;
+      await this.setConfigOption(id, value, undefined, true).catch((error) =>
+        this.pickRefused(current?.name ?? id, error),
+      );
+    }
+  }
+
+  private pickRefused(what: string, error: unknown): void {
+    console.warn(`the agent refused the staged ${what} change`, error);
+    this.noteConfigChange("Profile", undefined, `staged ${what} change dropped — the agent refused it`);
+  }
+
+  async setMode(modeId: string, origin?: Peer, say = origin !== undefined): Promise<void> {
     const sessionId = this.requireSession();
     const oldId = this.modes?.currentModeId;
     await this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId });
@@ -1942,7 +1937,7 @@ export class AcpBridge implements ConnectionRoute {
        a restore happens to run between turns; the moment one did not, a
        respawn would have narrated its own bookkeeping back to the reader as
        changes they never made. */
-    if (origin && oldId !== undefined && oldId !== modeId) {
+    if (say && oldId !== undefined && oldId !== modeId) {
       this.noteConfigChange("Mode", this.modeName(oldId), this.modeName(modeId));
     }
     this.emitConfig(origin);
@@ -1952,6 +1947,7 @@ export class AcpBridge implements ConnectionRoute {
     configId: string,
     value: string | boolean,
     origin?: Peer,
+    say = origin !== undefined,
   ): Promise<acp.SessionConfigOption[]> {
     const sessionId = this.requireSession();
     const before = this.configOptions.find((o) => o.id === configId);
@@ -2000,7 +1996,7 @@ export class AcpBridge implements ConnectionRoute {
     const newValue =
       after?.type === "select" ? after.currentValue : typeof value === "string" ? value : undefined;
     if (
-      origin &&
+      say &&
       typeof newValue === "string" &&
       (category === "model" || category === "thought_level") &&
       (beforeValue === undefined || beforeValue !== newValue)

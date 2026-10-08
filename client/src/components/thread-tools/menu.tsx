@@ -15,7 +15,7 @@
  *
  * The project contributes nothing: it is the directory, not the toolset.
  */
-import { BlocksIcon, ServerIcon, SlashSquareIcon, WrenchIcon } from "lucide-react"
+import { BlocksIcon, ServerIcon, SlashSquareIcon } from "lucide-react"
 
 import { McpIcon } from "@/components/entity-icon"
 import { useDispatch } from "@/lib/store"
@@ -112,34 +112,32 @@ export function ThreadToolsSections({
   const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks } =
     useThreadToolLinks(meta, actions, remember)
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
-  if (!editable && extra === 0 && !stagedLinks) return null
+  /* A started thread's links are picked here too — staged for the next send
+     (`useThreadToolLinks.toggle`). This menu is where tools are chosen; the
+     strip only reads them. */
+  const canEdit = editable || !meta.draft
   const iconClass = "size-4 text-muted-foreground"
-  const common = { editable: editable || stagedLinks !== null, needsAuth, agentName: agent?.name }
+  const common = { editable: canEdit, needsAuth, agentName: agent?.name }
   return (
     <>
     <DropdownMenuSeparator />
     <DropdownMenuGroup>
       <DropdownMenuLabel>
-        {editable ? "Tools" : stagedLinks ? "Tools — applies on next send" : "Running with"}
+        {stagedLinks ? "Tools — applies on next send" : "Tools"}
       </DropdownMenuLabel>
       <ToolSection
         {...common}
         title="MCP servers"
         icon={<ServerIcon className={iconClass} />}
-        items={mcpServers.filter((server) => server.type !== "builtin")}
-        itemIcon={(server) => <McpIcon server={server} className="size-3.5" />}
-        hint={mcpSubtitle}
-        inherited={inherited.mcpServerIds}
-        own={own.mcpServerIds}
-        unreadable={unreadable("mcpServerIds")}
-        onToggle={(id, on) => toggle("mcpServerIds", id, on)}
-      />
-      <ToolSection
-        {...common}
-        title="Built-in tools"
-        icon={<WrenchIcon className={iconClass} />}
-        items={mcpServers.filter((server) => server.type === "builtin")}
-        itemIcon={(server) => <McpIcon server={server} className="size-3.5" />}
+        /* The harness's own servers ride in the same list, after the
+           user's, marked with a badge rather than split into a second
+           submenu: to the agent they are all MCP servers. */
+        items={[
+          ...mcpServers.filter((server) => server.type !== "builtin"),
+          ...mcpServers.filter((server) => server.type === "builtin"),
+        ]}
+        itemIcon={(server) => <McpIcon server={server} className="size-4" />}
+        badge={(server) => (server.type === "builtin" ? "built-in" : undefined)}
         hint={mcpSubtitle}
         inherited={inherited.mcpServerIds}
         own={own.mcpServerIds}

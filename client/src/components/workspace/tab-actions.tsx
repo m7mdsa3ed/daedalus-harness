@@ -55,7 +55,7 @@ const LIST_FROM = 3
    bar — a 24px target to hit for the two controls a strip is used through, and
    the third height in a row that had one. */
 const STRIP_CONTROL = cn(
-  "size-[var(--dock-chip-h)] rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+  "size-[var(--dock-chip-h)] rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:bg-foreground/15",
   /* On a phone they wear the header controls' ground for the same reason those
      do — the strip is an overlay over a moving transcript there. One recipe,
      named once (`lib/header-chrome.ts`). */
@@ -85,7 +85,7 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
          claims a state a `menuitem` does not have. The tint is the same fact
          for a reader who is looking rather than listening. */
       aria-current={active ? "true" : undefined}
-      className={cn("gap-2", active && "bg-accent/60")}
+      className={cn("gap-2 max-md:min-h-11", active && "bg-accent/60")}
     >
       {Icon && <Icon className="text-muted-foreground" />}
       <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>{title}</span>

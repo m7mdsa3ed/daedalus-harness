@@ -144,7 +144,8 @@ export function createCore(deps: CoreDeps) {
       and its message went. */
   const createSession = async (
     meta: SessionMeta,
-    first?: { text: string; attachmentIds: string[] }
+    first?: { text: string; attachmentIds: string[] },
+    onAccepted?: () => void
   ): Promise<{ turnId?: string; promptError?: string }> => {
     /* The catalog is the query cache's now, read the same way `getState`
        is read here: inside the callback, last-committed, no subscription. */
@@ -236,6 +237,9 @@ export function createCore(deps: CoreDeps) {
           meta.asideQuote && meta.forkedFromSessionId
             ? { of: meta.forkedFromSessionId, quote: meta.asideQuote }
             : undefined,
+        /* A thread started on a board task: the server checks the card, briefs
+           the agent and carries the harness MCP it needs. */
+        taskId: meta.taskId ?? undefined,
         /* A draft renamed before it was ever sent to: the name travels with
            the create call, and the server's first-prompt sniff then leaves
            it alone. Left out when nobody has named it, so the sniff still
@@ -244,6 +248,11 @@ export function createCore(deps: CoreDeps) {
         prompt: first,
       }),
     }).finally(() => starting.delete(meta.id))
+    onAccepted?.()
+    /* The thread exists now. Say so in the store at once — the list read below
+       is a round trip, and until it lands the composer would keep drawing the
+       draft's menu for a thread that is already running. */
+    dispatch({ type: "promote-draft", id: meta.id })
     // Swaps the draft row for the server's own — see the `sessions` reducer.
     /* The POST landed: a failed refresh must not read as an unsent turn (a
        retry would duplicate the message). */

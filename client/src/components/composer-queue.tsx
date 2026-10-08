@@ -1,8 +1,13 @@
 /* Messages wait here until the active turn finishes. A composer steer is
    already on the wire and is shown only until its transcript bubble lands. */
 import * as React from "react"
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core"
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import {
+  CheckIcon,
   CornerDownRightIcon,
+  GripVerticalIcon,
   PaperclipIcon,
   PencilIcon,
   SendHorizontalIcon,
@@ -30,9 +35,34 @@ export function ComposerQueue({
       from the queue by the time this is called — see the note above. */
   onEdit: (text: string) => void
 }) {
-  const items = thread.queue
+  /* A drop is drawn at once and the server's `queue` event replaces it: the
+     order is kept against the list it was dragged from, so the next event —
+     the answer, or anyone else's edit — is what is drawn, with no effect to
+     clear it. */
+  const [dragged, setDragged] = React.useState<{ from: QueuedMessage[]; ids: string[] } | null>(null)
+  const steers = thread.queue.filter((item) => item.steer)
+  const queued = thread.queue.filter((item) => !item.steer)
+  const editable =
+    dragged?.from === thread.queue
+      ? dragged.ids.flatMap((id) => queued.find((item) => item.id === id) ?? [])
+      : queued
+  const items = [...steers, ...editable]
   const count = items.length
-  const editable = items.filter((item) => !item.steer)
+  /* The grip is its own target (as on Settings › Projects), so one pointer
+     sensor covers mouse and touch with no swipe-versus-drag question. */
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  /* Rows picked for "Send selected". Held in the component, not the store: a
+     pick is a gesture on this device, and a row that left the queue drops out
+     of it below rather than being sent as a stale id. */
+  const [picked, setPicked] = React.useState<ReadonlySet<string>>(new Set())
+  const pickedIds = editable.filter((item) => picked.has(item.id)).map((item) => item.id)
+  const toggle = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const [busy, setBusy] = React.useState(false)
   if (count === 0) return null
 
   /* A failed connection can act on nothing; an archived thread has no process
@@ -42,31 +72,72 @@ export function ComposerQueue({
   const canSend = !closed && !thread.archived
   const canEdit = !closed
   const running = thread.turnActive
+  const sortable = canEdit && editable.length > 1
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return
+    const ids = editable.map((item) => item.id)
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) return
+    const next = arrayMove(ids, from, to)
+    setDragged({ from: thread.queue, ids: next })
+    void actions.queueReorder(sessionId, next).catch(() => setDragged(null))
+  }
+  const sendMany = (ids: string[]) => {
+    setBusy(true)
+    void actions
+      .queueSendNow(sessionId, ids.length > 0 ? ids : undefined)
+      .then(() => setPicked(new Set()))
+      .catch(() => {})
+      .finally(() => setBusy(false))
+  }
   return (
     <section aria-label="Pending updates" className="mt-2">
       <header className="mb-1.5 flex items-center justify-between px-1">
         <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
           Up next
         </h3>
-        <span className="text-[10px] tabular-nums text-muted-foreground/70">
-          {count} {count === 1 ? "message" : "messages"}
-        </span>
+        <div className="flex items-center gap-2">
+          {editable.length > 1 && (
+            <button
+              type="button"
+              className="text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50"
+              disabled={!canSend || busy}
+              title={`${running ? "Stop the running turn and send" : "Send"} ${
+                pickedIds.length > 0 ? "the selected messages" : "every queued message"
+              } together as one`}
+              onClick={() => sendMany(pickedIds)}
+            >
+              {pickedIds.length > 0 ? `Send ${pickedIds.length} selected` : "Send all"}
+            </button>
+          )}
+          <span className="text-[10px] tabular-nums text-muted-foreground/70">
+            {count} {count === 1 ? "message" : "messages"}
+          </span>
+        </div>
       </header>
-      <ol className="flex min-w-0 flex-col gap-1">
-        {items.map((item) => (
-          <QueuedMessageRow
-            key={item.id}
-            item={item}
-            next={item.id === editable[0]?.id}
-            sessionId={sessionId}
-            actions={actions}
-            onEdit={onEdit}
-            canSend={canSend && !item.steer}
-            canEdit={canEdit && !item.steer}
-            running={running}
-          />
-        ))}
-      </ol>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={editable.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+          <ol className="flex min-w-0 flex-col gap-1">
+            {items.map((item) => (
+              <QueuedMessageRow
+                key={item.id}
+                item={item}
+                next={item.id === editable[0]?.id}
+                sessionId={sessionId}
+                actions={actions}
+                onEdit={onEdit}
+                canSend={canSend && !item.steer}
+                canEdit={canEdit && !item.steer}
+                running={running}
+                selected={picked.has(item.id)}
+                onToggle={editable.length > 1 && !item.steer ? () => toggle(item.id) : undefined}
+                sortable={sortable && !item.steer}
+              />
+            ))}
+          </ol>
+        </SortableContext>
+      </DndContext>
     </section>
   )
 }
@@ -80,6 +151,9 @@ function QueuedMessageRow({
   canSend,
   canEdit,
   running,
+  selected,
+  onToggle,
+  sortable,
 }: {
   item: QueuedMessage
   /** The first row the turn's end will send — the first that is not a steer. */
@@ -90,8 +164,17 @@ function QueuedMessageRow({
   canSend: boolean
   canEdit: boolean
   running: boolean
+  selected: boolean
+  /** Absent when there is nothing to pick between (one row, or a steer). */
+  onToggle?: () => void
+  /** Draws the grip. A steer never has one: it is already on the wire. */
+  sortable: boolean
 }) {
   const [busy, setBusy] = React.useState(false)
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+    disabled: !sortable,
+  })
 
   const run = (op: Promise<unknown>) => {
     setBusy(true)
@@ -110,15 +193,45 @@ function QueuedMessageRow({
 
   return (
     <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
       aria-busy={busy || undefined}
       className={cn(
         "group/queued relative flex min-w-0 flex-col gap-1 rounded-md border border-border/50 bg-muted/40 px-2 py-1.5",
         "transition-colors hover:border-border hover:bg-muted/70",
-        busy && "opacity-50"
+        busy && "opacity-50",
+        isDragging && "z-10 border-border bg-muted shadow-lg"
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <div className="flex min-w-0 items-center gap-1.5">
+          {sortable && (
+            <button
+              type="button"
+              className="-ms-1 shrink-0 cursor-grab touch-none text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+              title="Drag to reorder"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVerticalIcon className="size-3" />
+            </button>
+          )}
+          {onToggle && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={selected}
+              aria-label="Select to send"
+              disabled={!canSend || busy}
+              onClick={onToggle}
+              className={cn(
+                "flex size-3.5 shrink-0 items-center justify-center rounded-sm border border-border disabled:opacity-50",
+                selected && "border-primary bg-primary text-primary-foreground"
+              )}
+            >
+              {selected && <CheckIcon className="size-2.5" />}
+            </button>
+          )}
           <span
             className={cn(
               "truncate text-[10px] font-medium",
@@ -150,7 +263,7 @@ function QueuedMessageRow({
               className="inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50"
               disabled={!canSend || busy}
               title={running ? "Stop the running turn and send this now" : "Send this now"}
-              onClick={() => run(actions.queueSendNow(sessionId, item.id))}
+              onClick={() => run(actions.queueSendNow(sessionId, [item.id]))}
             >
               <SendHorizontalIcon className="size-3" />
               Send now

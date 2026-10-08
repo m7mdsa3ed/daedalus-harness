@@ -302,7 +302,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   arguments}`) and as `mcp__server__tool` from the others; a web search arrives
   under `search`, which is also where ripgrep lives. Each of those rendered as
   a JSON dump or a wrong-shaped pane before it had a view — as did a
-  `MultiEdit`, whose hunks are one level down in an array. **JSON is a tree, not
+  `MultiEdit`, whose hunks are one level down in an array. The harness server's
+  two meta-tools are the newest such view (`tool-views/harness.tsx`,
+  `lib/tools/harness.ts`): `harness_run`/`harness_help` reach every part of the
+  harness, so their row names the operation (`tasks_create` reads "Create
+  task", captioned with the name it was given) and their result is drawn as
+  the operations list, a field-set, or — for a list — a table of at most three
+  chosen columns (`harnessTable`), with the unabridged JSON folded below. A
+  `data:` URL is "inline image · N KB", never its base64. The closed row says
+  the same without opening: the mark is the *act* (`harnessAction` — plus,
+  pencil, bin, list; a removal wears the failure red), the trailing reading is
+  the outcome ("11 projects"), and a list's first names are chips under the
+  title (`HarnessPreview`, the `below` slot). **JSON is a tree, not
   a dump** (`JsonView`, `tool-parts.tsx`): every place a call arrives *as* JSON
   is drawn as foldable nodes — the arguments `ToolInput` falls back to (which is
   also what `McpDetail` points it at, and what the approval card shows in place
@@ -408,18 +419,23 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   and the full transcript when opened. Steps the runner has not spawned yet are
   pending rows, so the run's shape is whole from the first spawn and does not
   change under the reader. **The card also opens fullscreen** — a `Maximize2Icon`
-  in its header — through the app's own dialog, `ResponsiveDialog` (the sheet on a
-  phone, the centred popup on a desktop), in the `fullscreen` mode it now carries:
-  edge to edge on a desktop, the sheet's cap gone full, and none of the centred
-  popup's width cap, centring transform or zoom-in. It shares the card's view and
+  in its header — as a **morph**: `ui/morphing-dialog.tsx` (adapted from the shadcn
+  registry's `@motion-primitives/morphing-dialog`) gives the card and the panel one
+  `layoutId`, so the card grows into a panel inset from the window (not edge to edge)
+  and shrinks back into it. The card stays mounted and keeps its shape while the panel
+  is up — unmounting its body would move the transcript under the morph — and the panel's
+  contents fade in after the box lands, because the box is scaled from the card's rect
+  and would stretch them. The same component opens the openui `Flowchart` (a corner
+  button; the panel's chart is a fresh sketch, so an arrangement made there is gone on
+  close). It is not `ResponsiveDialog`, which has no fullscreen mode any more and gives
+  a phone no swipe-to-dismiss here. The panel shares the card's view and
   picked step, so it continues the reading rather than restating it, and it is not
   a second design: the card's expanded panel and the dialog's body are one
   `RunBody`, and the head they share is one `RunHead` (a disclosure inline, a
-  plain header in the dialog, which has nothing to fold). The popup is the
+  plain header in the dialog, which has nothing to fold). The panel is the
   `@container` the board and the graph inside it resolve `@panel-*` against,
   because a portal leaves the panel behind — a run confined to the transcript
-  column was never wide enough to draw the graph. It is the one surface that earns
-  a fullscreen dialog: a reader, never a form. **A run whose barrier joins several steps opens on a
+  column was never wide enough to draw the graph. It is a reader, never a form. **A run whose barrier joins several steps opens on a
   Graph view** (List is the toggle's other half) (`workflow-graph.tsx`, lazy, `@panel-md` and up): phases as columns, a
   join dot between two wide phases, node borders by step state, a live clock on a running node, a clicked node opening
   as the same step row under the graph. It draws **phase joins only** — the outline
@@ -534,9 +550,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **shimmers the title** (`harness-shimmer`, the same band as the working line and a live
   thought), a thread waiting on you gets an amber dot at the trailing edge; agent,
   profile, model, project, start time and — when it says something the start
-  time does not — last active live in `ThreadInfoCard` — one popover
-  that opens on hover (Base UI `openOnHover`) and, on a phone, on long press,
-  where it also carries the row's actions (it replaces the right-click menu there). Every row, label and group draws from
+  time does not — last active live in `ThreadInfoCard` — the
+  header of the row's ⋯ dropdown (it opens from the ⋯, never on hover), which
+  carries the row's actions beside the reading; the right-click menu and, on a phone, long press
+  open the same action list. Every row, label and group draws from
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). The
   footer's **plan usage** gauge (`sidebar/usage.tsx`, `SidebarUsage`) sits above
   the account row and opens a popover at a glance's measure: one card per
@@ -551,7 +568,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
   the Threads label carries a sort/filter menu (recent first / by project;
   all / running / needs you) remembered per device as `ui.sidebarView`. Fold
-  state is `ui.collapsedProjects`, keyed by project id. The shelf above
+  state is `ui.collapsedProjects`, keyed by project id. **Every row wears one status glyph in its trailing slot**
+  (`ThreadStateBadge`): the words "Needs you"/"Error" for the two asks, otherwise a
+  pause (held at a failure), a spinner (running) or a primary dot (finished since this
+  device last looked). Held is `agentState`'s rule asked of every session
+  (`sidebar/activity.ts`); **unread is device-local** (`ui.threadSeen`: the `activityAt`
+  last in front of you per thread, plus a first-launch baseline so history does not all
+  read unread) and is stamped by the thread in front of you — reading is not activity, so
+  nothing is written to the server. **Folders roll up** running and needs-you counts when
+  closed, and the Threads label carries the total needs-you. A folder wears a heavier,
+  faintly tinted header so it reads apart from the two-line rows. **The in-sidebar filter**
+  (`sidebarFilter`, Alt+T, or the magnifier on the label) matches already-loaded threads
+  by title, project or agent id, locally and unstored; the palette stays the deep search.
+  The All / Running / Needs you chips write the same `ui.sidebarView` the menu does.
+  **A running or waiting thread's Delete is disabled** in the row menu ("Stop the turn
+  first"): Delete is Trash, and Trash stops the agent. The shelf above
   the composer is `components/composer-strip.tsx`; app icons regenerate from
   `client/build/icon.svg` via `pnpm icons`.
   **Everything with a face is drawn by `components/entity-icon.tsx`**: `EntityIcon`
@@ -633,7 +664,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   reading beside the project, with the shelf's own ground wearing its tone (`--shelf-info`/
   `-warn`/`-error`); that made the composer wear the state of the *thread*, and it reported a
   dead socket as an entire surface coloured amber. It is a `Notice` at the foot of the
-  transcript now (`components/connection-card.tsx`), with the wait, the working line and the
+  transcript now (`components/thread-view/thread-status.tsx`), with the wait, the working line and the
   turn's other stops — so the shelf has no tone and nothing on it is ever wrong.
 - **The toolbar is the card's second row**, reading *what goes in → who answers → what
   happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, run a project command,
@@ -677,7 +708,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **Queued prompts share one pending-update panel** (`components/composer-queue.tsx`), at the
   very end of the flow. Rows carry the prompt, status and timestamp; "Up next" identifies the
   first item to send after the turn, with later messages marked "Queued". Steering is a composer
-  send action only, not a second action on each queued row. Queue actions stay with each item,
+  send action only, not a second action on each queued row. Queue actions stay with each item (a checkbox picks several for "Send N selected"; "Send all" sends the lot as one prompt),
   use `useCoarsePointer` for touch sizing and remain reachable by keyboard focus.
 - **Editing a queued message takes it back to the composer** — `queueRemove` first, then the
   composer's `fill` handle, and the fill only on success, because a message in the box *and*
@@ -1024,6 +1055,28 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
   either** — Electron gives it to close-window, so it would quit the app rather
   than close a tab, the same reason `splitRight` is not ⌘W.
 
+- **A split is split, walked and resized from the keyboard through the same table**
+  (`dock.tsx`): ⌘/Ctrl+\ and ⌘/Ctrl+⇧\ split right and down, ⌘/Ctrl+⇧M fills the
+  panel, ⌥/Alt+←/→ walk the grid's panes wrapping (`activateNext`, grid groups
+  only — a float is not a column), and ⌥/Alt+⇧+arrows push the divider the way
+  the arrow points (`resizeActive`): a pane with a neighbour that way grows
+  toward it, one at the edge gives way. **Resizing is `group.api.setSize`, never
+  the gridview**: dockview's sashes take the mouse only, but a group's size
+  event reaches its parent splitview, and a branch forwards a child's
+  `orthogonalSize` as its own size — so along the parent's axis it moves the
+  group's own edge and across it the branch the group sits in, and a 2×2 moves
+  both ways without touching the tree. In a row of three the far end absorbs
+  first (splitview's `relayout`), not the neighbour a drag would move. **Both
+  decline the key when there is nothing to act on** (`return false` from the
+  `useShortcut` handler): ⌥←/→ is the browser's Back/Forward and ⌥⇧← selects by
+  word in a composer on a Mac, and claiming them with no split would take both
+  for nothing. The resize family is one row (`resizePane`, Fixed — the arrow is
+  the key's meaning, as the digit is in `tabJump`); the walk is two rebindable
+  rows. It is not ⌘/Ctrl+⇧+arrow, which selects by word in the composer, where
+  the caret nearly always is. `splitDown` and `fillPanel` sat in the table and
+  the tab menu with no handler for a while: **a row in `SHORTCUTS` is not a
+  binding until a `useShortcut` names it.**
+
 ## The desktop shell
 
 `client/electron/` — `main.cjs` (windows, menu, IPC, the static server), `tray.cjs` (the
@@ -1220,6 +1273,18 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   a routed draft, which is what the console mints before it sends. The tab's mark is its
   sidebar row's (`PageIcon` in `panel-kinds.tsx`); its title is written forward only, so a
   restored tab never flashes "Page".
+- **The Browser panel's toolbar carries its own tools.** A project's Preview is the one
+  page this app can read, so two buttons are the page's: **Pick element** turns one click
+  into a selector for the composer — the way to tell an agent *which* element without
+  describing it, handed over through `lib/composer-insert.ts` by `Send to agent` — and
+  **Console** opens a drawer of the page's own log, with a dot when it holds warnings or
+  errors. Both ride the desktop shell's `<webview>` guest (`electron/main.cjs` relays the
+  console per guest and runs the picker with `executeJavaScript`); a browser's sandboxed
+  iframe has no console to read and no DOM to inspect, so neither is drawn there.
+- **A hidden chat tab is `display: none` while its thread dock stays mounted.** Dockview's
+  `always` renderer hides an inactive panel with `visibility`, which the inner dock's own
+  overlays escape; `display: none` cannot be escaped, and keeping the dock mounted is what
+  lets a Preview's page and a shell come back to what they were instead of reloading.
 - **A panel kind is a surface, and a surface that reads the URL cannot be one.** The tasks
   panel is the case that proved it: the board workspace answered "which board, which task"
   from `useParams`/`useSearchParams`/`useNavigate`, so a panel switching board would have

@@ -16,6 +16,9 @@ import { SessionManager } from "./sessions.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { WorkflowRunner } from "./workflows.js";
 import { workflowRoutes } from "./routes/workflows.js";
+import { harnessRoutes } from "./routes/harness.js";
+import { sqlRoutes } from "./routes/sql.js";
+import { attachBrowserHost, attachCdpClient, cdpRefusal } from "./browser-hosts.js";
 import { routineRoutes } from "./routes/routines.js";
 import { RoutineGitTriggers } from "./routine-git-trigger.js";
 import { RoutineEngine } from "./routines.js";
@@ -30,10 +33,14 @@ import { addNotification } from "./notifications.js";
 import { backfillSearchIndex } from "./search.js";
 import { bearerToken } from "./routes/helpers.js";
 import { miscRoutes } from "./routes/misc.js";
+import { voiceRoutes } from "./routes/voice.js";
+import { videoRoutes } from "./routes/video.js";
+import { recoverVideoRenders } from "./video/service.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { spaceRoutes } from "./routes/spaces.js";
 import { workspaceRoutes } from "./routes/workspace.js";
 import { attachmentRoutes } from "./routes/attachments.js";
+import { fileRoutes } from "./routes/files.js";
 import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { taskRoutes } from "./routes/tasks.js";
@@ -234,7 +241,7 @@ app.use("/api/sessions/:id/spans/:spanId", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /gw/* + /mx/* + /wf/* + /rt/* are outside /api with the key-in-path
+   and /gw/* + /mx/* + /wf/* + /hm/* + /rt/* (and the /cdp socket) are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
@@ -247,10 +254,16 @@ profileRoutes(app, { sessions });
   spaceRoutes(app);
   workspaceRoutes(app);
 attachmentRoutes(app);
+fileRoutes(app);
 libraryRoutes(app, { sessions });
 sessionRoutes(app, { sessions });
+voiceRoutes(app, { sessions });
+videoRoutes(app, { sessions });
+await recoverVideoRenders();
 taskRoutes(app, { sessions, tasks });
 workflowRoutes(app, { runner: workflows, sessions });
+harnessRoutes(app, { runner: workflows });
+sqlRoutes(app);
 routineRoutes(app, { engine: routines });
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
@@ -331,7 +344,24 @@ const heartbeat = setInterval(() => {
 heartbeat.unref();
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname !== "/ws" && url.pathname !== "/terminal") {
+  /* `chrome-devtools-mcp`'s connection to the thread's preview. Key-in-path,
+     like /hm: the per-boot key is the credential and the id names the thread.
+     Refused over HTTP while nobody is driving, so the MCP's error says so. */
+  const cdp = /^\/cdp\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+  if (cdp) {
+    const caller = workflows?.resolveCaller(cdp[1]!, decodeURIComponent(cdp[2]!)) ?? null;
+    const refused = caller ? cdpRefusal(caller.id) : "not found";
+    if (refused) {
+      socket.end(`HTTP/1.1 ${caller ? 409 : 404} ${refused}\r\nConnection: close\r\n\r\n`);
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      trackLiveness(ws);
+      attachCdpClient(caller!.id, ws);
+    });
+    return;
+  }
+  if (url.pathname !== "/ws" && url.pathname !== "/terminal" && url.pathname !== "/browser") {
     // Destroying the socket leaves the browser with a bare "connection failed".
     // An HTTP response at least names the problem in the network panel.
     socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -351,6 +381,11 @@ server.on("upgrade", (req, socket, head) => {
         url.searchParams.get("projectId") ?? "",
         ws,
       );
+      if (refused) ws.close(4004, refused);
+      return;
+    }
+    if (url.pathname === "/browser") {
+      const refused = attachBrowserHost(url.searchParams.get("sessionId") ?? "", ws);
       if (refused) ws.close(4004, refused);
       return;
     }

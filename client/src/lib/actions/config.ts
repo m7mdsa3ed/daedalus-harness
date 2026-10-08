@@ -8,6 +8,8 @@ import type * as acp from "@daedalus/acp"
 import { toast } from "../toast"
 import { saveProjectDefaults } from "../project-defaults"
 import { api, type Profile, type ProjectDefaults, type SessionMeta } from "../settings"
+import { currentChoiceLabel } from "../session-options"
+import type { ThreadState } from "../store"
 import type { ActionsCore } from "./core"
 
 /* ── Thread settings: what one pick is, and how several become one request ──
@@ -38,6 +40,10 @@ export type ConfigPatch = {
   personaId?: string
   suggestFollowups?: boolean
   uiBlocks?: boolean
+  /** The agent's own selectors — a staged pick is the only place these travel
+      as a patch; they are never a field of the session row. */
+  modeId?: string
+  options?: Record<string, string | boolean>
 }
 
 interface ConfigReply {
@@ -84,7 +90,13 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
     against the profile catalog where they have a name there; a persona is named
     by the fact it moved, because the catalog that holds its name is not one
     this module reads. */
-export function describeConfig(patch: ConfigPatch, profiles: Profile[]): string {
+export function describeConfig(
+  patch: ConfigPatch,
+  profiles: Profile[],
+  /** What names a mode or an option — the agent's own list, which this module
+      does not otherwise read. Without it an id stands in for its name. */
+  thread?: ThreadState
+): string {
   const parts: string[] = []
   if (patch.profileId !== undefined) {
     parts.push(`Profile: ${profiles.find((p) => p.id === patch.profileId)?.name ?? patch.profileId}`)
@@ -104,6 +116,15 @@ export function describeConfig(patch: ConfigPatch, profiles: Profile[]): string 
   }
   if (patch.uiBlocks !== undefined) {
     parts.push(patch.uiBlocks ? "Drawn UI on" : "Drawn UI off")
+  }
+  if (patch.modeId !== undefined) {
+    const mode = thread?.modes?.availableModes.find((m) => m.id === patch.modeId)
+    parts.push(`Mode: ${mode?.name ?? patch.modeId}`)
+  }
+  for (const [id, value] of Object.entries(patch.options ?? {})) {
+    const option = thread?.configOptions.find((o) => o.id === id)
+    const named = option ? currentChoiceLabel({ ...option, currentValue: value } as acp.SessionConfigOption) : String(value)
+    parts.push(`${option?.name ?? id}: ${named}`)
   }
   return parts.join(" · ")
 }
@@ -374,6 +395,23 @@ export function configActions(core: ActionsCore) {
     }
   }
 
+  const stagePick = async (
+    sessionId: string,
+    pick: { modeId?: string; options?: Record<string, string | boolean> },
+    context: string
+  ): Promise<void> => {
+    try {
+      const reply = await api<{ staged: ConfigPatch }>(settings, `/api/sessions/${sessionId}/config`, {
+        method: "POST",
+        body: JSON.stringify({ pick }),
+      })
+      dispatch({ type: "staged-config", id: sessionId, config: reply.staged })
+    } catch (error) {
+      recordError(sessionId, error, context)
+      throw error
+    }
+  }
+
   return {
     /**
      * Change a thread's profile, model or effort — and let the server say
@@ -485,57 +523,41 @@ export function configActions(core: ActionsCore) {
     },
 
     /**
-     * A mode or an agent option, on the running process.
+     * The reader's approval of what is staged, now: "Apply now".
      *
-     * Optimistic, and *actually* optimistic: the control moves on the pick
-     * and the round trip happens behind it. It used to dispatch after the
-     * await, which for a menu row a person has just clicked is a control that
-     * sits on the old value for as long as the agent takes to answer. A
-     * rejection has to be loud for the same reason — the value snaps back,
-     * and nothing else would say why.
+     * A running turn is steered with whatever the process can take as it is
+     * (the agent's selectors, a live model/effort move) and the rest stays
+     * staged for the next turn; an idle thread takes the whole patch, spawn
+     * included. The server answers what is left, and `staged_config` says the
+     * same to every other peer.
      */
-    async setMode(sessionId: string, modeId: string) {
-      const previous = getState().threads[sessionId]?.modes?.currentModeId
-      dispatch({ type: "mode", id: sessionId, modeId })
+    async applyStagedConfig(sessionId: string) {
       try {
-        await known(sessionId)?.live?.setMode(modeId)
+        const reply = await api<{ staged: ConfigPatch | null }>(settings, `/api/sessions/${sessionId}/config`, {
+          method: "POST",
+          body: JSON.stringify({ applyStaged: true }),
+        })
+        dispatch({ type: "staged-config", id: sessionId, config: reply.staged ?? null })
+        await refreshSessions()
       } catch (error) {
-        if (previous) dispatch({ type: "mode", id: sessionId, modeId: previous })
-        recordError(sessionId, error, "The agent rejected that mode")
+        recordError(sessionId, error, "Couldn't apply that settings change")
         throw error
       }
     },
 
-    async setConfigOption(sessionId: string, configId: string, value: string | boolean) {
-      // Read the category first: the response replaces the whole option set,
-      // and the category is what says whether this pick is also spawn state.
-      const options = getState().threads[sessionId]?.configOptions ?? []
-      const category = options.find((option) => option.id === configId)?.category
-      /* Moved first and put back on a refusal. The agent answers with the
-         whole option set — which is what finally lands — but that answer is a
-         round trip away, and the row the user clicked has to move now. */
-      dispatch({
-        type: "config-options",
-        id: sessionId,
-        configOptions: options.map((option) =>
-          option.id === configId
-            ? ({ ...option, currentValue: value } as acp.SessionConfigOption)
-            : option
-        ),
-      })
-      try {
-        const configOptions = await known(sessionId)?.live?.setConfigOption(configId, value)
-        if (configOptions) dispatch({ type: "config-options", id: sessionId, configOptions })
-      } catch (error) {
-        dispatch({ type: "config-options", id: sessionId, configOptions: options })
-        recordError(sessionId, error, `The agent rejected that ${configId} setting`)
-        throw error
-      }
-      /* Model and effort are also process env: the server rebuilds them from
-         the session record every time it revives a retired thread. It records
-         the change itself now (it knows the option's category), so all that is
-         left here is to re-read the list this thread's row appears in. */
-      if (category === "model" || category === "thought_level") await refreshSessions()
-    },
+    /**
+     * A mode or an agent option — **staged**, like every other setting.
+     *
+     * It used to go straight to the running agent, mid-turn included, which
+     * moved the permission mode under an answer already being written. Now it
+     * waits for the next turn (or the reader's "Apply now"), and the menus
+     * draw it through `stagedPicks`. A rejection is the server's to say, at
+     * the moment it is taken — there is nothing optimistic left to put back.
+     */
+    setMode: (sessionId: string, modeId: string) =>
+      stagePick(sessionId, { modeId }, "Couldn't stage that mode"),
+
+    setConfigOption: (sessionId: string, configId: string, value: string | boolean) =>
+      stagePick(sessionId, { options: { [configId]: value } }, `Couldn't stage that ${configId} setting`),
   }
 }

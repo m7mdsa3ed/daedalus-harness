@@ -21,7 +21,7 @@
    workspace over one bad entry. */
 import type { SerializedDockview } from "dockview-react"
 
-import { isPanelKind, parsePanel } from "./panels"
+import { isPanelKind, panelId as panelIdOf, parsePanel, type PanelDescriptor } from "./panels"
 import { loadActiveSpace } from "../spaces"
 import { IS_POPOUT } from "../popout"
 
@@ -352,6 +352,43 @@ export function saveLayout(serverId: string, layout: SerializedDockview, spaceId
     // Quota, or private-mode storage. The dock still works; it just will not
     // come back. Not worth a toast on every layout change.
     console.warn("Could not persist the workspace layout", error)
+  }
+}
+
+/* ── Tabs filed away for another space ──
+   A prune that evicts a tab because its project lives in another space is not a
+   close: the tab is owed to that space, and is reopened by `switchSpace` when it
+   next comes in front. Kept beside the layout (same prefix, so `clearLayout`
+   sweeps it) as plain descriptors — building them into a serialized grid would
+   mean inventing a leaf for a space that has no layout yet. */
+const stashKey = (serverId: string, spaceId: string) => `${layoutKey(serverId, spaceId)}:pending`
+
+export function stashPanels(serverId: string, spaceId: string, panels: PanelDescriptor[]): void {
+  if (IS_POPOUT || !spaceId || panels.length === 0) return
+  try {
+    const kept = takeStashedPanels(serverId, spaceId, { keep: true })
+    const ids = new Set(kept.map(panelIdOf))
+    localStorage.setItem(
+      stashKey(serverId, spaceId),
+      JSON.stringify([...kept, ...panels.filter((panel) => !ids.has(panelIdOf(panel)))])
+    )
+  } catch (error) {
+    console.warn("Could not file the tab under its space", error)
+  }
+}
+
+/** The tabs owed to a space, cleared on read unless `keep`. */
+export function takeStashedPanels(serverId: string, spaceId: string, opts?: { keep?: boolean }): PanelDescriptor[] {
+  if (!spaceId) return []
+  try {
+    const raw = localStorage.getItem(stashKey(serverId, spaceId))
+    if (!opts?.keep) localStorage.removeItem(stashKey(serverId, spaceId))
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed)
+      ? parsed.filter((p): p is PanelDescriptor => !!p && typeof p === "object" && isPanelKind((p as { kind?: unknown }).kind))
+      : []
+  } catch {
+    return []
   }
 }
 

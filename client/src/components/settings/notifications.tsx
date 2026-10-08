@@ -102,6 +102,40 @@ export function NotificationsPage() {
             aria-label="System notifications"
           />
         </Row>
+        <Row
+          title="Sounds"
+          subtitle="Play a short cue for each event above — also on the thread you are reading."
+        >
+          <Switch
+            checked={prefs.sound}
+            onCheckedChange={(checked) => setNotificationPref("sound", checked)}
+            aria-label="Sounds"
+          />
+        </Row>
+        <Row title="Tool-start sound" subtitle="Play a quiet tick when a tool call starts.">
+          <Switch
+            checked={prefs.toolStartedSound}
+            onCheckedChange={(checked) => setNotificationPref("toolStartedSound", checked)}
+            aria-label="Tool-start sound"
+          />
+        </Row>
+        <Row title="Tool-failure sound" subtitle="Play a low blip when a tool call fails.">
+          <Switch
+            checked={prefs.toolFailedSound}
+            onCheckedChange={(checked) => setNotificationPref("toolFailedSound", checked)}
+            aria-label="Tool-failure sound"
+          />
+        </Row>
+        <Row
+          title="Vibration"
+          subtitle="Vibrate for thread events and tool activity where the device and browser support it."
+        >
+          <Switch
+            checked={prefs.vibration}
+            onCheckedChange={(checked) => setNotificationPref("vibration", checked)}
+            aria-label="Vibration"
+          />
+        </Row>
         {/* Notifications are, by design, the one thing you cannot make happen:
             they fire for a thread you are NOT reading, from a window you are
             NOT looking at. So the only way to see what you just configured is
@@ -144,7 +178,7 @@ export function NotificationsPage() {
       </Group>
       <p className="px-1 text-xs text-pretty text-muted-foreground">
         Events on a thread you are currently reading are never announced — the transcript already
-        shows them. When no client is connected to a thread at all, the server delivers the same
+        shows them — except by sound, when it is on. When no client is connected to a thread at all, the server delivers the same
         events as push notifications to registered devices, if it has FCM configured.
       </p>
     </>

@@ -237,12 +237,13 @@ export function useMcpServers(): McpServerDef[] {
  * (`mcp_catalog`'s TTL) — refetching on a tab switch would spend a connect to
  * be told the same thing. The Check button is the live door.
  */
-export function useMcpCatalog(id: string) {
+export function useMcpCatalog(id: string, enabled = true) {
   const settings = useServer()
   return useApiQuery<McpCheckResult>(mcpCatalogKey(settings, id), `/api/mcp-servers/${id}/catalog`, {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     retry: false,
+    enabled,
   })
 }
 
@@ -267,6 +268,18 @@ export function useSkills(): SkillDef[] {
   return list<SkillDef>(useApiQuery<SkillDef[]>(skillsKey(settings), "/api/skills", {
     staleTime: CATALOG_STALE_MS,
   }).data)
+}
+
+/** The `SKILL.md` a thread's skill-load row loaded, read server-side by name. */
+export function useSkillContent(sessionId: string, name: string, enabled: boolean): string {
+  const settings = useServer()
+  return (
+    useApiQuery<{ content: string }>(
+      skillsKey(settings).concat([sessionId, name, "content"]),
+      `/api/sessions/${sessionId}/skills/${encodeURIComponent(name)}/content`,
+      { enabled: enabled && !!sessionId, staleTime: CATALOG_STALE_MS, retry: false }
+    ).data?.content ?? ""
+  )
 }
 
 export function useCommands(): CommandDef[] {

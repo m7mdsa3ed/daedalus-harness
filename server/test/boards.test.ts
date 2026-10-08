@@ -384,4 +384,16 @@ await test("bulk updates skip a status from another board rather than failing", 
   assert.ok((await rows).every((r) => r.priority === "urgent"));
 });
 
+await test("an agent's write carries its actor, and the actor outranks a claimed author", async () => {
+  await reset();
+  const task = await createTask({ title: "agent work" });
+  const comment = await addComment(task.id, { body: "done", author: "someone else" }, "Claude Code · fix it");
+  assert.equal(comment.author, "Claude Code · fix it");
+  await updateTask(task.id, { priority: "high" }, "Claude Code · fix it");
+  const rows = await db.select().from(taskActivityTable).where(eq(taskActivityTable.taskId, task.id));
+  assert.equal(rows.find((r) => r.field === "priority")!.actor, "Claude Code · fix it");
+  assert.equal(rows.find((r) => r.field === "commented")!.actor, "Claude Code · fix it");
+  assert.equal(rows.find((r) => r.field === "created")!.actor, null);
+});
+
 console.log(`\nboards: ${passed} passed, 0 failed`);

@@ -76,6 +76,8 @@ function itemText(item: ThreadItem): string {
       ]
         .filter(Boolean)
         .join("\n\n")
+    case "voice":
+      return `${item.role === "user" ? "**You (voice):**" : "**Voice:**"} ${item.text}`
     /* A `!` command the user ran. The line and what it printed, fenced, so a
        pasted transcript says both — a shell command with no output reads as one
        that did nothing. */

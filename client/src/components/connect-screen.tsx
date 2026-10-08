@@ -1,6 +1,7 @@
 import * as React from "react"
 import { KeyRound, Loader2, Server, Tag } from "lucide-react"
 import { Notice } from "@/components/notice"
+import { Logo } from "@/components/ui/logo"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
@@ -72,7 +73,7 @@ export function ConnectScreen({
       <div className="relative grid w-full max-w-4xl overflow-hidden rounded-2xl border bg-card shadow-glass-lg lg:grid-cols-[1.1fr_1fr]">
         <section className="hidden flex-col justify-between gap-10 border-r bg-muted/20 p-10 lg:flex">
           <div className="flex items-center gap-2.5">
-            <img src="/logo.svg" alt="" className="size-8" />
+            <Logo className="size-8 text-primary" />
             <span className="brand-script text-2xl leading-none">Daedalus</span>
           </div>
           <div>

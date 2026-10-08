@@ -1,9 +1,11 @@
 import * as React from "react"
+import { useNavigate } from "react-router"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
   Archive,
   ArchiveRestore,
+  Bot,
   CalendarIcon,
   Check,
   ChevronDown,
@@ -47,7 +49,11 @@ import {
   type TaskActivity,
   type TaskInput,
 } from "@/lib/tasks-board"
-import { boardPath } from "@/lib/router"
+import type { Actions } from "@/lib/actions"
+import { AgentIcon } from "@/components/entity-icon"
+import { boardPath, threadPath } from "@/lib/router"
+import { isListed } from "@/lib/settings"
+import { useStoreSelect } from "@/lib/store"
 import { checklistProgress, dueLabel } from "@/lib/tasks-view"
 import {
   useAddComment,
@@ -170,6 +176,8 @@ function describe(entry: TaskActivity, ctx: { statuses: BoardStatus[]; sprints: 
       return "created the task"
     case "commented":
       return "commented"
+    case "thread":
+      return "started a thread on this task"
     case "description":
       return "edited the description"
     case "statusId":
@@ -271,6 +279,7 @@ function TaskDetailSkeleton() {
 }
 
 export function TaskDetailDialog({
+  actions,
   taskId,
   onClose,
   board,
@@ -283,6 +292,7 @@ export function TaskDetailDialog({
   onUpdate,
   onDelete,
 }: {
+  actions: Actions
   taskId: string | null
   onClose: () => void
   board: Board
@@ -296,6 +306,18 @@ export function TaskDetailDialog({
   onDelete: (id: string) => Promise<void>
 }) {
   const detail = useTaskDetail(taskId)
+  const navigate = useNavigate()
+  const sessions = useStoreSelect((state) => state.sessions)
+  /* The threads that were started on this task, newest first. The link is the
+     thread's (`sessions.taskId`), so this is a read of the list the sidebar
+     already holds — the board never fetches threads. */
+  const threads = React.useMemo(
+    () =>
+      sessions
+        .filter((s) => s.taskId === taskId && isListed(s) && !s.deletedAt)
+        .sort((a, b) => b.createdAt - a.createdAt),
+    [sessions, taskId],
+  )
   const task = detail.data?.task ?? allTasks.find((t) => t.id === taskId) ?? null
   const addComment = useAddComment()
   const updateComment = useUpdateComment()
@@ -605,6 +627,53 @@ export function TaskDetailDialog({
             </Section>
 
             <Section
+              icon={Bot}
+              title="Threads"
+              count={threads.length}
+              action={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => {
+                    /* A draft on this task, in the board's project when it has
+                       one: the words are there to send as they are. The agent is
+                       briefed by the server and carries the harness MCP. */
+                    const id = actions.startThreadIn({
+                      projectId: board.projectId ?? undefined,
+                      taskId: task.id,
+                      text: `Work on ${key}: ${task.title}`,
+                    })
+                    if (!id) return toast.error("Set up a project first — a thread needs somewhere to run")
+                    close()
+                    void navigate(threadPath(id))
+                  }}
+                >
+                  <Bot className="size-3" /> Work on this
+                </Button>
+              }
+            >
+              <ul className="grid gap-0.5">
+                {threads.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        close()
+                        void navigate(threadPath(s.id))
+                      }}
+                      className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-left text-sm hover:bg-accent/40"
+                    >
+                      <AgentIcon agentId={s.agentId} className="size-4 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate hover:underline">{s.title}</span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">{fmtWhen(s.createdAt)}</span>
+                    </button>
+                  </li>
+                ))}
+                {threads.length === 0 && <li className="text-xs text-muted-foreground">No agent has worked on this yet.</li>}
+              </ul>
+            </Section>
+
+            <Section
               icon={Link2}
               title="Linked tasks"
               count={links.length}
@@ -756,7 +825,10 @@ export function TaskDetailDialog({
                 {activity.map((entry) => (
                   <li key={entry.id} className="flex gap-2">
                     <span className="w-28 shrink-0 tabular-nums">{fmtWhen(entry.at)}</span>
-                    <span>{describe(entry, { statuses, sprints, all: allTasks, boardKey: board.key })}</span>
+                    <span>
+                      {entry.actor && <span className="font-medium text-foreground">{entry.actor} </span>}
+                      {describe(entry, { statuses, sprints, all: allTasks, boardKey: board.key })}
+                    </span>
                   </li>
                 ))}
                 {activity.length === 0 && !detail.isLoading && <li>No history recorded.</li>}

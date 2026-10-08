@@ -88,3 +88,22 @@ assert.deepStrictEqual(only.tabGroups, [{ id: "tg1", label: "Work", collapsed: f
 assert.deepStrictEqual(Object.keys(pruned.edgeGroups ?? {}), ["bottom"], "an edge group left empty is dropped")
 
 console.log("layout.check: ok")
+
+// ── A tab filed under another space is owed to it once, then taken ──
+{
+  const { stashPanels, takeStashedPanels } = await import("./layout.ts")
+  const store = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => store.set(k, v),
+    removeItem: (k) => store.delete(k),
+    get length() { return store.size },
+    key: (i) => [...store.keys()][i] ?? null,
+  }
+  const a = { kind: "chat", sessionId: "a" }
+  stashPanels("srv", "work", [a])
+  stashPanels("srv", "work", [a, { kind: "terminal", projectId: "p", terminalId: "t" }]) // merged, no duplicate
+  stashPanels("srv", "", [a]) // no space, nothing filed
+  assert.deepStrictEqual(takeStashedPanels("srv", "work").map((p) => p.kind), ["chat", "terminal"])
+  assert.deepStrictEqual(takeStashedPanels("srv", "work"), []) // taken once
+}

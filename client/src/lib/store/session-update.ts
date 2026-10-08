@@ -121,6 +121,9 @@ function upsertFailure(items: ThreadItem[], failure: SessionFailure, at?: number
     ...(prompt?.text ? { retryText: prompt.text } : {}),
     ...(prompt?.attachments?.length ? { retryAttachments: prompt.attachments } : {}),
     ...(failure.severity === "warning" ? { severity: "warning" as const } : {}),
+    /* A warning is a retry in flight unless it is the agent's `advisory`, which
+       is a note to keep. */
+    ...(failure.severity === "warning" && failure.category !== "advisory" ? { transient: true } : {}),
     revision,
     at: prev?.at ?? at,
   }
@@ -160,11 +163,13 @@ export function applySessionUpdate(
   items: ThreadItem[],
   update: SessionUpdate,
   allowUserChunks = false,
-  sessionId?: string
+  sessionId?: string,
+  stamp?: number
 ): ThreadItem[] {
   /* `allowUserChunks` is set only by the replay path, so it doubles as "this is
      history": replayed items get no timestamp rather than the reload's. */
-  const at = allowUserChunks ? undefined : Date.now()
+  const now = stamp ?? Date.now()
+  const at = allowUserChunks ? undefined : now
   /* Whose item this is. The vendor `_meta` naming a parent tool call (Claude
      Code's Task, or the child session OpenCode projects) wins even over an
      update that arrived on a subagent's session (the RFD: `sessionId` names
@@ -251,7 +256,7 @@ export function applySessionUpdate(
         locations: update.locations ?? [],
         meta: metaOf(update),
         terminal: applyTerminalMeta(undefined, metaOf(update)),
-        startedAt: Date.now(),
+        startedAt: now,
         at,
       }
       const existing = items.find((i): i is ToolItem => i.kind === "tool" && i.id === item.id)
@@ -400,7 +405,7 @@ export function applySessionUpdate(
         usage: existing?.usage,
         context: existing?.context,
         state: "running",
-        startedAt: existing?.startedAt ?? Date.now(),
+        startedAt: existing?.startedAt ?? now,
         at: existing?.at ?? at,
         parentId: owner ?? existing?.parentId,
       }
@@ -446,7 +451,7 @@ export function applySessionUpdate(
         toolCallId: update.toolCallId ?? existing?.toolCallId,
         progress: existing?.progress ?? [],
         usage: existing?.usage,
-        startedAt: existing?.startedAt ?? Date.now(),
+        startedAt: existing?.startedAt ?? now,
         at: existing?.at ?? at,
         parentId: owner ?? existing?.parentId,
       }
@@ -530,7 +535,7 @@ export function applySessionUpdate(
         ...(update.title ? { title: update.title } : {}),
         answer: update.answer.answer,
         timedOut: update.answer.timedOut,
-        at: Date.now(),
+        at: now,
         ...(owner ? { parentId: owner } : {}),
       }
       return [...items, item]
@@ -572,10 +577,18 @@ export function applySessionUpdate(
         output,
         exitCode,
         timedOut,
-        at: prev?.at ?? Date.now(),
+        at: prev?.at ?? now,
         ...(owner ? { parentId: owner } : {}),
       }
       return index >= 0 ? items.map((i, n) => (n === index ? item : i)) : [...items, item]
+    }
+    /* A finished voice line, appended where it was said. Keyed by the caller's
+       id, so this device's own dispatch and the fan-out of the same line are
+       one row; a line is whole when it arrives, so there is nothing to patch. */
+    case "_daedalus/voice": {
+      const id = `voice:${update.voiceId}`
+      if (items.some((i) => i.kind === "voice" && i.id === id)) return items
+      return [...items, { kind: "voice", id, role: update.role, text: update.text, at: now }]
     }
     /* The AIR failure record rides a `session_info_update` (the rest of which
        — title, timestamps — is the server's to say, not the transcript's). The
@@ -671,7 +684,8 @@ export function applyMetaUpdate(
   thread: ThreadState,
   update: SessionUpdate,
   allowUserChunks = false,
-  sessionId?: string
+  sessionId?: string,
+  stamp?: number
 ): ThreadState {
   /* A subagent's session-level state is its own — its mode, its options, its
      context window. None of it describes the thread, so none of it reaches
@@ -686,7 +700,7 @@ export function applyMetaUpdate(
      context occupancy is not the thread's, but it IS the step's, and the step
      is an item. Everything else about a child's session dies here. */
   if (sessionId && update.sessionUpdate === "usage_update")
-    return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
+    return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId, stamp) }
   switch (update.sessionUpdate) {
     case "current_mode_update":
       return thread.modes
@@ -699,7 +713,7 @@ export function applyMetaUpdate(
     case "usage_update":
       return { ...thread, context: update, ...markStepUsage(thread, update), ...liveStep(thread, update) }
     default:
-      return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
+      return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId, stamp) }
   }
 }
 

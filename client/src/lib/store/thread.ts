@@ -244,6 +244,33 @@ export function configView<T extends SessionMeta>(
 }
 
 /**
+ * The agent's own selectors as the reader has left them: the live ones, under
+ * what is staged for the next turn. Same layering as `configView`, for the half
+ * of a thread's settings that is not on the session row — `modes` and
+ * `configOptions` are the agent's to report, and a pick waiting for a turn is
+ * not yet something the agent has said.
+ */
+export function stagedPicks(thread: ThreadState | undefined): {
+  modes: ThreadState["modes"]
+  configOptions: ThreadState["configOptions"]
+} {
+  const staged = thread?.stagedConfig
+  const modes = thread?.modes ?? null
+  const configOptions = thread?.configOptions ?? []
+  return {
+    modes:
+      modes && staged?.modeId !== undefined ? { ...modes, currentModeId: staged.modeId } : modes,
+    configOptions: staged?.options
+      ? configOptions.map((option) =>
+          option.id in staged.options!
+            ? ({ ...option, currentValue: staged.options![option.id] } as acp.SessionConfigOption)
+            : option
+        )
+      : configOptions,
+  }
+}
+
+/**
  * A thread with nothing in it yet.
  *
  * Three things hang off this — the centred composer, the welcome block, and the

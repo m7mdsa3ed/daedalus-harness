@@ -1,8 +1,9 @@
 /* ── The subagents out working ──
    The count in the footer's cluster, and `runningAgents` — the one reading of
    "who is still out", shared with the working line. */
+import { formatCount } from "@/components/composer-strip"
 import { useEffect, useMemo, useState } from "react"
-import { BotIcon, LoaderCircleIcon } from "lucide-react"
+import { LoaderCircleIcon, NetworkIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -104,9 +105,9 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
                 from the shared reading parts, so this row is the same shape as
                 the four beside it. */}
             <ReadingFace
-              icon={<BotIcon className={READING_MARK} />}
+              icon={<NetworkIcon className={READING_MARK} />}
               label={label}
-              after={<ReadingBubble>{count > 9 ? "9+" : count}</ReadingBubble>}
+              after={<ReadingBubble>{formatCount(count)}</ReadingBubble>}
             />
           </Button>
         }

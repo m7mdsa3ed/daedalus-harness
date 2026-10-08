@@ -1,7 +1,7 @@
 import { AgentError, type ThreadCallbacks, type ThreadSocket } from "../thread-socket"
 import { optionKey, saveAgentOptions, savePromptCapabilities } from "../agent-options"
 import { appendTaskEvent } from "../task-events"
-import { noticeDetail, notifyThreadEvent } from "../notifications"
+import { noticeDetail, notifyThreadEvent, toolStepCue } from "../notifications"
 import type { TextItem } from "../store"
 import { splitStderr } from "../errors"
 import { recordThreadError } from "./record-error"
@@ -45,8 +45,10 @@ export function makeThreadCallbacks(
   const { send, sendStream, flush } = sink
   const ctx: FoldContext = { host, sink, owner, carried: [], attachedArchived: false }
   return {
-    onUpdate: (update, historyReplay, sessionId) => {
-      sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId })
+    onUpdate: (update, historyReplay, sessionId, at) => {
+      sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId, at })
+      // `at` is set only while catching up, so this is the live stream alone.
+      if (at === undefined && !historyReplay) toolStepCue(update)
     },
     onSessionTitle: (title) => send({ type: "agent-session-title", id, title }),
     /* The agent is blocked on this question until somebody answers it. The
@@ -370,8 +372,8 @@ export function makeThreadCallbacks(
     /* A turn began on words this device did not type — either another peer
        prompted, or this is the replay rebuilding the transcript. Only the
        first is live activity. */
-    onTurnStarted: (turnId, text, catchingUp, attachments) => {
-      send({ type: "user-message", id, text, turnId, attachments })
+    onTurnStarted: (turnId, text, catchingUp, attachments, at) => {
+      send({ type: "user-message", id, text, turnId, attachments, at })
       send({ type: "session-title", id, title: text.slice(0, 60) })
       if (!catchingUp) send({ type: "turn-active", id, active: true })
     },

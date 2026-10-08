@@ -18,7 +18,13 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 
+import { MenuSearchInput, menuFilter } from "@/components/config-menu"
+
 import { ToolRow } from "./tool-row"
+
+/** Past this many entries the submenu grows a filter box — the same threshold
+    and the same box as the model and effort rows. */
+const SEARCH_THRESHOLD = 8
 
 export function ToolSection<T extends { id: string; name: string }>({
   title,
@@ -26,6 +32,7 @@ export function ToolSection<T extends { id: string; name: string }>({
   items,
   itemIcon,
   hint,
+  badge,
   inherited,
   own,
   editable,
@@ -41,6 +48,8 @@ export function ToolSection<T extends { id: string; name: string }>({
   items: T[]
   itemIcon?: (item: T) => React.ReactNode
   hint: (item: T) => string
+  /** A short tag after the name — "built-in" — for entries of a different origin. */
+  badge?: (item: T) => string | undefined
   /** Linked by the profile: checked, locked, and not this menu's to clear. */
   inherited: Set<string>
   /** Linked by the thread itself. */
@@ -57,9 +66,22 @@ export function ToolSection<T extends { id: string; name: string }>({
     ? items
     : items.filter((item) => inherited.has(item.id) || own.includes(item.id))
   if (!editable && shown.length === 0) return null
+  const [open, setOpen] = React.useState(false)
+  const [query, setQuery] = React.useState("")
+  // The box is about *this* opening of the submenu, never the last one.
+  React.useEffect(() => {
+    if (!open) setQuery("")
+  }, [open])
+  const searchable = shown.length > SEARCH_THRESHOLD
+  const matching = searchable
+    ? menuFilter(
+        shown.map((item) => ({ item, value: item.id, name: item.name, hint: hint(item) })),
+        query
+      ).map((row) => row.item)
+    : shown
   const on = shown.filter((item) => inherited.has(item.id) || own.includes(item.id)).length
   return (
-    <DropdownMenuSub>
+    <DropdownMenuSub open={open} onOpenChange={setOpen}>
       <DropdownMenuSubTrigger className="gap-2.5">
         {icon}
         <span className="truncate">{title}</span>
@@ -78,12 +100,17 @@ export function ToolSection<T extends { id: string; name: string }>({
             will not see them.
           </div>
         )}
+        {searchable && <MenuSearchInput label={title} value={query} onChange={setQuery} />}
         {shown.length === 0 ? (
           <DropdownMenuItem disabled className="text-xs">
             None in the library.
           </DropdownMenuItem>
+        ) : matching.length === 0 ? (
+          <DropdownMenuItem disabled className="text-xs">
+            No match
+          </DropdownMenuItem>
         ) : (
-          shown.map((item) => {
+          matching.map((item) => {
             const from = inherited.has(item.id)
             return (
               <ToolRow
@@ -95,6 +122,7 @@ export function ToolSection<T extends { id: string; name: string }>({
                 from={from}
                 needsAuth={needsAuth(item)}
                 hint={hint(item)}
+                badge={badge?.(item)}
                 onCheckedChange={(checked) => {
                   if (editable) onToggle(item.id, checked === true)
                 }}

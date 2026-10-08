@@ -3,7 +3,7 @@
 import type * as acp from "@daedalus/acp"
 import type { ToolItem } from "../store"
 import { asRecord, str, vendorMeta } from "./helpers"
-import { isOneOf } from "./naming"
+import { isOneOf, toolKindOf } from "./naming"
 import { stringifyOutput } from "./output"
 
 /**
@@ -329,17 +329,66 @@ export function permissionToolCall(
   }
 }
 
-/** A `Skill` load: which packaged workflow the agent pulled in, and with what. */
+/** A skill load: which packaged workflow the agent pulled in, and with what. */
 export interface SkillLoad {
   name: string
   args?: string
+  /** The skill's own one-line description — from the `SKILL.md` frontmatter a
+      runtime read, or from the input when a skill tool carried one. */
+  description?: string
 }
 
-export function extractSkill(item: Pick<ToolItem, "title" | "meta" | "rawInput">): SkillLoad | null {
-  if (!isOneOf(item, ["skill", "loadskill", "load_skill"])) return null
+/* A runtime with no skill *tool* loads one by **reading** its `SKILL.md` — the
+   harness's own agent lists skills in its prompt and is told to read the file
+   before relying on one. The directory is the name, and both layouts the harness
+   materialises into (Claude Code's `.claude/skills`, OpenCode's
+   `.opencode/skills`) share the `<dir>/<name>/SKILL.md` shape. */
+const SKILL_FILE_RE = /(?:^|\/)(?:\.claude|\.opencode)\/skills\/([^/]+)\/SKILL\.md$/i
+
+/** The value of one key in a leading markdown frontmatter block, `null` when
+    absent. Line-based on purpose: skill frontmatter here is `key: value`. */
+function frontmatterField(text: string, key: string): string | null {
+  if (!text.startsWith("---")) return null
+  const end = text.indexOf("\n---", 3)
+  if (end === -1) return null
+  for (const line of text.slice(3, end).split("\n")) {
+    const sep = line.indexOf(":")
+    if (sep === -1 || line.slice(0, sep).trim() !== key) continue
+    const value = line.slice(sep + 1).trim().replace(/^["']|["']$/g, "")
+    if (value) return value
+  }
+  return null
+}
+
+/* The fields a skill can be read out of. Every call site hands over the whole
+   `ToolItem`; the ones only a heading or a target holds are optional, so those
+   narrower callers can still ask. */
+type SkillSource = Pick<ToolItem, "title" | "meta" | "rawInput"> &
+  Partial<Pick<ToolItem, "rawOutput" | "content" | "toolKind">>
+
+export function extractSkill(item: SkillSource): SkillLoad | null {
+  /* A runtime that ships a skill tool — Claude Code's `Skill` — names the skill
+     in the call's input. */
+  if (isOneOf(item, ["skill", "loadskill", "load_skill"])) {
+    const input = asRecord(item.rawInput)
+    const name = str(input?.skill) ?? str(input?.name)
+    if (!name) return null
+    return {
+      name,
+      args: str(input?.args) ?? undefined,
+      description: str(input?.description) ?? undefined,
+    }
+  }
+  /* Otherwise it is the read of a skill file, and the directory is the name.
+     Gated on the kind so an edit that *writes* a `SKILL.md` is never read as
+     loading one. */
+  if (toolKindOf(item) !== "read") return null
   const input = asRecord(item.rawInput)
-  const name = str(input?.skill) ?? str(input?.name)
-  return name ? { name, args: str(input?.args) ?? undefined } : null
+  const path = str(input?.file_path) ?? str(input?.filePath) ?? str(input?.path)
+  const match = path ? SKILL_FILE_RE.exec(path.replace(/\\/g, "/")) : null
+  if (!match) return null
+  const output = stringifyOutput(item.rawOutput, 8_000).text
+  return { name: match[1], description: output ? (frontmatterField(output, "description") ?? undefined) : undefined }
 }
 
 // ─── Search options ──────────────────────────────────────────────────────────

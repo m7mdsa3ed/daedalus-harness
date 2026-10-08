@@ -160,7 +160,8 @@ export function isAnswerItem(item: ThreadItem): boolean {
     item.kind === "agent" ||
     item.kind === "notice" ||
     item.kind === "error" ||
-    item.kind === "shell"
+    item.kind === "shell" ||
+    item.kind === "voice"
   )
 }
 
@@ -181,7 +182,7 @@ export function buildRows(
     mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits))
   )
   const placed = placeNativeWorkflows(nested, items)
-  const grouped = groupTools ? groupToolRuns(placed, turnActive, groupEdits) : placed
+  const grouped = groupTools ? groupToolRuns(placed, groupEdits) : placed
   return groupShells ? groupShellRuns(grouped) : grouped
 }
 
@@ -609,7 +610,7 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boo
         id: item.id,
         head,
         active: subagentActive(head, kids, children, items, indexOf, turnActive),
-        children: groupTools ? groupToolRuns(children, turnActive, groupEdits) : children,
+        children: groupTools ? groupToolRuns(children, groupEdits) : children,
       })
     }
     return rows
@@ -720,15 +721,15 @@ function groupCodexLifecycle(
  * become one parent group. Its children split at specialized-view changes,
  * with repeated same-view calls folded into expandable subgroups. Other content
  * stays outside these groups. A leading or trailing thought joins only if the
- * run it borders has at least two calls. During a live turn, keep the in-flight
- * singleton in a run wrapper so later calls join without remounting its row.
+ * run it borders has at least two calls; a lone tool call remains ungrouped,
+ * including while a turn is active.
  */
-export function groupToolRuns(rows: Row[], turnActive = false, groupEdits = false): Row[] {
+export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
   const out: Row[] = []
   let items: (ToolItem | TextItem)[] = []
   let thoughts: TextItem[] = []
 
-  const flush = (keepLiveSingleton = false) => {
+  const flush = () => {
     const tools = items.filter((item): item is ToolItem => item.kind === "tool")
     const views = new Set(tools.map(toolViewOf))
     if (tools.length > 1 && views.size === 1) {
@@ -740,8 +741,6 @@ export function groupToolRuns(rows: Row[], turnActive = false, groupEdits = fals
         items,
         children: groupSameViewRuns(items),
       })
-    } else if (keepLiveSingleton && turnActive && tools.length === 1) {
-      out.push({ kind: "run", id: items[0].id, items })
     } else out.push(...items)
     items = []
   }
@@ -755,8 +754,10 @@ export function groupToolRuns(rows: Row[], turnActive = false, groupEdits = fals
     } else {
       if (items.some((item) => item.kind === "tool") && thoughts.length > 0) {
         const toolCount = items.filter((item) => item.kind === "tool").length
-        if (toolCount > 1) items.push(...thoughts)
-        thoughts = []
+        if (toolCount > 1) {
+          items.push(...thoughts)
+          thoughts = []
+        }
       }
       flush()
       out.push(...thoughts, row)
@@ -767,7 +768,7 @@ export function groupToolRuns(rows: Row[], turnActive = false, groupEdits = fals
     items.push(...thoughts)
     thoughts = []
   }
-  flush(turnActive)
+  flush()
   out.push(...thoughts)
   return out
 }

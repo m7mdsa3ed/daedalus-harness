@@ -62,10 +62,11 @@ export interface SocketHost {
     opts?: { steer?: boolean; attachmentIds?: string[]; forceLink?: boolean },
   ): Promise<PromptReply>;
   queueAdd(id: string, text: string, attachmentIds?: string[]): Promise<PromptReply>;
-  queueSendNow(id: string, itemId?: string): Promise<{ turnId: string }>;
+  queueSendNow(id: string, itemIds?: string[]): Promise<{ turnId: string }>;
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }>;
   queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): Promise<void>;
   queueRemove(id: string, itemId: string): Promise<void>;
+  queueReorder(id: string, ids: string[]): Promise<void>;
   queueClear(id: string): Promise<void>;
   stopTurn(id: string, reclaim: boolean): Promise<CancelReply>;
   /** Continue a held turn, taking a staged change first when there is one. */
@@ -415,6 +416,12 @@ export class SessionSocket {
           return {};
         });
         return;
+      case "queue_reorder":
+        this.run(session, peer, command.id, async () => {
+          await this.host.queueReorder(session.id, command.ids);
+          return {};
+        });
+        return;
       case "queue_clear":
         this.run(session, peer, command.id, async () => {
           await this.host.queueClear(session.id);
@@ -466,7 +473,7 @@ export class SessionSocket {
         );
         return;
       case "queue_send_now":
-        this.run(session, peer, command.id, () => this.host.queueSendNow(session.id, command.itemId));
+        this.run(session, peer, command.id, () => this.host.queueSendNow(session.id, command.itemIds ?? (command.itemId ? [command.itemId] : undefined)));
         return;
       case "queue_steer":
         this.run(session, peer, command.id, () => this.host.queueSteer(session.id, command.itemId));

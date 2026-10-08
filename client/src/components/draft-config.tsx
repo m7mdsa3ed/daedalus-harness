@@ -1,3 +1,4 @@
+import type { PopoverShell } from "@/components/session-config";
 import * as React from "react";
 import type * as acp from "@daedalus/acp";
 import { useQuery } from "@tanstack/react-query";
@@ -11,12 +12,12 @@ import {
 import {
   AgentIcon,
   EntityIcon,
-  McpIcon,
   ModelIcon,
   ProfileIcon,
   ProjectIcon,
 } from "@/components/entity-icon";
 import { AvatarGroup } from "@/components/ui/avatar";
+import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -30,13 +31,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   HelperModelRow,
   MenuAddItem,
+  type ChoicePick,
   MenuRow,
   PILL,
   PillLabel,
+  SessionSettingsSub,
   MenuSearchInput,
   menuFilter,
   selectChoices,
@@ -50,6 +52,10 @@ import {
   ReadingFace,
 } from "@/components/composer/indicator";
 import { SHELF_PAD } from "@/components/composer-strip";
+import { ConfigDrawer, type DrawerRows } from "@/components/config-drawer";
+import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows";
+import { useIsMobile } from "@/hooks/use-device";
+import { McpSelected } from "@/components/composer/mcp-avatars";
 import { ThreadToolsSections } from "@/components/thread-tools/menu";
 import { cn } from "@/lib/utils";
 import type { Actions } from "@/lib/actions";
@@ -63,12 +69,12 @@ import {
   currentChoiceLabel,
   partitionSessionOptions,
 } from "@/lib/session-options";
-import { mcpSubtitle, profileSupports, type SessionMeta } from "@/lib/settings";
+import { useStoreSelect } from "@/lib/store";
+import { profileSupports, type SessionMeta } from "@/lib/settings";
 import {
   useActiveSpace,
   useAgents,
   useAgentsStatus,
-  useMcpServers,
   usePersonas,
   useProfiles,
   useProjects,
@@ -181,12 +187,7 @@ export function DraftScopeRow({
   const pickable = projects.filter(
     (p) => !spaceId || p.spaceId === spaceId || p.id === meta.projectId,
   );
-  const mcpServers = useMcpServers();
   const newProject = useNewProject();
-  const selectedMcps = (meta.mcpServerIds ?? []).map((id) => ({
-    id,
-    server: mcpServers.find((server) => server.id === id),
-  }));
   return (
     /* py-1, not the shelf's py-1.5: every control in here is already h-6, so
        the padding is the only slack there is, and this row is under the pile on
@@ -244,104 +245,10 @@ export function DraftScopeRow({
           editable={editable && remember}
           onToggle={(isolate) => configure({ isolate })}
         />
-        {showSelectedMcps && selectedMcps.length > 0 && (
-          <>
-            <PathSep />
-            <span
-              className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-              aria-label="Selected MCP servers"
-            >
-              {selectedMcps.map(({ id, server }) => (
-                  <span
-                    key={id}
-                    className="flex min-w-0 items-center gap-1"
-                    title={
-                      server ? mcpSubtitle(server) : "MCP server unavailable"
-                    }
-                  >
-                    <McpIcon server={server} className="size-3.5" />
-                    <span className="hidden truncate @panel-sm:inline">
-                      {server?.name ?? "Unavailable MCP"}
-                    </span>
-                  </span>
-              ))}
-            </span>
-          </>
-        )}
+        {showSelectedMcps && <McpSelected meta={meta} />}
       </nav>
       {trailing && <span className="flex shrink-0 items-center gap-0.5">{trailing}</span>}
     </div>
-  );
-}
-
-/** A compact readout of this thread's selected MCP servers, kept beside the
-    model control rather than expanding the scope path. */
-export function SelectedMcpIndicator({ meta }: { meta: SessionMeta }) {
-  const mcpServers = useMcpServers();
-  const selected = (meta.mcpServerIds ?? []).map((id) => ({
-    id,
-    server: mcpServers.find((server) => server.id === id),
-  }));
-  if (selected.length === 0) return null;
-
-  const label = `${selected.length} ${selected.length === 1 ? "MCP" : "MCPs"}`;
-  const names = selected.map(({ server }) => server?.name ?? "Unavailable MCP").join(", ");
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="xs"
-            /* The shelf's accent, not three blue literals: this is the one
-               control in the cluster that used to pick its own colour, so a
-               generated palette left it a blue the rest of the row was not.
-               `primary` is what every other chip on the shelf wears (the count
-               chip, the readings), and the ring around each mark is the
-               composer's own ground. */
-            className="h-5 min-w-0 max-w-48 gap-1 rounded-pill bg-primary/12 px-1.5 text-[11px] text-primary hover:bg-primary/20 hover:text-primary pointer-coarse:h-7"
-            aria-label={`${label} selected`}
-            title={names}
-          >
-            {/* The model picker's stacked marks, one per server, capped at
-                three: the count beside them says how many there are. */}
-            <AvatarGroup className="-space-x-1">
-              {selected.slice(0, 3).map(({ id, server }) => (
-                <span
-                  key={id}
-                  className="grid size-3.5 shrink-0 place-items-center rounded-full bg-primary/25 ring-1 ring-composer"
-                >
-                  <McpIcon server={server} className="size-2" />
-                </span>
-              ))}
-            </AvatarGroup>
-            {selected.length === 1 ? (
-              <span className="truncate">{names}</span>
-            ) : (
-              <span className="font-medium tabular-nums">{selected.length}</span>
-            )}
-          </Button>
-        }
-      />
-      <PopoverContent align="start" side="top" className="w-72 gap-2">
-        <p className="font-medium">{label} selected</p>
-        <ul className="space-y-2">
-          {selected.map(({ id, server }) => (
-              <li key={id} className="flex min-w-0 items-start gap-2 text-xs">
-                <McpIcon server={server} className="mt-0.5 size-3.5" />
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">
-                    {server?.name ?? "Unavailable MCP"}
-                  </span>
-                  <span className="block truncate text-muted-foreground">
-                    {server ? mcpSubtitle(server) : "MCP server unavailable"}
-                  </span>
-                </span>
-            </li>
-          ))}
-        </ul>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -571,11 +478,14 @@ export function DraftConfigPopover({
   meta,
   actions,
   remember = true,
+  shell,
 }: {
   meta: SessionMeta;
   actions: Actions;
   /** See `DraftScopeRow`. */
   remember?: boolean;
+  /** Open state owned by `ConfigPopover`, so it survives the swap to the session body. */
+  shell?: PopoverShell;
 }) {
   const {
     agents,
@@ -664,9 +574,8 @@ export function DraftConfigPopover({
      menu: only worth a row when there is a choice to make. */
   const modes =
     known.modes && known.modes.availableModes.length > 1 ? known.modes : null;
-  const modeLabel = modes?.availableModes.find(
-    (m) => m.id === (meta.modeId || modes.currentModeId),
-  )?.name;
+  const modeId = modes ? meta.modeId || modes.currentModeId : undefined;
+  const modeLabel = modes?.availableModes.find((m) => m.id === modeId)?.name;
 
   /* The profile owns the model list when it has one. Effort follows the model:
      the profile's efforts if that model declares any, otherwise the agent's own
@@ -701,9 +610,192 @@ export function DraftConfigPopover({
      "asking" is a real wait, and a failed one is worth a retry rather than a
      sentence that reads like a design decision. */
   const probeStatus = useProbeStatus(optionKey(meta.profileId, meta.agentId));
+  const profilePick: ChoicePick = {
+    label: "Profile",
+    value: profile?.id ?? "",
+    choices: agentProfiles.map((p) => ({
+      value: p.id,
+      name: p.name,
+      icon: <ProfileIcon profile={p} agentId={meta.agentId} className="size-4" />,
+    })),
+    onSelect: (id) => configure({ profileId: id, model: "", effort: "" }),
+    add: {
+      /* Adding one selects it: the model and effort are the old profile's, so
+         they are cleared. */
+      label: "New profile…",
+      onSelect: () =>
+        newProfile((id) => configure({ profileId: id, model: "", effort: "" })),
+    },
+  };
+  const effortPick: ChoicePick | null = profileEffort
+    ? {
+        label: "Effort",
+        value: meta.effort || DEFAULT_CHOICE,
+        choices: withEffortIcons([
+          { value: DEFAULT_CHOICE, name: "Default" },
+          ...spawnEfforts.map((effort) => ({ value: effort, name: effort })),
+        ]),
+        onSelect: (value) => configure({ effort: value === DEFAULT_CHOICE ? "" : value }),
+      }
+    : liveEffort
+      ? {
+          label: "Effort",
+          value: optionValue(liveEffort),
+          choices: withEffortIcons(selectChoices(liveEffort)),
+          /* Effort travels the same channel as the model. */
+          onSelect: (value) => configure({ effort: value }),
+        }
+      : null;
+  // On a phone the whole menu is a sheet (`ConfigDrawer`).
+  const isMobile = useIsMobile();
+  const local = React.useState(false);
+  const [drawerOpen, setDrawerOpen] = shell ? [shell.drawerOpen, shell.setDrawerOpen] : local;
+  const toolRows = useToolDrawerRows(meta, actions, remember);
+  /* One object for the row and the sheet it opens, so the two cannot disagree
+     about what is listed. */
+  const modelPick: ChoicePick | null = overridden
+    ? {
+        label: "Model",
+        value: meta.model || DEFAULT_CHOICE,
+        choices: [
+          { value: DEFAULT_CHOICE, name: "Profile default" },
+          ...models.map((m) => ({
+            value: m.id,
+            name: m.label,
+            icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
+            group: m.group || undefined,
+          })),
+        ],
+        onSelect: (value) =>
+          configure({
+            model: value === DEFAULT_CHOICE ? "" : value,
+            effort: "",
+          }),
+        /* Only on the overridden branch: appending one row to a profile that
+           defers to the agent would silently flip it into overriding the
+           agent. */
+        add:
+          profile && !profile.virtual
+            ? {
+                label: "Add model…",
+                onSelect: () =>
+                  addModel(profile.id, (id) => configure({ model: id, effort: "" })),
+              }
+            : undefined,
+      }
+    : agentOptions.model
+      ? {
+          label: "Model",
+          value: optionValue(agentOptions.model),
+          /* Agent-driven options carry no art — every row gets the neutral
+             glyph so the list reads like the catalog one. */
+          choices: selectChoices(agentOptions.model).map((c) => ({
+            ...c,
+            icon: <BotIcon className="size-4 text-muted-foreground" />,
+          })),
+          /* The row's own `model`, not a config choice: the agent's model has
+             a channel of its own at spawn (`agentOwned`). */
+          onSelect: (value) => configure({ model: value }),
+        }
+      : null;
+
+  const personaPick: ChoicePick | null =
+    personas.length > 0
+      ? {
+          label: "Persona",
+          value: meta.personaId || NO_PERSONA,
+          choices: [{ value: NO_PERSONA, name: "None" }, ...personas.map((p) => ({ value: p.id, name: p.name }))],
+          onSelect: (value) => {
+            const picked = value === NO_PERSONA ? null : personas.find((p) => p.id === value);
+            configure({
+              personaId: picked?.id ?? "",
+              ...(picked?.effort ? { effort: picked.effort } : {}),
+            });
+          },
+        }
+      : null;
+  /* The same settings as the dropdown below, as the phone's sheet reads them. */
+  const drawerRows: DrawerRows = [
+    { type: "label", text: "Start this thread with" },
+    {
+      type: "pick",
+      pick: {
+        label: "Agent",
+        value: agent?.id ?? "",
+        choices: agents.map((a) => ({
+          value: a.id,
+          name: a.name,
+          icon: <AgentIcon agentId={a.id} className="size-4" />,
+          note: missingAgents.has(a.id) ? "Not installed" : undefined,
+        })),
+        onSelect: chooseAgent,
+      },
+    },
+    personaPick && { type: "pick", pick: personaPick },
+    { type: "pick", pick: profilePick },
+    modelPick && { type: "pick", pick: modelPick },
+    effortPick && { type: "pick", pick: effortPick },
+    ...toolRows,
+    { type: "label", text: "Session settings" },
+    {
+      type: "switch",
+      label: "Suggest follow-ups",
+      checked: meta.suggestFollowups !== false,
+      onChange: (checked) => configure({ suggestFollowups: checked }),
+    },
+    {
+      type: "switch",
+      label: "Draw answers as UI",
+      checked: meta.uiBlocks !== false,
+      onChange: (checked) => configure({ uiBlocks: checked }),
+    },
+    (modes || agentOptions.rest.length > 0) && { type: "label", text: "Agent options" },
+    modes && {
+      type: "pick",
+      pick: {
+        label: "Mode",
+        value: meta.modeId || modes.currentModeId,
+        choices: withModeIcons(modes.availableModes.map((mode) => ({ value: mode.id, name: mode.name }))),
+        onSelect: (modeId) => configure({ modeId }),
+      },
+    },
+    ...agentOptions.rest.map(
+      (option): NonNullable<DrawerRows[number]> =>
+        option.type === "select"
+          ? {
+              type: "pick",
+              pick: {
+                label: option.name,
+                value: option.currentValue,
+                choices: selectChoices(option),
+                onSelect: (value) => choose(option.id, value),
+              },
+            }
+          : {
+              type: "switch",
+              label: option.name,
+              checked: option.currentValue,
+              onChange: (checked) => choose(option.id, checked),
+            },
+    ),
+    (modes || agentOptions.rest.length > 0) && {
+      type: "action",
+      label: probeStatus === "asking" ? "Refreshing…" : "Refresh options",
+      muted: true,
+      onClick: () => void actions.learnAgentOptions(meta.profileId, meta.agentId, meta.projectId, true),
+    },
+  ];
 
   return (
-    <DropdownMenu>
+    <>
+    <DropdownMenu
+      open={isMobile ? false : shell?.open}
+      onOpenChange={(open) => {
+        // A phone opens the sheet instead; the menu itself never shows.
+        if (isMobile && open) setDrawerOpen(true);
+        if (!isMobile) shell?.setOpen(open);
+      }}
+    >
       <DropdownMenuTrigger
         render={
           <Button
@@ -758,7 +850,20 @@ export function DraftConfigPopover({
             )}
             {/* Same words the started thread's trigger reads — the agent is
                 named by its mark above. */}
-            <PillLabel persona={persona?.name} model={modelLabel} effort={effortLabel} mode={modeLabel} />
+            <PillLabel
+              persona={persona?.name}
+              model={modelLabel}
+              effort={effortLabel}
+              effortLevel={
+                profileEffort
+                  ? levelOf(spawnEfforts, meta.effort)
+                  : liveEffort
+                    ? levelOf(selectChoices(liveEffort).map((c) => c.value), optionValue(liveEffort))
+                    : null
+              }
+              mode={modeLabel}
+              modeId={modeId}
+            />
           </Button>
         }
       />
@@ -805,110 +910,11 @@ export function DraftConfigPopover({
           )}
           {/* Drawn even on a single profile: the row is also the door to
               making another. */}
-          <MenuRow
-            label="Profile"
-            value={profile?.id ?? ""}
-            choices={agentProfiles.map((p) => ({
-              value: p.id,
-              name: p.name,
-              icon: (
-                <ProfileIcon
-                  profile={p}
-                  agentId={meta.agentId}
-                  className="size-4"
-                />
-              ),
-            }))}
-            onSelect={(id) =>
-              configure({ profileId: id, model: "", effort: "" })
-            }
-            add={{
-              /* Adding one selects it: the model and effort are the old
-                 profile's, so they are cleared. */
-              label: "New profile…",
-              onSelect: () =>
-                newProfile((id) =>
-                  configure({ profileId: id, model: "", effort: "" }),
-                ),
-            }}
-          />
-          {overridden ? (
-            <MenuRow
-              label="Model"
-              value={meta.model || DEFAULT_CHOICE}
-              choices={[
-                { value: DEFAULT_CHOICE, name: "Profile default" },
-                ...models.map((m) => ({
-                  value: m.id,
-                  name: m.label,
-                  icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
-                  group: m.group || undefined,
-                })),
-              ]}
-              onSelect={(value) =>
-                configure({
-                  model: value === DEFAULT_CHOICE ? "" : value,
-                  effort: "",
-                })
-              }
-              /* Only on the overridden branch: appending one row to a
-                 profile that defers to the agent would silently flip it into
-                 overriding the agent. */
-              add={
-                profile && !profile.virtual
-                  ? {
-                      label: "Add model…",
-                      onSelect: () =>
-                        addModel(profile.id, (id) =>
-                          configure({ model: id, effort: "" }),
-                        ),
-                    }
-                  : undefined
-              }
-            />
-          ) : (
-            agentOptions.model && (
-              <MenuRow
-                label="Model"
-                value={optionValue(agentOptions.model)}
-                /* Agent-driven options carry no art — every row gets the
-                   neutral glyph so the submenu reads like the catalog one. */
-                choices={selectChoices(agentOptions.model).map((c) => ({
-                  ...c,
-                  icon: <BotIcon className="size-4 text-muted-foreground" />,
-                }))}
-                /* The row's own `model`, not a config choice: the agent's
-                   model has a channel of its own at spawn (`agentOwned`). */
-                onSelect={(value) => configure({ model: value })}
-              />
-            )
+          <MenuRow {...profilePick} />
+          {modelPick && (
+            <MenuRow {...modelPick} />
           )}
-          {profileEffort ? (
-            <MenuRow
-              label="Effort"
-              value={meta.effort || DEFAULT_CHOICE}
-              choices={[
-                { value: DEFAULT_CHOICE, name: "Default" },
-                ...spawnEfforts.map((effort) => ({
-                  value: effort,
-                  name: effort,
-                })),
-              ]}
-              onSelect={(value) =>
-                configure({ effort: value === DEFAULT_CHOICE ? "" : value })
-              }
-            />
-          ) : (
-            liveEffort && (
-              <MenuRow
-                label="Effort"
-                value={optionValue(liveEffort)}
-                choices={selectChoices(liveEffort)}
-                /* Effort travels the same channel as the model. */
-                onSelect={(value) => configure({ effort: value })}
-              />
-            )
-          )}
+          {effortPick && <MenuRow {...effortPick} />}
           {profile && <HelperModelRow profile={profile} />}
           {nothingYet &&
             (!profile ? (
@@ -953,25 +959,20 @@ export function DraftConfigPopover({
           remember={remember}
         />
         <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Session settings</DropdownMenuLabel>
-          <DropdownMenuCheckboxItem
-            checked={meta.suggestFollowups !== false}
-            onCheckedChange={(checked) =>
-              configure({ suggestFollowups: checked === true })
-            }
-          >
-            Suggest follow-ups
-          </DropdownMenuCheckboxItem>
-          <DropdownMenuCheckboxItem
-            checked={meta.uiBlocks !== false}
-            onCheckedChange={(checked) =>
-              configure({ uiBlocks: checked === true })
-            }
-          >
-            Draw answers as UI
-          </DropdownMenuCheckboxItem>
-        </DropdownMenuGroup>
+        <SessionSettingsSub
+          items={[
+            {
+              label: "Suggest follow-ups",
+              checked: meta.suggestFollowups !== false,
+              onChange: (checked) => configure({ suggestFollowups: checked }),
+            },
+            {
+              label: "Draw answers as UI",
+              checked: meta.uiBlocks !== false,
+              onChange: (checked) => configure({ uiBlocks: checked }),
+            },
+          ]}
+        />
         {/* Never touched by the profile: mode and the rest are the agent's. */}
         {(modes || agentOptions.rest.length > 0) && (
           <>
@@ -984,10 +985,12 @@ export function DraftConfigPopover({
                 <MenuRow
                   label="Mode"
                   value={meta.modeId || modes.currentModeId}
-                  choices={modes.availableModes.map((mode) => ({
-                    value: mode.id,
-                    name: mode.name,
-                  }))}
+                  choices={withModeIcons(
+                    modes.availableModes.map((mode) => ({
+                      value: mode.id,
+                      name: mode.name,
+                    })),
+                  )}
                   onSelect={(modeId) => configure({ modeId })}
                 />
               )}
@@ -1039,5 +1042,9 @@ export function DraftConfigPopover({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+    {isMobile && (
+      <ConfigDrawer open={drawerOpen} onOpenChange={setDrawerOpen} title="Start this thread with" rows={drawerRows} />
+    )}
+    </>
   );
 }

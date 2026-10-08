@@ -28,6 +28,8 @@ import {
   DatabaseBackup,
   FolderIcon,
   Gauge,
+  AudioLines,
+  Clapperboard,
   Keyboard,
   KeyRound,
   Palette,
@@ -162,6 +164,15 @@ export const SETTINGS_SECTIONS = [
       "Reusable prompts invoked as /name from the composer. Attach them to a profile, or pick them on a new thread; they are written into <cwd>/.claude/commands at spawn and the agent advertises them like its own.",
   },
   {
+    id: "files",
+    page: lazyPage(() => import("./files"), "FilesPage"),
+    label: "Files",
+    icon: FolderIcon,
+    title: "Files",
+    description:
+      "A library of folders and files kept on the server — the one place anything uploaded lives. The composer attaches from it and the logo fields choose from it. Bytes sit in the local store by default; each file records which storage provider holds it.",
+  },
+  {
     id: "rules",
     page: lazyPage(() => import("./rules"), "RulesPage"),
     label: "Rules",
@@ -242,6 +253,23 @@ export const SETTINGS_SECTIONS = [
     description:
       "The default search/fetch backend the harness's own web-search MCP server answers against. Profiles can override it.",
   },
+  {
+    id: "video",
+    page: lazyPage(() => import("./video"), "VideoProvidersPage"),
+    label: "Video & speech",
+    icon: Clapperboard,
+    title: "Video & speech",
+    description: "Batch text-to-speech and rendering providers used by Video panels inside threads. Provider keys stay on this server.",
+  },
+  {
+    id: "voice",
+    page: lazyPage(() => import("./voice"), "VoicePage"),
+    label: "Voice",
+    icon: AudioLines,
+    title: "Voice",
+    description:
+      "The realtime model voice mode talks through — OpenAI Realtime or Gemini Live. It speaks with you and hands the work to the thread's agent; the agent itself is unchanged.",
+  },
 ] as const
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"]
@@ -308,8 +336,8 @@ export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "ai", "web-search"] },
-  { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands", "rules", "personas", "model-prompts"] },
+  { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "ai", "web-search", "voice", "video"] },
+  { label: "Workspace", sections: ["projects", "files", "knowledge", "mcp", "skills", "commands", "rules", "personas", "model-prompts"] },
   { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },
 ] as const

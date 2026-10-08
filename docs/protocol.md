@@ -64,8 +64,15 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   unattached, which `composerLock` and `bannerFor` both treat as ordinary, since sending
   is what connects. `ready()` is the one door: `read`, `archived`, `idle` and `failed` all
   reach a live socket through it, so the refusal a send used to hit is a step the client
-  takes instead. Two exceptions, both the server's to state rather than the client's to
-  guess. A read whose `caught_up` says `promptActive` **does** attach: a running turn's
+  takes instead. The door does not trust the row it was handed: `start` returns the server's
+  own `archived`, and a `revive` open that comes back archived **spawns** rather than stopping
+  at the document — the row is a list read a moment ago and is not the authority on whether a
+  process is behind the thread, so a thread that was retired (or whose agent died) between
+  that read and the archive read used to be left with no process and nothing coming, and every
+  send answered "stuck reading from the archive with no agent running". One retry, and a
+  second archive answer is a real error rather than a circle. Automatic rungs are unaffected:
+  they ask with `revive: false`, so nothing respawns behind the reader's back. Two exceptions,
+  both the server's to state rather than the client's to guess. A read whose `caught_up` says `promptActive` **does** attach: a running turn's
   answer arrives on a socket or nowhere, and a permission the agent is blocked on rides
   the same wire. And a command that is not a prompt — a queue edit, a mode change, a
   config pick — opens one lazily inside `ThreadSocket.request` (`ensureSocket`), which is
@@ -237,7 +244,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `onReplayProgress`, counted against the `to` that `attached` now states — where the replay
   *ends*, which is a real bound on it and not just a reading of the log, so the count cannot
   be outrun by a turn streaming while the client connects — which is what
-  turns the wait into a quantity: `ThreadState.replay` drives a bar in `StartingLine` instead
+  turns the wait into a quantity: `ThreadState.replay` drives a bar in `ThreadStatus` instead
   of a line apologising for a length it had no evidence for. Before `attached` the client
   knows nothing about the thread's *size* (the wait is the network, the socket, or a server
   busy with another thread's turn), so that case says so instead, and a replay the server
@@ -609,7 +616,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
     client hands the second door to the first reader (`thread-socket.ts`), so there is one
     rule: **one row per `id`, placed where its first record arrived, replaced only by a
     higher `revision`**. Actions are the agent's and never inferred from `category`; only
-    `retry` has a door on a row today. A severity `error` still makes the turn's verdict a
+    `retry` has a door on a row today. **A `warning` that is not `advisory` is a status, not a
+    record** (`ErrorItem.transient`, e.g. Claude's "Reconnecting to Claude, attempt 1 of 10."):
+    no transcript row, said by the working line (`workingMessage`) only while it is the newest
+    item, gone the moment a step lands after it. A severity `error` still makes the turn's verdict a
     failure.
   - `recommendedValue` — model and effort selectors name the runtime's recommendation, and
     Claude Code replaces its ambiguous `default` row with concrete values. The client reads

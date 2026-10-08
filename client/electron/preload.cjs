@@ -40,6 +40,37 @@ contextBridge.exposeInMainWorld("desktop", {
   setWindowMaterial: (material) => ipcRenderer.invoke("set-window-material", material),
   /** Open one thread in a window of its own (`?popout=1`). */
   openThreadWindow: (sessionId) => ipcRenderer.invoke("open-thread-window", sessionId),
+  /** Drive: a CDP connection to one of this window's `<webview>` guests,
+      answered by main as a browser of one page (cdp-shim.cjs). */
+  cdp: {
+    reset: (guestId) => ipcRenderer.send("cdp-reset", guestId),
+    send: (guestId, data) => ipcRenderer.send("cdp-send", guestId, data),
+    onMessage: (handler) => {
+      const listener = (_event, guestId, data) => handler(guestId, data)
+      ipcRenderer.on("cdp-message", listener)
+      return () => ipcRenderer.off("cdp-message", listener)
+    },
+    onClosed: (handler) => {
+      const listener = (_event, guestId, reason) => handler(guestId, reason)
+      ipcRenderer.on("cdp-closed", listener)
+      return () => ipcRenderer.off("cdp-closed", listener)
+    },
+  },
+  /** The Preview's page console: the backlog for a guest, and the live stream
+      (`{type: "entry"|"clear"|"gone"}`), keyed by the guest's webContents id. */
+  guestConsole: {
+    read: (guestId) => ipcRenderer.invoke("preview-console-read", guestId),
+    onMessage: (handler) => {
+      const listener = (_event, guestId, payload) => handler(guestId, payload)
+      ipcRenderer.on("guest-console", listener)
+      return () => ipcRenderer.off("guest-console", listener)
+    },
+  },
+  /** "Pick element": resolve with the element the person clicked, or null. */
+  previewPicker: {
+    pick: (guestId) => ipcRenderer.invoke("preview-pick", guestId),
+    cancel: (guestId) => ipcRenderer.invoke("preview-pick-cancel", guestId),
+  },
   /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
       the renderer to run. Returns an unsubscribe. */
   onShortcut: (handler) => {

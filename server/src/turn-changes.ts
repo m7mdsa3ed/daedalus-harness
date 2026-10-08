@@ -294,6 +294,7 @@ export class TurnChangesRecorder {
     sessionId: string,
     turnId: string,
     force: boolean,
+    partial?: Record<string, git.OwnEdit[]>,
   ): Promise<{ reverted: string[]; conflicts: string[] }> {
     const dir = await this.repoDirOf(sessionId);
     if (!dir) throw new HttpError("This project is not a git repository.", 409);
@@ -304,7 +305,7 @@ export class TurnChangesRecorder {
     for (const tree of [row.startTree, row.endTree])
       if (!(await git.hasObject(dir, tree)))
         throw new HttpError("This turn's snapshot has been pruned by git, so it cannot be reverted.", 409);
-    return git.revertTurn(dir, row.startTree, row.endTree, force);
+    return git.revertTurn(dir, row.startTree, row.endTree, force, partial);
   }
 
   /** A turn of this thread or of one of its child threads — turn ids are

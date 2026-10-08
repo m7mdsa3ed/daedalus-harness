@@ -36,7 +36,12 @@ import * as React from "react"
 
 const KEY = "sidebar_width"
 const DEFAULT = "16rem"
-const clamp = (x: number) => `${Math.min(520, Math.max(180, Math.round(x)))}px`
+const MIN = 180
+const MAX = 520
+const clamp = (x: number) => `${Math.min(MAX, Math.max(MIN, Math.round(x)))}px`
+/* The stored width is "16rem" or "NNNpx"; the separator reports pixels. */
+const px = (w: string) =>
+  w.endsWith("rem") ? parseFloat(w) * parseFloat(getComputedStyle(document.documentElement).fontSize) : parseFloat(w)
 
 export function useSidebarWidth() {
   const [width, setWidth] = React.useState(() => localStorage.getItem(KEY) ?? DEFAULT)
@@ -77,6 +82,27 @@ export function useSidebarWidth() {
       data-slot="sidebar-resizer"
       role="separator"
       aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      tabIndex={0}
+      aria-valuemin={MIN}
+      aria-valuemax={MAX}
+      aria-valuenow={px(width)}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 48 : 16
+        const now = px(live.current)
+        const next =
+          event.key === "ArrowLeft" ? now - step
+          : event.key === "ArrowRight" ? now + step
+          : event.key === "Home" ? MIN
+          : event.key === "End" ? MAX
+          : null
+        if (next === null) return
+        event.preventDefault()
+        const value = clamp(next)
+        live.current = value
+        localStorage.setItem(KEY, value)
+        setWidth(value)
+      }}
       title="Drag to resize · double-click to reset"
       onPointerDown={(event) => {
         if (event.button !== 0) return
@@ -109,7 +135,7 @@ export function useSidebarWidth() {
         localStorage.removeItem(KEY)
         setWidth(DEFAULT)
       }}
-      className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize hover:bg-sidebar-border md:block"
+      className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize hover:bg-sidebar-border focus-visible:bg-sidebar-border focus-visible:outline-2 focus-visible:outline-ring md:block"
     />
   )
   return { width, resizer }

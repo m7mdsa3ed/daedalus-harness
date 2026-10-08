@@ -24,6 +24,7 @@ export type ThreadPanelKind =
   | "terminal"
   | "web"
   | "trajectory"
+  | "video"
 
 export interface ThreadDockHandle {
   /** Show the one there is (`reuse`) or open one — a fresh shell for a

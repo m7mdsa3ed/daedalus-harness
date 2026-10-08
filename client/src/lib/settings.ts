@@ -410,7 +410,7 @@ export interface McpCallResult {
 export interface McpCheckResult {
   ok: boolean
   ms: number
-  serverInfo?: { name: string; version: string }
+  serverInfo?: { name: string; version: string; icon?: string }
   tools: McpCheckEntry[]
   prompts: McpCheckEntry[]
   resources: McpCheckEntry[]
@@ -464,7 +464,7 @@ export interface RegistryEntry {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge" | "workflow" | "agents"
+  builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser"
 }
 
 /** Library entries projects, profiles and threads link to by id. */
@@ -490,6 +490,8 @@ export function mcpSubtitle(s: McpServerDef): string {
     if (s.builtin === "web-search") return "built-in · web search + fetch"
     if (s.builtin === "workflow") return "built-in · workflows"
     if (s.builtin === "agents") return "built-in · ask other agents"
+    if (s.builtin === "harness") return "built-in · manage the harness"
+    if (s.builtin === "browser") return "built-in · drive the thread's preview"
     return "built-in · project knowledge base"
   }
   if (s.type !== "http") return [s.command, ...s.args].join(" ")
@@ -910,6 +912,9 @@ export interface SessionMeta {
   /** An aside: the passage it was started on, selected in the thread
       `forkedFromSessionId` names. Set = flagged as an aside everywhere. */
   asideQuote?: string | null
+  /** The board task this thread was started on. The server briefs the agent
+      with it and moves the card; the client only draws the link both ways. */
+  taskId?: string | null
   /** The git worktree this thread runs in (server-side `git.createWorktree`):
       its project-relative path — which is also its `repo` for source control
       — the branch it was made on, and whether it is still on disk (absent
@@ -996,6 +1001,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.forkedFromSessionId === b.forkedFromSessionId &&
     a.forkedFromTurnId === b.forkedFromTurnId &&
     (a.asideQuote ?? null) === (b.asideQuote ?? null) &&
+    (a.taskId ?? null) === (b.taskId ?? null) &&
     a.worktree?.path === b.worktree?.path &&
     a.worktree?.exists === b.worktree?.exists &&
     sameIds(a.mcpServerIds, b.mcpServerIds) &&

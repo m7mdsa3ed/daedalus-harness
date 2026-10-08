@@ -109,3 +109,23 @@ export function diffStats(
   for (const count of counts.values()) removed += count
   return { added, removed }
 }
+
+/**
+ * Whether a thread's own edits account for a whole file's change: replay them
+ * over the turn's start text and compare with its end text. Equal means every
+ * line git measured was this thread's, whoever else had a turn open; anything
+ * else leaves a hunk this thread did not write (a peer's, or a shell's), so
+ * the file stays `shared`. A diff block that no longer matches (the text was
+ * since changed by someone else) is skipped, which also lands on "not equal".
+ */
+export function editsExplain(before: string, after: string, edits: EditInputDiff[]): boolean {
+  let text = before
+  for (const { oldText, newText } of edits) {
+    if (oldText === "") text = newText
+    else {
+      const at = text.indexOf(oldText)
+      if (at >= 0) text = text.slice(0, at) + newText + text.slice(at + oldText.length)
+    }
+  }
+  return text === after
+}

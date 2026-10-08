@@ -17,13 +17,12 @@
                                       worktree;
    — `composer/repo-indicator.tsx`    which branch the work lands on, and the
                                       writes a repository takes from here;
-   — `composer/activity-line.tsx`     `workingMessage`, `PhaseLine` and
-                                      `ActivityIndicator`.
+   — `composer/activity-line.tsx`     `workingMessage` and `PhaseLine`.
 
    This file is the barrel those importers still resolve through. The
    connection is not among them: it was a reading on the shelf's floor, which
    made the shelf's own ground wear its tone, and it is a `Notice` at the foot
-   of the transcript now (`components/connection-card.tsx`). */
+   of the transcript now (`components/thread-view/thread-status.tsx`). */
 export { StripIndicator } from "@/components/composer/indicator"
 export { ConfigIndicator } from "@/components/composer/config-indicator"
 export { ContextIndicator } from "@/components/composer/context-indicator"
@@ -31,4 +30,4 @@ export { TodoIndicator } from "@/components/composer/todo-indicator"
 export { AgentsIndicator, runningAgents } from "@/components/composer/agents-indicator"
 export { ChangesIndicator } from "@/components/composer/changes-indicator"
 export { RepoIndicator } from "@/components/composer/repo-indicator"
-export { ActivityIndicator, PhaseLine, workingMessage } from "@/components/composer/activity-line"
+export { PhaseLine, workingMessage } from "@/components/composer/activity-line"

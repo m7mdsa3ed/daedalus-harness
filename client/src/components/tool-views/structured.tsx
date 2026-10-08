@@ -7,6 +7,7 @@
 import {
   CheckIcon,
   FileWarningIcon,
+  LoaderCircleIcon,
   MessageCircleQuestionIcon,
   PlugZapIcon,
   SparklesIcon,
@@ -21,6 +22,7 @@ import {
   Prose,
   ProsePreview,
   SmartBlock,
+  ToolProse,
 } from "@/components/tool-parts"
 import {
   extractFindings,
@@ -37,6 +39,8 @@ import {
   type TodoEntry,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
+import { useThreadId } from "@/lib/thread-id-context"
+import { useSkillContent } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 
 // ─── Todos ───────────────────────────────────────────────────────────────────
@@ -292,18 +296,76 @@ export function PlanProposalDetail({ item }: { item: ToolItem }) {
 
 // ─── Skills ──────────────────────────────────────────────────────────────────
 
-/** A skill load: which packaged workflow came in, and with what arguments. The
-    call returns nothing, so the name is the whole story. */
-export function SkillDetail({ item }: { item: ToolItem }) {
+/** A skill load: which packaged workflow came in, with what arguments, and —
+    when the runtime read the file — the skill's own description and body. A
+    skill's whole point is the instructions it brings, so a name on its own made
+    the one call that hands the agent a workflow the least readable in the
+    transcript. While the call is active, the same view reads as a distinct
+    incoming capability rather than an empty generic tool pane. */
+export function SkillDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const skill = extractSkill(item)
   if (!skill) return null
+  const { text } = toolOutputText(item, 40_000)
+  /* Claude's Skill tool answers only "Launching skill", so the body comes from the library. */
+  const library = useSkillContent(useThreadId() ?? "", skill.name, !active && !text.includes("\n"))
+  const body = skillBody(library || text)
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
-      <SparklesIcon className="size-3 shrink-0 text-muted-foreground/60" />
-      <span className="font-mono text-foreground">{skill.name}</span>
-      {skill.args && <span className="font-mono text-muted-foreground/80">{skill.args}</span>}
+    <div
+      className={cn(
+        "relative isolate overflow-hidden rounded-md border border-purple-500/20 bg-purple-500/[0.035] p-3",
+        active && "border-dashed border-purple-500/35 bg-purple-500/[0.06]"
+      )}
+    >
+      {active && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 start-0 w-1 overflow-hidden bg-purple-500/10"
+        >
+          <span className="skill-load-rail absolute inset-x-0 top-0 h-1/2 rounded-full bg-purple-500/70" />
+        </div>
+      )}
+      <div className="flex items-start gap-2.5">
+        <span className="relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400">
+          {active ? (
+            <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <SparklesIcon aria-hidden className="size-3.5" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
+            <span className="font-medium text-foreground">{skill.name}</span>
+            {active && (
+              <span className="rounded-sm bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-purple-700 dark:text-purple-300">
+                Loading
+              </span>
+            )}
+            {skill.args && (
+              <span className="rounded-sm bg-muted/80 px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+                {skill.args}
+              </span>
+            )}
+          </div>
+          {skill.description ? (
+            <p className="text-[11.5px] leading-4 text-muted-foreground">{skill.description}</p>
+          ) : active ? (
+            <p className="text-[11px] leading-4 text-muted-foreground/75">Preparing skill instructions for this turn</p>
+          ) : null}
+          {body && <ToolProse text={body} />}
+        </div>
+      </div>
     </div>
   )
+}
+
+/** A skill file's YAML frontmatter stripped: the reader wants the instructions,
+    not the `name:`/`description:` block that has already been read out of it. */
+function skillBody(text: string): string {
+  if (!text.startsWith("---")) return text.trim()
+  const end = text.indexOf("\n---", 3)
+  if (end === -1) return text.trim()
+  const after = text.indexOf("\n", end + 1)
+  return (after === -1 ? "" : text.slice(after + 1)).trim()
 }
 
 // ─── Tool search ─────────────────────────────────────────────────────────────

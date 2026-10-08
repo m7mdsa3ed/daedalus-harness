@@ -44,11 +44,11 @@ import { formatElapsed, StepMeta, useElapsed } from "@/components/step-row"
 import { TokenSummary } from "@/components/token-usage"
 import { KIND_CHIPS, KIND_COLORS } from "@/components/tool-parts"
 import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
+  MorphingDialog,
+  MorphingDialogContent,
+  MorphingDialogOpen,
+  MorphingDialogSource,
+} from "@/components/ui/morphing-dialog"
 import { extractSubagent, toolHeading } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { sumUsage } from "@/lib/tokens"
@@ -909,9 +909,6 @@ function RunRow({
   const graphable = staged && phases.some((phase) => phase.steps.length > 1)
   const [runView, setRunView] = React.useState<RunView>("browse")
   const [picked, setPicked] = React.useState<string | null>(null)
-  /* The fullscreen reader is the same run at the window's size; it shares this
-     card's view and pick so opening it continues the reading, not restarts it. */
-  const [fullscreen, setFullscreen] = React.useState(false)
   const pickedStep = picked ? (runSteps.find((step) => step.id === picked) ?? null) : null
   const active = runSteps.some((step) => step.active)
   const states = all.map(stateOf)
@@ -1007,93 +1004,81 @@ function RunRow({
     />
   )
 
+  const steps =
+    all.length === 0 ? (
+      <div className={cn("text-xs text-muted-foreground/60", active && "harness-shimmer")}>
+        {active ? "Starting…" : "No steps ran"}
+      </div>
+    ) : (
+      body
+    )
+
+  /* The card is the morph's source: it stays mounted and keeps its shape while
+     the reader is up (it opens into the panel, and closes back into the card),
+     and the panel is the same run at the window's size, sharing this card's
+     view and pick so opening it continues the reading rather than restarting
+     it. The panel carries `@container`, because a portal leaves the transcript
+     column behind and the `@panel-*` queries inside have to answer to the
+     panel's own width — a run confined to the column was never wide enough to
+     draw the graph. */
   return (
-    <div className={cn("overflow-hidden", !fullscreen && "my-1.5 rounded-lg border border-border/60 bg-card/40")}>
-      <div className={cn("flex min-w-0 items-start gap-2.5 px-2.5 pt-2", fullscreen && "pr-12")}>
-        <RunHead
-          interactive={!fullscreen}
-          open={open}
-          onToggle={() => setOpen((v) => !v)}
-          icon={Icon}
-          name={name}
-          badge={badge}
-          caption={caption}
-          active={active}
-          paused={paused}
-        />
-        <span className="flex h-7 shrink-0 items-center gap-1.5">
-          {meta}
-          {control}
-          {!fullscreen && (
-            <button
-              type="button"
-              onClick={() => setFullscreen(true)}
+    <MorphingDialog>
+      <MorphingDialogSource className="my-1.5 overflow-hidden rounded-lg border border-border/60 bg-card/40">
+        <div className="flex min-w-0 items-start gap-2.5 px-2.5 pt-2">
+          <RunHead
+            interactive
+            open={open}
+            onToggle={() => setOpen((v) => !v)}
+            icon={Icon}
+            name={name}
+            badge={badge}
+            caption={caption}
+            active={active}
+            paused={paused}
+          />
+          <span className="flex h-7 shrink-0 items-center gap-1.5">
+            {meta}
+            {control}
+            <MorphingDialogOpen
               title="Full screen"
               className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:text-foreground"
             >
               <Maximize2Icon aria-hidden className="size-3" />
               <span className="sr-only">Full screen</span>
-            </button>
-          )}
-        </span>
-      </div>
-
-      {strip("px-2.5 pt-2 pb-2.5")}
-
-      {open && !fullscreen && (
-        <div className="min-w-0 border-t border-border/50 bg-background/40 px-2.5 py-2">
-          {all.length === 0 ? (
-            <div className={cn("text-xs text-muted-foreground/60", active && "harness-shimmer")}>
-              {active ? "Starting…" : "No steps ran"}
-            </div>
-          ) : (
-            body
-          )}
+            </MorphingDialogOpen>
+          </span>
         </div>
-      )}
 
-      {/* The app's own dialog — the sheet on a phone, the centred popup on a
-          desktop — in its fullscreen mode: a run is the one thing in a
-          transcript with a shape, and the board and the graph only say more of
-          it the wider they are. The popup carries `@container`, because a
-          portal leaves the panel behind and the `@panel-*` queries inside have
-          to answer to the dialog's own width. */}
-      <ResponsiveDialog
-        open={fullscreen}
-        onOpenChange={(next) => !next && setFullscreen(false)}
-        fullscreen
-      >
-        <ResponsiveDialogContent className="@container">
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle className="sr-only">{name}</ResponsiveDialogTitle>
-            <div className="flex min-w-0 items-start gap-2.5">
-              <RunHead
-                interactive={false}
-                open
-                icon={Icon}
-                name={name}
-                badge={badge}
-                caption={caption}
-                active={active}
-                paused={paused}
-              />
-              <span className="flex h-7 shrink-0 items-center gap-1.5">
-                {meta}
-                {control}
-              </span>
-            </div>
-          </ResponsiveDialogHeader>
+        {strip("px-2.5 pt-2 pb-2.5")}
+
+        {open && <div className="min-w-0 border-t border-border/50 bg-background/40 px-2.5 py-2">{steps}</div>}
+      </MorphingDialogSource>
+
+      <MorphingDialogContent label={name} className="@container">
+        <header className="shrink-0 border-b border-border/60 px-4 py-4 pr-14 sm:px-6 sm:py-5">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <RunHead
+              interactive={false}
+              open
+              icon={Icon}
+              name={name}
+              badge={badge}
+              caption={caption}
+              active={active}
+              paused={paused}
+            />
+            <span className="flex h-7 shrink-0 items-center gap-1.5">
+              {meta}
+              {control}
+            </span>
+          </div>
+        </header>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
           {strip("pb-2")}
-          {all.length === 0 ? (
-            <div className={cn("text-xs text-muted-foreground/60", active && "harness-shimmer")}>
-              {active ? "Starting…" : "No steps ran"}
-            </div>
-          ) : (
-            body
-          )}
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
-    </div>
+          {steps}
+        </div>
+      </MorphingDialogContent>
+    </MorphingDialog>
   )
 }
 

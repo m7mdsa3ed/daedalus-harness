@@ -46,7 +46,7 @@ const TerminalPanel = React.lazy(async () => ({
 }))
 const TasksPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/tasks-panel"))
-    .TasksPanel as React.FC<IDockviewPanelProps>,
+    .TasksPanel as React.FC<IDockviewPanelProps & { actions: Actions }>,
 }))
 /**
  * The dockview surface: the tab, the strip's actions, the tab-group chips and
@@ -233,7 +233,6 @@ export function WorkspaceDock({
     if (isMobile) dock.stackAll()
   }, [isMobile, dock])
   useTabSwipe(isMobile, dock.cycleTab)
-
   /* Every kind gets an entry, including the ones this build has not written
      yet: Dockview throws on an unknown component name, so a layout saved by a
      newer build would take the whole dock down instead of showing one panel it
@@ -265,7 +264,9 @@ export function WorkspaceDock({
       <ChatPanel {...(props as IDockviewPanelProps<{ sessionId: string }>)} actions={actions} />
     ))
     map.terminal = contained(TerminalPanel)
-    map.tasks = contained(TasksPanel)
+    map.tasks = contained((props) => (
+      <TasksPanel {...props} actions={actions} />
+    ))
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
     map.page = contained(PagePanel as React.FC<IDockviewPanelProps>)
     return map

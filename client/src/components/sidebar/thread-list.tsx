@@ -4,15 +4,14 @@ import { ChevronRight } from "lucide-react"
 import { useNavigate } from "react-router"
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { useThreadRowActions } from "@/components/thread-menu"
-import type { Actions } from "@/lib/actions"
 import { threadPath } from "@/lib/router"
 import { focusOpenChat, useActiveChat } from "@/lib/workspace/open-threads"
-import { usePins } from "@/lib/pins"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { MENU } from "./scale"
-import { ThreadRow, type ThreadStatus } from "./thread-row"
+import { useSidebarEnv } from "./env"
+import { ThreadRow, type ThreadRowHandlers } from "./thread-row"
 
 /* Memoized (the whole list, and each row below): the sidebar re-renders per
    streamed token, and with stable session objects, an identity-stable status
@@ -20,8 +19,6 @@ import { ThreadRow, type ThreadStatus } from "./thread-row"
    untouched — so the rows do not re-render at all. */
 export const ThreadList = React.memo(function ThreadList({
   sessions,
-  actions,
-  status,
   trash = false,
   limit,
   grouped = false,
@@ -29,8 +26,6 @@ export const ThreadList = React.memo(function ThreadList({
   revealActive = false,
 }: {
   sessions: SessionMeta[]
-  actions: Actions
-  status: (session: SessionMeta) => ThreadStatus
   onClose?: (session: SessionMeta) => void
   /** Keep the active row in view for the dock's Opened tier. */
   revealActive?: boolean
@@ -55,8 +50,7 @@ export const ThreadList = React.memo(function ThreadList({
   const hidden = sessions.length - visible.length
   const navigate = useNavigate()
   const activeThreadId = useActiveChat()
-  const pins = usePins()
-  const pinSet = React.useMemo(() => new Set(pins), [pins])
+  const { actions, status, pinSet, held, unread, projectNames } = useSidebarEnv()
   const { isMobile, setOpenMobile } = useSidebar()
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
@@ -75,6 +69,20 @@ export const ThreadList = React.memo(function ThreadList({
     if (focusOpenChat(session.id)) return
     void navigate(threadPath(session.id))
   }, [isMobile, setOpenMobile, navigate])
+
+  const handlers = React.useMemo<ThreadRowHandlers>(
+    () => ({
+      onOpen: open,
+      onRename: rename,
+      onDelete: remove,
+      onRestore: restore,
+      onPurge: purge,
+      onPin: pin,
+      onRemoveWorktree: removeWorktree,
+      onClose,
+    }),
+    [open, rename, remove, restore, purge, pin, removeWorktree, onClose]
+  )
 
   /* Arrow keys walk focus between the rows of this list. A local handler that
      preventDefaults, which is use-hotkey's documented contract for a local
@@ -110,12 +118,13 @@ export const ThreadList = React.memo(function ThreadList({
     rows[(index + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length]?.focus()
   }
 
+  let previousLabel: string | null = null
   return (
     <SidebarMenu ref={listRef} onKeyDown={onListKeyDown} className={MENU}>
-      {visible.map((session, index) => {
+      {visible.map((session) => {
         const label = grouped ? periodLabel(activityAt(session)) : null
-        const heading =
-          label && (index === 0 || label !== periodLabel(activityAt(visible[index - 1]!)))
+        const heading = label && label !== previousLabel
+        previousLabel = label
         return (
           <React.Fragment key={session.id}>
             {heading && (
@@ -139,15 +148,11 @@ export const ThreadList = React.memo(function ThreadList({
               trash={trash}
               active={activeThreadId === session.id}
               pinned={pinSet.has(session.id)}
+              held={held.has(session.id)}
+              unread={unread.has(session.id)}
               showProject={!grouped}
-              onOpen={open}
-              onRename={rename}
-              onDelete={remove}
-              onRestore={restore}
-              onPurge={purge}
-              onPin={pin}
-              onRemoveWorktree={removeWorktree}
-              onClose={onClose}
+              project={projectNames.get(session.projectId) ?? "Other"}
+              handlers={handlers}
             />
           </React.Fragment>
         )

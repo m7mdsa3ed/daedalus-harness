@@ -267,6 +267,11 @@ export interface StagedConfig {
   personaId?: string;
   suggestFollowups?: boolean;
   uiBlocks?: boolean;
+  /** The agent's own selectors — the permission mode and every other option
+      (its model and effort pickers included) — which no spawn is needed to
+      take, only a turn to start or an explicit approval (`approveStaged`). */
+  modeId?: string;
+  options?: Record<string, string | boolean>;
   mcpServerIds?: string[];
   skillIds?: string[];
   commandIds?: string[];
@@ -557,6 +562,26 @@ export interface ShellCommand {
   _meta?: Record<string, unknown> | null;
 }
 
+/**
+ * One finished line of a voice conversation held in front of this thread —
+ * what the person said, or what the voice model said back.
+ *
+ * The `!` row's bargain: journaled, so it is part of the conversation and comes
+ * back on a reload, but not a prompt — no turn runs and the agent never reads
+ * it. What the voice model handed the agent arrived as an ordinary message.
+ * One update per line, said once the line is whole; the live caption is the
+ * call card's and is never journaled. The audio itself is never kept.
+ */
+export interface VoiceLine {
+  sessionUpdate: "_daedalus/voice";
+  /** The caller's id for the line, so the fan-out and the caller's own
+      dispatch of the same line are one row. */
+  voiceId: string;
+  role: "user" | "assistant";
+  text: string;
+  _meta?: Record<string, unknown> | null;
+}
+
 /** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
 export type { ChangedFile } from "./db/schema.js";
 
@@ -586,7 +611,8 @@ export type SessionUpdate =
   | AsyncTaskStateUpdate
   | WorkflowStateUpdate
   | AutonomyAnswer
-  | ShellCommand;
+  | ShellCommand
+  | VoiceLine;
 
 export interface SessionInfoUpdate {
   sessionUpdate: "session_info_update";
@@ -738,13 +764,14 @@ export type ThreadCommand =
      `queue_add` is `prompt` from a client that already knows the thread is
      busy — on an idle thread it drains at once, so there is one path. Queue
      edits work with no agent process at all; `queue_send_now` interrupts the
-     running turn and sends one item or the whole queue, while `queue_steer`
+     running turn and sends the picked items (`itemIds`) or the whole queue, while `queue_steer`
      injects one queued item into the running turn without stopping it. */
   | { id: number; cmd: "queue_add"; text: string; attachmentIds?: string[] }
   | { id: number; cmd: "queue_update"; itemId: string; text: string; attachmentIds?: string[] }
   | { id: number; cmd: "queue_remove"; itemId: string }
+  | { id: number; cmd: "queue_reorder"; ids: string[] }
   | { id: number; cmd: "queue_clear" }
-  | { id: number; cmd: "queue_send_now"; itemId?: string }
+  | { id: number; cmd: "queue_send_now"; itemId?: string; itemIds?: string[] }
   | { id: number; cmd: "queue_steer"; itemId: string }
   | { id: number; cmd: "set_mode"; modeId: string }
   | { id: number; cmd: "set_config_option"; configId: string; value: string | boolean }
@@ -1069,7 +1096,17 @@ export type ThreadEvent =
       Absent means the thread's own session, which keeps the shape of every
       event journaled before subagents existed exactly as it was. The reducer
       files an update carrying it under the child rather than the thread. */
-  | { ev: "update"; seq: number; update: SessionUpdate; historyReplay: boolean; sessionId?: string }
+  | {
+      ev: "update";
+      seq: number;
+      update: SessionUpdate;
+      historyReplay: boolean;
+      sessionId?: string;
+      /** Epoch ms the journal wrote it. A replay is the reader's reload, not
+          the moment a step began, so the client times a step from this and
+          falls back to its own clock for a journal that predates it. */
+      at?: number;
+    }
   /** One event for three sources — the `session/new` response, the
       `session/load` response, and any accepted `set_mode`/`set_config_option`.
       It carries **absolute** state, which is what makes it safe to both journal
@@ -1198,7 +1235,16 @@ export type ThreadEvent =
       rather than bytes: a replayed user bubble still shows what was attached
       with nothing else stored. Absent on every event journaled before
       attachments existed, so their shape is unchanged. */
-  | { ev: "turn_started"; seq: number; turnId: string; text: string; attachments?: AttachmentRef[] }
+  | {
+      ev: "turn_started";
+      seq: number;
+      turnId: string;
+      text: string;
+      attachments?: AttachmentRef[];
+      /** Epoch ms the journal wrote it, so a replayed user bubble shows when it
+          was sent, not when the page reloaded. Absent on older journals. */
+      at?: number;
+    }
   /** `promptText` is what lets a replayed failure still offer Retry.
       `continued` says the queue is draining into a new turn right behind this
       one — a "turn finished" notification for it would announce a pause that

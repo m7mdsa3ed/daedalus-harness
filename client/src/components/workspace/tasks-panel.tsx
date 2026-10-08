@@ -16,13 +16,15 @@ import type { IDockviewPanelProps } from "dockview-react"
 
 import { ErrorBoundary } from "@/components/error-boundary"
 import { BoardWorkspace } from "@/components/tasks"
+import type { Actions } from "@/lib/actions"
 import { useBoards } from "@/lib/queries/boards"
 import type { BoardLocation } from "@/lib/tasks-location"
 
 export function TasksPanel({
   api,
   params,
-}: IDockviewPanelProps<{ boardId?: string; taskId?: string }>) {
+  actions,
+}: IDockviewPanelProps<{ boardId?: string; taskId?: string }> & { actions: Actions }) {
   const { boards } = useBoards()
   const board = boards.find((entry) => entry.id === params.boardId)
 
@@ -61,7 +63,7 @@ export function TasksPanel({
   return (
     <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,0px)]">
       <ErrorBoundary name="the board">
-        <BoardWorkspace location={location} />
+        <BoardWorkspace location={location} actions={actions} />
       </ErrorBoundary>
     </div>
   )

@@ -139,10 +139,13 @@ export interface TaskActivity {
   id: string
   taskId: string
   at: number
-  /** A task field name, or `created` / `commented` / `linked` / `description`. */
+  /** A task field name, or `created` / `commented` / `linked` / `description`
+      / `thread` (a thread was started on it; `to.sessionId`). */
   field: string
   from: unknown
   to: unknown
+  /** The agent thread that made the change, said by the harness; null = a person. */
+  actor?: string | null
 }
 
 export interface TaskLink {

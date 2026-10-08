@@ -26,9 +26,9 @@
    running turn shimmers the title and a thread waiting on you gets an amber
    dot at the trailing edge — that is the whole ornament. Everything else about
    a thread — agent, profile, model, project, when it started, and the row's
-   actions — is in the `ThreadInfoCard`, one popover that opens on hover (and,
-   on a phone, on long press) and carries the actions beside the reading, so
-   one hover reaches both a thread's what and its what-to-do.
+   actions — is in the `ThreadInfoCard`, the header of the row's ⋯ dropdown (never on hover), which carries the
+   actions beside the reading, so
+   one click reaches both a thread's what and its what-to-do.
 
    Pins, fold state and the sort/filter are device-local (the harness's session
    list is shared, and one person's sidebar must not reorder another's).
@@ -46,7 +46,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { FolderIcon, History as HistoryIcon, Layers, Pin, RefreshCwIcon, Trash2 } from "lucide-react"
+import { FolderIcon, History as HistoryIcon, Layers, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -54,12 +54,15 @@ import {
   SidebarMenu,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { SidebarEnvContext, type SidebarEnv } from "./env"
+import { deriveTiers } from "./tiers"
 import { FoldableGroup, ProjectFolder } from "./groups"
 import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, TIER } from "./scale"
 import { ThreadList } from "./thread-list"
 import type { ThreadStatus } from "./thread-row"
 import { EmptyTrash } from "./trash"
-import { useSidebarView, ViewMenu } from "./view"
+import { markSeen, useHeldIds, useUnreadIds } from "./activity"
+import { setSidebarFilter, useSidebarView, ViewMenu, type SidebarFilter } from "./view"
 import { useThreadStatuses } from "@/lib/thread/statuses"
 import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
@@ -71,11 +74,9 @@ import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useCoarsePointer } from "@/hooks/use-device"
+import { useShortcut } from "@/hooks/use-hotkey"
 import { describeError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
-
-/** Rows Recents shows before folding the rest into the project folders. */
-const RECENT_COUNT = 8
 
 /** Starting a thread *in* a given project — the + on a project folder, and the
     project page's own button. The same front door ⌘N takes
@@ -95,6 +96,16 @@ export function useStartThreadIn(actions: Actions) {
     [navigate, isMobile, setOpenMobile, actions]
   )
 }
+
+const STATUS_CHIPS: {
+  value: SidebarFilter
+  label: string
+  count?: (counts: { running: number; needsYou: number }) => number
+}[] = [
+  { value: "all", label: "All" },
+  { value: "running", label: "Running", count: (c) => c.running },
+  { value: "waiting", label: "Needs you", count: (c) => c.needsYou },
+]
 
 /* ── The list ── */
 export function ThreadSidebar({
@@ -119,15 +130,24 @@ export function ThreadSidebar({
   const activeThreadId = useActiveChat()
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
-  /* The icon rail is 3rem wide: a thread row there is a title clipped to
-     nothing, and a group label is already hidden by the primitive — so the
-     rail would be a column of blank rows and stray fold chevrons. Collapsed,
-     the list is not shown at all; the rail carries the fixed nav (New thread,
-     Search, Tasks) and nothing else. Mobile is unaffected — there the sidebar
-     is a sheet, always full width, whatever `open` says. */
-  const { state: sidebarState, isMobile } = useSidebar()
-  const railed = sidebarState === "collapsed" && !isMobile
   const coarse = useCoarsePointer()
+  /* The in-sidebar filter: local to this mount, never stored — it answers "is
+     it one of these?", and the palette is the deep search. Closing clears. */
+  const [query, setQuery] = React.useState("")
+  const [searching, setSearching] = React.useState(false)
+  const searchRef = React.useRef<HTMLInputElement>(null)
+  const { open: sidebarOpen, setOpen, isMobile, setOpenMobile } = useSidebar()
+  const closeSearch = () => {
+    setQuery("")
+    setSearching(false)
+  }
+  useShortcut("sidebarFilter", () => {
+    if (isMobile) setOpenMobile(true)
+    else if (!sidebarOpen) setOpen(true)
+    setSearching(true)
+    // After the field mounts (and the collapsed sidebar has opened).
+    requestAnimationFrame(() => searchRef.current?.focus())
+  })
   const [refreshing, setRefreshing] = React.useState(false)
   const refreshSessions = React.useCallback(() => {
     if (refreshing) return
@@ -172,87 +192,50 @@ export function ThreadSidebar({
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, recent, opened, filed } = React.useMemo(() => {
-    // Deleting is reversible, so a deleted thread leaves the tiers above but
-    // not the sidebar: it drops into Trash until it is restored or purged.
-    const live = sessions
-      .filter(isListed)
-      .filter(inSpace)
-      .filter((session) => !session.deletedAt)
-      .filter((session) => {
-        if (view.filter === "running") return statuses.get(session.id) === "running"
-        /* "Needs you" is both readings that are addressed to the reader: a
-           question the agent is blocked on, and a turn that ended badly and
-           has been sitting there since. */
-        if (view.filter === "waiting") {
-          const status = statuses.get(session.id)
-          return status === "waiting" || status === "failed"
-        }
-        return true
-      })
-    const trashed = sessions
-      .filter(isListed)
-      .filter(inSpace)
-      .filter((session) => !!session.deletedAt)
-      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+  const projectNames = React.useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects]
+  )
+  const { live, trashed, pinned, recent, opened, filed } = React.useMemo(
+    () =>
+      deriveTiers({
+        sessions,
+        inSpace,
+        filter: view.filter,
+        sort: view.sort,
+        statuses,
+        pins,
+        openIds,
+        query,
+        projectNames,
+      }),
+    [sessions, statuses, pins, view.filter, view.sort, openIds, inSpace, query, projectNames]
+  )
 
-    /* By last activity, not by creation: a thread is recent because something
-       was said in it, so picking up an old one brings it back to the top
-       instead of leaving it wherever it was started. */
-    const newestFirst = [...live].sort((a, b) => activityAt(b) - activityAt(a))
-    // Pinned keeps the order pins were added in, not the order threads were
-    // created: the group you built by hand should stay where you put it.
-    const pinned = pins
-      .map((id) => newestFirst.find((session) => session.id === id))
-      .filter((session): session is SessionMeta => !!session)
-    /* Recent first: a flat Recents list of the newest few — and the folders
-       still hold *every* thread, this one included. Recents is a shortcut, not
-       a place a thread moves to: a folder that dropped whatever was recent was
-       an incomplete index of its own project, so the newest thread — the one
-       most likely to be looked for — was the one missing from where it lives.
-       By project: no Recents at all, which is the view for someone who thinks
-       in projects rather than in time. */
-    /* Newest first, by creation date — and running is a reason to be *in*
-       Recents, never a reason to be at the top of it. A thread's status is only
-       truly known once this client has connected to it (`useThreadStatuses`
-       falls back to the server's `promptActive`, a snapshot refetched on
-       bootstrap and mutations), so a running block at the top re-sorted the
-       list the moment you clicked a row and the connection corrected a stale
-       reading — the one list position you were reading from moved under the
-       click that opened it. Membership can still change on that correction; the
-       order of what is drawn cannot. */
-    const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
-    const rest = [...live].sort((a, b) => b.createdAt - a.createdAt)
-
-    /* ── Opened, and Recents without it ──
-       A thread with a tab open is already one click away, so it is not also a
-       shortcut in Recents: the tier below lists what is open, Recents lists what
-       is not. Closing a tab takes its id out of the open set, which is all it
-       takes for the thread to fall back into Recents if it belongs there — both
-       are derived, so the two can never disagree. Mapped through `live`, so the
-       status filter narrows this tier with every other, and a draft (which no
-       list draws) stays out of it. */
-    const openSet = new Set(openIds)
-    const byId = new Map(live.map((session) => [session.id, session]))
-    const opened = openIds.flatMap((id) => {
-      const session = byId.get(id)
-      return session ? [session] : []
-    })
-    const closed = rest.filter((session) => !openSet.has(session.id))
-
-    const running = closed.filter(isRunning)
-    /* Every running thread keeps its place, whatever its age — that is what
-       Recents replaced the old Running tier with, and burying the turn that is
-       happening now is the thing the tier existed to prevent. The rest fill
-       what is left, so the count is what it always was. */
-    const shown = new Set(running.map((session) => session.id))
-    for (const session of closed) {
-      if (shown.size >= Math.max(RECENT_COUNT, running.length)) break
-      shown.add(session.id)
+  /* The chips' and the Threads label's numbers come from the unfiltered
+     statuses over the space's live threads, so a chip never counts itself away. */
+  const counts = React.useMemo(() => {
+    let running = 0
+    let needsYou = 0
+    for (const session of sessions) {
+      if (!isListed(session) || session.deletedAt || !inSpace(session)) continue
+      const state = statuses.get(session.id)
+      if (state === "running") running++
+      else if (state === "waiting" || state === "failed") needsYou++
     }
-    const recent = view.sort === "recent" ? closed.filter((session) => shown.has(session.id)) : []
-    return { live, trashed, pinned, recent, opened, filed: newestFirst }
-  }, [sessions, statuses, pins, view.filter, view.sort, openIds, inSpace])
+    return { running, needsYou }
+  }, [sessions, statuses, inSpace])
+
+  const held = useHeldIds()
+  const unread = useUnreadIds(sessions, statuses, activeThreadId)
+  /* The thread in front of you is read: stamp it with the activity it showed,
+     now and whenever a turn ends under your eyes. */
+  const activeSession = sessions.find((session) => session.id === activeThreadId)
+  const activeAt = activeSession ? activityAt(activeSession) : 0
+  React.useEffect(() => {
+    if (activeSession) markSeen(activeSession)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the stamp is the dependency, not the object
+  }, [activeSession?.id, activeAt])
 
   const { byProject, orphans } = React.useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>()
@@ -264,25 +247,48 @@ export function ThreadSidebar({
     /* Every project gets a folder, threads or not: an empty folder still has
        its + — which is how a project you have not started on yet gets its first
        thread from here. Threads whose project is gone fall into "Other". */
-    const orphans = [...byProject.keys()].filter(
-      (id) => !projects.some((project) => project.id === id)
-    )
+    const orphans = [...byProject.keys()].filter((id) => !knownProject.has(id))
     return { byProject, orphans }
-  }, [filed, projects])
+  }, [filed, knownProject])
 
-  const listProps = { actions, status }
+  const pinSet = React.useMemo(() => new Set(pins), [pins])
+  const env = React.useMemo<SidebarEnv>(
+    () => ({ actions, status, pinSet, held, unread, projectNames }),
+    [actions, status, pinSet, held, unread, projectNames]
+  )
   const filtered = view.filter !== "all"
+  const searched = query.trim() !== ""
   const nothingLive = live.length === 0
 
-  // After the hooks, never before: the lists above are all hook state.
-  if (railed) return null
-
   return (
-    <>
+    <SidebarEnvContext.Provider value={env}>
       <SidebarGroup className={cn(TIER, GROUP)}>
         <SidebarGroupLabel className={cn(GROUP_LABEL, "group/label")}>
           <span className="truncate">Threads</span>
+          {counts.needsYou > 0 && (
+            <span
+              title={`${counts.needsYou} thread${counts.needsYou === 1 ? "" : "s"} need${counts.needsYou === 1 ? "s" : ""} you`}
+              className="rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400"
+            >
+              {counts.needsYou}
+            </span>
+          )}
           <div className="ml-auto flex h-full items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              title="Filter threads"
+              aria-label="Filter threads"
+              aria-pressed={searching}
+              onClick={() => (searching ? closeSearch() : (setSearching(true), requestAnimationFrame(() => searchRef.current?.focus())))}
+              className={cn(
+                "rounded-sm text-muted-foreground hover:text-sidebar-foreground",
+                coarse ? "size-10" : "size-6",
+                (searching || query) && "text-primary"
+              )}
+            >
+              <Search className="size-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="icon-xs"
@@ -300,12 +306,70 @@ export function ThreadSidebar({
             <ViewMenu view={view} />
           </div>
         </SidebarGroupLabel>
+        {searching && (
+          <div className="relative mb-1">
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation()
+                  closeSearch()
+                }
+              }}
+              placeholder="Filter by title, project or agent"
+              aria-label="Filter threads by title, project or agent"
+              className="h-8 w-full rounded-lg border border-sidebar-border bg-transparent px-2 pr-7 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {query && (
+              <button
+                type="button"
+                title="Clear filter"
+                aria-label="Clear filter"
+                onClick={() => {
+                  setQuery("")
+                  searchRef.current?.focus()
+                }}
+                className="absolute top-1.5 right-1.5 grid size-5 place-items-center rounded-sm text-muted-foreground hover:text-sidebar-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+        {/* The status filter, in view: the menu's "Show" group, one click away.
+            Same store, so the two cannot disagree. */}
+        <div role="group" aria-label="Show threads" className="flex gap-1 px-0.5 pb-1">
+          {STATUS_CHIPS.map(({ value, label, count }) => {
+            const n = count?.(counts)
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={view.filter === value}
+                onClick={() => setSidebarFilter(value)}
+                className={cn(
+                  "h-6 rounded-full border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  view.filter === value
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-sidebar-border text-muted-foreground hover:text-sidebar-foreground"
+                )}
+              >
+                {label}
+                {n ? <span className="ml-1 tabular-nums opacity-70">{n}</span> : null}
+              </button>
+            )
+          })}
+        </div>
       </SidebarGroup>
 
       {nothingLive && (
         <SidebarGroup className={GROUP}>
-          <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            {filtered
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            {query.trim()
+              ? "No thread matches that."
+              : filtered
               ? view.filter === "running"
                 ? "Nothing is running right now."
                 : "Nothing is waiting on you."
@@ -318,7 +382,7 @@ export function ThreadSidebar({
 
       {pinned.length > 0 && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
-          <ThreadList sessions={pinned} {...listProps} />
+          <ThreadList sessions={pinned} />
         </FoldableGroup>
       )}
 
@@ -335,7 +399,7 @@ export function ThreadSidebar({
         >
           <ThreadList
             sessions={opened}
-            {...listProps}
+           
             onClose={closeOpenThread}
             revealActive
           />
@@ -346,17 +410,19 @@ export function ThreadSidebar({
         /* A clock read as "scheduled" next to a Scheduled nav row; Recents is
            what happened, so it wears a history mark. */
         <FoldableGroup groupKey="__recent" label="Recents" icon={<HistoryIcon className="size-3 shrink-0" />}>
-          <ThreadList sessions={recent} {...listProps} />
+          <ThreadList sessions={recent} />
         </FoldableGroup>
       )}
 
       {/* Projects: one folder each. Not a foldable tier itself — the folders
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
-      {scopedProjects.length > 0 && !(filtered && nothingLive) && (
+      {scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
         <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon className="size-3 shrink-0" />}>
             <SidebarMenu className={MENU}>
-              {scopedProjects.map((project) => (
+              {scopedProjects
+                .filter((project) => !searched || byProject.has(project.id))
+                .map((project) => (
                 <ProjectFolder
                   key={project.id}
                   id={project.id}
@@ -365,7 +431,7 @@ export function ThreadSidebar({
                   sessions={byProject.get(project.id) ?? []}
                   onNewThread={() => startIn(project)}
                   onOpenProject={() => void navigate(projectPath(project.id))}
-                  {...listProps}
+                 
                 />
               ))}
               {orphans.map((id) => (
@@ -374,7 +440,7 @@ export function ThreadSidebar({
                   id={id}
                   name="Other"
                   sessions={byProject.get(id) ?? []}
-                  {...listProps}
+                 
                 />
               ))}
             </SidebarMenu>
@@ -391,10 +457,10 @@ export function ThreadSidebar({
           count={trashed.length}
           defaultOpen={false}
         >
-          <ThreadList sessions={trashed} trash limit={PROJECT_PAGE_SIZE} {...listProps} />
+          <ThreadList sessions={trashed} trash limit={PROJECT_PAGE_SIZE} />
           <EmptyTrash sessions={trashed} actions={actions} />
         </FoldableGroup>
       )}
-    </>
+    </SidebarEnvContext.Provider>
   )
 }

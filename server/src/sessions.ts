@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { killSessionTerminals } from "./terminals.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import type { WebSocket } from "ws";
@@ -14,6 +14,7 @@ import { mcpServers as mcpLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
 import { personaEffort, personas, resolvePersonaSpawn } from "./personas.js";
+import { noteThreadLinked, noteTurnStarted, taskBrief } from "./task-threads.js";
 import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
@@ -36,7 +37,7 @@ import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-rin
 import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { AGENTS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
+import { AGENTS_SERVER_NAME, BROWSER_SERVER_NAME, HARNESS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -308,6 +309,10 @@ export interface Session {
   forkedFromTurnId: string | null;
   /** The passage an aside was started on, else null. Persisted. */
   asideQuote: string | null;
+  /** The board task this thread was started on (`task-threads.ts`), else null.
+      A pointer, not a foreign key: the spawn reads it fresh every time, so a
+      deleted task is simply no task. Persisted. */
+  taskId: string | null;
   /** The git worktree this thread runs in, project-relative, or null for the
       project's own cwd (`git.createWorktree`). Chosen on the draft, never
       moved: the agent names its conversation by the cwd it ran in. */
@@ -403,6 +408,11 @@ export async function mcpServersFor(
   /** The `agents` server, on the same terms: null for a thread that is itself
       a child, and for a caller with no thread behind it. */
   agents: StdioMcpServer | null = null,
+  /** The `harness` server — the agent managing this harness. Top-level threads
+      only, like `agents`. */
+  harness: StdioMcpServer | null = null,
+  /** The `builtin:browser` row — chrome-devtools-mcp on the thread's preview. */
+  browser: StdioMcpServer | null = null,
 ): Promise<{ servers: acp.McpServer[]; skipped: string[] }> {
   const linked = new Set(links.mcpServerIds);
   const servers: acp.McpServer[] = [];
@@ -421,7 +431,11 @@ export async function mcpServersFor(
             ? knowledgeServer(project)
             : s.builtin === "agents"
               ? agents
-              : workflow;
+              : s.builtin === "workflow"
+                ? workflow
+                : s.builtin === "browser"
+                  ? browser
+                  : harness;
       if (built) servers.push(built);
     } else if (s.type === "http") {
       /* An OAuth row is handed to the agent as the shim's loopback URL, never
@@ -523,6 +537,44 @@ export function agentsServer(session: Pick<Session, "id">, runner: WorkflowUrlSo
   return harnessMcpServer(AGENTS_SERVER_NAME, "agents-mcp", [{ name: "AGENTS_URL", value: runner.urlFor(session) }]);
 }
 
+/** The harness's own `harness` MCP server: the agent managing this harness —
+    tasks and boards, profiles, projects. Its loopback is the workflow runner's
+    key under `/hm`, so the tool call acts for exactly this thread. */
+export function harnessServer(session: Pick<Session, "id">, source: HarnessUrlSource): StdioMcpServer {
+  return harnessMcpServer(HARNESS_SERVER_NAME, "harness-mcp", [{ name: "HARNESS_URL", value: source.harnessUrlFor(session) }]);
+}
+
+/** The `builtin:browser` row: `chrome-devtools-mcp` connected to the thread's
+    Preview in the desktop app, through the `/cdp` pipe (browser-hosts.ts) —
+    never a browser of its own. Spawned by its global binary, like an agent,
+    and not advertised when it is not installed. Advertised whenever it is
+    linked, not only while a preview is driving: Drive comes and goes long
+    after `session/new` fixed the tool list, and the MCP connects on its first
+    call and again after a drop. CrUX and usage statistics are off — the URLs
+    here are someone's dev server. */
+export function browserServer(session: Pick<Session, "id">, source: BrowserUrlSource): StdioMcpServer | null {
+  const command = onPath("chrome-devtools-mcp");
+  if (!command) {
+    console.log("[mcp] builtin:browser is linked but chrome-devtools-mcp is not installed (npm i -g chrome-devtools-mcp)");
+    return null;
+  }
+  return {
+    name: BROWSER_SERVER_NAME,
+    command,
+    args: ["--wsEndpoint", source.cdpUrlFor(session), "--no-usage-statistics", "--no-performance-crux"],
+    env: [],
+  };
+}
+
+// ponytail: a PATH scan per spawn; cache it if spawns ever get hot
+function onPath(name: string): string | null {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const candidate = join(dir, name);
+    if (dir && existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 export interface SessionEvents {
   /** Fired only while no client is attached — used for push notifications. */
   onPermissionRequest?: (session: Session) => void;
@@ -547,6 +599,19 @@ export interface WorkflowUrlSource {
   urlFor(session: Pick<Session, "id">): string;
 }
 
+/** What the manager needs from the workflow runner to hand a thread the
+    `harness` MCP server: the same per-boot key and port under its own path
+    (`/hm`), so managing the harness rides the runner's one loopback credential
+    rather than minting a second. */
+export interface HarnessUrlSource {
+  harnessUrlFor(session: Pick<Session, "id">): string;
+}
+
+/** The same key and port again, under `/cdp`, for the `builtin:browser` row. */
+export interface BrowserUrlSource {
+  cdpUrlFor(session: Pick<Session, "id">): string;
+}
+
 /** A turn's outcome as `whenTurnSettled` reports it. */
 export interface TurnOutcome {
   error?: WireError;
@@ -568,7 +633,7 @@ export class SessionManager {
   /** One-shot waiters for a turn to settle, by session — see `whenTurnSettled`. */
   private turnWaiters = new Map<string, { turnId: string; settle: (outcome: TurnOutcome) => void; fail: (error: Error) => void }[]>();
   /** Injected at boot; null means no thread is handed the workflow server. */
-  private workflowRunner: WorkflowUrlSource | null = null;
+  private workflowRunner: (WorkflowUrlSource & HarnessUrlSource & BrowserUrlSource) | null = null;
   /** The event-journal concern — the buffered writes, the reads that flush
       first, the turn-boundary math and the replay framing — extracted to
       session-journal.ts. The manager decides when; the journal knows the table. */
@@ -1083,7 +1148,10 @@ export class SessionManager {
       /* And what the turn did to the worktree, measured by git rather than
          read off the transcript (turn-changes.ts). Off the prompt path: both
          calls return at once and do their git work on the next tick. */
-      if (event.ev === "turn_started") this.turnChanges.begin(session.id, event.turnId);
+      if (event.ev === "turn_started") {
+        this.turnChanges.begin(session.id, event.turnId);
+        void noteTurnStarted(session).catch((err) => console.warn(`[${session.id.slice(0, 8)}] task move failed: ${String(err)}`));
+      }
       else this.turnChanges.end(session.id, event.turnId);
       /* And how that turn went, in the same write. A turn beginning clears the
          last one's failure — the thread is being worked on again, and a row
@@ -1236,7 +1304,7 @@ export class SessionManager {
     return [...this.sessions.values()].filter((s) => s.parentSessionId === id);
   }
 
-  setWorkflowRunner(runner: WorkflowUrlSource): void {
+  setWorkflowRunner(runner: WorkflowUrlSource & HarnessUrlSource & BrowserUrlSource): void {
     this.workflowRunner = runner;
   }
 
@@ -1419,6 +1487,9 @@ export class SessionManager {
       worktree?: boolean | string;
       /** An aside of that thread, started on this passage. */
       aside?: { of: string; quote: string };
+      /** The board task this thread works on — its trailer, its card's
+          history and the card moving when a turn starts all follow it. */
+      taskId?: string;
     } = {},
   ): Promise<Session> {
     await this.ready;
@@ -1452,6 +1523,7 @@ export class SessionManager {
         title: opts.title,
         parentSessionId: opts.parentSessionId,
         autonomy: opts.autonomy,
+        taskId: opts.taskId,
         ...(opts.aside ? { forkedFrom: { sessionId: opts.aside.of, turnId: null }, asideQuote: opts.aside.quote } : {}),
       });
     } catch (error) {
@@ -1495,6 +1567,8 @@ export class SessionManager {
        id that never reached the row is a conversation the next boot cannot
        find. */
     await this.persist(session);
+    // A marker on the card's history; the thread exists either way if it fails.
+    void noteThreadLinked(session).catch((err) => console.warn(`[${session.id.slice(0, 8)}] task link note failed: ${String(err)}`));
     this.armDeadline(session);
     return session;
   }
@@ -1569,6 +1643,8 @@ export class SessionManager {
       forkedFrom?: { sessionId: string; turnId: string | null };
       /** An aside: a thread started from a passage selected in another. */
       asideQuote?: string;
+      /** The board task this thread works on. */
+      taskId?: string;
       /** Project-relative worktree this thread runs in. */
       worktree?: string | null;
       /** An imported thread already had a life before this row existed; its
@@ -1629,6 +1705,7 @@ export class SessionManager {
       forkedFromSessionId: opts.forkedFrom?.sessionId ?? null,
       forkedFromTurnId: opts.forkedFrom?.turnId ?? null,
       asideQuote: opts.asideQuote ?? null,
+      taskId: opts.taskId ?? null,
       worktree: opts.worktree ?? null,
       autonomy: opts.autonomy ?? null,
       deadline: null,
@@ -1753,6 +1830,10 @@ export class SessionManager {
         /* A drawn view is read by a person; an unattended run's output goes to
            a log and wants prose it can grep. */
         uiBlocks: session.uiBlocks && !unattended,
+        /* Read now, not remembered: a respawn tells the agent where the card is
+           and what it is called today. A workflow step has no harness MCP to
+           act on it with, so it is told nothing. */
+        task: session.parentSessionId ? null : await taskBrief(session.taskId),
       },
       rules,
     );
@@ -1906,12 +1987,20 @@ export class SessionManager {
     /* Asking another agent is one level too, but not the workflow engine's
        rival: Claude Code keeps its own Workflow and still gets this. */
     const agents = this.workflowRunner && !session.parentSessionId ? agentsServer(session, this.workflowRunner) : null;
+    /* Managing the harness is one level too: a workflow step or a subagent is
+       not the actor a person handed the harness to. */
+    const harness = this.workflowRunner && !session.parentSessionId ? harnessServer(session, this.workflowRunner) : null;
+    /* The preview a person is watching belongs to a top-level thread's dock;
+       a workflow step or a subagent has nobody driving one. */
+    const browser = this.workflowRunner && !session.parentSessionId ? browserServer(session, this.workflowRunner) : null;
     const { servers: mcpServers, skipped } = await mcpServersFor(
       this.effectiveLinks(session, profile),
       project,
       getConfig(),
       workflow,
       agents,
+      harness,
+      browser,
     );
     if (skipped.length) {
       console.log(
@@ -2058,6 +2147,19 @@ export class SessionManager {
        persona this method assigns below — so the rows can be the difference
        between two readings rather than a guess from the request. */
     const before = await this.configLabels(session);
+    /* **A pick is held, not taken — live-capable or not.** What the running
+       process could take without a restart (model, effort, a gateway move) used
+       to be applied on the spot, mid-turn included, which is a steer nobody
+       approved: the answer under way changed model beneath the reader. Now the
+       pick is staged like every other, and what takes it is a turn starting, a
+       spawn, or the reader's own approval (`approveStaged`). `defer: false` is
+       that approval, a **held** turn is waiting for exactly this change, and an
+       **agent** change is a different runtime — none of them can wait. */
+    const bridge = session.bridge;
+    const movesAgent = next.agentId !== session.agentId;
+    if (opts.defer !== false && !bridge?.paused && !movesAgent) {
+      return { live: false, staged: this.stageConfig(session, next) };
+    }
     if (await this.applyConfigLive(session, next)) {
       /* Whatever was waiting for the boundary has just been overtaken for the
          fields this call names — leaving them staged would move the setting
@@ -2066,34 +2168,8 @@ export class SessionManager {
       this.noteConfig(session, before, await this.configLabels(session));
       return { live: true };
     }
-    /* Nothing live could be done, so this costs the process — and a change that
-       costs the process is not taken when it is picked. It is **staged**: held
-       in `session.stagedConfig`, and the next spawn is what takes it
-       (`respawnNow` folds the patch; `prompt` flushes it before starting a
-       turn). Staging used to be the mid-turn case alone, and the idle case
-       respawned on the spot — which on a *retired* thread woke a process up for
-       nobody, and then paid for a second spawn when the next message revived it.
-       Now the pick costs nothing and the send costs one spawn.
-
-       Three exclusions, and only three:
-        - `defer: false` — the menu's "Apply now", which is the whole of "now,
-          and never mind what it costs";
-        - a **held** turn, which is stopped *waiting* for a model change (see
-          the `paused` event): staging one behind a boundary it will never reach
-          is a change that never happens;
-        - an **agent** change, which is not a setting on this process but a
-          different runtime. `StagedConfig` cannot carry one — a mid-turn agent
-          change used to be staged and then silently dropped at flush — and it
-          must not learn to: a respawn onto another binary ends in a
-          `session/load` of an id that lives in the *old* runtime's store, so
-          the conversation is lost while the transcript still shows it. Nothing
-          drives this from the UI (a started thread's agent is fixed at draft
-          time); the guard is here so a script or a workflow cannot either. */
-    const bridge = session.bridge;
-    const movesAgent = next.agentId !== session.agentId;
-    if (opts.defer !== false && !bridge?.paused && !movesAgent) {
-      return { live: false, staged: this.stageConfig(session, next) };
-    }
+    /* Nothing live could be done, so this costs the process — taken now,
+       because staging was refused above (see the three exclusions there). */
     /* The row moves before the respawn rather than being passed to it, because
        a persona is not a spawn argument the way model and effort are: `start`
        reads it off the session (it has to, since a revive with no caller
@@ -2339,7 +2415,36 @@ export class SessionManager {
     const moving = profile.id !== session.profileId;
     const model = staged.model ?? (moving ? "" : session.model);
     const effort = staged.effort ?? (moving ? "" : session.effort);
+    /* On a live process, a patch that is only the agent's own selectors needs
+       no spawn: apply it directly. With no process, continue through the
+       respawn path so those picks can be applied to the revived bridge. */
+    if (
+      !hasSpawnFields(staged) &&
+      !hasLinks(staged) &&
+      session.bridge &&
+      !session.exited
+    ) {
+      return this.takePicks(session, staged);
+    }
     try {
+      /* Thread links are fixed when the runtime session is created. Even an
+         agent whose model can move live must respawn to receive staged MCP,
+         skill, or command picks. Keep the patch intact for respawnNow to fold
+         (including the link rows) rather than routing through applyConfig,
+         which can accept the unchanged/live model and clear it without a spawn. */
+      if (hasLinks(staged)) {
+        const previousLinks = session.links;
+        try {
+          await this.respawn(session.id, profile, session.agentId, project, model, effort);
+        } catch (error) {
+          if (session.links !== previousLinks) {
+            session.links = await this.writeLinkSelection(session, previousLinks);
+          }
+          if (session.stagedConfig !== staged) this.setStaged(session, staged);
+          throw error;
+        }
+        return;
+      }
       await this.applyConfig(
         session.id,
         {
@@ -2362,6 +2467,90 @@ export class SessionManager {
          actually watching, and the send is about to fail with it. */
       if (session.stagedConfig !== staged) this.setStaged(session, staged);
       throw error;
+    }
+    /* After the spawn, on the process that is there now — `applyConfig` dropped
+       the whole patch (picks included) before it restarted, so `staged` is the
+       copy that still names them. */
+    await this.takePicks(session, staged);
+  }
+
+  /** Take the agent-selector half of a staged patch on the running process and
+      forget it. Taken *out* of the patch first, so a peer is never told a
+      change is waiting that is already on its way. */
+  private async takePicks(session: Session, staged: StagedConfig): Promise<void> {
+    const { modeId, options } = staged;
+    if (modeId === undefined && !options) return;
+    const rest: StagedConfig = { ...(session.stagedConfig ?? {}) };
+    delete rest.modeId;
+    delete rest.options;
+    if (session.stagedConfig) {
+      if (Object.keys(rest).length === 0) this.clearStaged(session);
+      else this.setStaged(session, rest);
+    }
+    if (session.bridge && !session.exited) await session.bridge.applyPicks({ modeId, options });
+  }
+
+  /** Stage a pick of the agent's own — the mode, or any option it advertises. */
+  stagePick(id: string, pick: { modeId?: string; options?: Record<string, string | boolean> }): StagedConfig {
+    const session = this.sessions.get(id);
+    if (!session) throw new HttpError("not found", 404);
+    if (session.deletedAt !== null) throw new HttpError("session deleted", 409);
+    const staged = session.stagedConfig ?? {};
+    const next: StagedConfig = {
+      ...staged,
+      ...(pick.modeId !== undefined ? { modeId: pick.modeId } : {}),
+      ...(pick.options ? { options: { ...staged.options, ...pick.options } } : {}),
+    };
+    this.setStaged(session, next);
+    return next;
+  }
+
+  /**
+   * The reader's approval of what is staged, now.
+   *
+   * **A running turn is steered, never restarted**: only what the process can
+   * take as it is — the agent's selectors, and a model/effort/gateway move its
+   * live path accepts — and whatever needs a spawn stays staged for the next
+   * turn. A thread nobody is running is not mid-anything, so there the whole
+   * patch is taken, spawn included (the same flush a send makes).
+   */
+  async approveStaged(id: string): Promise<StagedConfig | null> {
+    const session = this.requireSession(id);
+    if (!session.stagedConfig) return null;
+    await session.respawnChain?.catch(() => {});
+    const bridge = session.bridge && !session.exited ? await this.whenSpawnable(session) : null;
+    if (!bridge || !bridge.promptActive || bridge.paused) await this.flushStagedNow(session);
+    else await this.steerStaged(session);
+    return session.stagedConfig;
+  }
+
+  /** The live-only half of `flushStagedNow`. Never throws and never respawns —
+      it is called at a drained message's start and by a steer-approval, neither
+      of which can pay for a restart or fail over a setting. */
+  private async steerStaged(session: Session): Promise<void> {
+    const staged = session.stagedConfig;
+    if (!staged) return;
+    try {
+      await this.takePicks(session, staged);
+      if (staged.profileId === undefined && staged.model === undefined && staged.effort === undefined) return;
+      const profile = await getProfile(staged.profileId ?? session.profileId);
+      const project = await getProject(session.projectId);
+      if (!profile || !project || !profileSupports(profile, session.agentId)) return;
+      const moving = profile.id !== session.profileId;
+      const next = {
+        profile,
+        agentId: session.agentId,
+        project,
+        model: modelFor(session, profile, staged.model ?? (moving ? "" : session.model)),
+        effort: staged.effort ?? (moving ? "" : session.effort),
+      };
+      const before = await this.configLabels(session);
+      if (await this.applyConfigLive(session, next)) {
+        this.dropStaged(session, next);
+        this.noteConfig(session, before, await this.configLabels(session));
+      }
+    } catch (error) {
+      console.warn("couldn't steer the staged change", error);
     }
   }
 
@@ -2803,6 +2992,11 @@ export class SessionManager {
        entirely (a send reviving the thread, a rewind, the restart route). Said
        here, after the load, for `restartWith`'s own reason: before it, a clear
        would take the rows straight back out again. */
+    if (staged && (staged.modeId !== undefined || staged.options)) {
+      /* Re-read off the map: `session.bridge` was assigned null above, and
+         control flow has not heard that `start` put another there. */
+      await this.sessions.get(session.id)?.bridge?.applyPicks({ modeId: staged.modeId, options: staged.options });
+    }
     if (stagedBefore) {
       this.noteConfig(session, stagedBefore, await this.configLabels(session));
       /* …and what the thread ended up on, absolute, for every peer — including
@@ -3262,7 +3456,12 @@ export class SessionManager {
   private queue = new SessionQueue({
     emit: (session, event) => this.emit(session, event),
     whenSpawnable: (session) => this.whenSpawnable(session),
-    startTurn: (session, bridge, text, peer, opts) => this.startTurn(session, bridge, text, peer, opts),
+    /* A drained message is the next turn: what is staged and needs no restart
+       is taken here, and what does waits for a message of the reader's own. */
+    startTurn: async (session, bridge, text, peer, opts) => {
+      await this.steerStaged(session);
+      return this.startTurn(session, bridge, text, peer, opts);
+    },
   });
 
   async queueAdd(id: string, text: string, attachmentIds?: string[]): Promise<PromptReply> {
@@ -3280,6 +3479,10 @@ export class SessionManager {
 
   async queueRemove(id: string, itemId: string): Promise<void> {
     await this.queue.remove(this.requireSession(id), itemId);
+  }
+
+  async queueReorder(id: string, ids: string[]): Promise<void> {
+    await this.queue.reorder(this.requireSession(id), ids);
   }
 
   async queueClear(id: string): Promise<void> {
@@ -3327,8 +3530,8 @@ export class SessionManager {
     return this.queue.steer(this.requireSession(id), itemId);
   }
 
-  queueSendNow(id: string, itemId?: string): Promise<{ turnId: string }> {
-    return this.queue.sendNow(this.requireSession(id), itemId);
+  queueSendNow(id: string, itemIds?: string[]): Promise<{ turnId: string }> {
+    return this.queue.sendNow(this.requireSession(id), itemIds);
   }
 
   private requireSession(id: string): Session {
@@ -3410,11 +3613,11 @@ export class SessionManager {
 
   /** Undo one ended turn's files in the working tree (`TurnChangesRecorder.revert`).
       Refused while a turn runs: the agent would be writing the same paths. */
-  async revertTurn(id: string, turnId: string, force: boolean) {
+  async revertTurn(id: string, turnId: string, force: boolean, partial?: Record<string, git.OwnEdit[]>) {
     const session = this.sessions.get(id);
     if (!session) throw new HttpError("not found", 404);
     if (session.bridge?.promptActive) throw new HttpError("a turn is running — stop it before reverting one", 409);
-    return this.turnChanges.revert(id, turnId, force);
+    return this.turnChanges.revert(id, turnId, force, partial);
   }
 
   list() {
@@ -3460,6 +3663,7 @@ export class SessionManager {
       forkedFromSessionId: s.forkedFromSessionId,
       forkedFromTurnId: s.forkedFromTurnId,
       asideQuote: s.asideQuote,
+      taskId: s.taskId,
       /* The thread's own checkout, when it was isolated: where it is, the
          branch it was made on, and whether it is still there (a removed one
          keeps the column — a revive then fails on the missing cwd, loudly).
@@ -3595,10 +3799,11 @@ export class SessionManager {
     journal: this.log,
     prompt: async (id, text, peer, opts) => await this.prompt(id, text, peer, opts),
     queueAdd: async (id, text, attachmentIds) => await this.queueAdd(id, text, attachmentIds),
-    queueSendNow: async (id, itemId) => await this.queueSendNow(id, itemId),
+    queueSendNow: async (id, itemIds) => await this.queueSendNow(id, itemIds),
     queueSteer: (id, itemId) => this.queueSteer(id, itemId),
     queueUpdate: (id, itemId, text, attachmentIds) => this.queueUpdate(id, itemId, text, attachmentIds),
     queueRemove: (id, itemId) => this.queueRemove(id, itemId),
+    queueReorder: (id, ids) => this.queueReorder(id, ids),
     queueClear: (id) => this.queueClear(id),
     stopTurn: (id, reclaim) => this.stopTurn(id, reclaim),
     resumeTurn: (id) => this.resumeTurn(id),
@@ -3676,6 +3881,23 @@ function describe(error: unknown): string {
  *    when the profile is not moving: that is the same agent, and the id is its
  *    own (see `applyAgentOwned`).
  */
+/** Whether a patch names a setting only a spawn (or a live move) can place —
+    as opposed to the agent's own selectors, which `takePicks` hands over. */
+function hasSpawnFields(staged: StagedConfig): boolean {
+  return (
+    staged.profileId !== undefined ||
+    staged.model !== undefined ||
+    staged.effort !== undefined ||
+    staged.personaId !== undefined ||
+    staged.suggestFollowups !== undefined ||
+    staged.uiBlocks !== undefined
+  );
+}
+
+function hasLinks(staged: StagedConfig): boolean {
+  return staged.mcpServerIds !== undefined || staged.skillIds !== undefined || staged.commandIds !== undefined;
+}
+
 function modelFor(session: Session, profile: Profile, model: string | undefined): string | undefined {
   if (!model) return model;
   const catalog = profile.models ?? [];
@@ -3721,5 +3943,6 @@ function rowValues(s: Session) {
     forkedFromSessionId: s.forkedFromSessionId,
     forkedFromTurnId: s.forkedFromTurnId,
     asideQuote: s.asideQuote,
+    taskId: s.taskId,
   };
 }

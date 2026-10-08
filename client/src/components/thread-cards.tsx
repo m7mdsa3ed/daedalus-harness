@@ -12,6 +12,8 @@ import {
   FoldVerticalIcon,
   InfoIcon,
   ListTodoIcon,
+  AudioLinesIcon,
+  MicIcon,
   PaperclipIcon,
   PlayIcon,
   RotateCwIcon,
@@ -50,7 +52,7 @@ import type { TurnSources } from "@/lib/sources"
 import { stripPromptSuggestions } from "@/lib/suggestions"
 import { cn } from "@/lib/utils"
 import { autonomyLine } from "@/lib/autonomy-text"
-import type { AutonomyItem, CompactionItem, PlanItem, ShellItem, ThreadItem } from "@/lib/store"
+import type { AutonomyItem, CompactionItem, PlanItem, ShellItem, ThreadItem, VoiceItem } from "@/lib/store"
 
 /* Explanatory agents emit their insight box as two backticked rule lines around
    the body — as markdown that's a pair of code chips with a wall of dashes.
@@ -418,6 +420,16 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
 })
 TaskNotificationCard.displayName = "TaskNotificationCard"
 
+export const PILL = "h-6 gap-1 rounded-pill px-2 text-[11px] [&_svg]:size-3"
+
+/** The one action pill of an error or a status line (Continue, Retry, Reconnect…). */
+export function ActionPill({
+  className,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "size"> & { className?: string }) {
+  return <Button variant="outline" size="sm" className={cn(PILL, className)} {...props} />
+}
+
 /**
  * A failure, in the flow of the conversation. Loud enough not to be missed and
  * quiet enough not to be a modal: the headline says what the app was trying to
@@ -433,8 +445,11 @@ export const ErrorRow = React.memo(function ErrorRow({
   onContinue,
   onDismiss,
   showTimestamp = false,
+  compact = false,
 }: {
   item: Extract<ThreadItem, { kind: "error" }>
+  /** The foot's status says this failure in full: title and Copy only here. */
+  compact?: boolean
   onRetry?: () => void
   /** Present on the newest row of a turn the agent's process ended under —
       the same "Continue." the interrupt rule sends. */
@@ -471,6 +486,14 @@ export const ErrorRow = React.memo(function ErrorRow({
     { label: "Copy", icon: <CopyIcon />, onClick: () => copyText(full) },
     ...(onDismiss ? [{ label: "Dismiss", onClick: onDismiss }] : []),
   ]
+  if (compact)
+    return (
+      <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground select-text">
+        <TriangleAlertIcon className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{item.title}</span>
+        <CopyButton text={full} size="icon-xs" className="text-muted-foreground/80 hover:text-foreground" />
+      </div>
+    )
   return (
     <ItemContextMenu
       items={menuItems}
@@ -521,33 +544,24 @@ export const ErrorRow = React.memo(function ErrorRow({
         )}
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           {missing && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+            <ActionPill
               onClick={() => void navigate("/settings/agents")}
             >
               <SettingsIcon className="size-3" />
               Open Agents settings
-            </Button>
+            </ActionPill>
           )}
           {onContinue && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+            <ActionPill
               onClick={onContinue}
               title="Start the agent again and ask it to pick up where it stopped"
             >
               <PlayIcon className="size-3" />
               Continue
-            </Button>
+            </ActionPill>
           )}
           {onRetry && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+            <ActionPill
               onClick={onRetry}
               title={
                 carried
@@ -557,34 +571,26 @@ export const ErrorRow = React.memo(function ErrorRow({
             >
               <RotateCwIcon className="size-3" />
               {retryLabel}
-            </Button>
+            </ActionPill>
           )}
           {onRetryAsPaths && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+            <ActionPill
               onClick={onRetryAsPaths}
               title="Send it again with the files written into the workspace and named by path, rather than inlined"
             >
               <PaperclipIcon className="size-3" />
               Retry as file paths
-            </Button>
+            </ActionPill>
           )}
           <CopyButton
             text={full}
             label="Copy"
-            className="h-6 gap-1 rounded-pill px-2 text-[11px] [&_svg]:size-3"
+            className={PILL}
           />
           {onDismiss && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 rounded-pill px-2 text-[11px] text-muted-foreground"
-              onClick={onDismiss}
-            >
+            <ActionPill variant="ghost" className="text-muted-foreground" onClick={onDismiss}>
               Dismiss
-            </Button>
+            </ActionPill>
           )}
           {showTimestamp && <Timestamp at={item.at} />}
         </div>
@@ -680,6 +686,39 @@ export const AutonomyStep = React.memo(function AutonomyStep({
   )
 })
 AutonomyStep.displayName = "AutonomyStep"
+
+/**
+ * A line of the voice conversation, where it was said. Not a step: nothing was
+ * invoked and nothing expands, so it is a line of speech with the mark saying
+ * whose voice — the mic for the person, the waveform for the voice model,
+ * whose lines sit back a tone because the agent's own answer is the row above.
+ */
+export const VoiceStep = React.memo(function VoiceStep({
+  item,
+  showTimestamp,
+}: {
+  item: VoiceItem
+  showTimestamp?: boolean
+}) {
+  const Icon = item.role === "user" ? MicIcon : AudioLinesIcon
+  return (
+    <div className="flex items-start gap-2 py-1 text-sm leading-6">
+      <Icon aria-hidden className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+      <p
+        dir="auto"
+        className={cn(
+          "min-w-0 flex-1 text-pretty whitespace-pre-wrap",
+          item.role === "assistant" && "text-muted-foreground",
+        )}
+      >
+        <span className="sr-only">{item.role === "user" ? "You said: " : "Voice: "}</span>
+        {item.text}
+      </p>
+      <StepMeta parts={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]} />
+    </div>
+  )
+})
+VoiceStep.displayName = "VoiceStep"
 
 /**
  * A `!` command the reader ran against the thread's project, in the transcript

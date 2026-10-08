@@ -80,6 +80,20 @@ export { extractTodos } from "./tools/todos"
 export type { McpCall } from "./tools/mcp"
 export { extractMcpCall } from "./tools/mcp"
 
+export type { HarnessAction, HarnessCall, HarnessEffect, HarnessTable, HarnessVerb } from "./tools/harness"
+export {
+  extractHarnessCall,
+  harnessAction,
+  harnessEffect,
+  harnessFields,
+  harnessOperationLabel,
+  harnessPreview,
+  harnessResult,
+  harnessSubject,
+  harnessSummary,
+  harnessTable,
+} from "./tools/harness"
+
 export type { SubagentCall, WorkflowStepInfo, WorkflowPlanPhase } from "./tools/subagents"
 export {
   isSubagentLaunch,
