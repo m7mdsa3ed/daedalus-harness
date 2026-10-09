@@ -13,6 +13,8 @@ import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
 import { seedAgents } from "./registry.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
+import { adoptAgents } from "./adopt-boot.js";
+import { durable, sandbox } from "./sandbox/index.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { WorkflowRunner } from "./workflows.js";
 import { workflowRoutes } from "./routes/workflows.js";
@@ -177,6 +179,11 @@ await routines.recoverAtBoot();
    because it has no clock — it is woken by the filesystem, not by a sweep — and
    it watches only the projects that have an enabled git trigger, so a process
    with none holds no handles. */
+/* Agent hosts that outlived the last server (DAEDALUS_SANDBOX=hosted; a no-op
+   under direct). Reattached and their threads claimed now, before anything can
+   spawn or sweep; the bridges are opened once we listen (below). */
+await sessions.ready;
+const adoption = await adoptAgents(sandbox, sessions);
 routineGitTriggers = new RoutineGitTriggers({ engine: routines });
 routineGitTriggers.start();
 // Tails background-task journals (files an agent disclosed in a tool result)
@@ -247,8 +254,9 @@ app.use("/api/sessions/:id/spans/:spanId", compress());
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
    instead — /rt (the routine fire door) additionally accepts a trigger's own
-   stored token in that position, because a per-boot key is not a credential an
-   alerting tool outside this process can hold across a restart. The
+   stored token in that position, because a derived loopback key is not a credential an
+   alerting tool outside this process should hold (rotating it means rotating
+   every key, and it is not scoped to one trigger). The
    backup route additionally refuses `?token=` — see routes/misc.ts. */
 miscRoutes(app, { config, sessions, push });
 profileRoutes(app, { sessions });
@@ -270,6 +278,7 @@ routineRoutes(app, { engine: routines });
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   console.log(`daedalus server on http://${info.address}:${info.port}`);
   console.log(`token: ${config.token}`);
+  void adoption.bind();
 });
 
 /**
@@ -346,7 +355,7 @@ heartbeat.unref();
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   /* `chrome-devtools-mcp`'s connection to the thread's preview. Key-in-path,
-     like /hm: the per-boot key is the credential and the id names the thread.
+     like /hm: the derived key is the credential and the id names the thread.
      Refused over HTTP while nobody is driving, so the MCP's error says so. */
   const cdp = /^\/cdp\/([^/]+)\/([^/]+)$/.exec(url.pathname);
   if (cdp) {
@@ -417,12 +426,14 @@ server.on("upgrade", (req, socket, head) => {
 /**
  * One exit path for signals and fatal errors. The order matters: the watchers,
  * terminals and scheduler stop first, then the SessionManager retires
- * every live agent child and flushes the journal rows still buffered for the
+ * every live agent child (or, over a durable sandbox, detaches them and keeps
+ * their adopt state for the next server) and flushes the journal rows still buffered for the
  * next tick — a bare `process.exit()` orphaned the children and dropped that
  * tick. The bounded drain afterwards is what lets the SIGTERM→SIGKILL
  * escalation timers in terminals actually fire before the process goes.
  */
 const SHUTDOWN_DRAIN_MS = 2_000;
+const DURABLE_SETTLE_MS = 150;
 let shuttingDown = false;
 async function shutdown(code: number): Promise<never> {
   if (shuttingDown) return new Promise<never>(() => {}); // first caller owns the exit
@@ -437,14 +448,20 @@ async function shutdown(code: number): Promise<never> {
     clearInterval(heartbeat);
     workflows?.shutdown();
     routines?.shutdown();
-    sessions.shutdown();
+    await sessions.shutdown();
   } catch (error) {
     console.error("[shutdown]", error);
   }
   /* The retired bridges ended their spans; write them (and export them) inside
      the drain rather than dropping the last turn's trajectory. */
   await Promise.race([shutdownTracing(), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS))]);
-  await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
+  /* The fixed wait is for direct children: `AcpConnection.kill` escalates SIGTERM
+     to SIGKILL on a timer that has to fire before the process goes. Over a durable
+     sandbox nothing is waiting on one — the agents are not ours to kill, the hosts
+     keep them — and every second here is a second every client spends reconnecting
+     to a server that is not there. The short beat lets the pty kills and the
+     sockets' close frames leave the process. */
+  await new Promise((resolve) => setTimeout(resolve, durable ? DURABLE_SETTLE_MS : SHUTDOWN_DRAIN_MS));
   process.exit(code);
 }
 

@@ -173,6 +173,7 @@ export function Composer({
      in one tree would be two subscriptions to the same absolute state. */
   delivery,
   changes,
+  onSend,
   beforeSend,
   placeholder,
   autoFocus,
@@ -187,6 +188,8 @@ export function Composer({
       transcript (`withTurnChanges`) — the composer holds no opinion about
       which turn qualifies, only about where the reading is drawn. */
   changes?: TurnChanges
+  /** Fired as a message goes out — the transcript uses it to follow to the end. */
+  onSend?: () => void
   /** Awaited between "the words have been taken" and the send itself; `false`
       (or a throw) puts them back in the box and sends nothing. While it runs
       the send button shows busy. The build page scaffolds the project here. */
@@ -420,6 +423,7 @@ export function Composer({
        Fire and forget, and its failure is swallowed: a history that did not
        record is not a send that failed, and there is nothing the user would do
        about it. */
+    onSend?.()
     void actions
       .send(sessionId, outgoing, { ...opts, steer: steering, attachments, onUnsent })
       .then(() => {

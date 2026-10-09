@@ -77,7 +77,7 @@ export interface CallbackHost {
   probe: () => (() => Promise<boolean>) | undefined
   apply: (event: ConnEvent) => void
   clearRecovery: () => void
-  scheduleReconnect: (error: unknown, probe?: () => Promise<boolean>) => void
+  scheduleReconnect: (error: unknown, probe?: () => Promise<boolean>, opts?: { restarting?: boolean }) => void
   markReviving: (because: "revive" | "config") => void
   holdForRestart: () => void
   endRestartHold: () => void

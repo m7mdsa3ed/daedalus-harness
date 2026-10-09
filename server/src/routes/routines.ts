@@ -177,12 +177,11 @@ export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void 
    * the `/gw` `/ide` `/wf` rule. This one differs from those three in the way
    * that matters, and deliberately — TWO credentials are accepted.
    *
-   * The per-boot engine key is for callers inside this process (a chained
+   * The derived engine key is for callers inside this process (a chained
    * finish action, an MCP server), exactly as the other three routes work. A
-   * trigger's stored token is for everything outside it, because a per-boot key
-   * is a credential that changes on every restart: an alerting tool holding one
-   * would have to re-read it from this machine after every deploy, which is not
-   * a thing an alerting tool does. That is why this is the one credential in
+   * trigger's stored token is for everything outside it, because the engine key
+   * is shared with every loopback door and only rotates with the secret file:
+   * an alerting tool holding one could not be revoked on its own. That is why this is the one credential in
    * the harness that is stored — hashed, and compared in constant time by
    * `verifyTriggerSecret`.
    *
@@ -208,7 +207,7 @@ export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void 
     const auth = await engine.authorizeFire(c.req.param("routineId"), {
       key: path,
       // The path segment is tried as a token too: a caller outside this process
-      // has no boot key, and the path is the only place some webhook senders
+      // has no engine key, and the path is the only place some webhook senders
       // can put a credential at all.
       token: bearer || path,
     });

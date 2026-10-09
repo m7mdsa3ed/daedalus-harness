@@ -939,8 +939,8 @@ export class ThreadConnection {
       when an attempt it made on the user's behalf did not land, and because
       the socket's own `onStatus` books one for a close that says nothing
       about the thread. */
-  scheduleReconnect(lastError: unknown, probe?: () => Promise<boolean>): void {
-    this.ladder.schedule(lastError, probe)
+  scheduleReconnect(lastError: unknown, probe?: () => Promise<boolean>, opts?: { restarting?: boolean }): void {
+    this.ladder.schedule(lastError, probe, opts)
   }
 
   /** One rung. It asks for the thread AS IT IS (`revive: false`), which is
@@ -1038,7 +1038,7 @@ export class ThreadConnection {
         probe: () => this.probe,
         apply: (event) => this.apply(event),
         clearRecovery: () => this.clearRecovery(),
-        scheduleReconnect: (error, probe) => this.scheduleReconnect(error, probe),
+        scheduleReconnect: (error, probe, opts) => this.scheduleReconnect(error, probe, opts),
         markReviving: (because) => this.markReviving(because),
         holdForRestart: () => this.holdForRestart(),
         endRestartHold: () => this.endRestartHold(),

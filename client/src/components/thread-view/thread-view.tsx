@@ -1125,6 +1125,7 @@ export function ThreadView({
           meta={meta}
           delivery={delivery}
           changes={latestChanges}
+          onSend={options.autoScroll ? follow.follow : undefined}
         />
       </div>
       <QuoteSelection

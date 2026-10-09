@@ -392,8 +392,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   The key in the path is the
   credential, exactly as `/ide/<key>/` — the route is unauthenticated because the CLI
   carries its own `x-api-key` for the gateway, and a bare `/gw/<profileId>/` would be an
-  open relay to whatever URL a profile names; it is minted per boot and never stored, since
-  its only readers are children this process spawns and a restart kills those anyway.
+  open relay to whatever URL a profile names; it is derived from `data/loopback-secret` — stable across restarts so an adopted agent
+  keeps a working URL, never written anywhere else, and revoked by rotating that file, not
+  by restarting.
   `pnpm test:gateway` drives it against a stand-in gateway that answers like 9router.
 
 ## A profile is a provider; a thread is a (profile, agent) pair

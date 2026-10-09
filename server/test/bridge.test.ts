@@ -403,11 +403,11 @@ const allow = { outcome: { outcome: "selected", optionId: "allow" } } as const;
 const lastQueue = (ws: MockWs) => ws.of("queue").at(-1)?.items ?? [];
 /* Relative, not absolute: this counts permissions cumulatively across the whole
    file, so a test added above must not shift what "turn n" means here. */
-const park = async (n: number) => {
-  const before = b.of("permission").length;
-  send(a, { id: 1000 + n, cmd: "prompt", text: "needs permission" });
-  await waitFor(() => b.of("permission").length === before + 1, `turn ${n} parks on a permission`);
-  return b.of("permission").at(-1)!.requestId;
+const park = async (n: number, from: MockWs = a, to: MockWs = b) => {
+  const before = to.of("permission").length;
+  send(from, { id: 1000 + n, cmd: "prompt", text: "needs permission" });
+  await waitFor(() => to.of("permission").length === before + 1, `turn ${n} parks on a permission`);
+  return to.of("permission").at(-1)!.requestId;
 };
 
 // A prompt sent while a turn is running is queued, not steered. The reply says
@@ -1029,8 +1029,12 @@ for (let i = 0; i < 6; i += 1) {
     ev: "update",
     update: { sessionUpdate: "tool_call", toolCallId: `fat-${i}`, title: "big", rawInput: { FAT } },
   } as never);
+  // A real turn always ends: the window's gap rule starts a cut just after the
+  // previous turn_ended, so a turn that never closes drags the cut back over
+  // every fat turn before it.
+  fat.append(fatSession, { ev: "turn_ended", turnId: `fat-${i}`, stopReason: "end_turn" } as never);
 }
-fat.flush();
+await fat.flush();
 const fatStarts = (await manager.journal(logged.id))!
   .events.filter((e) => e.ev === "turn_started")
   .map((e) => (e as { seq: number }).seq);
@@ -1059,24 +1063,32 @@ assert.equal(capped.of("caught_up")[0].cursor, cappedAttach.to);
 // --- queue steering ---
 
 // Steer one queued item into the current turn without interrupting it.
-permission = await park(4);
-send(a, { id: 41, cmd: "queue_add", text: "steered from queue permission" });
-await waitFor(() => lastQueue(a).length === 1, "the steer candidate is queued");
-const queuedSteerStarted = b.of("turn_started").length;
-const queuedSteerEnded = a.of("turn_ended").length;
-const permissionCountBeforeSteer = b.of("permission").length;
-send(a, { id: 42, cmd: "queue_steer", itemId: lastQueue(a)[0].id });
-await waitFor(() => a.of("reply").some((r) => r.id === 42), "queue steer is answered");
-assert.ok("turnId" in (a.of("reply").find((r) => r.id === 42)!.result as object));
-await waitFor(() => b.of("permission").length === permissionCountBeforeSteer + 1, "the queued steer reaches the running turn");
-await waitFor(() => lastQueue(a)[0]?.steer === true, "the row is shown as steering while its bubble is held");
-assert.equal(b.of("turn_started").length, queuedSteerStarted, "the steered bubble waits for the current step");
-for (const requestId of b.of("permission").slice(-2).map((p) => p.requestId)) {
-  send(a, { cmd: "answer_permission", requestId, response: allow });
+// The thread above was purged, so this section runs on one of its own.
+const steerSession = await manager.create(profile, "fake", project);
+await steerSession.bridge!.ready;
+const sa = new MockWs();
+const sb = new MockWs();
+assert.equal(await manager.attach(steerSession.id, sa as never, 0), null);
+assert.equal(await manager.attach(steerSession.id, sb as never, 0), null);
+permission = await park(4, sa, sb);
+send(sa, { id: 41, cmd: "queue_add", text: "steered from queue permission" });
+await waitFor(() => lastQueue(sa).length === 1, "the steer candidate is queued");
+const queuedSteerStarted = sb.of("turn_started").length;
+const queuedSteerEnded = sa.of("turn_ended").length;
+const permissionCountBeforeSteer = sb.of("permission").length;
+send(sa, { id: 42, cmd: "queue_steer", itemId: lastQueue(sa)[0].id });
+await waitFor(() => sa.of("reply").some((r) => r.id === 42), "queue steer is answered");
+assert.ok("turnId" in (sa.of("reply").find((r) => r.id === 42)!.result as object));
+await waitFor(() => sb.of("permission").length === permissionCountBeforeSteer + 1, "the queued steer reaches the running turn");
+await waitFor(() => lastQueue(sa)[0]?.steer === true, "the row is shown as steering while its bubble is held");
+assert.equal(sb.of("turn_started").length, queuedSteerStarted, "the steered bubble waits for the current step");
+for (const requestId of sb.of("permission").slice(-2).map((p) => p.requestId)) {
+  send(sa, { cmd: "answer_permission", requestId, response: allow });
 }
-await waitFor(() => b.of("turn_started").length === queuedSteerStarted + 1, "the queued steer lands at the step boundary");
-assert.equal(b.of("turn_started").at(-1)!.text, "steered from queue permission");
-await waitFor(() => a.of("turn_ended").length === queuedSteerEnded + 1, "the steered turn settles");
+await waitFor(() => sb.of("turn_started").length === queuedSteerStarted + 1, "the queued steer lands at the step boundary");
+assert.equal(sb.of("turn_started").at(-1)!.text, "steered from queue permission");
+await waitFor(() => sa.of("turn_ended").length === queuedSteerEnded + 1, "the steered turn settles");
+assert.ok(await manager.purge(steerSession.id));
 
 // --- the queue outlives the process ---
 
@@ -1146,7 +1158,9 @@ send(orphanWs2, { id: 1, cmd: "prompt", text: "start over" });
 // Two: the kept journal still holds the turn that went before the refusal.
 await waitFor(() => orphanWs2.of("turn_ended").length === 2, "the turn on the new session");
 assert.equal(orphan.acpSessionId, "acp-123", "a session with a turn in it takes over the record");
-assert.equal(orphan.historyLost, null, "and the warning goes with it");
+// The report is kept for the life of the process (bridge-host `onSessionDurable`),
+// so every reattach still names the id that could not be loaded.
+assert.equal(orphan.historyLost?.acpSessionId, "acp-gone", "the warning outlives the move, for this process");
 assert.ok(await manager.purge(orphan.id));
 
 // --- the same refusal, on an id no turn ever committed to ---

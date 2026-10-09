@@ -1227,7 +1227,7 @@ export const routineTriggers = pgTable(
     /** sha-256 of the long-lived per-trigger token, never the token. This is
         the only stored credential in the harness that STARTS A PROCESS on the
         machine — a profile's key has to be replayed verbatim to a provider and
-        the key-in-path routes are per-boot and unstored — so it is held hashed
+        the key-in-path routes are derived from data/loopback-secret and unstored — so it is held hashed
         and compared in constant time. Shown once, at mint. */
     secretHash: text("secret_hash"),
     /** When the token was minted, so the UI can say how old the credential it
@@ -2257,3 +2257,30 @@ export const traceSpans = pgTable(
   },
   (t) => [index("trace_spans_session").on(t.sessionId, t.start)],
 );
+
+/**
+ * What a new server needs to ADOPT an agent process that outlived the old one
+ * (`adopt-state.ts`): the `initialize` answer it must not ask again, the JSON-RPC
+ * request counter it must not reuse, how much of the process's output was
+ * consumed, and the `session/prompt` requests still unanswered. The prompts
+ * live here rather than as columns on `sessions` because a shared process
+ * carries several sessions and the row dies with its process — nothing to
+ * clean up on the thread side. No foreign keys: the host id is the sandbox's.
+ */
+export const agentProcesses = pgTable("agent_processes", {
+  hostId: text("host_id").primaryKey(),
+  /** `AcpPool.key` of a shared process, null for one of its own. */
+  poolKey: text("pool_key"),
+  agentId: text("agent_id").notNull(),
+  initResult: jsonb("init_result").$type<acp.InitializeResponse>().notNull(),
+  /** The next wire request id (every id below it may still be answered). */
+  nextRequestId: integer("next_request_id").notNull().default(0),
+  /** Output frames consumed so far — the offset an `attach` resumes from. */
+  outputOffset: bigint("output_offset", { mode: "number" }).notNull().default(0),
+  prompts: jsonb("prompts")
+    .$type<{ acpSessionId: string; requestId: number; turnId: string }[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});

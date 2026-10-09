@@ -245,6 +245,13 @@ export function createCore(deps: CoreDeps) {
       }),
     }).finally(() => starting.delete(meta.id))
     onAccepted?.()
+    /* The bubble this device drew is the turn the server just journaled, and
+       tagged it is no longer carried across an attach (carry.ts): the replay's
+       own `turn_started` redraws it, so it is drawn once. Tagged HERE, before
+       `refreshSessions` — that refresh swaps the row, which re-runs the chat
+       panel's open effect, and an attach that lands while the bubble is still
+       untagged carries it AND replays it: the message twice. */
+    if (reply.turnId) dispatch({ type: "tag-user-turn", id: meta.id, turnId: reply.turnId })
     /* The thread exists now. Say so in the store at once — the list read below
        is a round trip, and until it lands the composer would keep drawing the
        draft's menu for a thread that is already running. */
@@ -279,12 +286,6 @@ export function createCore(deps: CoreDeps) {
       await threads.for(meta.id).open(created)
       return reply
     }
-    /* The bubble this device drew is the turn the server just journaled, and
-       tagged it is no longer carried across the attach below (carry.ts): the
-       replay's own `turn_started` redraws it, so it is drawn once — `seamless`,
-       so the swap is one commit and not a flicker. Tagged before the attach,
-       or the carry and the replay would both draw it. */
-    dispatch({ type: "tag-user-turn", id: meta.id, turnId: reply.turnId })
     try {
       /* `fresh`: nothing on the server is news to this device, so no HTTP read
          in front of the socket — the turn's answer arrives on a socket or not

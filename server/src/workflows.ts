@@ -19,12 +19,13 @@
  *
  * The agent reaches this through the `workflow` MCP server (workflow-mcp.ts),
  * a process the agent spawns, which can only talk to the manager over HTTP —
- * `/wf/<key>/<sessionId>/…` (routes/workflows.ts), the key minted per boot
- * like the gateway shim's and the session id naming the caller, so a server
+ * `/wf/<key>/<sessionId>/…` (routes/workflows.ts), the key derived from data/loopback-secret
+ * (stable across restarts) like the gateway shim's and the session id naming the caller, so a server
  * can act for exactly the thread that asked. A step is never handed that
  * server: one level, never a tree.
  */
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { derive } from "./loopback-secret.js";
 import { eq, inArray } from "drizzle-orm";
 import { db, workflowRuns as runsTable, type WorkflowRunStatus, type WorkflowStepRecord } from "./db/index.js";
 import { safeKeyEqual } from "./gateway-shim.js";
@@ -191,7 +192,7 @@ class PausableTimer {
 type UpdateEvent = Extract<ThreadEvent, { ev: "update" }>;
 
 export class WorkflowRunner {
-  private key = randomBytes(24).toString("hex");
+  private key = derive("wf");
   private runs = new Map<string, Run>();
   private liveChildren = 0;
   /** Script agents waiting for a child slot. Woken by `pump`, which every

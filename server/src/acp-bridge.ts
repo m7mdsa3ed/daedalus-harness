@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { sandbox, type Handle, type SpawnSpec } from "./sandbox/index.js";
 import { performance } from "node:perf_hooks";
 import { Readable, Writable } from "node:stream";
 import * as acp from "./acp.js";
@@ -35,6 +35,7 @@ import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
 import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import type { BuiltinToolOverrides } from "./db/schema.js";
 import type { AcpConnection, ConnectionRoute } from "./acp-connection.js";
+import type { OrphanPrompt, WireLedger } from "./adopt-state.js";
 
 /**
  * The ACP client, server-side.
@@ -92,25 +93,15 @@ export async function spawnAgent(
       forever instead. Fail fast there. Meaningless to every other runtime,
       which reads none of these vars. */
   unattended?: boolean,
-): Promise<ChildProcessWithoutNullStreams> {
+): Promise<Handle> {
   return spawnProcess(await resolveAgentSpawn(profile, agentId, project, model, effort, sessionId, persona, sidecar, unattended));
 }
 
-/** A resolved spawn: what `spawn()` is called with. */
-export interface SpawnSpec {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd: string;
-}
+export type { SpawnSpec };
 
-/** Spawn the process a spec describes — the one `spawn()` of an agent. */
-export function spawnProcess(spec: SpawnSpec): ChildProcessWithoutNullStreams {
-  return spawn(spec.command, spec.args, {
-    cwd: spec.cwd,
-    env: { ...process.env, ...spec.env },
-    stdio: ["pipe", "pipe", "pipe"],
-  }) as ChildProcessWithoutNullStreams;
+/** Spawn the process a spec describes — the one place an agent is started, via the sandbox. */
+export function spawnProcess(spec: SpawnSpec): Promise<Handle> {
+  return sandbox.spawn(spec);
 }
 
 /** `spawnAgent` without the spawn: the command, args, env and cwd it would
@@ -452,18 +443,30 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
     Inbound frames pass through one rewrite: a `session/update` carrying an RFD
     subagent variant is re-addressed to `SUBAGENT_UPDATE_METHOD` (see there). */
 export function agentStream(
-  proc: ChildProcessWithoutNullStreams,
+  proc: Handle,
   /** A second source of inbound frames, merged ahead of the rewrite — the
       OpenCode sidecar's synthesized `session/update`s, addressed to a child's
       session id (`opencode-subagents.ts`). The merged stream ends when
       **stdout** ends: the process is the conversation, and a feed that
       outlives it has nothing left to say. */
   extra?: ReadableStream<acp.AnyMessage>,
+  /** Id shifting and progress bookkeeping on the pipes (`adopt-state.ts`). It
+      counts the primary stream only, so the offset is the process's, not the
+      sidecar's. */
+  ledger?: WireLedger,
 ): acp.Stream {
-  const stream = acp.ndJsonStream(
+  const stdout = Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>;
+  const raw = acp.ndJsonStream(
     Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
-    Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>,
+    // The line counter sees what the parser sees, so ledger.offset is in host lines.
+    ledger ? stdout.pipeThrough(ledger.lines()) : stdout,
   );
+  let stream = raw;
+  if (ledger) {
+    const out = ledger.outbound();
+    void out.readable.pipeTo(raw.writable).catch(() => {});
+    stream = { writable: out.writable, readable: raw.readable.pipeThrough(ledger.inbound()) };
+  }
   const reroute = new TransformStream<acp.AnyMessage, acp.AnyMessage>({
     transform(message, controller) {
       controller.enqueue(
@@ -1752,6 +1755,7 @@ export class AcpBridge implements ConnectionRoute {
       this.outstanding.delete(sent);
       return fn(...args);
     };
+    this.conn.ledger?.noteTurn(sessionId, turnId);
     void this.connection.agent
       .request(acp.methods.agent.session.prompt, {
         sessionId,
@@ -1804,6 +1808,30 @@ export class AcpBridge implements ConnectionRoute {
       return;
     }
     void this.settleTurn(null, this.host.enrichError(toWireError(error)), text);
+  }
+
+  /**
+   * An adopted process still owes (or already sent, into the orphaned pipe) the
+   * answer to a `session/prompt` the previous server made. Re-enter that turn
+   * and settle it from the answer exactly as a live prompt would — the turn's
+   * `turn_started` is already in the journal, so only the end is said here.
+   * `OrphanPrompt` comes from `conn.ledger.watchOrphans`.
+   */
+  adoptTurn(turnId: string, text: string, reply: NonNullable<OrphanPrompt["reply"]> | Promise<NonNullable<OrphanPrompt["reply"]>>): void {
+    if (this.inflight === 0) {
+      this.currentTurnId = turnId;
+      this.currentTurnPrompt = text;
+      this.lastSeenMessageId = null;
+      this.turnFailure = undefined;
+      this.turnStartedAt = performance.now();
+      this.turnToolDurationMs = 0;
+    }
+    this.inflight++;
+    void Promise.resolve(reply).then((r) =>
+      "error" in r
+        ? this.settleTurn(null, this.host.enrichError(toWireError(r.error)), text)
+        : this.settleTurn(r.result.usage ?? null, undefined, text, r.result.stopReason, parseSessionFailure(r.result._meta)),
+    );
   }
 
   private async settleTurn(

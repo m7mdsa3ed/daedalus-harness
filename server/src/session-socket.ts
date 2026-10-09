@@ -54,6 +54,8 @@ function tpsFields(session: Session): { tps?: TpsStats } {
  */
 export interface SocketHost {
   getSession(id: string): Session | undefined;
+  /** Resolves once a thread held for boot adoption is bound (bounded); instant otherwise. */
+  whenAdopted(id: string): Promise<void>;
   journal: SessionJournal;
   prompt(
     id: string,
@@ -128,6 +130,10 @@ export class SessionSocket {
     const session = this.host.getSession(id);
     if (!session) return "no such thread on this server";
     if (session.deletedAt !== null) return "this thread is in the trash";
+    /* A server that has just restarted may be holding this thread for adoption: its
+       agent kept running, its bridge is a moment away. Reading it now would draw an
+       archived thread with an unfinished turn, then flip it live under the reader. */
+    await this.host.whenAdopted(id);
     /* A thread with no process is served read-only from its journal — but only
        if there IS one. An archive that was pruned, or a thread from before the
        archive existed, has nothing to show, and replaying nothing would render
@@ -313,6 +319,7 @@ export class SessionSocket {
     cursor: number,
     opts: { window?: number },
   ): AsyncGenerator<string> {
+    await this.host.whenAdopted(session.id);
     const to = session.eventCount;
     // Same clamp as `attach`: a cursor past the end of the log means the log
     // shrank under the client, and `from: 0` is its cue to rebuild.

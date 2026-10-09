@@ -238,12 +238,12 @@ export function miscRoutes(
   });
 
   /* Claude Code's traffic to a profile's gateway. Same rule as the editor: the
-     per-boot key in the path is the credential (the CLI carries its own
-     `x-api-key` for the gateway itself), and a key the shim did not mint is a
+     derived key in the path is the credential (the CLI carries its own
+     `x-api-key` for the gateway itself), and a key the shim did not derive is a
      404. See gateway-shim.ts for the one repair it makes on the way back. */
   app.all("/gw/*", (c) => proxyGatewayRequest(c.req.raw));
 
-  /* A paused thread's step hooks, mounted the same way: the per-boot key in
+  /* A paused thread's step hooks, mounted the same way: the derived key in
      the path is the credential, and the answer is only ever late, never "no"
      (pause-hooks.ts). */
   app.post("/ph/*", (c) => handlePauseHook(c.req.raw));

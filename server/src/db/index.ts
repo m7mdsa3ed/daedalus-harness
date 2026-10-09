@@ -193,6 +193,20 @@ async function ensureSchema(): Promise<void> {
   `);
   await db.execute(sql`ALTER TABLE session_video_renders ADD COLUMN IF NOT EXISTS document JSONB NOT NULL DEFAULT '{}'::jsonb`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS session_video_renders_session ON session_video_renders(session_id, created_at)`);
+  /* Adoptable agent processes (adopt-state.ts). */
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS agent_processes (
+      host_id TEXT PRIMARY KEY,
+      pool_key TEXT,
+      agent_id TEXT NOT NULL,
+      init_result JSONB NOT NULL,
+      next_request_id INTEGER NOT NULL DEFAULT 0,
+      output_offset BIGINT NOT NULL DEFAULT 0,
+      prompts JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )
+  `);
   /* The rules table (rules.ts). */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS rules (

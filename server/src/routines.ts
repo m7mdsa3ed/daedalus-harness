@@ -32,7 +32,7 @@
  * starts the runner on it. The one-level rule stands: a routine's run is a
  * parent, its steps are children, and a step can start neither.
  *
- * Modelled directly on `WorkflowRunner`, down to the shape of the per-boot key,
+ * Modelled directly on `WorkflowRunner`, down to the shape of the derived key,
  * the live-run cap, `recoverAtBoot` and `shutdown` — because it is the same
  * kind of object (a server-owned engine that puts real processes on this
  * machine) and a second idiom for it would be a second thing to reason about.
@@ -46,6 +46,7 @@
  */
 import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { derive } from "./loopback-secret.js";
 import { promisify } from "node:util";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -467,10 +468,10 @@ export async function deleteTrigger(id: string): Promise<boolean> {
  *
  * Only the sha-256 is stored. This is the one credential in the harness that
  * starts a process on this machine — a profile's API key has to be replayed
- * verbatim to a provider and the key-in-path routes are per-boot and unstored,
+ * verbatim to a provider and the key-in-path routes are derived from `data/loopback-secret` and unstored,
  * so neither could be held this way — and it is what an alerting tool outside
- * this process holds, because the boot key it would otherwise need is a
- * credential that changes every restart.
+ * this process holds, because the loopback key it would otherwise need is
+ * shared by every loopback door and only rotates with the secret file.
  */
 export async function mintTriggerToken(triggerId: string): Promise<string> {
   const trigger = await getTrigger(triggerId);
@@ -714,12 +715,13 @@ interface RunState {
 }
 
 export class RoutineEngine {
-  /** The credential in `/rt/<key>/…`, minted per boot and never stored —
-      exactly `WorkflowRunner`'s and the gateway shim's. Its only readers are
-      inside this process (and a caller a person pasted it to), and a restart
-      invalidates it, which is precisely why a trigger may also hold a stored
-      token for anything outside. */
-  private key = randomBytes(24).toString("hex");
+  /** The credential in `/rt/<key>/…`, derived from `data/loopback-secret` (stable across
+      restarts, never written anywhere else) — exactly `WorkflowRunner`'s and the
+      gateway shim's. Its only readers are inside this process (and a caller a
+      person pasted it to), and a leak is revoked by rotating the secret file,
+      which changes every loopback key — which is why a trigger may also hold its
+      own stored, individually revocable token for anything outside. */
+  private key = derive("rt");
   private runs = new Map<string, RunState>();
   private liveRuns = 0;
   /** Fire timestamps per routine, for `FIRE_RATE`. */
@@ -756,10 +758,10 @@ export class RoutineEngine {
   /**
    * Everything the fire route has to decide, in one call, so the route is thin.
    *
-   * Two credentials are accepted and they are not equivalent: the per-boot key
+   * Two credentials are accepted and they are not equivalent: the derived loopback key
    * for callers inside this process (an MCP server, a chained action), and a
    * trigger's stored token for anything outside, which is what an alerting tool
-   * needs — a credential that changes on every restart is not one it can hold.
+   * needs — a credential shared with every loopback door, revocable only by rotating the secret file, is not one to hand out.
    * The rate limit applies to both, because the door is the same door.
    */
   async authorizeFire(

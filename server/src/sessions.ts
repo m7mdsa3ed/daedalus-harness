@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { durable, type Handle } from "./sandbox/index.js";
 import { killSessionTerminals } from "./terminals.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -31,7 +31,7 @@ import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, resolveAgentSpawn, spawnProcess, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
-import { AcpPool, pool } from "./acp-connection.js";
+import { AcpPool, detachAllConnections, flushAllProcessStates, pool, type AcpConnection } from "./acp-connection.js";
 import { makeBridgeHost } from "./bridge-host.js";
 import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-ring.js";
 import { checkInstalled } from "./agent-status.js";
@@ -228,7 +228,7 @@ export interface Session {
       so nothing about a long thread is held in memory. */
   eventCount: number;
   /** null = no live process (loaded from disk / retired); revive via respawn. */
-  proc: ChildProcessWithoutNullStreams | null;
+  proc: Handle | null;
   /** The ACP client driving that process. Goes with it. */
   bridge: AcpBridge | null;
   /** Every attached client. Agent events fan out to all of them. */
@@ -619,6 +619,19 @@ export interface TurnOutcome {
     are common and a leaked process per one is not. */
 const HELD_TURN_MAX_MS = 6 * 60 * 60_000;
 
+/** A retired thread held for boot adoption (`SessionManager.claimForAdopt`). */
+export interface AdoptClaim {
+  sessionId: string;
+  acpSessionId: string;
+  release(): void;
+}
+
+/** How long a reader waits for a thread held for boot adoption to be bound. Binding is
+    a `session/resume` or `session/load` per thread, in sequence, so the last thread of
+    many waits for the ones before it; past this the reader gets the archived view and the
+    ordinary reattach picks the live one up. */
+const ADOPT_WAIT_MS = 20_000;
+
 export class SessionManager {
   private sessions = new Map<string, Session>();
   /** Server-side subscribers to a session's events (the workflow runner
@@ -848,7 +861,8 @@ export class SessionManager {
    * index.ts awaits a bounded drain after calling this so the SIGTERM→SIGKILL
    * escalation timers elsewhere get a chance to fire.
    */
-  shutdown(): void {
+  shutdown(): Promise<void> {
+    if (durable) return this.shutdownDurable();
     for (const session of this.sessions.values()) {
       /* 1001 ("going away"), not 4000: a deploy says nothing about the thread,
          so the client's ladder reattaches on its own once the server is back,
@@ -862,6 +876,108 @@ export class SessionManager {
     }
     pool.drain(); // the warm ones nobody is on
     this.log.flush();
+    return Promise.resolve();
+  }
+
+  /**
+   * Shutdown over a durable sandbox (`DAEDALUS_SANDBOX=hosted`): the agents
+   * keep running for the next server to adopt (`adopt-boot.ts`). So nothing is
+   * closed — closing a bridge rejects its in-flight prompt, and a turn that is
+   * still running must stay open in the journal for `adoptTurn` to end. The
+   * handles are let go (sockets closed, hosts buffering), then every row is
+   * written once the wire has stopped moving, and the rows stay.
+   */
+  private async shutdownDurable(): Promise<void> {
+    for (const session of this.sessions.values()) {
+      this.closePeers(session, 1001, "The server is restarting. Its agents keep running; this thread reattaches on its own.");
+    }
+    detachAllConnections();
+    await new Promise((resolve) => setTimeout(resolve, 50)); // frames already read finish their hop
+    await flushAllProcessStates();
+    await this.log.flush();
+  }
+
+  /** Bridge construction for an adopted connection (`claimForAdopt` → `bindAdopted`). */
+  private readonly adopting = new Map<string, { conn: AcpConnection; made: () => void }>();
+  /** Threads claimed for boot adoption and not yet bound, by session id. A reader
+      that arrives in that window waits on it (`whenAdopted`) rather than being
+      shown an archived thread with a turn that is about to finish. */
+  private readonly adoptHolds = new Map<string, Promise<unknown>>();
+
+  /**
+   * Resolves once a thread claimed for boot adoption has its bridge (or the
+   * adoption gave up), at most `ADOPT_WAIT_MS` — so a client that reconnects
+   * the moment the server listens gets the live thread, and the turn that ended
+   * while the server was down arrives before its first frame, not after a reload.
+   * Instant for every thread that is not being adopted.
+   */
+  async whenAdopted(id: string): Promise<void> {
+    const hold = this.adoptHolds.get(id);
+    if (!hold) return;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      hold.catch(() => {}),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ADOPT_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  /**
+   * Boot adoption, step one: take the retired thread that owns this agent
+   * session, before the server listens, so a send that races the adoption
+   * queues behind it (the same chain `respawn` serialises on) instead of
+   * spawning a second process. Null = no such thread to bind.
+   */
+  claimForAdopt(acpSessionId: string): AdoptClaim | null {
+    let found: Session | undefined;
+    for (const s of this.sessions.values())
+      if (s.acpSessionId === acpSessionId && s.exited && !s.bridge && s.deletedAt === null) found = s;
+    if (!found) return null;
+    const session = found;
+    let open!: () => void;
+    const hold = new Promise<Session>((resolve) => (open = () => resolve(session)));
+    session.respawnChain = hold;
+    this.adoptHolds.set(session.id, hold);
+    return {
+      sessionId: session.id,
+      acpSessionId,
+      release: () => {
+        if (session.respawnChain === hold) session.respawnChain = null;
+        if (this.adoptHolds.get(session.id) === hold) this.adoptHolds.delete(session.id);
+        open();
+      },
+    };
+  }
+
+  /**
+   * Step two: open the claimed thread's bridge on the adopted connection. It is
+   * the ordinary revive (`respawnNow`) with the journal kept — the process is
+   * live and the log is the conversation — minus the spawn. `session/resume`
+   * where the journal is whole and the agent offers it, `session/load` (replay
+   * dropped as `quietLoad`) otherwise. Never throws; null = the thread stays
+   * retired and revives on its next send, as before.
+   */
+  async bindAdopted(claim: AdoptClaim, conn: AcpConnection, made: () => void): Promise<AcpBridge | null> {
+    const session = this.sessions.get(claim.sessionId);
+    try {
+      if (!session || !session.exited || session.bridge) return null;
+      const [profile, project] = await Promise.all([getProfile(session.profileId), getProject(session.projectId)]);
+      if (!profile || !project) return null;
+      this.adopting.set(session.id, { conn, made });
+      await this.respawnNow(session, profile, session.agentId, project, session.model, session.effort, {
+        keepJournal: true,
+        revive: true,
+      });
+      return session.bridge;
+    } catch (error) {
+      console.warn(`[adopt] ${claim.sessionId.slice(0, 8)} could not be bound: ${describe(error)}`);
+      return null;
+    } finally {
+      this.adopting.delete(claim.sessionId);
+      made();
+    }
   }
 
   /**
@@ -1349,7 +1465,7 @@ export class SessionManager {
    * Note what is NOT here any more: stdout. The bridge's ndJsonStream owns it,
    * and a second reader would silently steal its bytes.
    */
-  private wire(session: Session, proc: ChildProcessWithoutNullStreams, bridge: AcpBridge, profileName: string, shared: boolean): void {
+  private wire(session: Session, proc: Handle, bridge: AcpBridge, profileName: string, shared: boolean): void {
     const onStderr = (chunk: Buffer) => {
       const text = chunk.toString().trimEnd();
       // A shared process is logged once, by the pool, not once per thread on it.
@@ -1827,7 +1943,10 @@ export class SessionManager {
        Minted here, per spawn, never stored — like the gateway key. The pool
        is empty only in the first moments after boot; a thread spawned then
        runs without the feed and the log says so, rather than waiting. */
-    const wantsFeed = agent?.subagentFeed === "opencode-http";
+    const adoptedBy = this.adopting.get(session.id);
+    this.adopting.delete(session.id);
+    // An adopted process already has its environment (and its feed's password).
+    const wantsFeed = agent?.subagentFeed === "opencode-http" && !adoptedBy;
     const feedPort = wantsFeed ? this.ports.take() : undefined;
     const sidecar = feedPort ? { port: feedPort, password: randomBytes(24).toString("hex") } : undefined;
     if (wantsFeed && !sidecar) console.warn(`[${session.id.slice(0, 8)}] no port ready for the subagent feed; spawning without it`);
@@ -1860,8 +1979,8 @@ export class SessionManager {
     const shared = agent?.sharedProcess === "acp-meta" && !sidecar;
     const sessionEnv = shared ? spec.env : undefined;
     if (shared) spec.env = {};
-    const conn = pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, () => {
-      const proc = spawnProcess(spec);
+    const conn = adoptedBy?.conn ?? await pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, async () => {
+      const proc = await spawnProcess(spec);
       const feed = sidecar
         ? new OpencodeSubagentFeed({
             ...sidecar,
@@ -1910,6 +2029,7 @@ export class SessionManager {
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
     session.exited = false;
+    adoptedBy?.made();
     /* A failed handshake is collapsed HERE, for every caller — create, respawn,
        fork. Only respawn and fork used to, so a `session/new` that errored or
        timed out on a new thread left it `exited:false` on a dead bridge: every
@@ -3736,6 +3856,7 @@ export class SessionManager {
       session-socket.ts, behind a port of exactly the methods it needs. */
   private socket = new SessionSocket({
     getSession: (id) => this.sessions.get(id),
+    whenAdopted: (id) => this.whenAdopted(id),
     journal: this.log,
     prompt: async (id, text, peer, opts) => await this.prompt(id, text, peer, opts),
     queueAdd: async (id, text, attachmentIds) => await this.queueAdd(id, text, attachmentIds),

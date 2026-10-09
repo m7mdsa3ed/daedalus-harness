@@ -498,7 +498,7 @@ beside Import in Settings › MCP.
   half: the `workflow` MCP server (`workflow-mcp.ts`) is a process the *agent* spawns and
   cannot reach the SessionManager, so it drives the engine over HTTP at
   `/wf/<key>/<sessionId>/…` (`routes/workflows.ts`) — outside `/api`, the `/gw`/`/ide`
-  key-in-path rule: the key is minted per boot and never stored, and the session id names
+  key-in-path rule: the key is derived from `data/loopback-secret` — stable across restarts, never written elsewhere, and the session id names
   the caller so a server can act for exactly the thread that asked and no other. **One level,
   never a tree**: `serversFor` hands no workflow server to a session with a
   `parentSessionId`, whatever its profile links, and `WorkflowRunner.start` refuses a caller
@@ -560,7 +560,7 @@ beside Import in Settings › MCP.
   never at a browser of its own.** At spawn the row resolves to the globally installed
   `chrome-devtools-mcp` (a PATH scan; not installed → not advertised, and the log says the
   install line) with `--wsEndpoint ws://127.0.0.1:<port>/cdp/<key>/<sessionId>`, the
-  workflow runner's per-boot key as the credential, plus `--no-usage-statistics
+  workflow runner's derived key as the credential, plus `--no-usage-statistics
   --no-performance-crux` because the URLs are someone's dev server. Top-level threads only.
   It is advertised whenever linked: Drive comes and goes long after `session/new`, and the
   MCP connects on its first call and again after any drop.

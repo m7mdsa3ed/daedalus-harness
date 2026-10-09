@@ -1,5 +1,5 @@
 import { describeError } from "../errors"
-import { RECONNECT_MAX_ATTEMPTS, type ConnEvent } from "./phase"
+import { RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_ATTEMPTS_RESTARTING, type ConnEvent } from "./phase"
 
 const RECONNECT_BASE_DELAY_MS = 500
 const RECONNECT_MAX_DELAY_MS = 8000
@@ -21,7 +21,13 @@ export interface ReconnectLadder {
   readonly recovering: boolean
   clear: () => void
   /** Book the next rung, or park. */
-  schedule: (lastError: unknown, probe?: () => Promise<boolean>) => void
+  schedule: (
+    lastError: unknown,
+    probe?: () => Promise<boolean>,
+    /** `restarting`: the close was the server announcing its own restart. Sticky for
+        the rest of the outage, so the rungs that follow keep the longer budget. */
+    opts?: { restarting?: boolean },
+  ) => void
   /** The network, or the user's attention, came back: reset the counter and try
       once now. A failure re-enters the ladder at rung one. */
   retryNow: (probe?: () => Promise<boolean>) => void
@@ -40,10 +46,12 @@ export function makeReconnectLadder(opts: {
   let attempt = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   let parked = false
+  let restarting = false
 
   const clear = (): void => {
     attempt = 0
     parked = false
+    restarting = false
     if (timer) {
       clearTimeout(timer)
       timer = null
@@ -65,8 +73,9 @@ export function makeReconnectLadder(opts: {
    * connection back and did not land, which `ready` re-books here so the thread
    * is not left with nothing watching it — and each failed attempt re-enters it.
    */
-  const schedule = (lastError: unknown, probe?: () => Promise<boolean>): void => {
+  const schedule = (lastError: unknown, probe?: () => Promise<boolean>, hint?: { restarting?: boolean }): void => {
     if (timer || opts.isDisposed()) return
+    if (hint?.restarting) restarting = true
     /* Offline, every attempt is a guaranteed failure that burns the budget
        against a network that cannot answer. Park the thread instead — the
        `online` listener retries it the moment there is a network to try. */
@@ -75,7 +84,8 @@ export function makeReconnectLadder(opts: {
       return
     }
     const next = attempt + 1
-    if (next > RECONNECT_MAX_ATTEMPTS) {
+    const max = restarting ? RECONNECT_MAX_ATTEMPTS_RESTARTING : RECONNECT_MAX_ATTEMPTS
+    if (next > max) {
       /* Parked, not abandoned: coming back online, refocusing the tab or the
          shared health poll resets the counter and tries again without waiting
          for the user. The ladder is a fast detector, not the whole budget —
@@ -100,6 +110,8 @@ export function makeReconnectLadder(opts: {
     opts.apply({
       type: "retry-scheduled",
       attempt: next,
+      max,
+      restarting: restarting || undefined,
       nextAt: Date.now() + delayMs,
       reason: lastError ? describeError(lastError).title : undefined,
     })

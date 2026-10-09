@@ -19,10 +19,12 @@
  * runtime reads the error as a non-blocking hook failure, and the turn goes
  * on — the right way round for a pause.
  *
- * The key in the path is the credential, exactly as `/gw/<key>/`: minted per
- * boot, never stored, read only by children this server spawns.
+ * The key in the path is the credential, exactly as `/gw/<key>/`: derived from
+ * data/loopback-secret (stable across restarts, never written elsewhere), read only
+ * by children this server spawns.
  */
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
+import { derive } from "./loopback-secret.js";
 
 let hooks: { key: string; port: number } | null = null;
 
@@ -30,7 +32,7 @@ let hooks: { key: string; port: number } | null = null;
     hook URL is handed out, and an agent that pauses through hooks is offered
     no pause — which is also what a test that never boots a server gets. */
 export function configurePauseHooks(opts: { port: number }): void {
-  hooks = { key: randomBytes(24).toString("hex"), port: opts.port };
+  hooks = { key: derive("ph"), port: opts.port };
 }
 
 /** The URL a thread's hooks call, or "" when there is nothing to call. */

@@ -24,7 +24,7 @@ const ScriptInput = z.object({
 
 /**
  * The loopback the `workflow` and `agents` MCP servers drive — outside `/api`, so outside
- * the bearer check: the per-boot key in the path is the credential (the
+ * the bearer check: the derived key in the path is the credential (the
  * `/gw`/`/ide` rule), and the session id after it names the thread the call is
  * made for, which is the only thread it may start or read runs on.
  */

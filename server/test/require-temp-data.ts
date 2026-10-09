@@ -72,3 +72,9 @@ try {
    Everything downstream — `drizzle-kit push` on a fresh database included —
    inherits it from the environment. */
 process.env.DATABASE_URL = scratch.toString();
+
+/* The tests run agents as the server's children unless one says otherwise (the
+   adopt and hosted tests set `hosted` themselves, after this import). Without this
+   a shell that inherited DAEDALUS_SANDBOX=hosted — the pm2 server's agents do —
+   ran every suite over detached hosts and left them behind. */
+process.env.DAEDALUS_SANDBOX = "direct";

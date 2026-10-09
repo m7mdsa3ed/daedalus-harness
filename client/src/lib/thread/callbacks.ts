@@ -139,7 +139,10 @@ export function makeThreadCallbacks(
         if (recoverable) {
           host.scheduleReconnect(
             new Error(closeInfo?.reason || "the connection to the thread closed"),
-            host.probe()
+            host.probe(),
+            /* 1001 is the server saying it is going away on purpose (a deploy, a
+               restart) — the wait is expected, so the ladder rides it out longer. */
+            { restarting: closeInfo?.code === 1001 }
           )
         }
         /* A dead socket ends any turn it was carrying, and settles it: the

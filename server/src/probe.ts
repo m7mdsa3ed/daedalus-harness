@@ -264,7 +264,7 @@ export async function withAgentConnection<T>(
     // spawned it.
     proc.kill("SIGTERM");
     setTimeout(async () => {
-      if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+      if (proc.running) proc.kill("SIGKILL");
     }, 5000).unref?.();
   }
 }
@@ -324,7 +324,7 @@ async function probeShared(
   const spec = await resolveAgentSpawn(profile, agentId, project);
   const env = spec.env;
   spec.env = {};
-  const conn = pool.acquire(agentId, AcpPool.key(spec), () => ({ proc: spawnProcess(spec) }));
+  const conn = await pool.acquire(agentId, AcpPool.key(spec), async () => ({ proc: await spawnProcess(spec) }));
   let sessionId: string | null = null;
   const sink = { ...SINK, ownsSession: (id: string) => id === sessionId };
   conn.attach(sink);

@@ -124,6 +124,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   bridge closing kills it, as before. A shared bridge closing is `session/close`, and the
   process stays warm 5 min — the draft's probe asks on it, so the first message skips
   `initialize`. A crash takes every session on the process with it.
+- **Agent processes can outlive the server** (`DAEDALUS_SANDBOX=hosted`, default `direct`). The
+  bridge sees a `Handle` from `server/src/sandbox/`, never a `ChildProcess`; a hosted agent runs
+  under its own detached host, shutdown *detaches* it, and boot *adopts* it from `agent_processes`
+  without a second `initialize`. A change to spawn, stdio or turn settlement must hold under both.
+  Loopback keys are derived from `data/loopback-secret`, so they survive a restart.
+  → `docs/protocol.md` "Durable agent processes".
 - **The trajectory is OpenTelemetry spans, never a re-read of the journal** (`tracing.ts`,
   `bridge-trace.ts`, `trace_spans`). One trace per turn, rooted at the turn; `session/prompt`
   carries its `traceparent` in `_meta`. A runtime that advertises `daedalus/trace` sends its own
@@ -258,7 +264,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   reclaimed message leaves the queue: only a caller with somewhere to put the words may ask.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
-  **The key in the path is the credential** — minted per boot, never stored.
+  **The key in the path is the credential** — derived (HMAC) from `data/loopback-secret`, so stable across restarts and never written anywhere else; a leaked key is revoked by rotating that file (every key changes, stranding adopted agents), not by restarting.
 - **Saved prompts replace personas, and they are mentioned, never selected.** `@handle`
   (`server/src/saved-prompts.ts`, Settings › Saved prompts, `/api/prompts`) is expanded to the
   prompt's text **in what the agent receives only** (`expandPrompts`, in the bridge beside

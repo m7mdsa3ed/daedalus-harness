@@ -86,7 +86,15 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   all, a bare 1006, the client's own watchdog code 4100) says only that the path died,
   which is a server restart or a network blink, and both come back — so `onStatus` books
   the ladder, and when the five rungs are spent the thread *parks*, which the health poll
-  and the `online` listener un-park the moment the server answers. What an automatic rung
+  and the `online` listener un-park the moment the server answers. **1001 is the exception
+  that is announced**: the server closes with 1001 and says it is restarting (over a durable
+  sandbox, that its agents keep running), so the ladder gets twelve rungs (~70 s,
+  `RECONNECT_MAX_ATTEMPTS_RESTARTING`, sticky for that outage) and the banner says
+  "The server is restarting" without counting — parking at ~16 s drew an error over a thread
+  that was about to be fine. Over a durable sandbox the server also skips its fixed 2 s
+  shutdown drain (`DURABLE_SETTLE_MS`), which exists only for direct children's SIGKILL
+  escalation, and `attach`/`snapshot` wait for a thread held for boot adoption
+  (`whenAdopted`, 20 s) so an early reconnect is handed the live thread. What an automatic rung
   does NOT do is put a process back: it opens with `revive: false`, so a live agent gets
   its socket and an idle-retired one is read from its journal and left `read`, sendable,
   with the revive still the user's to ask for. (A retired thread with no journal to read
@@ -946,3 +954,42 @@ under what.
 - **Export is standard OTLP** when `OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT` is set — the harness
   exports its spans, the agent exports its own from the same env. Not backed up: a restored
   install starts recording afresh. Deleting a thread cascades its spans.
+
+## Durable agent processes (`DAEDALUS_SANDBOX=hosted`)
+
+Goal: `pm2 restart` of the server does not kill running agents. Off by default
+(`direct`: children of the server, killed on shutdown, as before).
+
+- **The seam is `server/src/sandbox/`.** The bridge only sees a `Handle` (stdin/stdout/stderr,
+  `exited`, `kill`, `detach`, `offset`, `lossy`). `DirectSandbox` is a child process;
+  `HostedSandbox` launches a detached **per-agent host** (`src/agent-host.ts`, stdlib only) that
+  owns the child's pipes, buffers numbered stdout lines in a ring (8 MB, `lossy` on overflow) and
+  serves `data/agents/<id>.sock` (ndJSON: attach/write/kill in; attached/data/stderr/exit out;
+  one client, a new one replaces the old). Stderr is **live**: pushed per chunk while attached, and
+  its 64 KB tail is replayed once on attach, marked `replay`. `<id>.json` (0600, dir 0700) is written
+  last and carries `error` / `exited` and a **redacted** spec (command, args, cwd, env *names* — never
+  values: the full spec lives only in memory). A host lingers 60 s after an unattended child exit so a
+  returning server reads the replay and exit code. `attach` is bounded (5 s,
+  `DAEDALUS_HOST_ATTACH_TIMEOUT_MS`), because boot adoption awaits it before the server listens.
+- **pm2 must not treekill** (`treekill: false` in `ecosystem.config.cjs`): a detached host is still the
+  server's child, and pm2 walks the descendant tree on stop/restart.
+- **The persisted offset means "host lines consumed"**, never lines seen, and the JSON-RPC counter is
+  persisted as a *reservation* ahead of use, so a crash can never hand an old id out again.
+  The `WireLedger` exists only for a durable sandbox (or an adopt); under `direct` it is plain `ndJsonStream`.
+- **Shutdown detaches, it does not retire** (`SessionManager.shutdown`, hosted only): retiring
+  would reject the in-flight prompt and journal a `turn_ended` that `adoptTurn` must write
+  itself. Explicit stop, trash, idle sweep, restart route and respawn still `kill()`.
+  `pnpm pm2:kill-agents` is the "stop everything" command. Switching hosted to direct: run it first.
+- **Adopt on boot** (`src/adopt-boot.ts`, after `recoverAtBoot`, before `serve`): `agent_processes`
+  rows x `sandbox.list()`; no row kills the host, no host drops the row, lossy kills both.
+  `AcpConnection.adopt` skips `initialize` from the saved result. JSON-RPC ids are shifted by the
+  persisted high-water mark (`WireLedger`), and the ledger's offset is in **host lines**, counting
+  the blank and non-JSON lines the parser refuses. A prompt whose reply arrived while the server
+  was down ends through `bridge.adoptTurn`.
+- **Loopback credentials are stable** (`loopback-secret.ts`, `data/loopback-secret`, HMAC-derived),
+  because a surviving agent still holds the old URLs. Deleting that file strands every adopted agent.
+- **Known limits**: only threads with a prompt in flight are bound on boot (idle process-of-its-own
+  threads are not kept: no thread->host column); a permission answered before the restart and older
+  than the saved offset is not re-sent; after SIGKILL some updates can journal twice (progress is
+  persisted at most 500 ms late); `turnChanges.closeOrphans()` still closes an adopted turn's
+  measurement. Terminals (node-pty) are not hosted and still die with the server.

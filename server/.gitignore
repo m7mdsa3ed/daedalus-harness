@@ -3,3 +3,6 @@ node_modules/
 data/
 dist/
 logs/
+
+# local environment (read by ecosystem.config.cjs)
+.env

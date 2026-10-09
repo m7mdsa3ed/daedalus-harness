@@ -68,7 +68,7 @@ export type ConnPhase =
   | { kind: "read" }
   /** In the ladder. `attempt` of `max`; `nextAt` is when the next rung fires,
       so a surface can count down rather than spin. */
-  | { kind: "reconnecting"; attempt: number; max: number; nextAt: number; reason?: string }
+  | { kind: "reconnecting"; attempt: number; max: number; nextAt: number; reason?: string; restarting?: boolean }
   /** The ladder is spent, or there is no network. Retries itself when the
       network, the tab or the health poll says the world is back. */
   | { kind: "parked"; reason?: string; since: number }
@@ -102,7 +102,7 @@ export function samePhase(a: ConnPhase, b: ConnPhase): boolean {
     return a.done === b.done && a.total === b.total
   if (a.kind === "reviving" && b.kind === "reviving") return a.because === b.because
   if (a.kind === "reconnecting" && b.kind === "reconnecting")
-    return a.attempt === b.attempt && a.nextAt === b.nextAt && a.reason === b.reason
+    return a.attempt === b.attempt && a.nextAt === b.nextAt && a.reason === b.reason && a.restarting === b.restarting
   if (a.kind === "parked" && b.kind === "parked")
     return a.reason === b.reason && a.since === b.since
   if (a.kind === "failed" && b.kind === "failed")
@@ -135,7 +135,16 @@ export type ConnEvent =
       reason?: string
       code?: number
     }
-  | { type: "retry-scheduled"; attempt: number; nextAt: number; reason?: string }
+  | {
+      type: "retry-scheduled"
+      attempt: number
+      nextAt: number
+      reason?: string
+      /** The rung budget this outage has (a restart the server announced gets more). */
+      max?: number
+      /** The server said it is restarting (close 1001), so the wait is expected. */
+      restarting?: boolean
+    }
   | { type: "parked"; reason?: string; at: number }
   | { type: "failed"; title: string; reason: string; detail?: string; recover: "revive" | "reconnect" | "none" }
   | { type: "deleted" }
@@ -143,6 +152,13 @@ export type ConnEvent =
   | { type: "detached" }
 
 export const RECONNECT_MAX_ATTEMPTS = 5
+
+/** The budget when the server itself said it is going away (close 1001, "restarting").
+    A restart is not a fault to detect but a wait to ride out: it takes a build, a boot
+    and the adoption of every agent, which is well past the ~16 s five rungs cover, and
+    parking at that point drew an error over a thread that was about to be fine. Twelve
+    rungs at the ladder's 8 s ceiling is about 70 s. */
+export const RECONNECT_MAX_ATTEMPTS_RESTARTING = 12
 
 /** Phases that mean "on its way to being live" — the ones a surface draws as a
     wait rather than as a state. */
@@ -247,9 +263,10 @@ export function reduceConn(phase: ConnPhase, event: ConnEvent): ConnPhase {
       return {
         kind: "reconnecting",
         attempt: event.attempt,
-        max: RECONNECT_MAX_ATTEMPTS,
+        max: event.max ?? RECONNECT_MAX_ATTEMPTS,
         nextAt: event.nextAt,
         reason: event.reason,
+        restarting: event.restarting,
       }
     case "parked":
       return { kind: "parked", reason: event.reason, since: event.at }
@@ -435,6 +452,15 @@ export function bannerFor(phase: ConnPhase): ConnBanner | null {
        error only when the ladder is spent (`parked`). The first rung is not
        counted aloud — "attempt 1 of 5" is an alarm about nothing yet. */
     case "reconnecting":
+      /* The server announced it, so it is not an outage to count out loud: no
+         "attempt 3 of 12", just what is happening and that nothing is lost. */
+      if (phase.restarting)
+        return {
+          tone: "info",
+          title: "The server is restarting",
+          message: "Your agent keeps running and this thread reconnects by itself the moment the server is back.",
+          action: { label: "Reconnect now", busyLabel: "Reconnecting…", kind: "reconnect" },
+        }
       return {
         tone: "info",
         title: "Reconnecting…",

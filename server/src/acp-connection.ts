@@ -1,4 +1,3 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { TRACE_NOTIFICATION, type TraceNotificationParams } from "./protocol.js";
 import * as acp from "./acp.js";
 import {
@@ -16,6 +15,14 @@ import {
   type SessionNotification,
   type SpawnSpec,
 } from "./acp-bridge.js";
+import { durable, type Handle } from "./sandbox/index.js";
+import {
+  dropProcessState,
+  saveProcessProgress,
+  saveProcessState,
+  WireLedger,
+  type ProcessState,
+} from "./adopt-state.js";
 
 /**
  * One agent process and the one ACP connection over its stdio.
@@ -71,8 +78,25 @@ export const SINK: ConnectionRoute = {
   onTrace: () => {},
 };
 
+/** How long advancing offsets/counters wait before one write. */
+const PROGRESS_FLUSH_MS = 500;
+/** Every connection with a process behind it, for `flushAllProcessStates`. */
+const live = new Set<AcpConnection>();
+
+/** Write every dirty row now — before the server lets go of its processes. */
+export async function flushAllProcessStates(): Promise<void> {
+  await Promise.all([...live].map((c) => c.flush()));
+}
+
+/** Let go of every live process without ending it, for a server that is exiting
+    over a durable sandbox. Call before `flushAllProcessStates` so no frame
+    moves an offset after it is written. */
+export function detachAllConnections(): void {
+  for (const c of live) c.proc.detach();
+}
+
 export class AcpConnection {
-  readonly proc: ChildProcessWithoutNullStreams;
+  readonly proc: Handle;
   readonly rpc: acp.ClientConnection;
   /** The `initialize` answer, asked once for every session on this process. */
   readonly initialized: Promise<acp.InitializeResponse>;
@@ -91,25 +115,47 @@ export class AcpConnection {
   private creating: ConnectionRoute | null = null;
   /** Set by the pool while nobody is on the process. */
   idleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The pool's key for a shared process (set by the pool; persisted for adopt). */
+  poolKey: string | null = null;
+  /** Ids, offset and in-flight prompts on the wire — what adopt persists. */
+  readonly ledger: WireLedger | null;
+  /** Lets an adopted connection's buffered frames through (no-op otherwise). */
+  private readonly release: () => void;
+  private readonly createdAt = Date.now();
+  private saved = false;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private dirty = false;
+  private writing: Promise<unknown> = Promise.resolve();
+  private initResult: acp.InitializeResponse | null = null;
 
   constructor(
     agentId: string,
-    proc: ChildProcessWithoutNullStreams,
+    proc: Handle,
     shared: boolean,
     /** Extra inbound frames merged ahead of the reroute — see `agentStream`. */
     extra?: ReadableStream<acp.AnyMessage>,
+    /** Present = adopt: the process is already initialized, so `initialize`
+        is not sent and the wire resumes from this state. */
+    adopted?: ProcessState,
   ) {
     this.agentId = agentId;
+    // Only a process that can outlive the server needs bookkeeping; under `direct` the wire is the plain stream.
+    this.ledger = adopted || durable ? new WireLedger(adopted) : null;
+    // An adopted wire is held shut until its sessions' bridges exist (`open`).
+    this.release = adopted && this.ledger ? this.ledger.hold() : () => {};
+    if (this.ledger) this.ledger.onChange = (urgent) => this.markDirty(urgent);
     this.proc = proc;
     this.shared = shared;
     proc.on("exit", () => {
       this.exited = true;
+      this.forget();
     });
     // An unhandled 'error' on a ChildProcess takes the server down; each
     // session's own `wire` reports it, and a warm process nobody is on has
     // nobody to report it to.
     proc.on("error", () => {
       this.exited = true;
+      this.forget();
     });
     this.rpc = acp
       .client({ name: "daedalus" })
@@ -149,12 +195,88 @@ export class AcpConnection {
       .onNotification(TRACE_NOTIFICATION, parseTraceParams, (ctx) =>
         this.route(ctx.params.sessionId)?.onTrace(ctx.params),
       )
-      .connect(agentStream(proc, extra));
-    this.initialized = this.rpc.agent.request(acp.methods.agent.initialize, {
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: CLIENT_CAPABILITIES,
-    });
-    this.initialized.catch(() => {});
+      .connect(agentStream(proc, extra, this.ledger ?? undefined));
+    if (adopted) {
+      this.initResult = adopted.initResult;
+      this.saved = true;
+      this.initialized = Promise.resolve(adopted.initResult);
+    } else {
+      this.initialized = this.rpc.agent.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: CLIENT_CAPABILITIES,
+      });
+      this.initialized.catch(() => {});
+      this.initialized.then((init) => {
+        this.initResult = init;
+        this.markDirty(true);
+      }, () => {});
+    }
+    live.add(this);
+  }
+
+  /**
+   * A connection around a process the previous server left running: no
+   * `initialize` (its answer is `state.initResult`), request ids resumed above
+   * `state.nextRequestId`, and the prompts `state.prompts` left unanswered
+   * surfaced as `ledger.orphans` instead of "unknown request" noise. The
+   * caller attached `handle` from `state.offset`.
+   */
+  static adopt(handle: Handle, state: ProcessState, extra?: ReadableStream<acp.AnyMessage>): AcpConnection {
+    const conn = new AcpConnection(state.agentId, handle, state.poolKey !== null, extra, state);
+    conn.poolKey = state.poolKey;
+    return conn;
+  }
+
+  /** An adopted connection delivers nothing until this: call it once every bridge
+      that will own a session on it has been constructed. */
+  open(): void {
+    this.release();
+  }
+
+  private markDirty(urgent: boolean): void {
+    if (!this.ledger || !this.initResult || this.exited || this.killed) return; // nothing persisted before `initialize` answered
+    this.dirty = true;
+    if (urgent) return void this.flush();
+    this.flushTimer ??= setTimeout(() => void this.flush(), PROGRESS_FLUSH_MS).unref();
+  }
+
+  /** Write the row now (insert on first call, progress after). Never throws. */
+  async flush(): Promise<void> {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    if (this.dirty && this.ledger && this.initResult && !this.exited && !this.killed) this.write(this.ledger);
+    // Always wait for the chain, so a caller that finds nothing dirty still waits out a write in flight.
+    await this.writing;
+  }
+
+  private write(ledger: WireLedger): void {
+    this.dirty = false;
+    const p = ledger.snapshot();
+    const first = !this.saved;
+    this.saved = true;
+    // Serialised: an update must not overtake the insert it follows.
+    this.writing = this.writing.then(() =>
+      (first
+        ? saveProcessState({
+            hostId: this.proc.id,
+            poolKey: this.poolKey,
+            agentId: this.agentId,
+            initResult: this.initResult!,
+            createdAt: this.createdAt,
+            ...p,
+          })
+        : saveProcessProgress(this.proc.id, p)
+      ).catch((e) => console.warn(`[acp:${this.agentId}] could not persist adopt state`, e)),
+    );
+  }
+
+  /** The process is gone for good: its row is useless. */
+  private forget(): void {
+    live.delete(this);
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.dirty = false;
+    if (this.saved) this.writing = this.writing.then(() => dropProcessState(this.proc.id)).catch(() => {});
   }
 
   get alive(): boolean {
@@ -223,6 +345,7 @@ export class AcpConnection {
       this.kill();
       return;
     }
+    this.markDirty(true);
     if (sessionId && this.alive) {
       void this.initialized
         .then((init) => {
@@ -243,9 +366,10 @@ export class AcpConnection {
   kill(): void {
     if (this.exited) return;
     this.killed = true;
+    this.forget();
     this.proc.kill("SIGTERM");
     setTimeout(() => {
-      if (this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill("SIGKILL");
+      if (this.proc.running) this.proc.kill("SIGKILL");
     }, 5000).unref();
   }
 }
@@ -262,6 +386,8 @@ export const IDLE_TTL_MS = 5 * 60_000;
  */
 export class AcpPool {
   private readonly shared = new Map<string, AcpConnection>();
+  /** Spawns in flight, so two callers racing on one key start one process. */
+  private readonly starting = new Map<string, Promise<AcpConnection>>();
 
   static key(spec: SpawnSpec): string {
     const env = Object.keys(spec.env)
@@ -275,11 +401,11 @@ export class AcpPool {
    * reused. Otherwise a live process under the same key is handed out (its
    * idle clock stopped), and only a missing or dead one is spawned.
    */
-  acquire(
+  async acquire(
     agentId: string,
     key: string | null,
-    start: () => { proc: ChildProcessWithoutNullStreams; extra?: ReadableStream<acp.AnyMessage> },
-  ): AcpConnection {
+    start: () => Promise<{ proc: Handle; extra?: ReadableStream<acp.AnyMessage> }>,
+  ): Promise<AcpConnection> {
     if (key !== null) {
       const warm = this.shared.get(key);
       if (warm?.alive) {
@@ -288,19 +414,50 @@ export class AcpPool {
         return warm;
       }
     }
-    const { proc, extra } = start();
-    const conn = new AcpConnection(agentId, proc, key !== null, extra);
     if (key !== null) {
-      this.shared.set(key, conn);
-      proc.stderr.on("data", (chunk: Buffer) => console.error(`[acp:${agentId}]`, chunk.toString().trimEnd()));
-      const forget = () => {
-        if (conn.idleTimer) clearTimeout(conn.idleTimer);
-        if (this.shared.get(key) === conn) this.shared.delete(key);
-      };
-      proc.on("exit", forget);
-      proc.on("error", forget);
+      const pending = this.starting.get(key);
+      if (pending) {
+        await pending.catch(() => {});
+        return this.acquire(agentId, key, start);
+      }
     }
+    const spawned = this.spawnConn(agentId, key, start);
+    if (key === null) return spawned;
+    this.starting.set(key, spawned);
+    try {
+      return await spawned;
+    } finally {
+      this.starting.delete(key);
+    }
+  }
+
+  private async spawnConn(
+    agentId: string,
+    key: string | null,
+    start: () => Promise<{ proc: Handle; extra?: ReadableStream<acp.AnyMessage> }>,
+  ): Promise<AcpConnection> {
+    const { proc, extra } = await start();
+    const conn = new AcpConnection(agentId, proc, key !== null, extra);
+    conn.poolKey = key;
+    this.adopt(conn);
     return conn;
+  }
+
+  /** Make a shared connection findable by `acquire` — also how a connection
+      built around an adopted process (`AcpConnection.adopt`) joins the pool.
+      A connection of its own (no key) has nothing to register. */
+  adopt(conn: AcpConnection): void {
+    const key = conn.poolKey;
+    if (key === null) return;
+    const { proc, agentId } = conn;
+    this.shared.set(key, conn);
+    proc.stderr.on("data", (chunk: Buffer) => console.error(`[acp:${agentId}]`, chunk.toString().trimEnd()));
+    const forget = () => {
+      if (conn.idleTimer) clearTimeout(conn.idleTimer);
+      if (this.shared.get(key) === conn) this.shared.delete(key);
+    };
+    proc.on("exit", forget);
+    proc.on("error", forget);
   }
 
   /** Nobody left on a shared process: keep it warm for `IDLE_TTL_MS`. */

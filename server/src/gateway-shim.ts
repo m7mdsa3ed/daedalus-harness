@@ -71,12 +71,13 @@
  * The key in the path is the credential, exactly as `/ide/<key>/` is: the
  * route is unauthenticated because the CLI sends its own `x-api-key` for the
  * gateway, and a bare `/gw/<profileId>/` would be an open relay to whatever
- * `baseUrl` a profile names. The key is minted per boot and never stored —
+ * `baseUrl` a profile names. The key is derived from data/loopback-secret (stable across restarts) —
  * the only readers are child processes this server spawns, and a restart
  * kills those anyway. `{gatewayUrl}` in an agent's env template
  * (`registry.ts`) is where it is handed out.
  */
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { derive } from "./loopback-secret.js";
 
 import { getProfile, profileBaseUrl } from "./profiles.js";
 
@@ -152,7 +153,7 @@ export function setGatewaySessionResolver(resolver: SessionResolver): void {
     `gatewayUrlFor` hands out nothing and a spawn goes straight to the gateway
     — which is also what a test that never boots a server gets. */
 export function configureGatewayShim(opts: { port: number }): void {
-  shim = { key: randomBytes(24).toString("hex"), port: opts.port };
+  shim = { key: derive("gw"), port: opts.port };
 }
 
 /**

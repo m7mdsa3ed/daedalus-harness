@@ -5,7 +5,7 @@ import type { WorkflowRunner } from "../workflows.js";
 
 /**
  * The loopback the `harness` MCP server drives — outside `/api`, so outside the
- * bearer check: the per-boot key the workflow runner mints is the credential,
+ * bearer check: the loopback key derived from `data/loopback-secret` is the credential,
  * and the session id after it names the thread the call is made for.
  *
  * It is one generic proxy, not a route per tool: a request to

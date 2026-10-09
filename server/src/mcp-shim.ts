@@ -25,14 +25,14 @@
  *    second refusal is reported as a failure.
  *
  * The key in the path is the credential, exactly as `/gw/<key>/` and
- * `/ide/<key>/` are: minted per boot, never written to disk, and its only
+ * `/ide/<key>/` are: derived from data/loopback-secret, stable across restarts, and its only
  * readers are children this process spawns.
  *
  * The `resource` indicator is worth stating because the temptation is real:
  * tokens are bound to the *real* server's canonical URL, never the proxy's.
  * Nothing about being proxied changes what the upstream will accept.
  */
-import { randomBytes } from "node:crypto";
+import { derive } from "./loopback-secret.js";
 
 import { mcpServers as mcpLibrary } from "./library.js";
 import { accessTokenFor, mcpOauth, refreshTokens, safeParseUrl } from "./mcp-oauth.js";
@@ -57,7 +57,7 @@ let shim: { key: string; port: number } | null = null;
     `mcpProxyUrlFor` hands out nothing, which is what a test that never boots a
     server gets. */
 export function configureMcpShim(opts: { port: number }): void {
-  shim = { key: randomBytes(24).toString("hex"), port: opts.port };
+  shim = { key: derive("mx"), port: opts.port };
 }
 
 /** The URL an agent is handed instead of the server's own, or `""` when there
