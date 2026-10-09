@@ -2503,7 +2503,7 @@ html {
      page's pointer events instead of the strip's own overflow scroll — there
      is nothing to scroll sideways in a strip of one tab. */
   html .dv-tabs-and-actions-container {
-    touch-action: pan-y;
+    touch-action: none;
   }
 
   /* ── and the one that is left takes the strip ──
@@ -3225,4 +3225,21 @@ html .dock-tab [data-tab-action="pin"] {
 }
 @utility pr-safe {
   padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* A thread slid to by a swipe (`chat-panel.tsx`): enters from the side the
+   finger moved away from. */
+@keyframes tab-slide-in {
+  from {
+    transform: translateX(var(--slide-from));
+    opacity: 0;
+  }
+}
+[data-slide] {
+  animation: tab-slide-in 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slide] {
+    animation: none;
+  }
 }

@@ -1,6 +1,7 @@
 import { getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
+import { PROMPT_NAME_RE, uniqueSlug } from "./saved-prompts.js";
 import {
   agentOptions as agentOptionsTable,
   USAGE_KINDS,
@@ -14,7 +15,7 @@ import {
   modelPrompts as modelPromptsTable,
   notifications as notificationsTable,
   composerHistory as composerHistoryTable,
-  personas as personasTable,
+  savedPrompts as promptsTable,
   profiles as profilesTable,
   projectHelpers as projectHelpersTable,
   projects as projectsTable,
@@ -234,10 +235,19 @@ const CommandRow = z.object({
   content: str,
 });
 
-/* A user's own personas travel; so do the built-ins, edits and all, for the
-   `seededVersion` reason above — a restored built-in is never re-seeded, so a
-   row that came back without its prompt would be a persona that does nothing
-   and cannot be repaired except by hand. */
+/* A user's own saved prompts travel; so do the built-ins, edits and all, for the
+   `seededVersion` reason above — a restored built-in is never re-seeded. */
+const PromptRow = z.object({
+  id: str.min(1),
+  name: str,
+  description: str.default(""),
+  prompt: str,
+  seededVersion: int.default(0),
+  sortOrder: int.default(0),
+});
+
+/* The pre-saved-prompts shape (`personas`), still accepted on import: mapped to
+   prompts with slugged handles. */
 const PersonaRow = z.object({
   id: str.min(1),
   name: str,
@@ -249,7 +259,7 @@ const PersonaRow = z.object({
   sortOrder: int.default(0),
 });
 
-/* Model prompts travel whole, for the same reason personas do: a restored row
+/* Model prompts travel whole, for the same reason saved prompts do: a restored row
    without its prompt would be an assignment that does nothing, and the seed
    would never repair it — a built-in the importer brought back is stamped as
    already carried, so `seedModelPrompts` will not rewrite it. `seededVersion`
@@ -278,7 +288,6 @@ const ProjectDefaultsRow = z.object({
   effort: str.default(""),
   modeId: str.default(""),
   configChoices: z.record(str, z.union([str, z.boolean()])).default({}),
-  personaId: str.default(""),
   mcpServerIds: z.array(str).default([]),
   skillIds: z.array(str).default([]),
   commandIds: z.array(str).default([]),
@@ -390,9 +399,6 @@ const SessionRow = z.object({
   /* Absent in a bundle written before modes were persisted, which reads as
      the agent's default — which is exactly what the thread ran on. */
   modeId: optStr,
-  /* Absent in a bundle written before personas existed, which reads as the
-     thread having none — which is exactly what it had. */
-  personaId: optStr,
   /* Absent in a bundle written before suggestion toggles existed, which
      reads as on — suggestions default on, like every new thread. */
   suggestFollowups: z.boolean().default(true),
@@ -478,7 +484,7 @@ const WorkflowRunRow = z.object({
 });
 
 /* Routines and their two children (routines.ts). A routine is a root: nothing
-   in the bundle points at it, and its project/profile/agent/persona ids are
+   in the bundle points at it, and its project/profile/agent ids are
    deliberately not foreign keys, so a routine whose project the bundle does not
    carry still restores — "this routine's project no longer exists" is a
    sentence the UI can say, where a dropped row is not. */
@@ -492,7 +498,6 @@ const RoutineRow = z.object({
   agentId: str,
   model: str.default(""),
   effort: str.default(""),
-  personaId: optStr,
   configChoices: z.record(str, z.union([str, z.boolean()])).default({}),
   /* Opaque but required. Their INTERNALS are deliberately not validated here:
      `body` holds a whole workflow definition (workflow-schema.ts owns that
@@ -786,6 +791,8 @@ export const BundleSchema = z.object({
   mcpOauth: z.array(McpOauthRow).default([]),
   skills: z.array(SkillRow).default([]),
   commands: z.array(CommandRow).default([]),
+  prompts: z.array(PromptRow).default([]),
+  /** Legacy key (bundles written before saved prompts). */
   personas: z.array(PersonaRow).default([]),
   modelPrompts: z.array(ModelPromptRow).default([]),
   spaces: z.array(SpaceRow).default([]),
@@ -877,7 +884,8 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
       : mcpOauthRows.map((r) => ({ ...r, accessToken: "", refreshToken: "", clientSecret: "" })),
     skills: await db.select().from(skillsTable),
     commands: await db.select().from(commandsTable),
-    personas: await db.select().from(personasTable),
+    prompts: await db.select().from(promptsTable),
+    personas: [],
     modelPrompts: await db.select().from(modelPromptsTable),
     spaces: await db.select().from(spacesTable),
     projects: (await db.select().from(projectsTable)).map((row) => ({
@@ -942,7 +950,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "prompts" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
   | "rules" | "themes" | "voiceProviders" | "videoTtsProviders" | "sessionVideos" | "sessionVideoRenders" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
@@ -1028,7 +1036,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, prompts: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
     rules: 0, themes: 0, voiceProviders: 0, videoTtsProviders: 0, sessionVideos: 0, sessionVideoRenders: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
@@ -1053,7 +1061,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         // `mcp_oauth` cascades off `mcp_servers`, and is named here anyway so
         // the list reads as the whole of what `replace` empties.
         sessionsTable, profilesTable, spacesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
-        personasTable, modelPromptsTable,
+        promptsTable, modelPromptsTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
         agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, boardListsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
@@ -1142,13 +1150,25 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     summary.skills = bundle.skills.length;
     upsertChunked(tx, commandsTable, "id", bundle.commands.map((c) => ({ ...c, argumentHint: c.argumentHint ?? null })));
     summary.commands = bundle.commands.length;
+    /* A handle is unique, so one that collides with a different row (another
+       id already holds it, here or in the bundle) is re-slugged, not refused. */
+    const incoming = [...bundle.prompts, ...bundle.personas.map(({ thinking: _t, effort: _e, ...p }) => p)];
+    const ids = new Set(incoming.map((p) => p.id));
+    const usedNames = new Set(
+      (await tx.select({ id: promptsTable.id, name: promptsTable.name }).from(promptsTable))
+        .filter((r) => !ids.has(r.id))
+        .map((r) => r.name),
+    );
     upsertChunked(
       tx,
-      personasTable,
+      promptsTable,
       "id",
-      bundle.personas.map((p) => ({ ...p, thinking: p.thinking ?? null, effort: p.effort ?? null })),
+      incoming.map((p) => ({
+        ...p,
+        name: PROMPT_NAME_RE.test(p.name) && !usedNames.has(p.name) ? (usedNames.add(p.name), p.name) : uniqueSlug(p.name, usedNames),
+      })),
     );
-    summary.personas = bundle.personas.length;
+    summary.prompts = incoming.length;
     upsertChunked(tx, modelPromptsTable, "id", bundle.modelPrompts.map((r) => ({ ...r })));
     summary.modelPrompts = bundle.modelPrompts.length;
     /* Spaces before projects: a project names one, and the running install may
@@ -1329,7 +1349,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         return {
           ...columns,
           description: columns.description ?? null,
-          personaId: columns.personaId ?? null,
           output: columns.output ?? null,
         };
       }),

@@ -264,7 +264,6 @@ export interface StagedConfig {
   profileId?: string;
   model?: string;
   effort?: string;
-  personaId?: string;
   suggestFollowups?: boolean;
   uiBlocks?: boolean;
   /** The agent's own selectors — the permission mode and every other option
@@ -1188,7 +1187,6 @@ export type ThreadEvent =
       profileId: string;
       model: string;
       effort: string;
-      personaId?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
     }

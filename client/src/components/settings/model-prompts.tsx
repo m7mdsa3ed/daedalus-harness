@@ -106,7 +106,26 @@ function ModelPromptForm({
         description="Instruction text assigned to a model by id or pattern. A row whose match is a glob wins over the runtime's built-in family calibrations. The file is re-read every turn, so a live model change swaps the guidance with no respawn."
         onBack={() => onDone(false)}
       />
-      <PageForm onSubmit={save}>
+      <PageForm
+        onSubmit={save}
+        aiBuilder={{
+          title: "model prompt",
+          value: form,
+          onApply: (value) => setForm((current) => ({ ...current, ...value })),
+          schema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Human-readable name for these model-specific instructions.", examples: ["Qwen concise"] },
+              match: { type: "string", description: "Case-insensitive glob or exact model id that selects this prompt.", examples: ["qwen*", "gpt-4.1"] },
+              prompt: { type: "string", description: "Short tuning instructions appended to the runtime prompt; do not replace base instructions.", examples: ["Prefer concise answers. State assumptions and verify behavior with tests when appropriate."] },
+              enabled: { type: "boolean", description: "Whether the rule is active.", examples: [true] },
+              sortOrder: { type: "string", description: "Numeric ordering value; ties break by name.", examples: ["0"] },
+            },
+            required: ["name", "match", "prompt", "enabled", "sortOrder"],
+            additionalProperties: false,
+          },
+        }}
+      >
         <Field label="Name" hint="What this prompt is called in the list.">
           <Input
             value={form.name}
@@ -129,7 +148,7 @@ function ModelPromptForm({
         </Field>
         <Field
           label="Instructions"
-          hint="Appended as a layer of the agent's system prompt, ahead of the persona and the project files. Keep it short — a few bullets about how to drive this engine. Avoid contradicting the base prompt; these lines tune it, not replace it."
+          hint="Appended as a layer of the agent's system prompt, ahead of the project files. Keep it short — a few bullets about how to drive this engine. Avoid contradicting the base prompt; these lines tune it, not replace it."
         >
           <Textarea
             value={form.prompt}

@@ -43,6 +43,7 @@ import type { InlineError } from "@/lib/errors"
 import { KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { cn } from "@/lib/utils"
 import { type PageMeta } from "./sections"
+import { AiFormBuilder } from "./ai-form-builder"
 
 
 /** Page title block: title + description, with room for one action. The
@@ -246,9 +247,32 @@ export function FormPageHeader({
   )
 }
 
-/** Shared vertical rhythm for every route-backed form. */
-export function PageForm({ className, ...props }: React.ComponentProps<"form">) {
-  return <form className={cn("space-y-6", className)} {...props} />
+export type AiFormSchema = Record<string, unknown>
+
+/** Shared vertical rhythm for every route-backed form. Forms opt in with their JSON contract and a state updater. */
+export function PageForm({
+  className,
+  children,
+  aiBuilder,
+  ...props
+}: React.ComponentProps<"form"> & {
+  aiBuilder?: {
+    title: string
+    schema: AiFormSchema
+    value: Record<string, unknown>
+    onApply: (value: Record<string, unknown>) => void
+  }
+}) {
+  return (
+    <form className={cn("space-y-6", className)} {...props}>
+      {aiBuilder && (
+        <div className="flex justify-end">
+          <AiFormBuilder {...aiBuilder} />
+        </div>
+      )}
+      {children}
+    </form>
+  )
 }
 
 export const lines = (value: string) => value.split("\n").map((l) => l.trim()).filter(Boolean)

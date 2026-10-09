@@ -825,10 +825,6 @@ export class WorkflowRunner {
         /* A step works where its parent does — in the parent's worktree, when
            the parent was isolated in one. */
         worktree: run.parent.worktree ?? undefined,
-        /* And how the parent works, for the same reason: a step is the same
-           actor working in another thread, so a parent running "quick fix"
-           must not spawn steps that refactor. */
-        personaId: run.parent.personaId,
         /* And whether it offers follow-ups, for the same reason: the step's
            answer reads in the parent's transcript, where a missing fence
            would be the inconsistency showing. */

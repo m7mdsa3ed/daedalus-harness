@@ -142,7 +142,6 @@ export interface ThreadCallbacks {
     profileId: string,
     model: string,
     effort: string,
-    personaId?: string,
     suggestFollowups?: boolean,
     uiBlocks?: boolean
   ) => void
@@ -702,7 +701,6 @@ export class ThreadSocket {
           event.profileId,
           event.model,
           event.effort,
-          event.personaId,
           event.suggestFollowups,
           event.uiBlocks
         )

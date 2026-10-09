@@ -37,7 +37,7 @@ import {
   Search,
   Server,
   Settings2,
-  Drama,
+  MessageSquareText,
   Lightbulb,
   Sparkles,
   SquareSlash,
@@ -179,21 +179,20 @@ export const SETTINGS_SECTIONS = [
     icon: ScrollText,
     title: "Rules",
     description:
-      "Standing instructions every thread starts with — one global block, plus a per-project block edited with the project. The server folds them into each spawn beneath the persona, through the door the runtime already opens for instructions, so nothing is pasted in front of your messages.",
+      "Standing instructions every thread starts with — one global block, plus a per-project block edited with the project. The server folds them into each spawn through the door the runtime already opens for instructions, so nothing is pasted in front of your messages.",
   },
   {
-    id: "personas",
-    page: lazyPage(() => import("./personas"), "PersonasPage"),
-    /* No import route: nothing in the agents' own configs is a persona to
-       import — see settings/personas.tsx. */
+    id: "prompts",
+    page: lazyPage(() => import("./prompts"), "PromptsPage"),
+    /* No import route: no agent has a saved prompt to give. */
     sub: [
-      { path: ":entryId", page: lazyPage(() => import("./personas"), "PersonaFormPage") },
+      { path: ":entryId", page: lazyPage(() => import("./prompts"), "PromptFormPage") },
     ],
-    label: "Personas",
-    icon: Drama,
-    title: "Personas",
+    label: "Saved prompts",
+    icon: MessageSquareText,
+    title: "Saved prompts",
     description:
-      "How a thread wants to be worked on: a block of instructions appended to the agent's own system prompt, plus an optional thinking budget and effort. A thread picks one in its settings menu; the server hands it to each runtime through the door that runtime opens for it, so nothing is smuggled into your messages.",
+      "Reusable text you mention with @handle in the composer. The client sends the handle as typed; the server swaps in the prompt's text when the message is sent.",
   },
   {
     id: "model-prompts",
@@ -337,7 +336,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
   sections: readonly SettingsSectionId[]
 }[] = [
   { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "ai", "web-search", "voice", "video"] },
-  { label: "Workspace", sections: ["projects", "files", "knowledge", "mcp", "skills", "commands", "rules", "personas", "model-prompts"] },
+  { label: "Workspace", sections: ["projects", "files", "knowledge", "mcp", "skills", "commands", "rules", "prompts", "model-prompts"] },
   { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },
 ] as const

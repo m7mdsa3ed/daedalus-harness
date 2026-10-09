@@ -65,7 +65,7 @@ export function draftActions(core: ActionsCore) {
     const sameProject = projectId === current.projectId
     const rescoped = next.profileId !== undefined || next.agentId !== undefined
     const patch: ProjectDefaultsPatch = {}
-    const copy = <K extends "profileId" | "agentId" | "model" | "effort" | "personaId">(key: K) => {
+    const copy = <K extends "profileId" | "agentId" | "model" | "effort">(key: K) => {
       const value = next[key]
       if (value !== undefined) patch[key] = value
     }
@@ -73,7 +73,6 @@ export function draftActions(core: ActionsCore) {
     copy("agentId")
     copy("model")
     copy("effort")
-    copy("personaId")
     if (next.suggestFollowups !== undefined) patch.suggestFollowups = next.suggestFollowups
     if (next.uiBlocks !== undefined) patch.uiBlocks = next.uiBlocks
     if (next.mcpServerIds !== undefined) patch.mcpServerIds = next.mcpServerIds
@@ -179,7 +178,7 @@ export function draftActions(core: ActionsCore) {
        resolved the (profile, agent) pair against — the caller passes the
        model/effort that survived that resolution. The other fields are the
        row's, read here so a reload that re-adopts an unsent draft gets its
-       persona, its tools and its mode back along with its profile. */
+       tools and its mode back along with its profile. */
     const defaults = project.defaults ?? emptyDefaults()
     const tools = defaultToolPicks(defaults)
     const session: SessionMeta = {
@@ -189,7 +188,6 @@ export function draftActions(core: ActionsCore) {
       agentId: opts.agentId ?? profileAgentIds(profile)[0] ?? "",
       model: model ?? "",
       effort: effort ?? "",
-      personaId: defaults.personaId,
       suggestFollowups: defaults.suggestFollowups,
       uiBlocks: defaults.uiBlocks,
       /* The picks against the agent's advertised selectors, and the permission
@@ -351,7 +349,6 @@ export function draftActions(core: ActionsCore) {
           | "model"
           | "effort"
           | "modeId"
-          | "personaId"
           | "suggestFollowups"
           | "uiBlocks"
           | "mcpServerIds"

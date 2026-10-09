@@ -32,7 +32,7 @@ assert.ok(Math.abs(total(results) - one.parts.results) <= 1, "a part's rows add 
 assert.ok(Math.abs(total(d.user) - one.parts.user) <= 1)
 // --- measured (our runtime), with the prefix item list ---
 const meta = { daedalus: { breakdown: { total: 9000, system: 3000, tools: 2000, mcp: 1000, conversation: 3000, user: 500, assistant: 1000, results: 1500,
-  items: { system: [{ name: "Core instructions › General", tokens: 50 }, { name: "Core instructions › Planning", tokens: 150 }, { name: "Persona", tokens: 100 }],
+  items: { system: [{ name: "Core instructions › General", tokens: 50 }, { name: "Core instructions › Planning", tokens: 150 }, { name: "Rules", tokens: 100 }],
            tools: [{ name: "bash", tokens: 30 }, { name: "read_file", tokens: 10 }],
            mcp: [{ name: "mcp__gh__issue", tokens: 5 }, { name: "mcp__gh__pr", tokens: 5 }, { name: "mcp__web__search", tokens: 10 }] } } } }
 const m = tokensByTurn(items, { a1: { used: 9000, size: 100000, _meta: meta } }, {})

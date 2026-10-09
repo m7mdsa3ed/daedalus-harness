@@ -41,7 +41,7 @@ export type ConnPhase =
       setting the user just changed that could not be applied to the running
       process. Told apart because the sentence under the wait explains the
       cause, and one explanation was being given for both — a reader who had
-      just picked a persona was told their agent had been retired to free a
+      just changed a setting was told their agent had been retired to free a
       process, which is a paragraph about something that did not happen. */
   | { kind: "reviving"; because: "revive" | "config" }
   /** `GET …/replay` is in flight; nothing has been folded yet. */
@@ -314,15 +314,15 @@ export function failureFor(code: number | undefined, reason?: string): ConnPhase
     return {
       kind: "failed",
       title: "This connection was taken over",
-      reason: "Another device attached to this thread — reconnect to take it back.",
+      reason: "Another device or tab opened this thread, so this one was disconnected. Reconnect to use it here again.",
       recover: "reconnect",
     }
   }
   if (code === 4000 || code === 4004) {
     return {
       kind: "failed",
-      title: "This thread is no longer running",
-      reason: "The conversation is restored when the agent is revived.",
+      title: "This thread's agent isn't running",
+      reason: "Your conversation is saved. Revive the agent to pick up where you left off.",
       detail: reason,
       recover: "revive",
     }
@@ -330,8 +330,8 @@ export function failureFor(code: number | undefined, reason?: string): ConnPhase
   if (code === 4001) {
     return {
       kind: "failed",
-      title: "The agent process exited",
-      reason: "The conversation is restored when the agent is revived.",
+      title: "The agent stopped unexpectedly",
+      reason: "Your conversation is saved. Revive the agent to pick up where you left off.",
       detail: reason,
       recover: "revive",
     }
@@ -339,7 +339,7 @@ export function failureFor(code: number | undefined, reason?: string): ConnPhase
   return {
     kind: "failed",
     title: "Lost the connection to the server",
-    reason: "It may have restarted. Reconnecting picks the thread back up.",
+    reason: "The server may have restarted or the network dropped. Your conversation is safe; reconnecting picks the thread back up.",
     detail: reason,
     recover: "reconnect",
   }
@@ -390,7 +390,7 @@ export function composerLock(
       return {
         typable: true,
         submittable: true,
-        note: phase.because === "config" ? "Applying your change…" : "Restarting the agent…",
+        note: phase.because === "config" ? "Applying your change…" : "Waking the agent back up…",
       }
     case "loading":
     case "replaying":
@@ -438,14 +438,14 @@ export function bannerFor(phase: ConnPhase): ConnBanner | null {
       return {
         tone: "info",
         title: "Reconnecting…",
-        message: `${phase.attempt > 1 ? `Attempt ${phase.attempt} of ${phase.max}. ` : ""}${phase.reason ?? "The connection to this thread dropped."}`,
+        message: `${phase.attempt > 1 ? `Attempt ${phase.attempt} of ${phase.max}. ` : ""}${phase.reason ?? "The connection to this thread dropped. The agent is unaffected."}`,
         action: { label: "Reconnect now", busyLabel: "Reconnecting…", kind: "reconnect" },
       }
     case "parked":
       return {
         tone: "error",
-        title: "Couldn't reconnect to the server",
-        message: `${phase.reason ?? "The server or the agent process is not reachable."} Still trying — this reconnects on its own once the server answers.`,
+        title: "Can't reach the server",
+        message: `${phase.reason ?? "The server isn't answering."} Your conversation is safe. We'll keep trying and reconnect automatically once it's back, or you can retry now.`,
         action: { label: "Retry now", busyLabel: "Reconnecting…", kind: "reconnect" },
       }
     case "failed":
@@ -465,7 +465,7 @@ export function bannerFor(phase: ConnPhase): ConnBanner | null {
       return {
         tone: "error",
         title: "This thread is in Trash",
-        message: "Restore it to open it again.",
+        message: "Restore it from Trash to open it and keep working.",
         action: { label: "Restore", busyLabel: "Restoring…", kind: "restore" },
       }
     default:
@@ -576,46 +576,46 @@ export function startingLine(
   switch (phase.kind) {
     case "starting":
       return {
-        text: "Spawning the agent…",
+        text: "Starting the agent…",
         detail:
-          "The agent runs as its own program. The server is launching it and agreeing what it can do, which is the slow part of a new thread.",
+          "The agent is a separate program, and the server is launching it now. Setting up a brand-new thread is the slowest part, and it only happens once.",
       }
     case "reviving":
       return phase.because === "config"
         ? {
             text: "Applying your change…",
             detail:
-              "This setting is read only when a session starts, so the agent is being started again on it and told the conversation so far. Nothing is lost, and the thread comes back where you left it.",
+              "The agent only reads this setting when it starts, so it is restarting with your change. Your conversation is saved, and the thread will come back exactly where you left it.",
           }
         : {
-            text: "Restarting the agent…",
+            text: "Waking the agent back up…",
             detail:
-              "This thread's agent had stopped — threads nobody is reading are retired to free the process, and a server restart ends them all. Nothing was lost: it is being started again and told the conversation so far.",
+              "This thread's agent was shut down while idle to free resources (a server restart does the same). Your conversation is saved: the agent is starting again and catching up on it, then you can carry on.",
           }
     case "loading":
       return {
-        text: "Reading this conversation…",
+        text: "Opening this conversation…",
         detail:
-          "Fetching the transcript from the server. Nothing is connected yet, because reading a thread does not need a running agent.",
+          "Fetching the saved transcript from the server. You can read it without a running agent, so nothing needs to start yet.",
       }
     case "replaying":
       return {
-        text: "Loading this conversation…",
+        text: "Restoring the conversation…",
         detail:
-          "Rebuilding the transcript from the server's record of it, oldest message first. A long conversation takes a moment.",
+          "Putting the conversation back together from the server's record, oldest message first. Long conversations take a little longer.",
         bar: phase.total > 0 ? { done: phase.done, total: phase.total } : undefined,
       }
     case "attaching":
       return {
-        text: "Connecting…",
+        text: "Going live…",
         detail:
-          "The transcript is up to date. This is the live connection opening behind it — the one that carries new messages as the agent writes them.",
+          "The transcript is up to date. Almost done: the live connection is opening so new messages appear as the agent writes them.",
       }
     case "reconnecting":
       return {
         text: "Reconnecting…",
         detail:
-          "The connection to the server dropped. The agent keeps working either way, so this reattaches to the thread rather than restarting anything.",
+          "The connection to the server dropped. The agent keeps working in the meantime, and nothing restarts: this just reconnects you to the thread.",
       }
     default:
       return null
@@ -663,14 +663,14 @@ export function describePhase(phase: ConnPhase): string {
 export function slowLine(phase: ConnPhase): string | null {
   switch (phase.kind) {
     case "starting":
-      return "Still starting — the first launch of an agent can take a while."
+      return "Still starting. The first launch of an agent can take a while."
     case "reviving":
       return phase.because === "config"
-        ? "Still applying — starting the agent again can take a while."
-        : "Still restarting — starting the agent again can take a while."
+        ? "Still applying. Restarting the agent can take a while."
+        : "Still restarting. Starting the agent again can take a while."
     case "loading":
     case "attaching":
-      return "Still connecting — the server hasn't sent this thread's history yet."
+      return "Still connecting. The server hasn't sent this thread's history yet."
     default:
       return null
   }

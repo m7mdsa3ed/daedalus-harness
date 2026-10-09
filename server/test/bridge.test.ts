@@ -41,11 +41,11 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
 
 const { SessionManager } = await import("../src/sessions.js");
 
-/* Which door a persona reaches this agent through — set on the row rather than
+/* Which door the spawn instructions reach this agent through — set on the row rather than
    in agents.json above, because the legacy importer deliberately does not carry
    it (nor `liveConfig`, nor `quotaProbe`): those are claims about a runtime that
    only `seedAgents`' backfill is entitled to make, and it never touches an agent
-   the user wrote themselves. Without it the bridge correctly sends no persona at
+   the user wrote themselves. Without it the bridge correctly sends no instructions at
    all, which would make the assertions at the end of this file vacuous. */
 {
   const { eq } = await import("drizzle-orm");
@@ -1363,20 +1363,12 @@ const mentionsFallback = (ws: MockWs) =>
 assert.equal(mentionsFallback(quietWarnWs), false, "the quiet profile dropped the notice");
 assert.equal(mentionsFallback(loudWarnWs), true, "a profile that did not opt out still shows it");
 
-// --- a persona reaches the agent through session/new AND session/load ---
-// The two together are the whole reason a persona change is affordable: `_meta`
-// is only read when a session is created or loaded, so switching costs a
-// respawn — and a respawn ends in `session/load`, which is what carries the new
-// instructions onto the *existing* conversation instead of an empty one.
-const { personas } = await import("../src/personas.js");
-const persona = await personas.create({
-  name: "Terse",
-  description: "",
-  prompt: "Answer in one line.",
-  thinking: 0,
-  effort: null,
-  sortOrder: 0,
-});
+// --- spawn instructions reach the agent through session/new AND session/load ---
+// (The old persona door; rules and the thread's trailers ride it now.) `_meta`
+// is only read when a session is created or loaded, so a respawn ends in
+// `session/load`/`resume`, which carries the instructions onto the *existing*
+// conversation instead of an empty one.
+const { SUGGEST_FOLLOWUPS_INSTRUCTIONS } = await import("../src/personas.js");
 
 const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
   existsSync(join(process.env.DAEDALUS_DATA_DIR!, "fake-session-meta.jsonl"))
@@ -1386,7 +1378,7 @@ const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
         .map((line) => JSON.parse(line))
     : [];
 
-// A thread with no persona says nothing about one: `_meta` carries no
+// A thread with no instructions says nothing about them: `_meta` carries no
 // systemPrompt at all, rather than an empty append the agent would still apply.
 // Both behaviour toggles are off: each folds a trailer of its own, and the
 // `openui` lane is on by default, so leaving it on would make this assert the
@@ -1399,13 +1391,10 @@ const plain = await manager.create(profile, "fake", project, undefined, undefine
 await plain.bridge!.ready;
 const plainMeta = metaLog().slice(beforePlain).find((e) => e.method === "session/new");
 assert.ok(plainMeta, "session/new was recorded");
-assert.equal(plainMeta!.meta?.systemPrompt, undefined, "no persona and no toggles means no systemPrompt");
-assert.equal(plainMeta!.meta?.claudeCode?.options?.thinking, undefined, "…and no thinking budget");
+assert.equal(plainMeta!.meta?.systemPrompt, undefined, "no toggles means no systemPrompt");
 
-// Picked at create time, before any process exists. Suggestions are off so
-// this asserts the persona alone — the trailers are separate statements and
-// the plain thread above already turns them off; this one must too, or the
-// append below is persona + trailer and says nothing about either.
+// Picked at create time, before any process exists. Only suggestions are on, so
+// the append is exactly that trailer.
 const mark = metaLog().length;
 const styled = await manager.create(
   profile,
@@ -1416,22 +1405,17 @@ const styled = await manager.create(
   undefined,
   undefined,
   { mcpServerIds: [], skillIds: [], commandIds: [] },
-  { personaId: persona.id, suggestFollowups: false, uiBlocks: false },
+  { suggestFollowups: true, uiBlocks: false },
 );
 await styled.bridge!.ready;
 const newMeta = metaLog().slice(mark).find((e) => e.method === "session/new");
 assert.deepEqual(
   newMeta!.meta?.systemPrompt,
-  { append: "Answer in one line." },
-  "the persona is appended to the agent's own prompt, never a replacement",
-);
-assert.deepEqual(
-  newMeta!.meta?.claudeCode?.options?.thinking,
-  { type: "disabled" },
-  "a 0 budget is thinking off, not an absent budget",
+  { append: SUGGEST_FOLLOWUPS_INSTRUCTIONS },
+  "the instructions are appended to the agent's own prompt, never a replacement",
 );
 
-// And again on the respawn that a persona change (or any other) costs: the
+// And again on the respawn that a change costs: the
 // conversation is restored by session/load, and the instructions ride with it.
 /* A turn first: `session/load` is only attempted for an id a turn has proven,
    so without one the respawn would fall back to `session/new` and prove
@@ -1444,26 +1428,26 @@ assert.equal(styled.acpSessionProvisional, false, "the turn proved the id");
 const beforeLoad = metaLog().length;
 await manager.respawn(styled.id, profile, "fake", project);
 /* The journal is whole, so the conversation comes back by `session/resume`
-   (no replay) — and the persona rides that request just as it rides a load. */
+   (no replay) — and the instructions ride that request just as it rides a load. */
 const loadMeta = metaLog().slice(beforeLoad).find((e) => e.method === "session/resume");
 assert.ok(loadMeta, "the respawn resumed the conversation rather than starting a new one");
 assert.deepEqual(
   loadMeta!.meta?.systemPrompt,
-  { append: "Answer in one line." },
-  "session/resume carries the persona too — this is what makes a switch keep the thread",
+  { append: SUGGEST_FOLLOWUPS_INSTRUCTIONS },
+  "session/resume carries the instructions too — this is what makes a switch keep the thread",
 );
 
-// Dropping it is a real value, not an omission: the next spawn says nothing
+// Turning it off is a real value, not an omission: the next spawn says nothing
 // about a system prompt again.
 const dropped = metaLog().length;
 // `defer: false`, because a change that costs the process is staged now and
 // taken by the next spawn — and this asserts on the spawn itself.
 await manager.applyConfig(
   styled.id,
-  { profile, agentId: "fake", project, personaId: "", suggestFollowups: false, uiBlocks: false },
+  { profile, agentId: "fake", project, suggestFollowups: false, uiBlocks: false },
   { defer: false },
 );
-assert.equal(styled.personaId, "", "the row records that the thread has no persona now");
+assert.equal(styled.suggestFollowups, false, "the row records the toggle is off now");
 const droppedMeta = metaLog().slice(dropped).find((e) => e.meta);
 assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told nothing about one");
 

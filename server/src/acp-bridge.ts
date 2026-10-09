@@ -10,6 +10,7 @@ import type { TraceNotificationParams } from "./protocol.js";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
+import { expandPrompts } from "./saved-prompts.js";
 import { attachmentBlocks } from "./attachment-blocks.js";
 import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
@@ -985,13 +986,7 @@ export class AcpBridge implements ConnectionRoute {
     }
     if (disallowedTools.length > 0) Object.assign(options, { disallowedTools, allowedTools });
 
-    if (opts.persona) {
-      meta.systemPrompt = { append: opts.persona.prompt };
-      const budget = opts.persona.thinking;
-      if (budget !== null && budget !== undefined) {
-        options.thinking = budget > 0 ? { type: "enabled", budgetTokens: budget } : { type: "disabled" };
-      }
-    }
+    if (opts.persona) meta.systemPrompt = { append: opts.persona.prompt }; // "persona" = spawn instructions, see personas.ts
 
     if (opts.sessionEnv && Object.keys(opts.sessionEnv).length > 0) options.env = opts.sessionEnv;
     /* The adapter takes one `settings` object and nothing else sets it, so it
@@ -1738,7 +1733,10 @@ export class AcpBridge implements ConnectionRoute {
       // makes the degrade below it legible when it appears.
       console.log(`[attachments] ${note.name}: ${note.delivery} — ${note.reason}`);
     }
-    const outgoing = text + attach.textSuffix;
+    /* Saved prompts (`@name`) expand into what the agent receives only; the
+       journal and history above keep the literal handle. */
+    const expanded = await expandPrompts(text);
+    const outgoing = expanded.text + attach.textSuffix;
     const blocks = attach.blocks;
 
     /* The turn's own request carries its span out, so a runtime that traces
@@ -1772,7 +1770,7 @@ export class AcpBridge implements ConnectionRoute {
            `attachmentBlocks` may append to the text as well (a materialised
            path, or `[attached: shot.png]`), for the reason mentions.ts states:
            the text is what every runtime reads without being taught anything. */
-        prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, outgoing)],
+        prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, text + attach.textSuffix, expanded.names)],
         ...(traceMeta ? { _meta: traceMeta } : {}),
       })
       .then(
@@ -2523,7 +2521,7 @@ export class AcpBridge implements ConnectionRoute {
   }
 }
 
-/** What a setting change row can be about. Persona and the suggestions toggle
+/** What a setting change row can be about. The suggestions toggle
     joined the list late and are the reason it is a type: both always cost a
     respawn, so both used to change the way the agent answers with nothing
     anywhere saying they had. */
@@ -2532,7 +2530,6 @@ export type ConfigNoticeLabel =
   | "Model"
   | "Effort"
   | "Profile"
-  | "Persona"
   | "Agent"
   | "Follow-ups"
   | "Drawn UI";

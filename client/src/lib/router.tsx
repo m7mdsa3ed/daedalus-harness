@@ -46,7 +46,6 @@ export const mcpDetailPath = (id: string) => `/settings/mcp/${encodeURIComponent
 export const projectPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}`
 export const schedulesPath = () => `/schedules`
 /** Every listed thread's live state in one list — the agents dashboard. */
-export const agentsPath = () => `/agents`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
 /** One scheduled message's own page — what it says, where it lands, when it

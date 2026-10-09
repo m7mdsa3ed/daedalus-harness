@@ -18,7 +18,7 @@ export interface ThreadStatus {
   kind:
     | "starting" | "reviving" | "loading" | "replaying" | "attaching"
     | "reconnecting" | "parked" | "failed"
-    | "retrying" | "held" | "working" | "waiting"
+    | "retrying" | "held" | "sending" | "working" | "waiting"
     | "archived" | "trashed" | "turn-failed"
   tone: "progress" | "info" | "warn" | "error"
   headline: string
@@ -76,12 +76,15 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
   const line = startingLine(phase)
   if (line && waitShown) {
     const kind = phase.kind as "starting" | "reviving" | "loading" | "replaying" | "attaching"
+    const sending = thread.items.some((item) => item.kind === "user" && item.local && item.sending)
     return {
       kind,
       tone: "progress",
-      headline: line.text,
+      headline: sending ? `Sending your message — ${line.text}` : line.text,
       step: { n: STEPS[kind], of: 4 },
-      detail: line.detail,
+      detail: sending
+        ? `Your message is safe and will be delivered as soon as the agent is ready. ${line.detail}`
+        : line.detail,
       bar: line.bar,
       slow: slowLine(phase) ?? undefined,
       // Only the waits whose request can be abandoned; a settings restart is the server's.
@@ -108,6 +111,15 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
   }
   if (hold.paused) return { kind: "held", tone: "info", headline: hold.message }
   const waiting = thread.permissions.length > 0 || thread.elicitations.length > 0
+  const sending = thread.items.some((item) => item.kind === "user" && item.local && item.sending)
+  if (sending) {
+    return {
+      kind: "sending",
+      tone: "progress",
+      headline: "Sending your message…",
+      detail: "Waiting for the server to accept this message.",
+    }
+  }
   return { kind: waiting ? "waiting" : "working", tone: "progress", headline: workingMessage(thread) }
 }
 

@@ -6,6 +6,7 @@ export interface ChecklistItem {
   content: string
   status: "completed" | "in_progress" | "pending"
   priority?: "high" | "medium" | "low"
+  note?: string
 }
 
 export function TodoChecklist({ items, className }: { items: ChecklistItem[]; className?: string }) {
@@ -28,18 +29,21 @@ export function TodoChecklist({ items, className }: { items: ChecklistItem[]; cl
               <CircleIcon className="size-3 text-muted-foreground/60" />
             )}
           </span>
-          <span
-            className={cn(
-              "min-w-0 flex-1 break-words text-xs leading-5",
-              item.status === "completed"
-                ? "text-muted-foreground line-through decoration-muted-foreground/40"
-                : item.status === "in_progress"
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground"
-            )}
-          >
-            {item.content}
-          </span>
+          <div className="min-w-0 flex-1">
+            <span
+              className={cn(
+                "block break-words text-xs leading-5",
+                item.status === "completed"
+                  ? "text-muted-foreground line-through decoration-muted-foreground/40"
+                  : item.status === "in_progress"
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground"
+              )}
+            >
+              {item.content}
+            </span>
+            {item.note && <p className="break-words text-[11px] leading-snug text-muted-foreground">{item.note}</p>}
+          </div>
           {item.priority === "high" && item.status !== "completed" && (
             <span className="shrink-0 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide uppercase text-destructive">
               high

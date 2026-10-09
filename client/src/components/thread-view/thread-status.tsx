@@ -32,6 +32,7 @@ const LABEL: Partial<Record<Status["kind"], string>> = {
   archived: "Agent stopped",
   held: "Turn held",
   retrying: "Agent retrying",
+  sending: "Sending message",
   working: "Agent working",
   waiting: "Agent working",
   "turn-failed": "Turn failed",
@@ -70,6 +71,12 @@ function useWaitClock(waiting: boolean, cancellable: boolean) {
   return { slow, waited }
 }
 
+/** What the line has said, per thread, newest last. Module-level so a remount keeps it.
+    ponytail: this device's view of the status only; not journaled, gone on reload. */
+const LOG_MAX = 50
+const logs = new Map<string, { at: number; text: string }[]>()
+const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour12: false })
+
 export function ThreadStatus({
   status,
   sessionId,
@@ -88,6 +95,8 @@ export function ThreadStatus({
   const navigate = useNavigate()
   const [busy, setBusy] = React.useState(false)
   const [open, setOpen] = React.useState(false)
+  const [showLog, setShowLog] = React.useState(false)
+  const [, bump] = React.useReducer((n: number) => n + 1, 0)
   const opening = !!status.step
   const cancellable = !!status.actions?.some((a) => a.kind === "cancel")
   const { slow, waited } = useWaitClock(opening, cancellable)
@@ -104,6 +113,15 @@ export function ThreadStatus({
     if (offline) detail = "You are offline. This reconnects as soon as the network is back."
     else if (seconds && detail) detail = `${detail} Next attempt in ${seconds}s.`
   }
+  React.useEffect(() => {
+    const log = logs.get(sessionId) ?? []
+    if (log[log.length - 1]?.text === status.headline) return
+    log.push({ at: Date.now(), text: status.headline })
+    if (log.length > LOG_MAX) log.shift()
+    logs.set(sessionId, log)
+    bump()
+  }, [sessionId, status.headline])
+  const log = logs.get(sessionId) ?? []
   const bar = status.bar && status.bar.total >= LONG_REPLAY_EVENTS ? status.bar : null
 
   const run = (kind: StatusActionKind) => {
@@ -137,12 +155,30 @@ export function ThreadStatus({
 
   return (
     <div className="harness-status py-1" data-tone={status.tone}>
-      <PhaseLine
-        text={text}
-        still={!live}
-        tone={status.tone === "error" ? "error" : "normal"}
-        label={opening ? "Opening this thread" : (LABEL[status.kind] ?? "Agent status")}
-      />
+      <button
+        type="button"
+        className="block w-full text-left"
+        aria-expanded={showLog}
+        title={showLog ? "Hide events" : "Show events"}
+        onClick={() => setShowLog((v) => !v)}
+      >
+        <PhaseLine
+          text={text}
+          still={!live}
+          tone={status.tone === "error" ? "error" : "normal"}
+          label={opening ? "Opening this thread" : (LABEL[status.kind] ?? "Agent status")}
+        />
+      </button>
+      {showLog && (
+        <ul className="max-h-48 space-y-0.5 overflow-auto pl-6 pt-1 text-xs text-muted-foreground">
+          {[...log].reverse().map((e, i) => (
+            <li key={i} className="flex gap-2">
+              <time className="shrink-0 tabular-nums">{clock(e.at)}</time>
+              <span className="min-w-0 break-words">{e.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {hasBody && (
         <div key={family} className="harness-status-body">
           <div className="min-w-0 space-y-1 pl-6 pt-1 text-xs">

@@ -8,7 +8,7 @@
  * | file | what went there |
  * | --- | --- |
  * | `actions/core.ts` | the thread registry, `recordError`, `known`/`requireLive`, `createSession`, `refreshSessions`, `reconnectThread` and the network watch — plus `bootstrap`, `loadQuota` and `createSchedule`, each a thin skin over one of them |
- * | `actions/config.ts` | `ConfigPatch`, `describeConfig`, the coalescing buffer, and every settings pick: profile, model, effort, persona, follow-ups, the staged change, the agent's own mode and config options |
+ * | `actions/config.ts` | `ConfigPatch`, `describeConfig`, the coalescing buffer, and every settings pick: profile, model, effort, follow-ups, the staged change, the agent's own mode and config options |
  * | `actions/draft.ts` | a thread before it exists: `startThreadIn` (the one "new thread" front door), `newDraftThread`, `configureDraft`, `chooseDraftConfigOption`, `learnAgentOptions` |
  * | `actions/history.ts` | paging the transcript backwards: `loadEarlier`, `prefetchEarlier`, `loadUntilTurn` |
  * | `actions/send.ts` | `send`, the server-side queue, pause/resume, `compact`, a workflow run's hold, and `stop` — one file, because three of CLAUDE.md's rules are only readable with them side by side |

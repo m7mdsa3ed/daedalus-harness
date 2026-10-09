@@ -106,7 +106,7 @@ export function InlineHeldTurn({
       </AgentRequestBody>
       <AgentRequestActions>
         {/* The whole config menu, opened by this card's own button — see
-            `SessionConfigPopover`'s `trigger`. Profile and persona are in
+            `SessionConfigPopover`'s `trigger`. Profile is in
             there too, and both are honest answers to a spent quota. A pick
             made from here is taken at once, never held for a turn boundary:
             this turn is stopped *waiting* for it, and the server reads a held

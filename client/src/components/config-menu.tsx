@@ -421,18 +421,15 @@ export const PILL =
  * meter needs no vocabulary; its word waits for `@panel-sm` (the panel's width,
  * never the device's). The mode is an icon alone — its name rides the title and
  * the accessible name, and the keyword icon falls back to a neutral shield, so a
- * miss is never a wrong claim. The persona is a prefix that also waits for
- * `@panel-sm`.
+ * miss is never a wrong claim.
  */
 export function PillLabel({
-  persona,
   model,
   effort,
   effortLevel,
   mode,
   modeId,
 }: {
-  persona?: string
   model: string
   effort?: string | null
   effortLevel?: { index: number; count: number } | null
@@ -442,7 +439,6 @@ export function PillLabel({
   return (
     <span className="flex min-w-0 max-w-52 items-center gap-1.5 @panel-sm:max-w-80">
       <span className="flex min-w-0 items-baseline gap-1">
-        {persona && <span className="hidden shrink-0 @panel-sm:inline">{persona} ·</span>}
         <span className="min-w-0 truncate font-medium text-foreground/90">{model}</span>
       </span>
       {effort && (

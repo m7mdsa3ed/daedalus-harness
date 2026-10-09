@@ -107,7 +107,7 @@ export interface ViewOptions {
   /** Place grouped-tool and web-source strips on their heading row. */
   showToolSourcesOnFirstRow: boolean
   /** The setting-change rows (`Mode: Plan → Build`) — mode, model, effort,
-      profile, persona, agent, follow-ups, wherever in the thread they were
+      profile, agent, follow-ups, wherever in the thread they were
       changed. Off, a change still takes effect: the row is silent, not the
       switch. This switch is what makes reporting *every* change safe, and it
       is why the server no longer picks which ones are worth mentioning. */

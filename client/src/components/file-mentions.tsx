@@ -4,8 +4,8 @@ import { AtSign, Bot, Boxes, FileText, Folder, Plug } from "lucide-react"
 import { reportError } from "@/lib/errors"
 import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
-import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type Persona, type ThreadMcpServer } from "@/lib/settings"
-import { useMcpServers, usePersonas, useProjects } from "@/lib/queries/catalog"
+import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type SavedPrompt, type ThreadMcpServer } from "@/lib/settings"
+import { useMcpServers, usePrompts, useProjects } from "@/lib/queries/catalog"
 import { McpIcon, ProjectIcon } from "@/components/entity-icon"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
@@ -57,9 +57,9 @@ export interface McpServerMatch {
   server: McpServerDef
 }
 
-export interface PersonaMatch {
-  type: "persona"
-  persona: Persona
+export interface PromptMatch {
+  type: "prompt"
+  prompt: SavedPrompt
 }
 
 /** Another project. Picking one inserts its cwd as an absolute `@path`, so it is
@@ -72,7 +72,7 @@ export interface ProjectMatch {
   logoUrl?: string
 }
 
-export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | PersonaMatch | ProjectMatch
+export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | PromptMatch | ProjectMatch
 
 /** How many entries of each catalog join the file matches. */
 const MCP_LIMIT = 8
@@ -118,10 +118,8 @@ export function useFileMentions(opts: {
   /** Draft-only MCP server choices; spawned threads cannot change their links. */
   draft?: boolean
   linkedMcpServerIds?: string[]
-  currentPersonaId?: string
   onResource?: (resource: McpResourceMatch) => void
   onMcpServer?: (server: McpServerDef) => void
-  onPersona?: (persona: Persona) => void
 }): FileMentionState {
   const {
     text,
@@ -131,13 +129,11 @@ export function useFileMentions(opts: {
     mcpServers,
     draft = false,
     linkedMcpServerIds = [],
-    currentPersonaId,
     onResource,
     onMcpServer,
-    onPersona,
   } = opts
   const libraryServers = useMcpServers()
-  const personas = usePersonas()
+  const prompts = usePrompts()
   const linked = React.useMemo(() => new Set(linkedMcpServerIds), [linkedMcpServerIds])
   const [caret, setCaret] = React.useState(0)
   const [selected, setSelected] = React.useState(0)
@@ -189,14 +185,13 @@ export function useFileMentions(opts: {
       .slice(0, CATALOG_LIMIT)
       .map((server) => ({ type: "mcp-server", server }))
   }, [draft, libraryServers, linked, query, queryText])
-  const personaMatches = React.useMemo((): PersonaMatch[] => {
+  const promptMatches = React.useMemo((): PromptMatch[] => {
     if (query === null) return []
-    return personas
-      .filter((persona) => persona.id !== currentPersonaId)
-      .filter((persona) => `${persona.name} ${persona.description}`.toLowerCase().includes(queryText))
+    return prompts
+      .filter((prompt) => `${prompt.name} ${prompt.title} ${prompt.description}`.toLowerCase().includes(queryText))
       .slice(0, CATALOG_LIMIT)
-      .map((persona) => ({ type: "persona", persona }))
-  }, [personas, query, queryText, currentPersonaId])
+      .map((prompt) => ({ type: "prompt", prompt }))
+  }, [prompts, query, queryText])
 
   React.useEffect(() => {
     if (!projectId || query === null) {
@@ -267,8 +262,8 @@ export function useFileMentions(opts: {
       .map((p) => ({ type: "project" as const, id: p.id, name: p.name, cwd: p.cwd, logoUrl: p.logoUrl }))
   }, [query, projects, projectId])
   const matches = React.useMemo<MentionMatch[]>(
-    () => [...personaMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
-    [personaMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
+    () => [...promptMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
+    [promptMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
   )
 
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
@@ -283,12 +278,11 @@ export function useFileMentions(opts: {
       onResource?.(entry)
       return
     }
-    if (entry.type === "mcp-server" || entry.type === "persona") {
+    if (entry.type === "mcp-server") {
       pendingCaret.current = token.start
       setText(text.slice(0, token.start) + text.slice(caret))
       setSelected(0)
-      if (entry.type === "mcp-server") onMcpServer?.(entry.server)
-      else onPersona?.(entry.persona)
+      onMcpServer?.(entry.server)
       return
     }
     /* A directory completes to `@path/` and leaves the token open, so the next
@@ -296,7 +290,9 @@ export function useFileMentions(opts: {
     const insert =
       entry.type === "project"
         ? `@${entry.cwd} `
-        : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
+        : entry.type === "prompt"
+          ? `@${entry.prompt.name} `
+          : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
     pendingCaret.current = token.start + insert.length
     setText(text.slice(0, token.start) + insert + text.slice(caret))
     setSelected(0)
@@ -396,14 +392,14 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
   return (
     <CompleterList selected={state.selected} count={state.matches.length} hint={scope}>
       {state.matches.map((entry, i) => {
-        if (entry.type === "persona") {
+        if (entry.type === "prompt") {
           return (
             <CompleterRow
-              key={`persona:${entry.persona.id}`}
+              key={`prompt:${entry.prompt.id}`}
               icon={Bot}
-              label={entry.persona.name}
-              description={entry.persona.description || undefined}
-              badge="persona"
+              label={entry.prompt.title || entry.prompt.name}
+              description={entry.prompt.description || undefined}
+              badge="prompt"
               selected={i === state.selected}
               onPick={() => state.pick(entry)}
               onHover={() => state.setSelected(i)}

@@ -56,10 +56,20 @@ function MorphingDialog({ children }: { children: React.ReactNode }) {
 
 /** The box that opens into the panel. Stays mounted and in the flow while the
     panel is up, so nothing around it moves under the morph. */
-function MorphingDialogSource({ className, children }: { className?: string; children: React.ReactNode }) {
+function MorphingDialogSource({
+  className,
+  style,
+  children,
+}: {
+  className?: string
+  /** Radius and shadow belong here, not in classes: motion corrects only what
+      is a style while it scales the box. */
+  style?: React.CSSProperties
+  children?: React.ReactNode
+}) {
   const { layoutId } = useMorphingDialog()
   return (
-    <m.div layoutId={layoutId} className={className}>
+    <m.div layoutId={layoutId} className={className} style={style}>
       {children}
     </m.div>
   )
@@ -95,10 +105,13 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
 function MorphingDialogContent({
   label,
   className,
+  plain,
   children,
 }: {
   /** The dialog's accessible name. */
   label: string
+  /** No backdrop blur — a full-window blur is dear to animate on a phone. */
+  plain?: boolean
   className?: string
   children: React.ReactNode
 }) {
@@ -139,7 +152,7 @@ function MorphingDialogContent({
         <m.div
           key="backdrop"
           data-slot="dialog-overlay"
-          className="fixed inset-0 isolate z-50 bg-black/80 supports-backdrop-filter:backdrop-blur-xs"
+          className={cn("fixed inset-0 isolate z-50 bg-black/80", !plain && "supports-backdrop-filter:backdrop-blur-xs")}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -195,4 +208,4 @@ function MorphingDialogContent({
   )
 }
 
-export { MorphingDialog, MorphingDialogSource, MorphingDialogOpen, MorphingDialogContent }
+export { useMorphingDialog, MorphingDialog, MorphingDialogSource, MorphingDialogOpen, MorphingDialogContent }

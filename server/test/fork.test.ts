@@ -132,7 +132,6 @@ assert.equal(child.profileId, parent.profileId, "inherits the profile");
 assert.equal(child.agentId, parent.agentId, "…the agent");
 assert.equal(child.projectId, parent.projectId, "…the project");
 assert.equal(child.model, parent.model, "…the model");
-assert.equal(child.personaId, parent.personaId, "…the persona");
 assert.equal(child.suggestFollowups, parent.suggestFollowups, "…the suggestions toggle");
 assert.equal(child.parentSessionId, null, "a branch is not a workflow step");
 assert.ok(child.title.endsWith("(branch)"), "a name the title sniff will leave alone");

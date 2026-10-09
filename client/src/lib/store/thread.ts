@@ -144,7 +144,7 @@ export interface ThreadState {
       alone; the reset on a fresh attach takes it back to empty first. */
   turns: TurnTick[]
   /**
-   * A profile/model/effort/persona change **this device** has asked for and not
+   * A profile/model/effort change **this device** has asked for and not
    * yet had confirmed — the picks buffered before the POST goes out, and the
    * POST itself while it is in flight.
    *

@@ -537,29 +537,17 @@ export interface CommandDef {
   content: string
 }
 
-/**
- * How a thread wants to be worked on: a block of instructions appended to the
- * agent's own system prompt, plus the two dials that go with it.
- *
- * The client never assembles the prompt or sends it anywhere — a persona is an
- * id on the thread, and the server hands it to the runtime through whichever
- * door that runtime opens (`server/src/personas.ts`). Which is why picking one
- * costs a respawn: every agent we ship reads it only as a session is created or
- * loaded, so there is nothing to change on a running process. The conversation
- * survives, because the respawn ends in `session/load`.
- */
-export interface Persona {
+/** A saved prompt: reusable text, mentioned as `@handle` in the composer. The
+    client sends the literal handle; the server expands it at send time. */
+export interface SavedPrompt {
   id: string
+  /** The handle, without the `@`. */
   name: string
+  /** Display name, e.g. `QuickFix`; empty falls back to the handle. */
+  title: string
   description: string
   prompt: string
-  /** null = leave the runtime's own default alone; 0 = thinking off; >0 = a
-      token budget. Only runtimes with thinking as their own axis honour it. */
-  thinking: number | null
-  /** Applied to the thread when the persona is *picked*, and never again — the
-      effort row underneath stays the user's. Null = the persona has no opinion. */
-  effort: string | null
-  /** 0 for a persona the user made; the seed release for a built-in. */
+  /** 0 for a prompt the user made; the seed release for a built-in. */
   seededVersion: number
   sortOrder: number
 }
@@ -765,7 +753,7 @@ export interface Project {
   helpers?: HelperCommand[]
   /** How a thread started in this project opens — the profile/agent pair, the
       model and effort, the permission mode, the agent's other selectors, the
-      persona, the tool picks and the two instruction toggles. Written by the
+      tool picks and the two instruction toggles. Written by the
       composer as you pick (`rememberThreadDefaults`), so changing the project
       changes what a new thread in it is configured with.
 
@@ -780,7 +768,7 @@ export interface Project {
  *
  * The client's shape, not the row's: every field is present and `""` is the
  * empty pick everywhere it appears — no model (the agent's own), no effort,
- * no mode, no persona. A project nobody has configured reads as all of this
+ * no mode. A project nobody has configured reads as all of this
  * empty, which is exactly what a draft with nothing remembered holds.
  */
 export interface ProjectDefaults {
@@ -790,7 +778,6 @@ export interface ProjectDefaults {
   effort: string
   modeId: string
   configChoices: Record<string, string | boolean>
-  personaId: string
   mcpServerIds: string[]
   skillIds: string[]
   commandIds: string[]
@@ -834,8 +821,6 @@ export interface SessionMeta {
   agentId: string
   model: string
   effort: string
-  /** The thread's persona (`Persona`), or "" for none. */
-  personaId?: string
   /** Whether the agent closes answers with follow-up prompt suggestions.
       Absent from a server that predates the toggle, which reads as off. */
   suggestFollowups?: boolean
@@ -978,7 +963,6 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.agentId === b.agentId &&
     a.model === b.model &&
     a.effort === b.effort &&
-    a.personaId === b.personaId &&
     (a.suggestFollowups ?? false) === (b.suggestFollowups ?? false) &&
     (a.uiBlocks ?? true) === (b.uiBlocks ?? true) &&
     a.title === b.title &&
@@ -1170,9 +1154,6 @@ export interface Routine {
   /** Empty string = defer to the profile/agent, exactly as a thread does. */
   model: string
   effort: string
-  /** Null for none. Not a foreign key server-side: a deleted persona reads as
-      "none" at the next fire. */
-  personaId: string | null
   /** Picks against the agent's advertised selectors, replayed after
       `session/new`. Opaque ACP option ids — never enumerated. */
   configChoices: Record<string, string | boolean>
@@ -1209,7 +1190,6 @@ export interface RoutineInput {
   agentId: string
   model?: string
   effort?: string
-  personaId?: string | null
   configChoices?: Record<string, string | boolean>
   body: RoutineBody
   output?: Record<string, unknown> | null

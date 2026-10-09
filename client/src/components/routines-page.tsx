@@ -34,7 +34,6 @@ import {
   ShieldAlertIcon,
   ShieldCheckIcon,
   Trash2Icon,
-  UserRoundIcon,
   WorkflowIcon,
   ZapIcon,
 } from "lucide-react"
@@ -76,7 +75,7 @@ import { newRoutinePath, routinePath, routinesPath, threadPath } from "@/lib/rou
 import { api, profileSupports, type Routine, type RoutineRun } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
 import { routineRunsKey } from "@/lib/queries/keys"
-import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import {
   useCancelRoutineRun,
   useCreateRoutine,
@@ -594,7 +593,6 @@ function RoutineDetailPage({
   const projects = useProjects()
   const agents = useAgents()
   const profiles = useProfiles()
-  const personas = usePersonas()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const routine = routines?.find((r) => r.id === routineId)
@@ -653,7 +651,6 @@ function RoutineDetailPage({
   const project = projects.find((p) => p.id === routine.projectId)
   const agent = agents.find((a) => a.id === routine.agentId)
   const profile = profiles.find((p) => p.id === routine.profileId)
-  const persona = routine.personaId ? personas.find((p) => p.id === routine.personaId) : undefined
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -734,7 +731,6 @@ function RoutineDetailPage({
               {profile?.name ?? routine.profileId}
             </MetaFact>
             {routine.model && <MetaFact title="Model">{routine.model}{routine.effort && ` · ${routine.effort}`}</MetaFact>}
-            {persona && <MetaFact icon={UserRoundIcon} title="Persona">{persona.name}</MetaFact>}
             <MetaFact
               icon={grants > 0 ? ShieldAlertIcon : ShieldCheckIcon}
               className={grants > 0 ? "text-amber-600 dark:text-amber-400" : undefined}

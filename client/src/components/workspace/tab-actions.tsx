@@ -21,7 +21,7 @@
    one is doing (`panel-status`) rather than only what it is called. */
 import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
-import { ChevronDownIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, HistoryIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -30,7 +30,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  MorphingDialog,
+  MorphingDialogContent,
+  MorphingDialogOpen,
+  MorphingDialogSource,
+  useMorphingDialog,
+} from "@/components/ui/morphing-dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useStoreSelect } from "@/lib/store"
 import { useIsMobile } from "@/hooks/use-device"
 import { STRIP_GROUND } from "@/lib/header-chrome"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
@@ -38,6 +46,8 @@ import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { LAYOUT_PRESETS, WorkspacePanelItems } from "@/components/workspace/panel-items"
 import { useDock, useDockOpeners } from "@/components/workspace/dock-context"
+import { useOpenThreads } from "@/lib/workspace/open-threads"
+import { activityAt, isListed } from "@/lib/settings"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
@@ -48,6 +58,9 @@ import { cn } from "@/lib/utils"
     strip is the one tab you are on, so with a second tab open the list is the
     only place that one is by name — which is what makes it the switcher. */
 const LIST_FROM = 3
+
+/** Fired by a downward drag on the phone strip (`dock-surface.tsx`). */
+export const TAB_GRID_EVENT = "daedalus:tab-grid"
 
 /* The strip's own two controls: bare glyphs, like the header's (`HEADER_CHIP`
    beside them) and like the tab's mark, on the one line-height everything in a
@@ -61,6 +74,14 @@ const STRIP_CONTROL = cn(
      named once (`lib/header-chrome.ts`). */
   STRIP_GROUND
 )
+
+function relativeAge(at: number): string {
+  const m = Math.max(0, Math.round((Date.now() - at) / 60000))
+  if (m < 1) return "now"
+  if (m < 60) return `${m}m`
+  if (m < 1440) return `${Math.round(m / 60)}h`
+  return `${Math.round(m / 1440)}d`
+}
 
 function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
   const kind = panel.api.component
@@ -117,6 +138,164 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
         </Button>
       )}
     </DropdownMenuItem>
+  )
+}
+
+/* The phone's switcher, Chrome Android's: the strip's button is a rounded square
+   holding the tab count, and it morphs into a full panel of rows — the same
+   `MorphingDialog` the workflow run's full screen uses, so the two grow out of
+   their source the same way. */
+function TabGrid(props: {
+  panels: IDockviewPanel[]
+  onClose: (id: string) => void
+  onNew?: () => void
+  onOpenThread: (id: string) => void
+}) {
+  return (
+    <MorphingDialog>
+      <TabGridBody {...props} />
+    </MorphingDialog>
+  )
+}
+
+function TabGridBody({
+  panels,
+  onClose,
+  onNew,
+  onOpenThread,
+}: {
+  panels: IDockviewPanel[]
+  onClose: (id: string) => void
+  onNew?: () => void
+  onOpenThread: (id: string) => void
+}) {
+  const { open, setOpen } = useMorphingDialog()
+  /* Recents, as the sidebar draws them: listed threads with no tab open, newest
+     activity first. Only read while the grid is open. */
+  const sessions = useStoreSelect((state) => state.sessions)
+  const openIds = useOpenThreads()
+  const recent = React.useMemo(() => {
+    if (!open) return []
+    const taken = new Set(openIds)
+    return sessions
+      .filter((s) => isListed(s) && !s.deletedAt && !taken.has(s.id))
+      .sort((a, b) => activityAt(b) - activityAt(a))
+      .slice(0, 6)
+  }, [open, sessions, openIds])
+  /* The strip's drag-down (`dock-surface.tsx`) opens the same grid. */
+  React.useEffect(() => {
+    const show = () => setOpen(true)
+    window.addEventListener(TAB_GRID_EVENT, show)
+    return () => window.removeEventListener(TAB_GRID_EVENT, show)
+  }, [setOpen])
+  return (
+    <>
+      {/* The button stays put and stays drawn: the morph's source is an empty,
+          invisible box laid over it, so nothing blinks out when the panel
+          takes the layout id. Its radius is a style (a pill), so motion
+          corrects it while it scales. */}
+      <span className="relative grid">
+        <MorphingDialogOpen
+          title={`Switch tabs (${panels.length})`}
+          className={cn(STRIP_CONTROL, "grid place-items-center")}
+        >
+          <span className="grid size-5 place-items-center rounded-[6px] border-[1.5px] border-current text-[11px] font-semibold leading-none tabular-nums">
+            {panels.length}
+          </span>
+        </MorphingDialogOpen>
+        <MorphingDialogSource className="pointer-events-none absolute inset-0" style={{ borderRadius: 9999 }} />
+      </span>
+      <MorphingDialogContent plain label={`${panels.length} tabs`}>
+        <div className="flex h-12 shrink-0 items-center pr-14 pl-4">
+          <span className="text-base font-semibold">
+            Tabs <span className="ml-1 text-sm font-normal text-muted-foreground tabular-nums">{panels.length}</span>
+          </span>
+        </div>
+        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-[max(4rem,calc(var(--safe-bottom)+3.5rem))]">
+          {panels.map((panel) => (
+            <TabCard key={panel.id} panel={panel} onPick={() => setOpen(false)} onClose={() => onClose(panel.id)} />
+          ))}
+                {recent.length > 0 && (
+                  <>
+                    <div className="mt-2 flex h-7 items-center gap-1.5 px-2 text-[11px] font-bold tracking-[0.06em] text-foreground/80 uppercase">
+                      <HistoryIcon className="size-3" />
+                      Recent
+                    </div>
+                    {recent.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => {
+                          setOpen(false)
+                          onOpenThread(s.id)
+                        }}
+                        className="flex h-10 items-center gap-2 rounded-lg px-2 text-left active:bg-sidebar-accent/60"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[13px]">{s.title || "Untitled thread"}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                          {relativeAge(activityAt(s))}
+                        </span>
+                      </button>
+                    ))}
+                  </>
+                )}
+        </div>
+              {onNew && (
+                <button
+                  type="button"
+                  aria-label="New tab"
+                  onClick={() => {
+                    setOpen(false)
+                    onNew()
+                  }}
+                  className="absolute right-4 bottom-[max(1rem,var(--safe-bottom))] flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg active:scale-95"
+                >
+                  <PlusIcon className="size-4" />
+                  New tab
+                </button>
+              )}
+      </MorphingDialogContent>
+    </>
+  )
+}
+
+function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: () => void; onClose: () => void }) {
+  const kind = panel.api.component
+  const Icon = isPanelKind(kind) ? PANEL_ICONS[kind] : null
+  const title = panel.title ?? (isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : "Panel")
+  const status = usePanelStatus(panel.id)
+  const pinned = usePanelPinned(panel.id)
+  const active = panel.api.isActive
+  return (
+    <div className={cn("flex h-10 items-center rounded-lg", active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "active:bg-sidebar-accent/60")}>
+      <button
+        type="button"
+        aria-current={active ? "true" : undefined}
+        onClick={() => {
+          panel.api.setActive()
+          onPick()
+        }}
+        className="flex h-10 min-w-0 flex-1 items-center gap-2 px-2 text-left"
+      >
+        {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" />}
+        <span className="min-w-0 flex-1">
+          <span className={cn("block truncate text-[13px]", status?.tone === "running" && "harness-shimmer")}>{title}</span>
+        </span>
+        <PanelStatusDot status={status} />
+      </button>
+      {pinned ? (
+        <PinIcon aria-label="Pinned" className="mx-3 size-3.5 shrink-0 text-muted-foreground" />
+      ) : (
+        <button
+          type="button"
+          aria-label={`Close ${title}`}
+          onClick={onClose}
+          className="grid size-10 shrink-0 place-items-center text-muted-foreground"
+        >
+          <XIcon className="size-4" />
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -212,7 +391,21 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
           and nothing else, so the list is the switcher from two tabs up: it is
           the only place the other one is, by name. The + stays either way, which
           is the whole reason this row no longer returns null. */}
-      {panels.length >= (isMobile ? 2 : LIST_FROM) && (
+      {isMobile && (
+        <TabGrid
+          panels={panels}
+          onClose={(id) => void dock.closePanel(id)}
+          onOpenThread={(id) => dock.openChat(id, { newTab: true, into: { group: group.id } })}
+          onNew={
+            onNewTab &&
+            (() => {
+              dock.targetNext(group.id)
+              onNewTab()
+            })
+          }
+        />
+      )}
+      {!isMobile && panels.length >= LIST_FROM && (
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger

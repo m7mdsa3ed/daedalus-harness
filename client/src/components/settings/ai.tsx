@@ -13,7 +13,7 @@
  * turn on a thread's agent. Nothing here is journaled, queued or billed to a
  * thread; the API key never leaves the server.
  */
-import { GitBranchIcon, Sparkles } from "lucide-react"
+import { FileJson2, GitBranchIcon, Sparkles } from "lucide-react"
 
 import { ProfileIcon } from "@/components/entity-icon"
 import {
@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Notice } from "@/components/notice"
-import { aiCapable, enhancePick, gitPick, modelPickLabel, type AiPick } from "@/lib/ai-picks"
+import { aiCapable, enhancePick, formBuilderPick, gitPick, modelPickLabel, type AiPick } from "@/lib/ai-picks"
 import { useProfiles } from "@/lib/queries/catalog"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -54,6 +54,14 @@ export function AiPage() {
             title="Enhance prompts with"
             subtitle="The profile whose endpoint rewrites the composer's drafts. The box is replaced, unsent — sending is still yours."
             modelTitle="Enhance model"
+          />
+          <PickGroup
+            label="Forms"
+            icon={FileJson2}
+            pick={formBuilderPick}
+            title="Build forms with"
+            subtitle="The model that chats through schema-backed forms and drafts values for review. Applied values remain an unsaved draft until you save the form."
+            modelTitle="Form builder model"
           />
           <PickGroup
             label="Source control"

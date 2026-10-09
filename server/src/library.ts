@@ -50,7 +50,7 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     id: "builtin:harness",
     name: "Harness",
     description:
-      "Manage this harness from the agent — projects, spaces, profiles and agents, the task board, the library (MCP servers, skills, commands, personas, model prompts), rules, themes, knowledge, routines, schedules and threads, on the same routes the app itself calls.",
+      "Manage this harness from the agent — projects, spaces, profiles and agents, the task board, the library (MCP servers, skills, commands, saved prompts, model prompts), rules, themes, knowledge, routines, schedules and threads, on the same routes the app itself calls.",
   },
   browser: {
     id: "builtin:browser",

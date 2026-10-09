@@ -216,8 +216,8 @@ export function makeThreadCallbacks(
        what ends this device's optimism about it: the row moves and the
        overlay the menu was drawing from is dropped in the same commit, so
        the value never flickers between the two. */
-    onSpawnConfig: (profileId, model, effort, personaId, suggestFollowups, uiBlocks) => {
-      send({ type: "spawn-config", id, profileId, model, effort, personaId, suggestFollowups, uiBlocks })
+    onSpawnConfig: (profileId, model, effort, suggestFollowups, uiBlocks) => {
+      send({ type: "spawn-config", id, profileId, model, effort, suggestFollowups, uiBlocks })
       send({ type: "pending-config", id, patch: null })
     },
     onStagedConfig: (config) => send({ type: "staged-config", id, config }),

@@ -36,6 +36,7 @@ import {
   TypePicker,
 } from "./fields"
 import { TaskEditor } from "./task-editor"
+import { AiFormBuilder } from "@/components/settings/ai-form-builder"
 
 /**
  * Create a task with the fields that matter up front. The detail panel is
@@ -151,6 +152,28 @@ export function NewTaskDialog({
         {/* The footer is partitioned out of the children, so the buttons hang
             off the form by id rather than by nesting. */}
         <form id="new-task-form" onSubmit={(e) => void submit(e)} className="grid content-start gap-4">
+            <div className="flex justify-end">
+              <AiFormBuilder
+                title="task"
+                value={draft as Record<string, unknown>}
+                onApply={(next) => patch(next as Partial<TaskInput>)}
+                schema={{
+                  type: "object",
+                  properties: {
+                    title: { type: "string", description: "Concise task title.", examples: ["Handle empty API responses"] },
+                    description: { type: "string", description: "Context, goal, acceptance criteria, and implementation notes in Markdown." },
+                    type: { type: "string", enum: ["task", "bug", "story", "epic"], description: "Task category." },
+                    priority: { type: "string", enum: ["lowest", "low", "medium", "high", "urgent"], description: "Urgency." },
+                    statusId: { type: "string", enum: statuses.map((status) => status.id), description: "One of the current board status ids." },
+                    labels: { type: "array", items: { type: "string" }, description: "Short tags describing area or theme." },
+                    assignee: { type: ["string", "null"], enum: [...facets.assignees, null], description: "Assignee name, or null." },
+                    estimate: { type: ["integer", "null"], description: "Story-point estimate, or null." },
+                  },
+                  required: ["title", "description", "type", "priority", "statusId"],
+                  additionalProperties: false,
+                }}
+              />
+            </div>
             <div className="grid gap-1.5">
               <Label htmlFor="new-task-title" className="sr-only">
                 Title

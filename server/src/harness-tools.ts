@@ -40,7 +40,7 @@ export interface HarnessTool {
 }
 
 /** The library's five reusable-row resources, addressed by one set of tools. */
-export const LIBRARY_RESOURCES = ["mcp-servers", "skills", "commands", "personas", "model-prompts"] as const;
+export const LIBRARY_RESOURCES = ["mcp-servers", "skills", "commands", "prompts", "model-prompts"] as const;
 
 const id = { id: z.string().min(1).describe("The row's id.") };
 const projectId = { projectId: z.string().min(1).describe("The project's id.") };
@@ -214,7 +214,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "projects_set_defaults",
     title: "Set project defaults",
-    description: "Set what a thread started in this project opens with: {profileId?, agentId?, model?, effort?, modeId?, personaId?}.",
+    description: "Set what a thread started in this project opens with: {profileId?, agentId?, model?, effort?, modeId?}.",
     method: "PATCH",
     path: "/api/projects/:id/defaults",
     params: id,
@@ -297,7 +297,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     params: id,
   },
 
-  /* ── The library: MCP servers, skills, commands, personas, model prompts ── */
+  /* ── The library: MCP servers, skills, commands, saved prompts, model prompts ── */
   {
     name: "library_list",
     title: "List a library kind",
@@ -310,7 +310,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     name: "library_create",
     title: "Add a library row",
     description:
-      "Create a row: an MCP server ({type:\"stdio\"|\"http\"|\"builtin\", name, ...}), a skill ({name, path}), a command ({name, description, content, argumentHint?}), a persona, or a model prompt.",
+      "Create a row: an MCP server ({type:\"stdio\"|\"http\"|\"builtin\", name, ...}), a skill ({name, path}), a command ({name, description, content, argumentHint?}), a saved prompt ({name: the @handle, description?, prompt}), or a model prompt.",
     method: "POST",
     path: "/api/:resource",
     params: resource,
@@ -354,7 +354,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "rules_list",
     title: "List global rules",
-    description: "The global rules block, folded into every spawn beneath the persona.",
+    description: "The global rules block, folded into every spawn at spawn.",
     method: "GET",
     path: "/api/rules",
   },

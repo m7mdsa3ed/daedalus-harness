@@ -15,7 +15,7 @@ import {
   withInstructionTrailers,
 } from "../src/personas.js";
 
-const persona = { id: "p1", prompt: "PERSONA TEXT", thinking: null };
+const persona = { id: "p1", prompt: "PERSONA TEXT" };
 
 // --- nothing asked for: the persona is returned untouched ---
 {
@@ -60,7 +60,7 @@ const persona = { id: "p1", prompt: "PERSONA TEXT", thinking: null };
     "the trailer appears exactly once",
   );
   // A persona that quotes the trailer is not a reason to send it twice either.
-  const quoted = { id: "p2", prompt: `instructions\n\n${OPENUI_INSTRUCTIONS}`, thinking: null };
+  const quoted = { id: "p2", prompt: `instructions\n\n${OPENUI_INSTRUCTIONS}` };
   const out = withInstructionTrailers(quoted, { uiBlocks: true });
   assert.equal(out?.prompt, quoted.prompt, "quoted text is recognized as already present");
   console.log("openui-trailer: idempotent ok");

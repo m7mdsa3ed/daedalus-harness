@@ -71,7 +71,6 @@ import {
   EffortPage,
   ModePage,
   ModelPage,
-  PersonaPage,
   ProjectPage,
   ProjectsPage,
   StartPage,
@@ -396,8 +395,6 @@ const PageBody = React.memo(function PageBody({ page }: { page: PageId }) {
       return <EffortPage />
     case "mode":
       return <ModePage />
-    case "persona":
-      return <PersonaPage />
     case "routines":
       return <RunRoutinePage />
     case "routine-activity":

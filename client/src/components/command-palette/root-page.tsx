@@ -21,7 +21,6 @@
 import * as React from "react"
 import {
   AppWindowIcon,
-  Bot,
   ChevronLeft,
   ChevronRight,
   LayoutGrid,
@@ -31,7 +30,6 @@ import {
   Copy,
   Cpu,
   DownloadIcon,
-  Drama,
   FolderIcon,
   FolderPlus,
   Gauge,
@@ -80,7 +78,7 @@ import { currentChoiceLabel } from "@/lib/session-options"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { agentsPath, boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
+import { boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
 import { runShortcut } from "@/hooks/use-hotkey"
 import {
   activityAt,
@@ -90,7 +88,7 @@ import {
   loadSettings,
   setActiveServer,
 } from "@/lib/settings"
-import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
 import { usePins } from "@/lib/pins"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
@@ -128,7 +126,6 @@ export function RootPage() {
   const projects = useProjects()
   const profiles = useProfiles()
   const agents = useAgents()
-  const personas = usePersonas()
   const routines = useRoutines().data ?? []
   /* See search-page: a running mark per row, without subscribing to the
      stream that produces it. */
@@ -210,15 +207,6 @@ export function RootPage() {
       onSelect: () => palette.descend("thread-search"),
     })
   }
-  items.push({
-    id: "jump:agents",
-    group: "Jump",
-    title: "Agents",
-    keywords: "dashboard running waiting approval held failed status every thread overview",
-    icon: <Bot />,
-    subtitle: "Every thread's live state — which ones are running, and which are waiting on you",
-    onSelect: () => palette.run(() => void navigate(agentsPath())),
-  })
   if (routines.length > 0) {
     /* The one surface that answers "what have these been doing while I wasn't
        watching?" — one chord away on purpose, because a standing grant to act
@@ -389,22 +377,6 @@ export function RootPage() {
         icon: <Gauge />,
         meta: [{ label: capitalize(currentChoiceLabel(options.effort)) }],
         onSelect: () => palette.descend("effort"),
-      })
-    }
-    /* Above the permission mode, and unlike it not gated on the agent
-       advertising anything: a persona is the harness's own, so every started
-       thread can take one. Drafts are excluded — their persona is a field on
-       the composer's menu, and there is no thread to restart. */
-    if (!meta.draft && personas.length > 0) {
-      const persona = personas.find((p) => p.id === meta.personaId)
-      items.push({
-        id: "thread:persona",
-        group: "This thread",
-        title: "Change persona…",
-        keywords: "style think more less chat quick fix lazy instructions prompt",
-        icon: <Drama />,
-        meta: [{ label: persona?.name ?? "None" }],
-        onSelect: () => palette.descend("persona"),
       })
     }
     if (modes) {

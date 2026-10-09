@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 /**
  * Rules: standing instructions every thread starts with, written once instead
- * of retyped into a persona per thread.
+ * of retyped into every thread.
  *
  * Two layers, general to specific: global rules (projectId = null) and
  * project-scoped rules (projectId set). A spawn composes both with
@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
  * them all into the text block each runtime receives through its
  * existing door — claude-code's `_meta.systemPrompt.append`,
  * codex's `developer_instructions`, opencode's instructions file —
- * and no door learns rules exist. Like a persona, a rules change is
+ * and no door learns rules exist. A rules change is
  * a spawn-time fact: live threads pick it up on their next respawn.
  */
 

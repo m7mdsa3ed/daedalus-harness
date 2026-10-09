@@ -2,7 +2,7 @@
  *
  * The values a thread started in a project opens with — the profile/agent
  * pair, the model and effort, the permission mode, the agent's other
- * selectors, the persona, the tool picks and the two instruction toggles
+ * selectors, the tool picks and the two instruction toggles
  * (`ProjectDefaults`). They live on the project row, because that is the scope
  * they are about: "the model I use for this codebase" belongs to the codebase
  * exactly as `session_project` belongs to the thread, so a pick follows the

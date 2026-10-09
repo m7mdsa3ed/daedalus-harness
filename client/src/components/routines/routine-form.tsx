@@ -2,7 +2,7 @@
    A routine is a saved thread-start, so the half of this form that decides
    *how* the thread starts is drawn by the composer's own controls, not by
    copies of them: `DraftScopeRow` (project and the tools menu) and
-   `DraftConfigPopover` (agent, profile, persona, model, effort), verbatim. That is a
+   `DraftConfigPopover` (agent, profile, model, effort), verbatim. That is a
    constraint and not a convenience — a routine that needed a picker the draft
    composer does not have would be a routine that can start a thread you could
    not start by hand, which is the one thing the shape is meant to prevent.
@@ -106,7 +106,6 @@ export interface RoutineDraft {
   agentId: string
   model: string
   effort: string
-  personaId: string
   configChoices: Record<string, string | boolean>
   mcpServerIds: string[]
   skillIds: string[]
@@ -131,7 +130,6 @@ export function draftOf(routine: Routine): RoutineDraft {
     agentId: routine.agentId,
     model: routine.model,
     effort: routine.effort,
-    personaId: routine.personaId ?? "",
     configChoices: routine.configChoices,
     mcpServerIds: routine.links.mcpServerIds,
     skillIds: routine.links.skillIds,
@@ -162,7 +160,6 @@ export function blankDraft(seed: {
     ...seed,
     model: "",
     effort: "",
-    personaId: "",
     configChoices: {},
     mcpServerIds: [],
     skillIds: [],
@@ -288,7 +285,6 @@ export function toInput(draft: RoutineDraft): { input: RoutineInput } | { proble
       agentId: draft.agentId,
       model: draft.model,
       effort: draft.effort,
-      personaId: draft.personaId || null,
       configChoices: draft.configChoices,
       body,
       output,
@@ -417,7 +413,6 @@ export function RoutineForm({
       agentId: draft.agentId,
       model: draft.model,
       effort: draft.effort,
-      personaId: draft.personaId,
       configChoices: draft.configChoices,
       mcpServerIds: draft.mcpServerIds,
       skillIds: draft.skillIds,

@@ -27,13 +27,11 @@ import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
-import { useAgents, usePersonas, useProfiles } from "@/lib/queries/catalog"
+import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { configView, stagedPicks, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
-/** Sentinel for "no persona", which is not itself a persona id. */
-const NO_PERSONA = "__none__"
 
 /**
  * Everything about how this thread is answering, behind one compact trigger.
@@ -99,7 +97,6 @@ export function SessionConfigPopover({
   const meta = row ? configView(row, thread) : undefined
   const profiles = useProfiles()
   const agents = useAgents()
-  const personas = usePersonas()
   const profile = profiles.find((p) => p.id === meta?.profileId)
   // The thread's agent, not the profile's: a profile may serve several.
   const agentId = meta?.agentId ?? ""
@@ -197,14 +194,13 @@ export function SessionConfigPopover({
       ? currentChoiceLabel(liveEffort)
       : null
 
-  const persona = personas.find((p) => p.id === meta.personaId)
 
   /* The same settings as one string, for the collapsed trigger's tooltip and
      its accessible name — and what is true about them that the values alone
      cannot say: a pick that has not landed yet, or one waiting for the send
      that will spend the spawn. */
   const triggerLabel = [
-    [persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
+    [modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
     meta.configPending ? "— applying…" : meta.configStaged ? "— when you next send" : "",
   ]
     .filter(Boolean)
@@ -316,15 +312,6 @@ export function SessionConfigPopover({
         void actions.cancelStagedConfig(sessionId).catch((err) => reportError(err, "Couldn't cancel that change")),
     },
     { type: "label", text: "Session" },
-    personas.length > 0 && {
-      type: "pick",
-      pick: {
-        label: "Persona",
-        value: meta.personaId || NO_PERSONA,
-        choices: [{ value: NO_PERSONA, name: "None" }, ...personas.map((p) => ({ value: p.id, name: p.name }))],
-        onSelect: (value) => actions.changeThreadPersona(row, value === NO_PERSONA ? "" : value),
-      },
-    },
     { type: "pick", pick: profilePick },
     modelPick && { type: "pick", pick: modelPick },
     effortPick && { type: "pick", pick: effortPick },
@@ -434,7 +421,6 @@ export function SessionConfigPopover({
             {/* The mode rides along in the trigger: a silently-active "accept
                 edits" is the one setting you must see. */}
             <PillLabel
-              persona={persona?.name}
               model={modelLabel}
               effort={effortLabel}
               effortLevel={
@@ -498,19 +484,6 @@ export function SessionConfigPopover({
         )}
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session</DropdownMenuLabel>
-          {/* First: the one row about the work rather than the machinery, and
-              the only one whose choices do not depend on the profile below. */}
-          {personas.length > 0 && (
-            <MenuRow
-              label="Persona"
-              value={meta.personaId || NO_PERSONA}
-              choices={[
-                { value: NO_PERSONA, name: "None" },
-                ...personas.map((p) => ({ value: p.id, name: p.name })),
-              ]}
-              onSelect={(value) => actions.changeThreadPersona(row, value === NO_PERSONA ? "" : value)}
-            />
-          )}
           {/* Drawn on a single profile too — the row is also the door to
               making another. */}
           <MenuRow {...profilePick} />

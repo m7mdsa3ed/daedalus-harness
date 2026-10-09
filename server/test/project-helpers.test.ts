@@ -183,7 +183,6 @@ try {
     effort: "",
     modeId: "",
     configChoices: {},
-    personaId: "",
     mcpServerIds: [],
     skillIds: [],
     commandIds: [],

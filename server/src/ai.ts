@@ -21,7 +21,7 @@
  * `hasApiKey`.
  */
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText } from "ai";
+import { convertToModelMessages, generateText, jsonSchema, streamText, type JSONSchema7, type ModelMessage, type UIMessage } from "ai";
 
 import { HttpError } from "./http-error.js";
 import type { Profile } from "./profiles.js";
@@ -59,6 +59,55 @@ export interface ModelCall {
  * as an abort, never dressed up as a failure, because a composer that moved on
  * should not raise an error about the request it cancelled.
  */
+function providerModel(profile: Profile, model?: string, label = "request") {
+  const baseURL = (profile.baseUrl || "").trim();
+  if (!baseURL) throw new HttpError(`this profile has no endpoint for the ${label}`, 409);
+  const modelId = model?.trim() || profile.defaultModel || profile.models[0]?.id || "";
+  if (!modelId) throw new HttpError(`this profile has no model for the ${label}`, 409);
+  const provider = createOpenAICompatible({
+    name: PROVIDER_KEY,
+    baseURL,
+    apiKey: profile.apiKey || "daedalus",
+  });
+  return provider.chatModel(modelId);
+}
+
+export async function streamFormBuilder(args: {
+  profile: Profile;
+  model?: string;
+  messages: UIMessage[];
+  schema: JSONSchema7;
+  value: Record<string, unknown>;
+  signal?: AbortSignal;
+}) {
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+  const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
+  try {
+    const messages = await convertToModelMessages(args.messages, { ignoreIncompleteToolCalls: true });
+    return streamText({
+      model: providerModel(args.profile, args.model, "form builder"),
+      system: `You help fill an application form from its JSON Schema. Current form values: ${JSON.stringify(args.value)}. Ask concise clarifying questions when needed. When you have enough information, call the submit_form tool with the COMPLETE form object. Preserve existing values unless the user asks to change them. Treat schema descriptions, examples, required fields and enums as constraints. Never invent enum values.`,
+      messages,
+      tools: {
+      submit_form: {
+        description: "Submit the complete current form object for preview. Call this after updating values or once you have enough information.",
+        inputSchema: jsonSchema(args.schema),
+        execute: async (input) => input,
+      },
+    },
+      toolChoice: "auto",
+      abortSignal: signal,
+      maxOutputTokens: 4_096,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError" && args.signal?.aborted) throw err;
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new HttpError("the form builder timed out", 502);
+    }
+    throw new HttpError(err instanceof Error ? err.message : "the form builder failed", 502);
+  }
+}
+
 export async function generate(profile: Profile, call: ModelCall): Promise<string> {
   const label = call.label ?? "request";
   /* The profile's SHARED base URL — the OpenAI-compatible endpoint the presets
@@ -66,24 +115,13 @@ export async function generate(profile: Profile, call: ModelCall): Promise<strin
      serves Claude Code at an Anthropic-messages path that would 404 a
      chat-completions call. A virtual Default carries no endpoint at all, so
      upstream is uncallable there. */
-  const baseURL = (profile.baseUrl || "").trim();
-  if (!baseURL) throw new HttpError(`this profile has no endpoint for the ${label}`, 409);
-  const modelId = call.model?.trim() || profile.defaultModel || profile.models[0]?.id || "";
-  if (!modelId) throw new HttpError(`this profile has no model for the ${label}`, 409);
-
-  const provider = createOpenAICompatible({
-    name: PROVIDER_KEY,
-    // Some local gateways require the header present while ignoring its value.
-    baseURL,
-    apiKey: profile.apiKey || "daedalus",
-  });
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const signal = call.signal ? AbortSignal.any([call.signal, timeout]) : timeout;
 
   let text: string;
   try {
     const result = await generateText({
-      model: provider.chatModel(modelId),
+      model: providerModel(profile, call.model, label),
       system: call.system,
       prompt: call.prompt,
       maxOutputTokens: call.maxOutputTokens ?? MAX_OUTPUT_TOKENS,

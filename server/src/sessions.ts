@@ -13,7 +13,7 @@ import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace } fro
 import { mcpServers as mcpLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
-import { personaEffort, personas, resolvePersonaSpawn } from "./personas.js";
+import { resolvePersonaSpawn } from "./personas.js";
 import { noteThreadLinked, noteTurnStarted, taskBrief } from "./task-threads.js";
 import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
@@ -160,14 +160,9 @@ export interface Session {
       them off a live process, so a revive with none (idle-retired,
       pre-restart) used to bring the thread back on the agent's defaults. */
   configChoices: Record<string, string | boolean>;
-  /** How this thread wants to be worked on (`personas.ts`), or "" for no
-      persona. A spawn input like model and effort — and unlike them it can
-      never be applied live, because every runtime reads it only when a session
-      is created or loaded. See `applyConfigLive`. */
-  personaId: string;
   /** Whether the agent closes each answer with follow-up prompt suggestions
       in a `suggest-prompts` fenced block (`personas.ts`). Same spawn-input
-      bargain as the persona: read only at session creation/load, so toggling
+      bargain: read only at session creation/load, so toggling
       it costs a respawn. */
   suggestFollowups: boolean;
   /** Whether the agent may answer with a fenced `openui-lang` block, which the
@@ -765,9 +760,6 @@ export class SessionManager {
         lastActivityAt,
         links: links.get(row.id) ?? emptyLinks(),
         acpSessionId: row.acpSessionId ?? undefined,
-        // Null in the column, "" in memory: every other spawn input on the
-        // session is a string, and "no persona" is not a third state.
-        personaId: row.personaId ?? "",
         // Rows written before the mode column existed never picked one —
         // null is the agent's default, which is exactly what they had.
         modeId: row.modeId ?? null,
@@ -1458,11 +1450,8 @@ export class SessionManager {
       /** Settings to put in place once the session exists — a step inheriting
           its parent's permission mode, the same way a respawn keeps its own. */
       restore?: import("./protocol.js").RestoreState;
-      /** How this thread should be worked on — picked on the draft, and (for a
-          workflow step) inherited from the parent along with everything else. */
-      personaId?: string;
       /** Whether the agent should close answers with follow-up suggestions —
-          picked on the draft like the persona, and free there: nothing is
+          picked on the draft, and free there: nothing is
           running yet, so there is no respawn to pay for. */
       suggestFollowups?: boolean;
       /** Whether answers may carry a drawn view — the same draft-picked,
@@ -1517,7 +1506,6 @@ export class SessionManager {
         model,
         effort,
         modeId: opts.modeId,
-        personaId: opts.personaId,
         suggestFollowups: opts.suggestFollowups,
         uiBlocks: opts.uiBlocks,
         title: opts.title,
@@ -1632,7 +1620,6 @@ export class SessionManager {
       model?: string;
       effort?: string;
       modeId?: string | null;
-      personaId?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
       title?: string;
@@ -1671,7 +1658,6 @@ export class SessionManager {
          the moment the agent confirms them (`onSpawnStateChange`), so a fresh
          row starts empty rather than claiming settings no process has taken. */
       configChoices: {},
-      personaId: opts.personaId ?? "",
       suggestFollowups: opts.suggestFollowups ?? true,
       uiBlocks: opts.uiBlocks ?? true,
       title: opts.title ?? "New thread",
@@ -1823,7 +1809,6 @@ export class SessionManager {
     const unattended = !!session.parentSessionId || session.autonomy !== null;
     const persona = await resolvePersonaSpawn(
       session.id,
-      session.personaId,
       agent,
       {
         suggestFollowups: session.suggestFollowups,
@@ -2079,12 +2064,11 @@ export class SessionManager {
    *    the alternative to asking is finding out by being refused, with the
    *    thread's record already changed;
    *  - a thread with no live process at all, which is a revive;
-   *  - a **persona** change, which is not a matter of conservatism at all but
-   *    of where the value is read: every runtime takes a persona only as a
-   *    session is created or loaded (`personas.ts`), so there is no live path
-   *    to be careful about. The suggestions toggle rides the same rule: its
-   *    trailer is folded into the same spawn text. The respawn is cheap in the way that matters —
-   *    it ends in `session/load`, so the conversation comes back with it.
+   *  - the **suggestions / drawn-UI** toggles, which are read only as a
+   *    session is created or loaded (their trailers are folded into the spawn
+   *    text, `personas.ts`), so there is no live path. The respawn is cheap in
+   *    the way that matters — it ends in `session/load`, so the conversation
+   *    comes back with it.
    *
    * Answers `{ live }` so the caller can tell a client whether its socket
    * survived: a respawn clears the event log and every peer has to reattach,
@@ -2123,7 +2107,6 @@ export class SessionManager {
       project: Project;
       model?: string;
       effort?: string;
-      personaId?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
     },
@@ -2143,8 +2126,7 @@ export class SessionManager {
        is trusted to have cleared it, the staged path used to lose the clearing,
        and every later revive re-passes whatever the row ended up holding. */
     next = { ...next, model: modelFor(session, next.profile, next.model) };
-    /* Before anything moves — including `applyConfigLive`'s own writes and the
-       persona this method assigns below — so the rows can be the difference
+    /* Before anything moves — including `applyConfigLive`'s own writes — so the rows can be the difference
        between two readings rather than a guess from the request. */
     const before = await this.configLabels(session);
     /* **A pick is held, not taken — live-capable or not.** What the running
@@ -2171,25 +2153,17 @@ export class SessionManager {
     /* Nothing live could be done, so this costs the process — taken now,
        because staging was refused above (see the three exclusions there). */
     /* The row moves before the respawn rather than being passed to it, because
-       a persona is not a spawn argument the way model and effort are: `start`
-       reads it off the session (it has to, since a revive with no caller
-       spawns from the row alone). Written here so the process that comes back
-       is the one the user asked for. */
-    const changed = next.personaId !== undefined && next.personaId !== session.personaId;
-    if (next.personaId !== undefined) session.personaId = next.personaId;
+       the toggles are not spawn arguments the way model and effort are:
+       `start` reads them off the session (it has to, since a revive with no
+       caller spawns from the row alone). Written here so the process that
+       comes back is the one the user asked for. */
     if (next.suggestFollowups !== undefined) session.suggestFollowups = next.suggestFollowups;
     if (next.uiBlocks !== undefined) session.uiBlocks = next.uiBlocks;
-    /* A persona that names an effort applies it — but only at the moment it is
-       *picked*, never on every later spawn. Otherwise the persona would win
-       every argument: the user drops "Think more" to medium, changes their
-       model, and the respawn silently puts it back on high. Picking is a
-       statement about how to work; the effort row underneath stays theirs. */
-    const effort = (changed ? await personaEffort(next.personaId) : undefined) ?? next.effort;
     /* Everything staged is about to be superseded by a process spawned on these
        settings — and it is dropped before the restart is announced, so a peer
        that reattaches at `ready` cannot be handed a stale one on `caught_up`. */
     this.clearStaged(session);
-    const restart = this.restartWith(session, next, effort, before);
+    const restart = this.restartWith(session, next, next.effort, before);
     /* Answered before the restart — but only for a caller that said it is
        attached and will follow the `restart` events. One that is not (a device
        reading a retired thread, a script) has no way to learn how this ended,
@@ -2268,9 +2242,7 @@ export class SessionManager {
        take them straight back out.
 
        This used to be the profile alone, which is the setting a restart is
-       *least* likely to be about: a persona change costs a respawn every time
-       and is the change most likely to alter how the answers read, and it said
-       nothing. */
+       *least* likely to be about. */
     this.noteConfig(session, before, await this.configLabels(session));
     /* What the thread ended up on, absolute — the same event the live path
        sends, for the same reason: a cleared model resolved to the profile's
@@ -2282,7 +2254,6 @@ export class SessionManager {
       profileId: session.profileId,
       model: session.model,
       effort: session.effort,
-      personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
       uiBlocks: session.uiBlocks,
     });
@@ -2317,7 +2288,6 @@ export class SessionManager {
       profile: Profile;
       model?: string;
       effort?: string;
-      personaId?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
     },
@@ -2327,7 +2297,6 @@ export class SessionManager {
       profileId: next.profile.id,
       ...(next.model !== undefined ? { model: next.model } : {}),
       ...(next.effort !== undefined ? { effort: next.effort } : {}),
-      ...(next.personaId !== undefined ? { personaId: next.personaId } : {}),
       ...(next.suggestFollowups !== undefined ? { suggestFollowups: next.suggestFollowups } : {}),
       ...(next.uiBlocks !== undefined ? { uiBlocks: next.uiBlocks } : {}),
     };
@@ -2453,7 +2422,6 @@ export class SessionManager {
           project,
           model,
           effort,
-          ...(staged.personaId !== undefined ? { personaId: staged.personaId } : {}),
           ...(staged.suggestFollowups !== undefined ? { suggestFollowups: staged.suggestFollowups } : {}),
         },
         { defer: false },
@@ -2560,8 +2528,7 @@ export class SessionManager {
    * change and again after it. The rows are the difference, and taking them
    * this way rather than from the request is what makes them honest: a menu
    * sends model and effort on *every* call (they fall back to the row for what
-   * the user did not pick), a profile move deliberately clears both, a persona
-   * that names an effort moves it as a side effect, and a model the agent
+   * the user did not pick), a profile move deliberately clears both, and a model the agent
    * refuses is put back. Diffing the readings says what the thread ended up
    * on; reading the request would have announced what was asked for.
    *
@@ -2574,16 +2541,12 @@ export class SessionManager {
     "Agent",
     "Model",
     "Effort",
-    "Persona",
     "Follow-ups",
     "Drawn UI",
   ];
 
   private async configLabels(session: Session): Promise<Record<ConfigNoticeLabel, string>> {
-    const [persona, agent] = await Promise.all([
-      session.personaId ? personas.get(session.personaId) : undefined,
-      getAgent(session.agentId),
-    ]);
+    const agent = await getAgent(session.agentId);
     /* The catalog's label where the profile owns one, the raw id where it does
        not — the same fallback `selectValueName` makes, for the same reason: an
        id nobody can name is still better than saying nothing changed. */
@@ -2593,9 +2556,6 @@ export class SessionManager {
       Agent: agent?.name ?? session.agentId,
       Model: model?.label || session.model || "Default",
       Effort: session.effort || "Default",
-      // A persona deleted out from under a live thread reads as "None", which
-      // is exactly what the next spawn will give it.
-      Persona: persona?.name ?? "None",
       "Follow-ups": session.suggestFollowups ? "On" : "Off",
       "Drawn UI": session.uiBlocks ? "On" : "Off",
       // Never diffed here: the mode travels its own door and writes its own row
@@ -2627,7 +2587,6 @@ export class SessionManager {
       project: Project;
       model?: string;
       effort?: string;
-      personaId?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
     },
@@ -2636,10 +2595,7 @@ export class SessionManager {
     if (!agent?.liveConfig) return false;
     if (next.agentId !== session.agentId) return false;
     /* Nothing to be clever about: `_meta` is read at `session/new`/`session/load`
-       and codex's config is read at spawn, so a persona cannot be moved on a
-       running process by any runtime we ship. */
-    if (next.personaId !== undefined && next.personaId !== session.personaId) return false;
-    /* Same door, same rule: the suggestions trailer is spawn text, so a
+       and codex's config is read at spawn. The suggestions trailer is spawn text, so a
        thread that flips it needs the new process rather than a live patch. */
     if (next.suggestFollowups !== undefined && next.suggestFollowups !== session.suggestFollowups) return false;
     /* As are the drawn-UI lane's instructions, for the same reason. */
@@ -2714,7 +2670,6 @@ export class SessionManager {
       profileId: session.profileId,
       model,
       effort,
-      personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
       uiBlocks: session.uiBlocks,
     });
@@ -2805,7 +2760,7 @@ export class SessionManager {
        thread. Two devices opening the same retired thread each ask for one;
        the second, queued behind the first, used to kill the process the first
        had just brought up. Only a revive (`opts.revive`) — a restart asked for
-       by name may be about a setting that is not an argument here (a persona)
+       by name may be about a setting that is not an argument here
        — and only with nothing to change. */
     if (
       opts.revive &&
@@ -2867,21 +2822,9 @@ export class SessionManager {
       spawnProfile = usable;
       spawnModel = modelFor(session, usable, staged.model ?? (moving ? "" : model));
       spawnEffort = staged.effort ?? (moving ? "" : effort);
-      /* A persona that names an effort applies it — the same rule `applyConfig`
-         states, and it has to be repeated here rather than inherited, because
-         this path is a substitution and never re-enters that method. Only when
-         the persona is *moving*, and only under an effort the patch does not
-         name itself: picking a persona is a statement about how to work, and
-         the effort row underneath stays the user's. */
-      const movingPersona =
-        staged.personaId !== undefined && staged.personaId !== session.personaId;
-      if (movingPersona && staged.effort === undefined) {
-        spawnEffort = (await personaEffort(staged.personaId)) ?? spawnEffort;
-      }
-      /* The row moves before the spawn rather than being passed to it, because
-         a persona is not a spawn argument the way model and effort are: `start`
-         reads it off the session. Same bargain as `applyConfig`'s. */
-      if (staged.personaId !== undefined) session.personaId = staged.personaId;
+      /* The row moves before the spawn rather than being passed to it: the
+         toggles are not spawn arguments the way model and effort are, `start`
+         reads them off the session. Same bargain as `applyConfig`'s. */
       if (staged.suggestFollowups !== undefined) session.suggestFollowups = staged.suggestFollowups;
       if (staged.uiBlocks !== undefined) session.uiBlocks = staged.uiBlocks;
       await this.applyStagedLinks(session, staged);
@@ -3009,8 +2952,7 @@ export class SessionManager {
         profileId: session.profileId,
         model: session.model,
         effort: session.effort,
-        personaId: session.personaId,
-        suggestFollowups: session.suggestFollowups,
+          suggestFollowups: session.suggestFollowups,
         uiBlocks: session.uiBlocks,
       });
     }
@@ -3213,7 +3155,6 @@ export class SessionManager {
       model: session.model || undefined,
       effort: session.effort || undefined,
       modeId: session.modeId,
-      personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
       uiBlocks: session.uiBlocks,
       /* A name the user did not type is still a name the sniff must not
@@ -3629,7 +3570,6 @@ export class SessionManager {
       model: s.model,
       effort: s.effort,
       modeId: s.modeId,
-      personaId: s.personaId,
       suggestFollowups: s.suggestFollowups,
       uiBlocks: s.uiBlocks,
       title: s.title,
@@ -3888,7 +3828,6 @@ function hasSpawnFields(staged: StagedConfig): boolean {
     staged.profileId !== undefined ||
     staged.model !== undefined ||
     staged.effort !== undefined ||
-    staged.personaId !== undefined ||
     staged.suggestFollowups !== undefined ||
     staged.uiBlocks !== undefined
   );
@@ -3925,7 +3864,6 @@ function rowValues(s: Session) {
     effort: s.effort,
     modeId: s.modeId,
     configChoices: s.configChoices,
-    personaId: s.personaId || null,
     suggestFollowups: s.suggestFollowups,
     uiBlocks: s.uiBlocks,
     title: s.title,

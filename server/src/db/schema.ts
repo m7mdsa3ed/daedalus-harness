@@ -205,7 +205,7 @@ export const agents = pgTable("agents", {
       the agent for the same reason `spawnCategories` is: the *how to talk* is
       one of quota.ts's adapters, but the command to run is the user's. */
   quotaProbe: jsonb("quota_probe").$type<QuotaProbe>(),
-  /** Which door this runtime opens for a thread's persona (`personas.ts`):
+  /** Which door this runtime opens for a thread's spawn instructions (rules + trailers; the name is historical, from personas — `personas.ts`):
       `"acp-meta"` = the ACP `_meta` block on session/new and session/load,
       `"env"` = a key in its own config template, filled from `{personaPrompt}`
       or `{personaFile}`. Null = no known door, and a persona is not applied. */
@@ -490,8 +490,6 @@ export const projects = pgTable("projects", {
     .$type<Record<string, string | boolean>>()
     .notNull()
     .default({}),
-  /** Null for no persona, like `sessions.persona_id`. */
-  defaultPersonaId: text("default_persona_id"),
   /** The thread's own library picks, the values `POST /api/sessions` takes as
       `mcpServerIds`/`skillIds`/`commandIds`. */
   defaultMcpServerIds: jsonb("default_mcp_server_ids").$type<string[]>().notNull().default([]),
@@ -623,41 +621,35 @@ export const commands = pgTable("commands", {
 });
 
 /**
- * How a thread wants to be worked on — the instruction half of a thread's
- * configuration, where the profile is the credentials half and the model is the
- * engine.
- *
- * A persona is NOT prose the harness pastes in front of the user's message. It
- * is fed to each runtime through the door that runtime already opens for it
- * (`personas.ts`, `AgentDef.personaVia`), so the agent's own system prompt is
- * appended to rather than replaced and nothing about the transcript changes:
- * what the user typed is still exactly what is journaled.
- *
- * Seeded like `agents` and for the same reasons — `seededVersion` records the
- * release a row was offered in, so a persona added later reaches installs that
- * already exist and one the user deleted on purpose stays deleted.
+ * LEGACY — the old personas. Kept declared only so `db:push` does not drop the
+ * table: the boot migration (`saved-prompts.ts`, `migrateLegacyPersonas`) copies
+ * every row into `saved_prompts` once. Nothing else reads or writes it.
  */
 export const personas = pgTable("personas", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
-  /** The instruction block. Appended to the agent's own system prompt. */
   prompt: text("prompt").notNull(),
-  /**
-   * The thinking budget, where the runtime has one as its own axis:
-   * null/absent = leave it alone, `0` = off, a positive integer = that many
-   * tokens. This is deliberately not the same knob as `effort`: claude-code
-   * exposes both and they mean different things (see `personas.ts`), and an
-   * agent that has only one gets only the one it has.
-   */
   thinking: integer("thinking"),
-  /** A value out of the agent's own effort selector, applied at spawn like any
-      other effort. Null = whatever the thread already had. */
   effort: text("effort"),
-  /** A row this release seeded (see `seedPersonas`); 0 = the user's own. */
   seededVersion: integer("seeded_version").notNull().default(0),
-  /** Declared order in every menu. A list you have to read alphabetically is a
-      list whose author's ordering has been thrown away. */
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+/**
+ * A saved prompt: reusable text a message mentions as `@name`. The server
+ * expands the mention into `prompt` in the text the agent receives only
+ * (`saved-prompts.ts`); the journal keeps the literal `@name`. `name` is the
+ * unique handle. Seeded like `agents` (`seededVersion`).
+ */
+export const savedPrompts = pgTable("saved_prompts", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  /** Display name (PascalCase by convention); the handle stays lowercase. */
+  title: text("title").notNull().default(""),
+  description: text("description").notNull().default(""),
+  prompt: text("prompt").notNull(),
+  seededVersion: integer("seeded_version").notNull().default(0),
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
@@ -868,12 +860,6 @@ export const sessions = pgTable(
       .$type<Record<string, string | boolean>>()
       .notNull()
       .default({}),
-    /** The persona this thread runs under, or null for none. Not a foreign key
-        either, and for the same reason `parent_session_id` below is not: a row
-        vanishing out from under a live thread is the manager's business, not
-        SQL's. A deleted persona simply reads as "none" on the next spawn, which
-        is exactly what it is. */
-    personaId: text("persona_id"),
     /** True when the agent should close each answer with follow-up prompt
         suggestions in a `suggest-prompts` fenced block (`personas.ts`). On
         unless turned off. A spawn input like the persona: every runtime reads
@@ -1171,8 +1157,6 @@ export const routines = pgTable(
     /** "" = defer to the profile/agent, exactly as an unset draft does. */
     model: text("model").notNull().default(""),
     effort: text("effort").notNull().default(""),
-    /** Null for none, like `sessions.persona_id`, and not a foreign key. */
-    personaId: text("persona_id"),
     /** The draft's own picks against the agent's advertised selectors, replayed
         after `session/new` exactly as `POST /api/sessions` replays them. */
     configChoices: jsonb("config_choices")

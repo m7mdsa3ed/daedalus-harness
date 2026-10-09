@@ -1,4 +1,4 @@
-# Profiles, models, config & personas
+# Profiles, models, config & saved prompts
 
 _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
@@ -431,65 +431,24 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   simply does not serve the draft's agent. `resolveProfileAgent`'s strict reading is the
   spawn paths' alone.
 
-## Personas
+## Saved prompts
 
-- **A persona is how a thread wants to be worked on, and it goes in through each
-  runtime's own door.** A thread already said who answers (the agent), on whose
-  credentials (the profile) and with which engine (the model); it could not say
-  "think this one through", "just chat, don't touch the files" or "smallest
-  change that works". Effort is the nearest existing lever and it is a number on
-  a dial, not an instruction — and on a gateway profile the agent frequently
-  offers no dial at all. So `personas` is a library table (`server/src/personas.ts`,
-  Settings › Personas) seeded like `DEFAULT_AGENTS` — the same `since`/`introduced`
-  pair, so a persona added in a later release reaches existing installs and one
-  the user deleted stays deleted — carrying a **prompt append**, an optional
-  **thinking budget** and an optional **effort**. `sessions.persona_id` names it,
-  and like the other three ids on that row it is **not** a foreign key: a deleted
-  persona reads as none at the next spawn, which is what "deleted" should mean.
-  The point of the design is that **nothing is pasted in front of the user's
-  message** — the prompt the user typed is exactly the prompt that is journaled —
-  because all three runtimes have a real slot for this and `AgentDef.personaVia`
-  says which, declared with the agent for the reason `spawnCategories`/`liveConfig`/
-  `quotaProbe` are. `"acp-meta"` (claude-code) is `_meta` on `session/new`:
-  `systemPrompt` as an **object** is merged over the agent's own
-  `{type:"preset", preset:"claude_code"}` with type and preset locked, so
-  `{append}` adds to the CLI's prompt where a *string* there would replace it
-  wholesale; and `thinking` goes inside `claudeCode.options`, which the adapter
-  spreads straight into the Agent SDK's query options. Thinking is a **separate
-  axis from effort** — the agent exposes both and they do different things — so
-  `null` means "leave the runtime's default alone" and `0` means off, and the two
-  must never be conflated. `"env"` (codex, opencode) is a key in the agent's own
-  config template, filled from `{personaPrompt}` (inline text — codex's
-  `developer_instructions`, which appends, and **not** `base_instructions`, which
-  replaces codex's entire system prompt and is not a `ConfigToml` key) or
-  `{personaFile}` (a path — opencode's `instructions` is a list of *files*).
-  `{personaPrompt}` is **JSON-escaped in `resolveSpawn`** and is only ever correct
-  inside a JSON string literal, which is the only place a template names it: a
-  persona is prose full of quotes and newlines, and substituted raw it closed the
-  string it sat in, leaving CODEX_CONFIG unparseable — which `resolveEnvValue`
-  then passes through whole, unpruned. The file goes in `data/persona-prompts/<sessionId>.md`
-  beside the generated model catalogs, deliberately **not** in the project's cwd:
-  that directory is shared by every thread of the project, which is the hazard
-  `materializeFor` exists to manage. It is rewritten — or deleted — on every
-  spawn, so a thread that has just had its persona taken away does not leave the
-  old text on disk for the next spawn to point at.
-  **Changing it always costs a respawn**, and that is not conservatism: `_meta` is
-  read at `session/new`/`session/load` and codex's config at spawn, so no runtime
-  we ship can be told mid-process. It joins the four cases `applyConfigLive`
-  already refuses as a fifth, and the respawn is cheap in the way that matters —
-  it ends in `session/load`, which claude-agent-acp forwards `_meta` into, so the
-  new instructions land on the *existing* conversation rather than an empty one.
-  A persona's **effort applies when it is picked and never again**: otherwise the
-  persona wins every argument — drop "Think more" to medium, change model, and
-  the respawn silently puts it back on high. A workflow step inherits its
-  parent's persona along with everything else, because a step is the same actor
-  working in another thread and a parent on "quick fix" must not spawn steps that
-  refactor. Named *persona* and not *mode* because `mode` is already ACP's
-  permission modes (`current_mode_update`, the palette's `mode` page) and codex's
-  collaboration mode. The picker is a row in both config menus above Profile (it
-  is the one choice there that does not depend on one), a palette page, and the
-  settings library page — which is the only one of the four libraries with **no
-  Import**, since nothing in the agents' own configs is a persona to import.
+- **A saved prompt is reusable text, mentioned with `@handle`.** It replaced personas, which
+  were chosen at thread start and appended to the system prompt. `saved_prompts`
+  (`server/src/saved-prompts.ts`, Settings › Saved prompts) holds `name` (the unique handle,
+  `/^[a-z0-9][a-z0-9_-]*$/`), `description` and `prompt`; built-ins are seeded with the same
+  `since`/`introduced` bookkeeping `DEFAULT_AGENTS` use, so a deleted one stays deleted.
+  The `@` completer lists them (badge "prompt") and inserts the literal `@handle`.
+  **Expansion is at send, server-side, into `outgoing` only** (`expandPrompts`, acp-bridge):
+  the journaled text is what the user typed, and a token that named a prompt is not also a
+  file `resource_link`. Unknown tokens, `a@b.com` and an unmatched handle are left alone.
+- **There is no persona on a thread** — no picker, `persona_id`, project/routine default,
+  thinking budget or effort. Picking one used to cost a respawn; mentioning one costs nothing.
+- **Migration:** the old `personas` table is still declared (legacy) so `db:push` does not
+  drop it; `migrateLegacyPersonas` copies it once (marker `savedPromptsMigrated`), slugging
+  names. Backup exports `prompts` and still imports a legacy `personas` key.
+- **The spawn-instruction doors remain** (`personaVia`, `{personaPrompt}`, `{personaFile}`,
+  `resolvePersonaSpawn`) — historical names — because Rules and the spawn trailers ride them.
 
 ## Rules
 

@@ -60,7 +60,7 @@ export type Project = ProjectInput & {
  * The client's shape, not the row's: the columns are nullable and this is
  * every-field-present, because every one of these is a value a draft holds
  * anyway and a menu reads as a string. `""` is the empty pick everywhere it
- * appears — no model (the agent's own), no effort, no mode, no persona.
+ * appears — no model (the agent's own), no effort, no mode.
  *
  * `profileId`/`agentId` are the pair `resolveProfileAgent` resolves at spawn,
  * and are deliberately *not* resolved here: which profiles exist is the
@@ -74,7 +74,6 @@ export interface ProjectDefaults {
   effort: string;
   modeId: string;
   configChoices: Record<string, string | boolean>;
-  personaId: string;
   mcpServerIds: string[];
   skillIds: string[];
   commandIds: string[];
@@ -91,7 +90,6 @@ export const emptyDefaults = (): ProjectDefaults => ({
   effort: "",
   modeId: "",
   configChoices: {},
-  personaId: "",
   mcpServerIds: [],
   skillIds: [],
   commandIds: [],
@@ -113,7 +111,6 @@ export const ProjectDefaultsPatchSchema = z.object({
   effort: z.string().optional(),
   modeId: z.string().optional(),
   configChoices: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
-  personaId: z.string().optional(),
   mcpServerIds: z.array(z.string()).optional(),
   skillIds: z.array(z.string()).optional(),
   commandIds: z.array(z.string()).optional(),
@@ -126,7 +123,7 @@ export type ProjectDefaultsPatch = z.infer<typeof ProjectDefaultsPatchSchema>;
 /** The column value for each field, in one place so the two writers — the
     patch route and a backup import, both of which can move a single setting
     — cannot drift. Only the keys a patch names are present; a whole defaults
-    object names all twelve, which is what an import wants. */
+    object names all eleven, which is what an import wants. */
 export function projectDefaultsColumns(patch: ProjectDefaultsPatch) {
   const out: Record<string, unknown> = {};
   if (patch.profileId !== undefined) out.defaultProfileId = patch.profileId || null;
@@ -135,7 +132,6 @@ export function projectDefaultsColumns(patch: ProjectDefaultsPatch) {
   if (patch.effort !== undefined) out.defaultEffort = patch.effort || null;
   if (patch.modeId !== undefined) out.defaultModeId = patch.modeId || null;
   if (patch.configChoices !== undefined) out.defaultConfigChoices = patch.configChoices;
-  if (patch.personaId !== undefined) out.defaultPersonaId = patch.personaId || null;
   if (patch.mcpServerIds !== undefined) out.defaultMcpServerIds = patch.mcpServerIds;
   if (patch.skillIds !== undefined) out.defaultSkillIds = patch.skillIds;
   if (patch.commandIds !== undefined) out.defaultCommandIds = patch.commandIds;
@@ -154,7 +150,6 @@ export const projectDefaultsOf = (row: typeof projectsTable.$inferSelect): Proje
   effort: row.defaultEffort ?? "",
   modeId: row.defaultModeId ?? "",
   configChoices: row.defaultConfigChoices ?? {},
-  personaId: row.defaultPersonaId ?? "",
   mcpServerIds: row.defaultMcpServerIds ?? [],
   skillIds: row.defaultSkillIds ?? [],
   commandIds: row.defaultCommandIds ?? [],
@@ -178,7 +173,6 @@ export function withoutDefaults(row: typeof projectsTable.$inferSelect) {
     defaultEffort: _e,
     defaultModeId: _mode,
     defaultConfigChoices: _cc,
-    defaultPersonaId: _persona,
     defaultMcpServerIds: _mcp,
     defaultSkillIds: _skills,
     defaultCommandIds: _commands,

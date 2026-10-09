@@ -58,7 +58,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   /** Whether a row gets an Edit button. Every row can still be deleted. */
   editable?: (item: T) => boolean
   /** Whether there is anything to import from. False for a library the agents'
-      own configs know nothing about (personas), where the button would open a
+      own configs know nothing about (saved prompts), where the button would open a
       scan that can only ever come back empty. */
   importable?: boolean
   /** Replaces the table/cards list for a library whose rows want a shape of

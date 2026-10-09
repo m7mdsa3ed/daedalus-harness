@@ -95,3 +95,6 @@ export const enhancePick = createAiPick("enhance")
     device that wants a cheap local model reading its patches wants it for
     both. */
 export const gitPick = createAiPick("gitAi")
+
+/** Generic form builder profile and model, stored per device like other AI helpers. */
+export const formBuilderPick = createAiPick("formBuilder")

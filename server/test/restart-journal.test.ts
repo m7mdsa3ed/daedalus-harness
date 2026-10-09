@@ -30,7 +30,6 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
 ]);
 
 const { SessionManager } = await import("../src/sessions.js");
-const { personas } = await import("../src/personas.js");
 
 class MockWs extends EventEmitter {
   sent: string[] = [];
@@ -97,28 +96,19 @@ const turnsOf = (events: ThreadEvent[]) =>
 assert.equal(turnsOf(before.events), 2, "the turn's brackets are journaled");
 const sentBefore = peer.sent.length;
 
-// A persona change: no runtime takes one on a running process, so this is the
+// A suggestions flip: no runtime takes one on a running process, so this is the
 // respawn path — spawn, `session/load`, restore — with a live process and a log
 // that is holding the conversation. The narration the fake agent replays on a
 // load ("hello fake agent") is what must not arrive twice.
-const persona = await personas.create({
-  name: "Test persona",
-  description: "",
-  prompt: "be terse",
-  thinking: null,
-  effort: null,
-  sortOrder: 0,
-});
 // `defer: false` is what asks for the restart itself: a process-costing change
 // is otherwise staged and taken by the next spawn (see staged-config.test.ts).
 // This test is about what that restart does to the journal.
 const result = await manager.applyConfig(
   session.id,
-  { profile, agentId: "fake", project, personaId: persona.id },
+  { profile, agentId: "fake", project, suggestFollowups: !session.suggestFollowups },
   { defer: false },
 );
-assert.equal(result.live, false, "a persona change cannot be applied live");
-assert.equal(session.personaId, persona.id, "the row moved");
+assert.equal(result.live, false, "a suggestions flip cannot be applied live");
 
 const restarts = peer.of("restart");
 assert.deepEqual(
@@ -168,7 +158,7 @@ const quiet = new MockWs();
 assert.equal(await manager.attach(fresh.id, quiet as never), null);
 await manager.applyConfig(
   fresh.id,
-  { profile, agentId: "fake", project, personaId: persona.id },
+  { profile, agentId: "fake", project, suggestFollowups: !fresh.suggestFollowups },
   { defer: false },
 );
 assert.deepEqual(

@@ -36,9 +36,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - `tsconfig` uses `erasableSyntaxOnly` — no TS constructor parameter properties.
 - eslint crashes at startup (typescript-eslint vs typescript 7 — pre-existing).
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** No migration files
-  exist, and **`db:push` is plain `drizzle-kit push` — it takes no backup first**; export
-  one yourself with `pnpm db:export` if a change is risky, and restore with
-  `pnpm db:import <dump.sql>` (replacement). **A table push does not know about is a table
+  exist, and **`db:push` is plain `drizzle-kit push` — it takes no backup first**.
+  **A table push does not know about is a table
   push drops** — anything the server reads must be declared there. The FTS index is maintained
   outside Drizzle.
 - **Agents spawn by their globally installed binary, never `npx`** (~0.4s vs ~3.2s, and a

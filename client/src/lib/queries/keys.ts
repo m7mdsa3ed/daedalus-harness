@@ -47,7 +47,7 @@ export const mcpCatalogKey = (s: ServerSettings, id: string) => mcpServersKey(s)
 export const threadMcpKey = (s: ServerSettings, sessionId: string) => mcpServersKey(s).concat(["thread", sessionId])
 export const skillsKey = (s: ServerSettings) => scope(s).concat(["skills"])
 export const commandsKey = (s: ServerSettings) => scope(s).concat(["commands"])
-export const personasKey = (s: ServerSettings) => scope(s).concat(["personas"])
+export const promptsKey = (s: ServerSettings) => scope(s).concat(["prompts"])
 export const modelPromptsKey = (s: ServerSettings) => scope(s).concat(["model-prompts"])
 /** The rules list (`GET /api/rules`) and individual rule CRUD. */
 export const rulesKey = (s: ServerSettings) => scope(s).concat(["rules"])

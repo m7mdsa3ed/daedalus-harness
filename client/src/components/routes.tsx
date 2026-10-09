@@ -62,7 +62,6 @@ const ProjectPage = lazyPage(() => import("@/components/project-page"), "Project
 const TracePage = lazyPage(() => import("@/components/trace-page"), "TracePage")
 const RoutinesPage = lazyPage(() => import("@/components/routines-page"), "RoutinesPage")
 const SchedulePage = lazyPage(() => import("@/components/schedule-page"), "SchedulePage")
-const AgentsPage = lazyPage(() => import("@/components/agents-page"), "AgentsPage")
 const NotificationsInboxPage = lazyPage(
   () => import("@/components/notifications/page"),
   "NotificationsInboxPage"
@@ -132,7 +131,6 @@ export function usePageHeading(): (path: string) => PageHeading | null {
             : "All routines",
       }
     if (first === "board") return { crumb: "Workspace", title: "Tasks" }
-    if (first === "agents") return { crumb: "Workspace", title: "Agents" }
     if (first === "notifications") return { crumb: "Workspace", title: "Inbox" }
     if (first === "projects")
       return { crumb: "Projects", title: projects.find((p) => p.id === seg)?.name ?? "Project" }
@@ -201,16 +199,6 @@ export function pageRoutes({
           }
         />
       ))}
-      {/* Every thread's live state — a place, like the schedules, and as
-          wide: its rows are a table where the panel has room. */}
-      <Route
-        path="/agents"
-        element={
-          <PageFrame width="wide" gutter="panel">
-            <AgentsPage actions={actions} />
-          </PageFrame>
-        }
-      />
       {/* /routines is the list, /routines/new the form, /routines/<id> one
           routine — one component reads the path (see RoutinesPage). Every
           one of them is `wide`, the form included: the autonomy control is

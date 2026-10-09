@@ -5,8 +5,9 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
+import { streamFormBuilder } from "../ai.js";
 import { getAgent, profileHasAgent } from "../registry.js";
-import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
+import { defaultProfileFor, getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
 import { mcpServers } from "../library.js";
 import { getProject } from "../projects.js";
 import { getTask } from "../tasks-board.js";
@@ -100,7 +101,6 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       model,
       effort,
       modeId,
-      personaId,
       suggestFollowups,
       uiBlocks,
       configChoices,
@@ -163,10 +163,6 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         commandIds: ids(commandIds),
       }, {
         taskId: task,
-        // Not validated: a persona id naming a row that is gone resolves to no
-        // persona at spawn, which is what "gone" should mean — see
-        // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
-        personaId: typeof personaId === "string" ? personaId : undefined,
         // Omitted reads as off — a draft that never asked is a thread that
         // never asked, the same default the row carries.
         suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
@@ -366,8 +362,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
 
   /**
-   * Change this thread's profile, model, effort or persona — the *first* thing
-   * a client asks for all four, because it is the only side that can tell
+   * Change this thread's profile, model or effort — the *first* thing
+   * a client asks for all three, because it is the only side that can tell
    * whether a restart is needed.
    *
    * Three answers, not two.
@@ -424,7 +420,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        change it was asked to take. This is what answers a caller that does
        not. */
     const staged = body.defer === false ? (sessions.stagedRequest(session.id) ?? {}) : {};
-    const { profileId, agentId: askedAgent, model, effort, personaId, suggestFollowups, uiBlocks } = {
+    const { profileId, agentId: askedAgent, model, effort, suggestFollowups, uiBlocks } = {
       ...staged,
       ...body,
     };
@@ -444,10 +440,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         project,
         model,
         effort,
-        // Omitted means unchanged; "" is a real value and means no persona.
-        personaId: typeof personaId === "string" ? personaId : undefined,
         // Omitted means unchanged; a boolean flips the suggestions trailer and
-        // respawns, like a persona change.
+        // respawns.
         suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
         // Same bargain for the drawn-UI lane: system-prompt text, so a flip
         // costs the process.
@@ -478,7 +472,6 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       profileId: session.profileId,
       model: session.model,
       effort: session.effort,
-      personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
       uiBlocks: session.uiBlocks,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
@@ -740,6 +733,38 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     text: z.string(),
     model: z.string().optional(),
     profileId: z.string().optional(),
+  });
+
+  const FormBuilderSchema = z.object({
+    profileId: z.string().min(1),
+    model: z.string().optional(),
+    schema: z.record(z.string(), z.unknown()),
+    value: z.record(z.string(), z.unknown()),
+    messages: z.array(z.unknown()).min(1).max(40),
+  });
+
+  app.post("/api/form-builder", async (c) => {
+    const parsed = FormBuilderSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "profileId, schema, value, and messages are required" }, 400);
+    if (JSON.stringify(parsed.data.schema).length > 32_000) {
+      return c.json({ error: "form schema is too large" }, 413);
+    }
+    if (JSON.stringify(parsed.data.messages).length > 64_000) {
+      return c.json({ error: "chat history is too large" }, 413);
+    }
+    const profile = await getProfile(parsed.data.profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    if (!await profileHasAgent(profile)) return c.json({ error: "profile has no supported agent" }, 409);
+
+    const result = await streamFormBuilder({
+      profile,
+      model: parsed.data.model,
+      messages: parsed.data.messages as import("ai").UIMessage[],
+      schema: parsed.data.schema as import("ai").JSONSchema7,
+      value: parsed.data.value,
+      signal: c.req.raw.signal,
+    });
+    return result.toUIMessageStreamResponse();
   });
 
   app.post("/api/sessions/:id/enhance", async (c) => {

@@ -91,7 +91,25 @@ function CommandForm({
         description="Define the reusable prompt and autocomplete metadata for this slash command."
         onBack={() => onDone(false)}
       />
-      <PageForm onSubmit={save}>
+      <PageForm
+        onSubmit={save}
+        aiBuilder={{
+          title: "slash command",
+          value: form,
+          onApply: (value) => setForm((current) => ({ ...current, ...value })),
+          schema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Short command name; users invoke it as /name.", examples: ["review-pr"] },
+              description: { type: "string", description: "One-line purpose displayed in autocomplete.", examples: ["Review a pull request for correctness and risk"] },
+              argumentHint: { type: "string", description: "Optional placeholder describing arguments.", examples: ["[pr-number]"] },
+              content: { type: "string", description: "Markdown instructions sent to the agent. Use $ARGUMENTS for user-supplied arguments.", examples: ["Review $ARGUMENTS for correctness, security issues, and missing tests."] },
+            },
+            required: ["name", "description", "content"],
+            additionalProperties: false,
+          },
+        }}
+      >
       <Field label="Name" hint="Typed as /name in the composer; also the filename on disk.">
         <Input
           value={form.name}

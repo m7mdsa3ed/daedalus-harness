@@ -193,7 +193,7 @@ export function describeError(err: unknown): ErrorInfo {
   if (err instanceof TypeError && /fetch|network|load failed/i.test(err.message)) {
     return {
       title: "Can't reach the server",
-      detail: "The request never completed — the server may be down, or the URL unreachable.",
+      detail: "The request never completed. The server may be down, or its address may be wrong or unreachable.",
       kind: "network",
     }
   }

@@ -213,8 +213,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** That is the whole
   path — no migration files are generated or committed, and nothing applies SQL at boot to an
   existing database (`ensureSchema` creates the initial schema only). `db:push` is plain
-  `drizzle-kit push` (interactive diff) and takes no backup first; `pnpm db:export` makes one
-  on demand, and `pnpm db:import <dump.sql>` restores it (replacement, not merge). Two objects sit outside the schema: the full-text search index is maintained in
+  `drizzle-kit push` (interactive diff) and takes no backup first. Two objects sit outside the schema: the full-text search index is maintained in
   `db/index.ts`/`search.ts` and hidden from Drizzle's push, and the table push does not know
   about may be **dropped**, so every table the server reads must be declared in `schema.ts`.
   Custom migration files are for changes that cannot be expressed as a schema diff — a data

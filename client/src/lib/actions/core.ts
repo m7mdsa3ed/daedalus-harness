@@ -205,12 +205,8 @@ export function createCore(deps: CoreDeps) {
            applied by the server right after session/new, and replaced by the
            live thread's own mode state from then on. */
         modeId: modeId || undefined,
-        /* How this thread should be worked on. Picked on the draft like the
-           rest of this, and — unlike a started thread's — free: nothing is
-           running yet, so there is no respawn to pay for. */
-        personaId: meta.personaId || undefined,
         /* Whether answers should close with follow-up suggestions. Picked on
-           the draft like the persona, and free for the same reason. On
+           the draft, and free for the same reason. On
            unless the draft turned it off — `??` rather than `||`, so an
            explicit off survives the trip instead of reading as unset. */
         suggestFollowups: meta.suggestFollowups ?? true,

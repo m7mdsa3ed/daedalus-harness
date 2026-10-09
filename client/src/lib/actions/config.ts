@@ -1,4 +1,4 @@
-/* Thread settings: profile, model, effort, persona, follow-ups, the staged
+/* Thread settings: profile, model, effort, follow-ups, the staged
    change, the agent's own mode and config options — and the coalescing buffer
    that turns a menu's worth of picks into one request.
 
@@ -31,13 +31,12 @@ const CONFIG_COALESCE_MS = 450
 const CONFIG_PROFILE_COALESCE_MS = 3000
 
 /** The fields `POST /api/sessions/:id/config` moves. Absent means unchanged;
-    `""` is a real value everywhere it appears (no persona, the profile's
+    `""` is a real value everywhere it appears (the profile's
     default model, no effort). */
 export type ConfigPatch = {
   profileId?: string
   model?: string
   effort?: string
-  personaId?: string
   suggestFollowups?: boolean
   uiBlocks?: boolean
   /** The agent's own selectors — a staged pick is the only place these travel
@@ -70,14 +69,13 @@ interface BufferedConfig {
 const configBuffer = new Map<string, BufferedConfig>()
 
 /** The current value of every field a patch names — the Undo for it. Only the
-    named fields: a patch that moved the model must not put back a persona
+    named fields: a patch that moved the model must not put back a setting
     nobody touched. */
 function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
   return {
     ...(patch.profileId !== undefined ? { profileId: meta.profileId } : {}),
     ...(patch.model !== undefined ? { model: meta.model ?? "" } : {}),
     ...(patch.effort !== undefined ? { effort: meta.effort ?? "" } : {}),
-    ...(patch.personaId !== undefined ? { personaId: meta.personaId ?? "" } : {}),
     ...(patch.suggestFollowups !== undefined
       ? { suggestFollowups: meta.suggestFollowups === true }
       : {}),
@@ -87,9 +85,7 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
 
 /** One line naming what a pick changed — used by the composer footer's
     `ConfigIndicator` and by the restart toast's description. Ids are resolved
-    against the profile catalog where they have a name there; a persona is named
-    by the fact it moved, because the catalog that holds its name is not one
-    this module reads. */
+    against the profile catalog where they have a name there. */
 export function describeConfig(
   patch: ConfigPatch,
   profiles: Profile[],
@@ -108,9 +104,6 @@ export function describeConfig(
     parts.push(`Model: ${label ?? (patch.model || "profile default")}`)
   }
   if (patch.effort !== undefined) parts.push(`Effort: ${patch.effort || "default"}`)
-  if (patch.personaId !== undefined) {
-    parts.push(patch.personaId ? "Persona changed" : "Persona cleared")
-  }
   if (patch.suggestFollowups !== undefined) {
     parts.push(patch.suggestFollowups ? "Follow-ups on" : "Follow-ups off")
   }
@@ -158,7 +151,6 @@ export function configActions(core: ActionsCore) {
     if (next.profileId !== undefined) patch.profileId = next.profileId
     if (next.model !== undefined) patch.model = next.model
     if (next.effort !== undefined) patch.effort = next.effort
-    if (next.personaId !== undefined) patch.personaId = next.personaId
     if (next.suggestFollowups !== undefined) patch.suggestFollowups = next.suggestFollowups
     if (next.uiBlocks !== undefined) patch.uiBlocks = next.uiBlocks
     if (Object.keys(patch).length > 0) {
@@ -208,14 +200,9 @@ export function configActions(core: ActionsCore) {
           agentId: meta.agentId,
           model: next.model ?? meta.model ?? undefined,
           effort: next.effort ?? meta.effort ?? undefined,
-          /* Deliberately not `?? meta.personaId`: sending the current value
-             back would be indistinguishable from asking for it, and the
-             server reads a *changed* persona as "apply its effort too". Only
-             a real pick travels. */
-          personaId: next.personaId,
-          /* Unlike the persona, a boolean has no "unchanged" sentinel of its
-             own — so only a real flip travels, and the server's respawn
-             answers for every peer. */
+          /* A boolean has no "unchanged" sentinel of its own — so only a
+             real flip travels, and the server's respawn answers for every
+             peer. */
           suggestFollowups: next.suggestFollowups,
           // Same as the trailer above: a boolean has no "unchanged" sentinel,
           // so only a real flip travels.
@@ -469,22 +456,9 @@ export function configActions(core: ActionsCore) {
     },
 
     /**
-     * Change how this thread is worked on.
-     *
-     * Always costs the process — no runtime we ship will take a persona on a
-     * running one — so this always comes back `staged`, whether or not a turn
-     * is running: the next spawn is the next moment any runtime would read
-     * it. `""` is a real value and means no persona; model and profile are
-     * left alone, because a persona says nothing about either.
-     */
-    changeThreadPersona(meta: SessionMeta, personaId: string): void {
-      changeThreadConfig(meta, { personaId }, "Couldn't change how this thread works")
-    },
-
-    /**
      * Flip whether answers close with follow-up prompt suggestions.
      *
-     * Same spawn-text bargain as the persona, and the same staging: the
+     * Spawn-text bargain, and staging: the
      * trailer is read at `session/new`/`session/load` and nowhere else.
      */
     changeThreadSuggestions(meta: SessionMeta, suggestFollowups: boolean): void {
@@ -500,7 +474,7 @@ export function configActions(core: ActionsCore) {
      *
      * The identical bargain to the suggestions trailer above: the lane is
      * system-prompt text, read at `session/new`/`session/load` and nowhere
-     * else, so this costs a respawn and the server stages it like a persona.
+     * else, so this costs a respawn and the server stages it.
      */
     changeThreadUiBlocks(meta: SessionMeta, uiBlocks: boolean): void {
       changeThreadConfig(meta, { uiBlocks }, "Couldn't change this thread's drawn UI")

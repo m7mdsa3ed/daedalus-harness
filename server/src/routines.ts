@@ -2,7 +2,7 @@
  * Routines: a saved thread-start that fires on its own.
  *
  * A routine is everything a `POST /api/sessions` body carries — profile, agent,
- * project, model, effort, persona, config choices, library links — plus the
+ * project, model, effort, config choices, library links — plus the
  * ways it fires and what happens to the answer. A fire is literally
  * `await manager.create(...)` with those values and then one prompt. That is the
  * constraint the whole feature is built around: **a routine must not be able to
@@ -260,7 +260,6 @@ const RoutineFields = {
   agentId: z.string().min(1),
   model: z.string().optional(),
   effort: z.string().optional(),
-  personaId: z.string().nullable().optional(),
   configChoices: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
   body: BodySchema,
   output: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -338,7 +337,6 @@ export async function createRoutine(input: RoutineInput): Promise<Routine> {
         agentId: input.agentId,
         model: input.model ?? "",
         effort: input.effort ?? "",
-        personaId: input.personaId ?? null,
         configChoices: input.configChoices ?? {},
         body: input.body,
         output: input.output ?? null,
@@ -366,7 +364,6 @@ export async function updateRoutine(id: string, patch: RoutinePatch): Promise<Ro
     if (patch.agentId !== undefined) set.agentId = patch.agentId;
     if (patch.model !== undefined) set.model = patch.model;
     if (patch.effort !== undefined) set.effort = patch.effort;
-    if (patch.personaId !== undefined) set.personaId = patch.personaId;
     if (patch.configChoices !== undefined) set.configChoices = patch.configChoices;
     if (patch.body !== undefined) set.body = patch.body;
     if (patch.output !== undefined) set.output = patch.output;
@@ -995,7 +992,6 @@ export class RoutineEngine {
         run.routine.links,
         {
           title: `${run.routine.name} · ${stamp(run.startedAt)}`,
-          personaId: run.routine.personaId ?? undefined,
           autonomy: policyFor(run.routine.autonomy, run.dryRun),
         },
       );

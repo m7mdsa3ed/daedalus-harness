@@ -192,7 +192,7 @@ export function sendActions(
          is what a draft has relied on since it started drawing early, and it
          was the only thing keeping this send behind the round trip. */
       if (!queueing) {
-        dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
+        dispatch({ type: "user-message", id: sessionId, text, local: true, sending: true, attachments })
         if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         dispatch({ type: "turn-active", id: sessionId, active: true })
       }

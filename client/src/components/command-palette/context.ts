@@ -21,9 +21,8 @@ export type PageId =
   | "theme"
   | "model"
   | "effort"
-  /** ACP's permission mode — default / accept edits / plan. Not `persona`. */
+  /** ACP's permission mode — default / accept edits / plan. */
   | "mode"
-  | "persona"
   /** The routines, as things to fire. */
   | "routines"
   /** What the routines have been doing — runs across every routine, newest
@@ -72,7 +71,6 @@ export const PAGE_LABEL: Record<PageId, string> = {
   model: "Model",
   effort: "Effort",
   mode: "Permission mode",
-  persona: "Persona",
   routines: "Run routine",
   "routine-activity": "Routine activity",
 }
@@ -88,7 +86,6 @@ export const PAGE_PLACEHOLDER: Record<PageId, string> = {
   model: "Search models…",
   effort: "Search effort levels…",
   mode: "Search permission modes…",
-  persona: "Search personas…",
   routines: "Search routines…",
   "routine-activity": "Search recent runs…",
 }

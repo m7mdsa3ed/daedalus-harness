@@ -45,7 +45,7 @@ import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from
 import { TokensPanel } from "./tokens-panel"
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
 import { extractSubagent, formatMcpName, loadedTools, parseMcpToolName, toolHeading, type LoadedTool } from "@/lib/tools"
-import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { DockContext } from "@/components/workspace/dock-context"
 
 function workflowProgress(workflow: WorkflowGroup) {
@@ -365,7 +365,6 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
   const agents = useAgents()
   const profiles = useProfiles()
   const projects = useProjects()
-  const personas = usePersonas()
   const workflows = workflowGroups(rows)
   const groups = activityGroups(rows)
   const requests = thread.items.filter((item) => item.kind === "user").length
@@ -397,7 +396,6 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
   const agent = agents.find((item) => item.id === meta.agentId)
   const profile = profiles.find((item) => item.id === meta.profileId)
   const project = projects.find((item) => item.id === meta.projectId)
-  const persona = personas.find((item) => item.id === meta.personaId)
   const model = profile?.models.find((item) => item.id === meta.model)?.label ?? meta.model
   const active = groups.filter((group) => group.active).length
   const state = thread.paused ? "Paused" : thread.turnActive ? "Working" : meta.lastTurnError ? "Last turn failed" : thread.archived ? "Archived" : "Ready"
@@ -431,7 +429,6 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
           <dl className="space-y-0 px-2.5 py-1 text-[11px]">
             <div className="flex min-w-0 justify-between gap-3 border-b border-border/40 py-1.5"><dt className="shrink-0 text-muted-foreground">Model</dt><dd className="truncate text-right font-medium" title={meta.model}>{model}</dd></div>
             {meta.effort && <div className="flex justify-between gap-3 border-b border-border/40 py-1.5 last:border-0"><dt className="text-muted-foreground">Effort</dt><dd className="font-medium capitalize">{meta.effort}</dd></div>}
-            {persona && <div className="flex justify-between gap-3 py-1.5"><dt className="text-muted-foreground">Persona</dt><dd className="truncate font-medium">{persona.name}</dd></div>}
           </dl>
         </section>
 

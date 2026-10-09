@@ -1,5 +1,5 @@
 /* The catalog query family — profiles, agents, projects, the tool libraries
-   and personas. These were reducer slices refilled by `bootstrap` and by
+   and saved prompts. These were reducer slices refilled by `bootstrap` and by
    `refreshX` after every mutation; the cache owns them now, one read per
    slice, invalidated (never mirrored back) by the writes.
 
@@ -18,7 +18,7 @@ import {
   type ThreadMcpServer,
   type McpServerDef,
   type ModelPrompt,
-  type Persona,
+  type SavedPrompt,
   type Profile,
   type ProfilePreset,
   type Project,
@@ -36,7 +36,7 @@ import {
   threadMcpKey,
   mcpServersKey,
   modelPromptsKey,
-  personasKey,
+  promptsKey,
   profilePresetsKey,
   profilesKey,
   projectsKey,
@@ -289,9 +289,9 @@ export function useCommands(): CommandDef[] {
   }).data)
 }
 
-export function usePersonas(): Persona[] {
+export function usePrompts(): SavedPrompt[] {
   const settings = useServer()
-  return list<Persona>(useApiQuery<Persona[]>(personasKey(settings), "/api/personas", {
+  return list<SavedPrompt>(useApiQuery<SavedPrompt[]>(promptsKey(settings), "/api/prompts", {
     staleTime: CATALOG_STALE_MS,
   }).data)
 }
@@ -386,7 +386,7 @@ export type CatalogSlice =
   | "mcp-servers"
   | "skills"
   | "commands"
-  | "personas"
+  | "prompts"
   | "model-prompts"
 
 /** Invalidate catalog slices after an out-of-band write — the same job the

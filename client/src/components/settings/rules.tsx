@@ -12,7 +12,7 @@ import { useSettingsPage } from "./layout"
 
 /* ── Rules ──
    Individual standing instructions every thread spawns with —
-   beneath any project's own rules and above its persona, folded
+   beneath any project's own rules, folded
    into the spawn by server/src/rules.ts through the door each
    runtime already opens. Each rule has a title and content so
    they can be managed individually rather than as one blob. */

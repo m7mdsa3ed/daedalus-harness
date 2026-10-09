@@ -21,7 +21,6 @@ import {
   ArrowUpRightIcon,
   BotIcon,
   ListTodoIcon,
-  LoaderCircleIcon,
   PlayIcon,
   SparklesIcon,
   WrenchIcon,
@@ -823,12 +822,6 @@ export const ThreadItemView = React.memo(function ThreadItemView({
                 </BubbleContent>
               </Bubble>
             </MessageContent>
-            {item.sending && (
-              <span role="status" className="flex items-center gap-1.5 pr-1 text-[11px] text-muted-foreground">
-                <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
-                Sending…
-              </span>
-            )}
             {showTimestamps && <Timestamp at={item.at} className="pr-1" />}
           </Message>
         </ItemContextMenu>

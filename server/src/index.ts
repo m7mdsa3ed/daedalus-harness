@@ -7,7 +7,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocket, WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
-import { seedPersonas } from "./personas.js";
+import { migrateLegacyPersonas, seedPrompts } from "./saved-prompts.js";
 import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
 import { seedAgents } from "./registry.js";
@@ -63,9 +63,10 @@ configurePauseHooks({ port: config.port });
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
-// Same rules, same reasons: only the personas this install has never been
-// offered, and never over a row the user has edited. See personas.seedPersonas.
-await seedPersonas();
+// Legacy personas become saved prompts once, then the same rules: only the
+// built-ins this install has never been offered, never over an edited row.
+await migrateLegacyPersonas();
+await seedPrompts();
 /* Same rules again for the model-prompt library, then the file the runtime
    reads. The write is unconditional and not the seed's: the library is derived
    state, and a boot after a hand-edited `data/` — or after an import, which

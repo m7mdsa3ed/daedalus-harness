@@ -12,7 +12,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **`server/` is the ACP client** (Node 22 + Hono + ws): one agent process per thread, one
   `AcpBridge` (`src/acp-bridge.ts`) per process, derived state to the browser over a
   WebSocket (`src/protocol.ts`). It owns profiles (provider config + the MCP/skill/command
-  links its threads get), projects (a cwd and a name — nothing linked), the library, personas,
+  links its threads get), projects (a cwd and a name — nothing linked), the library, saved prompts,
   bearer auth, the event log and FCM push. `data/` holds secrets — gitignored, never commit.
 - **Storage is SQLite via Drizzle** (`server/src/db/`), better-sqlite3, synchronous because
   spawn paths are. Every query goes through the `db` exported by `db/index.ts`. Links are join
@@ -36,9 +36,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - `tsconfig` uses `erasableSyntaxOnly` — no TS constructor parameter properties.
 - eslint crashes at startup (typescript-eslint vs typescript 7 — pre-existing).
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** No migration files
-  exist, and **`db:push` is plain `drizzle-kit push` — it takes no backup first**; export
-  one yourself with `pnpm db:export` if a change is risky, and restore with
-  `pnpm db:import <dump.sql>` (replacement). **A table push does not know about is a table
+  exist, and **`db:push` is plain `drizzle-kit push` — it takes no backup first**.
+  **A table push does not know about is a table
   push drops** — anything the server reads must be declared there. The FTS index is maintained
   outside Drizzle.
 - **Agents spawn by their globally installed binary, never `npx`** (~0.4s vs ~3.2s, and a
@@ -187,7 +186,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`pnpm fake:agent` writes its row). Samples are scenes; the default turn stays small,
   because a turn is what the replay window is measured in.
 
-## Profiles, models, config, personas → `docs/profiles-and-config.md`
+## Profiles, models, config, saved prompts → `docs/profiles-and-config.md`
 
 - **A profile is a provider, not an agent; a thread is a (profile, agent) pair.** The agent is
   chosen at draft time, lives on `sessions.agent_id`, and survives a respawn.
@@ -260,11 +259,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
   **The key in the path is the credential** — minted per boot, never stored.
-- **A persona goes in through each runtime's own door** (`AgentDef.personaVia`); **nothing is
-  pasted in front of the user's message**. Changing it always costs a respawn.
-- **Rules are the layer above personas** (`server/src/rules.ts`): one global block plus one per
-  project, composed and folded into every spawn **beneath** the persona through the same doors.
-  Spawn-time like a persona — a change costs a respawn — and backup carries them upsert-per-key.
+- **Saved prompts replace personas, and they are mentioned, never selected.** `@handle`
+  (`server/src/saved-prompts.ts`, Settings › Saved prompts, `/api/prompts`) is expanded to the
+  prompt's text **in what the agent receives only** (`expandPrompts`, in the bridge beside
+  `mentionLinks`); the journal, queue and history keep the literal `@handle`, and nothing goes
+  in the system prompt. There is no persona id on a thread, project, routine or workflow.
+  The legacy `personas` table stays declared (a table push does not know about is dropped)
+  and is copied once at boot (`migrateLegacyPersonas`).
+- **Rules ride the spawn-instruction doors** (`AgentDef.personaVia`, `{personaPrompt}`,
+  `{personaFile}` — names are historical): `server/src/rules.ts`, one global block plus one per
+  project, plus the spawn trailers. Spawn-time — a change costs a respawn — and backup carries
+  them upsert-per-key.
 - **Every agent gets a virtual "Default" profile** (`default:<agentId>`) with no credentials
   and deliberately no models. Never written to `data/`, uneditable.
 - **A draft cannot ask a process that does not exist**: option sets come from a live session
@@ -949,7 +954,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 | --- | --- |
 | `docs/architecture.md` | server, storage, the `agent/` runtime, agent registry/seeding, deploy, schema push, dev tunnel |
 | `docs/protocol.md` | ACP bridge, thread open, replay/windowing, session ids, import, capabilities, subagents |
-| `docs/profiles-and-config.md` | profiles, models, live reconfiguration, queue, gateway shim, personas, option probe |
+| `docs/profiles-and-config.md` | profiles, models, live reconfiguration, queue, gateway shim, saved prompts, option probe |
 | `docs/mcp-and-workflows.md` | built-in MCP rows, the MCP OAuth shim, workflows, link ownership |
 | `docs/client.md` | state ownership, theming, palette, sidebar, tool views, shortcuts, errors, toasts, dock, project page |
 | `docs/pwa-and-notifications.md` | service worker, FCM, notification shape, backgrounded pages |

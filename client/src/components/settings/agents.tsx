@@ -4,7 +4,7 @@
    Only the user's half of a row is editable — name, command, args, env — which
    is exactly the half the seed rules already promise never to overwrite, so an
    edit here survives every future release. The declarative fields beside them
-   (which knobs are live, which door a persona takes, how to read a quota) are
+   (which knobs are live, which door the instructions take, how to read a quota) are
    statements about what the protocol on the other end can do rather than
    preferences, so they stay the server's and are not drawn.
 

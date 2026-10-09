@@ -207,7 +207,6 @@ const opencodeAgent = {
 const persona = (over: Partial<PersonaSpawn> = {}): PersonaSpawn => ({
   id: "px",
   prompt: "Answer in one line.",
-  thinking: null,
   ...over,
 });
 

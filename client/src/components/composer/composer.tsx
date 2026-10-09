@@ -506,7 +506,7 @@ export function Composer({
   }
 
   /* `@` offers paths and thread resources alongside draft MCP servers and
-     persona picks. It reads the token at the caret — a file is named mid-sentence,
+     saved prompts. It reads the token at the caret — a file is named mid-sentence,
      unlike a command — so the textarea has to be reachable. It goes after the
      command menu in the key handler: whichever menu is open owns the arrows. */
 
@@ -553,7 +553,6 @@ export function Composer({
     mcpServers,
     draft,
     linkedMcpServerIds: meta?.mcpServerIds,
-    currentPersonaId: meta?.personaId,
     onResource: (resource) => {
       readMcpResourceFile(server, sessionId, resource.serverId, resource.uri, resource.name)
         .then((file) => files.add([file]))
@@ -564,17 +563,6 @@ export function Composer({
       const selected = new Set(meta.mcpServerIds ?? [])
       selected.add(picked.id)
       actions.configureDraft(meta.id, { mcpServerIds: [...selected] })
-    },
-    onPersona: (persona) => {
-      if (!meta) return
-      if (meta.draft) {
-        actions.configureDraft(meta.id, {
-          personaId: persona.id,
-          ...(persona.effort ? { effort: persona.effort } : {}),
-        })
-      } else {
-        actions.changeThreadPersona(meta, persona.id)
-      }
     },
   })
 

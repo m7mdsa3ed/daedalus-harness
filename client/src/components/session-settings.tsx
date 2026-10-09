@@ -176,7 +176,7 @@ const GROUPS: Group[] = [
         icon: Eye,
         title: "Show setting changes",
         description:
-          "The rows marking a mode, model, effort, profile, persona or agent change, wherever in the thread it happened. Off, the change still takes effect — only the row is silent.",
+          "The rows marking a mode, model, effort, profile or agent change, wherever in the thread it happened. Off, the change still takes effect — only the row is silent.",
       },
     ],
   },

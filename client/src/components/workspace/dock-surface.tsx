@@ -30,7 +30,7 @@ import { PanelTab } from "@/components/workspace/panel-tab"
 import { PagePanel } from "@/components/workspace/page-panel"
 import { WebPanel } from "@/components/workspace/web-panel"
 import { UnsupportedPanel } from "@/components/workspace/unsupported-panel"
-import { TabActions } from "@/components/workspace/tab-actions"
+import { TAB_GRID_EVENT, TabActions } from "@/components/workspace/tab-actions"
 import type { Actions } from "@/lib/actions"
 import { navigateTo } from "@/lib/router"
 import { MOBILE_BREAKPOINT, useIsMobile } from "@/hooks/use-device"
@@ -65,6 +65,7 @@ export function DockSurface({
 }) {
   const { resolved } = useTheme()
   const dock = useDock()
+  const isMobile = useIsMobile()
   const teardownRef = React.useRef<(() => void) | void>(undefined)
   React.useEffect(
     () => () => {
@@ -117,6 +118,11 @@ export function DockSurface({
       tabGroupColors={TAB_GROUP_COLORS}
       getTabGroupChipContextMenuItems={chipMenu}
       defaultRenderer="always"
+      /* A phone never drags a tab (see the stack rule below). Left on, the
+         downward drag that opens the tab grid started dockview's own drag: the
+         tab collapsed out of the strip, the pointer was cancelled and the
+         strip's header remounted under the opening animation. */
+      disableDnd={isMobile}
       defaultTabComponent={PanelTab}
       /* Floating groups are on: a panel over the dock, and — through
          `popoutPanel` — one in a window of its own. `floatingGroupBounds`
@@ -171,7 +177,7 @@ function useTabSwipe(enabled: boolean, cycle: (delta: number) => void) {
   cycleRef.current = cycle
   React.useEffect(() => {
     if (!enabled) return
-    let start: { id: number; x: number; y: number; axis: "x" | "y" | null } | null = null
+    let start: { id: number; x: number; y: number; axis: "x" | "y" | null; grid?: boolean } | null = null
     const down = (e: PointerEvent) => {
       if (e.pointerType !== "touch" || !e.isPrimary) return
       const target = e.target as Element | null
@@ -180,20 +186,30 @@ function useTabSwipe(enabled: boolean, cycle: (delta: number) => void) {
       start = { id: e.pointerId, x: e.clientX, y: e.clientY, axis: null }
     }
     const move = (e: PointerEvent) => {
-      if (!start || e.pointerId !== start.id || start.axis) return
+      if (!start || e.pointerId !== start.id) return
       const dx = Math.abs(e.clientX - start.x)
       const dy = Math.abs(e.clientY - start.y)
-      if (Math.max(dx, dy) < SWIPE_LOCK_PX) return
-      start.axis = dx > dy * 1.5 ? "x" : "y"
+      if (!start.axis) {
+        if (Math.max(dx, dy) < SWIPE_LOCK_PX) return
+        start.axis = dx > dy * 1.5 ? "x" : "y"
+      }
+      /* Dragging the tab down opens the card grid, as on Chrome. Marked here,
+         opened when the finger lifts (or the browser cancels the touch, which
+         it may do to a vertical drag): opening under a live touch starts the
+         morph while the strip is still taking pointer events. */
+      if (start.axis === "y" && e.clientY - start.y >= SWIPE_COMMIT_PX / 2) start.grid = true
     }
     const up = (e: PointerEvent) => {
       if (!start || e.pointerId !== start.id) return
       const dx = e.clientX - start.x
       const horizontal = start.axis === "x"
+      const grid = start.grid
       start = null
+      if (grid) window.dispatchEvent(new Event(TAB_GRID_EVENT))
       if (horizontal && Math.abs(dx) >= SWIPE_COMMIT_PX) cycleRef.current(dx < 0 ? 1 : -1)
     }
     const cancel = () => {
+      if (start?.grid) window.dispatchEvent(new Event(TAB_GRID_EVENT))
       start = null
     }
     document.addEventListener("pointerdown", down, true)

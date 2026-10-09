@@ -2,14 +2,14 @@
    on the root page. Each one is `PaletteItem[]` through `ItemList`, so the
    query filters and ranks them exactly the way it does the commands — there is
    one matcher in the palette, not one per page. */
-import { Cpu, Drama, FolderPlus, Gauge, Palette as PaletteIcon, ShieldCheck } from "lucide-react"
+import { Cpu, FolderPlus, Gauge, Palette as PaletteIcon, ShieldCheck } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
 import { projectPath, settingsPath } from "@/lib/router"
 import { activityAt, isListed } from "@/lib/settings"
-import { usePersonas, useProjects } from "@/lib/queries/catalog"
+import { useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { recommendedValue } from "@/lib/session-options"
@@ -123,58 +123,6 @@ export function ModePage() {
           .catch((err) => reportError(err, "Couldn't switch mode"))
       }),
   }))
-
-  return <ItemList items={items} query={palette.query} />
-}
-
-/**
- * How the open thread is worked on.
- *
- * The one page here that costs something: a persona is read at `session/new` /
- * `session/load` and nowhere else, so picking one restarts the agent (the
- * conversation is restored with it). No confirmation, unlike the same row in
- * the settings menu — the palette is a keyboard surface and a dialog inside a
- * dialog is worse than an undo, and the undo here is picking the old one back.
- * A draft is left out entirely: it has no thread to reconfigure, and its
- * persona is a field on the composer's own menu.
- */
-export function PersonaPage() {
-  const palette = usePalette()
-  const personas = usePersonas()
-  const { meta } = useThreadTarget()
-  if (!meta || meta.draft) return null
-
-  const current = meta.personaId ?? ""
-  const items: PaletteItem[] = personas.map((persona) => ({
-    id: `persona:${persona.id}`,
-    group: "Persona",
-    title: persona.name,
-    subtitle: persona.description,
-    icon: <Drama className={current === persona.id ? "text-primary" : undefined} />,
-    checked: current === persona.id,
-    onSelect: () =>
-      palette.run(() => {
-        /* Picked and flushed in one go: the palette closes on select, so there
-           is nothing left open for the coalescing window to collect. */
-        palette.actions.changeThreadPersona(meta, persona.id)
-        void palette.actions.flushThreadConfig(meta.id)
-      }),
-  }))
-  if (current) {
-    items.push({
-      id: "persona:none",
-      group: "",
-      title: "No persona",
-      keywords: "clear none default off",
-      icon: <Drama />,
-      rank: "bottom",
-      onSelect: () =>
-        palette.run(() => {
-          palette.actions.changeThreadPersona(meta, "")
-          void palette.actions.flushThreadConfig(meta.id)
-        }),
-    })
-  }
 
   return <ItemList items={items} query={palette.query} />
 }

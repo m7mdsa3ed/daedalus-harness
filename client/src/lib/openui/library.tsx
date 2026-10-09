@@ -64,6 +64,7 @@ import {
 } from "@/components/ui/morphing-dialog"
 import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Notice } from "@/components/notice"
+import { TodoChecklist } from "@/components/todo-checklist"
 import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
@@ -1310,6 +1311,46 @@ const Waterfall = defineComponent({
   },
 })
 
+/** A plan: a goal over a checklist, with a done/total count. The checklist is
+    the composer's own (`TodoChecklist`), so a plan and the thread's todo list
+    read as the same thing. */
+const PLAN_STATUS = { done: "completed", active: "in_progress", pending: "pending" } as const
+const Plan = defineComponent({
+  name: "Plan",
+  description: "A plan: a title and goal over checklist steps, each pending, active or done, with an optional note and priority, and a done count.",
+  props: z.object({
+    title: z.string(),
+    steps: z.array(
+      z.object({
+        text: z.string(),
+        status: z.enum(["done", "active", "pending"]).optional(),
+        note: z.string().optional(),
+        priority: z.enum(["high", "medium", "low"]).optional(),
+      })
+    ),
+    goal: z.string().optional(),
+  }),
+  component: ({ props }) => {
+    const done = props.steps.filter((step) => step.status === "done").length
+    return (
+      <Box>
+        <BoxHeader title={props.title} meta={props.goal} />
+        <div className={cn(PAD, "space-y-2")}>
+          <div className={cn(META, "tabular-nums")}>{done}/{props.steps.length} done</div>
+          <TodoChecklist
+            items={props.steps.map((step) => ({
+              content: step.text,
+              status: PLAN_STATUS[step.status ?? "pending"],
+              note: step.note,
+              priority: step.priority,
+            }))}
+          />
+        </div>
+      </Box>
+    )
+  },
+})
+
 export const openuiLibrary = createLibrary({
   root: "Stack",
   components: [
@@ -1334,6 +1375,7 @@ export const openuiLibrary = createLibrary({
     Image,
     Badges,
     Timeline,
+    Plan,
     Compare,
     Details,
     Tabs,
@@ -1356,13 +1398,13 @@ export const openuiLibrary = createLibrary({
     },
     {
       name: "Content",
-      components: ["List", "Table", "Callout", "Code", "KeyValue", "EmptyState", "Image", "Badges", "Timeline", "Compare", "Diff", "Keys", "People", "Gallery"],
+      components: ["List", "Table", "Callout", "Code", "KeyValue", "EmptyState", "Image", "Badges", "Timeline", "Plan", "Compare", "Diff", "Keys", "People", "Gallery"],
       notes: [
         "- Write each table row as its own array of strings, in the SAME order as `columns`.",
         "- A short answer is prose; reach for these when the answer is a structure.",
         "- Image only with a URL you were actually given; never invent one. Remote images are loaded only when the reader clicks.",
         "- Diff for a before/after of text, Keys for shortcuts, People for who is involved, Gallery for several images.",
-        "- Compare for weighing options, Timeline for ordered steps or history, Badges for short statuses.",
+        "- Compare for weighing options, Timeline for ordered steps or history, Plan for a proposed or in-progress task checklist, Badges for short statuses.",
       ],
     },
     {

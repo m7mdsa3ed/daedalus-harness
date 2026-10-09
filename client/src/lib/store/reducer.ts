@@ -41,7 +41,6 @@ export type Action =
           | "model"
           | "effort"
           | "modeId"
-          | "personaId"
           | "suggestFollowups"
           | "uiBlocks"
           | "mcpServerIds"
@@ -61,7 +60,6 @@ export type Action =
       profileId: string
       model: string
       effort: string
-      personaId?: string
       suggestFollowups?: boolean
       uiBlocks?: boolean
     }
@@ -272,9 +270,6 @@ export function reducer(state: State, action: Action): State {
                 profileId: action.profileId,
                 model: action.model,
                 effort: action.effort,
-                // Omitted by a server that predates personas — leave whatever
-                // the row already carries rather than blanking it.
-                ...(action.personaId === undefined ? {} : { personaId: action.personaId }),
                 // Omitted by a server that predates the toggle — same bargain.
                 ...(action.suggestFollowups === undefined ? {} : { suggestFollowups: action.suggestFollowups }),
                 ...(action.uiBlocks === undefined ? {} : { uiBlocks: action.uiBlocks }),

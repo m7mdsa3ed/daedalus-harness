@@ -11,7 +11,7 @@ import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import {
   agents as agentsTable,
   commands as commandsTable,
-  personas as personasTable,
+  savedPrompts as promptsTable,
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
@@ -45,7 +45,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 }
 
 async function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, promptsTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     await db.delete(table);
   }
 }
@@ -62,9 +62,8 @@ async function seed() {
   await db.insert(skillsTable).values({ id: "s1", name: "skill", path: "/tmp/skill" });
   await db.insert(commandsTable).values({ id: "c1", name: "go", description: "d", content: "body" });
   /* A built-in, edits and all: it carries a `seededVersion`, so a restore that
-     dropped it would never be re-seeded and the thread below would point at a
-     persona that no longer exists. */
-  await db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 });
+     dropped it would never be re-seeded. */
+  await db.insert(promptsTable).values({ id: "builtin:terse", name: "terse", description: "d", prompt: "One line.", seededVersion: 1, sortOrder: 10 });
   await db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [], group: "Speed", iconUrl: "https://models.dev/logos/gw.svg" }] });
   
   /* A project with start defaults picked, so the round trip below is a real
@@ -81,7 +80,6 @@ async function seed() {
     defaultEffort: "high",
     defaultModeId: "plan",
     defaultConfigChoices: { sandbox: "workspace-write" },
-    defaultPersonaId: "builtin:terse",
     defaultMcpServerIds: ["m1"],
     defaultSkillIds: ["s1"],
     defaultCommandIds: ["c1"],
@@ -89,7 +87,7 @@ async function seed() {
     defaultUiBlocks: false,
   });
   await db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now });
-  await db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", personaId: "builtin:terse", title: "Thread", acpSessionId: "acp-1", createdAt: now });
+  await db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", title: "Thread", acpSessionId: "acp-1", createdAt: now });
   await db.insert(eventsTable).values([
     { sessionId: "t1", seq: 0, kind: "turn_started", payload: { ev: "turn_started", turnId: "x" }, at: now },
     { sessionId: "t1", seq: 1, kind: "turn_ended", payload: { ev: "turn_ended", turnId: "x" }, at: now },
@@ -152,17 +150,14 @@ await test("a full export round-trips through the schema", async () => {
   assert.ok(!("mcpServerIds" in (bundle.profiles[0] as object)));
   assert.equal(bundle.events.length, 2);
   assert.equal(bundle.queue.length, 1);
-  assert.deepEqual(bundle.personas[0], {
+  assert.deepEqual(bundle.prompts[0], {
     id: "builtin:terse",
-    name: "Terse",
+    name: "terse",
     description: "d",
     prompt: "One line.",
-    thinking: 0,
-    effort: "low",
     seededVersion: 1,
     sortOrder: 10,
   });
-  assert.equal(bundle.sessions[0]!.personaId, "builtin:terse", "the thread remembers how it was worked on");
   /* A model's `group` and `iconUrl` are the user's own writing, like the price
      beside them — a bundle that did not carry them would hand back a restored
      profile whose picker headings were silently gone. */
@@ -170,15 +165,18 @@ await test("a full export round-trips through the schema", async () => {
   assert.equal(bundle.profiles[0]!.models[0]!.iconUrl, "https://models.dev/logos/gw.svg");
 });
 
-await test("a 0 thinking budget survives the round trip as 0, not as absent", async () => {
-  // The one value the schema could quietly lose: `thinking: 0` is "no
-  // thinking", and a nullish coalesce anywhere on the path turns it into
-  // "leave the runtime's default alone" — the opposite instruction.
+await test("a legacy bundle's personas import as saved prompts with slugged handles", async () => {
   await seed();
-  const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
+  const bundle = JSON.parse(JSON.stringify(await exportBundle({ includeSecrets: true, includeJournals: true })));
+  bundle.prompts = [];
+  bundle.personas = [
+    { id: "pa", name: "Think more!", prompt: "A", thinking: 0, effort: "low" },
+    { id: "pb", name: "think more", prompt: "B" },
+  ];
   await wipe();
-  await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
-  assert.equal((await db.select().from(personasTable))[0]!.thinking, 0);
+  await importBundle(BundleSchema.parse(bundle), "replace");
+  const rows = await db.select().from(promptsTable);
+  assert.deepEqual(rows.map((r) => [r.id, r.name]).sort(), [["pa", "think-more"], ["pb", "think-more-2"]]);
 });
 
 await test("a routine round-trips with its triggers, runs and links", async () => {
@@ -311,7 +309,6 @@ await test("a project's start defaults survive export and import", async () => {
     effort: "high",
     modeId: "plan",
     configChoices: { sandbox: "workspace-write" },
-    personaId: "builtin:terse",
     mcpServerIds: ["m1"],
     skillIds: ["s1"],
     commandIds: ["c1"],

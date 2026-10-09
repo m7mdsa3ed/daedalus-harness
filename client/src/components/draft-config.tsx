@@ -75,7 +75,6 @@ import {
   useActiveSpace,
   useAgents,
   useAgentsStatus,
-  usePersonas,
   useProfiles,
   useProjects,
 } from "@/lib/queries/catalog";
@@ -84,8 +83,6 @@ import { useServer } from "@/lib/server-context";
 import { gitRepos } from "@/lib/workspace/git-api";
 
 const DEFAULT_CHOICE = "__default__";
-/** Sentinel for "no persona", which is not itself a persona id. */
-const NO_PERSONA = "__none__";
 
 /** The shared read of a draft's current configuration — both controls below
     need the same lookups, and they must not disagree about what is selected. */
@@ -96,7 +93,6 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
   const projects = useProjects();
   const profiles = useProfiles();
   const agents = useAgents();
-  const personas = usePersonas();
   const project = projects.find((p) => p.id === meta.projectId);
   const profile = profiles.find((p) => p.id === meta.profileId);
   // The draft's own agent, not the profile's: a profile may serve several.
@@ -132,7 +128,6 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
     projects,
     profiles,
     agents,
-    personas,
     project,
     profile,
     agent,
@@ -457,7 +452,7 @@ export function PickerMenu({
 }
 
 /**
- * Who answers and how: agent, profile, persona, model, effort, and — from the
+ * Who answers and how: agent, profile, model, effort, and — from the
  * agent's remembered `modes` — the permission mode it will start in.
  *
  * The agent leads the list because it decides what every row under it even
@@ -490,7 +485,6 @@ export function DraftConfigPopover({
   const {
     agents,
     profiles,
-    personas,
     profile,
     agent,
     agentProfiles,
@@ -588,7 +582,6 @@ export function DraftConfigPopover({
   const optionValue = (option?: acp.SessionConfigOption) =>
     option?.type === "select" ? option.currentValue : "";
 
-  const persona = personas.find((p) => p.id === meta.personaId);
   /* `currentChoiceLabel`, the same reading the started menu draws with — the
      two chips must name the model identically or the pick looks like it moved
      the moment the thread starts. */
@@ -699,21 +692,6 @@ export function DraftConfigPopover({
         }
       : null;
 
-  const personaPick: ChoicePick | null =
-    personas.length > 0
-      ? {
-          label: "Persona",
-          value: meta.personaId || NO_PERSONA,
-          choices: [{ value: NO_PERSONA, name: "None" }, ...personas.map((p) => ({ value: p.id, name: p.name }))],
-          onSelect: (value) => {
-            const picked = value === NO_PERSONA ? null : personas.find((p) => p.id === value);
-            configure({
-              personaId: picked?.id ?? "",
-              ...(picked?.effort ? { effort: picked.effort } : {}),
-            });
-          },
-        }
-      : null;
   /* The same settings as the dropdown below, as the phone's sheet reads them. */
   const drawerRows: DrawerRows = [
     { type: "label", text: "Start this thread with" },
@@ -731,7 +709,6 @@ export function DraftConfigPopover({
         onSelect: chooseAgent,
       },
     },
-    personaPick && { type: "pick", pick: personaPick },
     { type: "pick", pick: profilePick },
     modelPick && { type: "pick", pick: modelPick },
     effortPick && { type: "pick", pick: effortPick },
@@ -804,7 +781,7 @@ export function DraftConfigPopover({
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
             className={PILL}
-            title={[persona?.name, modelLabel, effortLabel, modeLabel]
+            title={[modelLabel, effortLabel, modeLabel]
               .filter(Boolean)
               .join(" · ")}
           >
@@ -851,7 +828,6 @@ export function DraftConfigPopover({
             {/* Same words the started thread's trigger reads — the agent is
                 named by its mark above. */}
             <PillLabel
-              persona={persona?.name}
               model={modelLabel}
               effort={effortLabel}
               effortLevel={
@@ -883,31 +859,6 @@ export function DraftConfigPopover({
             }))}
             onSelect={chooseAgent}
           />
-          {/* Above Profile: the only row here that does not depend on one. A
-              persona that names an effort applies it on the spot; the row
-              below still shows it, and still overrides it. */}
-          {personas.length > 0 && (
-            <MenuRow
-              label="Persona"
-              value={meta.personaId || NO_PERSONA}
-              choices={[
-                { value: NO_PERSONA, name: "None" },
-                ...personas.map((p) => ({ value: p.id, name: p.name })),
-              ]}
-              onSelect={(value) => {
-                const picked =
-                  value === NO_PERSONA
-                    ? null
-                    : personas.find((p) => p.id === value);
-                configure({
-                  personaId: picked?.id ?? "",
-                  /* Only when the persona has an opinion: dropping to "" would
-                     silently clear an effort chosen on purpose. */
-                  ...(picked?.effort ? { effort: picked.effort } : {}),
-                });
-              }}
-            />
-          )}
           {/* Drawn even on a single profile: the row is also the door to
               making another. */}
           <MenuRow {...profilePick} />
