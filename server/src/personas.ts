@@ -101,6 +101,51 @@ export const SUGGEST_FOLLOWUPS_INSTRUCTIONS = `After your final answer, suggest 
 
 Every prompt is a message the USER would type next, written so it can be sent as-is — a command or a question the user asks of you ("Show me the diff", "Merge the two servers via backup import", "What happens if two servers' projects conflict?"). Write them in the user's voice, never in yours. In particular, do not put your own questions to the user in the block: if you need their input to proceed, ask it in your answer's prose. Omit the block when no follow-up makes sense — for example when your answer has already asked the user what it needs to know, or nothing natural remains to suggest. Never put anything but follow-up prompts in it.`;
 
+/* ── Recommended project commands ──
+ *
+ * The same ask as the follow-ups above — "what next?" — answered with a line to
+ * run instead of a sentence to send. A second fence, because the two are drawn
+ * differently and acted on differently: a follow-up is filled into the box as
+ * prose, a command is filled as a `!` line the send path runs against the
+ * project (`project-commands.tsx`).
+ *
+ * The list is the whole point. A recommendation is only ever a command the
+ * project *defines* — a saved helper (`project-helpers.ts`) or a package.json
+ * script (`project-scripts.ts`) — so the trailer names them and the model is
+ * told to recommend from nothing else, and the client drops a line that names
+ * a command it does not have. A model left to invent a shell line would offer
+ * one that fails, which is worse than offering none. */
+
+/** Fence the model wraps recommended project commands in. Mirrored by the
+    client's parser (`lib/suggestions.ts`). */
+export const SUGGEST_COMMANDS_FENCE = "suggest-commands";
+
+/** One command the model may recommend: the name a person knows it by and the
+    shell line that runs it. Built from the project's own rows, so every line the
+    model may name is one the harness can resolve and run. */
+export interface SuggestableCommand {
+  name: string;
+  command: string;
+}
+
+/** Trailer listing the project's own commands and asking the model to recommend
+    at most two of them. */
+export function suggestCommands(commands: readonly SuggestableCommand[]): string {
+  const list = commands.map((c) => `- ${c.name}: \`${c.command}\``).join("\n");
+  return `## Project commands
+The project this thread runs in defines these commands:
+
+${list}
+
+After your final answer, if one or two of them would genuinely help the user's next step, recommend them in one fenced block named \`${SUGGEST_COMMANDS_FENCE}\`, one command per line — each line the command itself, exactly as listed above, never the name — and no other text inside the fence:
+
+\`\`\`${SUGGEST_COMMANDS_FENCE}
+<the exact command from the list above>
+\`\`\`
+
+Only ever name a command from the list above; never invent one, and never recommend one the work does not call for. Omit the block entirely when none of them fit. These run in the project's shell, so the user sends the line — do not run them yourself.`;
+}
+
 /* ── Drawn answers ──
  *
  * The other thread-level behaviour folded in at this seam, and it is the same
@@ -131,6 +176,10 @@ export const OPENUI_FENCE = "openui-lang";
 export interface ThreadBehaviour {
   suggestFollowups?: boolean | null;
   uiBlocks?: boolean | null;
+  /** The project's own commands (saved helpers + package.json scripts), read at
+      spawn so the recommendations trailer can list exactly the lines that exist
+      and the model recommends only from them. */
+  commands?: readonly SuggestableCommand[] | null;
   /** The task the thread was started on, resolved at spawn so a respawn sees
       the card as it is now. */
   task?: TaskBrief | null;
@@ -184,8 +233,14 @@ export function withInstructionTrailers(
   const trailers: { id: string; text: string }[] = [];
   if (behaviour.task) trailers.push({ id: "task", text: taskInstructions(behaviour.task) });
   if (behaviour.uiBlocks) trailers.push({ id: "openui", text: OPENUI_INSTRUCTIONS });
-  if (behaviour.suggestFollowups)
+  if (behaviour.suggestFollowups) {
+    /* The project's own commands ride the suggestions ask rather than a toggle
+       of their own: "what next?" answered with a line to run instead of a
+       sentence to send. Only where the project defines something to name. */
+    if (behaviour.commands?.length)
+      trailers.push({ id: "commands", text: suggestCommands(behaviour.commands) });
     trailers.push({ id: "suggestions", text: SUGGEST_FOLLOWUPS_INSTRUCTIONS });
+  }
   if (trailers.length === 0) return persona;
 
   /* Appended only where absent, and matched on the trailer itself: a thread

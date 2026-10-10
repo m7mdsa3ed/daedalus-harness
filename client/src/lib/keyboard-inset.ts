@@ -100,7 +100,7 @@ export const KEYBOARD_CENTER_FLOW =
     translate; the transition stays on the base so the settle rides the same
     curve. */
 export const KEYBOARD_LIFT_FOCUSED =
-  "transition-[translate] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] will-change-transform motion-reduce:transition-none focus-within:translate-y-[calc(var(--keyboard-inset,0px)*-1)]"
+  "relative focus-within:z-20 transition-[translate] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] will-change-transform motion-reduce:transition-none focus-within:translate-y-[calc(var(--keyboard-inset,0px)*-1)]"
 
 /** Lift a bottom-anchored surface, and the edge its height is capped against. */
 export const KEYBOARD_RISE = "bottom-[var(--keyboard-inset,0px)]"

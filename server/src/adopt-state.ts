@@ -30,10 +30,12 @@ export interface ProcessState {
   /** Output frames consumed; an adopt attaches from here. */
   offset: number;
   prompts: InflightPrompt[];
+  /** Agent->client requests the agent is blocked on (`WireLedger.requests`), whole frames. */
+  requests?: acp.AnyMessage[];
   createdAt?: number;
 }
 
-export type ProgressState = Pick<ProcessState, "nextRequestId" | "offset" | "prompts">;
+export type ProgressState = Pick<ProcessState, "nextRequestId" | "offset" | "prompts" | "requests">;
 
 /** Insert or replace the whole row. */
 export async function saveProcessState(s: ProcessState): Promise<void> {
@@ -46,6 +48,7 @@ export async function saveProcessState(s: ProcessState): Promise<void> {
     nextRequestId: s.nextRequestId,
     outputOffset: s.offset,
     prompts: s.prompts,
+    pendingRequests: s.requests ?? [],
     createdAt: s.createdAt ?? now,
     updatedAt: now,
   };
@@ -59,7 +62,7 @@ export async function saveProcessState(s: ProcessState): Promise<void> {
 export async function saveProcessProgress(hostId: string, p: ProgressState): Promise<void> {
   await db
     .update(agentProcesses)
-    .set({ nextRequestId: p.nextRequestId, outputOffset: p.offset, prompts: p.prompts, updatedAt: Date.now() })
+    .set({ nextRequestId: p.nextRequestId, outputOffset: p.offset, prompts: p.prompts, pendingRequests: p.requests ?? [], updatedAt: Date.now() })
     .where(eq(agentProcesses.hostId, hostId));
 }
 
@@ -73,6 +76,7 @@ export async function loadProcessStates(): Promise<ProcessState[]> {
     nextRequestId: r.nextRequestId,
     offset: r.outputOffset,
     prompts: r.prompts,
+    requests: r.pendingRequests as acp.AnyMessage[],
     createdAt: r.createdAt,
   }));
 }
@@ -86,6 +90,12 @@ export async function dropProcessState(hostId: string): Promise<void> {
 export interface OrphanPrompt extends InflightPrompt {
   reply?: { result: acp.PromptResponse } | { error: { code: number; message: string; data?: unknown } };
 }
+
+/** Agent->client requests that wait on a person, so the only ones worth
+    surviving a restart. ponytail: `fs/*` and `terminal/*` are machine-answered
+    in milliseconds and not idempotent (a re-run write), so they are not tracked. */
+const isTrackedRequest = (method: string) =>
+  method === acp.methods.client.session.requestPermission || method === acp.methods.client.elicitation.create;
 
 type Msg = acp.AnyMessage & { id?: number | string | null; method?: string; params?: { sessionId?: string } };
 
@@ -116,14 +126,27 @@ export class WireLedger {
   private readonly noted = new Map<string, string[]>();
   private readonly prompts = new Map<number, InflightPrompt>();
   readonly orphans = new Map<number, OrphanPrompt>();
+  /** Requests the agent sent that have no outbound answer yet, by id. */
+  private readonly requests = new Map<string | number, acp.AnyMessage>();
+  /** Saved requests the wire has not re-delivered (yet): `reinject` hands them over. */
+  private readonly toInject = new Map<string | number, acp.AnyMessage>();
+  /** Ids `reinject` already delivered; the host's replay of the same frame is dropped once. */
+  private readonly injected = new Set<string | number>();
+  private inboundController: TransformStreamDefaultController<acp.AnyMessage> | null = null;
   private orphanListener: ((o: OrphanPrompt) => void) | null = null;
   onChange: (urgent: boolean) => void = () => {};
 
-  constructor(saved?: Pick<ProcessState, "nextRequestId" | "offset" | "prompts">) {
+  constructor(saved?: Pick<ProcessState, "nextRequestId" | "offset" | "prompts" | "requests">) {
     this.idBase = saved?.nextRequestId ?? 0;
     this.reserved = this.idBase;
     this.offsetBase = saved?.offset ?? 0;
     for (const p of saved?.prompts ?? []) this.orphans.set(p.requestId, { ...p });
+    for (const f of saved?.requests ?? []) {
+      const id = (f as Msg).id;
+      if (id === undefined || id === null) continue;
+      this.requests.set(id, f);
+      this.toInject.set(id, f);
+    }
   }
 
   /** The next id this connection will put on the wire. */
@@ -184,6 +207,7 @@ export class WireLedger {
       offset: this.offset,
       // Orphans still owed an answer stay persisted: a second restart must not forget them.
       prompts: [...this.orphans.values()].filter((o) => !o.reply).map(({ acpSessionId, requestId, turnId }) => ({ acpSessionId, requestId, turnId })).concat([...this.prompts.values()]),
+      requests: [...this.requests.values()],
     };
   }
 
@@ -234,7 +258,11 @@ export class WireLedger {
             }
           }
           controller.enqueue({ ...msg, id } as acp.AnyMessage);
-        } else controller.enqueue(m);
+        } else {
+          // An answer to the agent's request (no `method`): the question is closed.
+          if (typeof msg.method !== "string" && msg.id !== undefined && msg.id !== null && this.requests.delete(msg.id)) urgent = true;
+          controller.enqueue(m);
+        }
         this.onChange(urgent);
       },
     });
@@ -242,6 +270,9 @@ export class WireLedger {
 
   inbound(): TransformStream<acp.AnyMessage, acp.AnyMessage> {
     const stream = new TransformStream<acp.AnyMessage, acp.AnyMessage>({
+      start: (controller) => {
+        this.inboundController = controller;
+      },
       transform: (m, controller) => (this.gate ? this.gate.then(() => step(m, controller)) : step(m, controller)),
     });
     const step = (m: acp.AnyMessage, controller: TransformStreamDefaultController<acp.AnyMessage>): void => {
@@ -257,6 +288,15 @@ export class WireLedger {
 
   private deliver(m: acp.AnyMessage, controller: TransformStreamDefaultController<acp.AnyMessage>): void {
         const msg = m as Msg;
+        if (typeof msg.method === "string" && isTrackedRequest(msg.method) && msg.id !== undefined && msg.id !== null) {
+          this.toInject.delete(msg.id);
+          // The replay of a request `reinject` already handed over: once is enough.
+          if (this.injected.delete(msg.id)) return;
+          this.requests.set(msg.id, m);
+          this.onChange(true);
+          controller.enqueue(m);
+          return;
+        }
         if (typeof msg.method !== "string" && typeof msg.id === "number") {
           const orphan = this.orphans.get(msg.id);
           if (orphan) {
@@ -270,6 +310,17 @@ export class WireLedger {
           if (msg.id < this.idBase) return; // an answer to nothing we could have asked
           controller.enqueue({ ...msg, id: msg.id - this.idBase } as acp.AnyMessage);
         } else controller.enqueue(m);
+  }
+
+  /** Hand the saved, still-unanswered requests to the SDK as if the agent had just
+      sent them. Call once every bridge exists and the gate is open: a request whose
+      session has no bridge is answered `cancelled` by the connection's own sink. */
+  reinject(): void {
+    for (const [id, f] of this.toInject) {
+      this.injected.add(id);
+      this.inboundController?.enqueue(f);
+    }
+    this.toInject.clear();
   }
 
   /** The orphan's answer has been acted on; stop persisting it. */

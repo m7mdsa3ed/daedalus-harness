@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   OPENUI_FENCE,
   OPENUI_INSTRUCTIONS,
+  SUGGEST_COMMANDS_FENCE,
   SUGGEST_FOLLOWUPS_INSTRUCTIONS,
   withInstructionTrailers,
 } from "../src/personas.js";
@@ -98,6 +99,44 @@ const persona = { id: "p1", prompt: "PERSONA TEXT" };
   assert.ok(out!.prompt.indexOf("WEB-12") < out!.prompt.indexOf(OPENUI_INSTRUCTIONS), "the task comes first");
   assert.equal(withInstructionTrailers(out, { task, uiBlocks: true })!.prompt, out!.prompt, "and a respawn does not repeat it");
   console.log("openui-trailer: task ok");
+}
+
+// --- project commands: listed, recommend-only, ahead of the follow-ups ---
+{
+  const commands = [
+    { name: "Build", command: "pnpm build" },
+    { name: "Test", command: "pnpm test" },
+  ];
+  const out = withInstructionTrailers(persona, { suggestFollowups: true, commands });
+  const text = out!.prompt;
+  assert.ok(text.includes(SUGGEST_COMMANDS_FENCE), "names the commands fence");
+  assert.ok(
+    text.includes("`pnpm build`") && text.includes("`pnpm test`"),
+    "lists the project's own lines for the model to pick from",
+  );
+  assert.ok(
+    text.indexOf(SUGGEST_COMMANDS_FENCE) < text.indexOf(SUGGEST_FOLLOWUPS_INSTRUCTIONS),
+    "the commands trailer sits ahead of the follow-up block, which stays last",
+  );
+  assert.ok(
+    /only ever name a command from the list/i.test(text),
+    "the list is the constraint: the model is told to invent nothing",
+  );
+
+  // No project commands: the follow-ups still go out, and nothing names a fence
+  // the model was handed no list for.
+  const bare = withInstructionTrailers(persona, { suggestFollowups: true });
+  assert.ok(bare!.prompt.includes(SUGGEST_FOLLOWUPS_INSTRUCTIONS), "follow-ups still there");
+  assert.ok(!bare!.prompt.includes(SUGGEST_COMMANDS_FENCE), "and no commands fence without a list");
+
+  // The commands trailer rides the suggestions toggle, not a lane of its own.
+  const off = withInstructionTrailers(persona, { commands });
+  assert.equal(off?.prompt, "PERSONA TEXT", "commands alone instruct nothing");
+
+  // Idempotent across a respawn, like the others.
+  const twice = withInstructionTrailers(out, { suggestFollowups: true, commands });
+  assert.equal(twice!.prompt, out!.prompt, "a respawn does not repeat the commands trailer");
+  console.log("openui-trailer: commands ok");
 }
 
 console.log("openui-trailer.test.ts passed");

@@ -149,3 +149,59 @@ test("flush waits for a write already in flight", async () => {
   h.emit("exit", 0, null);
   await tick(80);
 });
+
+const PERM = (id: number | string) => ({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId: "s1", options: [], toolCall: { toolCallId: "c" } } });
+
+test("a permission request is tracked, persisted, and cleared by its outbound answer", async () => {
+  const h = new StubHandle("req1");
+  const conn = new AcpConnection("a", asHandle(h), false);
+  await tick();
+  h.say({ jsonrpc: "2.0", id: h.sent[0]!.id, result: INIT });
+  await conn.initialized;
+  await tick();
+  h.say(PERM(7));
+  h.say({ jsonrpc: "2.0", id: "e1", method: "fs/read_text_file", params: { sessionId: "s1", path: "/x" } }); // machine-answered: not tracked
+  await tick(80);
+  // No bridge owns the session, so the sink answers `cancelled` at once and the ledger sees it go out.
+  assert.deepEqual((await loadProcessStates()).find((s) => s.hostId === "req1")!.requests, []);
+  assert.ok(h.sent.some((m) => (m as { id?: unknown }).id === 7), "the answer used the agent's own id");
+  h.emit("exit", 0, null);
+  await tick(80);
+});
+
+test("pending requests round-trip through the row", async () => {
+  await saveProcessState({ hostId: "req2", poolKey: null, agentId: "a", initResult: INIT as never, nextRequestId: 0, offset: 0, prompts: [], requests: [PERM(3) as never] });
+  assert.deepEqual((await loadProcessStates()).find((s) => s.hostId === "req2")!.requests, [PERM(3)]);
+  await saveProcessProgress("req2", { nextRequestId: 0, offset: 0, prompts: [], requests: [] });
+  assert.deepEqual((await loadProcessStates()).find((s) => s.hostId === "req2")!.requests, []);
+  await dropProcessState("req2");
+});
+
+test("reinject delivers a saved request once, even when the host replays it too", async () => {
+  for (const replayFirst of [false, true]) {
+    const l = new WireLedger({ nextRequestId: 0, offset: 0, prompts: [], requests: [PERM(5) as never] });
+    const release = l.hold();
+    const inbound = l.inbound();
+    const got: unknown[] = [];
+    const reader = inbound.readable.getReader();
+    void (async () => { for (;;) { const r = await reader.read(); if (r.done) return; got.push(r.value); } })();
+    const w = inbound.writable.getWriter();
+    void w.write(PERM(5) as never); // the replay from the saved offset
+    release();
+    if (replayFirst) await tick();
+    l.reinject();
+    await tick();
+    assert.equal(got.length, 1, `delivered once (replay ${replayFirst ? "first" : "after"})`);
+    assert.equal((got[0] as { id: number }).id, 5, "agent->client ids are never shifted");
+    assert.deepEqual(l.snapshot().requests, [PERM(5)]);
+  }
+});
+
+test("an answer sent before the restart is not re-asked", async () => {
+  const l = new WireLedger({ nextRequestId: 0, offset: 0, prompts: [], requests: [PERM(9) as never] });
+  const out = l.outbound();
+  void out.readable.getReader().read();
+  void out.writable.getWriter().write({ jsonrpc: "2.0", id: 9, result: { outcome: { outcome: "cancelled" } } } as never);
+  await tick();
+  assert.deepEqual(l.snapshot().requests, []);
+});

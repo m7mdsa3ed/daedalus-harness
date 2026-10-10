@@ -80,8 +80,11 @@ async function scriptsIn(
   return out;
 }
 
-export async function listProjectScripts(projectId: string): Promise<ProjectScript[]> {
-  const root = await projectRoot(projectId);
+/** The scripts under one directory — a project's root, or a thread's cwd. Split
+    from `listProjectScripts` so a caller that already holds the directory (a
+    spawn, which has the project in hand) reads it without re-resolving the
+    project through the database. */
+export async function listScriptsUnder(root: string): Promise<ProjectScript[]> {
   const out = await scriptsIn(join(root, "package.json"), root, null);
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
     /* `node_modules` and dot-dirs are the whole reason this list is one level
@@ -92,4 +95,8 @@ export async function listProjectScripts(projectId: string): Promise<ProjectScri
     out.push(...(await scriptsIn(join(root, entry.name, "package.json"), join(root, entry.name), entry.name)));
   }
   return out;
+}
+
+export async function listProjectScripts(projectId: string): Promise<ProjectScript[]> {
+  return listScriptsUnder(await projectRoot(projectId));
 }

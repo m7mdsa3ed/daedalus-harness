@@ -988,8 +988,27 @@ Goal: `pm2 restart` of the server does not kill running agents. Off by default
   was down ends through `bridge.adoptTurn`.
 - **Loopback credentials are stable** (`loopback-secret.ts`, `data/loopback-secret`, HMAC-derived),
   because a surviving agent still holds the old URLs. Deleting that file strands every adopted agent.
+- **An adopted turn keeps its duration.** The old turn timer died with the old server, so
+  `adoptTurn` takes the journal's `turn_started.at` as `startedAt` and reports `durationMs` as
+  wall clock from there — downtime included, ending at the settle (for a reply that arrived
+  while down, that is adoption, the real finish is not recorded). `toolDurationMs` is left
+  **unset**, not 0: the per-tool timings died with the process, and a figure covering only the
+  part seen since adoption would be wrong. Time to first token is unknown and not emitted.
+- **A question the agent is blocked on survives a restart.** The `WireLedger` tracks inbound
+  `session/request_permission` and `elicitation/create` frames whole, by id, until the matching
+  outbound response (same id, `result`/`error`) goes out, and persists them with the process
+  (`agent_processes.pending_requests`, saved urgently on add and remove). After the bridges
+  exist, `bindOne` calls `ledger.reinject()`, which puts each saved frame into the inbound
+  stream, so the SDK dispatches it to the ordinary handler: `bridge.pending` is rebuilt, peers
+  see it on attach, and the answer leaves with the id the agent waits on (agent→client ids are
+  never shifted). If the host's replay from the saved offset delivers the same id too, it is
+  delivered once (whichever comes first wins, the other is dropped). A request whose session has
+  no bridge reaches the connection's `SINK` and is answered `cancelled`. `fs/*` and `terminal/*`
+  are not tracked: they are answered by the machine in milliseconds and re-running one (a
+  write) is not safe.
 - **Known limits**: only threads with a prompt in flight are bound on boot (idle process-of-its-own
-  threads are not kept: no thread->host column); a permission answered before the restart and older
-  than the saved offset is not re-sent; after SIGKILL some updates can journal twice (progress is
+  threads are not kept: no thread->host column); a crash between writing an answer and
+  persisting its removal re-asks a question the agent already has the answer to (the stale
+  answer is ignored by the agent); after SIGKILL some updates can journal twice (progress is
   persisted at most 500 ms late); `turnChanges.closeOrphans()` still closes an adopted turn's
   measurement. Terminals (node-pty) are not hosted and still die with the server.

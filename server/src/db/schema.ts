@@ -2281,6 +2281,12 @@ export const agentProcesses = pgTable("agent_processes", {
     .$type<{ acpSessionId: string; requestId: number; turnId: string }[]>()
     .notNull()
     .default(sql`'[]'::jsonb`),
+  /** Permission/elicitation requests the agent is blocked on, whole frames
+      (`WireLedger.requests`) — re-injected on adopt. */
+  pendingRequests: jsonb("pending_requests")
+    .$type<unknown[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });

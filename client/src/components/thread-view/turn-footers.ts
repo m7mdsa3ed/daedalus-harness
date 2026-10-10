@@ -310,8 +310,8 @@ export function withTurnSuggestions(
   items: ThreadItem[],
   turnActive: boolean,
   enabled: boolean
-): Map<string, { itemId: string; prompts: string[] }> {
-  const after = new Map<string, { itemId: string; prompts: string[] }>()
+): Map<string, { itemId: string; prompts: string[]; commands: string[] }> {
+  const after = new Map<string, { itemId: string; prompts: string[]; commands: string[] }>()
   if (!enabled) return after
   for (const { turn } of finishedTurns(items, turnActive)) {
     const entry = turnSuggestions(turn)

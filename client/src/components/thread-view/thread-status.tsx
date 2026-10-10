@@ -183,12 +183,12 @@ export function ThreadStatus({
         <div key={family} className="harness-status-body">
           <div className="min-w-0 space-y-1 pl-6 pt-1 text-xs">
             {status.step && (
-              <span className="inline-block rounded-pill bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
+              <span className="harness-part-in inline-block rounded-pill bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
                 Step {status.step.n} of {status.step.of}
               </span>
             )}
             {bar && (
-              <div className="flex max-w-xs items-center gap-2 pt-0.5">
+              <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2 pt-0.5">
                 <Progress value={bar.done} max={bar.total} className="flex-1 [&_[data-slot=progress-track]]:h-1" />
                 <span className="text-muted-foreground tabular-nums">
                   {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
@@ -198,13 +198,13 @@ export function ThreadStatus({
             {/* Always said, never taken over by the slow line: the detail is the
                 only thing that says nothing was lost. */}
             {(detail || (opening && slow && status.slow)) && (
-              <div className="max-w-prose leading-relaxed whitespace-pre-line text-muted-foreground">
+              <div className="harness-part-in [--part-i:1] max-w-prose leading-relaxed whitespace-pre-line text-muted-foreground">
                 {detail}
                 {opening && slow && status.slow && <span className="mt-1 block">{status.slow}</span>}
               </div>
             )}
             {status.install && (
-              <code className="block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
+              <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
                 {status.install}
               </code>
             )}
@@ -219,7 +219,7 @@ export function ThreadStatus({
               </pre>
             )}
             {(visible.length > 0 || showCopy) && (
-              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <div className="harness-part-in [--part-i:3] flex flex-wrap items-center gap-1.5 pt-0.5">
                 {visible.map((a) => (
                   <ActionPill
                     key={a.kind}
@@ -251,7 +251,7 @@ export function ThreadStatus({
             {/* The way out of a wait that has stopped looking like one. Cancel
                 gives up the wait, never the words: the message goes back in the box. */}
             {cancellable && waited >= CLOCK_MS && (
-              <div className="flex items-center gap-2 pt-0.5 text-muted-foreground">
+              <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-0.5 text-muted-foreground">
                 <span className="tabular-nums">Waiting {formatElapsed(waited)}</span>
                 <Button variant="outline" size="xs" onClick={() => run("cancel")}>
                   Cancel

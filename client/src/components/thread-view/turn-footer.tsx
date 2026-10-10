@@ -4,6 +4,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 
+import { CommandSuggestions } from "@/components/command-suggestions"
 import { PromptSuggestions } from "@/components/prompt-suggestions"
 import { SourcesStrip } from "@/components/thread-cards"
 import { TokenSummary } from "@/components/token-usage"
@@ -17,16 +18,22 @@ export const TurnFooter = React.memo(function TurnFooter({
   durationMs,
   toolDurationMs,
   suggestions,
+  commands,
   onPick,
+  onPickCommand,
 }: {
   sources?: TurnSources
   usage?: acp.Usage
   durationMs?: number
   toolDurationMs?: number
   suggestions?: string[]
+  /** The project commands the answer recommended, already filtered to the ones
+      the project defines (`keepDefinedCommands`). */
+  commands?: string[]
   onPick: (prompt: string) => void
+  onPickCommand: (command: string) => void
 }) {
-  if (!sources && !usage && !suggestions?.length) return null
+  if (!sources && !usage && !suggestions?.length && !commands?.length) return null
 
   return (
     <div className="min-w-0">
@@ -48,6 +55,11 @@ export const TurnFooter = React.memo(function TurnFooter({
       {suggestions && suggestions.length > 0 && (
         <div className="harness-item-in mt-1" style={stagger(3)}>
           <PromptSuggestions suggestions={suggestions} onPick={onPick} />
+        </div>
+      )}
+      {commands && commands.length > 0 && (
+        <div className="harness-item-in mt-1" style={stagger(4)}>
+          <CommandSuggestions commands={commands} onPick={onPickCommand} />
         </div>
       )}
     </div>

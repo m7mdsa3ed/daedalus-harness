@@ -860,6 +860,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **A `!` row is never windowed away**: `windowStart` opens the replay at the thread's oldest
   shell command (`firstShell`), because a row that belongs to no turn would otherwise be cut off
   by a turn boundary for good, where an old message is merely behind `load earlier`.
+- **The project's own commands can also be recommended under an answer**
+  (`command-suggestions.tsx`). With a thread's suggestions toggle on, the spawn trailer lists the
+  project's helpers and package.json scripts (`personas.ts` `suggestCommands`, fed from the
+  spawn's own project — never a second `getProject`) and asks the model to close with one or two
+  of them in a `suggest-commands` fence, beside the follow-ups (`lib/suggestions`). **The client
+  draws only the lines that name a command the project defines** (`keepDefinedCommands`), so a
+  hallucinated line is dropped rather than offered as a `!` the user could click and watch fail;
+  the card wears the shell's dress — monospace, a terminal mark, "Project commands" where the
+  follow-ups say "Next" — and a pick fills the box with the `!` line **unsent**, the same
+  read-before-it-runs bargain the `!` completer's pick makes.
 - **Three view options govern the rows** (`lib/view-options.ts`). **Show `!` commands** hides them
   outright — the command still ran and the journal still holds it, only the row is silent — and
   **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,

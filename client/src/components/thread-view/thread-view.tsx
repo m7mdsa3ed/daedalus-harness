@@ -31,6 +31,8 @@ import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem,
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext } from "@/components/workspace/dock-context"
 import { useProjects } from "@/lib/queries/catalog"
+import { useProjectScripts } from "@/lib/queries"
+import { keepDefinedCommands } from "@/lib/suggestions"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { useLocation } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
@@ -529,6 +531,13 @@ export function ThreadView({
     else if (kind === "dismiss") h.dismiss()
   }
   const pickSuggestion = React.useCallback((prompt: string) => composerApiRef.current?.fill(prompt), [])
+  /* A recommended command picked from its card fills the box with the `!` line
+     — the same act the `!` completer's pick is, and for the same reason: the
+     line is read and edited before it runs, so nothing is executed by the click. */
+  const pickCommand = React.useCallback(
+    (command: string) => composerApiRef.current?.fill(`!${command}`),
+    []
+  )
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
@@ -566,8 +575,39 @@ export function ThreadView({
     () => withTurnSuggestions(thread.items, thread.turnActive, meta?.suggestFollowups === true),
     [thread.items, thread.turnActive, meta?.suggestFollowups]
   )
-  const suggestionsFor = (row: Row): { itemId: string; prompts: string[] } | undefined =>
+  const suggestionsFor = (
+    row: Row
+  ): { itemId: string; prompts: string[]; commands: string[] } | undefined =>
     suggestionsAfter.get(rowTailId(row))
+
+  /* The commands a thread may recommend are its project's own — the same union
+     the `!` completer offers (saved helpers + package.json scripts, folded into
+     `useProjects` and one query). The recommendation is filtered against this
+     set before it is drawn, so a line that names nothing defined never becomes a
+     command the user could click and watch fail. */
+  const suggestionProject = useProjects().find((candidate) => candidate.id === meta?.projectId)
+  const suggestionScripts =
+    useProjectScripts(meta?.projectId ?? "", Boolean(meta?.projectId)).data ?? []
+  const definedCommands = React.useMemo(
+    () =>
+      new Set([
+        ...(suggestionProject?.helpers ?? []).map((helper) => helper.command.trim()),
+        ...suggestionScripts.map((script) => script.command.trim()),
+      ]),
+    [suggestionProject?.helpers, suggestionScripts]
+  )
+  /* Each answer's defined commands, one identity per entry so a streaming
+     re-render does not hand `TurnFooter` a fresh array every frame and defeat
+     its memo. Keyed by the same answer id the follow-ups are. */
+  const commandsAfter = React.useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const [id, entry] of suggestionsAfter) {
+      const commands = keepDefinedCommands(entry.commands, definedCommands)
+      if (commands.length > 0) map.set(id, commands)
+    }
+    return map
+  }, [suggestionsAfter, definedCommands])
+  const commandsFor = (row: Row): string[] | undefined => commandsAfter.get(rowTailId(row))
 
   const rootRef = React.useRef<HTMLDivElement>(null)
   /* The aside open over this thread, if any — one at a time. */
@@ -894,7 +934,9 @@ export function ThreadView({
                     durationMs={durationFor(row)}
                     toolDurationMs={toolDurationFor(row)}
                     suggestions={suggestionsFor(row)?.prompts}
+                    commands={commandsFor(row)}
                     onPick={pickSuggestion}
+                    onPickCommand={pickCommand}
                   />
                 </MessageScrollerItem>
                 )

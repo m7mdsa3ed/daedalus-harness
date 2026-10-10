@@ -192,8 +192,10 @@ function TabGridBody({
     <>
       {/* The button stays put and stays drawn: the morph's source is an empty,
           invisible box laid over it, so nothing blinks out when the panel
-          takes the layout id. Its radius is a style (a pill), so motion
-          corrects it while it scales. */}
+          takes the layout id. Its radius is a style, so motion corrects it
+          while it scales, and it is the panel's own 16: a 9999 pill tweened
+          to 16 stays a pill for most of the spring and snaps square at the
+          end. The button is a circle at most 32px, so 16 is still round. */}
       <span className="relative grid">
         <MorphingDialogOpen
           title={`Switch tabs (${panels.length})`}
@@ -203,7 +205,7 @@ function TabGridBody({
             {panels.length}
           </span>
         </MorphingDialogOpen>
-        <MorphingDialogSource className="pointer-events-none absolute inset-0" style={{ borderRadius: 9999 }} />
+        <MorphingDialogSource className="pointer-events-none absolute inset-0" style={{ borderRadius: 16 }} />
       </span>
       <MorphingDialogContent plain label={`${panels.length} tabs`}>
         <div className="flex h-12 shrink-0 items-center pr-14 pl-4">

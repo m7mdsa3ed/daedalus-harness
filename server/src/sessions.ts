@@ -14,6 +14,9 @@ import { mcpServers as mcpLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
 import { resolvePersonaSpawn } from "./personas.js";
+import type { SuggestableCommand } from "./personas.js";
+import { listHelpers } from "./project-helpers.js";
+import { listScriptsUnder } from "./project-scripts.js";
 import { noteThreadLinked, noteTurnStarted, taskBrief } from "./task-threads.js";
 import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
@@ -77,6 +80,22 @@ const TITLE_MAX = 200;
     line in a list, a status word in a card — and the failure itself is on the
     journaled `turn_ended`, which is what the transcript draws in full. */
 const LAST_ERROR_MAX = 300;
+
+/** The commands a thread may recommend back to the user: its project's own —
+    the saved helpers and the package.json scripts, the same union the `!`
+    completer offers. Read at spawn so the trailer lists exactly the lines that
+    exist today. Empty is an ordinary answer (a project that defines nothing),
+    not a failure; a project directory that is gone fails the spawn elsewhere. */
+async function recommendableCommands(projectId: string, cwd: string): Promise<SuggestableCommand[]> {
+  const [helpers, scripts] = await Promise.all([
+    listHelpers(projectId),
+    listScriptsUnder(cwd),
+  ]);
+  return [
+    ...helpers.map((helper) => ({ name: helper.name, command: helper.command })),
+    ...scripts.map((script) => ({ name: script.name, command: script.command })),
+  ];
+}
 
 /** One attached client. Several may share a session; they are subscribers to
     one server-side ACP client, not ACP clients themselves — which is why a peer
@@ -677,8 +696,15 @@ export class SessionManager {
        whose row it did not see, so a `create` that raced it had its thread
        deleted out from under the caller. */
     this.ready = (async () => {
+      // Timed because this is the one boot phase that scales with the data (journal
+      // retention, then every thread row); see boot-timing.ts for the rest.
+      const pruneStart = Date.now();
       await this.pruneJournals();
+      const reloadStart = Date.now();
       await this.reload();
+      console.log(
+        `[boot] sessions: prune ${reloadStart - pruneStart}ms, reload ${Date.now() - reloadStart}ms (${this.sessions.size} threads)`,
+      );
     })().catch((error) => console.error("[sessions] boot read failed", error));
 
     /* What answers a `/gw/<key>/s/<id>/…` request. The shim asks per request
@@ -1931,6 +1957,12 @@ export class SessionManager {
         /* A drawn view is read by a person; an unattended run's output goes to
            a log and wants prose it can grep. */
         uiBlocks: session.uiBlocks && !unattended,
+        /* The project's own commands, for the recommendations trailer beside
+           the follow-ups. Only read when the thread is asking for suggestions at
+           all — a thread that is not pays neither the query nor the disk walk. */
+        commands: session.suggestFollowups
+          ? await recommendableCommands(project.id, project.cwd)
+          : undefined,
         /* Read now, not remembered: a respawn tells the agent where the card is
            and what it is called today. A workflow step has no harness MCP to
            act on it with, so it is told nothing. */

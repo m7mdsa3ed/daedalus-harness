@@ -770,6 +770,8 @@ export class AcpBridge implements ConnectionRoute {
   private inflight = 0;
   private turnStartedAt: number | null = null;
   private turnToolDurationMs = 0;
+  /** The turn was adopted from a previous server: its tool time is unknown. */
+  private toolTimeLost = false;
   private toolWindowStartedAt: number | null = null;
   private ttftSent = false;
   private nextRequestId = 1;
@@ -1817,14 +1819,28 @@ export class AcpBridge implements ConnectionRoute {
    * `turn_started` is already in the journal, so only the end is said here.
    * `OrphanPrompt` comes from `conn.ledger.watchOrphans`.
    */
-  adoptTurn(turnId: string, text: string, reply: NonNullable<OrphanPrompt["reply"]> | Promise<NonNullable<OrphanPrompt["reply"]>>): void {
+  adoptTurn(
+    turnId: string,
+    text: string,
+    reply: NonNullable<OrphanPrompt["reply"]> | Promise<NonNullable<OrphanPrompt["reply"]>>,
+    /** Epoch ms the turn began (the journal's `turn_started.at`). */
+    startedAt?: number,
+  ): void {
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
       this.lastSeenMessageId = null;
       this.turnFailure = undefined;
-      this.turnStartedAt = performance.now();
+      /* Wall clock from the original start, downtime included: the old server's
+         timer died with it, and the journal's stamp is the only clock left. For a
+         turn whose reply is already in, the settle is moments away and the
+         duration ends at adoption, not at the (unrecorded) real finish. */
+      this.turnStartedAt = performance.now() - (startedAt !== undefined ? Math.max(0, Date.now() - startedAt) : 0);
       this.turnToolDurationMs = 0;
+      /* Per-tool timings died with the old server; a number from the part seen
+         since adoption would be a wrong one, so the turn reports none. */
+      this.toolTimeLost = true;
+      this.ttftSent = true; // time to first token is unknown too
     }
     this.inflight++;
     void Promise.resolve(reply).then((r) =>
@@ -1866,7 +1882,7 @@ export class AcpBridge implements ConnectionRoute {
        a turn rather than opening one, so this covers every prompt in it. */
     const durationMs =
       this.turnStartedAt !== null ? Math.round(performance.now() - this.turnStartedAt) : undefined;
-    const toolDurationMs = durationMs !== undefined
+    const toolDurationMs = durationMs !== undefined && !this.toolTimeLost
       ? Math.min(durationMs, Math.round(this.turnToolDurationMs))
       : undefined;
     const turnFailure = this.turnFailure;
@@ -1881,6 +1897,7 @@ export class AcpBridge implements ConnectionRoute {
     this.trace.endTurn({ error: failed?.message, usage, stopReason, durationMs, toolDurationMs });
     this.turnStartedAt = null;
     this.turnToolDurationMs = 0;
+    this.toolTimeLost = false;
     /* The session has content now, so the agent has written it down and a later
        `session/load` can find it. Before this point its id is unloadable, and
        recording an unloadable id is how a thread loses the transcript it had.

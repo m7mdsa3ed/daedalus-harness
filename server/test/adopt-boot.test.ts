@@ -39,9 +39,19 @@ let lines = 0;
 const w = (s) => { process.stdout.write(s + "\\n"); writeFileSync(count, String(++lines)); };
 const out = (m) => w(JSON.stringify(m));
 const reply = (id, result) => out({ jsonrpc: "2.0", id, result });
+const asking = new Map();
 createInterface({ input: process.stdin }).on("line", (line) => {
   const msg = JSON.parse(line);
-  if (!msg.method) return;
+  if (!msg.method) {
+    // The answer to a permission request this stub sent: record it, then finish (or wait for the gate).
+    const a = asking.get(msg.id);
+    if (a) {
+      asking.delete(msg.id);
+      appendFileSync(log, JSON.stringify({ method: "answered", id: msg.id, outcome: msg.result?.outcome ?? null }) + "\\n");
+      a();
+    }
+    return;
+  }
   appendFileSync(log, JSON.stringify({ method: msg.method, sessionId: msg.params?.sessionId ?? null }) + "\\n");
   switch (msg.method) {
     case "initialize":
@@ -57,6 +67,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "echo:" + text } } } });
         reply(msg.id, { stopReason: "end_turn" });
       };
+      if (text === "ask" || text === "askslow") {
+        const id = 9000 + Math.floor(Math.random() * 1000);
+        asking.set(id, () => {
+          if (text === "ask") return finish();
+          const t = setInterval(() => { if (readFileSync(gate, "utf8") === "open") { clearInterval(t); finish(); } }, 20);
+        });
+        return out({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId, toolCall: { toolCallId: "tc-" + id, title: "do it" }, options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }] } });
+      }
       if (text !== "slow") return finish();
       const t = setInterval(() => { if (readFileSync(gate, "utf8") === "open") { clearInterval(t); finish(); } }, 20);
       return;
@@ -101,7 +119,7 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string
   for (let i = 0; i < 160 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
   assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
-const logged = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { method: string; sessionId: string | null });
+const logged = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { method: string; sessionId: string | null; id?: number; outcome?: unknown });
 
 await seedAgents();
 const first = new SessionManager({}, 60);
@@ -112,6 +130,7 @@ const ws1 = new MockWs();
 assert.equal(await first.attach(thread.id, ws1 as never), null);
 send(ws1, { id: 1, cmd: "prompt", text: "hi" });
 await waitFor(() => ws1.of("turn_ended").length === 1, "the first turn");
+const slowSentAt = Date.now();
 send(ws1, { id: 2, cmd: "prompt", text: "slow" });
 await waitFor(() => logged().filter((e) => e.method === "session/prompt").length === 2, "the slow prompt to reach the agent");
 const hostId = thread.proc!.id;
@@ -161,6 +180,13 @@ assert.equal(await second.attach(thread.id, ws2 as never), null);
 await waitFor(() => ws2.of("caught_up").length > 0, "the replay");
 await waitFor(() => ws2.of("turn_ended").length === 2, "the turn that finished while down to end via adoptTurn");
 assert.equal(ws2.of("turn_started").length, 2, "its turn_started was kept in the journal");
+{
+  // Wall clock from the original start (downtime included), not 0; tool time is not invented.
+  const ended = ws2.of("turn_ended")[1];
+  assert.ok(ended.durationMs !== undefined && ended.durationMs >= 300, `an adopted turn keeps its duration (got ${ended.durationMs})`);
+  assert.ok(ended.durationMs <= Date.now() - slowSentAt + 50, "…and no more than the real elapsed time");
+  assert.equal(ended.toolDurationMs, undefined, "tool time died with the old server and is left unset");
+}
 rows = await loadProcessStates();
 assert.equal(rows.find((r) => r.hostId === "deadbeef-dead"), undefined, "a row with no host is dropped");
 await waitFor(async () => !(await sandbox.list()).some((i) => i.id === stray.id), "a host with no row to be killed");
@@ -171,8 +197,57 @@ send(ws2, { id: 1, cmd: "prompt", text: "again" });
 await waitFor(() => ws2.of("turn_ended").length === 3, "a turn on the adopted process");
 assert.equal(logged().filter((e) => e.method === "initialize").length, 1);
 
+
+// ---- a question the agent is blocked on survives a restart ----
+type Live = { bridge: { pending: Map<string, unknown>; answer(id: string, r: unknown): unknown } };
+const liveOf = (m: InstanceType<typeof SessionManager>) => (m as unknown as { sessions: Map<string, Live> }).sessions.get(thread.id)!;
+const allow = { outcome: { outcome: "selected", optionId: "allow" } };
+const reboot = async (prev: InstanceType<typeof SessionManager>) => {
+  await prev.shutdown();
+  const next = new SessionManager({}, 60);
+  await next.ready;
+  const a = await adoptAgents(sandbox, next);
+  assert.equal(a.adopted, 1);
+  await a.bind();
+  const ws = new MockWs();
+  assert.equal(await next.attach(thread.id, ws as never), null);
+  await waitFor(() => ws.of("caught_up").length > 0, "the replay");
+  return { next, ws };
+};
+writeFileSync(gatePath, "closed");
+send(ws2, { id: 2, cmd: "prompt", text: "ask" });
+await waitFor(() => ws2.of("permission").length === 1, "the first permission request");
+const askedAt = Date.now();
+await new Promise((r) => setTimeout(r, 300));
+const { next: third, ws: ws3 } = await reboot(second);
+assert.equal(ws3.of("permission").length, 1, "the pending permission is shown again to the new server's peer");
+const reqId = ws3.of("permission")[0].requestId;
+assert.deepEqual([...liveOf(third).bridge.pending.keys()], [reqId], "bridge.pending is rebuilt");
+liveOf(third).bridge.answer(reqId, allow);
+await waitFor(() => logged().some((e) => e.method === "answered"), "the agent to receive the answer");
+await waitFor(() => ws3.of("turn_ended").length === 4, "the blocked turn to complete after the answer");
+{
+  const ended = ws3.of("turn_ended")[3];
+  assert.ok(ended.durationMs !== undefined && ended.durationMs >= 300 && ended.durationMs <= Date.now() - askedAt + 2000, `a turn adopted while running reports its original start (got ${ended.durationMs})`);
+}
+const stubIds = logged().filter((e) => e.method === "answered").map((e) => e.id);
+assert.equal(stubIds.length, 1, "answered once, with the id the agent was waiting on");
+
+// ---- answered before the restart: nothing is re-asked ----
+send(ws3, { id: 1, cmd: "prompt", text: "askslow" });
+await waitFor(() => ws3.of("permission").length === 2, "the second permission request");
+liveOf(third).bridge.answer(ws3.of("permission")[1].requestId, allow);
+await waitFor(() => logged().filter((e) => e.method === "answered").length === 2, "the agent to take the second answer");
+const { next: fourth, ws: ws4 } = await reboot(third);
+assert.equal(ws4.of("permission").length, 0, "an answered question is not re-asked");
+assert.equal(liveOf(fourth).bridge.pending.size, 0);
+assert.equal((await loadProcessStates()).find((r) => r.hostId === hostId)?.requests?.length, 0);
+writeFileSync(gatePath, "open");
+await waitFor(() => ws4.of("turn_ended").length === 5, "the adopted, answered turn to finish");
+const live4 = liveOf(fourth) as unknown as typeof live;
+
 // ---- explicit retire still kills ----
-second.retire(live);
+fourth.retire(live4);
 await waitFor(async () => !(await sandbox.list()).some((i) => i.id === hostId), "the host to end after a retire");
 await waitFor(async () => !(await db.select().from(agentProcesses).where(eq(agentProcesses.hostId, hostId))).length, "its row to go");
 

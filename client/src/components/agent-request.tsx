@@ -29,7 +29,7 @@ export function AgentRequestCard({ className, ...props }: React.ComponentProps<"
       className={cn(
         // px-4/py-3.5 is the card's whole gutter — bands inside it add no
         // horizontal padding of their own, so every edge lines up.
-        "my-3 overflow-hidden rounded-xl bg-primary/[0.06] px-4 py-3.5 text-xs",
+        "my-3 overflow-hidden rounded-xl bg-[color-mix(in_oklab,var(--primary)_6%,var(--background))] px-4 py-3.5 text-xs",
         "animate-in duration-200 fade-in slide-in-from-bottom-1",
         className
       )}

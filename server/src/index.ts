@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
@@ -14,6 +15,7 @@ import { seedAgents } from "./registry.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
 import { adoptAgents } from "./adopt-boot.js";
+import { mark } from "./boot-timing.js";
 import { durable, sandbox } from "./sandbox/index.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { WorkflowRunner } from "./workflows.js";
@@ -47,11 +49,13 @@ import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { taskRoutes } from "./routes/tasks.js";
 
+mark("modules loaded");
 const config = loadConfig();
 // Index whatever was journaled before the FTS table existed. Once (a marker in
 // search_meta), incremental, and before the server listens — so nothing is
 // streaming into the journal while it walks. New events index at flush time.
 await backfillSearchIndex();
+mark("search index backfill");
 /* Before anything can spawn: `{gatewayUrl}` in an agent's env is resolved at
    spawn from what this hands out, and a spawn that predates it would go to the
    gateway direct (correct, but without the shim's repair). */
@@ -82,6 +86,7 @@ await writeModelPromptsLibrary();
    ids are the exact strings pre-boards tasks hold in `tasks.status`, so those
    rows become legible without being rewritten. See boards.ensureDefaultBoard. */
 await ensureDefaultBoard();
+mark("seeds and migrations");
 const push = new Push(config.fcm);
 /** The failure's own line, or null. A push body is a sentence, so its
     whitespace is collapsed on the way into one. */
@@ -154,6 +159,7 @@ const sessions = new SessionManager(
 /* No turn survives a restart, so a turn row still open at boot is one the
    old process never closed (turn-changes.ts, `closeOrphans`). */
 await sessions.turnChanges.closeOrphans();
+mark("turn-changes recovery");
 /* The workflow engine (workflows.ts). Wired both ways after construction: the
    manager hands every top-level thread the `workflow` MCP server pointed at
    the runner's loopback URL, and the runner drives the manager to run steps.
@@ -161,6 +167,7 @@ await sessions.turnChanges.closeOrphans();
 workflows = new WorkflowRunner(sessions, { port: config.port });
 sessions.setWorkflowRunner(workflows);
 await workflows.recoverAtBoot();
+mark("workflow recovery");
 /* The routine engine (routines.ts) — a saved thread-start that fires on its
    own. After the workflow runner because a workflow-bodied routine hands its
    run's thread to it, and neither can be given the other at its own
@@ -174,6 +181,7 @@ routines = new RoutineEngine(sessions, {
   notify: (title, body, data) => push.send(title, body, data).catch(console.error),
 });
 await routines.recoverAtBoot();
+mark("routine recovery");
 /* The `git` trigger kind (routine-git-trigger.ts): a project watcher that fires
    a routine when the repository under it moves. Separate from the scheduler
    because it has no clock — it is woken by the filesystem, not by a sweep — and
@@ -183,7 +191,9 @@ await routines.recoverAtBoot();
    under direct). Reattached and their threads claimed now, before anything can
    spawn or sweep; the bridges are opened once we listen (below). */
 await sessions.ready;
+mark("session manager ready");
 const adoption = await adoptAgents(sandbox, sessions);
+mark(`agents adopted (${adoption.adopted})`);
 routineGitTriggers = new RoutineGitTriggers({ engine: routines });
 routineGitTriggers.start();
 // Tails background-task journals (files an agent disclosed in a tool result)
@@ -269,6 +279,7 @@ sessionRoutes(app, { sessions });
 voiceRoutes(app, { sessions });
 videoRoutes(app, { sessions });
 await recoverVideoRenders();
+mark("video renders recovered");
 taskRoutes(app, { sessions, tasks });
 workflowRoutes(app, { runner: workflows, sessions });
 harnessRoutes(app, { runner: workflows });
@@ -278,7 +289,8 @@ routineRoutes(app, { engine: routines });
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   console.log(`daedalus server on http://${info.address}:${info.port}`);
   console.log(`token: ${config.token}`);
-  void adoption.bind();
+  mark("listening");
+  void adoption.bind().then(() => mark("threads bound"));
 });
 
 /**
@@ -438,6 +450,9 @@ let shuttingDown = false;
 async function shutdown(code: number): Promise<never> {
   if (shuttingDown) return new Promise<never>(() => {}); // first caller owns the exit
   shuttingDown = true;
+  const shutdownStart = performance.now();
+  const lap = (label: string) => console.log(`[shutdown] +${Math.round(performance.now() - shutdownStart)}ms ${label}`);
+  lap("signal received");
   try {
     /* Before `stopWatching`, so the closers it fires cannot race a resubscribe:
        `stop()` is what tells the git triggers to stay down. */
@@ -449,12 +464,14 @@ async function shutdown(code: number): Promise<never> {
     workflows?.shutdown();
     routines?.shutdown();
     await sessions.shutdown();
+    lap("sessions shut down");
   } catch (error) {
     console.error("[shutdown]", error);
   }
   /* The retired bridges ended their spans; write them (and export them) inside
      the drain rather than dropping the last turn's trajectory. */
   await Promise.race([shutdownTracing(), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS))]);
+  lap("tracing flushed");
   /* The fixed wait is for direct children: `AcpConnection.kill` escalates SIGTERM
      to SIGKILL on a timer that has to fire before the process goes. Over a durable
      sandbox nothing is waiting on one — the agents are not ours to kill, the hosts
@@ -462,6 +479,7 @@ async function shutdown(code: number): Promise<never> {
      to a server that is not there. The short beat lets the pty kills and the
      sockets' close frames leave the process. */
   await new Promise((resolve) => setTimeout(resolve, durable ? DURABLE_SETTLE_MS : SHUTDOWN_DRAIN_MS));
+  lap("exiting");
   process.exit(code);
 }
 

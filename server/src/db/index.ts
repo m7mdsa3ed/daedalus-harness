@@ -203,10 +203,12 @@ async function ensureSchema(): Promise<void> {
       next_request_id INTEGER NOT NULL DEFAULT 0,
       output_offset BIGINT NOT NULL DEFAULT 0,
       prompts JSONB NOT NULL DEFAULT '[]'::jsonb,
+      pending_requests JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL
     )
   `);
+  await db.execute(sql`ALTER TABLE agent_processes ADD COLUMN IF NOT EXISTS pending_requests JSONB NOT NULL DEFAULT '[]'::jsonb`);
   /* The rules table (rules.ts). */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS rules (

@@ -47,8 +47,8 @@ export async function killHost(sb: Sandbox, id: string): Promise<void> {
   }
 }
 
-/** The text the prompt was sent with, as the journal's `turn_started` has it. */
-async function turnText(sessionId: string, turnId: string): Promise<string> {
+/** The text the prompt was sent with and when the turn began (epoch ms), as the journal's `turn_started` has them. */
+async function turnStart(sessionId: string, turnId: string): Promise<{ text: string; at?: number }> {
   try {
     const rows = await db
       .select({ payload: sessionEvents.payload })
@@ -61,9 +61,10 @@ async function turnText(sessionId: string, turnId: string): Promise<string> {
         ),
       )
       .limit(1);
-    return (rows[0]?.payload as { text?: string } | undefined)?.text ?? "";
+    const p = rows[0]?.payload as { text?: string; at?: number } | undefined;
+    return { text: p?.text ?? "", at: typeof p?.at === "number" ? p.at : undefined };
   } catch {
-    return "";
+    return { text: "" };
   }
 }
 
@@ -104,8 +105,10 @@ export async function adoptAgents(
       const state = stateById.get(info.id);
       if (!state) continue;
       let handle: Handle | null = null;
+      const attachStart = Date.now();
       try {
         handle = await sb.attach(state.hostId, state.offset);
+        log(`host ${state.hostId.slice(0, 8)} attached in ${Date.now() - attachStart}ms`);
         // A host whose child already exited answers with its exit frame.
         await Promise.race([handle.exited, sleep(150)]);
         if (!handle.running) {
@@ -183,12 +186,15 @@ async function bindOne({ conn, claims }: Adopted, mgr: AdoptManager, pool: AcpPo
     const bridges = await Promise.all(
       claims.map((claim) => {
         let once = false;
-        return mgr.bindAdopted(claim, conn, () => {
-          if (!once) {
-            once = true;
-            made();
-          }
-        });
+        const bindStart = Date.now();
+        return mgr
+          .bindAdopted(claim, conn, () => {
+            if (!once) {
+              once = true;
+              made();
+            }
+          })
+          .finally(() => log(`thread ${claim.sessionId.slice(0, 8)} bound in ${Date.now() - bindStart}ms`));
       }),
     );
     conn.open();
@@ -201,7 +207,10 @@ async function bindOne({ conn, claims }: Adopted, mgr: AdoptManager, pool: AcpPo
           if (o.acpSessionId !== claim.acpSessionId) continue;
           claimed.add(o.requestId);
           const answer = answers.get(o.requestId)!;
-          if (bridge) bridge.adoptTurn(o.turnId, await turnText(claim.sessionId, o.turnId), answer.promise);
+          if (bridge) {
+            const start = await turnStart(claim.sessionId, o.turnId);
+            bridge.adoptTurn(o.turnId, start.text, answer.promise, start.at);
+          }
           else answer.resolve(cancelled);
         }
       } catch (error) {
@@ -213,6 +222,8 @@ async function bindOne({ conn, claims }: Adopted, mgr: AdoptManager, pool: AcpPo
     }
     // Orphans of a session no thread could take: nothing to tell.
     for (const [id, a] of answers) if (!claimed.has(id)) a.resolve(cancelled);
+    // Questions the agent is still blocked on: every bridge exists, so ask them again (an unowned one is answered cancelled).
+    ledger.reinject();
     if (conn.sessionCount > 0) return;
     if (conn.shared) pool.release(conn);
     else {
