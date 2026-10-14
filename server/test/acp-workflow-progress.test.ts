@@ -15,13 +15,22 @@
 // Run: pnpm test:acp-workflow
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const PACKAGE = "@agentclientprotocol/claude-agent-acp";
 
 function adapterDir(): string | null {
+  if (process.env.CLAUDE_AGENT_ACP_DIR) return process.env.CLAUDE_AGENT_ACP_DIR;
+  /* The adapter the harness actually spawns: the package behind the binary on
+     PATH (global, never npx) — the same lookup scripts/patch-claude-acp.mjs makes. */
+  for (const bin of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const shim = join(bin, "claude-agent-acp");
+    if (!existsSync(shim)) continue;
+    const pkg = dirname(dirname(realpathSync(shim))); // <pkg>/dist/index.js
+    if (existsSync(join(pkg, "package.json"))) return pkg;
+  }
   const require = createRequire(import.meta.url);
   try {
     return dirname(require.resolve(`${PACKAGE}/package.json`));

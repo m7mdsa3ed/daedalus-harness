@@ -450,8 +450,8 @@ export function ComposerStrip({
         data-front={front ? "" : undefined}
         hidden={!front}
         className={cn(
-          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-xl",
-          front && cn("backdrop-blur-sm", ground)
+          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-2xl",
+          front && cn("backdrop-blur-[var(--app-blur)]", ground)
         )}
         style={{ top: railHeight, bottom: footerHeight + tuck }}
       >
@@ -505,7 +505,7 @@ export function ComposerStrip({
           // the way down. Without it the composer would jump rather than slide.
           // Never with a footer: that surface is already down there, and a
           // second one over it would wash the row it is under.
-          empty && !stowed && cn("overflow-hidden rounded-t-xl", ground),
+          empty && !stowed && cn("overflow-hidden rounded-t-2xl", ground),
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className
@@ -538,11 +538,11 @@ export function ComposerStrip({
                   tabIndex={selected ? 0 : -1}
                   onClick={() => setPicked(entry.id)}
                   className={cn(
-                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-2 text-left text-[11px] font-medium transition-colors",
+                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-pill px-2 text-left text-[11px] font-medium transition-colors",
                     wideLayout && "w-full justify-start",
                     selected
-                      ? "bg-composer text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                      ? "bg-composer text-foreground ring-1 ring-foreground/10"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   )}
                 >
@@ -574,13 +574,12 @@ export function ComposerStrip({
                  sits a step away from it in both modes (light: darker toward the
                  foreground; dark: darker toward the background), so the strip
                  reads as a distinct object under the box it belongs to. No
-                 ring: the difference in ground is what separates them.
-
-                 Every card above it wears the same surface, and so does the
-                 box on the way down — one colour for the whole shelf, because
-                 nothing on it is ever wrong (see `GROUND`). */
+                 ring: the difference in ground is what separates them, and the
+                 composer's own hairline draws the seam. Every card above it wears the same surface, and so does
+                 the box on the way down — one colour for the whole shelf,
+                 because nothing on it is ever wrong (see `GROUND`). */
               ground,
-              entries.length === 0 && "rounded-t-xl"
+              entries.length === 0 && "rounded-t-2xl"
             )}
           >
             {footer}

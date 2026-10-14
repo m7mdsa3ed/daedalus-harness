@@ -332,7 +332,7 @@ await test("autonomy never revives with a thread", async () => {
   const { session } = await thread(policy({ permissions: { default: "allow" }, maxRunSeconds: 600 }));
   manager.retire(session);
   assert.equal(session.deadline, null, "retire disarms the deadline");
-  manager.reload();
+  await manager.reload();
   // A run a person opens by hand tomorrow is a thread with a human in front of
   // it, and must not come back holding last night's standing grant.
   assert.equal(manager.get(session.id)?.autonomy, null);

@@ -196,11 +196,11 @@ This is not a marketing interface. It should not use oversized headlines, orname
 
 The UI is built from semantic color roles rather than component-specific colors. Components consume `background`, `foreground`, `card`, `popover`, `primary`, `muted`, `accent`, `border`, and their paired foreground tokens. Do not insert arbitrary colors into components when an existing semantic role applies.
 
-The default palette is nearly neutral with a slight warm cast. Contrast and state changes carry hierarchy more often than hue. `primary` identifies the strongest action or selected state, `muted` separates quiet regions, and `destructive` is reserved for errors and irreversible actions.
+The default palette is shadcn's stock neutral. Contrast and state changes carry hierarchy more often than hue. `primary` identifies the strongest action or selected state, `muted` separates quiet regions, and `destructive` is reserved for errors and irreversible actions.
 
 Light and dark modes preserve the same semantic relationships. Dark mode is not a simple inversion: elevated surfaces are lighter than the page, borders become translucent, and muted text remains clearly subordinate without becoming faint.
 
-Built-in palettes such as Ocean, Forest, Violet, Sunset, Rose, and Amber may change hue, but they must override the complete semantic token set and preserve the same foreground/background relationships. User-created palettes follow the same contract. Every text-bearing pair must meet at least WCAG AA contrast for normal text.
+Default is the only built-in palette; user-created palettes (from the theme studio) override the complete semantic token set and preserve the same foreground/background relationships. Every text-bearing pair must meet at least WCAG AA contrast for normal text.
 
 ## Typography
 

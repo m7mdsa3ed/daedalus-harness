@@ -1,44 +1,34 @@
 /* ── The main sidebar ──
-   Laid out the way the Codex and Claude desktop apps lay theirs out, because
-   that is the shape people arrive already knowing:
+   Laid out after the Claude desktop app's session sidebar, because that is the
+   shape people arrive already knowing: one list of every active and recent
+   session, filtered by status and grouped by project on demand.
 
-     ┌ brand row · Search
-     │ New thread · Build · Tasks · …                  fixed nav, icon + label, always there
-      ├ Pinned                             the ones you said matter
-      │ Opened                             the threads with a tab open, in
-      │                                    dock order — Recents leaves these out
-      │ Recents                            the newest few, flat — a shortcut,
-      │                                    running turns always among them
-     │ Projects                           one folder per project, ALL its
-     │   ▸ harness              + ·       threads, by period; + starts one *in* it
-     │   ▸ website
-     │ Routines · Scheduled             …two more fixed rows: each is a page
-     │ Trash                              folded shut
-     └ <server> / Settings                the "account" row
+     ┌ brand · Search                              (app-shell.tsx)
+     │ New session                                 the one primary row
+     │ Tasks · Routines · Scheduled                the places, as plain rows
+      ├ Sessions   needs-you ·  search · refresh · view
+      │ Pinned                                     the ones you said matter
+      │ Today / Yesterday / …                      flat, newest activity first,
+      │                                            each row naming its project —
+      │   or, "By project":
+      │ ▸ harness                + ·               one folder per project, ALL
+      │ ▸ website                                  its threads; + starts one in it
+      │ Trash                                      folded shut
+     └ usage · server · notifications · Settings   the footer (app-shell.tsx)
 
-   Two ideas are borrowed on purpose. From Codex: the fixed nav rows at the top
-   and projects as expandable folders with their threads under them — a new
-   thread started from a folder lands *in* that folder. From Claude Code
-   desktop: the list is a working set, so it carries a status per row (a
-   running turn, a thread waiting on you), and the controls at the top of the
-   list filter by that status and switch between "recent first" and "group by
-   project". Rows are one line and carry the title alone, like both apps: a
-   running turn shimmers the title and a thread waiting on you gets an amber
-   dot at the trailing edge — that is the whole ornament. Everything else about
-   a thread — agent, profile, model, project, when it started, and the row's
-   actions — is in the `ThreadInfoCard`, the header of the row's ⋯ dropdown (never on hover), which carries the
-   actions beside the reading, so
-   one click reaches both a thread's what and its what-to-do.
+   Rows are one line: the agent's mark, the title, and its status (a running
+   turn spins, a thread waiting on you says so) or how long ago it last spoke.
+   The model and project are the row's tooltip; everything else about a thread is
+   in the `ThreadInfoCard`, the header of the row's ⋯ dropdown.
 
-   Pins, fold state and the sort/filter are device-local (the harness's session
-   list is shared, and one person's sidebar must not reorder another's).
+   The sort/filter (`view.tsx`), pins and fold state are device-local: the
+   harness's session list is shared, and one person's sidebar must not reorder
+   another's.
 
    Routines and scheduled messages are not listed here at all. Each is a page
-   of its own (`/routines`, `/schedules`) with the whole list, its counts and
-   the controls, so the sidebar carries one nav row per page rather than a
-   second, smaller copy of the list with fewer controls on it.
+   of its own (`/routines`, `/schedules`), so the header carries one row per page.
 
-   This folder is the sidebar: the spacing scale (`scale.ts`), the fixed nav
+   This folder is the sidebar: the spacing scale (`scale.ts`), the nav rows
    (`nav.tsx`), the sort/filter store and its menu (`view.tsx`), the
    folder/group primitives (`groups.tsx`), the memoized row and list
    (`thread-row.tsx`, `thread-list.tsx`) and the Trash's own action
@@ -46,7 +36,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { ChevronRight, FolderIcon, History as HistoryIcon, Layers, Loader2, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
+import { ChevronRight, FolderIcon, Loader2, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -61,8 +51,8 @@ import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, TIER } from "./scale"
 import { ThreadList } from "./thread-list"
 import type { ThreadStatus } from "./thread-row"
 import { EmptyTrash } from "./trash"
-import { markSeen, useHeldIds, useUnreadIds } from "./activity"
-import { setSidebarFilter, useSidebarView, ViewMenu, type SidebarFilter } from "./view"
+import { markSeen } from "./activity"
+import { useSidebarView, ViewMenu } from "./view"
 import { useThreadStatuses } from "@/lib/thread/statuses"
 import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
@@ -97,24 +87,8 @@ export function useStartThreadIn(actions: Actions) {
   )
 }
 
-const STATUS_CHIPS: {
-  value: SidebarFilter
-  label: string
-  count?: (counts: { running: number; needsYou: number }) => number
-}[] = [
-  { value: "all", label: "All" },
-  { value: "running", label: "Running", count: (c) => c.running },
-  { value: "waiting", label: "Needs you", count: (c) => c.needsYou },
-]
-
 /* ── The list ── */
-export function ThreadSidebar({
-  actions,
-  closeOpenThread,
-}: {
-  actions: Actions
-  closeOpenThread: (session: SessionMeta) => void
-}) {
+export function ThreadSidebar({ actions }: { actions: Actions }) {
   /* The session list and the project catalog — never `state.threads` itself,
      which is replaced on every streamed token of every thread. Projects come
      from the query cache, so only a projects refresh reaches this. */
@@ -123,9 +97,10 @@ export function ThreadSidebar({
   const { id: activeSpaceId } = useActiveSpace()
   const pins = usePins()
   const view = useSidebarView()
-  /* The threads with a tab open, in the dock's order — the "Opened" tier, and
-     what Recents leaves out. Published by the dock (lib/workspace/open-threads),
-     so a reload rebuilds it from the restored layout. */
+  /* The threads with a tab open, in the dock's order — kept loaded below so a
+     tab never goes missing from the list. Published by the dock
+     (lib/workspace/open-threads), so a reload rebuilds it from the restored
+     layout. */
   const openIds = useOpenThreads()
   const activeThreadId = useActiveChat()
   const navigate = useNavigate()
@@ -196,24 +171,14 @@ export function ThreadSidebar({
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects]
   )
-  const { live, trashed, pinned, recent, opened, filed } = React.useMemo(
+  const { live, trashed, pinned, filed } = React.useMemo(
     () =>
-      deriveTiers({
-        sessions,
-        inSpace,
-        filter: view.filter,
-        sort: view.sort,
-        statuses,
-        pins,
-        openIds,
-        query,
-        projectNames,
-      }),
-    [sessions, statuses, pins, view.filter, view.sort, openIds, inSpace, query, projectNames]
+      deriveTiers({ sessions, inSpace, filter: view.filter, statuses, pins, query, projectNames }),
+    [sessions, statuses, pins, view.filter, inSpace, query, projectNames]
   )
 
-  /* The chips' and the Threads label's numbers come from the unfiltered
-     statuses over the space's live threads, so a chip never counts itself away. */
+  /* The Sessions label's numbers come from the unfiltered
+     statuses over the space's live threads, so a filter never counts itself away. */
   const counts = React.useMemo(() => {
     let running = 0
     let needsYou = 0
@@ -226,8 +191,6 @@ export function ThreadSidebar({
     return { running, needsYou }
   }, [sessions, statuses, inSpace])
 
-  const held = useHeldIds()
-  const unread = useUnreadIds(sessions, statuses, activeThreadId)
   /* The thread in front of you is read: stamp it with the activity it showed,
      now and whenever a turn ends under your eyes. */
   const activeSession = sessions.find((session) => session.id === activeThreadId)
@@ -253,8 +216,8 @@ export function ThreadSidebar({
 
   const pinSet = React.useMemo(() => new Set(pins), [pins])
   const env = React.useMemo<SidebarEnv>(
-    () => ({ actions, status, pinSet, held, unread, projectNames }),
-    [actions, status, pinSet, held, unread, projectNames]
+    () => ({ actions, status, pinSet, projectNames }),
+    [actions, status, pinSet, projectNames]
   )
 
   /* ── Threads arrive a page at a time ──
@@ -335,7 +298,7 @@ export function ThreadSidebar({
     <SidebarEnvContext.Provider value={env}>
       <SidebarGroup className={cn(TIER, GROUP)}>
         <SidebarGroupLabel className={cn(GROUP_LABEL, "group/label")}>
-          <span className="truncate">Threads</span>
+          <span className="truncate">Sessions</span>
           {counts.needsYou > 0 && (
             <span
               title={`${counts.needsYou} thread${counts.needsYou === 1 ? "" : "s"} need${counts.needsYou === 1 ? "s" : ""} you`}
@@ -409,30 +372,6 @@ export function ThreadSidebar({
             )}
           </div>
         )}
-        {/* The status filter, in view: the menu's "Show" group, one click away.
-            Same store, so the two cannot disagree. */}
-        <div role="group" aria-label="Show threads" className="flex gap-1 px-0.5 pb-1">
-          {STATUS_CHIPS.map(({ value, label, count }) => {
-            const n = count?.(counts)
-            return (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={view.filter === value}
-                onClick={() => setSidebarFilter(value)}
-                className={cn(
-                  "h-6 rounded-full border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  view.filter === value
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-sidebar-border text-muted-foreground hover:text-sidebar-foreground"
-                )}
-              >
-                {label}
-                {n ? <span className="ml-1 tabular-nums opacity-70">{n}</span> : null}
-              </button>
-            )
-          })}
-        </div>
       </SidebarGroup>
 
       {nothingLive && (
@@ -457,38 +396,19 @@ export function ThreadSidebar({
         </FoldableGroup>
       )}
 
-      {/* The threads with a tab open, in the dock's order. The active one is
-          the row the dock just focused — highlighted here exactly as it is in
-          every other tier, so the transcript in front of you always has a row
-          that says so. Recents leaves these out; closing a tab returns it. */}
-      {opened.length > 0 && (
-        <FoldableGroup
-          groupKey="__opened"
-          label="Opened"
-          icon={<Layers className="size-3 shrink-0" />}
-          expandOn={opened.some((session) => session.id === activeThreadId) ? activeThreadId : null}
-        >
-          <ThreadList
-            sessions={opened}
-           
-            onClose={closeOpenThread}
-            revealActive
-          />
-        </FoldableGroup>
-      )}
-
-      {recent.length > 0 && (
-        /* A clock read as "scheduled" next to a Scheduled nav row; Recents is
-           what happened, so it wears a history mark. */
-        <FoldableGroup groupKey="__recent" label="Recents" icon={<HistoryIcon className="size-3 shrink-0" />}>
-          <ThreadList sessions={recent} />
-        </FoldableGroup>
+      {/* Flat: every live thread, newest activity first, under Today /
+          Yesterday / … headings, each row naming its project. The thread in
+          front of you is highlighted in place — it is always one of these. */}
+      {view.sort === "recent" && filed.length > 0 && (
+        <SidebarGroup className={GROUP}>
+          <ThreadList sessions={filed} grouped showProject />
+        </SidebarGroup>
       )}
 
       {/* Projects: one folder each. Not a foldable tier itself — the folders
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
-      {scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
+      {view.sort === "project" && scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
         <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon className="size-3 shrink-0" />}>
             <SidebarMenu className={MENU}>
               {scopedProjects

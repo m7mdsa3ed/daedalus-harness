@@ -1,7 +1,7 @@
 /* ── Presets tab ──
    Start from a coordinated whole rather than from a token: a style preset (the
    Design half at once), a curated colour scheme (the palette *and* the design
-   that goes with it), or the ramp the built-in themes are generated from —
+   that goes with it), or the palette ramp —
    driven either by a named palette preset or by the three sliders below it.
    Each of the three swatches draws the thing it applies, because the names are
    not the choice. */

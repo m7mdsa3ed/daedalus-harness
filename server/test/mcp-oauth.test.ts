@@ -317,7 +317,7 @@ await test("dynamic registration, then an authorize URL carrying PKCE, the resou
   assert.ok(after.accessToken);
   assert.ok(after.refreshToken);
   assert.ok(after.expiresAt && after.expiresAt > Date.now());
-  assert.equal(isConnected(rowId), true);
+  assert.equal(await isConnected(rowId), true);
   const state2 = await authStateOf(rowId, "oauth");
   assert.equal(state2.kind === "oauth" ? state2.state : state2.kind, "connected");
 });
@@ -355,7 +355,7 @@ await test("a wrong key is a 404 that says nothing, and so is an unknown server"
 
 await test("an expired token is refreshed exactly once under five concurrent requests", async () => {
   refreshCalls = 0;
-  mcpOauth.patch(rowId, { expiresAt: Date.now() - 1000 });
+  await mcpOauth.patch(rowId, { expiresAt: Date.now() - 1000 });
   const before = (await mcpOauth.get(rowId))!.accessToken;
   const results = await Promise.all(
     Array.from({ length: 5 }, () =>
@@ -400,7 +400,7 @@ await test("a second 401 clears the connection and reports it, rather than hangi
   assert.equal(row.accessToken, null);
   assert.equal(row.refreshToken, null);
   assert.match(row.lastError ?? "", /refused/);
-  assert.equal(isConnected(rowId), false);
+  assert.equal(await isConnected(rowId), false);
   assert.equal(await accessTokenFor(rowId), null);
   refuseAll = false;
 });
@@ -413,7 +413,7 @@ await test("an unauthorized server is not advertised at spawn; a connected one i
   assert.deepEqual(off.skipped, [rowId]);
 
   // Reconnect, and it comes back — as the shim's URL, never its own.
-  mcpOauth.patch(rowId, { accessToken: "access-manual", refreshToken: "refresh-manual", expiresAt: Date.now() + 3600_000, lastError: null });
+  await mcpOauth.patch(rowId, { accessToken: "access-manual", refreshToken: "refresh-manual", expiresAt: Date.now() + 3600_000, lastError: null });
   issued.set("access-manual", { refresh: "refresh-manual", expiresIn: 3600 });
   const on = await mcpServersFor(links, project, getConfig());
   assert.equal(on.servers.length, 1);
@@ -427,7 +427,7 @@ await test("an unauthorized server is not advertised at spawn; a connected one i
   const plain = await mcpLibrary.create({ type: "http", name: "plain", url: "https://plain.example/mcp", headers: [], auth: "none" });
   const both = await mcpServersFor({ mcpServerIds: [plain.id] }, project, getConfig());
   assert.equal((both.servers[0] as { url: string }).url, "https://plain.example/mcp");
-  mcpLibrary.remove(plain.id);
+  await mcpLibrary.remove(plain.id);
 });
 
 await test("the legacy transport's endpoint event comes back through the proxy", async () => {
@@ -442,13 +442,13 @@ await test("disconnecting revokes what it can and always forgets locally", async
   const result = await disconnectServer(rowId);
   assert.equal(result.revoked, true);
   assert.ok(revoked.length > 0);
-  assert.equal(mcpOauth.get(rowId), undefined);
+  assert.equal(await mcpOauth.get(rowId), undefined);
   const after = await authStateOf(rowId, "oauth");
   assert.equal(after.kind === "oauth" ? after.state : after.kind, "disconnected");
 });
 
-await test("deleting the server takes its tokens with it", () => {
-  mcpOauth.put({
+await test("deleting the server takes its tokens with it", async () => {
+  await mcpOauth.put({
     mcpServerId: rowId,
     resource: resourceUrl,
     issuer: `http://127.0.0.1:${asPort}`,
@@ -462,9 +462,9 @@ await test("deleting the server takes its tokens with it", () => {
     expiresAt: null,
     lastError: null,
   });
-  assert.ok(mcpOauth.get(rowId));
-  mcpLibrary.remove(rowId);
-  assert.equal(mcpOauth.get(rowId), undefined, "ON DELETE CASCADE");
+  assert.ok(await mcpOauth.get(rowId));
+  await mcpLibrary.remove(rowId);
+  assert.equal(await mcpOauth.get(rowId), undefined, "ON DELETE CASCADE");
 });
 
 server.close();

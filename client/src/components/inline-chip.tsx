@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils"
  * after the face (`trailing`) centres itself back with `self-center`. */
 export function chipClass(opts: { selected?: boolean; trailing?: boolean; link?: boolean } = {}) {
   return cn(
-    "mx-px inline-flex items-baseline gap-0.5 rounded-md bg-foreground/[0.06] py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-foreground/[0.1]",
+    "mx-px inline-flex items-baseline gap-0.5 rounded-pill bg-secondary py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-muted",
     opts.link ? "max-w-[min(16rem,100%)]" : "max-w-[min(20rem,100%)]",
     opts.trailing ? "pe-0.5" : "pe-1.5",
     opts.selected && "bg-primary/15 hover:bg-primary/15"

@@ -22,6 +22,7 @@ export const ThreadList = React.memo(function ThreadList({
   trash = false,
   limit,
   grouped = false,
+  showProject,
   onClose,
   revealActive = false,
 }: {
@@ -42,6 +43,9 @@ export const ThreadList = React.memo(function ThreadList({
       that are actually visible: the limit still counts threads, not headings,
       and "Show more" cannot reveal a heading with nothing under it. */
   grouped?: boolean
+  /** Name the project on each row. Defaults to the opposite of `grouped`: a
+      folder's own list would only repeat the folder, a flat list needs it. */
+  showProject?: boolean
 }) {
   /* Expansion is deliberately not persisted: the reveal answers "is what I am
      looking for down there?" and the answer resets the next visit. */
@@ -50,7 +54,7 @@ export const ThreadList = React.memo(function ThreadList({
   const hidden = sessions.length - visible.length
   const navigate = useNavigate()
   const activeThreadId = useActiveChat()
-  const { actions, status, pinSet, held, unread, projectNames } = useSidebarEnv()
+  const { actions, status, pinSet, projectNames } = useSidebarEnv()
   const { isMobile, setOpenMobile } = useSidebar()
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
@@ -137,7 +141,7 @@ export const ThreadList = React.memo(function ThreadList({
               <li
                 data-slot="sidebar-menu-item"
                 data-sidebar="menu-item"
-                className="mt-1.5 flex h-6 items-center px-2 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground/80 uppercase first:mt-0"
+                className="mt-1.5 flex h-6 items-center px-2 text-[11px] font-medium text-muted-foreground/70 first:mt-0"
               >
                 <span className="truncate">{label}</span>
               </li>
@@ -148,9 +152,7 @@ export const ThreadList = React.memo(function ThreadList({
               trash={trash}
               active={activeThreadId === session.id}
               pinned={pinSet.has(session.id)}
-              held={held.has(session.id)}
-              unread={unread.has(session.id)}
-              showProject={!grouped}
+              showProject={showProject ?? !grouped}
               project={projectNames.get(session.projectId) ?? "Other"}
               handlers={handlers}
             />

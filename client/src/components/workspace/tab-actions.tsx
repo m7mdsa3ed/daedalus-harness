@@ -23,14 +23,13 @@
    hunt through one tab's ⋮ menu — and the phone's grid carries the same row. */
 import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
-import { ChevronDownIcon, HistoryIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
+import { HistoryIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -50,11 +49,6 @@ import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
 
-/** Below this many tabs the strip shows them all, and a list of what you can
-    already see is a button that does nothing for you. A phone's bar is two: its
-    strip is the one tab you are on, so with a second tab open the list is the
-    only place that one is by name — which is what makes it the switcher. */
-const LIST_FROM = 3
 
 /** Fired by a downward drag on the phone strip (`dock-surface.tsx`). */
 export const TAB_GRID_EVENT = "daedalus:tab-grid"
@@ -78,64 +72,6 @@ function relativeAge(at: number): string {
   if (m < 60) return `${m}m`
   if (m < 1440) return `${Math.round(m / 60)}h`
   return `${Math.round(m / 1440)}d`
-}
-
-function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
-  const kind = panel.api.component
-  const Icon = isPanelKind(kind) ? PANEL_ICONS[kind] : null
-  const title = panel.title ?? (isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : "Panel")
-  const status = usePanelStatus(panel.id)
-  const pinned = usePanelPinned(panel.id)
-  const active = panel.api.isActive
-
-  return (
-    <DropdownMenuItem
-      onClick={() => panel.api.setActive()}
-      /* What the ✕ beside the row does, for the reader who arrowed here rather
-         than pointed at it — the same key the tab strip itself answers to. */
-      onKeyDown={(event) => {
-        if (pinned || event.key !== "Delete") return
-        event.preventDefault()
-        onClose()
-      }}
-      /* The row for the tab you are already on. `aria-current` and not
-         `aria-selected`: this is a menu, and a menu row that says "selected"
-         claims a state a `menuitem` does not have. The tint is the same fact
-         for a reader who is looking rather than listening. */
-      aria-current={active ? "true" : undefined}
-      className={cn("gap-2 max-md:min-h-11", active && "bg-accent/60")}
-    >
-      {Icon && <Icon className="text-muted-foreground" />}
-      <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>{title}</span>
-      {pinned && <PinIcon aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
-      <PanelStatusDot status={status} />
-      {/* Closing from the list, so a tab that has scrolled out of the strip can
-          be got rid of without being brought back into it first. Pinned rows
-          keep the pin instead — the same trade the tab itself makes.
-
-          `tabIndex={-1}` for the reason the tab's own controls carry it: a
-          focusable child of a `menuitem` is a second stop inside a widget whose
-          arrow keys own the movement. It keeps its name, so it is still read
-          out as part of the row and still reachable in a screen reader's browse
-          mode; the `Delete` above is the way to it from the arrow keys. */}
-      {!pinned && (
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          tabIndex={-1}
-          aria-label={`Close ${title}`}
-          className="-mr-1 size-5 opacity-60 hover:opacity-100"
-          onClick={(event) => {
-            event.stopPropagation()
-            event.preventDefault()
-            onClose()
-          }}
-        >
-          <XIcon className="size-3" />
-        </Button>
-      )}
-    </DropdownMenuItem>
-  )
 }
 
 /* The phone's switcher, Chrome Android's: the strip's button is a rounded square
@@ -385,12 +321,10 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      {/* Below `LIST_FROM` the list is a button that does nothing for you — the
-          tabs are all on screen. On a phone the strip is the one tab you are on
-          and nothing else, so the list is the switcher from two tabs up: it is
-          the only place the other one is, by name. The + stays either way, which
-          is the whole reason this row no longer returns null. */}
-      {isMobile && (
+      {/* The switcher is the phone's, at every width: the strip is the one tab
+          you are on and a counter button opens the grid of the rest. The + stays
+          either way, which is the whole reason this row no longer returns null. */}
+      {(
         <TabGrid
           panels={panels}
           onClose={(id) => void dock.closePanel(id)}
@@ -404,54 +338,6 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
             })
           }
         />
-      )}
-      {!isMobile && panels.length >= LIST_FROM && (
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="All tabs in this group"
-                    className={STRIP_CONTROL}
-                  >
-                    <ChevronDownIcon className="size-3.5" />
-                  </Button>
-                }
-              />
-            }
-          />
-          <TooltipContent side="bottom">{panels.length} tabs</TooltipContent>
-        </Tooltip>
-        {/* Sized to its rows, not to the 24px button it hangs off — the same
-            fix `workspace/panel-items` needed for the same reason. */}
-        <DropdownMenuContent
-          align="end"
-          className="w-auto max-w-[min(22rem,calc(var(--float-w)-1.5rem))] min-w-56"
-        >
-          {panels.map((panel) => (
-            <TabRow key={panel.id} panel={panel} onClose={() => void dock.closePanel(panel.id)} />
-          ))}
-          {/* The group's own close-all, at the foot of its list. The per-tab ⋮
-              carries the same row; a reader tidying a strip should not have to
-              open one tab's menu to close the rest of them. It closes the tabs
-              of *this* strip — the +'s own group — and steps over pinned tabs,
-              exactly as the row in the tab menu does. Named for a lone tab it
-              is meaningless, so it is disabled rather than hidden: a list whose
-              actions move as tabs close is worse than a row that says "not yet". */}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            disabled={panels.length < 2}
-            onClick={() => panels[0] && void dock.closeGroup(panels[0].id)}
-            className={MENU_ROW}
-          >
-            <MenuRow icon={<XIcon />} label="Close all" />
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
       )}
     </div>
   )

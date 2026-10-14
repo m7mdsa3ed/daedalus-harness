@@ -3,14 +3,8 @@
    than in it. New thread is the first menu row; Search is the icon button
    beside the brand in the header (`app-shell.tsx`).
 
-   Deliberately only the rows that start something. Plan usage used to sit here
-   too, as a peak-percentage badge that polled `GET /api/quota` every ten
-   minutes; it was taken out for that timer and for being the one row that
-   worked rather than navigated. It is back, and below this nav rather than in
-   it: `sidebar/usage.tsx`, in the footer beside the account row, reading the
-   list route the Usage page already reads instead of a timer of its own. A nav
-   row is a place you go; the plans are a reading, and they belong with the
-   server's name. */
+   Deliberately only the rows that start something. Plan usage is not here (nor
+   anywhere in the sidebar): it lives on Settings › Usage. */
 import * as React from "react"
 import { CalendarClock, MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"

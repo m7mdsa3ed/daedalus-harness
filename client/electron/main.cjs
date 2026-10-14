@@ -36,7 +36,7 @@ const chrome = () => ({
   frame: process.platform === "darwin",
   titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
   titleBarOverlay:
-    process.platform === "darwin" ? undefined : { color: "#00000000", symbolColor: overlaySymbolColor, height: 36 },
+    process.platform === "darwin" ? undefined : { color: "#00000000", symbolColor: overlaySymbolColor, height: 44 },
   trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 14 } : undefined,
 })
 // The windows built with chrome(), whose caption buttons follow the theme.
@@ -123,7 +123,7 @@ ipcMain.on("theme-changed", (_event, resolved, source, colorTheme) => {
   }
   if (process.platform === "darwin") return
   for (const w of framelessWindows) {
-    if (!w.isDestroyed()) w.setTitleBarOverlay({ color: "#00000000", symbolColor: overlaySymbolColor, height: 36 })
+    if (!w.isDestroyed()) w.setTitleBarOverlay({ color: "#00000000", symbolColor: overlaySymbolColor, height: 44 })
   }
   /* No setBackgroundColor here: the tint is constant, and the native material's
      light/dark variant is picked by `themeSource` above. */
@@ -656,7 +656,7 @@ function guardWindow(w) {
     child.on("closed", () => framelessWindows.delete(child))
     guardWindow(child)
     if (process.platform !== "darwin") {
-      child.setTitleBarOverlay({ color: "#00000000", symbolColor: overlaySymbolColor, height: 36 })
+      child.setTitleBarOverlay({ color: "#00000000", symbolColor: overlaySymbolColor, height: 44 })
     }
     child.webContents.once("dom-ready", () => {
       child.webContents.send("theme-changed", appTheme.resolved, appTheme.colorTheme)

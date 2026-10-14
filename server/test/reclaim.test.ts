@@ -187,4 +187,6 @@ assert.deepEqual(queue().map((i) => i.text), ["still mine"], "the queue is still
 
 a.close();
 b.close();
+manager.shutdown();
 console.log("reclaim: all assertions passed");
+process.exit(0);

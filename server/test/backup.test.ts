@@ -153,6 +153,7 @@ await test("a full export round-trips through the schema", async () => {
   assert.deepEqual(bundle.prompts[0], {
     id: "builtin:terse",
     name: "terse",
+    title: "",
     description: "d",
     prompt: "One line.",
     seededVersion: 1,

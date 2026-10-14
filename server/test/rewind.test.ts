@@ -14,7 +14,6 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeJson } from "../src/config.js";
-import { createProject, deleteProject } from "../src/projects.js";
 import type { Profile } from "../src/profiles.js";
 import type { ThreadCommand, ThreadEvent } from "../src/protocol.js";
 
@@ -29,7 +28,10 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
   },
 ]);
 
+/* Imported after agents.json is written: the first module to load the database
+   is what imports the legacy files, and a static import here ran it too early. */
 const { SessionManager } = await import("../src/sessions.js");
+const { createProject, deleteProject } = await import("../src/projects.js");
 
 /* `rewindVia` is a claim about the runtime behind `command`, which only
    `seedAgents`' backfill is entitled to make for a shipped agent — and this

@@ -247,7 +247,7 @@ export async function proxyMcpRequest(req: Request): Promise<Response> {
     }
     if (!renewed || upstream.status === 401) {
       void upstream.body?.cancel();
-      mcpOauth.patch(server.id, {
+      await mcpOauth.patch(server.id, {
         accessToken: null,
         refreshToken: null,
         expiresAt: null,

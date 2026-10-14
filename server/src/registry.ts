@@ -957,10 +957,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // `writePersonaPrompt` puts the prompt somewhere for it to point at.
     // Seed 13 enables OpenCode's permission bypass for the built-in template;
     // this is deliberately merged only when no permission policy exists.
-    // Seed 16 declares the subagent feed (`subagentFeed`, see AgentDef). It
-    // is a fact about the runtime, not a template key, so the backfill sets it
-    // beside the row's env without touching the env — which is also why the
-    // probe cache is left alone: nothing the agent advertises changed.
+    // Seed 16 declared a subagent feed for OpenCode 1.x; seed 30 retired it
+    // and its column is gone.
     // Seed 20 declares the workspace layout OpenCode actually reads —
     // `.opencode/skills` and `.opencode/commands` (opencode.ai/docs). Its
     // skills already worked by accident, because it also reads `.claude/skills`

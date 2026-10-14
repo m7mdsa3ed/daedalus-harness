@@ -340,7 +340,7 @@ export function ProjectCommandMenu({
               <span
                 role="button"
                 title="Save as a project command"
-                className="-my-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground pointer-coarse:-my-2 pointer-coarse:h-9 pointer-coarse:min-w-9 pointer-coarse:justify-center"
+                className="-my-1 inline-flex h-6 items-center gap-1 rounded-pill px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:-my-2 pointer-coarse:h-9 pointer-coarse:min-w-9 pointer-coarse:justify-center"
                 onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()

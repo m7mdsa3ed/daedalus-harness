@@ -201,8 +201,7 @@ export function descriptorOf(panel: IDockviewPanel): PanelDescriptor | null {
 }
 
 /** The tab-group palette, from the theme's own tokens rather than dockview's
-    fixed hues, so a group's colour follows every built-in and generated theme
-    (`pnpm themes` already gates `--chart-*` for contrast). The id is what a
+    fixed hues, so a group's colour follows every theme. The id is what a
     layout stores; the value is resolved live, so a theme switch recolours
     every chip without touching a saved layout. */
 export const TAB_GROUP_COLORS = [

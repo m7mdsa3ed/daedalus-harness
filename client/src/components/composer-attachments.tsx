@@ -154,7 +154,7 @@ export function ComposerAttachments({
           <button
             type="button"
             onClick={() => attachments.forEach((entry) => onRemoveAttachment(entry.id))}
-            className="rounded-md px-1.5 py-0.5 hover:bg-foreground/10 hover:text-foreground pointer-coarse:py-1.5"
+            className="rounded-pill px-1.5 py-0.5 hover:bg-muted hover:text-foreground pointer-coarse:py-1.5"
           >
             Remove all
           </button>

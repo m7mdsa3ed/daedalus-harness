@@ -1,5 +1,5 @@
 /* ── The bell, in the sidebar footer ──
-   An icon in the footer's row of them, beside plan usage, servers and
+   An icon in the footer's row of them, beside the space, servers and
    settings. The count is the button's own badge rather than a label, which is
    what lets it share a line with three other icons — and the popover is the
    glance: the newest handful, unread first in the sense that they are the

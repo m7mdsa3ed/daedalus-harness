@@ -587,17 +587,14 @@ export function contrastRatio(a: string, b: string): number {
   return (high + 0.05) / (low + 0.05)
 }
 
-/* The pairs the studio warns on are the pairs the generator gates the
-   built-ins with — one list, in theme-ramp.ts, or the two would eventually
-   disagree about what counts as readable. */
+/* The pairs the studio warns on: one list, in theme-ramp.ts. */
 export { CONTRAST_PAIRS, MIN_CONTRAST } from "./theme-ramp"
 
 // ---- generating a palette ----
 
 /** Coordinated colour starting points. Each is a hue, a brand chroma and a
-    neutral tint fed to the same ramp the built-in themes are generated from —
-    so "Generate palette" produces something as internally consistent as a
-    shipped theme, which thirty-three hand-picked swatches never stay. */
+    neutral tint fed to the palette ramp, so "Generate palette" produces something internally
+    consistent, which thirty-three hand-picked swatches never stay. */
 export const PALETTE_PRESETS: readonly ({ id: string; label: string } & RampSpec)[] = [
   { id: "mono", label: "Mono", hue: 50, brand: 0.012, tint: 0.004 },
   { id: "slate", label: "Slate", hue: 264, brand: 0.018, tint: 0.005 },

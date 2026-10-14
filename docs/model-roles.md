@@ -75,7 +75,7 @@ The base description is unchanged; only when the env has roles, one clause is ap
 
 ## `subagentModelsVia` — cross-runtime dispatch
 
-A declarative column on the agent row (`AgentDef`, `registry.ts`, beside `subagentFeed`/`rewindVia`/`pauseVia`), **never a comparison against an id**. It says how a runtime's *own* subagents take a role's model:
+A declarative column on the agent row (`AgentDef`, `registry.ts`, beside `rewindVia`/`pauseVia`), **never a comparison against an id**. It says how a runtime's *own* subagents take a role's model:
 
 - **`"acp-env"`** (daedalus): roles ride `DAEDALUS_AGENT_MODEL_ROLES` at spawn and its in-process `task` tool reads them directly — nothing per-call reaches the child, because a subagent is the same process. A role's model is fixed for the process, so an assignment change costs a respawn like any spawn-time fact.
 - **null / absent** (claude-code, codex, opencode, anything added): no helper models — the draft and session menus do not offer the submenu (they read this column, `client/src/lib/settings.ts`), subagents inherit the session model, and the runtime's own `Task`/`Agent` tools are untouched.

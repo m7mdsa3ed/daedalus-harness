@@ -998,7 +998,7 @@ export class RoutineEngine {
         },
       );
       run.sessionId = session.id;
-      this.persist(run);
+      await this.persist(run);
       unsubscribe = this.watch(run, session);
       await session.bridge!.ready;
 
@@ -1265,7 +1265,7 @@ export class RoutineEngine {
       },
     );
     run.actions = records;
-    this.persist(run);
+    await this.persist(run);
   }
 
   // ---- lifecycle ----

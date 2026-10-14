@@ -2,12 +2,12 @@ import { cn } from "@/lib/utils"
 
 /* Group titles, not rows. A label used to be the same size, weight and colour
    as the threads under it, so "Recent" scanned as a thread called Recent.
-   Smaller, uppercase, tracked out, and darker than the rows beneath — /80 over
-   the sidebar surface keeps it legible while the rows stay full-strength.
-   Shared by every sidebar group (the settings nav too) so the whole panel has
-   one title voice. */
+   Sentence case, a step smaller than a row, medium weight and muted — the
+   quiet label the Claude desktop sidebar puts over a run of sessions. Shared by
+   every sidebar group (the settings nav too) so the whole panel has one title
+   voice. */
 export const GROUP_LABEL =
-  "flex h-7 gap-1.5 px-2 text-[11px] font-bold tracking-[0.06em] uppercase text-sidebar-foreground/80"
+  "flex h-7 gap-1.5 px-2 text-xs font-medium text-sidebar-foreground/60"
 
 /* ── One spacing scale for the whole sidebar ──
    Every row, label and group in this panel draws from these, so nothing is
@@ -32,14 +32,8 @@ export const GROUP_LABEL =
      NEST    a folder's threads, indented so a child's icon sits under the
              folder's own — the border is the folder chevron's centre line. */
 export const ROW = "h-8 px-2 text-[13px]"
-/* A thread row is two lines — the title over "project · age" — so it is taller
-   than ROW and taller than the primitive's own `sm`. `min-h-11` keeps a title
-   short enough not to wrap at the same 44px a full one reaches, so a column of
-   rows is one rhythm rather than alternating heights. The ⋯ still sits at
-   `top-1.5`, which is the *title's* line, not the row's centre. */
-export const ROW_TWO_LINE = "h-auto min-h-11 px-2 py-1.5 text-[13px]"
 export const MENU = "gap-0.5"
-/* The footer's icon buttons — plan usage, servers, notifications and settings
+/* The footer's icon buttons — the space, servers, notifications and settings
    in one row. Sized and rounded like a sidebar row, because that is the surface
    they stand on, and tinted with the sidebar's own accent on hover rather than
    the button primitive's `muted`, which is the page's ground. */

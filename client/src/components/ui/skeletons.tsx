@@ -51,13 +51,18 @@ export function ToolCallSkeleton({ className }: { className?: string }) {
   )
 }
 
+/* `animate-none skeleton-shimmer`: the sidebar's placeholders sweep rather than
+   pulse (index.css), and each bar starts a beat after the one above it so the
+   list reads as a wave and not as one block blinking. */
+const SHIMMER = "animate-none skeleton-shimmer"
+
 function SidebarRows({ rows }: { rows: number }) {
   return (
     <div className="space-y-1 px-2">
       {[...Array(rows).keys()].map((index) => (
         <div key={index} className="flex items-center gap-2 rounded-md px-2 py-1.5">
-          <Skeleton className="size-4 shrink-0 rounded-sm" />
-          <Skeleton className="h-3 flex-1" />
+          <Skeleton className={cn("size-4 shrink-0 rounded-sm", SHIMMER)} style={{ animationDelay: `${index * 120}ms` }} />
+          <Skeleton className={cn("h-3 flex-1", SHIMMER)} style={{ animationDelay: `${index * 120}ms` }} />
         </div>
       ))}
     </div>
@@ -70,11 +75,11 @@ export function SidebarGroupsSkeleton() {
     // of blank placeholder rows says nothing 3rem wide.
     <div aria-busy="true" className="group-data-[collapsible=icon]:hidden">
       <div className="px-2 pb-1 pt-4">
-        <Skeleton className="ml-2 h-3 w-16" />
+        <Skeleton className={cn("ml-2 h-3 w-16", SHIMMER)} />
       </div>
       <SidebarRows rows={4} />
       <div className="px-2 pb-1 pt-4">
-        <Skeleton className="ml-2 h-3 w-20" />
+        <Skeleton className={cn("ml-2 h-3 w-20", SHIMMER)} />
       </div>
       <SidebarRows rows={3} />
     </div>

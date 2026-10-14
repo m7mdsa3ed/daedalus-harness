@@ -41,6 +41,7 @@ assert.deepEqual(caps.session.notices, {}, "session.notices is claimed");
 assert.deepEqual(caps.subagents, {}, "the RFD's subagents field is still sent beside the AIR spelling");
 assert.deepEqual(caps._meta, {
   "subagent-transcript": true,
+  "opencode/child-session-updates": true,
   terminal_output_delta: true,
   jetbrains: {
     air: {

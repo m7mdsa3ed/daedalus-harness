@@ -23,18 +23,12 @@ type Theme = "light" | "dark" | "system"
 /** A palette id: a built-in one, or `custom:<id>` from the theme builder. */
 export type ColorTheme = string
 
-/* The themes that ship in styles/themes.css. The list itself is **generated**
-   alongside the CSS by scripts/gen-themes.mjs (`pnpm themes`) and re-exported
-   here so every existing importer keeps its path. It used to be hand-written
-   in this file with a "keep in sync" comment at both ends, which is exactly how
-   Sunset, Rose, Amber and Slate outlived the blocks that painted them.
-
-   A theme is no longer only a palette: each also sets a radius, three font
-   roles, a depth, a glass strength, a measure and a tracking, and the generator
-   refuses to write a file where two of them share a design signature or where a
-   preset value is worn by none. Anyone wearing a theme that has been removed is
-   put back on Default by `colorThemeExists` below — the same path a deleted
-   custom theme already took. */
+/* The themes that ship in styles/themes.css (just Default, shadcn's stock
+   palette), re-exported here so every existing importer keeps its path. A theme
+   is a palette plus a radius, three font roles, a depth, a glass strength, a
+   measure and a tracking. Anyone wearing a theme that no longer exists is put
+   back on Default by `colorThemeExists` below — the same path a deleted custom
+   theme takes. */
 export { BUILTIN_THEMES, type BuiltinTheme }
 
 export const DEFAULT_COLOR_THEME = "default"

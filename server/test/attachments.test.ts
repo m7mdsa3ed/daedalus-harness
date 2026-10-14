@@ -318,15 +318,15 @@ await test("a queue row round-trips ids and answers refs", async () => {
 
 await test("…and the drain carries them into the prompt", async () => {
   const before = ws.of("turn_ended").length;
-  // Whatever is queued, combined into one prompt with one attachment set.
-  manager.queueAdd(session.id, "attachments:", []);
-  await waitFor(() => ws.of("turn_ended").length > before, "the drained turn to end");
-  assert.equal((await listQueue(session.id)).length, 0, "rows go only after the prompt is dispatched");
-  /* One prompt, one attachment set: the row queued above and the one added
-     here are unioned in row order, which is what the drain sends. The
-     `[attachments]` line the bridge logs for `queued.png` is the other half of
-     the same statement — the decision is made at send, against the model the
-     turn is actually going to. */
+  /* A real queue: the oldest row is its own turn, with its own attachments, and
+     the row added here waits behind it (`continued` re-drains at the turn end).
+     So two rows are two turns, and the queue is empty only after both. */
+  await manager.queueAdd(session.id, "attachments:", []);
+  await waitFor(() => ws.of("turn_ended").length >= before + 2, "both queued rows' turns to end");
+  assert.equal((await listQueue(session.id)).length, 0, "every row went once its prompt was dispatched");
+  /* The `[attachments]` line the bridge logs for `queued.png` is the other half
+     of this — the decision is made at send, against the model the turn is
+     actually going to. */
   assert.equal(
     ((await getAttachment(heldId))?.sessionId ?? null),
     session.id,

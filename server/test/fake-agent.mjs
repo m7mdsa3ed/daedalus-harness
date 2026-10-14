@@ -655,7 +655,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     // Replay a tiny conversation, then answer — mirrors ACP loadSession.
     const historyText = (() => {
       try {
-        if (HISTORY && existsSync(HISTORY)) return JSON.parse(readFileSync(HISTORY, "utf8")).text;
+        // A fork is a new conversation: it never replays the parent's saved prompt.
+        if (!forked && HISTORY && existsSync(HISTORY)) return JSON.parse(readFileSync(HISTORY, "utf8")).text;
       } catch {
         // Invalid fixture history behaves like an agent with no stored messages.
       }

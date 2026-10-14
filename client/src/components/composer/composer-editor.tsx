@@ -88,7 +88,7 @@ function Chip({
       <ChipBody {...body} />
       <button
         type="button"
-        className="inline-flex shrink-0 items-center self-center rounded-sm p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground [&_svg]:pointer-events-none"
+        className="inline-flex shrink-0 items-center self-center rounded-sm p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground [&_svg]:pointer-events-none"
         aria-label={removeLabel}
         title="Remove"
         onClick={onRemove}

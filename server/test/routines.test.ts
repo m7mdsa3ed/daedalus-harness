@@ -142,33 +142,42 @@ const finished = async (id: string, what = "the run to finish") => {
 };
 
 /**
- * Subscribe to a run's thread the moment the engine names it.
+ * Subscribe to the next thread the manager creates — a run's — the moment
+ * `create` resolves, which is before the engine gets the session back to
+ * prompt it.
  *
- * The engine writes `session_id` onto the row immediately after
- * `manager.create` and *before* `await bridge.ready` — a `node` spawn and a
- * handshake away — so a tick-level poll started beside the fire wins that race
- * comfortably. It is a poll and not a hook because there is no
- * session-created event to hang off, and inventing one for a test would put a
- * seam in the manager that nothing in the product needs.
+ * It used to poll `routine_runs.session_id`, on the premise that the row was
+ * written before `await bridge.ready` and so a spawn and a handshake ahead of
+ * the first question. Neither holds any more: `create` awaits the handshake
+ * itself, and the row is a Postgres write the engine does not await, so the
+ * poll's two round trips lost to the agent's first question and subscribed
+ * after the turn was over. Wrapping `create` here keeps the seam in the test,
+ * not the manager. Armed before the fire; the caller asserts the id it caught
+ * is the run's, so a wrong thread fails loudly rather than passing quietly.
  */
-function watchRun(runId: string): { events: ThreadEvent[]; sessionId: () => string | null; stop: () => void } {
+type CreatedSession = Awaited<ReturnType<typeof manager.create>>;
+const onCreate: ((session: CreatedSession) => void)[] = [];
+const realCreate = manager.create.bind(manager);
+manager.create = async (...args: Parameters<typeof realCreate>) => {
+  const session = await realCreate(...args);
+  for (const fn of onCreate.splice(0)) fn(session);
+  return session;
+};
+function watchRun(): { events: ThreadEvent[]; sessionId: () => string | null; stop: () => void } {
   const events: ThreadEvent[] = [];
   let unsubscribe: (() => void) | null = null;
   let sessionId: string | null = null;
-  const timer = setInterval(async () => {
-    if (unsubscribe) return;
-    const id = (await getRun(runId))?.sessionId;
-    if (!id) return;
-    sessionId = id;
-    unsubscribe = manager.subscribe(id, (event) => events.push(event));
-    clearInterval(timer);
-  }, 2);
-  timer.unref();
+  const bind = (session: CreatedSession) => {
+    sessionId = session.id;
+    unsubscribe = manager.subscribe(session.id, (event) => events.push(event));
+  };
+  onCreate.push(bind);
   return {
     events,
     sessionId: () => sessionId,
     stop: () => {
-      clearInterval(timer);
+      const armed = onCreate.indexOf(bind);
+      if (armed >= 0) onCreate.splice(armed, 1);
       unsubscribe?.();
     },
   };
@@ -313,8 +322,8 @@ await test("the routine's autonomy reaches the run's session, and the answer is 
     body: { kind: "prompt", text: "perm:execute" },
     autonomy: policy({ permissions: { default: "ask", execute: "allow" } }),
   });
+  const watch = watchRun();
   const started = await engine.fire(r.id, { source: "manual" });
-  const watch = watchRun(started.id);
   const run = await finished(started.id);
   assert.equal(run.status, "completed", run.error ?? "");
   assert.ok(watch.sessionId(), "the subscriber caught the run's thread");
@@ -370,8 +379,8 @@ await test("an `ask` nobody answers falls to askFallback and ends the run `block
     body: { kind: "prompt", text: "perm:execute" },
     autonomy: policy({ permissions: { default: "ask" }, askTimeoutSeconds: 0.3, askFallback: "deny" }),
   });
+  const watch = watchRun();
   const started = await engine.fire(r.id, { source: "schedule" });
-  const watch = watchRun(started.id);
   const run = await finished(started.id);
   // `blocked`, not `failed`: the work did not error, it ran out of a human.
   assert.equal(run.status, "blocked");

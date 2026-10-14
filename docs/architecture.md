@@ -147,8 +147,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   for the case the cache cannot see — an `npm install -g` that just ran.
 - Seed 16 added `subagentFeed` to the `opencode` row — a server-side sidecar for OpenCode
   1.x's children. **Seed 30 retired it** with OpenCode 2, whose `acp` rejects the sidecar's
-  `--port`/`--hostname` and sends its children itself. The `subagent_feed` column stays
-  declared (a column push does not know about is one it drops) and nothing reads it. Seed 30
+  `--port`/`--hostname` and sends its children itself, and the `subagent_feed` column was
+  dropped (by the push that ships it). Seed 30
   also moves the row's template (`OPENCODE_CONFIG`) to a `daedalus` provider declaring the
   thread's model, filled from harness placeholders so a profile with no endpoint prunes it
   away and OpenCode keeps its own login — replaced only on an exact match of seed 21's.

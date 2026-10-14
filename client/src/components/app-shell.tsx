@@ -40,7 +40,6 @@ import {
   FOOTER_ICON,
   SettingsNav,
   SidebarNav,
-  SidebarUsage,
   ThreadSidebar,
 } from "@/components/thread-sidebar"
 import type { OpenerTarget } from "@/components/workspace/dock-context"
@@ -167,11 +166,6 @@ export function AppShell({
     if (!api.hasMaximizedGroup()) maximizedRef.current = true
     api.maximizeGroup(panel)
   }, [dock, focused, activeChat])
-  const closeOpenThread = React.useCallback(
-    (session: SessionMeta) =>
-      void dock.closePanel(panelId({ kind: "chat", sessionId: session.id })),
-    [dock]
-  )
   const headingFor = usePageHeading()
 
   const inSettings = location.pathname.startsWith("/settings")
@@ -565,66 +559,42 @@ export function AppShell({
           then — the location.assign fallback would be a full reload. */}
       <NavigationBridge />
       <CloseSidebarOnNavigate />
-      {/* shadcn's `inset` layout, less the column's own `p-2` frame (`p-0`):
-          the provider paints the whole wrapper `bg-sidebar`, and the only
-          inset is the 8px each group, the footer and the brand row carry, so
-          a row ground is 8px from every edge — the same on the web, a desktop
-          titlebar and the phone sheet. `SidebarInset` is the column the app
-          is read in. `offcanvas`, not
-          `icon`: a 3rem column of glyphs is still a column, and the toggle
-          that brings it back lives in the app header, which is on every
-          route. */}
-      <Sidebar variant="inset" collapsible="offcanvas" className="p-0">
-        {/* The same 8px on every side. The brand row used to be the app
-            header row's height with its chips centred in it, so the two halves
-            of the bar sat on one line across the seam — but that centring
-            left a different gap above the chips on every platform, against
-            the 8px every row ground and the footer keep from their edges. Now
-            the row pads by the same `pt-2` (on the drag region, so macOS's own
-            titlebar padding on this element still stacks under it) and is
-            only as tall as its chips; the seam is a few px off, which is the
-            price of one inset. The status-bar inset stays on the header
-            itself. `px-2` here, `px-2` on every group, `p-2` on the footer
-            and `pt-2` on the content, so the brand row's chips, every row's
-            hover ground and the footer stand on the same 8px line. The brand
-            button pads its own `pl-2`, which puts the logo on the row-icon
-            line. */}
-        <SidebarHeader className="gap-2 px-2 pt-[var(--app-inset-top)] pb-0">
-          <div data-drag-region className="flex items-center gap-2 pt-2 group-data-[collapsible=icon]:flex-col">
+      {/* A flush rail: shadcn's stock `sidebar` variant, a panel with a 1px
+          edge and the column beside it filling the rest — no floating card, no
+          outer gutters. `offcanvas`, not `icon`: a 3rem column of glyphs is
+          still a column, and the toggle that brings it back lives in the app
+          header, which is on every route. */}
+      <Sidebar collapsible="offcanvas">
+        {/* The brand row is the app header's own row: the same top offset (the
+            status-bar inset, then the frame gap the column keeps above its
+            header) and the same height (`--app-header-row-h`), so the brand
+            and Search stand on one line with the tab strip's chips across the
+            seam (the frame gap is zero in the flush layout, so the offset is the
+            status-bar inset alone). */}
+        <SidebarHeader className="gap-2 px-2 pt-[var(--app-inset-top)] pb-0 md:pt-[calc(var(--app-inset-top)+var(--app-frame-gap))]">
+          <div data-drag-region className="flex h-[var(--app-header-row-h)] items-center gap-2">
             <button
               type="button"
               onClick={() => void navigate("/")}
               aria-label="Go to homepage"
-              /* Collapsed, the brand is one more icon in the rail and has to
-                 sit on its axis: the nav rows below are 32px buttons inside a
-                 group's 8px padding, so their glyph centres on 24px — the
-                 rail's own centre. So in the rail the button becomes that same
-                 32px box, centred. */
-              className="flex shrink-0 items-center gap-2 pl-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center"
+              className="flex shrink-0 items-center gap-2 rounded-sm pl-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Logo idle className="size-4 shrink-0" />
-              <span className="brand-script text-xl leading-none group-data-[collapsible=icon]:hidden">
-                Daedalus
-              </span>
+              <span className="brand-script text-xl leading-none">Daedalus</span>
             </button>
             {/* The palette, beside the brand. It is the app's own, not a
                 route's and not a dock group's — the sidebar is the one surface
-                that is on every route and never splits, which is why it is
-                here rather than in a header the workspace shares with tabs.
-                In the icon rail it stacks under the brand with the footer's
-                icons, which is where every other control lives. */}
-            <div className="ml-auto flex items-center gap-0.5 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:flex-col">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className={cn(HEADER_CHIP, "text-muted-foreground hover:text-foreground")}
-                title={`Search threads and commands (${formatChord(paletteChord)})`}
-                aria-label="Search"
-                onClick={() => palette.setOpen(true)}
-              >
-                <SearchIcon className="size-3.5" />
-              </Button>
-            </div>
+                that is on every route and never splits. */}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className={cn(HEADER_CHIP, "ml-auto text-muted-foreground hover:text-foreground")}
+              title={`Search threads and commands (${formatChord(paletteChord)})`}
+              aria-label="Search"
+              onClick={() => palette.setOpen(true)}
+            >
+              <SearchIcon className="size-3.5" />
+            </Button>
           </div>
         </SidebarHeader>
         {/* ── One sidebar, two contents, chosen by the panel in front of you ──
@@ -644,34 +614,28 @@ export function AppShell({
             <SettingsNav />
           ) : (
             <>
-              {/* The fixed nav rows sit above the list, the way the Codex and
-                  Claude desktop sidebars open. `New project` stays reachable
-                  from /settings/projects and the command palette. */}
+              {/* The nav rows sit above the list, the way the Claude desktop
+                  sidebar opens. `New project` stays reachable from
+                  /settings/projects and the command palette. */}
               <SidebarNav onNewThread={() => startRef.current.startThread()} />
               {loading ? (
                 <SidebarGroupsSkeleton />
               ) : (
-                <ThreadSidebar
-                  actions={actions}
-                  closeOpenThread={closeOpenThread}
-                />
+                <ThreadSidebar actions={actions} />
               )}
             </>
           )}
         </SidebarContent>
         <SidebarFooter className="p-2">
           {/* ── One row of icons ──
-              The four things the panel itself needs, on one line: what is left
-              of the plans this machine spends, the server it is talking to,
-              what has arrived while you were away, and the way into every
-              setting. They were two rows of labelled buttons, which cost the
+              The things the panel itself needs, on one line: the space, the
+              server it is talking to, what has arrived while you were away,
+              and the way into every setting. They were two rows of labelled buttons, which cost the
               thread list their 128px and made the panel's furniture read as
               more places to go. Each is a control that opens something, and
-              each says its own name in a tooltip. `SidebarUsage` draws itself
-              away when nothing reports a plan, so a machine with no plan has
-              three. */}
+              each says its own name in a tooltip. Plan usage is not here: the
+              plans are listed on Settings › Usage and nowhere else. */}
           <div className="flex items-center gap-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1">
-            <SidebarUsage />
             <SpaceIconButton />
             <ServerIconButton settings={settings} onAddServer={onAddServer} />
             <NotificationIconButton />
@@ -698,23 +662,13 @@ export function AppShell({
         </SidebarFooter>
         {sidebar.resizer}
       </Sidebar>
-      {/* The column the app is read in — and not the card. The variant draws
-          `m-2 ml-0 rounded-xl shadow-sm bg-background`, and `index.css` takes
-          the radius, the shadow and the background back off it
-          (`[data-slot="sidebar-inset"]`), keeping only the gutter: the header
-          row stands on the wrapper's ground, and the card is what is *below*
-          the header — each dock group's content container under its tabs.
+      {/* The column the app is read in: a plain `<main>` beside the rail. The
+          header row and the dock's strips stand on the rail's own tone (one
+          band across the top of the window) and each group's content fills
+          what is below its strip on `--background`.
 
-          **No `h-full` here, and that is the whole reason the app has one
-          scrollbar.** The provider is pinned to `height: 100dvh` above, and the
-          variant gives this element `m-2` — so `h-full` asked for 100dvh of
-          content *plus* 16px of margin inside a 100dvh box, and the 16px it
-          could not fit went to the document, which grew a second scrollbar.
-          The wrapper is a row flex container with the default `align-items:
-          stretch`, which sizes an item's **margin box** to the container — so
-          with no height declared this resolves to exactly `100dvh - 16px`.
-          `min-h-0` still has to be here: stretch gives a definite height, and
-          `min-h-0` is what lets the scrolling column inside shrink to it. */}
+          `min-h-0` has to be here: the provider is pinned to `100dvh`, and it
+          is what lets the scrolling column inside shrink to it. */}
       <SidebarInset data-focus-mode={focused || undefined} className="flex min-h-0 flex-col overflow-hidden">
         {/* An overlay spanning the whole top, INSIDE `SidebarInset` — it is the
             card's bar, not the window's. The dock's top groups join this row
@@ -745,16 +699,16 @@ export function AppShell({
           data-drag-region
           className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[var(--app-inset-top)] md:px-1"
         >
-          {/* Below `md` there is no card: the strip is an overlay (`index.css`)
-              and the transcript scrolls up under the tabs and this bar, so the
-              bar keeps a progressive blur there. `md:hidden` — at `md` the card
-              starts under the tabs, and a backdrop filter would also turn off
+          {/* The strip is an overlay at every width (`index.css`) and the
+              transcript scrolls up under the tabs and this bar, so the bar
+              carries a progressive blur that takes those lines out of focus
+              before they reach the chips. Caveat: a backdrop filter turns off
               the window's vibrancy/acrylic across the band. */}
           <ProgressiveBlur
             position="top"
             height="calc(100% + 1rem)"
             blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
-            className="absolute inset-x-0 top-0 -z-10 md:hidden"
+            className="absolute inset-x-0 top-0 -z-10"
           />
           {/* The two device-level controls. No title and no crumb — every
               route is a tab, and the tab says the name; a thread keeps only

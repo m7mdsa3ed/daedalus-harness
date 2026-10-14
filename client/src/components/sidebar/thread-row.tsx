@@ -1,6 +1,6 @@
 /* ── One thread, one line ── the row, its actions, and its menus. */
 import * as React from "react"
-import { Loader2, MoreVertical, Pause, X } from "lucide-react"
+import { MoreVertical, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,7 +14,6 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-device"
-import { Badge } from "@/components/ui/badge"
 import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon } from "@/components/entity-icon"
 import { ThreadInfoCard } from "./thread-info-card"
@@ -23,7 +22,7 @@ import { activityAt, type SessionMeta } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
-import { FLOAT_ACTION, FLOAT_ROW, ROW_TWO_LINE } from "./scale"
+import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
 
 /* The reading a row shows comes from `lib/thread/phase.ts` and is shared with
    the dock tabs and the project page. It used to be declared here as
@@ -34,8 +33,7 @@ import { FLOAT_ACTION, FLOAT_ROW, ROW_TWO_LINE } from "./scale"
    the store, which made both hard to grep for. */
 export type ThreadStatus = ThreadActivity
 
-/** One thread, two lines: the title with its status badge, over the project and
-    when the thread last spoke. Nothing else on the row. The actions live in the
+/** One thread, one line: the agent's mark, the title, and its status or age. Nothing else on the row. The actions live in the
     ⋯ that floats over the title on hover and in the right-click (long-press, on
     a phone) context menu — the same list, built once.
 
@@ -63,8 +61,6 @@ export const ThreadRow = React.memo(function ThreadRow({
   trash,
   active,
   pinned,
-  held,
-  unread,
   showProject,
   project,
   handlers,
@@ -74,9 +70,6 @@ export const ThreadRow = React.memo(function ThreadRow({
   trash: boolean
   active: boolean
   pinned: boolean
-  /** Held at a failure / finished since this device last looked. */
-  held: boolean
-  unread: boolean
   /** Whether the row names its project. Under a project's own folder it would
       only repeat the folder, so it wears the agent's mark alone. */
   showProject: boolean
@@ -90,6 +83,9 @@ export const ThreadRow = React.memo(function ThreadRow({
      waiting on an answer) is not something to throw away from a menu row —
      stop it first. Disabled with the reason on the row, not hidden. */
   const busy = state === "running" || state === "waiting"
+  /* What the second line used to say, as the row's tooltip. */
+  const reason = trash ? null : state === "waiting" ? "Needs you" : state === "failed" ? "Error — the last turn failed" : null
+  const detail = [reason, session.model, showProject ? project : null].filter(Boolean).join(" · ")
   const items = React.useMemo(
     () =>
       trash
@@ -109,70 +105,41 @@ export const ThreadRow = React.memo(function ThreadRow({
   /* The device hook, not `useSidebar()`: a context read re-renders past
      `memo`, so every row in the list re-rendered on each sidebar toggle. */
   const isMobile = useIsMobile()
-  /* ── Two lines ──
-     The title owns the first line with the status badge beside it. The second
-     line carries the agent, the project and when the thread last spoke — the
-     facts a title cannot, and which the ⋯ card was once the only place to read. */
+  /* ── One line ──
+     The agent's mark, the title, and at the trailing edge the status (a spinner,
+     a badge, a glyph) or, when there is none, how long ago the thread last spoke.
+     Model, project and the rest are one hover away (the row's tooltip) and in
+     the ⋯ card — a second line per row halved how many threads fit. */
+  const age = shortAge(activityAt(session))
   const row = (
-    <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+    <span className="flex min-w-0 flex-1 items-center gap-2" title={detail}>
+      <AgentIcon agentId={session.agentId} className="size-3.5 shrink-0" />
       <span
         className={cn(
-          "col-start-1 row-start-1 truncate",
+          "min-w-0 flex-1 truncate",
           (session.exited || trash) && "text-muted-foreground",
           trash && "line-through",
-          (state === "reconnecting" || state === "offline") && "animate-pulse"
+          /* The status is the title's colour, not a mark beside it: amber for a
+             thread waiting on you, red for a failed turn, and a shimmer sweeping
+             the letters while a turn runs. */
+          !trash && state === "waiting" && "text-amber-700 dark:text-amber-400",
+          !trash && state === "failed" && "text-destructive",
+          !trash && state === "running" && "harness-shimmer [animation-duration:3.2s]!"
         )}
       >
         {session.title}
       </span>
-      {/* The ⋯ floats over this cell (`FLOAT_ACTION`, `right-1`, a 20px box), so
-          a badge clears its footprint — covering a 6px dot on hover was fine,
-          covering the two words that say what is wrong with the thread is not.
-          `pr-6` is the ⋯'s 24px; a row with no badge reserves nothing, so its
-          title still runs to the edge as it did. */}
-      <span
-        className={cn(
-          "col-start-2 row-start-1 flex shrink-0 items-center gap-1.5",
-          (state === "waiting" || state === "failed") && "pr-6"
-        )}
-      >
-        {state === "running" && !held ? (
-          <span title="Running" aria-label="Running" role="img">
-            <Loader2 className="size-3 animate-spin text-muted-foreground" />
-          </span>
-        ) : (
-          <ThreadStateBadge state={state} held={held} unread={unread && !trash} />
-        )}
-        {(state === "reconnecting" || state === "offline") && (
-          <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground/60" />
-        )}
-      </span>
-      {/* The second line: the agent, where the thread runs, and when it last
-          spoke. The mark is the agent's alone, not the tab's paired
-          agent-over-project stack: that pairing is drawn for a 28px tab slot,
-          and squeezed into this line's 14px one the two discs overflowed their
-          box and ran into the project name beside them. The project is named on
-          this line anyway, so the mark carries the one fact the line does not —
-          which runtime the thread belongs to — and every row reads the same,
-          a folder's own threads included. */}
-      <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
-        <AgentIcon agentId={session.agentId} className="size-3.5" />
-        {/* An aside is flagged on the row: a thread started from a passage of
-            another (`asideQuote`), whose card names that thread. */}
-        {session.asideQuote && (
-          <span className="shrink-0 rounded-sm bg-primary/10 px-1 text-primary" title={`Aside on: ${session.asideQuote}`}>
-            Aside
-          </span>
-        )}
-        {showProject && <span className="truncate">{project}</span>}
-        {/* The separator belongs between two things: a folder's own thread names
-            no project, and its age used to stand behind a leading dot. */}
-        {(showProject || session.asideQuote) && (
-          <span aria-hidden className="shrink-0 opacity-50">
-            ·
-          </span>
-        )}
-        <span className="shrink-0 tabular-nums">{shortAge(activityAt(session))}</span>
+      {/* An aside is flagged on the row: a thread started from a passage of
+          another (`asideQuote`), whose card names that thread. */}
+      {session.asideQuote && (
+        <span className="shrink-0 rounded-sm bg-primary/10 px-1 text-[10px] text-primary" title={`Aside on: ${session.asideQuote}`}>
+          Aside
+        </span>
+      )}
+      {/* The ⋯ floats over the age on hover (`FLOAT_ACTION`, painted in the
+          row's own hover colour), so nothing is reserved for it. */}
+      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground transition-opacity group-hover/menu-item:opacity-0">
+        {age}
       </span>
     </span>
   )
@@ -197,9 +164,13 @@ export const ThreadRow = React.memo(function ThreadRow({
             if (isMobile) event.preventDefault()
           }}
           className={cn(
-            ROW_TWO_LINE,
+            ROW,
             FLOAT_ROW,
-            onClose && "pr-14!",
+            /* A faint wash over the whole row for the two states addressed to
+               the reader, a step stronger on hover. The active row keeps its
+               own selected ground. */
+            !trash && !active && state === "waiting" && "bg-amber-500/10 hover:bg-amber-500/15",
+            !trash && !active && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
             isMobile && "select-none [-webkit-touch-callout:none]"
           )}
         >
@@ -244,47 +215,3 @@ export const ThreadRow = React.memo(function ThreadRow({
     </SidebarMenuItem>
   )
 })
-
-/** ── The status, as a word rather than a dot ──
-    A dot was the whole ornament while the row was one line: there was room for a
-    mark and none for a word, and colour was the only thing a 6px disc could
-    say. Two lines changed the arithmetic — the second line exists, and a badge
-    in the first line's trailing slot costs the title nothing the dot did not
-    already cost it — so the two states addressed to the reader say what they
-    are. That matters most for `failed`, which was a red dot for "work that
-    stopped" and read as decoration on a row whose title gave no hint of it.
-
-    Only the two *asks* get a word. Everything else that is true of the thread
-    is a glyph in the same slot (held, running, finished-unread), and the
-    connection states are a pulse on the title plus a dot, because a label that
-    changes every few seconds is noise on every row of a working list. */
-function ThreadStateBadge({ state, held, unread }: { state: ThreadStatus; held: boolean; unread: boolean }) {  if (state === "waiting") {
-    return (
-      <Badge
-        variant="outline"
-        title="Waiting on your answer"
-        className="h-4 gap-0 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
-      >
-        Needs you
-      </Badge>
-    )
-  }
-  if (state === "failed") {
-    return (
-      <Badge variant="destructive" title="The last turn failed" className="h-4 px-1.5 text-[10px]">
-        Error
-      </Badge>
-    )
-  }
-  /* The quiet states are glyphs, one slot, in the order they matter: a held
-     turn (stopped, waiting for a model change and a resume), and a finished
-     one nobody has looked at. Running is shown in the first-row status slot. */
-  if (held)
-    return (
-      <span title="Held at an error — waiting for a model change and a resume" aria-label="Held" role="img">
-        <Pause className="size-3 text-amber-600 dark:text-amber-400" />
-      </span>
-    )
-  if (unread) return <span role="img" aria-label="Finished, unread" title="Finished since you last looked" className="size-2 rounded-full bg-primary" />
-  return null
-}

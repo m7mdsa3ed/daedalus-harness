@@ -1,7 +1,6 @@
 /* ── The palette ramp ──
    One function turns three numbers — a hue, a brand chroma and a neutral tint —
-   into a whole coherent palette, light and dark. It is what the twelve built-in
-   themes are generated from (scripts/gen-themes.mjs) *and* what the studio's
+   into a whole coherent palette, light and dark. It is what the studio's
    "Generate palette" control runs, which is the only reason a user-made theme
    can be as internally consistent as a shipped one: the ramp decides what
    "muted" means relative to "background", and thirty-three hand-picked swatches
@@ -186,7 +185,7 @@ export function rampContrast(a: string, b: string, over?: string): number {
 }
 
 /** Foreground token → the surface it is drawn on. The contrast gate's subject,
-    shared so the generator and the studio warn about exactly the same pairs. */
+    shared so every control in the studio warns about exactly the same pairs. */
 export const CONTRAST_PAIRS: Readonly<Record<string, string>> = {
   foreground: "background",
   "card-foreground": "card",

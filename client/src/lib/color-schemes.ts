@@ -25,9 +25,8 @@
    under WCAG AA against the surface this app puts secondary text on, because in
    an editor they sit on the plain background and are *meant* to recede. Where
    that happens the scheme's own next-brighter documented neutral is used for
-   `--muted-foreground` instead, and the swap is marked. The gate in
-   scripts/gen-themes.mjs is what enforces this, and it runs over these exactly
-   as it runs over the built-ins.
+   `--muted-foreground` instead, and the swap is marked. The studio warns on the
+   same `CONTRAST_PAIRS` it uses for every other theme.
 
    All six are MIT-licensed. Nothing here is redistributed but the colour
    values, which is what a "theme preset" is. */

@@ -10,9 +10,6 @@ export interface SidebarEnv {
   actions: Actions
   status: (session: SessionMeta) => ThreadStatus
   pinSet: ReadonlySet<string>
-  /** Threads held at a failure, and threads that finished since this device last looked. */
-  held: ReadonlySet<string>
-  unread: ReadonlySet<string>
   /** Project id -> name; a missing id reads "Other". */
   projectNames: ReadonlyMap<string, string>
 }

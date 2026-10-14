@@ -44,7 +44,7 @@ export const HEADER_BADGE =
  * are 28px icon buttons, and a square-ish corner on a glyph that size reads as a
  * tab that failed to grow. */
 export const STRIP_GROUND =
-  "max-md:rounded-full max-md:bg-[var(--dock-mobile-tab-ground)] max-md:shadow-sm"
+  "rounded-full bg-[var(--dock-mobile-tab-ground)] shadow-sm"
 
 /** The header's icon buttons — the sidebar toggle and the view-settings
     sliders beside it. Bare ghost buttons, no ground: the row stands on the

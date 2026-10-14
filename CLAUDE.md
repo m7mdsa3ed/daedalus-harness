@@ -370,10 +370,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   what the *socket* writes; everything a *route* answers is TanStack Query
   (`src/lib/queries/`). One owner per slice, nothing mirrored; writes **invalidate** rather
   than re-read by hand. Thread-lifecycle side effects stay in `src/lib/actions.ts`.
-- **Built-in themes are generated** — `pnpm themes` writes both the CSS and
-  `src/lib/builtin-themes.ts`, and that table is the only place a built-in exists. Three
-  gates run first (WCAG AA, no duplicate design signature, every preset value and font used).
-  Radius steps are **multiples** of `--radius`, never offsets.
+- **Default is the only built-in theme and it is shadcn's stock palette** (`:root` / `.dark` in
+  `index.css`; `styles/themes.css` is hand-maintained and adds only radius, fonts, depth and
+  tracking). Every other theme is user-made, from the studio. Radius steps are **multiples** of
+  `--radius`, never offsets.
 - **Reading a tool call is `lib/tools/`; drawing one is `components/tool-views/`.** **No
   component matches on a vendor tool name** — a new runtime's tool is one file's edit. ACP
   `kind` decides the layout family only; web views match the tool's **leaf** name. A vendor's
@@ -744,17 +744,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   out where four marks used to be, and hiding one is `display`.
 - **Every strip is the app header's own row** (`--dv-tabs-and-actions-container-height`): a
   strip in the band and a strip docked under it are the same bar, and a shorter one below
-  reads as a lesser thing rather than as another group of the same kind. **The header row and
-  the tabs stand outside the card, on every route.** `SidebarInset` is the column, not the
-  card — `index.css` takes the variant's radius, shadow and background back off it — and the
-  card is what is *under* the header: the routes box on every other route (header in flow,
-  `--app-header-h` zeroed inside so no route pads for an overlay that is not over it), and
-  with the dock mounted each group's content container, the strip in flow above it (the only
-  box in dockview's tree below a strip and above the content, which is what makes a split two
-  strips over two cards; the header stays an overlay there so the top groups can join its
-  row). **What separates two groups is the gutter between their cards**;
-  `--dv-separator-border` is transparent, because dockview's line runs the full view height,
-  through the band and down the gap.
+  reads as a lesser thing rather than as another group of the same kind. **There is no inset variant and no floating card:**
+  the rail is shadcn's stock `sidebar` variant (a flush panel with a 1px edge), `SidebarInset` is
+  a plain `<main>` beside it, the header row and the strips stand on the rail's own tone
+  (`--sidebar`, painted on `html` and `body::before`) so the top of the window is one band, and
+  each group's content container fills what is below its strip on `--background` under a
+  hairline (the strip in flow above it; the header stays an overlay so the top groups can join
+  its row). **What separates two groups is a hairline**; `--dv-separator-border` is
+  transparent, because dockview's line runs the full view height, through the band.
 - **A tab strip carries what is about its own group** — the **+**, the layout presets
   (`LAYOUT_PRESETS`, applied to the strip's own instance, never on a phone) and the tab list, **against
   the last tab and not at the strip's end** (`.dv-void-container { order: 1 }`, which moves
@@ -765,7 +762,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   belongs to is `app-shell`'s answer, and every surface calls the one `openWorkspacePanel`.
   The bell and the palette trigger stay in the sidebar header, which does not split and is on
   every route.
-- **On a narrow screen only the tab you are on is drawn** — every other tab is in the strip's
+- **Only the tab you are on is drawn, at every width** (the outer dock; a thread dock keeps its tabs) — every other tab is in the strip's
   list (`TabActions`, the switcher from two tabs up), because a row of marks is a second thing
   to read beside the list that already names every tab. It is entirely `index.css`, keyed on
   dockview's `dv-active-tab`/`dv-inactive-tab`: **a hide and not a collapse** (`display: none`,

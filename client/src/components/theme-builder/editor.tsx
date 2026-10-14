@@ -12,8 +12,7 @@
    Three tabs, ordered the way a theme is actually made:
    - **Presets** — start from a coordinated whole. A style preset sets the
      entire Design half at once; a palette preset (or the hue/chroma/tint
-     sliders) regenerates every colour through the same ramp the built-in
-     themes are generated from.
+     sliders) regenerates every colour through the palette ramp.
    - **Design** — the mode-independent half: type, shape, depth, glass, measure.
    - **Color** — the light/dark pair, edited together, because editing one
      blind is how you end up with a theme that only works after dark.

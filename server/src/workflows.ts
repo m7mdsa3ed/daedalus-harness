@@ -1097,7 +1097,12 @@ export class WorkflowRunner {
       }),
       new Promise((resolve) => {
         onAbort = () => resolve({ kind: "cancelled" });
-        run.abort.signal.addEventListener("abort", onAbort, { once: true });
+        /* A cancel that landed while `prompt` was still awaiting (attachments,
+           saved prompts — database round trips after `promptActive` is already
+           true) has fired its event already, and a listener added to an aborted
+           signal never hears it. */
+        if (run.abort.signal.aborted) onAbort();
+        else run.abort.signal.addEventListener("abort", onAbort, { once: true });
       }),
     ]);
     if (timer) {

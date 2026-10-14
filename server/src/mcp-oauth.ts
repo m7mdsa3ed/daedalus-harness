@@ -503,7 +503,7 @@ export async function disconnectServer(serverId: string): Promise<{ revoked: boo
       }
     }
   }
-  mcpOauth.remove(serverId);
+  await mcpOauth.remove(serverId);
   return { revoked, error };
 }
 

@@ -215,9 +215,6 @@ export const agents = pgTable("agents", {
       `"acp-meta"` = the ACP `_meta` on session/new|resume|load. Null = one
       process per thread. */
   sharedProcess: text("shared_process").$type<"acp-meta">(),
-  /** Legacy, read by nothing: OpenCode 1.x's subagent sidecar, retired with
-      OpenCode 2 (seed 30). Declared so a push does not drop the column. */
-  subagentFeed: text("subagent_feed").$type<"opencode-http">(),
   /** How this runtime's *own* subagents take a role's model (docs/model-roles.md):
       `"acp-env"` = roles ride `DAEDALUS_AGENT_MODEL_ROLES` at spawn and its
       in-process `task` tool reads them. Null/absent = no helper models, and a
