@@ -80,6 +80,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 
 import { getProfile, profileBaseUrl } from "./profiles.js";
+import { detectProvider } from "./providers/index.js";
 import { gatewayPromptTotal, recordGatewayPrompt, tapGatewaySse } from "./gateway-token-breakdown.js";
 
 /** Constant-time string comparison for path-carried credentials — an equality
@@ -574,6 +575,19 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   const baseUrl = profile ? profileBaseUrl(profile, agentId) : "";
   if (!baseUrl) return notFound("that profile has no base URL");
 
+  /* Free-tier providers (opencode-free first) only serve clients presenting
+     their fingerprint — exact headers, session shape, verbatim tools. The
+     child sends none of that, so the shim applies it here. See
+     `server/src/providers/`: adding a provider is a new file plus one
+     `detectProvider` entry, never a change to this function. */
+  const freeProvider = detectProvider(baseUrl);
+  const providerCtx = {
+    threadId: parsed.kind === "s" ? parsed.id : `probe:${parsed.id}`,
+    agentId,
+    profileId: thread?.profileId ?? parsed.id,
+  };
+  let upstreamRest = parsed.rest;
+
   const headers = new Headers();
   req.headers.forEach((value, name) => {
     if (!HOP_BY_HOP.has(name.toLowerCase())) headers.set(name, value);
@@ -588,6 +602,10 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   if (profile?.apiKey) {
     if (headers.has("x-api-key")) headers.set("x-api-key", profile.apiKey);
     if (headers.has("authorization")) headers.set("authorization", `Bearer ${profile.apiKey}`);
+  }
+  if (freeProvider) {
+    for (const name of freeProvider.dropRequestHeaders()) headers.delete(name);
+    for (const [name, value] of Object.entries(freeProvider.headers(providerCtx))) headers.set(name, value);
   }
 
   /* Two reasons to read a request body, and both are narrow. The Codex repair
@@ -604,7 +622,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   let renames: Record<string, RenamedTool> = {};
   if (
     req.method === "POST" &&
-    (isResponses || rewriting || /\/messages\/?$|\/chat\/completions\/?$/.test(parsed.rest)) &&
+    (freeProvider || isResponses || rewriting || /\/messages\/?$|\/chat\/completions\/?$/.test(parsed.rest)) &&
     /application\/json/i.test(req.headers.get("content-type") ?? "")
   ) {
     const text = await req.text();
@@ -612,6 +630,13 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     try {
       const parsedBody = JSON.parse(text) as Json;
       let edited = rewriting ? applySessionModel(parsedBody, thread.model, thread.effort) : false;
+      if (freeProvider) {
+        upstreamRest = freeProvider.upstreamPath(
+          typeof parsedBody.model === "string" ? parsedBody.model : "",
+          parsed.rest,
+        );
+        edited = freeProvider.transformBody(parsedBody, providerCtx) || edited;
+      }
       const flat = isResponses ? flattenNamespaces(parsedBody) : null;
       if (flat) {
         namespaces = flat.namespaces;
@@ -651,7 +676,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     headersTimeoutMs,
   );
   try {
-    upstream = await fetch(`${baseUrl.replace(/\/+$/, "")}${parsed.rest}${url.search}`, {
+    upstream = await fetch(`${baseUrl.replace(/\/+$/, "")}${upstreamRest}${url.search}`, {
       method: req.method,
       headers,
       body,
