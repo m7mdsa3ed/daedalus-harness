@@ -1,6 +1,8 @@
 # Plan: OpenCode subagent transcripts through an event sidecar
 
-Status: **shipped** (steps 1–5). `server/src/opencode-subagents.ts`, `server/src/net.ts`,
+Status: **retired** (seed 30): OpenCode 2's `acp` rejects the sidecar's flags and sends its
+children itself (`opencode/session/child_update`, `server/src/subagent-update.ts`); the code
+below is deleted. Was shipped (steps 1–5): `server/src/opencode-subagents.ts`, `server/src/net.ts`,
 `AgentDef.subagentFeed` (seed 16), `agentStream(proc, extra)`, `pnpm test:opencode-subagents`.
 Deviations from the plan below: `PUT /api/agents/:id` does **not** accept `subagentFeed` —
 it is declarative like `liveConfig`, and the route's schema deliberately excludes those; the

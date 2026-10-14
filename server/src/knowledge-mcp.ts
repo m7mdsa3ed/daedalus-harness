@@ -38,7 +38,13 @@ if (!projectId) {
 // from the shared module so a bare `node dist/knowledge-mcp.js` still connects.
 const db = openDb(process.env.DATABASE_URL);
 
-const server = new McpServer({ name: "knowledge", version: "1.0.0" });
+const server = new McpServer(
+  { name: "knowledge", version: "1.0.0" },
+  {
+    instructions:
+      "A knowledge base for this thread's project, shared across its threads. Search it (knowledge_search) before answering questions about the project's docs, APIs or conventions, and store durable reference material with knowledge_add — one entry per topic, titled. knowledge_list surveys what is stored; knowledge_delete removes an entry by id.",
+  },
+);
 
 server.registerTool(
   "knowledge_add",

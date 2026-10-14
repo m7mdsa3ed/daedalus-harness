@@ -258,4 +258,66 @@ await assert.rejects(
   );
 }
 
+// ---- Claude Code parity: whenToUse, isolation, agentType, workflow() ----
+{
+  assert.equal(extractMeta(`export const meta = { name: 'a', description: 'b', whenToUse: 'when c' }`).whenToUse, "when c");
+
+  const seen: Record<string, unknown>[] = [];
+  const { hooks, rec } = harness();
+  const inner = hooks.agent;
+  hooks.agent = async (spec) => {
+    seen.push(spec);
+    return inner(spec);
+  };
+  hooks.loadWorkflow = async (ref) => {
+    assert.equal(ref, "child");
+    return `export const meta = { name: 'child', description: 'c' }
+      phase('Inner')
+      const got = await agent('in:' + args.x, { label: 'kid' })
+      let refused = false
+      try { await workflow('child') } catch (e) { refused = /one level/.test(e.message) }
+      return { got, refused }`;
+  };
+  const out = await runScript({
+    source: `${META}
+      const a = await agent('p', { label: 'iso', isolation: 'worktree', agentType: 'reviewer' })
+      const nested = await workflow('child', { x: 7 })
+      const bad = await parallel([() => agent('q', { isolation: 'remote' })])
+      return { a, nested, bad }`,
+    args: undefined, hooks, budgetTotal: null,
+  });
+  assert.equal(seen[0].isolation, "worktree");
+  assert.equal(seen[0].agentType, "reviewer");
+  assert.deepEqual(out.result, { a: "out:iso", nested: { got: "out:kid", refused: true }, bad: [null] },
+    "a nested workflow returns its result; nesting twice and isolation:'remote' are refused");
+  assert.equal(rec.prompts[1], "in:7", "the child reads its own args");
+  assert.equal(rec.phases[1], "▸ child · Inner", "the child's agents are grouped under its name");
+  assert.equal(out.agents, 2, "the child's agents count against the parent's cap");
+}
+
+// ---- saved workflows: project shadows personal, symlinks refused ----
+{
+  const { mkdtemp, mkdir, symlink, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { listSaved, loadSaved, saveWorkflow } = await import("../src/workflow-saved.js");
+  const root = await mkdtemp(join(tmpdir(), "wf-saved-"));
+  const project = join(root, "proj");
+  process.env.CLAUDE_CONFIG_DIR = join(root, "home");
+  const src = (d: string) => `export const meta = { name: 'audit', description: '${d}' }\nreturn 1`;
+  await saveWorkflow(project, src("personal"), "personal");
+  await saveWorkflow(project, src("project"), "project");
+  const listed = await listSaved(project);
+  assert.deepEqual(listed.map((w) => [w.name, w.scope]), [["audit", "project"]], "a project workflow shadows a personal one");
+  assert.match(await loadSaved(project, project, "audit"), /'project'/);
+  await writeFile(join(project, "x.js"), src("by path"));
+  assert.match(await loadSaved(project, project, { scriptPath: "x.js" }), /by path/);
+  await assert.rejects(() => loadSaved(project, project, "nope"), /no saved workflow/);
+  const linked = join(root, "linked");
+  await mkdir(linked);
+  await symlink(join(root, "elsewhere"), join(linked, ".claude"));
+  await assert.rejects(() => saveWorkflow(linked, src("x"), "project"), /symlink/);
+  delete process.env.CLAUDE_CONFIG_DIR;
+}
+
 console.log("workflow-script: ok");

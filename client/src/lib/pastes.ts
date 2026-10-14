@@ -20,9 +20,14 @@
 
 /* Keyed by the session id the composer is already holding — see lib/drafts,
    whose storage half this is a copy of on purpose. */
-const PREFIX = "ui.draft-pastes."
+import { IS_POPOUT, POPOUT_WINDOW_ID } from "./popout"
 
-const storageKey = (sessionId: string): string => PREFIX + sessionId
+const PREFIX = "ui.draft-pastes."
+const STORAGE_PREFIX = IS_POPOUT ? `${PREFIX}window.${POPOUT_WINDOW_ID ?? "unscoped"}.` : PREFIX
+const otherWindowKey = (key: string) =>
+  key.startsWith(`${PREFIX}window.`) && (!IS_POPOUT || !key.startsWith(STORAGE_PREFIX))
+
+const storageKey = (sessionId: string): string => STORAGE_PREFIX + sessionId
 
 const SAVE_DEBOUNCE_MS = 300
 
@@ -193,7 +198,8 @@ export function prunePastes(sessionIds: Iterable<string>): void {
   }
   try {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(PREFIX) && !live.has(key.slice(PREFIX.length))) {
+      if (otherWindowKey(key) || !key.startsWith(STORAGE_PREFIX)) continue
+      if (!live.has(key.slice(STORAGE_PREFIX.length))) {
         localStorage.removeItem(key)
       }
     }

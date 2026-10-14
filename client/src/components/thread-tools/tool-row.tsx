@@ -19,7 +19,6 @@ export function ToolRow({
   needsAuth,
   /** The second line when the entry is neither the profile's nor unauthorized. */
   hint,
-  badge,
   onCheckedChange,
 }: {
   name: string
@@ -29,7 +28,6 @@ export function ToolRow({
   from: boolean
   needsAuth: boolean
   hint: string
-  badge?: string
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
@@ -43,11 +41,6 @@ export function ToolRow({
       <span className="flex min-w-0 flex-col">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="truncate">{name}</span>
-          {badge && (
-            <span className="shrink-0 rounded-pill bg-muted px-1.5 text-[9px] leading-4 text-muted-foreground">
-              {badge}
-            </span>
-          )}
           {/* An OAuth server nobody has connected resolves to
               nothing at spawn — it is not advertised at all, the
               rule the built-in web-search row already sets. So it

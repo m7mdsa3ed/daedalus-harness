@@ -64,6 +64,9 @@ export interface ScriptMeta {
   phases: { title: string; detail?: string }[];
 }
 
+/** Where `workflow(ref)` finds a script: a saved workflow's name, or a file. */
+export type WorkflowRef = string | { scriptPath: string };
+
 /** What the engine hands the sandbox: the one call that does real work, plus
     the run's bookkeeping. Everything else in the API is arithmetic over these. */
 export interface ScriptHooks {
@@ -77,7 +80,13 @@ export interface ScriptHooks {
     schema?: Record<string, unknown>;
     model?: string;
     effort?: string;
+    /** `'worktree'`: the agent works in a git worktree of its own. */
+    isolation?: "worktree";
+    /** A saved prompt's handle, the harness's stand-in for a custom subagent type. */
+    agentType?: string;
   }): Promise<unknown>;
+  /** `workflow(ref)`: the source of a saved workflow or a script file. */
+  loadWorkflow?(ref: WorkflowRef): Promise<string>;
   /** A phase was entered. Titles are declared in `meta.phases`; this is the
       script saying which one it is on. */
   phase(title: string): void;
@@ -128,7 +137,8 @@ export function extractMeta(source: string): ScriptMeta {
       phases.push({ title: title.slice(0, SCRIPT_LIMITS.maxLabel), ...(typeof detail === "string" ? { detail } : {}) });
     }
   }
-  return { name: name.slice(0, 80), description: description.slice(0, 500), phases };
+  const whenToUse = typeof meta.whenToUse === "string" ? meta.whenToUse.trim().slice(0, 500) : "";
+  return { name: name.slice(0, 80), description: description.slice(0, 500), ...(whenToUse ? { whenToUse } : {}), phases };
 }
 
 /** The end of the object literal that starts at `from`, by brace depth, with
@@ -196,12 +206,18 @@ export async function runScript(opts: {
   args: unknown;
   hooks: ScriptHooks;
   budgetTotal: number | null;
+  /** Set by `workflow()` for the child it runs: the parent's agent count (one
+      cap for both) and the group its agents are drawn under. A child cannot
+      call `workflow()` itself — one level, as Claude Code's. */
+  nested?: { counter: { agents: number }; group: string };
 }): Promise<RunScriptResult> {
   const { hooks } = opts;
   if (opts.source.length > SCRIPT_LIMITS.sourceBytes) {
     throw new ScriptError(`a workflow script is at most ${SCRIPT_LIMITS.sourceBytes} bytes`);
   }
-  let agents = 0;
+  const counter = opts.nested?.counter ?? { agents: 0 };
+  const group = (title: string | null): string | null =>
+    opts.nested ? (title ? `${opts.nested.group} · ${title}` : opts.nested.group).slice(0, SCRIPT_LIMITS.maxLabel) : title;
   let currentPhase: string | null = null;
 
   const budget = {
@@ -218,14 +234,18 @@ export async function runScript(opts: {
   async function agent(prompt: unknown, options?: Record<string, unknown>): Promise<unknown> {
     if (hooks.signal.aborted) throw new ScriptError("the run was cancelled");
     if (typeof prompt !== "string" || !prompt.trim()) throw new ScriptError("agent(prompt): prompt must be a non-empty string");
-    if (agents >= SCRIPT_LIMITS.maxAgents) {
+    if (counter.agents >= SCRIPT_LIMITS.maxAgents) {
       throw new ScriptError(`this run has spawned ${SCRIPT_LIMITS.maxAgents} agents, which is the cap`);
     }
     if (budget.total !== null && budget.remaining() <= 0) {
       throw new ScriptError(`the run's token budget (${budget.total}) is spent`);
     }
-    agents += 1;
-    const index = agents;
+    const isolation = options?.isolation;
+    if (isolation !== undefined && isolation !== "worktree") {
+      throw new ScriptError(`agent(…, {isolation}): only 'worktree' is supported here, not ${JSON.stringify(isolation)}`);
+    }
+    counter.agents += 1;
+    const index = counter.agents;
     const schema = options?.schema;
     if (schema !== undefined && (typeof schema !== "object" || schema === null || Array.isArray(schema))) {
       throw new ScriptError("agent(…, {schema}): schema must be a JSON Schema object");
@@ -234,7 +254,7 @@ export async function runScript(opts: {
        which is what keeps a pipeline stage out of a race with the global
        `phase()` cursor; without one the agent joins whatever phase the script
        is on. */
-    const phase = typeof options?.phase === "string" ? options.phase : currentPhase;
+    const phase = typeof options?.phase === "string" ? group(options.phase) : currentPhase;
     return hooks.agent({
       prompt,
       label: label(options?.label, `agent ${index}`),
@@ -242,6 +262,8 @@ export async function runScript(opts: {
       ...(schema ? { schema: schema as Record<string, unknown> } : {}),
       ...(typeof options?.model === "string" ? { model: options.model } : {}),
       ...(typeof options?.effort === "string" ? { effort: options.effort } : {}),
+      ...(isolation ? { isolation } : {}),
+      ...(typeof options?.agentType === "string" && options.agentType.trim() ? { agentType: options.agentType.trim() } : {}),
     });
   }
 
@@ -300,8 +322,29 @@ export async function runScript(opts: {
 
   function phase(title: unknown): void {
     if (typeof title !== "string" || !title.trim()) throw new ScriptError("phase(title): title must be a non-empty string");
-    currentPhase = title.trim().slice(0, SCRIPT_LIMITS.maxLabel);
-    hooks.phase(currentPhase);
+    currentPhase = group(title.trim().slice(0, SCRIPT_LIMITS.maxLabel));
+    hooks.phase(currentPhase!);
+  }
+
+  /** Another workflow as one step of this one. It shares this run's agent cap,
+      cancel and budget; its agents are drawn under its own name. */
+  async function workflow(ref: unknown, childArgs?: unknown): Promise<unknown> {
+    if (opts.nested) throw new ScriptError("workflow() cannot be called from inside a nested workflow — one level only");
+    if (!hooks.loadWorkflow) throw new ScriptError("workflow() is not available here");
+    const valid =
+      (typeof ref === "string" && ref.trim()) ||
+      (ref && typeof ref === "object" && typeof (ref as { scriptPath?: unknown }).scriptPath === "string");
+    if (!valid) throw new ScriptError("workflow(ref): ref is a saved workflow's name or {scriptPath}");
+    const source = await hooks.loadWorkflow(ref as WorkflowRef);
+    const meta = extractMeta(source);
+    const { result } = await runScript({
+      source,
+      args: childArgs,
+      hooks,
+      budgetTotal: opts.budgetTotal,
+      nested: { counter, group: `▸ ${meta.name}` },
+    });
+    return result;
   }
 
   function log(message: unknown): void {
@@ -322,6 +365,7 @@ export async function runScript(opts: {
     pipeline,
     phase,
     log,
+    workflow,
     args: opts.args,
     budget,
     console: { log, warn: log, error: log, info: log, debug: log },
@@ -367,8 +411,7 @@ export async function runScript(opts: {
       hooks.signal.addEventListener("abort", () => reject(new ScriptError("the run was cancelled")), { once: true });
     }),
   ]);
-  return { result: jsonSafe(result), agents };
-  return { result, agents };
+  return { result: jsonSafe(result), agents: counter.agents };
 }
 
 /** `export const meta = …` → `const meta = …`. The only rewrite: the source is

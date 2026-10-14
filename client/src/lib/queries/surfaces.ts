@@ -31,6 +31,24 @@ export function useAppMeta() {
   const settings = useServer()
   return useApiQuery<AppMeta>(appMetaKey(settings), "/api/meta", { staleTime: 5 * 60_000 })
 }
+
+/* ── A link's title and mark ──
+   What the composer's link chip and every link the transcript draws read. The
+   server fetches the page and inlines its image (`link-preview.ts`), so this is
+   one horizontal read per URL, held for the session. `persist:false`: it is a
+   network read of a page that may be gone tomorrow, nearer the dev-server
+   status than the catalog (queries/persist.ts). Absent and pending both draw
+   as the hostname, so the empty fallback is a value, not a skeleton. */
+export type LinkPreview = { url: string; title?: string; image?: string }
+
+export function useLinkPreview(url: string) {
+  const settings = useServer()
+  return useApiQuery<LinkPreview>(
+    linkPreviewKey(settings, url),
+    `/api/link-preview?url=${encodeURIComponent(url)}`,
+    { staleTime: 30 * 60_000, meta: { persist: false } }
+  )
+}
 import {
   addKnowledge,
   deleteKnowledge,
@@ -55,6 +73,7 @@ import {
   allQuotaKey,
   appMetaKey,
   composerHistoryKey,
+  linkPreviewKey,
   notificationsKey,
   projectKnowledgeKey,
   projectGitBranchesKey,

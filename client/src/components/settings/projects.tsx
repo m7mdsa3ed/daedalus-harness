@@ -25,25 +25,30 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Switch } from "@/components/ui/switch"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type HelperCommand, type Project, type ServerSettings } from "@/lib/settings"
-import { useActiveSpace, useInvalidateCatalog, useProjects } from "@/lib/queries/catalog"
 import {
-  useAddHelper,
+  useActiveSpace,
+  useCreateRule,
+  useDeleteRule,
+  useInvalidateCatalog,
+  useProjectRules,
+  useProjects,
+  useUpdateRule,
+} from "@/lib/queries/catalog"
+import {
   useAddKnowledge,
   useDeleteHelper,
   useDeleteKnowledge,
   useProjectKnowledge,
   useReorderProjects,
-  useUpdateHelper,
 } from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, INSET, LogoUpload } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
-import { type HelperInput } from "@/lib/workspace/project-helpers"
+import { HelperForm } from "@/components/helper-form"
 
 export function ProjectsPage() {
   const { settings } = useSettingsPage()
@@ -347,11 +352,91 @@ export function ProjectForm({
       </PageForm>
       {!dialog && (
         <div className="mt-8 border-t pt-6 space-y-8">
+          <RulesSection project={project} />
           <HelpersSection project={project} />
           <KnowledgeSection project={project} />
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * Standing instructions for threads started in this project, spawned after the
+ * global rules (server/src/rules.ts). The same rows and editing as the global
+ * Rules page, scoped by `projectId`. Only for an existing project.
+ */
+function RulesSection({ project }: { project: Project | null }) {
+  const projectId = project?.id ?? null
+  const rules = useProjectRules(projectId)
+  const createRule = useCreateRule()
+  const updateRule = useUpdateRule()
+  const deleteRule = useDeleteRule()
+  const [error, setError] = React.useState<InlineError | null>(null)
+
+  const add = () => {
+    if (!projectId) return
+    createRule.mutate({ projectId, title: "New rule", content: "" }, {
+      onError: (err) => setError(captureError(err, "Couldn't add the rule")),
+    })
+  }
+
+  const updateField = (id: string, field: "title" | "content", value: string) => {
+    updateRule.mutate({ id, [field]: value }, {
+      onError: (err) => setError(captureError(err, "Couldn't update the rule")),
+    })
+  }
+
+  const remove = (id: string) => {
+    deleteRule.mutate({ id }, {
+      onError: (err) => setError(captureError(err, "Couldn't delete the rule")),
+    })
+  }
+
+  return (
+    <FormSection label="Rules">
+      {!projectId ? (
+        <p className="text-xs text-muted-foreground">Save the project first to manage its rules.</p>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Standing instructions for every thread started in this project, after the global rules.
+          </p>
+          {error && <Notice tone="error">{error.text}</Notice>}
+          {rules.length === 0 ? (
+            <Empty>No rules for this project yet — add one below.</Empty>
+          ) : (
+            rules.map((rule) => (
+              <div key={rule.id} className={cn("space-y-2 p-3", INSET)}>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={rule.title}
+                    onChange={(e) => updateField(rule.id, "title", e.target.value)}
+                    placeholder="Rule title"
+                    className="font-medium"
+                  />
+                  <Button type="button" variant="ghost" size="icon-sm" title="Delete rule" onClick={() => remove(rule.id)}>
+                    <Trash2 />
+                  </Button>
+                </div>
+                <Textarea
+                  value={rule.content}
+                  onChange={(e) => updateField(rule.id, "content", e.target.value)}
+                  rows={3}
+                  className="font-mono text-xs"
+                  placeholder="Standing instruction for the agent…"
+                />
+              </div>
+            ))
+          )}
+          <div className="flex justify-end">
+            <Button type="button" size="sm" onClick={add} disabled={createRule.isPending}>
+              <Plus /> Add rule
+            </Button>
+          </div>
+        </div>
+      )}
+    </FormSection>
   )
 }
 
@@ -365,112 +450,16 @@ export function ProjectForm({
 function HelpersSection({ project }: { project: Project | null }) {
   const projectId = project?.id ?? null
   const helpers = project?.helpers ?? []
-  const addHelperMutation = useAddHelper()
-  const updateHelperMutation = useUpdateHelper()
   const deleteHelperMutation = useDeleteHelper()
-
-  const [saving, setSaving] = React.useState(false)
-  const [editingId, setEditingId] = React.useState<string | null>(null)
-  const [name, setName] = React.useState("")
-  const [command, setCommand] = React.useState("")
-  const [description, setDescription] = React.useState("")
-  const [cwd, setCwd] = React.useState("")
-  const [envText, setEnvText] = React.useState("")
-  const [confirm, setConfirm] = React.useState(false)
-  const [preview, setPreview] = React.useState(false)
-  const [envProblem, setEnvProblem] = React.useState<string | null>(null)
-
-  /** `KEY=value` per line — friendlier to type than JSON, lossless to parse. */
-  const parseEnvText = (text: string): Record<string, string> | null => {
-    const out: Record<string, string> = {}
-    for (const raw of text.split("\n")) {
-      const line = raw.trim()
-      if (!line || line.startsWith("#")) continue
-      const eq = line.indexOf("=")
-      const key = eq === -1 ? "" : line.slice(0, eq).trim()
-      if (!key) return null
-      out[key] = line.slice(eq + 1).trim()
-    }
-    return out
-  }
-
-  const startEdit = (helper: HelperCommand) => {
-    setEditingId(helper.id)
-    setName(helper.name)
-    setCommand(helper.command)
-    setDescription(helper.description ?? "")
-    setCwd(helper.cwd ?? "")
-    setEnvText(
-      helper.env ? Object.entries(helper.env).map(([k, v]) => `${k}=${v}`).join("\n") : ""
-    )
-    setConfirm(helper.confirm)
-    setPreview(helper.preview)
-    setEnvProblem(null)
-  }
-
-  const cancelEdit = () => {
-    setEditingId(null)
-    setName("")
-    setCommand("")
-    setDescription("")
-    setCwd("")
-    setEnvText("")
-    setConfirm(false)
-    setPreview(false)
-    setEnvProblem(null)
-  }
-
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!projectId || saving) return
-    const trimmedName = name.trim()
-    const trimmedCmd = command.trim()
-    if (!trimmedName || !trimmedCmd) return
-
-    const env = parseEnvText(envText)
-    if (env === null) {
-      setEnvProblem("Some lines aren't KEY=value — fix them to save.")
-      return
-    }
-    setEnvProblem(null)
-
-    const input: HelperInput = {
-      name: trimmedName,
-      command: trimmedCmd,
-      description: description.trim() || null,
-      cwd: cwd.trim() || null,
-      env: env && Object.keys(env).length > 0 ? env : null,
-      confirm,
-      preview,
-    }
-
-    setSaving(true)
-    try {
-      if (editingId) {
-        await updateHelperMutation.mutateAsync({
-          projectId,
-          helperId: editingId,
-          input,
-        })
-      } else {
-        await addHelperMutation.mutateAsync({
-          projectId,
-          input,
-        })
-      }
-      cancelEdit()
-    } catch (err) {
-      reportError(err, editingId ? "Couldn't update helper command" : "Couldn't add helper command")
-    } finally {
-      setSaving(false)
-    }
-  }
+  /* The helper in the form below: one being edited, or null for a new one.
+     The form is keyed on it, so switching remounts it with that row's fields. */
+  const [editing, setEditing] = React.useState<HelperCommand | null>(null)
 
   const remove = async (helperId: string) => {
     if (!projectId) return
     try {
       await deleteHelperMutation.mutateAsync({ projectId, helperId })
-      if (editingId === helperId) cancelEdit()
+      if (editing?.id === helperId) setEditing(null)
     } catch (err) {
       reportError(err, "Couldn't delete helper command")
     }
@@ -519,8 +508,7 @@ function HelpersSection({ project }: { project: Project | null }) {
                     variant="ghost"
                     size="icon-sm"
                     title="Edit"
-                    disabled={saving}
-                    onClick={() => startEdit(h)}
+                    onClick={() => setEditing(h)}
                   >
                     <Pencil />
                   </Button>
@@ -529,7 +517,6 @@ function HelpersSection({ project }: { project: Project | null }) {
                     variant="ghost"
                     size="icon-sm"
                     title="Delete"
-                    disabled={saving}
                     onClick={() => void remove(h.id)}
                   >
                     <Trash2 />
@@ -538,92 +525,18 @@ function HelpersSection({ project }: { project: Project | null }) {
               ))}
             </ul>
           )}
-          <form onSubmit={save} className={cn("space-y-3 p-3", INSET)}>
+          <div className={cn("space-y-3 p-3", INSET)}>
             <div className="text-xs font-medium">
-              {editingId ? "Edit helper command" : "New helper command"}
+              {editing ? "Edit helper command" : "New helper command"}
             </div>
-            <Field label="Name">
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Restart server, Run migrations, Seed database"
-                required
-              />
-            </Field>
-            <Field
-              label="Command"
-              hint="Runs in a terminal panel, so a command that asks something can be answered."
-            >
-              <Input
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                placeholder="npm run db:migrate"
-                className="font-mono text-xs"
-                spellCheck={false}
-                required
-              />
-            </Field>
-            <Field label="Description" hint="Shown in the Run menu and before the command runs.">
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What this command does, if the name isn't enough"
-              />
-            </Field>
-            <Field label="Working directory" hint="Project-relative. Empty = the project root.">
-              <Input
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-                placeholder="packages/server"
-                className="font-mono text-xs"
-                spellCheck={false}
-              />
-            </Field>
-            <Field label="Environment" hint="One variable per line, KEY=value.">
-              <Textarea
-                value={envText}
-                onChange={(e) => setEnvText(e.target.value)}
-                placeholder={"DATABASE_URL=postgres://localhost/app\nNODE_ENV=development"}
-                rows={2}
-                className="min-h-0 font-mono text-xs"
-                spellCheck={false}
-              />
-              {envProblem && <p className="text-xs text-destructive">{envProblem}</p>}
-            </Field>
-            <div className={cn("flex items-center justify-between gap-3 px-3 py-2", INSET)}>
-              <div className="min-w-0">
-                <div className="text-xs font-medium">Ask before running</div>
-                <div className="text-[11px] text-muted-foreground">
-                  Confirm the command before its terminal opens — for the destructive ones.
-                </div>
-              </div>
-              <Switch checked={confirm} onCheckedChange={setConfirm} aria-label="Ask before running" />
-            </div>
-            <div className={cn("flex items-center justify-between gap-3 px-3 py-2", INSET)}>
-              <div className="min-w-0">
-                <div className="text-xs font-medium">Starts the project's dev server</div>
-                <div className="text-[11px] text-muted-foreground">
-                  Marked once per project — the Browser panel offers it when the preview URL is
-                  set but nothing answers on it.
-                </div>
-              </div>
-              <Switch
-                checked={preview}
-                onCheckedChange={setPreview}
-                aria-label="Starts the project's dev server"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              {editingId && (
-                <Button type="button" variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>
-                  Cancel
-                </Button>
-              )}
-              <Button type="submit" size="sm" disabled={saving}>
-                <Plus /> {saving ? "Saving…" : editingId ? "Save changes" : "Add command"}
-              </Button>
-            </div>
-          </form>
+            <HelperForm
+              key={editing?.id ?? "new"}
+              projectId={projectId}
+              initial={editing ?? undefined}
+              onDone={() => setEditing(null)}
+              onCancel={editing ? () => setEditing(null) : undefined}
+            />
+          </div>
         </div>
       )}
     </FormSection>

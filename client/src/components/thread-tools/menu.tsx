@@ -1,7 +1,8 @@
 /**
- * What a thread carries and what it could: MCP servers, skills and slash
- * commands out of the library, as a group of submenus in the thread's settings
- * dropdown. This owns everything that is about *the thread* — which links are
+ * What a thread carries and what it could: skills and slash commands out of
+ * the library, as a group of submenus in the thread's settings dropdown. MCP
+ * servers are picked on the composer's own chip (`composer/mcp-avatars.tsx`),
+ * which reads the same hook. This owns everything that is about *the thread* — which links are
  * its own, what a toggle writes, and whether the runtime will read them at all.
  *
  * **The kinds are submenus, not stacked groups**: a library grows, and one flat
@@ -15,9 +16,8 @@
  *
  * The project contributes nothing: it is the directory, not the toolset.
  */
-import { BlocksIcon, ServerIcon, SlashSquareIcon } from "lucide-react"
+import { BlocksIcon, SlashSquareIcon } from "lucide-react"
 
-import { McpIcon } from "@/components/entity-icon"
 import { useDispatch } from "@/lib/store"
 import {
   DropdownMenuGroup,
@@ -26,7 +26,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import type { Actions, LinkKey } from "@/lib/actions"
-import { mcpNeedsAuth, mcpSubtitle, type SessionMeta } from "@/lib/settings"
+import { mcpNeedsAuth, type SessionMeta } from "@/lib/settings"
 import type { StagedConfig } from "@daedalus/protocol"
 import { useStoreSelect } from "@/lib/store"
 import { useAgents, useCommands, useMcpServers, useSkills } from "@/lib/queries/catalog"
@@ -61,15 +61,13 @@ export function useThreadToolLinks(
     skillIds: stagedLinks?.skillIds ?? meta.skillIds ?? [],
     commandIds: stagedLinks?.commandIds ?? meta.commandIds ?? [],
   }
-  const toggle = (key: LinkKey, id: string, on: boolean) => {
-    if (meta.draft) {
-      const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
-      actions.configureDraft(meta.id, { [key]: next }, remember)
-    } else {
-      const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
-      void actions.changeThreadLink(meta, key, next).catch(() => {})
-    }
+  /* A draft's pick, or a started thread's change staged for the next send. */
+  const set = (key: LinkKey, next: string[]) => {
+    if (meta.draft) actions.configureDraft(meta.id, { [key]: next }, remember)
+    else void actions.changeThreadLink(meta, key, next).catch(() => {})
   }
+  const toggle = (key: LinkKey, id: string, on: boolean) =>
+    set(key, on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id))
 
   /* Only an MCP row can need one. */
   const needsAuth = (item: { id: string }): boolean => {
@@ -90,10 +88,10 @@ export function useThreadToolLinks(
     return null
   }
 
-  return { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks }
+  return { mcpServers, skills, commands, inherited, own, set, toggle, needsAuth, agent, unreadable, stagedLinks }
 }
 
-/** The tools group of a settings dropdown: four submenus and, on a draft that
+/** The tools group of a settings dropdown: two submenus and, on a draft that
     has picked some, the way to take them back. Renders nothing on a started
     thread that carries none — a group that only ever says "none" is not worth
     drawing. */
@@ -111,7 +109,7 @@ export function ThreadToolsSections({
 }) {
   const { mcpServers, skills, commands, inherited, own, toggle, needsAuth, agent, unreadable, stagedLinks } =
     useThreadToolLinks(meta, actions, remember)
-  const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
+  const extra = own.skillIds.length + own.commandIds.length
   /* A started thread's links are picked here too — staged for the next send
      (`useThreadToolLinks.toggle`). This menu is where tools are chosen; the
      strip only reads them. */
@@ -125,25 +123,6 @@ export function ThreadToolsSections({
       <DropdownMenuLabel>
         {stagedLinks ? "Tools — applies on next send" : "Tools"}
       </DropdownMenuLabel>
-      <ToolSection
-        {...common}
-        title="MCP servers"
-        icon={<ServerIcon className={iconClass} />}
-        /* The harness's own servers ride in the same list, after the
-           user's, marked with a badge rather than split into a second
-           submenu: to the agent they are all MCP servers. */
-        items={[
-          ...mcpServers.filter((server) => server.type !== "builtin"),
-          ...mcpServers.filter((server) => server.type === "builtin"),
-        ]}
-        itemIcon={(server) => <McpIcon server={server} className="size-4" />}
-        badge={(server) => (server.type === "builtin" ? "built-in" : undefined)}
-        hint={mcpSubtitle}
-        inherited={inherited.mcpServerIds}
-        own={own.mcpServerIds}
-        unreadable={unreadable("mcpServerIds")}
-        onToggle={(id, on) => toggle("mcpServerIds", id, on)}
-      />
       <ToolSection
         {...common}
         title="Skills"
@@ -170,7 +149,7 @@ export function ThreadToolsSections({
       {editable && extra > 0 && (
         <DropdownMenuItem
           onClick={() =>
-            actions.configureDraft(meta.id, { mcpServerIds: [], skillIds: [], commandIds: [] }, remember)
+            actions.configureDraft(meta.id, { skillIds: [], commandIds: [] }, remember)
           }
         >
           Clear this thread&rsquo;s tools

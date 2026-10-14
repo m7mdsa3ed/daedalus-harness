@@ -322,13 +322,15 @@ export function useRules(): Rule[] {
   )
 }
 
-/** Project rules for a given project. */
-export function useProjectRules(projectId: string): Rule[] {
+/** Project rules for a given project; parked while there is no saved project. */
+export function useProjectRules(projectId: string | null): Rule[] {
   const settings = useServer()
   return list<Rule>(
-    useApiQuery<Rule[]>(rulesKey(settings).concat([projectId]), `/api/rules/project/${projectId}`, {
-      staleTime: CATALOG_STALE_MS,
-    }).data,
+    useApiQuery<Rule[]>(
+      rulesKey(settings).concat([projectId ?? ""]),
+      projectId ? `/api/rules/project/${projectId}` : "",
+      { enabled: Boolean(projectId), staleTime: CATALOG_STALE_MS },
+    ).data,
   )
 }
 

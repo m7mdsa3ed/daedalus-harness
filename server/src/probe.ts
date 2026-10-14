@@ -324,7 +324,7 @@ async function probeShared(
   const spec = await resolveAgentSpawn(profile, agentId, project);
   const env = spec.env;
   spec.env = {};
-  const conn = await pool.acquire(agentId, AcpPool.key(spec), async () => ({ proc: await spawnProcess(spec) }));
+  const conn = await pool.acquire(agentId, AcpPool.key(spec), () => spawnProcess(spec));
   let sessionId: string | null = null;
   const sink = { ...SINK, ownsSession: (id: string) => id === sessionId };
   conn.attach(sink);

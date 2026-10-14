@@ -211,8 +211,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@agentclientprotocol/sdk':
-        specifier: 1.5.1
-        version: 1.5.1(zod@4.6.5)
+        specifier: 1.8.0
+        version: 1.8.0(zod@4.6.5)
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.11.0(jiti@2.7.0))
@@ -288,8 +288,8 @@ importers:
 
 packages:
 
-  '@agentclientprotocol/sdk@1.5.1':
-    resolution: {integrity: sha512-nSUIrC1fOR9+ppKfx9KdwjBBND2sAPzFHo4yVQrGbXZHnayUYpwL8CDVR5LSxbapY/oKMOzNP0wvwfyx3PS2KA==}
+  '@agentclientprotocol/sdk@1.8.0':
+    resolution: {integrity: sha512-fbP7qHZsFyTJVT0/RPrcWJ8An26qLXHEuGCHHEKDyxD1xpXV+Ejyh2LAE6vBAFePkpVjZeeohnbgvuEhZ7wLMg==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -7003,7 +7003,7 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@1.5.1(zod@4.6.5)':
+  '@agentclientprotocol/sdk@1.8.0(zod@4.6.5)':
     dependencies:
       zod: 4.6.5
 

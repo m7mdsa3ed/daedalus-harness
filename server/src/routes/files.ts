@@ -4,13 +4,16 @@ import { refOf } from "../attachments.js";
 import {
   MAX_FILE_BYTES,
   attachmentFor,
+  copyFile,
   getFile,
   listFolder,
+  listFolders,
   makeFolder,
   pathOf,
   putFile,
   readFile,
   removeFile,
+  searchFiles,
   updateFile,
 } from "../files.js";
 import { HttpError } from "../http-error.js";
@@ -30,6 +33,15 @@ export function fileRoutes(app: Hono): void {
   app.get("/api/files", async (c) => {
     const parentId = parentOf(c.req.query("parent"));
     return c.json({ parentId, path: await pathOf(parentId), items: await listFolder(parentId) });
+  });
+
+  app.get("/api/files/folders", async (c) => c.json({ folders: await listFolders() }));
+
+  app.get("/api/files/search", async (c) => c.json({ items: await searchFiles(c.req.query("q") ?? "") }));
+
+  app.post("/api/files/:id/copy", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    return c.json(await copyFile(c.req.param("id"), parentOf(body.parentId ?? undefined)), 201);
   });
 
   app.post("/api/files/folder", async (c) => {

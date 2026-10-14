@@ -7,7 +7,7 @@ import type * as acp from "@daedalus/acp"
 import { CommandSuggestions } from "@/components/command-suggestions"
 import { PromptSuggestions } from "@/components/prompt-suggestions"
 import { SourcesStrip } from "@/components/thread-cards"
-import { TokenSummary } from "@/components/token-usage"
+import { TokenSummary, TurnTime } from "@/components/token-usage"
 import type { TurnSources } from "@/lib/sources"
 import { stagger } from "@/lib/utils"
 
@@ -33,7 +33,7 @@ export const TurnFooter = React.memo(function TurnFooter({
   onPick: (prompt: string) => void
   onPickCommand: (command: string) => void
 }) {
-  if (!sources && !usage && !suggestions?.length && !commands?.length) return null
+  if (!sources && !usage && durationMs === undefined && !suggestions?.length && !commands?.length) return null
 
   return (
     <div className="min-w-0">
@@ -50,6 +50,11 @@ export const TurnFooter = React.memo(function TurnFooter({
             durationMs={durationMs}
             toolDurationMs={toolDurationMs}
           />
+        </div>
+      )}
+      {!usage && durationMs !== undefined && (
+        <div className="harness-item-in -ml-1" style={stagger(2)}>
+          <TurnTime durationMs={durationMs} />
         </div>
       )}
       {suggestions && suggestions.length > 0 && (

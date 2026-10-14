@@ -42,10 +42,8 @@ import {
   webSearchUsage as usageTable,
   workflowRuns as workflowRunsTable,
   rules as rulesTable,
+  modelRoles as modelRolesTable,
   voiceProviders as voiceTable,
-  videoTtsProviders as videoTtsTable,
-  sessionVideos as sessionVideosTable,
-  sessionVideoRenders as sessionVideoRendersTable,
   themes as themesTable,
   type NameValue,
   type RoutineBody,
@@ -133,7 +131,7 @@ const AgentRow = z.object({
   /* Carried for the third time and the same reason: a restored row keeps its
      `seededVersion`, so nothing would ever backfill the door a persona reaches
      this agent through, and every thread's persona would silently do nothing. */
-  personaVia: z.enum(["acp-meta", "env"]).nullish(),
+  personaVia: z.enum(["acp-meta", "air-meta", "env"]).nullish(),
   sharedProcess: z.enum(["acp-meta"]).nullish(),
   seededVersion: int.default(0),
 });
@@ -338,6 +336,17 @@ const RulesRow = z.object({
   updatedAt: int,
 });
 
+/** A model role — the free-form, ordered vocabulary a profile's models tag
+    themselves with, as individual global rows (no project). */
+const ModelRolesRow = z.object({
+  id: str.min(1),
+  label: str,
+  description: str.default(""),
+  sortOrder: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
 /** A voice backend. `apiKey` is absent under `secrets=0`, and a blank one
     keeps the install's own — the profile-key rule. */
 const VoiceRow = z.object({
@@ -350,9 +359,6 @@ const VoiceRow = z.object({
 });
 
 /** A user-made theme — the three halves the studio edits, as JSON records. */
-const VideoTtsRow = z.object({ provider: str.min(1), apiKey: str.optional(), model: str, voice: str, updatedAt: int });
-const SessionVideoRow = z.object({ sessionId: str, document: z.record(str, json), revision: int, updatedAt: int });
-const SessionVideoRenderRow = z.object({ id: str.min(1), sessionId: str, revision: int, document: z.record(str, json), status: z.enum(["queued", "rendering", "completed", "failed"]), progress: int, outputPath: optStr, error: optStr, createdAt: int, updatedAt: int });
 
 const ThemeRow = z.object({
   id: str.min(1),
@@ -405,6 +411,9 @@ const SessionRow = z.object({
   /* Same bargain for the drawn-UI lane: a bundle written before the switch
      existed reads as on, which is the default every new thread carries. */
   uiBlocks: z.boolean().default(true),
+  /* The thread's role → model assignment (`docs/model-roles.md`). Absent in a
+     bundle written before the column existed, which reads as no helpers. */
+  helperModels: z.array(z.object({ role: str, model: str })).default([]),
   title: str.default("New thread"),
   /* The thread's git worktree, project-relative. Absent in older bundles,
      which is a thread in the project's own cwd — what they all were. */
@@ -822,13 +831,12 @@ export const BundleSchema = z.object({
   composerHistory: z.array(ComposerHistoryRow).default([]),
   /** Standalone rules — individual items rather than a single blob. */
   rules: z.array(RulesRow).default([]),
+  /** The model-role vocabulary — individual global rows. */
+  modelRoles: z.array(ModelRolesRow).default([]),
   /** User-made themes from the studio, whole rows. */
   themes: z.array(ThemeRow).default([]),
   /** Realtime voice backends (Settings › Voice). */
   voiceProviders: z.array(VoiceRow).default([]),
-  videoTtsProviders: z.array(VideoTtsRow).default([]),
-  sessionVideos: z.array(SessionVideoRow).default([]),
-  sessionVideoRenders: z.array(SessionVideoRenderRow).default([]),
   /** `app_settings` as a record. */
   settings: z.record(str, str).default({}),
   config: z.object({ webSearch: WebSearchBlock.optional() }).default({}),
@@ -927,15 +935,11 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     notifications: await db.select().from(notificationsTable),
     composerHistory: await db.select().from(composerHistoryTable),
     rules: await db.select().from(rulesTable),
+    modelRoles: await db.select().from(modelRolesTable),
     themes: await db.select().from(themesTable),
     voiceProviders: (await db.select().from(voiceTable)).map(({ apiKey, ...row }) =>
       opts.includeSecrets ? { ...row, apiKey } : row,
     ),
-    videoTtsProviders: (await db.select().from(videoTtsTable)).map(({ apiKey, ...row }) =>
-      opts.includeSecrets ? { ...row, apiKey } : row,
-    ),
-    sessionVideos: await db.select().from(sessionVideosTable),
-    sessionVideoRenders: await db.select().from(sessionVideoRendersTable),
     settings: Object.fromEntries(await (await db.select().from(appSettingsTable)).map((r) => [r.key, r.value])),
     config: webSearch
       ? {
@@ -951,7 +955,7 @@ export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "prompts" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
-  | "rules" | "themes" | "voiceProviders" | "videoTtsProviders" | "sessionVideos" | "sessionVideoRenders" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
+  | "rules" | "modelRoles" | "themes" | "voiceProviders" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
   number
@@ -1037,7 +1041,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, prompts: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
-    rules: 0, themes: 0, voiceProviders: 0, videoTtsProviders: 0, sessionVideos: 0, sessionVideoRenders: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
+    rules: 0, modelRoles: 0, themes: 0, voiceProviders: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
     orphaned: 0, missingSecrets: false,
@@ -1051,7 +1055,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
   const existingTriggers = new Map(await (await db.select().from(routineTriggersTable)).map((t) => [t.id, t]));
   const existingWebSearch = readWebSearch();
   const existingVoice = new Map((await db.select().from(voiceTable)).map((v) => [v.provider, v]));
-  const existingVideoTts = new Map((await db.select().from(videoTtsTable)).map((v) => [v.provider, v]));
 
   await db.transaction(async (tx) => {
     if (mode === "replace") {
@@ -1068,9 +1071,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         notificationsTable,
         composerHistoryTable,
         agentOptionsTable,
-        sessionVideoRendersTable,
-        sessionVideosTable,
-        videoTtsTable,
         voiceTable,
       ]) {
         await tx.delete(table);
@@ -1211,6 +1211,10 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     upsertChunked(tx, rulesTable, "id", bundle.rules.map((r) => ({ ...r })));
     summary.rules = bundle.rules.length;
 
+    /* The model-role vocabulary — individual global rows, imported wholesale. */
+    upsertChunked(tx, modelRolesTable, "id", bundle.modelRoles.map((r) => ({ ...r })));
+    summary.modelRoles = bundle.modelRoles.length;
+
     const voiceRows = bundle.voiceProviders.map((v) => {
       const apiKey = v.apiKey || existingVoice.get(v.provider)?.apiKey || "";
       if (!apiKey) summary.missingSecrets = true;
@@ -1218,13 +1222,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     });
     await upsertChunked(tx, voiceTable, "provider", voiceRows);
     summary.voiceProviders = voiceRows.length;
-    const videoTtsRows = bundle.videoTtsProviders.map((row) => {
-      const apiKey = row.apiKey || existingVideoTts.get(row.provider)?.apiKey || "";
-      if (!apiKey) summary.missingSecrets = true;
-      return { ...row, apiKey };
-    });
-    await upsertChunked(tx, videoTtsTable, "provider", videoTtsRows);
-    summary.videoTtsProviders = videoTtsRows.length;
 
     /* The link tables are replaced wholesale per owner: `writeLinks` drops the
        owner's rows and re-adds only ids the library actually holds, so a
@@ -1321,20 +1318,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     const events = keep(bundle.events);
     insertChunked(tx, eventsTable, events);
     summary.events = events.length;
-    const videoRows = keep(bundle.sessionVideos);
-    upsertChunked(tx, sessionVideosTable, "sessionId", videoRows);
-    summary.sessionVideos = videoRows.length;
-    const videoRenderRows = keep(bundle.sessionVideoRenders).map((row) => ({
-      ...row,
-      /* A completed artifact lives in the source install's data directory and
-         is not carried in a JSON backup. Keep the version, but make it honestly
-         unavailable on this install. */
-      status: row.status === "completed" ? "failed" as const : row.status,
-      outputPath: null,
-      error: row.status === "completed" ? "Video bytes are not included in this backup." : row.error ?? null,
-    }));
-    upsertChunked(tx, sessionVideoRendersTable, "id", videoRenderRows);
-    summary.sessionVideoRenders = videoRenderRows.length;
 
     /* Routines, and the two tables that hang off them. A root: nothing points
        at a routine, so this sits outside the session block entirely — a routine

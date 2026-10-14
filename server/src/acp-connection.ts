@@ -132,8 +132,6 @@ export class AcpConnection {
     agentId: string,
     proc: Handle,
     shared: boolean,
-    /** Extra inbound frames merged ahead of the reroute — see `agentStream`. */
-    extra?: ReadableStream<acp.AnyMessage>,
     /** Present = adopt: the process is already initialized, so `initialize`
         is not sent and the wire resumes from this state. */
     adopted?: ProcessState,
@@ -195,7 +193,7 @@ export class AcpConnection {
       .onNotification(TRACE_NOTIFICATION, parseTraceParams, (ctx) =>
         this.route(ctx.params.sessionId)?.onTrace(ctx.params),
       )
-      .connect(agentStream(proc, extra, this.ledger ?? undefined));
+      .connect(agentStream(proc, this.ledger ?? undefined));
     if (adopted) {
       this.initResult = adopted.initResult;
       this.saved = true;
@@ -221,8 +219,8 @@ export class AcpConnection {
    * surfaced as `ledger.orphans` instead of "unknown request" noise. The
    * caller attached `handle` from `state.offset`.
    */
-  static adopt(handle: Handle, state: ProcessState, extra?: ReadableStream<acp.AnyMessage>): AcpConnection {
-    const conn = new AcpConnection(state.agentId, handle, state.poolKey !== null, extra, state);
+  static adopt(handle: Handle, state: ProcessState): AcpConnection {
+    const conn = new AcpConnection(state.agentId, handle, state.poolKey !== null, state);
     conn.poolKey = state.poolKey;
     return conn;
   }
@@ -404,7 +402,7 @@ export class AcpPool {
   async acquire(
     agentId: string,
     key: string | null,
-    start: () => Promise<{ proc: Handle; extra?: ReadableStream<acp.AnyMessage> }>,
+    start: () => Promise<Handle>,
   ): Promise<AcpConnection> {
     if (key !== null) {
       const warm = this.shared.get(key);
@@ -434,10 +432,9 @@ export class AcpPool {
   private async spawnConn(
     agentId: string,
     key: string | null,
-    start: () => Promise<{ proc: Handle; extra?: ReadableStream<acp.AnyMessage> }>,
+    start: () => Promise<Handle>,
   ): Promise<AcpConnection> {
-    const { proc, extra } = await start();
-    const conn = new AcpConnection(agentId, proc, key !== null, extra);
+    const conn = new AcpConnection(agentId, await start(), key !== null);
     conn.poolKey = key;
     this.adopt(conn);
     return conn;

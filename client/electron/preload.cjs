@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("desktop", {
   version: process.versions.electron,
   /** A thread window (main.cjs `open-thread-window`) — true for its whole life, whatever it navigates to. */
   popout: process.argv.includes("--daedalus-popout"),
+  popoutId: process.argv.find((arg) => arg.startsWith("--daedalus-popout-id="))?.split("=").slice(1).join("="),
   // Caption buttons (min/max/close) are drawn natively, colored via
   // titleBarOverlay; the app's theme is a user choice, so main must be told.
   setTitleBarTheme: (resolved, source, colorTheme) => ipcRenderer.send("theme-changed", resolved, source, colorTheme),
@@ -40,6 +41,9 @@ contextBridge.exposeInMainWorld("desktop", {
   setWindowMaterial: (material) => ipcRenderer.invoke("set-window-material", material),
   /** Open one thread in a window of its own (`?popout=1`). */
   openThreadWindow: (sessionId) => ipcRenderer.invoke("open-thread-window", sessionId),
+  /** Close only the BrowserWindow that owns this renderer. */
+  closeWindow: () => ipcRenderer.invoke("close-window"),
+  signalWorkspaceReady: () => ipcRenderer.send("workspace-ready"),
   /** Drive: a CDP connection to one of this window's `<webview>` guests,
       answered by main as a browser of one page (cdp-shim.cjs). */
   cdp: {

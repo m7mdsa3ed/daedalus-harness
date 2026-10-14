@@ -44,6 +44,7 @@ import {
   THOUGHT_MAX_H,
   Timestamp,
 } from "@/components/tool-parts"
+import { ReportBlock } from "@/components/tool-views/report"
 import { HarnessPreview, harnessMark as harnessMarkOf } from "@/components/tool-views/harness"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import {
@@ -59,6 +60,7 @@ import {
   copyText,
   DISCLOSE_EXIT,
   finishedOpening,
+  formatElapsed,
   StepDirContext,
   StepMeta,
   StepRow,
@@ -70,6 +72,7 @@ import {
   stepNameOf,
   stepUsage,
   SubagentBatchRun,
+  sessionBriefOf,
   subagentHasBody,
   useStepThread,
   WorkflowRun,
@@ -91,7 +94,6 @@ import {
   RunAvatarStack,
   RunSummary,
   summarise,
-  thoughtPreview,
 } from "@/components/thread-items/summaries"
 import {
   EarlierSteps,
@@ -112,6 +114,7 @@ import {
   toolKindOf,
   toolViewOf,
   workflowAgentItems,
+  workflowAgentResult,
 } from "@/lib/tools"
 import { buildRows } from "@/lib/transcript-rows"
 import type { Row, SubagentGroup, ToolGroup, ToolRunGroup } from "@/lib/transcript-rows"
@@ -119,9 +122,11 @@ import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usag
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
-import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
+import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "@/lib/store"
+import type { SubagentCall } from "@/lib/tools"
 import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
+
 
 export const ToolRun = React.memo(function ToolRun({
   items,
@@ -391,9 +396,9 @@ RowView.displayName = "RowView"
  * peeks its last few steps while live, like a run does.
  *
  * `head` is a Task tool call (Claude Code, OpenCode, Codex's legacy rows) or
- * the session the agent announced (the ACP subagent RFD). The RFD's has no
- * brief or report of its own — the child's prose IS the report, and it is in
- * the rail — so those two halves are drawn only for a tool head.
+ * the session the agent announced (the ACP subagent RFD). The RFD's brief is
+ * the spawn's `task` and it has no report of its own — the child's prose IS
+ * the report, and it is in the rail.
  */
 export const SubagentStep = React.memo(function SubagentStep({
   group,
@@ -408,15 +413,18 @@ export const SubagentStep = React.memo(function SubagentStep({
 }) {
   const { head, children } = group
   const view = useViewOptionsContext()
-  const tool = head.kind === "tool" ? head : null
+  /* A session head may carry the call that launched it (`group.launch`): the
+     call brings the brief, the report and the agent type, the session the
+     state. One step either way, whichever runtime announced it. */
+  const tool = head.kind === "tool" ? head : (group.launch ?? null)
   const session = head.kind === "subagent" ? head : null
   const call = tool ? extractSubagent(tool) : null
   /* The RFD's states onto the step vocabulary: `failed` is a failure,
      `cancelled`/`disconnected` are endings that are not — they get the word
      in the label column, in the quiet colour, rather than "failed". */
-  const headStatus = tool
-    ? tool.status
-    : session!.state === "running"
+  const headStatus = !session
+    ? tool!.status
+    : session.state === "running"
       ? "in_progress"
       : session!.state === "failed"
         ? "failed"
@@ -435,14 +443,14 @@ export const SubagentStep = React.memo(function SubagentStep({
      asked to do. Shared with the run's list (`stepNameOf`) so a step does not
      change its name depending on where it is read. */
   const target = stepNameOf(group)
-  const captionOf = tool
-    ? [call?.agentType, call?.model].filter(Boolean).join(" · ") || undefined
-    : session!.name
+  const runsOn = subagentModelOf(group, call)
+  const captionOf = call?.agentType ?? runsOn.role ?? session?.name
   /* Who the worker is and what it has done so far share the second line, not
      the trailing column: that column is `shrink-0` (it holds figures that must
      not wrap), and a sentence parked in it took a narrow panel's whole width
      and left the name nothing. The caption truncates; the figures stay. */
-  const who = captionOf === target ? undefined : captionOf
+  const who =
+    [captionOf === target ? undefined : captionOf, runsOn.model].filter(Boolean).join(" · ") || undefined
   const steps = collectTools(children)
   const prose = summarise(steps)
     .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
@@ -471,6 +479,10 @@ export const SubagentStep = React.memo(function SubagentStep({
       caption={caption}
       mono={false}
       startedAt={head.startedAt}
+      /* Only a tool head has an ending to hand: the call that launched the
+         worker settles when the worker does. A session head's end is the state
+         update that closed it, which is not stamped on the item. */
+      endedAt={head.kind === "tool" ? head.endedAt : undefined}
       metric={[
         tokens ? <TokenSummary usage={tokens} label="This step" /> : null,
         showTimestamps ? <Timestamp at={head.at} /> : null,
@@ -523,13 +535,30 @@ export const SubagentStep = React.memo(function SubagentStep({
 SubagentStep.displayName = "SubagentStep"
 
 /**
+ * Which helper role a subagent was spawned on and the model it runs on: our
+ * runtime's spawn says both (`SubagentItem.model`/`role` — on the head, or
+ * nested under the `task` call that launched it); else a call that named its
+ * own model (an OpenCode or Codex call) says that (docs/model-roles.md).
+ */
+function subagentModelOf(group: SubagentGroup, call: SubagentCall | null): { role?: string; model?: string } {
+  const spawn: SubagentItem | undefined =
+    group.head.kind === "subagent"
+      ? group.head
+      : group.children.find(
+          (row): row is SubagentGroup & { head: SubagentItem } =>
+            row.kind === "subagent-group" && row.head.kind === "subagent"
+        )?.head
+  return { role: spawn?.role ?? call?.agentType, model: spawn?.model || call?.model || undefined }
+}
+
+/**
  * Everything a subagent produced: brief, its own thread, its rail, its report.
  *
  * Split out of `SubagentStep` because a workflow step is drawn twice — as an
  * ordinary step row on its own, and as a row of the run's table — and the two
- * differ only in the header above this. The brief and report exist for a tool
- * head alone: the RFD's child has no brief of its own, its prose IS the report
- * and it is already in the rail.
+ * differ only in the header above this. A tool head brings its brief and
+ * report; an RFD child's brief is its spawn's `task` (`sessionBriefOf`), and
+ * its prose IS the report, already in the rail.
  */
 function SubagentBody({
   group,
@@ -540,8 +569,9 @@ function SubagentBody({
   stepThread: string | null
   showTimestamps?: boolean
 }) {
-  const tool = group.head.kind === "tool" ? group.head : null
+  const tool = group.head.kind === "tool" ? group.head : (group.launch ?? null)
   const session = group.head.kind === "subagent" ? group.head : null
+  const brief = sessionBriefOf(group)
   const active = group.active
   return (
     <div className="space-y-2">
@@ -552,7 +582,7 @@ function SubagentBody({
       {session?.activity && active && (
         <p className="text-[11px] text-muted-foreground/70 harness-shimmer">{session.activity}</p>
       )}
-      {session?.prompt && <BriefSection text={session.prompt} />}
+      {brief && <BriefSection text={brief} />}
       {stepThread && (
         <Link
           to={threadPath(stepThread)}
@@ -575,12 +605,26 @@ function SubagentBody({
         />
       )}
       {tool && <SubagentReport item={tool} active={active} />}
-      {session?.report && (
-        <DetailSection label={session.state === "failed" ? "Error" : active ? "Report so far" : "Report"}>
-          <SmartBlock text={session.report} tone={session.state === "failed" ? "error" : undefined} />
-        </DetailSection>
-      )}
+      {session?.report && <NativeStepReport session={session} active={active} />}
     </div>
+  )
+}
+
+/* The runtime's report is a 400-character preview, which never holds a whole
+   JSON report — so once the step's transcript is read (`NativeStepTranscript`,
+   mounted beside this, does the reading) its final answer replaces it. A
+   failure keeps the runtime's error, which is not in the transcript. */
+function NativeStepReport({ session, active }: { session: SubagentItem; active: boolean }) {
+  const failed = session.state === "failed"
+  const events = useAgentTranscript(session.transcript?.dir ?? "", session.transcript?.agentId ?? "")
+  const full = React.useMemo(
+    () => (failed || !session.transcript ? undefined : workflowAgentResult(events)),
+    [events, failed, session.transcript]
+  )
+  return (
+    <DetailSection label={failed ? "Error" : active ? "Report so far" : "Report"}>
+      <ReportBlock text={full ?? session.report!} tone={failed ? "error" : undefined} />
+    </DetailSection>
   )
 }
 
@@ -764,6 +808,11 @@ export const ThreadItemView = React.memo(function ThreadItemView({
      place a hook can live. Only a thought uses it — a tool row draws its own
      inside ToolStep, and the other kinds are not steps. */
   const stepTokens = useStepTokens(item.id)
+  const thoughtElapsed = useThoughtElapsed(
+    item.kind === "thought" ? item.at : undefined,
+    item.kind === "thought" ? item.endedAt : undefined,
+    item.kind === "thought" && streaming
+  )
   switch (item.kind) {
     case "error":
       return (
@@ -888,49 +937,36 @@ export const ThreadItemView = React.memo(function ThreadItemView({
     }
     case "thought": {
       const reasoning = item.text.trim()
-      /* The title is a snippet of the detail. Settled, it is the opening
-         line — what the thought was about. Still streaming, it is the
-         *newest* line's tail instead, so a folded row reads as a ticker of
-         what the agent is thinking right now rather than freezing on the
-         first words for a minute of silence; the whole item is rebuilt per
-         chunk anyway (appendText replaces the tail item), so this costs no
-         extra render. Clipped from the front because `truncate` cuts the
-         end, and the end is the part that is new. */
-      const preview = thoughtPreview(reasoning, streaming)
       /* A request that ended on its thinking — no tool call after it — files
          its cost here, and this is the row that has to print it or the reading
          is simply lost. Never while it streams: the figure lands with the
          request that is still being written. */
       const tokens = view.showTokens && !streaming ? stepTokens : undefined
+      /* The clock is the block's own title, not a trailing reading: the whole
+         point of the thought is the duration, and a label parked at the row's
+         end left the reasoning squeezed into the column beside it. */
+      const durationLabel =
+        thoughtElapsed !== null
+          ? `${streaming ? "Thinking" : "Thought for"} ${formatElapsed(thoughtElapsed)}`
+          : undefined
 
       return (
         <StepRow
           dir={textDir(reasoning)}
-          icon={KIND_ICONS.think}
-          iconAccent={KIND_COLORS.think}
-          iconChip={KIND_CHIPS.think}
+          plain
           status={streaming ? "in_progress" : null}
-          label={streaming ? <ThinkingLabel /> : undefined}
-          startedAt={streaming ? item.at : undefined}
           metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
           mono={false}
           /* The row is open for exactly as long as the thought streams: a live
-             view you watch, not a block left standing in the transcript. The
-             moment it settles it folds to its one-line preview — the compact
-             shape every finished step keeps — and the reader opens it to read
-             the reasoning. "Show thinking" arms the live view: off, nothing pops
-             open and the row is the ticker alone. */
+             view you watch, not a block left standing in the transcript. When
+             folded, it shows three lines of muted reasoning like assistant
+             prose; clicking opens the full text. "Show thinking" arms the live
+             view: off, the excerpt stays folded while the thought streams. */
           autoOpen={view.showThinking && streaming}
           openSetting={view.showThinking}
-          target={
-            streaming ? (
-              <span className="harness-shimmer text-primary">{preview}</span>
-            ) : (
-              preview
-            )
-          }
-          openTarget="Thinking"
-          detail={<ThoughtDetail text={reasoning} streaming={streaming} />}
+          target=""
+          foldedTarget={<ThoughtPreview text={reasoning} label={durationLabel} />}
+          detail={<ThoughtDetail text={reasoning} streaming={streaming} label={durationLabel} />}
         />
       )
     }
@@ -960,55 +996,94 @@ export const ThreadItemView = React.memo(function ThreadItemView({
 })
 ThreadItemView.displayName = "ThreadItemView"
 
-/* What the running thought says in the row's trailing column: a live dot beside
-   its word. The row no longer stays open past the stream, so the dot is what
-   marks "still being written" without the block standing in the way — and it is
-   the same violet the kind wears on its mark. */
-function ThinkingLabel() {
+/* The clock for a thought. Unlike a tool step's `useElapsed`, this one outlives
+   the stream — a settled thought keeps saying "Thought for 12s" — but it must
+   be *measured*, never re-derived. `at` is when the thought started, so
+   `Date.now() - at` on any later mount (a scroll, a reload, a journal replay)
+   is the age of the row, not how long it thought: that is where "Thought for
+   177m 45s" came from. So the figure ticks while it streams and the last
+   reading is frozen when the stream ends.
+
+   A thought read back out of the journal is the case the freeze cannot cover —
+   it mounts settled, with nothing frozen — and it used to say nothing at all.
+   It now arrives with both ends: `at` is the run's first chunk as the journal
+   wrote it and `endedAt` the last, so the length is the gap between them,
+   measured server-side at the only moment it could be (see `coalescedPage`,
+   which is what merges the run and can therefore see its end). Live, `endedAt`
+   is absent and the ticking `elapsed` above stands. */
+function useThoughtElapsed(
+  startedAt: number | undefined,
+  endedAt: number | undefined,
+  streaming: boolean
+): number | null {
+  const [elapsed, setElapsed] = React.useState<number | null>(null)
+  const settled = React.useRef<number | null>(null)
+
+  React.useEffect(() => {
+    if (startedAt === undefined) {
+      settled.current = null
+      setElapsed(null)
+      return
+    }
+    if (!streaming) {
+      setElapsed(settled.current)
+      return
+    }
+    settled.current = null
+    const update = () => setElapsed(Date.now() - startedAt)
+    update()
+    const timer = setInterval(update, 1000)
+    return () => {
+      clearInterval(timer)
+      settled.current = Date.now() - startedAt
+    }
+  }, [startedAt, streaming])
+
+  /* After the hooks, never before: a return above them would change what the
+     next render calls. The order matters, because an item can have both
+     readings: a socket that reattached mid-run rebuilds the item from the
+     journal (`at`/`endedAt`, the run so far) and then watches the rest of it
+     stream. There the frozen figure covers the whole run and the journal's end
+     is stale by however long it kept going, so the measurement this mount took
+     is the one that stands. */
+  if (!streaming && settled.current !== null) return settled.current
+  if (!streaming && startedAt !== undefined && endedAt !== undefined) {
+    return Math.max(0, endedAt - startedAt)
+  }
+  return elapsed
+}
+
+/* Folded and expanded thoughts share one muted prose renderer. In expanded
+   streaming state, cap and follow it so new text stays in view; settled detail
+   starts at its beginning. */
+function ThoughtLabel({ label }: { label?: string }) {
   return (
-    <span className="flex items-center gap-1">
-      <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-violet-500" />
-      thinking
-    </span>
+    <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+      {label ?? "Thinking"}
+    </div>
   )
 }
 
-/* The thinking row's detail: a capped, live-styled box that follows its own
-   newest text while the thought streams.
+function ThoughtPreview({ text, label }: { text: string; label?: string }) {
+  return (
+    <div className="thought-surface">
+      <ThoughtLabel label={label} />
+      <div className="thought-detail thought-preview">
+        <StreamedProse text={text} streaming={false} />
+      </div>
+    </div>
+  )
+}
 
-   The cap is `THOUGHT_MAX_H` (a tight fraction of the panel, narrower on a
-   narrow panel — see `tool-parts.tsx`). It exists, so the box is what scrolls,
-   and a box that scrolls has to be *driven*: the transcript's own
-   `useFollowStream` watches the content element, and a capped box stops growing
-   when it fills, so left alone the newest thinking would be exactly what falls
-   out of view. So this is the same hook on a smaller scroller — it owns
-   unpinning on a gesture and re-pinning at the end, which is more than a
-   `scrollTop = scrollHeight` per chunk would get right.
-
-   While it streams the box wears its own ground — a violet-framed well that
-   reads as something still happening, a different design from the plain quiet
-   text a settled thought shows when the reader opens it. Settled (`streaming`
-   false) it is inert: the box opens at the top so a folded-away thought is read
-   from its start.
-
-   A component rather than inline JSX for the reason `StreamedProse` is one:
-   `ThreadItemView`'s kind switch is a chain of returns, so a hook at the call
-   site would be a conditional one. */
-function ThoughtDetail({ text, streaming }: { text: string; streaming: boolean }) {
+function ThoughtDetail({ text, streaming, label }: { text: string; streaming: boolean; label?: string }) {
   const follow = useFollowStream(streaming)
   return (
-    <div
-      ref={follow.viewportRef}
-      className={cn(
-        THOUGHT_MAX_H,
-        "overflow-y-auto overscroll-contain",
-        streaming
-          ? "rounded-md border border-violet-500/25 bg-violet-500/[0.05] px-2.5 py-2"
-          : "pr-1"
-      )}
-    >
-      <div ref={follow.contentRef}>
-        <StreamedProse text={text} streaming={streaming} className="thought-detail" />
+    <div className="thought-surface">
+      <ThoughtLabel label={label} />
+      <div ref={follow.viewportRef} className={cn(THOUGHT_MAX_H, "overflow-y-auto overscroll-contain pr-1")}>
+        <div ref={follow.contentRef}>
+          <StreamedProse text={text} streaming={streaming} className="thought-detail" />
+        </div>
       </div>
     </div>
   )
@@ -1104,6 +1179,7 @@ const ToolStep = React.memo(function ToolStep({
         showTimestamp ? <Timestamp at={item.at} /> : null,
       ]}
       startedAt={item.startedAt}
+      endedAt={item.endedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       firstRow={view.showToolSourcesOnFirstRow ? <ToolSources item={item} /> : undefined}
       below={

@@ -48,11 +48,12 @@ export function draftActions(core: ActionsCore) {
    *
    * Two exclusions, both deliberate:
    *
-   * - `modeId` and `configChoices` are written only for the project the draft
-   *   was **already** on. Re-pointing a draft at another project moves the
-   *   provider state but not the agent's own selectors: those name the option
-   *   set of the agent that was in front of the menu, and handing them to a
-   *   project whose agent may differ is the same rescope the
+   * - `modeId`, `configChoices` and `helperModels` are written only for the
+   *   project the draft was **already** on. Re-pointing a draft at another
+   *   project moves the provider state but not the agent's own selectors: those
+   *   name the option set of the agent that was in front of the menu (and the
+   *   helper models name ids in the old profile's catalog), and handing them to
+   *   a project whose agent may differ is the same rescope the
    *   `configure-draft` reducer refuses on a reload, one step further out.
    * - Moving to another project is also a **message about this device**, not
    *   about either row: which project ⌘N's front door opens in is nobody's
@@ -86,9 +87,11 @@ export function draftActions(core: ActionsCore) {
       if (rescoped) {
         patch.modeId = ""
         patch.configChoices = {}
+        patch.helperModels = []
       } else {
         if (next.modeId !== undefined) patch.modeId = next.modeId
         if (next.configChoices !== undefined) patch.configChoices = next.configChoices
+        if (next.helperModels !== undefined) patch.helperModels = next.helperModels
       }
     }
     if (Object.keys(patch).length === 0) return
@@ -195,6 +198,7 @@ export function draftActions(core: ActionsCore) {
          empty set is what a project nobody has configured holds, and
          `createSession` replays exactly what the menu drew. */
       configChoices: defaults.configChoices,
+      helperModels: defaults.helperModels,
       ...(defaults.modeId ? { modeId: defaults.modeId } : {}),
       title: "New thread",
       createdAt: Date.now(),
@@ -351,6 +355,8 @@ export function draftActions(core: ActionsCore) {
           | "modeId"
           | "suggestFollowups"
           | "uiBlocks"
+          | "helperModels"
+          | "configChoices"
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"
@@ -368,14 +374,46 @@ export function draftActions(core: ActionsCore) {
       /* Isolation is a question about one repository: a different project
          asks it again rather than inheriting a yes it may not be able to keep. */
       if (next.projectId !== undefined && next.isolate === undefined) next = { ...next, isolate: false }
+      /* Moving a draft to another project takes that project's saved config
+         with it — pair, model, effort, mode, the agent's selectors, tools and
+         toggles — because the project is the scope those were picked in.
+         Nothing is written back: this is a read of the target row, so the
+         publish below is skipped for the move itself. */
+      const before = core.getState().sessions.find((s) => s.id === id)
+      const moved = next.projectId !== undefined && next.projectId !== before?.projectId
+      if (moved) {
+        saveThreadDefaults({ projectId: next.projectId })
+        const target = catalog.projects().find((p) => p.id === next.projectId)
+        const d = target?.defaults ?? emptyDefaults()
+        const start = target && resolveThreadStart(d, catalog.profiles())
+        if (start) {
+          /* The selectors name the option set of the pair the project named; a
+             fallback pair has never heard of them (see `resolveThreadStart`). */
+          const named = start.profile.id === d.profileId && start.agentId === d.agentId
+          next = {
+            ...next,
+            profileId: start.profile.id,
+            agentId: start.agentId,
+            model: start.model ?? "",
+            effort: start.effort ?? "",
+            modeId: named ? d.modeId || undefined : undefined,
+            configChoices: named ? d.configChoices : {},
+            helperModels: named ? d.helperModels : [],
+            suggestFollowups: d.suggestFollowups,
+            uiBlocks: d.uiBlocks,
+            ...defaultToolPicks(d),
+          }
+          remember = false
+        }
+      }
       dispatch({ type: "configure-draft", id, next })
       /* The same rescope the reducer applies: a different agent or profile is a
          different set of settings, so the picks made against the old one must
          not come back with the row on the next reload. */
       const rescoped = next.agentId !== undefined || next.profileId !== undefined
       patchDraft(settings.id, id, {
+        ...(rescoped ? { configChoices: undefined, modeId: undefined, helperModels: undefined } : null),
         ...next,
-        ...(rescoped ? { configChoices: undefined, modeId: undefined } : null),
       })
       const current = core.getState().sessions.find((s) => s.id === id)
       if (current && remember) publish(next, current)

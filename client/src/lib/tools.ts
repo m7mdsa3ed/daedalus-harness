@@ -69,6 +69,7 @@ export {
   parseTaskNotification,
   taskFindings,
   workflowAgentItems,
+  workflowAgentResult,
 } from "./tools/tasks"
 
 export type { TerminalState } from "./tools/terminal"
@@ -94,14 +95,17 @@ export {
   harnessTable,
 } from "./tools/harness"
 
-export type { SubagentCall, WorkflowStepInfo, WorkflowPlanPhase } from "./tools/subagents"
+export type { AgentMessageCall, SubagentCall, WorkflowStepInfo, WorkflowPlanPhase } from "./tools/subagents"
 export {
+  agentLabel,
+  extractAgentMessage,
   isSubagentLaunch,
   extractSubagent,
   parseTaskWrapper,
   parentToolIdOf,
   subagentItemId,
   childToolTitle,
+  spawnModelOf,
   workflowInfoOf,
 } from "./tools/subagents"
 

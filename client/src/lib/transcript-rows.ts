@@ -44,6 +44,12 @@ export interface SubagentGroup {
   kind: "subagent-group"
   id: string
   head: ToolItem | SubagentItem
+  /** The tool call that launched a session head, folded into it — our
+      runtime's `task` (its spawn names it in `_meta`) or OpenCode's `task`
+      (its output names the child session). One subagent is one step, however
+      many wire records announced it: the launch brings the brief and the
+      report, the session the rail, the state and the usage. */
+  launch?: ToolItem
   /** Whether this subagent is at work right now — the one reading of it, so
       the rail's shimmer, the count above the composer and the working line
       all agree. See `subagentActive`. */
@@ -580,11 +586,27 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boo
     else byParent.set(owner, [item])
     claimed.add(item)
   }
+  const launchOf = sessionLaunches(items)
+  const absorbed = new Map<string, string>()
+  for (const [session, tool] of launchOf) absorbed.set(tool.id, session)
+  /* A launched session stands where its launch would have — under the launch's
+     owner — and anything filed under the launch moves to the session. */
+  const ownerOf = (item: ThreadItem): string | undefined =>
+    launchOf.get(item.id)?.parentId ?? (item.parentId && absorbed.get(item.parentId)) ?? item.parentId
   for (const item of items) {
-    if (item.parentId && heads.has(item.parentId)) claim(item, item.parentId)
+    if (absorbed.has(item.id)) continue
+    const owner = ownerOf(item)
+    if (owner && heads.has(owner)) claim(item, owner)
   }
   adoptProjectedChildren(items, heads, byParent, claimed)
   groupCodexLifecycle(items, byParent, claimed)
+  // Anything the passes above filed under a folded launch belongs to its session.
+  for (const [toolId, session] of absorbed) {
+    const kids = byParent.get(toolId)
+    if (!kids) continue
+    byParent.delete(toolId)
+    byParent.set(session, [...(byParent.get(session) ?? []), ...kids])
+  }
   const indexOf = new Map<ThreadItem, number>()
   items.forEach((item, index) => indexOf.set(item, index))
 
@@ -593,6 +615,7 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boo
     for (const item of list) {
       // At the top level a claimed item is drawn under its owner, not here.
       if (list === items && claimed.has(item)) continue
+      if (absorbed.has(item.id)) continue
       const isHead =
         item.kind === "subagent" ||
         (item.kind === "tool" && (byParent.has(item.id) || isSubagentLaunch(item)))
@@ -605,10 +628,12 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boo
       next.add(item.id)
       const children = build(kids, next)
       const head = item as ToolItem | SubagentItem
+      const launch = launchOf.get(item.id)
       rows.push({
         kind: "subagent-group",
         id: item.id,
         head,
+        ...(launch ? { launch } : {}),
         active: subagentActive(head, kids, children, items, indexOf, turnActive),
         children: groupTools ? groupToolRuns(children, groupEdits) : children,
       })
@@ -616,6 +641,63 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boo
     return rows
   }
   return build(items, new Set())
+}
+
+/**
+ * Session heads that a tool call launched, keyed on the session item's id.
+ * Two links say so: the spawn filed under a launch call (our runtime's
+ * `subagent_spawned` carries `_meta.daedalus.parentToolUseId`), or a launch
+ * call whose output names the child session (OpenCode's `task`, whose child
+ * the server feeds as an RFD session). Claude Code and Codex never need it:
+ * with native subagent sessions they withhold the launch call themselves.
+ */
+function sessionLaunches(items: ThreadItem[]): Map<string, ToolItem> {
+  const tools = new Map<string, ToolItem>()
+  const sessions = new Set<string>()
+  for (const item of items) {
+    if (item.kind === "tool") tools.set(item.id, item)
+    else if (item.kind === "subagent") sessions.add(item.id)
+  }
+  const out = new Map<string, ToolItem>()
+  const taken = new Set<ToolItem>()
+  const link = (session: string, tool: ToolItem | undefined) => {
+    if (!tool || taken.has(tool) || out.has(session) || !isSubagentLaunch(tool)) return
+    out.set(session, tool)
+    taken.add(tool)
+  }
+  /* A launch that names no child yet, waiting for the session it started.
+     codex-acp in native mode may start a `spawnAgent` that never learns its
+     receiver and never completes — the spawn's `task` is that call's prompt.
+     OpenCode 2's `subagent` names its child only when it completes, and the
+     child's title is the call's `description`. So the next unclaimed session,
+     under the same owner, that says one of the call's words is its child. */
+  const dangling: { tool: ToolItem; words: string[]; any: boolean }[] = []
+  for (const item of items) {
+    if (item.kind === "subagent") {
+      if (item.parentId) link(item.id, tools.get(item.parentId))
+      if (out.has(item.id)) continue
+      const said = [item.name.trim(), item.task.trim()]
+      const match = dangling.findIndex(
+        (d) =>
+          !taken.has(d.tool) &&
+          d.tool.parentId === item.parentId &&
+          (d.any || d.words.some((w) => said.includes(w)))
+      )
+      if (match >= 0) link(item.id, dangling.splice(match, 1)[0].tool)
+    }
+    if (item.kind === "tool") {
+      const call = extractSubagent(item)
+      const id = call?.sessionId ? subagentItemId(call.sessionId) : undefined
+      if (id && sessions.has(id)) link(id, item)
+      else if (call && !call.sessionId && isSubagentLaunch(item)) {
+        const words = [call.description, call.prompt].filter((w): w is string => !!w?.trim()).map((w) => w.trim())
+        const codexSpawn = call.tool === "spawnAgent"
+        if (codexSpawn && call.receiverThreadIds?.length) continue
+        dangling.push({ tool: item, words, any: codexSpawn && words.length === 0 })
+      }
+    }
+  }
+  return out
 }
 
 /**
@@ -668,6 +750,13 @@ function groupCodexLifecycle(
   const headByThread = new Map<string, string>()
   const starts: { item: ToolItem; threadId: string }[] = []
   const spawns: ToolItem[] = []
+  /* With native subagent sessions codex-acp withholds the `spawnAgent` and
+     makes the child a session whose id is its thread id (`:generation:N` on a
+     re-open, the newest winning) — but the parent's `sendInput`/`wait`/
+     `closeAgent` rows still arrive, naming that thread. They go under it. */
+  for (const item of items) {
+    if (item.kind === "subagent") headByThread.set(item.sessionId.replace(/:generation:\d+$/, ""), item.id)
+  }
   for (const item of items) {
     if (item.kind !== "tool" || item.parentId || claimed.has(item)) continue
     const call = extractSubagent(item)
@@ -679,7 +768,7 @@ function groupCodexLifecycle(
       starts.push({ item, threadId: call.threadId })
     }
   }
-  if (starts.length === 0 && spawns.length === 0) return
+  if (starts.length === 0 && spawns.length === 0 && headByThread.size === 0) return
   // Positions, once: `items.indexOf` inside the find below was O(n) per
   // candidate per spawn — O(n²) on a transcript with many lifecycle rows.
   const indexOf = new Map<ThreadItem, number>()

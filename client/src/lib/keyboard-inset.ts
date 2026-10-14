@@ -106,26 +106,16 @@ export const KEYBOARD_LIFT_FOCUSED =
 export const KEYBOARD_RISE = "bottom-[var(--keyboard-inset,0px)]"
 
 /* ── Reading it from script ──
-   The variable is the answer for anything CSS can place. Two things it cannot:
-   a Base UI positioner, which collides against a rect it computes in JS, and
-   anything that needs to know *which* of the two measurements answered.
-
-   That second question is the whole reason this is a store and not a
-   `getComputedStyle` call. Under the visual-viewport regime (iOS) the viewport
-   floating-ui measures against has *already* shrunk, so it collides above the
-   keyboard on its own and padding by the same number again would push a
-   flyout up by twice the keyboard. Under `overlaysContent` (Android) the
-   viewport deliberately does not shrink, floating-ui sees the full page, and
-   the padding is the only thing that keeps a dropdown off the keyboard. So the
-   padding is the inset in one regime and 0 in the other. */
+   The variable is the answer for anything CSS can place, Base UI flyouts
+   included: their portal is the float box (index.css), which is floored at the
+   keyboard. The store is for script that has to react to it — the caret keeper
+   and `useKeyboardInset`. */
 export type KeyboardState = {
   /** Pixels of the layout viewport the keyboard covers; 0 when closed. */
   height: number
-  /** Whether the visual viewport has already lost that height. */
-  shrinksViewport: boolean
 }
 
-const CLOSED: KeyboardState = { height: 0, shrinksViewport: false }
+const CLOSED: KeyboardState = { height: 0 }
 
 let state: KeyboardState = CLOSED
 const listeners = new Set<() => void>()
@@ -143,7 +133,7 @@ export function subscribeKeyboard(listener: () => void): () => void {
 }
 
 function setState(next: KeyboardState) {
-  if (next.height === state.height && next.shrinksViewport === state.shrinksViewport) return
+  if (next.height === state.height) return
   state = next
   for (const listener of listeners) listener()
 }
@@ -198,12 +188,7 @@ export function startKeyboardInset(): () => void {
       : 0
     const covered = Math.max(fromKeyboard, fromViewport)
     const inset = covered > MIN_KEYBOARD_PX ? Math.round(covered) : 0
-    // Which path answered, for the readers that must not double-count it.
-    setState(
-      inset === 0
-        ? CLOSED
-        : { height: inset, shrinksViewport: fromViewport >= fromKeyboard }
-    )
+    setState(inset === 0 ? CLOSED : { height: inset })
     if (inset === last) return
     last = inset
     root.style.setProperty(KEYBOARD_INSET, `${inset}px`)

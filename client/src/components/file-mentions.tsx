@@ -1,11 +1,14 @@
 import * as React from "react"
 import type { TextSurface } from "@/components/composer/composer-editor"
-import { AtSign, Bot, Boxes, FileText, Folder, Plug } from "lucide-react"
+import { AtSign, Bot, Boxes, FileText, Folder, Plug, SquareCheck } from "lucide-react"
 import { reportError } from "@/lib/errors"
 import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
 import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type SavedPrompt, type ThreadMcpServer } from "@/lib/settings"
 import { useMcpServers, usePrompts, useProjects } from "@/lib/queries/catalog"
+import { useBoardsEnabled, useTasksQuery } from "@/lib/queries/boards"
+import { taskKey } from "@/lib/tasks-board"
+import { HARNESS_MCP_ID, TASK_MENTION_RE } from "@/lib/task-mentions"
 import { McpIcon, ProjectIcon } from "@/components/entity-icon"
 import { useStripSummary } from "./composer-strip"
 import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
@@ -72,7 +75,18 @@ export interface ProjectMatch {
   logoUrl?: string
 }
 
-export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | PromptMatch | ProjectMatch
+/** A task from the board. Picking one inserts `@KEY-12`, which the send
+    expands into the task and how to work it (`lib/task-mentions.ts`) — only for
+    a thread that carries the Harness MCP, so only such a thread is offered one. */
+export interface TaskMatch {
+  type: "task"
+  key: string
+  title: string
+  status?: string
+}
+
+export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | PromptMatch | ProjectMatch | TaskMatch
+
 
 /** How many entries of each catalog join the file matches. */
 const MCP_LIMIT = 8
@@ -100,6 +114,9 @@ export interface FileMentionState {
   onKeyDown: (e: React.KeyboardEvent) => boolean
   /** Attach to the box: caret moves are what open and close the menu. */
   onSelect: () => void
+  /** The message mentions a task but the thread has no Harness MCP, so the
+      mention will go as plain text — said, rather than silently dropped. */
+  taskWithoutHarness: boolean
   /** Where the caret must land once the *next* text change has rendered.
       Exported because this hook already owns the caret after every edit (see
       the effect below) — anything else that rewrites `text` and wants a caret
@@ -185,6 +202,29 @@ export function useFileMentions(opts: {
       .slice(0, CATALOG_LIMIT)
       .map((server) => ({ type: "mcp-server", server }))
   }, [draft, libraryServers, linked, query, queryText])
+  /* Tasks only where the agent can work them: the expansion tells it to call
+     the Harness MCP, so without it there is nothing to mention. Asked for once
+     the menu is open, never by a composer that is merely mounted. */
+  const harness = linked.has(HARNESS_MCP_ID)
+  const offerTasks = harness && query !== null && !query.includes("/")
+  const tasksQuery = useTasksQuery(offerTasks)
+  const { boards, statuses } = useBoardsEnabled(offerTasks)
+  const taskMatches = React.useMemo((): TaskMatch[] => {
+    if (!offerTasks) return []
+    const keyOf = new Map(boards.map((b) => [b.id, b.key]))
+    const statusOf = new Map(statuses.map((s) => [s.id, s.name]))
+    return (tasksQuery.data ?? [])
+      .filter((task) => !task.archived && keyOf.has(task.boardId))
+      .map((task) => ({
+        type: "task" as const,
+        key: taskKey(task, keyOf.get(task.boardId)!),
+        title: task.title,
+        status: statusOf.get(task.statusId),
+      }))
+      .filter((task) => `${task.key} ${task.title}`.toLowerCase().includes(queryText))
+      .slice(0, CATALOG_LIMIT)
+  }, [offerTasks, boards, statuses, tasksQuery.data, queryText])
+  const taskWithoutHarness = !harness && TASK_MENTION_RE.test(text)
   const promptMatches = React.useMemo((): PromptMatch[] => {
     if (query === null) return []
     return prompts
@@ -262,8 +302,8 @@ export function useFileMentions(opts: {
       .map((p) => ({ type: "project" as const, id: p.id, name: p.name, cwd: p.cwd, logoUrl: p.logoUrl }))
   }, [query, projects, projectId])
   const matches = React.useMemo<MentionMatch[]>(
-    () => [...promptMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
-    [promptMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
+    () => [...promptMatches, ...taskMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
+    [promptMatches, taskMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
   )
 
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
@@ -292,7 +332,9 @@ export function useFileMentions(opts: {
         ? `@${entry.cwd} `
         : entry.type === "prompt"
           ? `@${entry.prompt.name} `
-          : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
+          : entry.type === "task"
+            ? `@${entry.key} `
+            : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
     pendingCaret.current = token.start + insert.length
     setText(text.slice(0, token.start) + insert + text.slice(caret))
     setSelected(0)
@@ -343,6 +385,7 @@ export function useFileMentions(opts: {
     setSelected,
     onKeyDown,
     onSelect,
+    taskWithoutHarness,
     requestCaret,
   }
 }
@@ -369,7 +412,13 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
         }
       : null
   )
-  if (!open) return null
+  if (!open) {
+    return state.taskWithoutHarness ? (
+      <CompleterNote icon={SquareCheck}>
+        Select the Harness MCP to mention tasks — this one will be sent as plain text.
+      </CompleterNote>
+    ) : null
+  }
 
   /* Empty is a state worth drawing, not nothing: the summary line says the menu
      is up, and a row that vanishes while the query is still being typed reads
@@ -400,6 +449,21 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
               label={entry.prompt.title || entry.prompt.name}
               description={entry.prompt.description || undefined}
               badge="prompt"
+              selected={i === state.selected}
+              onPick={() => state.pick(entry)}
+              onHover={() => state.setSelected(i)}
+            />
+          )
+        }
+        if (entry.type === "task") {
+          return (
+            <CompleterRow
+              key={`task:${entry.key}`}
+              icon={SquareCheck}
+              label={entry.key}
+              description={entry.title}
+              aside={entry.status}
+              badge="task"
               selected={i === state.selected}
               onPick={() => state.pick(entry)}
               onHover={() => state.setSelected(i)}

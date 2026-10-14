@@ -41,10 +41,10 @@ const [pkg] = entriesOf({
 assert.equal(pkg.via, "npm");
 assert.equal(pkg.qualifiedName, "com.pulsemcp/remote-filesystem");
 assert.equal(pkg.logoUrl, "https://cdn.example/logo.png");
-assert.equal(pkg.server.logoUrl, pkg.logoUrl);
 assert.equal(pkg.server.type, "stdio");
 assert.equal(pkg.server.name, "remote-filesystem", "the agent gets the tail, not the reverse-DNS name");
 if (pkg.server.type !== "stdio") throw new Error("unreachable");
+assert.equal(pkg.server.logoUrl, pkg.logoUrl, "the icon rides the server row too");
 assert.equal(pkg.server.command, "npx");
 // Runtime arguments come before the package, and the package is pinned.
 assert.deepEqual(pkg.server.args, ["-y", "remote-filesystem-mcp-server@0.1.5"]);

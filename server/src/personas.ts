@@ -14,8 +14,9 @@ import type { TaskBrief } from "./task-threads.js";
  * `{personaPrompt}`, `{personaFile}`, `PersonaSpawn`), kept so no column,
  * template or user's agent row has to change.
  *
- *   - claude-agent-acp reads `_meta.systemPrompt` on `session/new`: `{append}`
- *     adds to the CLI's own prompt rather than replacing it.
+ *   - claude-agent-acp and the daedalus agent read AIR's
+ *     `_meta.jetbrains.air.customInstructions` on every `session/new`, load and
+ *     resume, appended to the runtime's own prompt rather than replacing it.
  *   - codex reads `developer_instructions` out of its config, through the
  *     `CODEX_CONFIG` env template.
  *   - opencode reads `instructions`, a list of *file paths*, out of
@@ -67,7 +68,9 @@ export async function resolvePersonaSpawn(
   // taken away does not leave the old text on disk for the next spawn to point
   // at — see `writePersonaPrompt`.
   if (agent && usesPersonaFile(agent)) {
-    const file = writePersonaPrompt(sessionId, spawn);
+    // Only an `"env"` door reads the file; for a `_meta` door this clears the
+    // copy an earlier spawn left (a row seeded before seed 29 still names it).
+    const file = writePersonaPrompt(sessionId, agent.personaVia === "env" ? spawn : undefined);
     if (spawn && file) spawn.file = file;
   }
   return spawn;

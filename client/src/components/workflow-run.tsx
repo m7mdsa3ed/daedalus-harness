@@ -11,7 +11,6 @@ import {
   KanbanIcon,
   ListIcon,
   ListTreeIcon,
-  Maximize2Icon,
   NetworkIcon,
   LoaderCircleIcon,
   PauseIcon,
@@ -43,15 +42,9 @@ import {
 import { formatElapsed, StepMeta, useElapsed } from "@/components/step-row"
 import { TokenSummary } from "@/components/token-usage"
 import { KIND_CHIPS, KIND_COLORS } from "@/components/tool-parts"
-import {
-  MorphingDialog,
-  MorphingDialogContent,
-  MorphingDialogOpen,
-  MorphingDialogSource,
-} from "@/components/ui/morphing-dialog"
-import { extractSubagent, toolHeading } from "@/lib/tools"
+import { extractSubagent, toolHeading, toolOutputText } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/transcript-rows"
-import { sumUsage } from "@/lib/tokens"
+import { formatTokens, sumUsage } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import { useStoreSelect, type ToolItem } from "@/lib/store"
@@ -115,7 +108,7 @@ export function useStepThread(group: SubagentGroup): string | null {
 export function subagentHasBody(group: SubagentGroup, stepThread: string | null): boolean {
   const previews =
     group.head.kind === "subagent" &&
-    Boolean(group.head.prompt || group.head.report || group.head.activity || group.head.transcript)
+    Boolean(sessionBriefOf(group) || group.head.report || group.head.activity || group.head.transcript)
   return (
     group.head.kind === "tool" ||
     group.children.length > 0 ||
@@ -125,10 +118,31 @@ export function subagentHasBody(group: SubagentGroup, stepThread: string | null)
   )
 }
 
+/** A session head's brief. A runtime that announces its child as an RFD
+    session withholds the launch call (our `task`, Claude Code's and Codex's
+    native children), so the spawn's `task` is the only record of what it was
+    asked — unless a launch is here to say it, or `task` is just the name again
+    (OpenCode titles both with the child's title). */
+export function sessionBriefOf(group: SubagentGroup): string | undefined {
+  const head = group.head
+  if (head.kind !== "subagent") return undefined
+  if (head.prompt) return head.prompt
+  if (group.launch && extractSubagent(group.launch)?.prompt) return undefined
+  const task = head.task?.trim()
+  return task && task !== head.name.trim() ? task : undefined
+}
+
 /** What a step spent, when its runtime reported it. Task-child usage is
     attribution only: those tokens remain included in the parent's turn total. */
 export function stepUsage(group: SubagentGroup): acp.Usage | undefined {
   return group.head.kind === "subagent" ? group.head.usage : undefined
+}
+
+/** A step's figure for a one-line label — `12.4k tokens`, or nothing when its
+    runtime reported none or the reader hid tokens. */
+function stepTokensLabel(group: SubagentGroup | null, showTokens: boolean): string | null {
+  const total = showTokens && group ? stepUsage(group)?.totalTokens : undefined
+  return total ? `${formatTokens(total)} tokens` : null
 }
 
 /** What a *running* step is doing right now: the newest call still open, else
@@ -143,6 +157,65 @@ function currentActivity(group: SubagentGroup): string | undefined {
   if (!tools.length) return undefined
   const open = [...tools].reverse().find((t) => t.status !== "completed" && t.status !== "failed")
   return toolHeading(open ?? tools[tools.length - 1]).title
+}
+
+/** A running step's latest calls, oldest first — the flowchart's live lines. */
+function recentActivity(group: SubagentGroup, limit = 3): string[] {
+  if (group.head.kind === "subagent" && group.head.activity) return [group.head.activity]
+  return collectTools(group.children)
+    .slice(-limit)
+    .map((tool) => toolHeading(tool).title)
+}
+
+/** What a settled step came back with: the runtime's report, else the
+    launch call's result, else — an RFD child, whose prose IS its report — the
+    last thing it said. A JSON report becomes a human summary for the compact
+    board/flowchart preview; the opened step still shows the complete result. */
+export function stepResultOf(group: SubagentGroup): string | undefined {
+  const tool = group.head.kind === "tool" ? group.head : (group.launch ?? null)
+  const report =
+    (group.head.kind === "subagent" ? group.head.report : undefined) ||
+    (tool ? (extractSubagent(tool)?.result ?? toolOutputText(tool, 2_000).text) : undefined) ||
+    lastProse(group.children)
+  if (!report?.trim()) return undefined
+  return summarizeStepResult(report)
+}
+
+function summarizeStepResult(report: string): string {
+  const trimmed = report.trim()
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed)?.[1]
+  const source = (fenced ?? trimmed).trim()
+  if (!source.startsWith("{") && !source.startsWith("[")) return trimmed.replace(/\s+/g, " ")
+  try {
+    const value: unknown = JSON.parse(source)
+    if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "result" : "results"}`
+    if (!value || typeof value !== "object") return trimmed.replace(/\s+/g, " ")
+    const record = value as Record<string, unknown>
+    if (Array.isArray(record.findings)) {
+      const count = record.findings.length
+      const status = [record.status, record.verdict].find((field) => typeof field === "string")
+      return `${count} ${count === 1 ? "finding" : "findings"}${status ? ` · ${status}` : ""}`
+    }
+    const summary = [record.summary, record.overview, record.message].find(
+      (field) => typeof field === "string" && field.trim()
+    )
+    if (typeof summary === "string") return summary.trim().replace(/\s+/g, " ")
+    const count = Object.keys(record).length
+    return `${count} ${count === 1 ? "result field" : "result fields"}`
+  } catch {
+    return trimmed.replace(/\s+/g, " ")
+  }
+}
+
+function lastProse(rows: Row[]): string | undefined {
+  for (const row of [...rows].reverse()) {
+    if (row.kind === "agent") return row.text
+    if (row.kind === "run" || row.kind === "tool-group") {
+      const text = [...row.items].reverse().find((item) => item.kind === "agent")
+      if (text && "text" in text) return text.text
+    }
+  }
+  return undefined
 }
 
 /** A step's state as one word, from either kind of head. A step the runner has
@@ -195,11 +268,39 @@ export function lastActivityAt(rows: Row[]): number {
 
 /** One phase's steps, in definition order: the group the runner spawned for
     each, or null while it is still ahead of the run. */
-interface PhaseView {
+export interface PhaseView {
   /** Null for a definition written as a flat step list — one unnamed phase. */
   name: string | null
   steps: { name: string; group: SubagentGroup | null }[]
+  /** A live harness workflow's pause/resume, on the first phase of its run —
+      set by `agentOutline` only: a run card carries it in its own header. */
+  hold?: RunHold
 }
+
+interface RunHold {
+  sessionId: string
+  runId: string
+  paused: boolean
+}
+
+/** Whether a run can be held, and where its toggle posts. The hold is stamped
+    on every step of the run (see the reducer), so any head says it; the thread
+    the run belongs to rides the same stamp. Offered only while the run is live
+    — a settled run has nothing to hold — and still while held, since a held
+    run has no active step to read liveness from. */
+function holdOf(group: WorkflowGroup): RunHold | undefined {
+  const heads = group.steps.map((s) => (s.head.kind === "subagent" ? s.head : null))
+  const info = heads.find((h) => h?.workflow)?.workflow
+  const paused = heads.some((h) => h?.workflow?.paused)
+  const live =
+    paused ||
+    group.steps.some((s) => stepStateOf(s) === "running") ||
+    (info?.total !== undefined && group.steps.length < info.total)
+  if (!live || !info?.sessionId) return undefined
+  return { sessionId: info.sessionId, runId: group.id.slice("workflow:".length), paused }
+}
+
+const PhaseHold = ({ phase }: { phase: PhaseView }) => (phase.hold ? <WorkflowHold {...phase.hold} /> : null)
 
 /**
  * The run as phases of steps: the definition's outline (`group.plan`, stamped
@@ -269,7 +370,15 @@ function StepCard({
   const live = useElapsed(startedAt, state === "running" && startedAt > 0)
   const end = group ? lastActivityAt(group.children) : 0
   const ms = state === "running" ? live : end > startedAt && startedAt > 0 ? end - startedAt : null
-  const detail = group ? (state === "running" ? currentActivity(group) : undefined) : "waiting"
+  const tokens = stepTokensLabel(group, useViewOptionsContext().showTokens)
+  const meta = [tokens, ms !== null && ms >= 1000 ? formatElapsed(ms) : null].filter(Boolean).join(" · ")
+  const detail = group
+    ? state === "running"
+      ? currentActivity(group)
+      : state === "completed" || state === "failed"
+        ? stepResultOf(group)
+        : undefined
+    : "waiting"
   const label = name || (group ? stepNameOf(group) : "")
   const [Icon, tone] = STATE_ICON[state]
   const body = (
@@ -277,9 +386,7 @@ function StepCard({
       <span className="flex min-w-0 items-center gap-1.5">
         <Icon aria-hidden className={cn("size-3 shrink-0", tone)} />
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{label}</span>
-        {ms !== null && ms >= 1000 && (
-          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">{formatElapsed(ms)}</span>
-        )}
+        {meta && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">{meta}</span>}
       </span>
       {detail && (
         <span
@@ -317,11 +424,11 @@ function StepCard({
   )
 }
 
-type StepState = ReturnType<typeof stepStateOf> | "pending"
+export type StepState = ReturnType<typeof stepStateOf> | "pending"
 
 /* One colour per state, shared by the progress segments and the phase nodes so
    the strip and the board under it read as the same legend. */
-const SEGMENT: Record<StepState, string> = {
+export const SEGMENT: Record<StepState, string> = {
   completed: "bg-emerald-500/80",
   running: "bg-primary motion-safe:animate-pulse",
   failed: "bg-destructive",
@@ -350,15 +457,16 @@ const BADGE = {
    a reading of the same facts the reader picks between: browse for
    drilling phase → step → its turn parts, the board for the run's shape, the list
    for reading every step inline, the timeline for when each step ran and for
-   how long, and the graph (wide panels, real barriers only) for how phases join. */
-type RunView = "browse" | "board" | "list" | "timeline" | "graph"
+   how long, and the flowchart for how phases join and what a running step is
+   doing this second. */
+export type RunView = "browse" | "board" | "list" | "timeline" | "flowchart"
 
-const RUN_VIEWS: { id: RunView; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+export const RUN_VIEWS: { id: RunView; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "browse", label: "Browse", icon: ListTreeIcon },
   { id: "board", label: "Board", icon: KanbanIcon },
   { id: "list", label: "List", icon: ListIcon },
   { id: "timeline", label: "Timeline", icon: GanttChartIcon },
-  { id: "graph", label: "Graph", icon: NetworkIcon },
+  { id: "flowchart", label: "Flowchart", icon: NetworkIcon },
 ]
 
 interface ViewProps {
@@ -422,6 +530,7 @@ function BoardView({ phases, staged, picked, pick }: ViewProps) {
               <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">
                 {own.filter((s) => s === "completed").length}/{own.length}
               </span>
+              <PhaseHold phase={phase} />
             </header>
             {phase.steps.map((step, i) => card(step, step.group?.id ?? `${p}:${i}`))}
           </section>
@@ -478,6 +587,7 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
                 <span className="ms-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
                   {own.filter((s) => s === "completed").length}/{own.length}
                 </span>
+                <PhaseHold phase={phase} />
               </div>
               <div className="min-w-0 space-y-0.5">{rows(phase, p)}</div>
             </div>
@@ -493,6 +603,7 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
 function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
   /* Elapsed since 0 is simply now — one clock for every running bar. */
   const now = useElapsed(0, active)
+  const { showTokens } = useViewOptionsContext()
   const spans = phases.flatMap((phase) => phase.steps.map((step) => spanOf(step.group, now)))
   const known = spans.filter((span): span is [number, number] => span !== null)
   const t0 = known.length ? Math.min(...known.map((span) => span[0])) : 0
@@ -504,8 +615,9 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
       {phases.map((phase, p) => (
         <React.Fragment key={phase.name ?? p}>
           {staged && (
-            <div className="pt-1.5 pb-0.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground/50 uppercase first:pt-0">
-              {phaseLabel(phase, p)}
+            <div className="flex items-center gap-1 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground/50 uppercase first:pt-0">
+              <span className="min-w-0 flex-1 truncate">{phaseLabel(phase, p)}</span>
+              <PhaseHold phase={phase} />
             </div>
           )}
           {phase.steps.map((step, i) => {
@@ -521,8 +633,8 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
                     <button
                       type="button"
                       aria-pressed={picked === group.id}
-                      aria-label={`${label}, ${formatElapsed(span[1] - span[0])}`}
-                      title={`${label} · ${formatElapsed(span[1] - span[0])}`}
+                      aria-label={[label, formatElapsed(span[1] - span[0]), stepTokensLabel(group, showTokens)].filter(Boolean).join(", ")}
+                      title={[label, formatElapsed(span[1] - span[0]), stepTokensLabel(group, showTokens)].filter(Boolean).join(" · ")}
                       onClick={() => pick(group.id)}
                       style={{
                         insetInlineStart: `${((span[0] - t0) / width) * 100}%`,
@@ -615,12 +727,12 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
             const state = phaseState(own)
             const running = ph.steps.find((s) => s.group?.active)?.group
             return (
-              <li key={ph.name ?? i}>
+              <li key={ph.name ?? i} className="flex min-w-0 items-center gap-1">
                 <button
                   type="button"
                   onClick={() => setPhaseAt(i)}
                   className={cn(
-                    "group/phase flex w-full min-w-0 items-center gap-2.5 rounded-md border bg-card px-2.5 py-2 text-start shadow-xs transition-colors hover:bg-muted/60",
+                    "group/phase flex w-full min-w-0 flex-1 items-center gap-2.5 rounded-md border bg-card px-2.5 py-2 text-start shadow-xs transition-colors hover:bg-muted/60",
                     state === "running" ? "border-primary/40" : state === "failed" ? "border-destructive/40" : "border-border/60"
                   )}
                 >
@@ -664,6 +776,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                     className="size-3.5 shrink-0 text-muted-foreground/40 transition-transform group-hover/phase:translate-x-0.5"
                   />
                 </button>
+                <PhaseHold phase={ph} />
               </li>
             )
           })}
@@ -693,11 +806,8 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
   )
 }
 
-/** The run's head: its mark, name, state badge and the line under it. A
-    disclosure button inline — where the card folds — and a plain header in the
-    fullscreen reader, which has nothing to fold. */
+/** The run's head: its mark, name, state badge and the line under it. */
 function RunHead({
-  interactive,
   open,
   onToggle,
   icon: Icon,
@@ -707,10 +817,8 @@ function RunHead({
   active,
   paused,
 }: {
-  interactive: boolean
   open: boolean
-  /* Only the interactive head folds, so only it needs the handler. */
-  onToggle?: () => void
+  onToggle: () => void
   icon: React.ComponentType<{ className?: string }>
   name: string
   badge: readonly [string, string]
@@ -729,11 +837,9 @@ function RunHead({
         )}
       >
         <Icon className="size-3.5 group-hover/run:hidden" />
-        {interactive && (
-          <ChevronRightIcon
-            className={cn("hidden size-3.5 transition-transform group-hover/run:block", open && "rotate-90")}
-          />
-        )}
+        <ChevronRightIcon
+          className={cn("hidden size-3.5 transition-transform group-hover/run:block", open && "rotate-90")}
+        />
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
@@ -755,7 +861,6 @@ function RunHead({
       </span>
     </>
   )
-  if (!interactive) return <span className="flex min-w-0 flex-1 items-start gap-2.5 text-start">{inner}</span>
   return (
     <button
       type="button"
@@ -768,54 +873,96 @@ function RunHead({
   )
 }
 
-/** Everything the run draws under its head — the view tabs and whichever layout
-    the reader picked. Stateless: the view and the picked step are the card's,
-    so the fullscreen reader opens on the reading it was opened from. */
-function RunBody({
+/** The layout picker: the run's own, and the Agents panel's with one more. */
+export function RunViewTabs<V extends string>({
+  views,
+  value,
+  onChange,
+  label,
+  className,
+}: {
+  views: { id: V; label: string; icon: React.ComponentType<{ className?: string }> }[]
+  value: V
+  onChange: (view: V) => void
+  label: string
+  className?: string
+}) {
+  return (
+    <div className={cn("flex flex-wrap gap-0.5", className)} role="group" aria-label={label}>
+      {views.map((mode) => (
+        <button
+          key={mode.id}
+          type="button"
+          aria-pressed={value === mode.id}
+          onClick={() => onChange(mode.id)}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-sm px-1.5 text-xs leading-5 transition-colors",
+            value === mode.id ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <mode.icon aria-hidden className="size-3" />
+          {mode.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** One outline in the picked layout, with the picked step opened under it.
+    Owns the pick, so a run card and the Agents panel each keep their own. */
+export function RunLayout({
   phases,
-  staged,
-  picked,
-  pick,
+  view,
   active,
   stepRow: StepView,
   showTimestamps,
-  graphable,
-  runView,
-  setRunView,
-  pickedStep,
-}: ViewProps & {
-  graphable: boolean
-  runView: RunView
-  setRunView: (view: RunView) => void
-  pickedStep: SubagentGroup | null
+  fill = false,
+}: {
+  phases: PhaseView[]
+  view: RunView
+  active: boolean
+  stepRow: StepRowComponent
+  showTimestamps?: boolean
+  /** The flowchart takes the whole of a flex column, and a picked step
+      scrolls in a strip under it — the Agents panel, where the drawing is
+      the panel. Without it (a card in the scrolling transcript, which has no
+      height to fill) the chart bleeds to the card's edges at a height of its
+      own. Only the flowchart reads it; the other layouts scroll. */
+  fill?: boolean
 }) {
-  const shownView = runView === "graph" && !graphable ? "board" : runView
+  const [picked, setPicked] = React.useState<string | null>(null)
+  const { showTokens } = useViewOptionsContext()
+  /* A second click on the picked card puts it away again. */
+  const pick = (id: string) => setPicked((current) => (current === id ? null : id))
+  const pickedStep = picked
+    ? (phases.flatMap((phase) => phase.steps).find((step) => step.group?.id === picked)?.group ?? null)
+    : null
+  /* A run with a hold is always drawn with its headings, so the toggle has
+     somewhere to sit even when it is the only phase there is. */
+  const staged = phases.length > 1 || phases.some((phase) => phase.hold)
   const viewProps: ViewProps = { phases, staged, picked, pick, active, stepRow: StepView, showTimestamps }
+  const holds = phases.filter((phase) => phase.hold)
   return (
     <>
-      <div className="flex flex-wrap gap-0.5 pb-1.5" role="group" aria-label="Run view">
-        {RUN_VIEWS.filter((mode) => mode.id !== "graph" || graphable).map((mode) => (
-          <button
-            key={mode.id}
-            type="button"
-            aria-pressed={runView === mode.id}
-            onClick={() => setRunView(mode.id)}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-sm px-1.5 text-xs leading-5 transition-colors",
-              /* Wide panels only: a graph squeezed beside a terminal is not a
-                 drawing anyone can read. */
-              mode.id === "graph" && "hidden @panel-md:inline-flex",
-              runView === mode.id ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <mode.icon aria-hidden className="size-3" />
-            {mode.label}
-          </button>
-        ))}
-      </div>
-      {shownView === "graph" && (
-        <div className="hidden @panel-md:block">
-          <React.Suspense fallback={<div className="h-64" />}>
+      {/* The flowchart has no headings, so its runs' toggles stand above it. */}
+      {view === "flowchart" && holds.length > 0 && (
+        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground", fill ? "px-2.5 py-1" : "pb-1.5")}>
+          {holds.map((phase, i) => (
+            <span key={i} className="inline-flex min-w-0 items-center gap-0.5">
+              <span className="truncate">{phase.name}</span>
+              <PhaseHold phase={phase} />
+            </span>
+          ))}
+        </div>
+      )}
+      {view === "flowchart" && (
+        <div
+          className={cn(
+            "flex flex-col",
+            fill ? "min-h-0 flex-1" : "-mx-2.5 h-[min(70vh,600px)] min-h-64 border-y border-border/50"
+          )}
+        >
+          <React.Suspense fallback={<div className="flex-1" />}>
             <WorkflowGraph
               phases={phases.map((phase) => ({
                 name: phase.name,
@@ -824,6 +971,9 @@ function RunBody({
                   name: step.name || (step.group ? stepNameOf(step.group) : ""),
                   state: stateOfStep(step),
                   startedAt: step.group?.head.startedAt,
+                  updates: step.group?.active ? recentActivity(step.group) : undefined,
+                  result: step.group && !step.group.active ? stepResultOf(step.group) : undefined,
+                  tokens: stepTokensLabel(step.group, showTokens) ?? undefined,
                 })),
               }))}
               selectedId={pickedStep ? picked : null}
@@ -832,20 +982,20 @@ function RunBody({
           </React.Suspense>
         </div>
       )}
-      {/* A narrow panel never draws the graph, so it falls back to the board. */}
-      {(shownView === "board" || shownView === "graph") && (
-        <div className={cn(shownView === "graph" && "@panel-md:hidden")}>
-          <BoardView {...viewProps} />
-        </div>
-      )}
-      {shownView === "list" && <ListView {...viewProps} />}
-      {shownView === "timeline" && <TimelineView {...viewProps} />}
-      {shownView === "browse" && <BrowseView {...viewProps} />}
+      {view === "board" && <BoardView {...viewProps} />}
+      {view === "list" && <ListView {...viewProps} />}
+      {view === "timeline" && <TimelineView {...viewProps} />}
+      {view === "browse" && <BrowseView {...viewProps} />}
       {/* The picked step opens as the same row it would be on its own, under
           the drawing — the transcript stays in place. List and browse already
           draw their steps' rows. */}
-      {pickedStep && shownView !== "list" && shownView !== "browse" && (
-        <div className="mt-2 min-w-0 border-t border-border/50 pt-1.5">
+      {pickedStep && view !== "list" && view !== "browse" && (
+        <div
+          className={cn(
+            "mt-2 min-w-0 border-t border-border/50 pt-1.5",
+            fill && view === "flowchart" && "mt-0 max-h-[45%] shrink-0 overflow-y-auto px-2.5 pb-2"
+          )}
+        >
           <StepView group={pickedStep} showTimestamps={showTimestamps} />
         </div>
       )}
@@ -853,10 +1003,58 @@ function RunBody({
   )
 }
 
+/** The shape strip: one segment per step in outline order, phases separated
+    by a wider gap, so a run's shape and how far along it is read at a glance. */
+export function RunStrip({ phases, className }: { phases: PhaseView[]; className?: string }) {
+  if (!phases.some((phase) => phase.steps.length > 0)) return null
+  return (
+    <div className={cn("flex gap-1.5", className)} aria-hidden>
+      {phases.map((phase, p) => (
+        <div key={phase.name ?? p} className="flex flex-1 gap-0.5" style={{ flexGrow: phase.steps.length }}>
+          {phase.steps.map((step, i) => (
+            <span
+              key={step.group?.id ?? i}
+              title={step.name || (step.group ? stepNameOf(step.group) : "")}
+              className={cn("h-1 flex-1 rounded-full transition-colors", SEGMENT[stateOfStep(step)])}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Every agent a thread launched as one outline, in transcript order — so the
+ * run layouts read the whole thread the way they read one run: a workflow
+ * keeps its own phases (named after the run), a batch is a phase, and each
+ * stretch of lone subagents between them is one.
+ */
+export function agentOutline(rows: Row[]): PhaseView[] {
+  const phases: PhaseView[] = []
+  let loose: PhaseView | null = null
+  for (const row of rows) {
+    if (row.kind === "subagent-group") {
+      if (!loose) phases.push((loose = { name: "Subagents", steps: [] }))
+      loose.steps.push({ name: "", group: row })
+      continue
+    }
+    if (row.kind === "workflow-group") {
+      const hold = holdOf(row)
+      phasesOf(row).forEach((phase, i) =>
+        phases.push({ ...phase, name: phase.name ? `${row.name} · ${phase.name}` : row.name, hold: i === 0 ? hold : undefined })
+      )
+    } else if (row.kind === "subagent-batch") {
+      phases.push({ name: batchNameOf(row), steps: row.steps.map((group) => ({ name: "", group })) })
+    } else continue
+    loose = null
+  }
+  return phases
+}
+
 /**
  * A set of subagents in the transcript — a harness workflow run, or the N
- * workers an agent fired side by side — as **a run card that opens into its
- * phases**.
+ * workers an agent fired side by side — as **an expandable run card**.
  *
  * Folded, the card is a header (name, state, readings, the hold toggle), the
  * line about what is being written right now, and a segmented progress strip:
@@ -904,12 +1102,7 @@ function RunRow({
   const all = phases.flatMap((p) => p.steps)
   const stateOf = (step: { group: SubagentGroup | null }): StepState =>
     step.group ? stepStateOf(step.group) : "pending"
-  /* A graph only says more than the board where a barrier joins several steps;
-     a chain, a single phase and every batch are a line the others already are. */
-  const graphable = staged && phases.some((phase) => phase.steps.length > 1)
   const [runView, setRunView] = React.useState<RunView>("browse")
-  const [picked, setPicked] = React.useState<string | null>(null)
-  const pickedStep = picked ? (runSteps.find((step) => step.id === picked) ?? null) : null
   const active = runSteps.some((step) => step.active)
   const states = all.map(stateOf)
   const done = states.filter((s) => s === "completed").length
@@ -957,12 +1150,7 @@ function RunRow({
     setOpen(view.showToolDetails)
   }, [view.showToolDetails])
 
-  /* A second click on the picked card puts it away again. */
-  const pick = (id: string) => setPicked((current) => (current === id ? null : id))
-
-  /* The head's readings and the shape strip are drawn both on the card and on
-     the fullscreen reader, from the same facts — so they are declared once and
-     placed twice. */
+  /* The head's readings and the shape strip are declared once for the card. */
   const meta = (
     <StepMeta
       parts={[
@@ -972,36 +1160,17 @@ function RunRow({
       ]}
     />
   )
-  const strip = (className: string) =>
-    all.length > 0 && (
-      <div className={cn("flex gap-1.5", className)} aria-hidden>
-        {phases.map((phase, p) => (
-          <div key={phase.name ?? p} className="flex flex-1 gap-0.5" style={{ flexGrow: phase.steps.length }}>
-            {phase.steps.map((step, i) => (
-              <span
-                key={step.group?.id ?? i}
-                title={step.name || (step.group ? stepNameOf(step.group) : "")}
-                className={cn("h-1 flex-1 rounded-full transition-colors", SEGMENT[stateOf(step)])}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-    )
   const body = (
-    <RunBody
-      phases={phases}
-      staged={staged}
-      picked={picked}
-      pick={pick}
-      active={active}
-      stepRow={StepView}
-      showTimestamps={showTimestamps}
-      graphable={graphable}
-      runView={runView}
-      setRunView={setRunView}
-      pickedStep={pickedStep}
-    />
+    <>
+      <RunViewTabs
+        views={RUN_VIEWS}
+        value={runView}
+        onChange={setRunView}
+        label="Run view"
+        className="pb-1.5"
+      />
+      <RunLayout phases={phases} view={runView} active={active} stepRow={StepView} showTimestamps={showTimestamps} />
+    </>
   )
 
   const steps =
@@ -1013,72 +1182,29 @@ function RunRow({
       body
     )
 
-  /* The card is the morph's source: it stays mounted and keeps its shape while
-     the reader is up (it opens into the panel, and closes back into the card),
-     and the panel is the same run at the window's size, sharing this card's
-     view and pick so opening it continues the reading rather than restarting
-     it. The panel carries `@container`, because a portal leaves the transcript
-     column behind and the `@panel-*` queries inside have to answer to the
-     panel's own width — a run confined to the column was never wide enough to
-     draw the graph. */
   return (
-    <MorphingDialog>
-      <MorphingDialogSource className="my-1.5 overflow-hidden rounded-lg border border-border/60 bg-card/40">
-        <div className="flex min-w-0 items-start gap-2.5 px-2.5 pt-2">
-          <RunHead
-            interactive
-            open={open}
-            onToggle={() => setOpen((v) => !v)}
-            icon={Icon}
-            name={name}
-            badge={badge}
-            caption={caption}
-            active={active}
-            paused={paused}
-          />
-          <span className="flex h-7 shrink-0 items-center gap-1.5">
-            {meta}
-            {control}
-            <MorphingDialogOpen
-              title="Full screen"
-              className="inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:text-foreground"
-            >
-              <Maximize2Icon aria-hidden className="size-3" />
-              <span className="sr-only">Full screen</span>
-            </MorphingDialogOpen>
-          </span>
-        </div>
+    <div className="my-1.5 overflow-hidden rounded-lg border border-border/60 bg-card/40">
+      <div className="flex min-w-0 items-start gap-2.5 px-2.5 pt-2">
+        <RunHead
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          icon={Icon}
+          name={name}
+          badge={badge}
+          caption={caption}
+          active={active}
+          paused={paused}
+        />
+        <span className="flex h-7 shrink-0 items-center gap-1.5">
+          {meta}
+          {control}
+        </span>
+      </div>
 
-        {strip("px-2.5 pt-2 pb-2.5")}
+      <RunStrip phases={phases} className="px-2.5 pt-2 pb-2.5" />
 
-        {open && <div className="min-w-0 border-t border-border/50 bg-background/40 px-2.5 py-2">{steps}</div>}
-      </MorphingDialogSource>
-
-      <MorphingDialogContent label={name} className="@container">
-        <header className="shrink-0 border-b border-border/60 px-4 py-4 pr-14 sm:px-6 sm:py-5">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <RunHead
-              interactive={false}
-              open
-              icon={Icon}
-              name={name}
-              badge={badge}
-              caption={caption}
-              active={active}
-              paused={paused}
-            />
-            <span className="flex h-7 shrink-0 items-center gap-1.5">
-              {meta}
-              {control}
-            </span>
-          </div>
-        </header>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-          {strip("pb-2")}
-          {steps}
-        </div>
-      </MorphingDialogContent>
-    </MorphingDialog>
+      {open && <div className="min-w-0 border-t border-border/50 bg-background/40 px-2.5 py-2">{steps}</div>}
+    </div>
   )
 }
 
@@ -1092,19 +1218,9 @@ export const WorkflowRun = React.memo(function WorkflowRun({
   showTimestamps?: boolean
   stepRow: StepRowComponent
 }) {
-  /* The hold is stamped on every step of the run (see the reducer), so any
-     head says it; the thread the run belongs to rides the same stamp. The
-     toggle is only offered while the run is live — a settled run has nothing
-     to hold — and stays offered while held, since a held run has no active
-     step to read liveness from. */
-  const heads = group.steps.map((s) => (s.head.kind === "subagent" ? s.head : null))
-  const info = heads.find((h) => h?.workflow)?.workflow
-  const paused = heads.some((h) => h?.workflow?.paused)
-  const live =
-    paused ||
-    group.steps.some((s) => stepStateOf(s) === "running") ||
-    (info?.total !== undefined && group.steps.length < info.total)
-  const runId = group.id.slice("workflow:".length)
+  const hold = holdOf(group)
+  /* Paused is read off the steps even once the toggle is gone, for the badge. */
+  const paused = group.steps.some((s) => s.head.kind === "subagent" && s.head.workflow?.paused)
   return (
     <RunRow
       name={group.name}
@@ -1115,11 +1231,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
       showTimestamps={showTimestamps}
       stepRow={stepRow}
       paused={paused}
-      control={
-        live && info?.sessionId ? (
-          <WorkflowHold sessionId={info.sessionId} runId={runId} paused={paused} />
-        ) : undefined
-      }
+      control={hold ? <WorkflowHold {...hold} /> : undefined}
     />
   )
 })
@@ -1164,6 +1276,16 @@ function WorkflowHold({ sessionId, runId, paused }: { sessionId: string; runId: 
   )
 }
 
+function batchNameOf(group: SubagentBatch): string {
+  const kinds = new Set(
+    group.steps
+      .map((step) => (step.head.kind === "tool" ? extractSubagent(step.head)?.agentType : step.head.name))
+      .filter((kind): kind is string => Boolean(kind))
+  )
+  const count = group.steps.length
+  return kinds.size === 1 ? `${count} × ${[...kinds][0]}` : `${count} subagents`
+}
+
 /**
  * The subagents an agent fired side by side (`SubagentBatch`) as the same row.
  * No definition wrote this one, so its name has to be read off the workers
@@ -1181,16 +1303,9 @@ export const SubagentBatchRun = React.memo(function SubagentBatchRun({
   showTimestamps?: boolean
   stepRow: StepRowComponent
 }) {
-  const kinds = new Set(
-    group.steps
-      .map((step) => (step.head.kind === "tool" ? extractSubagent(step.head)?.agentType : step.head.name))
-      .filter((kind): kind is string => Boolean(kind))
-  )
-  const count = group.steps.length
-  const name = kinds.size === 1 ? `${count} × ${[...kinds][0]}` : `${count} subagents`
   return (
     <RunRow
-      name={name}
+      name={batchNameOf(group)}
       steps={group.steps}
       icon={BotIcon}
       countNoun="done"

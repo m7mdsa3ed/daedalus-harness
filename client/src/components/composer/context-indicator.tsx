@@ -33,6 +33,7 @@ import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { addUsage, type ThreadState } from "@/lib/store"
+import { spendTime, subagentSpend } from "@/lib/token-breakdown"
 import {
   formatDuration,
   formatRate,
@@ -66,6 +67,10 @@ function Row({
     </div>
   )
 }
+
+/** Children listed by name before the rest fold into "N more"; the Tokens
+    panel has the whole list. */
+const SUBAGENT_ROWS = 4
 
 /** A captioned group of rows under a hairline — the popover's one unit. */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -322,6 +327,8 @@ export function ContextIndicator({
         : cacheRate >= 20
           ? "text-amber-600 dark:text-amber-400"
           : "text-destructive"
+  const spend = subagentSpend(thread.items)
+  const spendTotal = spend.reduce((n, child) => n + child.tokens, 0)
   /* `turnUsage` is filled in turn order, so its last entry is the newest turn. */
   const lastTurn = Object.values(thread.turnUsage).at(-1)
   return (
@@ -419,6 +426,23 @@ export function ContextIndicator({
             {context?.cost && (
               <Row label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
             )}
+          </Section>
+        )}
+
+        {/* Each child's own bill, apart from the session's: some runtimes count a
+            child in the turn that launched it, so adding them would double those. */}
+        {spend.length > 0 && (
+          <Section title={`Subagents · ${spend.length}`}>
+            {spend.slice(0, SUBAGENT_ROWS).map((child) => (
+              <Row
+                key={child.id}
+                label={child.name}
+                hint={[child.workflow && "workflow", spendTime(child)].filter(Boolean).join(" · ") || undefined}
+                value={formatTokens(child.tokens)}
+              />
+            ))}
+            {spend.length > SUBAGENT_ROWS && <Row label={`${spend.length - SUBAGENT_ROWS} more`} value="" />}
+            <Row label="Total billed" value={formatTokens(spendTotal)} />
           </Section>
         )}
 

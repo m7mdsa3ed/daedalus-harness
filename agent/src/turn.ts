@@ -275,14 +275,15 @@ export async function handlePrompt(
           session,
           emit,
           clientCaps: deps.clientCaps(),
-          runSubagent: (name, prompt, toolCallId) =>
+          env: deps.env,
+          runSubagent: (name, prompt, toolCallId, modelId, role) =>
             runSubagent(deps, session, ctx, emit, toolCallId ?? "unknown", name, prompt, (usage) => {
               /* A subagent's spend is the turn's spend: its steps never touch
                  `session.lastTokens` (they measure the child's own window), so
                  the only place its tokens can land is here, folded into the
                  same accumulator every retry of the root adds to. */
               if (usage) turnUsage = addUsage(turnUsage, usage);
-            }),
+            }, undefined, modelId, role),
           listSubagents: () =>
             deps.store.listSubagents(session.id).map(({ id, name, task, status }) => ({ id, name, task, status })),
           sendMessage: (agent, message) =>
@@ -1017,9 +1018,22 @@ async function runSubagent(
       spent most of its budget in three children reported only the root's. */
   reportUsage: (usage: LanguageModelUsage | null) => void,
   existingId?: string,
+  /** The model the child runs on — the `task` tool's `role`/`model` resolved to
+      an id. Absent, the session model (today's behaviour). Its context window
+      is read off `env.modelWindows` like any other model, so a child on a role
+      is measured against the window it actually runs in. */
+  modelId?: string,
+  /** The role that named `modelId`, when one did — saved and announced. */
+  role?: string,
 ): Promise<string> {
   const existing = existingId ? deps.store.subagent(session.id, existingId) : null;
   if (existingId && !existing) throw new Error(`No saved subagent named or identified by '${existingId}'.`);
+  /* The one id every reading below is taken against — the request's model, the
+     window it is measured with, and the model the transcript names. Resolved
+     once so the three cannot disagree. A follow-up runs where the child was
+     spawned: a message to the advisor is still the advisor's. */
+  const childModel = modelId ?? existing?.model ?? session.modelId;
+  const childRole = existing?.role ?? role;
   const childId = existing?.id ?? randomUUID();
   if (!deps.store.claimSubagent(session.id, childId)) {
     throw new Error(`Subagent '${existing?.name ?? name}' is already running; wait for it to stop before messaging it.`);
@@ -1028,7 +1042,14 @@ async function runSubagent(
   const childName = existing?.name ?? name;
   const task = existing?.task ?? prompt;
   if (!existing) {
-    deps.store.createSubagent(session.id, { id: childId, name: childName, task, status: "running" });
+    deps.store.createSubagent(session.id, {
+      id: childId,
+      name: childName,
+      task,
+      status: "running",
+      model: childModel,
+      role: childRole,
+    });
   } else {
     deps.store.setSubagentStatus(session.id, childId, "running");
   }
@@ -1038,7 +1059,8 @@ async function runSubagent(
       subagentSessionId: childId,
       name: childName,
       task: task.length > 500 ? `${task.slice(0, 500)}…` : task,
-      _meta: { daedalus: { parentToolUseId: toolCallId } },
+      /* What the child runs on, for its row: ACP's spawn names no model. */
+      _meta: { daedalus: { parentToolUseId: toolCallId, model: childModel, role: childRole, prompt: task } },
     });
   }
   const childEmit = parentEmit.asChild(childId, rfd);
@@ -1047,6 +1069,7 @@ async function runSubagent(
     session,
     emit: childEmit,
     clientCaps: deps.clientCaps(),
+    env: deps.env,
     runSubagent: () => Promise.reject(new Error("subagents cannot launch subagents")),
     listSubagents: () => [],
     sendMessage: () => Promise.reject(new Error("subagents cannot message sibling agents")),
@@ -1084,7 +1107,7 @@ async function runSubagent(
          role, and `messages` alone is only where the child started. */
       let sent: ModelMessage[] = messages;
       const result = streamText({
-        model: deps.makeModel(deps.env, session.modelId),
+        model: deps.makeModel(deps.env, childModel),
         system,
         messages,
         tools,
@@ -1126,12 +1149,12 @@ async function runSubagent(
           childEmit,
           meta,
           deps.env,
-          session.modelId,
+          childModel,
           null,
           undefined,
           rfd,
           prefix,
-          { cwd: session.cwd, model: session.modelId },
+          { cwd: session.cwd, model: childModel },
           () => sent,
         );
         if (outcome.totalUsage) {

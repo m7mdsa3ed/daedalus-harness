@@ -15,7 +15,10 @@ import {
   type Node,
   type NodeChange,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react"
+
+import { PANEL_SM } from "@/hooks/use-device"
 
 export type FlowchartNode = {
   id: string
@@ -25,6 +28,11 @@ export type FlowchartNode = {
   tone?: "done" | "running" | "failed" | "pending"
   /** A second, quieter line under the label. */
   hint?: string
+  /** What a live node has been doing, oldest first — a run's running step
+      lists its latest calls here, and the newest shimmers. */
+  updates?: string[]
+  /** What a finished node came back with, clamped to three lines. */
+  result?: string
 }
 
 export type FlowchartEdge = {
@@ -41,10 +49,17 @@ type FlowNodeData = {
   direction: FlowDirection
   tone?: FlowchartNode["tone"]
   hint?: string
+  updates?: string[]
+  result?: string
 }
 type FlowNode = Node<FlowNodeData, "flowNode">
 
-function layoutNodes(nodes: FlowchartNode[], edges: FlowchartEdge[], direction: FlowDirection): FlowNode[] {
+function layoutNodes(
+  nodes: FlowchartNode[],
+  edges: FlowchartEdge[],
+  direction: FlowDirection,
+  columns = Number.POSITIVE_INFINITY
+): FlowNode[] {
   const unique = [...new Map(nodes.map((node) => [node.id, node])).values()]
   const ids = new Set(unique.map((node) => node.id))
   const next = new Map(unique.map((node) => [node.id, [] as string[]]))
@@ -78,23 +93,40 @@ function layoutNodes(nodes: FlowchartNode[], edges: FlowchartEdge[], direction: 
     }
   }
 
+  const levelsById = new Map(unique.map((node) => [node.id, levels.get(node.id) ?? 0]))
   const rows = new Map<number, FlowchartNode[]>()
   for (const node of unique) {
-    const level = levels.get(node.id) ?? 0
+    const level = levelsById.get(node.id) ?? 0
     rows.set(level, [...(rows.get(level) ?? []), node])
   }
 
+  /* In a vertical layout, cap siblings across to the measured panel width and
+     continue them on extra rows. Shift later graph levels down to make room. */
+  const rowPosition = new Map<string, { level: number; index: number; count: number }>()
+  let levelOffset = 0
+  const rowSize = Math.max(1, Math.floor(columns))
+  for (const [level, row] of [...rows].sort(([a], [b]) => a - b)) {
+    const chunks = direction === "down" ? Math.max(1, Math.ceil(row.length / rowSize)) : 1
+    row.forEach((node, index) => {
+      const chunk = direction === "down" ? Math.floor(index / rowSize) : 0
+      rowPosition.set(node.id, {
+        level: level + levelOffset + chunk,
+        index: direction === "down" ? index % rowSize : index,
+        count: direction === "down" ? Math.min(rowSize, row.length - chunk * rowSize) : row.length,
+      })
+    })
+    levelOffset += chunks - 1
+  }
+
   return unique.map((node) => {
-    const level = levels.get(node.id) ?? 0
-    const row = rows.get(level) ?? [node]
-    const positionInRow = row.findIndex((entry) => entry.id === node.id)
-    const across = (positionInRow - (row.length - 1) / 2) * 220
-    const along = level * 150
+    const position = rowPosition.get(node.id) ?? { level: levelsById.get(node.id) ?? 0, index: 0, count: 1 }
+    const across = (position.index - (position.count - 1) / 2) * 220
+    const along = position.level * 150
     return {
       id: node.id,
       type: "flowNode",
       position: direction === "right" ? { x: along, y: across } : { x: across, y: along },
-      data: { label: node.label ?? node.id, shape: node.shape ?? "box", direction, tone: node.tone, hint: node.hint },
+      data: { label: node.label ?? node.id, shape: node.shape ?? "box", direction, tone: node.tone, hint: node.hint, updates: node.updates, result: node.result },
     }
   })
 }
@@ -124,9 +156,29 @@ function FlowNodeView({ data, selected }: NodeProps<FlowNode>) {
     >
       <Handle type="target" position={targetPosition} className="!size-2 !border-2 !border-background !bg-primary" />
       {data.shape !== "dot" && (
-        <span className="break-words">
+        <span className="min-w-0 break-words">
           {data.label}
           {data.hint && <span className="block text-[10px] text-muted-foreground">{data.hint}</span>}
+          {data.updates && data.updates.length > 0 && (
+            <span className="mt-1 block space-y-px border-t border-border/60 pt-1 text-start text-[10px] text-muted-foreground">
+              {data.updates.map((update, i) => (
+                <span
+                  key={i}
+                  className={`block truncate ${i === data.updates!.length - 1 ? "text-foreground/80 harness-shimmer" : "opacity-70"}`}
+                >
+                  {update}
+                </span>
+              ))}
+            </span>
+          )}
+          {data.result && (
+            <span
+              className={`mt-1 line-clamp-3 border-t border-border/60 pt-1 text-start text-[10px] leading-snug ${data.tone === "failed" ? "text-destructive" : "text-muted-foreground"}`}
+              title={data.result}
+            >
+              {data.result}
+            </span>
+          )}
         </span>
       )}
       <Handle type="source" position={sourcePosition} className="!size-2 !border-2 !border-background !bg-primary" />
@@ -173,20 +225,90 @@ export function InteractiveFlowchart({
   /** Take the height of a flex column instead of the inline figure's own. */
   fill?: boolean
 }) {
+  const [responsiveLayout, setResponsiveLayout] = React.useState<{ direction: FlowDirection; columns: number }>(
+    () => ({ direction, columns: Number.POSITIVE_INFINITY })
+  )
+  const layoutDirection = responsiveLayout.direction
+  const columns = responsiveLayout.columns
+  const layoutKey = `${layoutDirection}:${columns}`
   const [nodes, setNodes] = React.useState<FlowNode[]>(() => layoutNodes(inputNodes, inputEdges, direction))
   const [edges, setEdges] = React.useState<Edge[]>(() => toEdges(inputNodes, inputEdges))
+  const edgesRef = React.useRef(edges)
+  edgesRef.current = edges
   // Read-only: derived every render, so a live run's states flow straight in.
   const liveNodes = React.useMemo(
     () =>
       readOnly
-        ? layoutNodes(inputNodes, inputEdges, direction).map((node) => ({ ...node, selected: node.id === selectedId }))
+        ? layoutNodes(inputNodes, inputEdges, layoutDirection, columns).map((node) => ({ ...node, selected: node.id === selectedId }))
         : null,
-    [readOnly, inputNodes, inputEdges, direction, selectedId]
+    [readOnly, inputNodes, inputEdges, layoutDirection, columns, selectedId]
   )
   const liveEdges = React.useMemo(
     () => (readOnly ? toEdges(inputNodes, inputEdges) : null),
     [readOnly, inputNodes, inputEdges]
   )
+
+  /* Width belongs to the chart's containing panel, not the window. */
+  const boxRef = React.useRef<HTMLDivElement>(null)
+  const flowRef = React.useRef<ReactFlowInstance<FlowNode, Edge> | null>(null)
+  React.useEffect(() => {
+    const box = boxRef.current
+    if (!box) return
+    let frame = 0
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry?.contentRect.width ?? 0)
+      if (width <= 0) return
+      const nextDirection: FlowDirection = direction === "right" && width < PANEL_SM ? "down" : direction
+      const nextColumns = nextDirection === "down" ? Math.max(1, Math.floor((width - 80) / 220)) : Number.POSITIVE_INFINITY
+      setResponsiveLayout((current) =>
+        current.direction === nextDirection && current.columns === nextColumns
+          ? current
+          : { direction: nextDirection, columns: nextColumns }
+      )
+      if (readOnly) {
+        cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(() => void flowRef.current?.fitView({ padding: 0.22 }))
+      }
+    })
+    observer.observe(box)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [direction, readOnly])
+
+  /* Reflow editable nodes only when their responsive layout changes, retaining
+     all authored data and any nodes/edges the reader added. */
+  const previousLayout = React.useRef(layoutKey)
+  React.useEffect(() => {
+    if (previousLayout.current === layoutKey) return
+    previousLayout.current = layoutKey
+    if (!readOnly) {
+      setNodes((current) => {
+        const currentNodes: FlowchartNode[] = current.map((node) => ({
+          id: node.id,
+          label: node.data.label,
+          shape: node.data.shape,
+          tone: node.data.tone,
+          hint: node.data.hint,
+          updates: node.data.updates,
+          result: node.data.result,
+        }))
+        const positions = new Map(
+          layoutNodes(
+            currentNodes,
+            edgesRef.current.map((edge) => ({ from: edge.source, to: edge.target })),
+            layoutDirection,
+            columns
+          ).map((node) => [node.id, node.position])
+        )
+        return current.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position, data: { ...node.data, direction: layoutDirection } }))
+      })
+    }
+    let frame = 0
+    frame = requestAnimationFrame(() => void flowRef.current?.fitView({ padding: 0.22 }))
+    return () => cancelAnimationFrame(frame)
+  }, [layoutKey, layoutDirection, columns, readOnly])
 
   const onNodesChange = React.useCallback((changes: NodeChange<FlowNode>[]) => {
     setNodes((current) => applyNodeChanges(changes, current))
@@ -206,6 +328,7 @@ export function InteractiveFlowchart({
 
   return (
     <div
+      ref={boxRef}
       className={`relative w-full min-w-0 self-stretch overflow-hidden bg-background ${fill ? "min-h-0 flex-1" : "h-[min(55vh,390px)] min-h-64 rounded-md"}`}
       aria-label="Interactive flowchart"
     >
@@ -219,6 +342,7 @@ export function InteractiveFlowchart({
         onEdgesChange={readOnly ? undefined : onEdgesChange}
         onConnect={readOnly ? undefined : onConnect}
         onNodeClick={onNodeClick ? (_, node) => onNodeClick(node.id) : undefined}
+        onInit={(instance) => (flowRef.current = instance)}
         fitView
         fitViewOptions={{ padding: 0.22 }}
         nodesConnectable={!readOnly}

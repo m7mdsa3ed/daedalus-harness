@@ -32,7 +32,6 @@ export function ToolSection<T extends { id: string; name: string }>({
   items,
   itemIcon,
   hint,
-  badge,
   inherited,
   own,
   editable,
@@ -48,8 +47,6 @@ export function ToolSection<T extends { id: string; name: string }>({
   items: T[]
   itemIcon?: (item: T) => React.ReactNode
   hint: (item: T) => string
-  /** A short tag after the name — "built-in" — for entries of a different origin. */
-  badge?: (item: T) => string | undefined
   /** Linked by the profile: checked, locked, and not this menu's to clear. */
   inherited: Set<string>
   /** Linked by the thread itself. */
@@ -122,7 +119,6 @@ export function ToolSection<T extends { id: string; name: string }>({
                 from={from}
                 needsAuth={needsAuth(item)}
                 hint={hint(item)}
-                badge={badge?.(item)}
                 onCheckedChange={(checked) => {
                   if (editable) onToggle(item.id, checked === true)
                 }}

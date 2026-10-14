@@ -264,62 +264,23 @@ beside Import in Settings › MCP.
   name, step, index/total, this step's `phase`) — decoded only in `lib/tools/subagents.ts`
   (`workflowInfoOf`), stamped onto the `SubagentItem`, and folded at view time by
   `mergeWorkflowRuns` (`transcript-rows.ts`) into one `workflow-group` row per run, which
-  `WorkflowRun` (`thread-items/rows.tsx`) draws as a **compact preview card that opens the run
-  in a dialog** — instead of N stray subagent rows, and instead of the phase-banded table
-  the card itself used to hold: a run is N whole threads, and a transcript column is the
-  wrong room to read one in (the table fought the panel for width, and a step's events
-  ended up in a pane inside a card inside a transcript). The card answers the passing
-  reader's questions and nothing else: a header (an icon chip in the run's state tint,
-  the run's name, its **fact line**, the state as a word in `WorkflowPill`), **one
+  `WorkflowRun` (`thread-items/rows.tsx`) draws as an **expandable run card** instead of N
+  stray subagent rows: a run is N whole threads, and the transcript keeps the run's shape
+  with its steps instead of sending the reader to another surface. The card answers the
+  passing reader's questions and nothing else: a header (an icon chip in the run's state
+  tint, the run's name, its **fact line**, the state as a word in `WorkflowPill`), **one
   progress bar** (`RunProgress`), and a foot line that live says the stage and step being
   written plus `currentActivity` (the newest call still open — `summarise`'s counts
   describe what a working step did a minute ago) and settled-failed names the step that
-  failed. The whole card is one button (children are spans — a button holds phrasing
-  content), with a standing `Maximize2Icon` hint: hover is not the only way in, just the
-  first one discovered. Its `aria-label` carries the state and the count, because the bar
-  is presentational inside a button and the fact line is spans. **The bar is one bar.**
-  It replaced a segmented track with a slot per stage sized by weighted flex and a
-  "frontier pill" floating over the live slot to name the stage — three mechanisms to say
-  *2 of 9, one failing*, which is what the fact line beside it already says in words; the
-  card is read in passing at the width of a transcript column, and which stage the run is
-  on is said on the foot line, where there is room for it. **The fact line is `RunFact[]`,
-  derived once and drawn twice** (`RunFactsInline` on the card — spans, one truncating
-  row, because the card is a button; `RunFactsBlock` in the dialog header, where there is
-  room to label each figure): the figure leads and the noun follows it, where four
-  dot-joined phrases of equal weight were a sentence to read rather than a reading to
-  take. A failure **count** is one of them, because a run that has moved on from a failure
-  still has to admit to it where the foot line no longer can. Every state colour anywhere
-  comes from one table (`WF_TONE`/`wfTone`, a `chip` and a `bar`), because surfaces each
-  picking their own let a failed step read destructive in one and merely muted in another;
-  it carried a `text`, a `fill` and a `border` too until nothing painted them any more,
-  and a colour nothing paints is a colour that drifts.
-  **The dialog is one scrolling list, top to bottom, and nothing else.** It restates the
-  card's header (it covers the transcript, so it must say which run it is showing) over a
-  single column: a stage is a heading (`WorkflowPhaseHeading` — the name, a rule filling
-  the rest of the line, the elapsed time and its `done/total`), a step is a row
-  (`WorkflowStepRow` — state mark in a tinted square, the definition's step name, a live
-  `currentActivity`, duration and tokens, a chevron), and a pending step is the same row
-  greyed (`WorkflowPendingRow`, trailing `waiting` rather than a blank, since a column of
-  blanks reads as missing data rather than as work not yet done). **Opening a step expands
-  its transcript underneath its own row** — the very same `SubagentBody` a step draws on
-  its own, which is what `SubagentStep` was split around — one at a time, so a run of nine
-  steps still costs one mounted transcript. This is the third shape and the reason the
-  other two went: a board of columns with an overlay pane came first, then a timeline of
-  nodes on a rail with a grid of cards, and both spent the dialog's geometry on *drawing*
-  a sequence that a list states for free, and then needed a second surface (a pane, a Back
-  button) to show a step, because the first surface had been spent on shape. The list has
-  one scroll, one column at every width, one reading order — the order the steps run in,
-  where a responsive grid of cards reordered itself as the dialog was resized — and one
-  way in and out of a step. Progressive disclosure in place, no layout that reflows under
-  the cursor, and a shape that grows as steps arrive are what a CI run view is judged on,
-  and they fall out of the list rather than being fought for on top of it. The dialog is
-  sized to the run now (`md:h-auto` between a floor and the screen, and 52rem rather than
-  72rem): a board had to fill a fixed box or its columns had nothing to stand in, and a
-  run of four steps in a box built for twenty reads as a dialog that failed to load.
-  **Opening the dialog lands on the list and never on a step** — auto-expanding answers a
-  question the reader has not asked and pushes the run off the screen at the moment they
-  asked to see it — though a step opened last time stays open. Every row states its state
-  as `sr-only` text, since the mark that states it is an icon.
+  failed. **The bar is one bar.**
+  The header readings and segmented progress strip remain visible when the card is folded.
+  Expanded, the card offers **Browse**, **Board**, **List**, **Timeline**, and (when a barrier
+  joins parallel steps) **Graph**; the graph is hidden below the panel width where it is
+  readable. A picked step opens within the same card, and Browse/List show step rows inline.
+  The workflow outline is carried with every spawn, so the shape and pending steps are visible
+  before they run. Subagent batches use the same card without a planned outline. There is no
+  separate fullscreen or dialog surface for a run; the transcript remains in place while the
+  reader changes views or opens a step.
   **The shape is drawn before it happens**: the same stamp carries `plan`,
   the whole outline (phases and the step names in them), repeated on *every* spawn — so
   the bar's denominator and the dialog's list show every step of the definition from the
@@ -503,10 +464,35 @@ beside Import in Settings › MCP.
   never a tree**: `serversFor` hands no workflow server to a session with a
   `parentSessionId`, whatever its profile links, and `WorkflowRunner.start` refuses a caller
   that is a step — a step that could start a workflow makes the caps, cancel propagation and
-  restart recovery a tree, and a definition that spawns itself the obvious failure. The
-  tools answer within their wait budget (`run_workflow` ≤55s, then `wait_workflow`
-  long-polls the same route) because an MCP tool timeout is the agent runtime's — codex 60s,
-  Claude Code a hard wall clock — and every one of them is shorter than a pipeline. Children
+  restart recovery a tree, and a definition that spawns itself the obvious failure. **A run
+  starts in the background, and its end is a message, never a poll** — Claude Code's
+  `<task-notification>`. `run_workflow`/`run_script` with no `waitSec` answer at once
+  (`wait=0`), and **every** run is marked `notify` — a `waitSec` included, because a model
+  that passed `waitSec: 1` to check the run started got a run that never said it ended, and
+  the thread sat idle until a person typed "continue". `finishRun` hands the outcome to the parent
+  through the scheduler's `fire` — the one door that queues behind a running turn, starts one
+  on an idle thread and revives a retired one first — so the agent ends its turn and is woken
+  with the result. A `wait_workflow` blocked when the run ends *is* the telling, so nothing is
+  sent after it; neither is the agent's own `cancel_workflow`. A restart cannot prompt (boot
+  recovery runs before adoption), so `recoverAtBoot` writes a one-shot scheduled message the
+  scheduler delivers once it starts. `waitSec` still blocks ≤55s, because an MCP tool timeout
+  is the agent runtime's — codex 60s, Claude Code a hard wall clock.
+
+  **The rest of Claude Code's script surface rides doors that already existed.**
+  `agent(…, {isolation: 'worktree'})` is `manager.create({worktree: true})` — a checkout of
+  the step's own, left in place like any thread's. `agentType` is a saved prompt's handle
+  prefixed to the prompt, which the bridge expands as it does every `@handle` (an unknown one
+  is refused by name). `workflow(nameOrRef, args)` runs a child script inside the same run —
+  one agent counter, its phases drawn under `▸ <name>`, one level. Saved workflows are files
+  in **Claude Code's own directories** (`workflow-saved.ts`: `<project>/.claude/workflows/`
+  and `~/.claude/workflows/` or `$CLAUDE_CONFIG_DIR/workflows/`, keyed by `meta.name`, the
+  project's shadowing the personal one, a write through a symlink refused), so either tool
+  runs what the other saved — `list_workflows`, `save_workflow`, `run_script({name})`.
+  `resumeFromRunId` relaunches a script run on its old script and args unless new ones are
+  given, and an `agent()` call whose key (prompt and options hashed,
+  `WorkflowStepRecord.key`) matches a completed step of the old run answers from it without
+  spawning — by key rather than Claude Code's strict prefix, since an identical call is an
+  identical answer. A cached step spawns nothing, so the card does not draw it. Children
   never push (`hostFor` gates `onTurnEnd`, permission and elicitation on `parentSessionId`:
   a phone told "turn finished" per step is told it five times for one workflow), and the
   idle sweep in the constructor now skips a session mid-turn (`bridge.promptActive`) and
@@ -654,7 +640,12 @@ beside Import in Settings › MCP.
   A profile links them (the provider setup: a gateway's own servers, the skills that go with
   a house style), and a thread picks its own on the draft's composer strip
   (`ThreadToolsMenu` in `components/thread-tools/menu.tsx`, where the profile's show checked and
-  locked, so the thread's picks are exactly the additions). **That control outlives the
+  locked, so the thread's picks are exactly the additions). **MCP servers are the exception
+  to where**: they are picked on the composer's own chip beside the model pill (`McpPicker`,
+  `components/composer/mcp-avatars.tsx`) — its face is the servers' logos, its menu the
+  library as a checklist — on a draft and a started thread alike (staged for the next send),
+  through the same `useThreadToolLinks`; the model menu's Tools group keeps skills and
+  commands only. **That control outlives the
   draft**: the same component, `editable={false}`, sits in the composer's control row beside
   `SessionConfigPopover` for the whole of a started thread and reads the kit back — what the
   agent was spawned with, each entry saying whether it came from the profile or from the

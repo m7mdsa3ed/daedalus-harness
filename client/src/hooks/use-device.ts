@@ -16,7 +16,7 @@ export const MOBILE_BREAKPOINT = 768
 /* `--container-panel-sm`, in px. The CSS half of this question is the
    `@panel-sm:` variant; this is for the few places that must choose a whole
    *tree* rather than restyle one, which a container query cannot do. */
-const PANEL_SM = 640
+export const PANEL_SM = 640
 
 /**
  * Is the box this ref sits in narrower than the panel-sm breakpoint?

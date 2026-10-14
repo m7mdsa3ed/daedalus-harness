@@ -42,14 +42,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   outside Drizzle.
 - **Agents spawn by their globally installed binary, never `npx`** (~0.4s vs ~3.2s, and a
   thread spawns on create, revive and every profile/model change). codex-acp **≥ 2.0.1**,
-  claude-agent-acp **≥ 0.84.0** — the AIR shape below (and `ToolCall.name`, the tool's own
+  claude-agent-acp **≥ 0.89.0** — the AIR shape below (and rules on its `customInstructions` key) (and `ToolCall.name`, the tool's own
   name, which `lib/tools/naming.ts` prefers over a vendor `_meta` block). Claude's
-  `workflow_progress` passthrough is `server/scripts/patch-claude-acp.mjs`, re-run per upgrade.
+  `workflow_progress` passthrough and its `SendMessage` resume fixes (a resumed child is keyed on its
+  launch id, not the SendMessage's, and a load registers the replayed children) are
+  `server/scripts/patch-claude-acp.mjs` (check: `patch-claude-acp.check.mjs`), re-run per upgrade.
   Seeding backfills new fields but **never** replaces name/command/args/env — those are the
   user's, and so are `install`/`icon` (descriptive, not protocol).
 - **What the harness believes about a runtime is a column on its row, never a comparison
   against its id.** `spawnCategories`, `liveConfig`, `quotaProbe`, `personaVia`,
-  `subagentFeed`, `rewindVia`, `workflowsVia`, `workspaceLayout`, `builtinTools`, `sharedProcess`,
+  `rewindVia`, `workflowsVia`, `workspaceLayout`, `builtinTools`, `sharedProcess`,
   `catalogProbe`, `discovery`, `install`, `icon` — a user who repoints `command` at a fork
   repoints these with it, and nothing outside `registry.ts` spells a vendor's tool name,
   config path, install line or id.
@@ -180,8 +182,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   to a provider that rejects it.
 - **Subagents: the store is flat, the transcript is a tree.** Ownership is resolved in one
   place and lands as `parentId`; consumers reading `thread.items` must ignore `parentId`
-  items where the thread's own are meant. OpenCode's children are read off the side of the
-  process, server-side — nothing downstream learns a fourth shape. The Daedalus agent's
+  items where the thread's own are meant. OpenCode 2's children arrive on its own `opencode/session/child_update`, translated on the
+  way in — nothing downstream learns a fourth shape. The Daedalus agent's
   `task` children have stable ids and saved conversation state: use `list_agents` to find a
   child and `send_message` to follow up. A stopped or failed child resumes from its last
   complete model/tool step; a running child rejects a message instead of racing. This resumes
@@ -275,7 +277,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Rules ride the spawn-instruction doors** (`AgentDef.personaVia`, `{personaPrompt}`,
   `{personaFile}` — names are historical): `server/src/rules.ts`, one global block plus one per
   project, plus the spawn trailers. Spawn-time — a change costs a respawn — and backup carries
-  them upsert-per-key.
+  them upsert-per-key. Claude Code's and the Daedalus agent's door is AIR's
+  `_meta.jetbrains.air.customInstructions` (`"air-meta"`, re-sent on new/load/resume; the
+  bridge logs a runtime that never advertised it); **codex stays on `"env"`** because codex-acp reads that key on
+  `session/new` only, so a revived thread would never get a change.
 - **Every agent gets a virtual "Default" profile** (`default:<agentId>`) with no credentials
   and deliberately no models. Never written to `data/`, uneditable.
 - **A draft cannot ask a process that does not exist**: option sets come from a live session
@@ -344,7 +349,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the save path's probe decides.
 - **Workflows are the harness's, except where the runtime says it has its own**
   (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
-  so ours is not offered). A definition is **declarative JSON**, never a script. **Every step is a real thread** on the parent's own profile, agent, model,
+  so ours is not offered). A definition is **declarative JSON**; a script is Claude Code's API,
+  name for name, and its saved workflows live in Claude Code's own `.claude/workflows/`.
+  **A run starts in the background and its end is a message** (`<task-notification>` through
+  the scheduler's `fire`), never a poll the agent has to keep up. **Every step is a real thread** on the parent's own profile, agent, model,
   effort, persona and links. One level, never a tree. Nothing survives a restart.
 - **A run pauses as a state, never as a cancel-and-restart**, and its clocks stand still. A
   restart ends a paused run as it ends a running one.
@@ -499,6 +507,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--harness-composer-width`, so the whole unit breathes on every click in and out of the
   textarea, which is motion the reader did not ask for at the exact moment they are aiming
   at something.
+- **The composer gets out of the way when the reader leaves the tail, and never by itself.**
+  `ThreadView` hands `Composer` the scroller's own pin (`useFollowStream.pinned`) as `collapsed`,
+  so the one fact that shows the scroll-to-end button is also what slides the box down — a
+  transform and an opacity and `inert`, never `hidden`, because **the height it reserves stays**
+  (`--composer-dock-h`) and collapsing must not re-flow a transcript somebody is reading.
+  The card **morphs into a pill** as it goes (a `clip-path` onto the pill's box — a clip moves no
+  layout) and the pill is the way back in place. Coming back is a gesture: the pill, reaching the
+  bottom (which re-pins), and the scroll-to-end button are the same door — **and a fill re-opens it** (`revealed`), because a suggested follow-up, a queued row's
+  Edit or an "Ask about this" has to be seen. A composer that collapsed *itself* — on a narrow
+  panel or a short window — was tried and removed: it took the box away from someone who was
+  typing, on no gesture at all, and left a "Show composer" button where the box had been. A
+  thread with nothing to scroll cannot be unpinned, so a new thread is never the one that leaves;
+  so is the landing console, which has no scroller to ask.
 - **The shelf has a surface of its own** (`--shelf`, `bg-shelf`), derived from `--composer`
   and **darker than it in both modes — which is two declarations, not one**: darker is toward
   the foreground in a light palette and toward the *background* in a dark one, where
@@ -579,9 +600,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Every surface a caret can land in clears the soft keyboard.** The page does not resize
   when one opens (`overlays-content`), so a fixed surface at the bottom is a surface
   *behind* the keys. Ride it with a named recipe from `lib/keyboard-inset.ts` —
-  `KEYBOARD_LIFT`, `KEYBOARD_CENTER`, `KEYBOARD_RISE`, `cn`'d last — never a fresh calc. A
-  Base UI positioner is **padded, not moved** (`useKeyboardCollisionPadding`), and only
-  where the visual viewport did not already shrink, or a flyout rises by two keyboards. A
+  `KEYBOARD_LIFT`, `KEYBOARD_CENTER`, `KEYBOARD_RISE`, `cn`'d last — never a fresh calc.
+  **Edge-to-edge is cleared at the portal, never in a `ui/` component** (shadcn's, which a
+  reinstall reverts): every Base UI surface lands in `[data-base-ui-portal]`, and
+  index.css makes that wrapper the **float box** — the viewport less the status bar, a
+  landscape notch, and the home indicator *or* the keyboard. A flyout's wrapper *clips*,
+  which is what floating-ui collides against and sizes `--available-height` to (no
+  `collisionPadding` anywhere); a dialog's is its containing block, floored above the
+  indicator but not the keyboard, which the dialog rides itself; sheets, drawers and toasts
+  are edge surfaces that pad themselves and are not boxed. Anything sized by hand reads
+  `--float-h`/`--float-w`/`--float-bottom`, never `100dvh`/`100vw`. A
   field on an ordinary form is `lib/keyboard-caret.ts`'s, because the browser's own
   scroll-into-view is the thing `overlays-content` turned off.
 - **The phone has no bottom navigation bar**: the header's sidebar trigger opens the mobile
@@ -934,9 +962,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `StorageProvider`'s** (`storage/provider.ts`: `local` default, others implement the one
   interface and a line in `PROVIDERS`); a row records its provider, so they mix. No FK on
   `parent_id` — delete is a recursive walk that releases bytes only when no other row shares
-  them. The client's one chooser is `FilePicker` over `FileExplorer`: the composer's "From
-  library" (bytes → `File` → the ordinary attachment path) and every logo field's Upload
-  (→ `logoFromFile` → a small `data:` URL on the row) use it.
+  them. **A copy is a row, never bytes** (`copyFile` points at the same key). The client's one
+  surface is `FileExplorer` (`components/files/`: tree, list/grid, details, search, desktop
+  keys and drag-and-drop; how it is drawn is device-local, `explorerPrefs`), and **its preview
+  reuses the workspace Preview panel's converters** (`office-preview.ts`, `Slides`, `Prose`,
+  `Highlighted`) — a blob opened in a tab is only ever an inert type, since a blob URL has the
+  app's origin. Its one chooser is `FilePicker` over it in pick mode: the
+  composer's "From library" (`multiple`; bytes → `File` → the ordinary attachment path) and
+  every logo field's Upload (one; → `logoFromFile` → a small `data:` URL on the row).
 - **Backup is one JSON document and import is one transaction.** Never exported: the server
   token/host/port, the probe cache, `history_*` rows.
 - **Subscription quota is read by asking the runtime's own CLI, out of band**, naming the

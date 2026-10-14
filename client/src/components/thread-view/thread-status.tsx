@@ -101,6 +101,13 @@ export function ThreadStatus({
   const cancellable = !!status.actions?.some((a) => a.kind === "cancel")
   const { slow, waited } = useWaitClock(opening, cancellable)
   const seconds = useSecondsUntil(status.kind === "reconnecting" ? (status.nextAt ?? null) : null)
+  // The backoff is counted from the moment this retry was announced.
+  const retry = status.retry
+  const retryAt = React.useMemo(
+    () => (retry?.delayMs ? Date.now() + retry.delayMs : null),
+    [retry?.attempt, retry?.delayMs] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const retrySeconds = useSecondsUntil(retryAt)
   // A detail folded for one failure must not stay open for the next.
   React.useEffect(() => setOpen(false), [status.kind, status.itemId])
 
@@ -148,7 +155,7 @@ export function ThreadStatus({
   const live = status.tone === "progress" || status.kind === "retrying"
   const text = status.kind === "working" || status.kind === "waiting" ? `${status.headline.replace(/[.…]+$/, "")}…` : status.headline
   const hasBody =
-    opening || !!(detail || status.more || status.install || bar || visible.length || showCopy)
+    opening || !!retry || !!(detail || status.more || status.install || bar || visible.length || showCopy)
   /* One body per family: the opening steps share one, so stepping through them
      moves the text and the badge and does not re-open the box each time. */
   const family = opening ? "opening" : status.kind
@@ -186,6 +193,29 @@ export function ThreadStatus({
               <span className="harness-part-in inline-block rounded-pill bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
                 Step {status.step.n} of {status.step.of}
               </span>
+            )}
+            {retry && (
+              <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
+                {retry.of && (
+                  <span className="flex gap-1" aria-hidden>
+                    {Array.from({ length: retry.of }, (_, i) => (
+                      <span
+                        key={i}
+                        className={cn(
+                          "size-1.5 rounded-full",
+                          i < retry.attempt ? "bg-warning" : "bg-muted-foreground/25",
+                          i === retry.attempt - 1 && !!retrySeconds && "animate-pulse"
+                        )}
+                      />
+                    ))}
+                  </span>
+                )}
+                <span>
+                  Retry {retry.attempt}
+                  {retry.of ? ` of ${retry.of}` : ""}
+                  {retrySeconds ? ` · next try in ${retrySeconds}s` : ""}
+                </span>
+              </div>
             )}
             {bar && (
               <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2 pt-0.5">

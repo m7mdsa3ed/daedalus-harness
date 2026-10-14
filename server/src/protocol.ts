@@ -266,6 +266,9 @@ export interface StagedConfig {
   effort?: string;
   suggestFollowups?: boolean;
   uiBlocks?: boolean;
+  /** The thread's role → model assignment (`sessions.helper_models`). Spawn-time
+      like model and effort: taking it costs a respawn. */
+  helperModels?: { role: string; model: string }[];
   /** The agent's own selectors — the permission mode and every other option
       (its model and effort pickers included) — which no spawn is needed to
       take, only a turn to start or an explicit approval (`approveStaged`). */
@@ -311,6 +314,9 @@ export interface SubagentSpawned {
   subagentSessionId: string;
   name: string;
   task: string;
+  /** The child's full brief, where the runtime sends it (claude-agent-acp's
+      native sessions do; `task` is then a one-line description). */
+  prompt?: string;
   capabilities: { cancel?: boolean; close?: boolean };
   _meta?: Record<string, unknown> | null;
 }
@@ -1100,11 +1106,23 @@ export type ThreadEvent =
       seq: number;
       update: SessionUpdate;
       historyReplay: boolean;
+      /** Original prompt text and refs recovered from the pre-load turn journal. */
+      historyText?: string;
+      historyAttachments?: AttachmentRef[];
       sessionId?: string;
       /** Epoch ms the journal wrote it. A replay is the reader's reload, not
           the moment a step began, so the client times a step from this and
           falls back to its own clock for a journal that predates it. */
       at?: number;
+      /** Epoch ms the journal wrote the **last** row of the run this event
+          stands for (`coalescedPage`) — present only where the read merged a
+          run, and only on a replay. `at` says when a streamed run began and
+          this says when it ended, so a step read back out of the journal is
+          *measured* rather than re-derived: without it a replayed thought had
+          no end to subtract its start from, and every reloaded transcript
+          showed a thought with no duration at all. Live updates never carry
+          it — the client times its own live reads off `at` and its clock. */
+      endAt?: number;
     }
   /** One event for three sources — the `session/new` response, the
       `session/load` response, and any accepted `set_mode`/`set_config_option`.
@@ -1189,6 +1207,9 @@ export type ThreadEvent =
       effort: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
+      /** The thread's helper models, absolute — the row's, so a menu draws the
+          answer rather than the request. */
+      helperModels?: { role: string; model: string }[];
     }
   /** A config change is waiting for the running turn to end, or is no longer
       (`config: null` — it was applied, cancelled, or the process went away).

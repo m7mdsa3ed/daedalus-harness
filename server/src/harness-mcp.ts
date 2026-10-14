@@ -32,7 +32,13 @@ if (!base) {
   process.exit(1);
 }
 
-const server = new McpServer({ name: HARNESS_SERVER_NAME, version: "1.0.0" });
+const server = new McpServer(
+  { name: HARNESS_SERVER_NAME, version: "1.0.0" },
+  {
+    instructions:
+      "Manage this harness itself. Call harness_help to find an operation — no arguments lists them all, `search` filters by name or description, and `tool` returns one operation's exact fields — then harness_run with the operation name and every field in `args` (path, query and body together). It covers projects, profiles, agents, the library (MCP servers, skills, commands, saved prompts), rules, routines, schedules, threads and the task board, on the same routes the app calls.",
+  },
+);
 
 async function call(path: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(`${base}${path}`, {

@@ -452,6 +452,24 @@
   /* The home-indicator inset a surface at the bottom of the shell pads by
      (the composer, a board's list, a settings save bar). */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* ── The float box: where anything floating may stand ──
+     The viewport less the status bar, a landscape notch, and the home
+     indicator *or* the keyboard — the larger, never the sum, because the keys
+     cover the indicator. `100dvh`/`100vw` run under all four under
+     `viewport-fit=cover`. It is applied once, to the portal every Base UI
+     surface lands in (see "The float box, applied" below), so no component
+     names it; these are for what sizes itself against it by hand.
+     `--dialog-bottom` is the box's floor for a dialog: the indicator, but not
+     the keyboard, which a dialog rides itself (`KEYBOARD_CENTER`,
+     `KEYBOARD_RISE`) and would otherwise clear twice. */
+  --float-bottom: max(var(--safe-bottom), var(--keyboard-inset));
+  --float-h: calc(100dvh - var(--safe-top) - var(--float-bottom));
+  --float-w: calc(100vw - var(--safe-left) - var(--safe-right));
+  --dialog-bottom: max(0px, calc(var(--safe-bottom) - var(--keyboard-inset)));
 
   /* ── The transcript's three work accents ──
      One hue per act — a thought, a shell command, a tool call — worn by the
@@ -1935,13 +1953,27 @@ html[data-window-controls-overlay="true"] {
   @apply me-1.5 align-middle accent-primary;
 }
 
-/* Thinking is secondary to the conversation: smaller and quieter than an
-   answer, including headings and emphasis inside its markdown. */
+/* Thinking stays muted and assistant-sized; a subtle tint plus the small label
+   separates it from the main response without a border or transcript gutter. */
+.thought-surface {
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--muted-foreground) 4%, transparent);
+  padding: 0.5rem 0.75rem;
+  color: var(--muted-foreground);
+}
 .thought-detail .prose,
 .thought-detail .prose :where(*) {
   color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 1.55;
+}
+
+/* Folded thoughts show three lines and fade the final line as a continuation cue. */
+.thought-preview .prose {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
 }
 
 /* A path, a URL or a hash in running text is a single unbreakable token, and
@@ -2245,15 +2277,16 @@ html .dv-right-actions-container {
    to a rectangle.
 
    **Four corners, in the frame's own air.** The card is rounded on every
-   corner and keeps the frame's gutter on the right and the bottom as well
+   corner and keeps the frame's gutter on all four sides
    (`--app-frame-gap`, the same air the column keeps over the header row and
    the card under the strip): a corner that runs into the window's edge is a
    corner the reader never sees, and a card with two square corners stopped
-   reading as a thing standing on the ground. The left stands on the sidebar's
-   own edge — the variant's `ml-2` arrives there when it is closed — and
-   between two groups split side by side it is the 4px the second one's card
-   keeps on its left (`.dv-horizontal` below), which is also the only place
-   two cards can meet.
+   reading as a thing standing on the ground. The left was 0, trusting the
+   variant's `ml-2` — but the inset's margin rule above zeroes that, so in a
+   browser the card sat flush on the left with air on the other three (Electron
+   zeroes the gap, which hid it). Between two groups split side by side it is
+   the 4px the second one's card keeps on its left (`.dv-horizontal` below),
+   which is also the only place two cards can meet.
 
    Below `md` the card keeps the same relationship on *less* air: no frame gap
    and no side gutters — a phone has no width to spend on a margin and a
@@ -2282,8 +2315,8 @@ html .dv-groupview > .dv-content-container {
     @apply shadow-sm;
     border-radius: var(--radius-xl);
     /* The same air under the strip as the column has over the header row, and
-       the frame's gutter on the right and bottom so those corners read. */
-    margin: var(--app-frame-gap) var(--app-frame-gap) var(--app-frame-gap) 0;
+       the frame's gutter on every side so all four corners read. */
+    margin: var(--app-frame-gap);
   }
   html .dv-horizontal > .dv-view-container > .dv-view:not(:first-child) .dv-content-container {
     margin-left: 4px;
@@ -2475,6 +2508,16 @@ html {
   --dock-tab-duration: 240ms;
 }
 
+/* ── Focus mode (`lib/focus-mode.ts`) ──
+   The narrow strip's hide (below), at every width, for the outer dock only: the thread's own
+   dock (`.dock-nested`) is about the thread in front and keeps its tabs. The
+   strip's +/list go too — they are the way to every other tab. Hidden, never
+   closed: the panels stay mounted and connected. */
+html [data-focus-mode] .dv-tab.dv-inactive-tab:not(.dock-nested *),
+html [data-focus-mode] .dv-right-actions-container:not(.dock-nested *) {
+  display: none;
+}
+
 /* ── Narrow: the strip is one tab, the rest are in the list ──
    A phone's strip draws the tab you are on and nothing else; every other tab
    lives in the tab list at the strip's end (`tab-actions.tsx`, the switcher
@@ -2493,6 +2536,7 @@ html {
 
    Keyed on dockview's own `dv-active-tab`/`dv-inactive-tab`, the class it
    already toggles on the element that owns the width. */
+
 @media (width < 48rem) {
   html .dv-tab.dv-inactive-tab {
     display: none;
@@ -3208,6 +3252,67 @@ html .dock-tab [data-tab-action="pin"] {
 .task-editor ul[data-type="taskList"] li[data-checked="true"] > div {
   color: var(--muted-foreground);
   text-decoration: line-through;
+}
+
+/* ── The float box, applied ──
+   Every Base UI surface — menu, select, combobox, tooltip, popover, hover
+   card, dialog — is portaled into a `<div data-base-ui-portal>` on `<body>`,
+   the one place all of them pass through. So that wrapper is made the float
+   box (`--float-*`, above) and no `components/ui/` file carries any of this:
+   those are shadcn's, and a reinstall takes back whatever was added to them.
+
+   - **A flyout's wrapper** (it holds a positioner, which carries `data-side`)
+     is a fixed box that *clips*. floating-ui collides against a clipping
+     ancestor and sizes `--available-height` to it, so a menu stays out from
+     under the status bar, clear of a notch and above the keys without a
+     `collisionPadding` on any positioner. The clip is what makes it count;
+     `overflow-clip-margin` lets the shadow paint past it where supported. A
+     modal menu's internal backdrop is `fixed`, and this wrapper is not its
+     containing block, so it still covers the whole screen. On iOS the visual
+     viewport has already lost the keyboard; the clip rect is intersected with
+     it, never added to it, so the keys are not cleared twice.
+   - **A dialog's wrapper** is the same box as a containing block
+     (`contain: layout`), floored at `--dialog-bottom` because a dialog rides
+     the keyboard itself. `top-1/2`, `inset-0` and `100%` inside it measure
+     the box, so a centred dialog centres below the status bar and its width
+     clears a notch. Its backdrop is stretched back out to the screen's edges.
+   - **Sheets, drawers and toasts are not boxed**: they are edge surfaces that
+     pad themselves by `--safe-*`, and boxing them would pad them twice.
+
+   A portal opened from inside a dialog lands in the dialog's wrapper, and the
+   box it would stand in is the one it is already in — so it is set back to
+   that box's edges. Layered as `base` so a utility on a child still wins. */
+@layer base {
+  [data-base-ui-portal]:has(> [data-side]),
+  [data-base-ui-portal]:has(> [data-slot="dialog-content"], > [data-slot="alert-dialog-content"]) {
+    position: fixed;
+    inset: var(--safe-top) var(--safe-right) var(--dialog-bottom) var(--safe-left);
+    z-index: 50;
+    pointer-events: none;
+  }
+  [data-base-ui-portal]:has(> [data-side]) {
+    bottom: var(--float-bottom);
+    overflow: clip;
+    overflow-clip-margin: 4rem;
+  }
+  [data-base-ui-portal]:has(> [data-slot="dialog-content"], > [data-slot="alert-dialog-content"]) {
+    contain: layout;
+  }
+  :where([data-base-ui-portal]) > * {
+    pointer-events: auto;
+  }
+  [data-base-ui-portal]:has(> [data-slot="dialog-content"], > [data-slot="alert-dialog-content"]) [data-base-ui-portal] {
+    inset: 0;
+  }
+  [data-base-ui-portal]:has(> [data-slot="dialog-content"], > [data-slot="alert-dialog-content"]) [data-base-ui-portal]:has(> [data-side]) {
+    bottom: calc(var(--float-bottom) - var(--dialog-bottom));
+  }
+}
+/* Unlayered: it has to beat the overlay's own `inset-0` utility. */
+[data-base-ui-portal]:has(> [data-slot="dialog-content"], > [data-slot="alert-dialog-content"])
+  > :is([data-slot="dialog-overlay"], [data-slot="alert-dialog-overlay"]) {
+  inset: calc(-1 * var(--safe-top)) calc(-1 * var(--safe-right)) calc(-1 * var(--dialog-bottom))
+    calc(-1 * var(--safe-left));
 }
 
 /* The device's safe-area insets as padding utilities — the home indicator, a

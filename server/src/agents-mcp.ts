@@ -26,7 +26,13 @@ if (!url) {
 const DEFAULT_WAIT_SEC = 45;
 const MAX_WAIT_SEC = 55;
 
-const server = new McpServer({ name: AGENTS_SERVER_NAME, version: "1.0.0" });
+const server = new McpServer(
+  { name: AGENTS_SERVER_NAME, version: "1.0.0" },
+  {
+    instructions:
+      "Ask another (profile, agent) pair to do a task and read its reply. Call list_agents for the pairs, and — unless the user named the profile themselves — ask the user which one to use before ask_agent, because some profiles have missing or broken credentials. The asked agent runs in a new thread and sees only the brief you give it, so make that brief complete; wait_agent follows a still-running ask and cancel_agent stops one.",
+  },
+);
 
 async function call(path: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(`${url}${path}`, {

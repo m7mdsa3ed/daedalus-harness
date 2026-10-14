@@ -467,7 +467,7 @@ export function LogoUpload({ value, onChange }: { value: string; onChange: (valu
         onOpenChange={setOpen}
         accept="image/*"
         title="Choose a logo"
-        onPick={(record) =>
+        onPick={([record]) =>
           void files
             .fetchFile(record)
             .then(logoFromFile)

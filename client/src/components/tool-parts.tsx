@@ -58,6 +58,7 @@ import { splitOpenuiFences } from "@/lib/openui/fences"
 import { FileLink } from "@/components/file-link"
 import { FilePreviewContext, projectPath } from "@/lib/file-preview"
 import { USER_CHIP_COMPONENTS, remarkUserChips } from "@/components/thread-items/user-chips"
+import { LinkChip } from "@/components/inline-chip"
 
 export const KIND_LABELS: Record<string, string> = {
   read: "read",
@@ -247,16 +248,30 @@ const REMARK = [remarkGfm]
    in-place would replace the app, and the turn behind it is not something you
    can navigate back to cheaply. Only absolute http(s) links: an in-page anchor
    (a GFM footnote is one) must stay in the page. */
+/* A link is the composer's chip, everywhere `Prose` draws one: the pill says
+   the page's title (fetched server-side, `link-preview.ts`) over its host, and
+   opens in a new tab. Only a plain-text label chips — an authored `[**bold**]
+   (https://…)` keeps its own markup as an ordinary link rather than losing it
+   to a label string. */
 const MarkdownLink = ({
   node: _node,
   href,
+  children,
   ...props
 }: React.ComponentProps<"a"> & { node?: unknown }) =>
-  /^https?:\/\//i.test(href ?? "") ? (
-    <a {...props} href={href} target="_blank" rel="noreferrer noopener" />
-  ) : (
-    <a {...props} href={href} />
-  )
+  /^https?:\/\//i.test(href ?? "")
+    ? typeof children === "string" || children === undefined ? (
+        <LinkChip url={href ?? ""} text={children} />
+      ) : (
+        <a {...props} href={href} target="_blank" rel="noreferrer noopener">
+          {children}
+        </a>
+      )
+    : (
+        <a {...props} href={href}>
+          {children}
+        </a>
+      )
 
 /* A fenced code block floats a copy affordance over its corner. The text is
    read off the rendered <pre> at click time — rehype-highlight has already
@@ -467,7 +482,7 @@ export function PlanFullscreen({
       {/* Nearly the whole window: a plan is the one payload where the limit on
           reading it was the room, and `pr-12` clears the dialog's own close
           button the way the workflow dialog's header does. */}
-      <DialogContent className="flex h-[calc(100svh-2rem)] w-[min(64rem,calc(100vw-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)]">
+      <DialogContent className="flex h-[calc(var(--float-h)-2rem)] w-[min(64rem,calc(var(--float-w)-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[calc(var(--float-w)-2rem)]">
         <div className="flex shrink-0 items-center gap-2.5 border-b border-border/40 py-3 pr-12 pl-4">
           <span
             aria-hidden

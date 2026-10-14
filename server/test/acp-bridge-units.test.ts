@@ -22,6 +22,7 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as acp from "../src/acp.js";
+import { translateOpencodeChildUpdate, translateSubagentUpdate, type KnownSubagent } from "../src/subagent-update.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(testDir, "../src/acp-bridge.ts"), "utf8");
@@ -287,6 +288,52 @@ test("every runtime symbol the server uses is still exported by the SDK", () => 
     return cursor === undefined;
   });
   assert.deepEqual(missing, [], `SDK no longer exports: ${missing.join(", ")}`);
+});
+
+test("the RFD's subagent_update is said as the draft pair the readers know", () => {
+  const known = new Map<string, KnownSubagent>();
+  const kinds = (update: Record<string, unknown>) =>
+    translateSubagentUpdate("root", { sessionUpdate: "subagent_update", sessionId: "kid", ...update }, known).map(
+      (n) => `${n.sessionId}:${n.update.sessionUpdate}:${"state" in n.update ? n.update.state : "name" in n.update ? n.update.name : n.update.usage.totalTokens}`,
+    );
+  // First sight announces it, on the parent; a running beat says nothing new.
+  assert.deepEqual(kinds({ title: "Explore", description: "look", state: { state: "running" } }), [
+    "root:subagent_spawned:Explore",
+  ]);
+  assert.deepEqual(kinds({ state: { state: "requires_action" } }), []);
+  // Idle ends it, by its stop reason; an omitted title is unchanged.
+  const usage = { totalTokens: 12, inputTokens: 10, outputTokens: 2 };
+  assert.deepEqual(kinds({ state: { state: "idle", stopReason: "end_turn", usage } }), [
+    "root:_daedalus/subagent_usage:12",
+    "root:subagent_state_update:completed",
+  ]);
+  assert.deepEqual(kinds({ state: { state: "unknown" } }), []);
+  // Woken by a follow-up: announced again (the client upserts), keeping its name.
+  assert.deepEqual(kinds({ state: { state: "running" } }), ["root:subagent_spawned:Explore"]);
+  assert.deepEqual(kinds({ state: { state: "idle", stopReason: "error" } }), ["root:subagent_state_update:failed"]);
+  // A rename while idle restates the spawn and then the ending it already had.
+  assert.deepEqual(kinds({ title: "Explorer", state: { state: "idle", stopReason: "cancelled" } }), [
+    "root:subagent_spawned:Explorer",
+    "root:subagent_state_update:cancelled",
+  ]);
+});
+
+test("OpenCode 2's child_update is said as the RFD sequence the feed used to synthesise", () => {
+  // Shapes as `opencode acp` 2.0.26 sent them in a live run.
+  const head = { rootSessionId: "ses_root", childSessionId: "ses_kid", parentSessionId: "ses_root", depth: 1, title: "Run ls and report" };
+  const said = (extra: Record<string, unknown>) =>
+    translateOpencodeChildUpdate({ ...head, ...extra }).map((n) => `${n.sessionId}:${n.update.sessionUpdate}`);
+  assert.deepEqual(said({ type: "status", status: "created" }), ["ses_root:subagent_spawned"]);
+  assert.equal(translateOpencodeChildUpdate({ ...head, type: "status", status: "created" })[0].update.name, "Run ls and report");
+  assert.deepEqual(said({ type: "status", status: "running" }), []);
+  assert.deepEqual(said({ type: "update", update: { sessionUpdate: "tool_call", toolCallId: "ses_kid:call_1", title: "Run ls and report: shell" } }), [
+    "ses_kid:tool_call",
+  ]);
+  const ending = (status: string) => translateOpencodeChildUpdate({ ...head, type: "status", status })[0]?.update.state;
+  assert.equal(ending("completed"), "completed");
+  assert.equal(ending("interrupted"), "cancelled");
+  assert.equal(ending("failed"), "failed");
+  assert.deepEqual(translateOpencodeChildUpdate({ type: "status" }), [], "a frame with no child is nobody's");
 });
 
 test("the method table still names the wire strings the fake agent answers to", () => {

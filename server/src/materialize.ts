@@ -116,6 +116,31 @@ export function materializeModelAllowlist(cwd: string, layout: WorkspaceLayout, 
   else rmSync(manifestPath, { force: true });
 }
 
+/* ── Subagent role definitions, taken back ──
+ *
+ * Claude Code once got the thread's helper models as one
+ * `<cwd>/.claude/agents/<role>.md` per role. Helper models are now the daedalus
+ * runtime's alone (docs/model-roles.md), so all that is left is removing the
+ * files that wrote — marker-guarded, so a subagent the user wrote by hand in the
+ * same directory is never touched.
+ *
+ * ponytail: runs on every spawn of a runtime with a workspace layout, a readdir
+ * of one directory; delete it once installs that wrote these have rolled over.
+ */
+export function sweepSubagentRoles(cwd: string, layout: WorkspaceLayout): void {
+  const dir = join(cwd, layout.dir, "agents");
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith(".md")) continue;
+    const path = join(dir, entry);
+    try {
+      if (lstatSync(path).isFile() && readFileSync(path, "utf8").includes(MANAGED_MARKER)) rmSync(path);
+    } catch {
+      // unreadable entry — not ours, leave it alone
+    }
+  }
+}
+
 /* The skills directory is shared with symlinks the user made by hand, so —
    like the commands sweep and its marker below — only links this harness wrote
    are ours to delete. A manifest in the directory records their names; links

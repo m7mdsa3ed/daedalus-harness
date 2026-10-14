@@ -45,8 +45,8 @@ export function makeThreadCallbacks(
   const { send, sendStream, flush } = sink
   const ctx: FoldContext = { host, sink, owner, carried: [], attachedArchived: false }
   return {
-    onUpdate: (update, historyReplay, sessionId, at) => {
-      sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId, at })
+    onUpdate: (update, historyReplay, sessionId, at, historyText, historyAttachments, endAt) => {
+      sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId, at, historyText, historyAttachments, endAt })
       // `at` is set only while catching up, so this is the live stream alone.
       if (at === undefined && !historyReplay) toolStepCue(update)
     },
@@ -219,8 +219,8 @@ export function makeThreadCallbacks(
        what ends this device's optimism about it: the row moves and the
        overlay the menu was drawing from is dropped in the same commit, so
        the value never flickers between the two. */
-    onSpawnConfig: (profileId, model, effort, suggestFollowups, uiBlocks) => {
-      send({ type: "spawn-config", id, profileId, model, effort, suggestFollowups, uiBlocks })
+    onSpawnConfig: (profileId, model, effort, suggestFollowups, uiBlocks, helperModels) => {
+      send({ type: "spawn-config", id, profileId, model, effort, suggestFollowups, uiBlocks, helperModels })
       send({ type: "pending-config", id, patch: null })
     },
     onStagedConfig: (config) => send({ type: "staged-config", id, config }),

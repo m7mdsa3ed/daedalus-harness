@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, ilike, inArray, isNull } from "drizzle-orm";
 
 import { db, files as table } from "./db/index.js";
 import { HttpError } from "./http-error.js";
@@ -50,13 +50,69 @@ async function freeName(parentId: string | null, wanted: string, except?: string
   }
 }
 
+/** A listed row; a folder also says how many entries sit directly in it. */
+export type ListedRow = FileRow & { childCount?: number };
+
 /** Folders first, then by name — the order a file explorer draws. */
-export async function listFolder(parentId: string | null): Promise<FileRow[]> {
+export async function listFolder(parentId: string | null): Promise<ListedRow[]> {
   await requireFolder(parentId);
   const rows = await db.select().from(table).where(inFolder(parentId));
-  return rows.sort((a, b) =>
-    a.kind !== b.kind ? (a.kind === "folder" ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true }),
+  const folderIds = rows.filter((row) => row.kind === "folder").map((row) => row.id);
+  const counts = new Map(
+    folderIds.length === 0
+      ? []
+      : (
+          await db
+            .select({ parentId: table.parentId, n: count() })
+            .from(table)
+            .where(inArray(table.parentId, folderIds))
+            .groupBy(table.parentId)
+        ).map((row) => [row.parentId, row.n] as const),
   );
+  return rows
+    .map((row) => (row.kind === "folder" ? { ...row, childCount: counts.get(row.id) ?? 0 } : row))
+    .sort((a, b) =>
+      a.kind !== b.kind ? (a.kind === "folder" ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
+}
+
+export type FolderNode = { id: string; parentId: string | null; name: string };
+
+/** Every folder, flat — the explorer's tree pane and its "Move to" list are
+    drawn from this one read rather than a request per expanded level. */
+export async function listFolders(): Promise<FolderNode[]> {
+  return db
+    .select({ id: table.id, parentId: table.parentId, name: table.name })
+    .from(table)
+    .where(eq(table.kind, "folder"));
+}
+
+/** Names containing `query`, anywhere in the library, each with the path of
+    the folder it sits in (root → parent) so a result can say where it is. */
+export async function searchFiles(query: string, limit = 200): Promise<(FileRow & { path: { id: string; name: string }[] })[]> {
+  const needle = query.trim();
+  if (!needle) return [];
+  const pattern = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const [rows, folders] = await Promise.all([
+    db.select().from(table).where(ilike(table.name, pattern)).limit(limit),
+    listFolders(),
+  ]);
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const pathTo = (id: string | null) => {
+    const path: { id: string; name: string }[] = [];
+    for (let cursor = id, guard = 0; cursor && guard < 100; guard++) {
+      const folder = byId.get(cursor);
+      if (!folder) break;
+      path.unshift({ id: folder.id, name: folder.name });
+      cursor = folder.parentId;
+    }
+    return path;
+  };
+  return rows
+    .map((row) => ({ ...row, path: pathTo(row.parentId) }))
+    .sort((a, b) =>
+      a.kind !== b.kind ? (a.kind === "folder" ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
 }
 
 /** Root → the folder itself, for a breadcrumb. */
@@ -150,6 +206,37 @@ export async function updateFile(id: string, patch: { name?: string; parentId?: 
   const name = await freeName(parentId, cleanName(patch.name ?? row.name), id);
   await db.update(table).set({ name, parentId, updatedAt: Date.now() }).where(eq(table.id, id));
   return { ...row, name, parentId, updatedAt: Date.now() };
+}
+
+/** A copy into `parentId` (a folder copies everything under it). Bytes are
+    never written again: the new row points at the same key, and `removeFile`
+    releases them only once no row does. */
+export async function copyFile(id: string, parentId: string | null): Promise<FileRow> {
+  const row = await getFile(id);
+  if (!row) throw new HttpError("no such file", 404);
+  await requireFolder(parentId);
+  if (row.kind === "folder" && (await pathOf(parentId)).some((step) => step.id === id)) {
+    throw new HttpError("a folder cannot be copied into itself", 400);
+  }
+  const copyOne = async (source: FileRow, into: string | null): Promise<FileRow> => {
+    const now = Date.now();
+    const copy: FileRow = {
+      ...source,
+      id: randomUUID(),
+      parentId: into,
+      name: await freeName(into, source.name),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.insert(table).values(copy);
+    if (source.kind === "folder") {
+      for (const child of await db.select().from(table).where(eq(table.parentId, source.id))) {
+        await copyOne(child, copy.id);
+      }
+    }
+    return copy;
+  };
+  return copyOne(row, parentId);
 }
 
 /** A folder takes everything under it with it; each file's bytes are released

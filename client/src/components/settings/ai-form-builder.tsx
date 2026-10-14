@@ -170,7 +170,7 @@ function BuilderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(88dvh,54rem)] flex-col gap-4 overflow-hidden sm:max-w-6xl">
+      <DialogContent className="flex h-[min(calc(var(--float-h)-2rem),54rem)] flex-col gap-4 overflow-hidden sm:max-w-6xl">
         <DialogHeader className="pr-8">
           <DialogTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" /> Build {title}</DialogTitle>
           <DialogDescription>Describe what you want. The assistant uses this form's schema and current values; review the JSON before applying it. Change the model in Settings, AI helpers.</DialogDescription>

@@ -410,37 +410,22 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   The same outline has four other readings, picked per card: **Board** (a
   column per phase of step cards, pending ones dashed), **List** (a numbered
   phase stepper with every step's row inline), **Timeline** (a bar per step on
-  the run's own clock, start to last activity) and **Graph** (wide panels, and
-  only where a barrier joins several steps). A subagent step also keeps
+  the run's own clock, start to last activity) and **Flowchart** (Start → phases → End,
+  top to bottom so it reads in a narrow panel; a running node lists its latest three calls,
+  live, and a settled one its report on three lines — `stepResultOf`, which the board's
+  cards also show for a finished step). A subagent step also keeps
   its newest three child rows under the folded header by default — a separate
   preview, not a disclosure of the brief/report — with its reader-global view
   option to hide that preview; opening the row still reveals the full rail.
   Native workflow transcript previews read at most the recent steps while closed
   and the full transcript when opened. Steps the runner has not spawned yet are
   pending rows, so the run's shape is whole from the first spawn and does not
-  change under the reader. **The card also opens fullscreen** — a `Maximize2Icon`
-  in its header — as a **morph**: `ui/morphing-dialog.tsx` (adapted from the shadcn
-  registry's `@motion-primitives/morphing-dialog`) gives the card and the panel one
-  `layoutId`, so the card grows into a panel inset from the window (not edge to edge)
-  and shrinks back into it. The card stays mounted and keeps its shape while the panel
-  is up — unmounting its body would move the transcript under the morph — and the panel's
-  contents fade in after the box lands, because the box is scaled from the card's rect
-  and would stretch them. The same component opens the openui `Flowchart` (a corner
-  button; the panel's chart is a fresh sketch, so an arrangement made there is gone on
-  close). It is not `ResponsiveDialog`, which has no fullscreen mode any more and gives
-  a phone no swipe-to-dismiss here. The panel shares the card's view and
-  picked step, so it continues the reading rather than restating it, and it is not
-  a second design: the card's expanded panel and the dialog's body are one
-  `RunBody`, and the head they share is one `RunHead` (a disclosure inline, a
-  plain header in the dialog, which has nothing to fold). The panel is the
-  `@container` the board and the graph inside it resolve `@panel-*` against,
-  because a portal leaves the panel behind — a run confined to the transcript
-  column was never wide enough to draw the graph. It is a reader, never a form. **A run whose barrier joins several steps opens on a
-  Graph view** (List is the toggle's other half) (`workflow-graph.tsx`, lazy, `@panel-md` and up): phases as columns, a
-  join dot between two wide phases, node borders by step state, a live clock on a running node, a clicked node opening
-  as the same step row under the graph. It draws **phase joins only** — the outline
-  carries no `dependsOn`, so an edge inside a phase is never guessed — and a chain, a
-  one-phase run or a batch gets no toggle, because the list already is that line.
+  change under the reader. **The run stays in the transcript**: its views and
+  picked step expand inline. It is a reader, never a form. The **Flowchart**
+  (`workflow-graph.tsx`, lazy) draws phases as rows, a join dot between two wide phases,
+  node borders by step state, a live clock on a running node, a clicked node opening as the
+  same step row under the drawing. It draws **phase joins only** — the outline carries no
+  `dependsOn`, so an edge inside a phase is never guessed.
   This replaced a preview card (icon tile,
   state pill, progress bar, fact line, live foot) over a modal dialog that
   restated all five and then drew its own step rows, phase rules, tone table and
@@ -462,6 +447,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`thoughtPreview`), clipped from the front because the end is the part that is new.
   Settled, the title is the opening line as before. Derived at view time from position,
   not from a flag in the store: the reducer never marks a thought done.
+  **A settled step says how long it took, and both ends come from the journal.** The
+  ticker is this device's and dies with the mount that started it, so a reloaded
+  transcript had a start and no end and said nothing: a thought now reads the merged
+  run's `at` and `endAt` (see the replay section of `docs/protocol.md`), and a tool call
+  the stamps on the update that opened it and the one that settled it
+  (`ToolItem.startedAt`/`endedAt`). `StepRow` draws whichever pair it was given, through
+  the same 2s gate and the same `formatElapsed` as the ticking one, so a step reads the
+  same live and reloaded — and says nothing where its runtime never said an ending
+  (a call still open when the turn ends, a session/load replay, whose stamps are the
+  reload's rather than the step's).
   **Its detail is capped — `THOUGHT_MAX_H`, a fraction of `--panel-h`, less of a narrow
   panel than a roomy one (`@panel-sm:`, the container query)** — because an unbounded
   reasoning block pushes everything after it off the screen, and a fixed cap is wrong in
@@ -546,11 +541,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   stamping on it would move a thread to the top of the list for having been
   scrolled. Rows written before the column existed read 0 and are backfilled
   from the journal's own `max(at)` in `reload`, once, rather than by a migration.
-  Rows are one line and title-only: a running turn
-  **shimmers the title** (`harness-shimmer`, the same band as the working line and a live
-  thought), a thread waiting on you gets an amber dot at the trailing edge; agent,
-  profile, model, project, start time and — when it says something the start
-  time does not — last active live in `ThreadInfoCard` — the
+  Rows are two lines and title-first: the title wears the running spinner in
+  its trailing slot and an amber badge for a thread waiting on you, and the
+  quiet second line under it carries the agent's own mark, the project and when
+  the thread last spoke (the mark is the agent's alone — the tab's paired
+  agent-over-project stack needs the 28px tab slot, not this line's). The rest —
+  profile, model, start time and, when it says something the start time does
+  not, last active — lives in `ThreadInfoCard` — the
   header of the row's ⋯ dropdown (it opens from the ⋯, never on hover), which
   carries the row's actions beside the reading; the right-click menu and, on a phone, long press
   open the same action list. Every row, label and group draws from
@@ -628,6 +625,22 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   excerpts ("Ask about this" on a transcript selection) are inline quote chips, *in* the box, and
   `editor-text.ts` maps string offsets to editor positions so every caret reader is unchanged
   (checked by `editor-text.check.mjs`).
+- **The composer can be *away*, and away is the scroller's answer, never its own**: `ThreadView`
+  passes `collapsed={!follow.pinned}` — the pin `useFollowStream` owns, the same state that reveals
+  the scroll-to-end button — so a reader who scrolls away from the tail gets the transcript back and
+  a reader who reaches it gets the box back, with **no control of its own between the two**: the
+  bottom of the transcript and the scroll-to-end button are both the reader's own gesture.
+  It is drawn away as `opacity-0 translate-y-6`, `pointer-events-none` and `inert`, **never
+  `hidden`**, because this element is what `--composer-dock-h` is measured from — the transcript's
+  bottom padding and its `scroll-padding-bottom` are both read off it — so dropping it from the flow
+  would re-flow the transcript under somebody mid-scroll *and* shrink the very distance to the bottom
+  that decided the collapse. `revealed` is the one exception: a fill from outside the box (a
+  suggested follow-up, a queued row's Edit, an "Ask about this", the prompt enhancer's rewrite, the
+  Preview's picked element) re-opens it, because those words have to be seen, and the box is handed
+  back to the scroll the moment the reader is at the tail again. **Nothing here collapses by
+  itself** — it did briefly, on a narrow panel (`useIsNarrow`) or a short window, which took the box
+  away from someone who was typing with no gesture behind it and left a "Show composer" button where
+  the box had been.
 - **The shelf has a floor: `ComposerStrip`'s `footer`, the one row that is always there**
   (`DraftScopeRow` in `components/draft-config.tsx`): the project this thread runs in at the
   row's start, and at its **end** a cluster of readings — the tools it carries
@@ -899,9 +912,26 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   - `KEYBOARD_LIFT` (a transform) for a surface whose reserved height must not move with
     it: the composer, whose docked height the transcript pads by (`--composer-dock-h`,
     measured from offsetHeight), so a `bottom` change would drag the transcript with it.
-  - `KEYBOARD_CENTER` for a centred popup — `ui/dialog.tsx` and the desktop half of
+  - `KEYBOARD_CENTER` for a centred popup — the desktop half of
     `ui/responsive-dialog.tsx` — which stays centred in what is *left* above the keyboard,
     and caps its height there too. A dialog is opened to be typed into more often than not.
+- **The status bar, a notch and the home indicator are cleared at the portal, not in the
+  components.** `viewport-fit=cover` draws the page under all three, and every Base UI
+  surface is portaled into a `<div data-base-ui-portal>` on `<body>` — so index.css ("The
+  float box, applied") makes *that* the float box, and no `components/ui/` file carries any
+  of it (they are shadcn's, and a reinstall takes back whatever was added). A **flyout's**
+  wrapper (it holds a positioner, `data-side`) is a fixed box with `overflow: clip`:
+  floating-ui collides against a clipping ancestor and sizes `--available-height` to it, so
+  no positioner needs a `collisionPadding`, and its floor is `--float-bottom` (indicator or
+  keyboard). A **dialog's** wrapper is the same box as a containing block
+  (`contain: layout`), floored at `--dialog-bottom` (the indicator, *not* the keyboard,
+  which `KEYBOARD_CENTER`/`KEYBOARD_RISE` already clear), so `top-1/2` and `100%` measure
+  the box; its backdrop is stretched back to the screen's edges. **Sheets, drawers and the
+  toasts are not boxed** — edge surfaces that pad themselves by `--safe-*`. A portal opened
+  inside a dialog lands in the dialog's wrapper and is set back to its edges. Anything that
+  sizes itself by hand (a full-window viewer, a flyout's width cap) reads `--float-h`,
+  `--float-w`, `--float-bottom`; the aside window, placed in JS outside any Base UI portal,
+  reads the same clearance as numbers from `lib/safe-area-inset.ts`.
   - `KEYBOARD_RISE` (a `bottom`) for a bottom-anchored surface that owns its box: the
     mobile sheet, `ui/sheet.tsx`, `ui/drawer.tsx`, the toast viewport. It has to be the
     edge and not a transform, because the height cap is measured from that edge — a sheet
@@ -1112,14 +1142,19 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   device-local `desktop.quickEntry`, default `Alt+Space`, `""` = off). Main registers
   nothing on its own: the renderer re-sends it on every boot. A taken or unparsable
   accelerator comes back as `{ok:false, error}` and is drawn on the row — never thrown.
-- **A popout is one thread and no shell** (`lib/popout.ts`, tab menu "Open thread in its
-  own window", sent threads only). It shares the main window's origin, so it shares every
-  device-local store — which is why it mounts no dock (and `saveLayout` refuses in it
-  anyway), skips the boot's draft restore/prune and `refreshSessions`' composer-draft prunes
-  (its store holds none of the main window's drafts, so it would delete their text), and
-  raises no notifications (the main window already does). The flag is a process argument
-  (`desktop.popout`) as well as `?popout=1`, so a reload after something navigated the URL
-  still knows what window it is.
+- **"Open thread in its own window" opens a full workspace** (`lib/popout.ts`): it uses
+  `AppShell` and the same dock-backed `ChatPanel`/`PanelContainer` path as the main window, so
+  its sidebar, thread list, search, tabs and page routes work there too. The initial URL opens
+  the requested thread in its dock; opening another thread navigates or focuses tabs normally.
+  Since Electron windows share an origin, a stable `desktop.popoutId` scopes this window's
+  dock layout, saved layouts, draft rows, composer text, long-paste bodies and attachment refs;
+  it cannot read or overwrite the main window's workspace/drafts, and refresh only prunes its
+  own namespaced data. System notifications stay owned by the main window to avoid duplicates,
+  while worker notification clicks can navigate this workspace. The identity survives route
+  changes through the preload process argument. The native window stays hidden until
+  `ready-to-show`, with a four-second fallback and load-failure reveal; each reveal nudges the
+  bounds by one pixel and restores them to invalidate stale initial layout. The app-level close
+  control closes only the `BrowserWindow` that owns the caller.
 - **Auto-update is not wired**: `electron-updater` is not a dependency. Adding it is the
   dependency, a `publish` block in `build`, and `autoUpdater.checkForUpdatesAndNotify()`
   after `whenReady`.
@@ -1404,7 +1439,11 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   so `useTabLabel` rewrites it with the reading and the pin state folded in.
   **Dockview's own overflow dropdown is off** (`disableTabsOverflowList`): it draws one at the
   same end of the same strip as `TabActions`, and ours lists every tab rather than only the
-  hidden ones, says what each is doing and closes one without bringing it back first.
+  hidden ones, says what each is doing and closes one without bringing it back first. It also
+  carries the group's **Close all** at its foot — the same guarded bulk close (`closeGroup`,
+  pins excepted) the tab's ⋮ offers, so a reader tidying a strip is not made to open one tab's
+  menu to close the rest of them — and the phone's tab grid carries the same action, since the
+  folded strip shows one tab and the grid is where the others are.
 - **A narrow strip is the tab you are on, and the list holds the rest.** A phone's strip used
   to draw every tab as its mark and collapse the ones you were not on to `2.5rem` — the tab's
   `max-width` cap and a grid column taken to `0fr`. That is gone: a row of glyphs is a second
@@ -1845,14 +1884,21 @@ goes to it.
     agent did not make.
   - **Plan** — `threadTodos` (exported from `todo-indicator.tsx`, the one place that decides
     which item *is* the checklist), full height.
-  - **Agents** — every subagent group, running first, each a button that scrolls the
-    transcript to the top-level row containing it (`rowContains` → `scrollToMessage`, the
-    rail's own gesture), and under it the step's **own turn parts**: the very
-    `SubagentStep` with `variant="body"` a run's drill-down draws, so an ordinary agent and
-    a step of a workflow run read here exactly as they read in the transcript. One fold,
-    open while the step works, because a native workflow step's transcript is fetched when
-    it opens (`loadAgentTranscript`) and a panel holding thirty of them must not ask for
-    all thirty at once. A sheet closes itself on a jump.
+  - **Agents** — every subagent, batch and workflow run as **one outline of the whole
+    thread** (`agentOutline`: a workflow keeps its phases, named after the run; a batch is a
+    phase; each stretch of lone subagents is one), drawn in a run card's own layouts
+    (`RunLayout`, `RUN_VIEWS`) — List by default, picked per device
+    (`inspectorPrefs.agentsView`) — so the panel and a run card cannot drift. A live
+    workflow's pause/resume rides its first phase heading (`PhaseView.hold`, which forces
+    the headings on even for a one-phase run; a row above the flowchart, which has none),
+    and every step row carries a locate button that scrolls the transcript to it
+    (`LocatableStep`, module-level with the jump in context so an open row never remounts).
+    A "Runs" view of the transcript's own cards was tried and removed: each card carried
+    its own layout tabs, a second picker inside the first. The header carries the shape
+    strip (`RunStrip`) and filters counted per agent. Rows are built with the reader's view
+    options and provided as context, because the panel is outside the transcript's
+    provider. A native workflow step's transcript is still fetched only when its row opens
+    (`loadAgentTranscript`). A sheet closes itself on a jump.
   - **Details** — model, workspace, usage, workflow runs and history.
   - **Tokens** (`thread-view/tokens-panel.tsx`, arithmetic in `lib/token-breakdown.ts`,
     checked by `token-breakdown.check.mjs`) — two readings kept apart. **Billed** is the

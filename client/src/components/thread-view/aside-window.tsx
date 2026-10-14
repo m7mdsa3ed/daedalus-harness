@@ -19,6 +19,7 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadView } from "@/components/thread-view/thread-view"
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
+import { safeAreaState } from "@/lib/safe-area-inset"
 import { useSessionMeta, useStoreSelect } from "@/lib/store"
 import { useThreadConnection } from "@/lib/thread/use-thread-connection"
 import { ThreadLinksProvider } from "@/lib/workspace/thread-links"
@@ -35,13 +36,25 @@ export interface AsideAt {
   y: number
 }
 
-/** Clamp the box into the viewport, preferring below-right of the point. */
+/** The viewport less the safe-area insets and `MARGIN` — the float box, in px. */
+function bounds() {
+  const inset = safeAreaState()
+  return {
+    left: inset.left + MARGIN,
+    top: inset.top + MARGIN,
+    right: window.innerWidth - inset.right - MARGIN,
+    bottom: window.innerHeight - inset.bottom - MARGIN,
+  }
+}
+
+/** Clamp the box into the float box, preferring below-right of the point. */
 function place(x: number, y: number) {
-  const w = Math.min(WIDTH, window.innerWidth - MARGIN * 2)
-  const h = Math.min(HEIGHT, window.innerHeight - MARGIN * 2)
-  const left = Math.max(MARGIN, Math.min(x - w / 2, window.innerWidth - w - MARGIN))
+  const b = bounds()
+  const w = Math.min(WIDTH, b.right - b.left)
+  const h = Math.min(HEIGHT, b.bottom - b.top)
+  const left = Math.max(b.left, Math.min(x - w / 2, b.right - w))
   const below = y + MARGIN
-  const top = below + h <= window.innerHeight - MARGIN ? below : Math.max(MARGIN, window.innerHeight - h - MARGIN)
+  const top = below + h <= b.bottom ? below : Math.max(b.top, b.bottom - h)
   return { left, top, width: w, height: h }
 }
 
@@ -86,8 +99,9 @@ export function AsideWindow({
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!drag.current) return
     // Keep the title bar on screen, so the window can always be grabbed back.
-    const left = Math.min(Math.max(event.clientX - drag.current.dx, MARGIN - box.width + 80), window.innerWidth - 80)
-    const top = Math.min(Math.max(event.clientY - drag.current.dy, MARGIN), window.innerHeight - 36)
+    const b = bounds()
+    const left = Math.min(Math.max(event.clientX - drag.current.dx, b.left - box.width + 80), b.right - 80)
+    const top = Math.min(Math.max(event.clientY - drag.current.dy, b.top), b.bottom - 36)
     setBox((b) => ({ ...b, left, top }))
   }
   const onPointerUp = () => {
@@ -99,7 +113,7 @@ export function AsideWindow({
     <div
       role="dialog"
       aria-label={`Aside: ${meta.title}`}
-      className="@container fixed z-50 flex min-h-60 min-w-72 max-h-[calc(100dvh-16px)] max-w-[calc(100vw-16px)] resize flex-col overflow-hidden rounded-xl border bg-background shadow-xl animate-in fade-in-0 zoom-in-95"
+      className="@container fixed z-50 flex min-h-60 min-w-72 max-h-[calc(var(--float-h)-16px)] max-w-[calc(var(--float-w)-16px)] resize flex-col overflow-hidden rounded-xl border bg-background shadow-xl animate-in fade-in-0 zoom-in-95"
       style={{ ...box, "--dock-content-overlap": "0px" } as React.CSSProperties}
     >
       <div

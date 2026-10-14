@@ -46,6 +46,10 @@ export const ProfileInputSchema = z.object({
         // `ModelDef.group`). Declared here or Zod strips it on save and the
         // group is gone the moment the form is submitted.
         group: z.string().optional(),
+        // Retired (`docs/model-roles.md`): the role → model map moved onto the
+        // thread (`sessions.helper_models`) and nothing reads this any more. Left
+        // declared so Zod does not strip a legacy field off an old payload.
+        roles: z.array(z.string()).optional(),
       }),
     )
     .default([]),

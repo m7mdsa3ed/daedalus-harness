@@ -12,7 +12,6 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 
 import { cn } from "@/lib/utils"
-import { useKeyboardCollisionPadding } from "@/hooks/use-keyboard-inset"
 
 export function DropdownMenuContentPositioned({
   align = "start",
@@ -37,8 +36,6 @@ export function DropdownMenuContentPositioned({
     | "collisionPadding"
     | "sticky"
   >) {
-  /* The safe-area + keyboard padding unless the caller narrows it. */
-  const defaultCollisionPadding = useKeyboardCollisionPadding()
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -49,7 +46,7 @@ export function DropdownMenuContentPositioned({
         sideOffset={sideOffset}
         collisionAvoidance={collisionAvoidance}
         collisionBoundary={collisionBoundary}
-        collisionPadding={collisionPadding ?? defaultCollisionPadding}
+        collisionPadding={collisionPadding}
         sticky={sticky}
       >
         <MenuPrimitive.Popup

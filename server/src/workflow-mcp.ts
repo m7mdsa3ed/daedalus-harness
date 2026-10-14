@@ -31,14 +31,22 @@ if (!url) {
 const DEFAULT_WAIT_SEC = 45;
 const MAX_WAIT_SEC = 55;
 
-const server = new McpServer({ name: WORKFLOW_SERVER_NAME, version: "1.0.0" });
+const server = new McpServer(
+  { name: WORKFLOW_SERVER_NAME, version: "1.0.0" },
+  {
+    instructions:
+      "Run multi-step workflows where every step is a real thread on this server, in this thread's project. run_workflow takes a declarative definition — steps (or named phases of steps) with dependsOn ordering and a prompt each; run_script takes an orchestration script for work whose shape is only known as it runs. Runs start in the background and report back as a <task-notification>, so do not poll; list_workflows shows saved ones runnable by name, and pause/resume/cancel act on a runId.",
+  },
+);
+
+const BACKGROUND = `The run starts in the BACKGROUND and the call returns at once with its runId. Do not poll and do not call wait_workflow to wait it out: when the run ends, its outcome arrives in this thread as a <task-notification> message carrying the runId, status and result, and you continue from there. Meanwhile do other work, or end your turn if there is none. Passing waitSec only blocks the call that long; the run still tells you when it ends unless that wait already returned it ended.`;
 
 const RULES = `A workflow is a set of named steps. Each step runs its prompt in a NEW thread on this server — same project, same profile, agent and model as this thread — and its final reply is the step's output. Steps whose \`dependsOn\` are all complete run in parallel (up to maxParallel, default ${LIMITS.defaultParallel}); a chain of dependsOn is a pipeline. At most ${LIMITS.maxSteps} steps.
 Write it either way: \`steps\` is one flat list ordered by dependsOn; \`phases\` is that list grouped into up to ${LIMITS.maxPhases} named stages (\`[{name, steps:[…]}]\`) that run one after another — a phase begins only when every step of the phase before it has completed, and its own steps run side by side. Prefer phases when the work has stages ("research" then "implement" then "verify"): the stages are named for the reader, and within them you only need dependsOn for ordering *inside* a phase.
 Templates: a prompt may contain {{inputs.NAME}} and {{steps.STEP.output}} (STEP must be in that step's dependsOn, or — with phases — in any earlier phase). When a step declares \`output: {schema}\` its reply must contain exactly one \`\`\`json fence matching that JSON Schema; then {{steps.STEP.output.path.to.field}} reads into it (arrays by index). A reply that does not validate gets one repair turn, then the step fails.
 Steps run with your permission mode and cannot start workflows themselves. A step takes a few seconds to start. A step that fails skips everything depending on it; siblings already running finish.
 A run can be paused (pause_workflow): no further step starts, steps whose runtime can hold do so at their next step boundary (a step on a runtime that cannot runs to its end), and the clocks stop; resume_workflow carries on exactly where it stood. Nothing is thrown away, which is what makes it a pause and not a cancel.
-Each call returns within its wait budget. If the returned status is "running" or "paused", call wait_workflow with the runId until it is completed, failed or cancelled. Step outputs are in \`steps[].output\`.`;
+${BACKGROUND}`;
 
 async function call(path: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(`${url}${path}`, {
@@ -63,12 +71,14 @@ const failed = (error: unknown) => ({
   isError: true,
 });
 const clampWait = (sec: number | undefined) => Math.max(1, Math.min(MAX_WAIT_SEC, Math.floor(sec ?? DEFAULT_WAIT_SEC)));
+/** A start with no waitSec is a background run (wait=0). */
+const startWait = (sec: number | undefined) => (sec === undefined ? 0 : clampWait(sec));
 
 server.registerTool(
   "run_workflow",
   {
     title: "Run a workflow",
-    description: `Start a multi-step, multi-thread workflow and wait up to waitSec (default ${DEFAULT_WAIT_SEC}, max ${MAX_WAIT_SEC}) for it.\n${RULES}`,
+    description: `Start a multi-step, multi-thread workflow in the background.\n${RULES}`,
     inputSchema: {
       definition: z.object(WorkflowDefinitionShape).describe("The workflow: its steps (or phases of steps), their dependencies and prompts."),
       inputs: z.record(z.string(), z.unknown()).optional().describe("Values for {{inputs.NAME}} references."),
@@ -79,7 +89,7 @@ server.registerTool(
   async ({ definition, inputs, waitSec }) => {
     try {
       return summarize(
-        await call(`/runs?wait=${clampWait(waitSec)}`, { method: "POST", body: JSON.stringify({ definition, inputs: inputs ?? {} }) }),
+        await call(`/runs?wait=${startWait(waitSec)}`, { method: "POST", body: JSON.stringify({ definition, inputs: inputs ?? {} }) }),
       );
     } catch (error) {
       return failed(error);
@@ -98,10 +108,12 @@ Begin with a pure literal \`export const meta = { name, description, phases }\` 
   return await pipeline(found.filter(Boolean).flatMap((f) => f.findings),
     (f) => agent(\`Try to refute: \${f.title}\`, { label: 'verify:' + f.title, schema: VERDICT }))
 
-API — agent(prompt, {label, phase, schema, model, effort}) spawns one agent; with \`schema\` (a JSON Schema) its reply must be one \`\`\`json fence matching it, gets one repair turn, and agent() resolves with the parsed object. parallel(thunks) awaits all and is a BARRIER — a thunk that throws becomes null, so \`.filter(Boolean)\`. pipeline(items, ...stages) runs each item through every stage independently with NO barrier between them; each stage gets (previous, item, index). Prefer pipeline: a barrier makes every fast item wait for the slowest. phase(title) names the stage the following agents belong to. log(message) narrates to the reader. \`args\` is what you passed in. \`budget\` is {total, spent(), remaining()}.
+API — agent(prompt, {label, phase, schema, model, effort, isolation, agentType}) spawns one agent; with \`schema\` (a JSON Schema) its reply must be one \`\`\`json fence matching it, gets one repair turn, and agent() resolves with the parsed object. \`isolation: 'worktree'\` gives the agent a git worktree of its own — EXPENSIVE, use it only when parallel agents edit files and would collide. \`agentType\` names a saved prompt (its @handle without the @) whose text leads the agent's prompt — the custom-subagent equivalent here. workflow(nameOrRef, args) runs a saved workflow (by meta.name) or {scriptPath} inline and returns its result; it shares this run's agent cap, cancel and budget, and one level only. parallel(thunks) awaits all and is a BARRIER — a thunk that throws becomes null, so \`.filter(Boolean)\`. pipeline(items, ...stages) runs each item through every stage independently with NO barrier between them; each stage gets (previous, item, index). Prefer pipeline: a barrier makes every fast item wait for the slowest. phase(title) names the stage the following agents belong to; inside pipeline/parallel prefer agent's own {phase} so stages do not race the global one. log(message) narrates to the reader. \`args\` is what you passed in. \`budget\` is {total, spent(), remaining()}. meta may carry \`whenToUse\`, shown by list_workflows.
 
 Limits: ${SCRIPT_LIMITS.maxAgents} agents per run, ${SCRIPT_LIMITS.maxItems} items per parallel/pipeline call, ${LIMITS.maxParallel} agents running at once (the rest queue). Date.now(), new Date() and Math.random() all throw — a run that reads a clock cannot be replayed; pass a timestamp through \`args\` and vary prompts by index. There is no filesystem, no network and no require: the agents you spawn do that work, not the script.
-Each call returns within its wait budget; if the status is still "running", call wait_workflow with the runId. Agent outputs are in \`steps[].output\`, and the script's own return value in \`result\`.`;
+To run a SAVED workflow pass \`name\` instead of \`script\` (list_workflows shows them; save_workflow keeps a run's script). To RELAUNCH a stopped, failed or edited run pass \`resumeFromRunId\` — with no \`script\`/\`args\` the earlier ones are reused — and every agent() call identical to one that completed returns its saved result without spawning; only new, changed or failed calls run.
+Agent outputs are in \`steps[].output\`, and the script's own return value in \`result\`.
+${BACKGROUND}`;
 
 server.registerTool(
   "run_script",
@@ -109,21 +121,62 @@ server.registerTool(
     title: "Run a workflow script",
     description: `Orchestrate many agents from a script — for work whose shape is only known as it runs: fanning out over a list a first agent discovered, looping until a search goes dry, or having agents check each other's findings. For a pipeline you can write down in full up front, run_workflow is simpler.\n${SCRIPT_RULES}`,
     inputSchema: {
-      script: z.string().min(1).describe("The orchestration script: `export const meta = {…}` then the body."),
+      script: z.string().min(1).optional().describe("The orchestration script: `export const meta = {…}` then the body."),
+      name: z.string().min(1).optional().describe("Run a saved workflow by its meta.name instead of passing a script."),
+      resumeFromRunId: z.string().min(1).optional().describe("Relaunch an earlier script run, reusing every completed agent whose call is unchanged."),
       args: z.unknown().optional().describe("Passed to the script as the `args` global. Give real JSON, not a JSON string."),
       tokenBudget: z.number().int().positive().optional().describe("Output-token ceiling for the whole run, readable as `budget`. Agents past it are refused."),
       waitSec: z.number().int().min(1).max(MAX_WAIT_SEC).optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ script, args, tokenBudget, waitSec }) => {
+  async ({ script, name, resumeFromRunId, args, tokenBudget, waitSec }) => {
     try {
       return summarize(
-        await call(`/scripts?wait=${clampWait(waitSec)}`, {
+        await call(`/scripts?wait=${startWait(waitSec)}`, {
           method: "POST",
-          body: JSON.stringify({ script, args, tokenBudget }),
+          body: JSON.stringify({ script, name, resumeFromRunId, args, tokenBudget }),
         }),
       );
+    } catch (error) {
+      return failed(error);
+    }
+  },
+);
+
+server.registerTool(
+  "list_workflows",
+  {
+    title: "List saved workflows",
+    description:
+      "Saved workflow scripts this thread can run by name with run_script({name}): the project's .claude/workflows/ and the personal ~/.claude/workflows/ (the project one wins a name clash). Each has a name, description and, when its author gave one, whenToUse.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async () => {
+    try {
+      return summarize(await call("/saved"));
+    } catch (error) {
+      return failed(error);
+    }
+  },
+);
+
+server.registerTool(
+  "save_workflow",
+  {
+    title: "Save a workflow",
+    description:
+      "Save a script run's script as a reusable workflow named by its meta.name — into the project's .claude/workflows/ (shared with everyone who clones the repo) or the personal ~/.claude/workflows/. Overwrites a saved workflow of the same name. Save only when the user asks to keep it.",
+    inputSchema: {
+      runId: z.string().min(1),
+      scope: z.enum(["project", "personal"]).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ runId, scope }) => {
+    try {
+      return summarize(await call("/saved", { method: "POST", body: JSON.stringify({ runId, scope }) }));
     } catch (error) {
       return failed(error);
     }
@@ -134,7 +187,7 @@ server.registerTool(
   "wait_workflow",
   {
     title: "Wait for a workflow",
-    description: `Wait up to timeoutSec (default ${DEFAULT_WAIT_SEC}, max ${MAX_WAIT_SEC}) for a running workflow and return it as it stands. Call again while status is "running".`,
+    description: `Block up to timeoutSec (default ${DEFAULT_WAIT_SEC}, max ${MAX_WAIT_SEC}) on a running workflow and return it as it stands. Rarely needed: a background run tells this thread when it ends. Use it only when your next step cannot happen without the result and nothing else is worth doing meanwhile.`,
     inputSchema: { runId: z.string().min(1), timeoutSec: z.number().int().min(1).max(MAX_WAIT_SEC).optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },

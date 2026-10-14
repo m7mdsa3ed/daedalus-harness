@@ -39,6 +39,10 @@ export type ConfigPatch = {
   effort?: string
   suggestFollowups?: boolean
   uiBlocks?: boolean
+  /** The thread's role→model helper map (docs/model-roles.md) — a spawn input
+      like `model`/`effort`, so a change costs a respawn and the server stages
+      it against the running turn's boundary. */
+  helperModels?: { role: string; model: string }[]
   /** The agent's own selectors — a staged pick is the only place these travel
       as a patch; they are never a field of the session row. */
   modeId?: string
@@ -80,11 +84,12 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
       ? { suggestFollowups: meta.suggestFollowups === true }
       : {}),
     ...(patch.uiBlocks !== undefined ? { uiBlocks: meta.uiBlocks !== false } : {}),
+    ...(patch.helperModels !== undefined ? { helperModels: meta.helperModels ?? [] } : {}),
   }
 }
 
-/** One line naming what a pick changed — used by the composer footer's
-    `ConfigIndicator` and by the restart toast's description. Ids are resolved
+/** One line naming what a pick changed — used by the transcript's
+    `PendingSettings` and by the restart toast's description. Ids are resolved
     against the profile catalog where they have a name there. */
 export function describeConfig(
   patch: ConfigPatch,
@@ -109,6 +114,10 @@ export function describeConfig(
   }
   if (patch.uiBlocks !== undefined) {
     parts.push(patch.uiBlocks ? "Drawn UI on" : "Drawn UI off")
+  }
+  if (patch.helperModels !== undefined) {
+    const named = patch.helperModels.map((h) => h.role).join(", ")
+    parts.push(`Helper models: ${named || "none"}`)
   }
   if (patch.modeId !== undefined) {
     const mode = thread?.modes?.availableModes.find((m) => m.id === patch.modeId)
@@ -153,6 +162,7 @@ export function configActions(core: ActionsCore) {
     if (next.effort !== undefined) patch.effort = next.effort
     if (next.suggestFollowups !== undefined) patch.suggestFollowups = next.suggestFollowups
     if (next.uiBlocks !== undefined) patch.uiBlocks = next.uiBlocks
+    if (next.helperModels !== undefined) patch.helperModels = next.helperModels
     if (Object.keys(patch).length > 0) {
       saveProjectDefaults(settings, queryClient, meta.projectId, patch)
     }
@@ -207,6 +217,10 @@ export function configActions(core: ActionsCore) {
           // Same as the trailer above: a boolean has no "unchanged" sentinel,
           // so only a real flip travels.
           uiBlocks: next.uiBlocks,
+          /* The role→model helper map (docs/model-roles.md). A spawn input:
+             only a real pick travels (`undefined` is dropped by
+             `JSON.stringify`), and the server stages it like the rest. */
+          helperModels: next.helperModels,
           /* "Now, and never mind the running turn" — the only thing that
              stops the server holding a process-costing change for the turn's
              own boundary. Sent by the menu's Apply now and by nothing else. */
@@ -358,9 +372,9 @@ export function configActions(core: ActionsCore) {
     }
     if (outcome === "staged") {
       if (opts.silent) return
-      /* The composer footer's `ConfigIndicator` carries the same sentence —
-         `composer-status.tsx`, which calls `describeConfig` too — and the
-         cancel in its popover is the only affordance. A change that costs the
+      /* The transcript's `PendingSettings` card carries the same sentence —
+         `thread-view/pending-settings.tsx`, which calls `describeConfig` too —
+         and the cancel on it is the only affordance. A change that costs the
          process is spent by the next spawn, and for a thread nobody is
          sending to that is no spawn at all, so nothing to offer, and the
          toast that used to live here was the one extra path that would force
@@ -453,6 +467,13 @@ export function configActions(core: ActionsCore) {
         its own model catalog. */
     changeSpawnConfig(meta: SessionMeta, next: { model?: string; effort?: string }): void {
       changeThreadConfig(meta, next, "Couldn't change this thread's model")
+    },
+
+    /** Replace the thread's role→model helper map (docs/model-roles.md). A
+        spawn input like the model, so the server stages it against the running
+        turn's boundary — the same door as every other pick. */
+    changeHelperModels(meta: SessionMeta, helperModels: { role: string; model: string }[]): void {
+      changeThreadConfig(meta, { helperModels }, "Couldn't change this thread's helper models")
     },
 
     /**

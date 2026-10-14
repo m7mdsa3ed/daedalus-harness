@@ -6,7 +6,7 @@
 // table above `SCENES` below) — an ordinary prompt streams the whole catalogue,
 // and `scene:<name>` streams one of them, which is how a surface gets worked on
 // without scrolling past the other twenty. A bare `scene:` lists them.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -19,6 +19,9 @@ const out = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
    respawn's `session/load` is a second line and not a lost first one. */
 const RECORD = process.env.DAEDALUS_DATA_DIR
   ? join(process.env.DAEDALUS_DATA_DIR, "fake-session-meta.jsonl")
+  : null;
+const HISTORY = process.env.DAEDALUS_DATA_DIR
+  ? join(process.env.DAEDALUS_DATA_DIR, "fake-session-history.json")
   : null;
 const recordSessionMeta = (method, params) => {
   if (!RECORD) return;
@@ -650,10 +653,19 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       return;
     }
     // Replay a tiny conversation, then answer — mirrors ACP loadSession.
+    const historyText = (() => {
+      try {
+        if (HISTORY && existsSync(HISTORY)) return JSON.parse(readFileSync(HISTORY, "utf8")).text;
+      } catch {
+        // Invalid fixture history behaves like an agent with no stored messages.
+      }
+      return forked ? "(forked conversation)" : "hello fake agent";
+    })();
+    const historyContent = { type: "text", text: historyText };
     out({
       jsonrpc: "2.0",
       method: "session/update",
-      params: { sessionId: sid, update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: forked ? "(forked conversation)" : "hello fake agent" } } },
+      params: { sessionId: sid, update: { sessionUpdate: "user_message_chunk", content: historyContent } },
     });
     out({
       jsonrpc: "2.0",
@@ -717,6 +729,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     out({ jsonrpc: "2.0", id: msg.id, result: { configOptions } });
   } else if (msg.method === "session/prompt") {
     const asked = (msg.params.prompt ?? []).map((b) => b.text ?? "").join(" ");
+    if (HISTORY) writeFileSync(HISTORY, JSON.stringify({ text: asked }));
     /* A prompt starting with "echo:" streams the remainder back as one message
        chunk and ends the turn — a deterministic answer, which is what the
        workflow test needs to check template rendering and JSON output. Checked

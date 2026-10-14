@@ -12,9 +12,11 @@
        one, with each paste expanded into a fence; `collapsePastes` folds those
        back into their tokens first and hands the bodies over by context;
      — `@path` becomes a mention chip, on the composer's rule: a path-looking
-       token (a `/`, `.` or `~` in it), trailing sentence punctuation left out. */
+       token (a `/`, `.` or `~` in it), trailing sentence punctuation left out;
+     — `@KEY-12` becomes a task chip whose popover is what the agent was sent
+       about it (`splitTaskContext` folds the block out first, as pastes are). */
 import * as React from "react"
-import { ClipboardListIcon, TextQuoteIcon } from "lucide-react"
+import { ClipboardListIcon, SquareCheckIcon, TextQuoteIcon } from "lucide-react"
 
 import {
   ChipBody,
@@ -25,6 +27,7 @@ import {
   useMentionFace,
 } from "@/components/inline-chip"
 import { FilePreviewContext, projectPath } from "@/lib/file-preview"
+import { TASK_KEY } from "@/lib/task-mentions"
 
 type MdNode = {
   type: string
@@ -58,10 +61,11 @@ function splitText(value: string): MdNode[] {
       node = chip("paste-chip", { n: match[1] })
     } else {
       const path = match[3].replace(TRAILING, "")
-      if (!path || !PATH_LIKE.test(path)) continue
+      const task = TASK_KEY.test(path)
+      if (!path || !(task || PATH_LIKE.test(path))) continue
       start = match.index + match[2].length
       end = start + 1 + path.length
-      node = chip("file-mention", { path })
+      node = task ? chip("task-mention", { task: path }) : chip("file-mention", { path })
     }
     if (start > last) out.push({ type: "text", value: value.slice(last, start) })
     out.push(node)
@@ -143,6 +147,20 @@ export function UserPastes({
   return <PastesContext.Provider value={pastes}>{children}</PastesContext.Provider>
 }
 
+/* ── tasks ── */
+
+const TasksContext = React.createContext<ReadonlyMap<string, string>>(new Map())
+
+export function UserTasks({
+  tasks,
+  children,
+}: {
+  tasks: ReadonlyMap<string, string>
+  children: React.ReactNode
+}) {
+  return <TasksContext.Provider value={tasks}>{children}</TasksContext.Provider>
+}
+
 /* ── the chips, as markdown components ── */
 
 type Hast = { node?: unknown; children?: React.ReactNode }
@@ -185,7 +203,25 @@ function MentionChip({ path = "" }: Hast & { path?: string }) {
   )
 }
 
+/* What the agent was sent about the task, as it was at send — not a live read
+   of the board, which may have moved on since. */
+function TaskChip({ task = "" }: Hast & { task?: string }) {
+  const body = React.useContext(TasksContext).get(task)
+  // Sent without the block (no Harness MCP): it went as words, so it stays words.
+  if (body === undefined) return <>{`@${task}`}</>
+  return (
+    <span className={chipClass()}>
+      <ChipBody
+        icon={SquareCheckIcon}
+        label={task}
+        preview={<ChipPreview caption="Sent to the agent" text={body} />}
+      />
+    </span>
+  )
+}
+
 export const USER_CHIP_COMPONENTS = {
+  "task-mention": TaskChip,
   "paste-chip": PasteChip,
   "quote-chip": QuoteChip,
   "file-mention": MentionChip,

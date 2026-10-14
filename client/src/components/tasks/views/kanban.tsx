@@ -1,14 +1,25 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import {
   DndContext,
+  DragOverlay,
+  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
-  closestCorners,
+  closestCenter,
+  defaultDropAnimationSideEffects,
+  getFirstCollision,
+  pointerWithin,
+  rectIntersection,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
+  type DragStartEvent,
+  type DropAnimation,
+  type UniqueIdentifier,
 } from "@dnd-kit/core"
 import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import {
@@ -31,7 +42,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { COLOR_DOT, type BoardStatus } from "@/lib/boards"
 import type { Task } from "@/lib/tasks-board"
-import { TaskCard } from "../task-card"
+import { TaskCard, TaskCardOverlay } from "../task-card"
 import { QuickAdd } from "../quick-add"
 import type { ColumnOps, ViewProps } from "../types"
 
@@ -72,6 +83,11 @@ const COLUMN_PREFIX = "column:"
     namespaced, since a card's has to be its own id for `useSortable`. */
 function statusFromOverId(columns: Columns, overId: string): string | undefined {
   return overId.startsWith(COLUMN_PREFIX) ? overId.slice(COLUMN_PREFIX.length) : columnOf(columns, overId)
+}
+
+/** The source card fades to a placeholder while the overlay animates into its slot. */
+const dropAnimation: DropAnimation = {
+  sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: "0.4" } } }),
 }
 
 /** One kanban column (a status): the drop target for its tasks. */
@@ -213,9 +229,53 @@ export function KanbanView({
      the board's columns change — including right after a drop, which is what
      replaces the optimistic order with the committed one. */
   const [draft, setDraft] = React.useState<Columns>(() => groupByStatus(tasks, statuses))
+  const [activeId, setActiveId] = React.useState<string | null>(null)
+  /* Re-seed only when the data changes, and never mid-drag: an update landing
+     during a drag would yank the card out of the pointer's column. Ending a
+     drag deliberately does NOT re-seed — the draft already shows the drop, and
+     resetting it to not-yet-updated props would snap the card back until the
+     write lands. The committed list re-seeds it when it arrives. */
+  const dragging = React.useRef(false)
   React.useEffect(() => {
-    setDraft(groupByStatus(tasks, statuses))
+    if (!dragging.current) setDraft(groupByStatus(tasks, statuses))
   }, [tasks, statuses])
+
+  /* ── Collision detection (dnd-kit's MultipleContainers preset) ──
+     Pointer first, then rect overlap; a column hit resolves to its closest
+     card. When a cross-column move shifts the layout for a frame and nothing
+     is under the pointer, the last match is reused instead of flickering. */
+  const lastOverId = React.useRef<UniqueIdentifier | null>(null)
+  const recentlyMovedToNewColumn = React.useRef(false)
+  React.useEffect(() => {
+    requestAnimationFrame(() => {
+      recentlyMovedToNewColumn.current = false
+    })
+  }, [draft])
+  const collisionDetection: CollisionDetection = React.useCallback(
+    (args) => {
+      const pointer = pointerWithin(args)
+      const intersections = pointer.length > 0 ? pointer : rectIntersection(args)
+      let overId = getFirstCollision(intersections, "id")
+      if (overId != null) {
+        const id = String(overId)
+        if (id.startsWith(COLUMN_PREFIX)) {
+          const cards = new Set((draft[id.slice(COLUMN_PREFIX.length)] ?? []).map((t) => t.id))
+          if (cards.size > 0) {
+            overId =
+              closestCenter({
+                ...args,
+                droppableContainers: args.droppableContainers.filter((c) => cards.has(String(c.id))),
+              })[0]?.id ?? overId
+          }
+        }
+        lastOverId.current = overId
+        return [{ id: overId }]
+      }
+      if (recentlyMovedToNewColumn.current) lastOverId.current = activeId
+      return lastOverId.current != null ? [{ id: lastOverId.current }] : []
+    },
+    [activeId, draft],
+  )
 
   /* Mouse and touch are separated on purpose. One PointerSensor with a distance
      constraint makes a finger that starts on a card ambiguous: the same gesture
@@ -229,7 +289,11 @@ export function KanbanView({
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
   )
 
-  const reset = () => setDraft(groupByStatus(tasks, statuses))
+  const reset = () => {
+    dragging.current = false
+    setActiveId(null)
+    setDraft(groupByStatus(tasks, statuses))
+  }
 
   /* Unfiltered per-column counts: a WIP limit is about the column, not about
      what the current filter happens to show of it. */
@@ -246,33 +310,45 @@ export function KanbanView({
     return out
   }, [allTasks, statuses])
 
-  /* Cross-column hover: take the card out of the column it is in and append it
-     to the one under the pointer, so an empty column stops being empty and the
-     card is visibly accepted. Appending rather than inserting at the pointer is
-     deliberate — `onDragEnd` does the precise placement, and doing it in both
-     places applied the move twice. */
-  const handleDragOver = (event: DragOverEvent) => {
-    const { active, over } = event
+  const handleDragStart = ({ active }: DragStartEvent) => {
+    dragging.current = true
+    setActiveId(String(active.id))
+  }
+
+  /* Cross-column hover: move the card into the column under the pointer, at
+     the slot it is over — above that card, or below it once the dragged rect's
+     top passes the card's bottom (dnd-kit's MultipleContainers preset). Over
+     the column background, it goes last. Same-column order is left to the
+     sortable strategy and committed in `onDragEnd`. */
+  const handleDragOver = ({ active, over }: DragOverEvent) => {
     if (!over) return
-    const activeId = String(active.id)
+    const movingId = String(active.id)
     const overId = String(over.id)
     setDraft((prev) => {
-      const fromStatus = columnOf(prev, activeId)
+      const fromStatus = columnOf(prev, movingId)
       const targetStatus = statusFromOverId(prev, overId)
       if (!fromStatus || !targetStatus || fromStatus === targetStatus) return prev
       if (!prev[targetStatus]) return prev
-      const moving = prev[fromStatus].find((task) => task.id === activeId)
+      const moving = prev[fromStatus].find((task) => task.id === movingId)
       if (!moving) return prev
+      const target = prev[targetStatus]
+      const overIndex = target.findIndex((task) => task.id === overId)
+      const translated = active.rect.current.translated
+      const below = translated != null && translated.top > over.rect.top + over.rect.height
+      const at = overIndex >= 0 ? overIndex + (below ? 1 : 0) : target.length
+      recentlyMovedToNewColumn.current = true
       return {
         ...prev,
-        [fromStatus]: prev[fromStatus].filter((task) => task.id !== activeId),
-        [targetStatus]: [...prev[targetStatus], moving],
+        [fromStatus]: prev[fromStatus].filter((task) => task.id !== movingId),
+        [targetStatus]: [...target.slice(0, at), moving, ...target.slice(at)],
       }
     })
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
+    dragging.current = false
+    setActiveId(null)
     if (!over) return reset()
     const movedId = String(active.id)
     const overId = String(over.id)
@@ -309,14 +385,29 @@ export function KanbanView({
     if (originStatus !== targetStatus && draft[originStatus]) {
       byStatus[originStatus] = draft[originStatus].filter((task) => task.id !== movedId).map((task) => task.id)
     }
+    /* Commit the drop to the draft synchronously (as dnd-kit's own example
+       does in onDragEnd), so the card stays where it was dropped no matter
+       when the write reaches the store or the server. */
+    setDraft((prev) => {
+      const byId = new Map(Object.values(prev).flat().map((task) => [task.id, task]))
+      const next = { ...prev }
+      for (const [statusId, ids] of Object.entries(byStatus))
+        next[statusId] = ids.flatMap((id) => byId.get(id) ?? [])
+      return next
+    })
     onMove(byStatus)
   }
+
+  const activeTask = activeId != null ? allTasks.find((t) => t.id === activeId) : undefined
 
   return (
     <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 pb-[max(0.75rem,var(--safe-bottom))] sm:snap-none">
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collisionDetection}
+        // Columns change size while a card crosses them; re-measure every frame.
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
         onDragCancel={reset}
@@ -338,6 +429,15 @@ export function KanbanView({
             }}
           />
         ))}
+        {/* Portalled to <body>: the card must escape the columns' overflow and
+            stacking contexts, and any transformed ancestor (a dialog centred
+            with translate) that would re-anchor its position: fixed. */}
+        {createPortal(
+          <DragOverlay dropAnimation={dropAnimation}>
+            {activeTask ? <TaskCardOverlay task={activeTask} ctx={ctx} /> : null}
+          </DragOverlay>,
+          document.body,
+        )}
       </DndContext>
       <button
         type="button"

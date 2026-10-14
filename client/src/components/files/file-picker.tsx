@@ -1,7 +1,7 @@
-/* The library in a dialog, to choose one file from — the composer's "From
-   library" and every logo field's Upload share it. It is the explorer in pick
-   mode, so uploading, folders and drag-and-drop are all here too: a file just
-   uploaded is one click from chosen. */
+/* The library in a dialog, to choose from — the composer's "From library"
+   (several files) and every logo field's Upload (one) share it. It is the explorer in pick
+   mode, so uploading, folders, search and drag-and-drop are all here too: a
+   file just uploaded is one click from chosen. */
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -17,29 +17,39 @@ export function FilePicker({
   onOpenChange,
   accept,
   title = "Choose a file",
+  multiple = false,
+  pickLabel,
   onPick,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   accept?: string
   title?: string
-  onPick: (file: FileRecord) => void
+  /** Choose several at once (⌘/Ctrl- and Shift-click); otherwise one. */
+  multiple?: boolean
+  pickLabel?: string
+  onPick: (files: FileRecord[]) => void
 }) {
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent>
+      <ResponsiveDialogContent className="sm:max-w-5xl">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>{title}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            {accept ? "Pick a file that is already here, or upload a new one." : "Pick a file, or upload a new one."}
+            {multiple
+              ? "Select files with ⌘/Ctrl- or Shift-click, or upload new ones."
+              : "Double-click a file to choose it, or upload a new one."}
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         <FileExplorer
           accept={accept}
-          className="h-[min(60svh,28rem)]"
-          onPick={(file) => {
+          multiple={multiple}
+          pickLabel={pickLabel}
+          className="h-[min(70svh,36rem)]"
+          onCancel={() => onOpenChange(false)}
+          onPick={(files) => {
             onOpenChange(false)
-            onPick(file)
+            onPick(files)
           }}
         />
       </ResponsiveDialogContent>

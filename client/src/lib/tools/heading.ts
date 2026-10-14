@@ -7,6 +7,7 @@ import { extractHarnessCall, harnessOperationLabel, harnessSubject } from "./har
 import { extractMcpCall } from "./mcp"
 import { formatMcpName, NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
 import { extractSkill } from "./structured"
+import { agentLabel, extractAgentMessage } from "./subagents"
 import { extractToolSearch } from "./tool-search"
 import { displayUrl, webInput } from "./web"
 
@@ -294,6 +295,16 @@ export function toolHeading(
     return search.query
       ? { title: "Search tools", detail: search.query, prose: true }
       : { title: "Load tools", detail: search.selected.map(toolDisplayName).join(", ") || undefined, prose: true }
+  }
+  /* A follow-up to a subagent names who it went to; Claude Code's recap of
+     the message is the caption. */
+  const message = extractAgentMessage({ ...item, title: item.title ?? "" })
+  if (message) {
+    return {
+      title: message.to ? `Message ${agentLabel(message.to)}` : "Message agent",
+      detail: message.summary,
+      prose: true,
+    }
   }
   /* The harness server's two tools reach every part of the harness, so the row
      names the operation rather than the server-and-tool pair it arrived as. */

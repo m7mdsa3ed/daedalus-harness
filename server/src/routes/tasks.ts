@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { createScheduled, deleteScheduled, listScheduled, updateScheduled } from "../scheduler.js";
 import { TaskDirError, type TaskTailer } from "../tasks.js";
+import { expandTaskMentions } from "../task-mentions.js";
 import {
   BoardError,
   CompleteSprintSchema,
@@ -277,6 +278,15 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
   app.get("/api/tasks/by-key/:key", async (c) => {
     const task = await findTaskByKey(c.req.param("key"));
     return task ? c.json(task) : c.json({ error: "not found" }, 404);
+  });
+
+  /** A message's `@KEY-12` mentions → the block the composer appends before it
+      sends (task-mentions.ts), so the transcript holds what the agent got. */
+  app.post("/api/tasks/mention-context", async (c) => {
+    const parsed = z.object({ text: z.string().max(200_000) }).safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
+    const out = await expandTaskMentions(parsed.data.text);
+    return c.json({ text: out.text, keys: [...out.keys] });
   });
 
   /* Who is writing, when it is a thread rather than the person at the board:

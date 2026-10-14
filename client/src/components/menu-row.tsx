@@ -40,7 +40,7 @@ export const MENU_ROW =
     header's trigger is a 28px icon button, which would squeeze every row); the
     max is the escape hatch for a narrow phone, where a menu wider than the
     screen is clipped rather than merely wide. */
-export const MENU_WIDTH = "w-auto max-w-[min(20rem,calc(100vw-1.5rem))] min-w-60"
+export const MENU_WIDTH = "w-auto max-w-[min(20rem,calc(var(--float-w)-1.5rem))] min-w-60"
 
 export type MenuRowProps = {
   icon?: React.ReactNode

@@ -180,6 +180,16 @@ assert.ok(
   noticeAt < turnAt,
   "…and said BEFORE the turn, or the transcript reads as though the setting followed the message",
 );
+/* A tool link is a setting like the ones beside it, so it draws the same row —
+   named, out of the library, never a uuid. Both were empty and both were picked. */
+assert.ok(
+  since.some((e) => e.ev === "config_notice" && e.text === "MCP: none → Workflow"),
+  "the MCP link change is said too, by the server's own name for it",
+);
+assert.ok(
+  since.some((e) => e.ev === "config_notice" && e.text === "Skills: none → Skill One"),
+  "…and so is the skill, on the same one spawn",
+);
 
 // ---- a queue drain is not a boundary, and neither is a steer ----
 

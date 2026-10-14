@@ -45,6 +45,7 @@ import { InlineElicitation } from "@/components/elicitation-form"
 import { InlineApproval } from "@/components/tool-approval"
 import { InlineHeldTurn } from "@/components/held-turn"
 import { ThreadStatus } from "@/components/thread-view/thread-status"
+import { PendingSettings } from "@/components/thread-view/pending-settings"
 import { useThreadStatus } from "@/lib/thread/status"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
@@ -98,7 +99,8 @@ const INSPECTOR_TRANSCRIPT_MIN = 480
     level down (a subagent, tool group, workflow, or batch). */
 function rowContains(row: Row, id: string): boolean {
   if (row.id === id) return true
-  if (row.kind === "subagent-group") return row.children.some((child) => rowContains(child, id))
+  if (row.kind === "subagent-group")
+    return row.launch?.id === id || row.children.some((child) => rowContains(child, id))
   if (row.kind === "tool-group")
     return row.items.some((item) => item.id === id) || row.children.some((child) => rowContains(child, id))
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
@@ -1052,6 +1054,17 @@ export function ThreadView({
                   </div>
                 </MessageScrollerItem>
               )}
+              {/* The settings change the thread is carrying rides with the
+                  queue: both are what the conversation is *about to be* on,
+                  and the transcript is where that is read. Above the queue,
+                  because the queue is the sentences and this is the context
+                  they will be sent in. Gated outside the item, which renders
+                  nothing yet still reserves `contain-intrinsic-size`. */}
+              {(thread.pendingConfig || thread.stagedConfig) && (
+                <MessageScrollerItem messageId="pending-settings">
+                  <PendingSettings thread={thread} sessionId={sessionId} actions={actions} />
+                </MessageScrollerItem>
+              )}
               {thread.queue.length > 0 && (
                 <MessageScrollerItem messageId="queue">
                   <ComposerQueue
@@ -1167,6 +1180,17 @@ export function ThreadView({
           meta={meta}
           delivery={delivery}
           changes={latestChanges}
+          /* Scroll, and the box gets out of the way: `follow.pinned` is false
+             once a gesture has taken the reader away from the tail — the same
+             state the scroll-to-end button draws — and reaching the bottom
+             re-pins, so the composer is back without a control of its own. It
+             used to be a collapse of the composer's own, triggered by a narrow
+             panel or a short window, which took the box away from somebody who
+             was typing with no gesture behind it. An empty thread cannot be
+             unpinned (there is nothing to scroll), so a new thread's composer
+             is never the one that leaves. The mini window and the landing
+             console are the same rule: the console has no scroller to ask. */
+          collapsed={!follow.pinned}
           onSend={options.autoScroll ? follow.follow : undefined}
         />
       </div>

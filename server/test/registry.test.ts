@@ -15,7 +15,7 @@ import { agentOptions as agentOptionsTable, agents as agentsTable, db } from "..
 import type { Profile } from "../src/profiles.js";
 import type { Project } from "../src/projects.js";
 import { configureGatewayShim } from "../src/gateway-shim.js";
-import { getAgent, isBuiltInAgent, resetAgent, resolveSpawn, seedAgents, updateAgent } from "../src/registry.js";
+import { getAgent, isBuiltInAgent, modelRoleDefs, resetAgent, withoutSubagentModelKey, resolveSpawn, seedAgents, updateAgent } from "../src/registry.js";
 import type { PersonaSpawn } from "../src/personas.js";
 import { checkInstalled, locateCommand, npmPackage } from "../src/agent-status.js";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -119,6 +119,16 @@ test("the Default profile names no model at all", () => {
   // Every key prunes away: the agent keeps its own credentials, its own model,
   // and — the point here — its own choice of cheap model.
   assert.deepEqual(env, {});
+});
+
+test("a helper model resolves through the catalog, or as written on the Default", () => {
+  const roles = [{ id: "small", label: "Small", description: "", sortOrder: 0, createdAt: 0, updatedAt: 0 }];
+  const helpers = [{ role: "small", model: "haiku" }];
+  // A catalog that lacks the id: the helper falls back to the session model.
+  assert.equal(modelRoleDefs(claudeAgent, profileWith(), roles, helpers, "gw/big")[0].model, "gw/big");
+  // The Default has no catalog — the id came off the agent's own list.
+  assert.equal(modelRoleDefs(claudeAgent, virtualProfile, roles, helpers)[0].model, "haiku");
+  assert.equal(modelRoleDefs(claudeAgent, virtualProfile, roles, [{ role: "small", model: "" }])[0].model, "");
 });
 
 /* ── the 1M conditional ─────────────────────────────────────────────────── */
@@ -262,6 +272,14 @@ test("a persona with no file resolves the path empty even when it has a prompt",
 
 /* ── seedAgents ─────────────────────────────────────────────────────────── */
 
+test("seed 27 takes back the seeded subagent-model key, never a user's own", () => {
+  // Helper models are the daedalus runtime's alone now (docs/model-roles.md).
+  assert.deepEqual(withoutSubagentModelKey({ CLAUDE_CODE_SUBAGENT_MODEL: "{subagentModel}", A: "1" }), { A: "1" });
+  assert.deepEqual(withoutSubagentModelKey({ CLAUDE_CODE_SUBAGENT_MODEL: "my-model" }), {
+    CLAUDE_CODE_SUBAGENT_MODEL: "my-model",
+  });
+});
+
 async function resetAgents(rows: { id: string; env: Record<string, string>; seededVersion: number }[]) {
   await db.delete(agentsTable);
   for (const row of rows) {
@@ -278,16 +296,35 @@ test("OpenCode's built-in config bypasses permission prompts", async () => {
   assert.equal(JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission, "allow");
 });
 
-test("OpenCode's built-in model field carries the opencode/ provider prefix", async () => {
-  resetAgents([]);
-  seedAgents();
-  const opencode = await getAgent("opencode");
-  /* OpenCode resolves a model only against `provider/<id>`; a bare id in the
-     top-level `model` is a ProviderModelNotFoundError and the thread hangs. */
-  assert.equal(
-    JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").model,
-    "opencode/{env:DAEDALUS_OPENCODE_MODEL}",
-  );
+test("OpenCode's endpoint is a provider of its own that declares the thread's model", async () => {
+  await resetAgents([]);
+  await seedAgents();
+  const opencode = (await getAgent("opencode"))!;
+  /* OpenCode 2 resolves `provider/<id>` against that provider's catalog; under
+     the id `opencode` the catalog was Zen's, and a gateway model fell back to
+     a Zen one sent to the gateway. */
+  const { env } = resolveSpawn(opencode, profileWith(), project, "gw/big");
+  const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(config.model, "daedalus/gw/big");
+  assert.deepEqual(config.provider, {
+    daedalus: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Daedalus",
+      options: { baseURL: "https://gw.example/v1", apiKey: "sk-test" },
+      models: { "gw/big": { name: "gw/big" } },
+    },
+  });
+  assert.equal(Object.keys(env).some((k) => k.startsWith("DAEDALUS_OPENCODE_")), false);
+});
+
+test("a profile with no endpoint leaves OpenCode its own provider", async () => {
+  await resetAgents([]);
+  await seedAgents();
+  const opencode = (await getAgent("opencode"))!;
+  /* The Default profile: a hollow `opencode` override was a provider with no
+     baseURL, and every prompt failed. Nothing but the bypass may remain. */
+  const { env } = resolveSpawn(opencode, profileWith({ baseUrl: "", apiKey: "", models: [], defaultModel: "" }), project);
+  assert.deepEqual(JSON.parse(env.OPENCODE_CONFIG_CONTENT), { permission: "allow" });
 });
 
 test("OpenCode backfill preserves an explicit permission policy", async () => {
@@ -324,21 +361,40 @@ test("OpenCode backfill prefixes an unprefixed model field on a stored template"
   assert.equal(config.permission, "allow", "the user's permission policy is preserved");
 });
 
-test("seed 16 declares OpenCode's subagent feed without touching the user's env", async () => {
-  resetAgents([
+test("seed 30 moves the seeded OpenCode template and drops only its own vars", async () => {
+  const seeded21 =
+    '{"permission":"allow","instructions":["{personaFile}"],"model":"opencode/{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}';
+  await resetAgents([
     {
       id: "opencode",
-      seededVersion: 15,
-      env: { OPENCODE_CONFIG_CONTENT: '{"permission":{"bash":"ask"},"model":"{model}"}', MY_KEY: "kept" },
+      seededVersion: 21,
+      env: {
+        OPENCODE_CONFIG_CONTENT: seeded21,
+        DAEDALUS_OPENCODE_API_KEY: "{apiKey}",
+        DAEDALUS_OPENCODE_MODEL: "{model}",
+        DAEDALUS_OPENCODE_BASE_URL: "https://mine.example/v1",
+        MY_KEY: "kept",
+      },
     },
   ]);
-  seedAgents();
-  const opencode = await getAgent("opencode");
-  assert.equal(opencode?.subagentFeed, "opencode-http");
-  assert.equal(opencode?.env.MY_KEY, "kept");
-  assert.equal(opencode?.command, "opencode");
-  assert.deepEqual(JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission, { bash: "ask" });
-  /* The probe cache is left alone — nothing the agent advertises changed. */
+  await seedAgents();
+  const opencode = (await getAgent("opencode"))!;
+  const [row] = await db.select().from(agentsTable).where(eq(agentsTable.id, "opencode"));
+  assert.equal(row.seededVersion, 30);
+  assert.equal(JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT).provider.daedalus.options.baseURL, "{baseUrl}");
+  assert.equal("DAEDALUS_OPENCODE_API_KEY" in opencode.env, false);
+  assert.equal("DAEDALUS_OPENCODE_MODEL" in opencode.env, false);
+  assert.equal(opencode.env.DAEDALUS_OPENCODE_BASE_URL, "https://mine.example/v1", "an edited var is the user's");
+  assert.equal(opencode.env.MY_KEY, "kept");
+});
+
+test("seed 30 leaves an edited OpenCode template alone", async () => {
+  const mine = '{"permission":{"bash":"ask"},"model":"{model}"}';
+  await resetAgents([{ id: "opencode", seededVersion: 21, env: { OPENCODE_CONFIG_CONTENT: mine, DAEDALUS_OPENCODE_MODEL: "{model}" } }]);
+  await seedAgents();
+  const opencode = (await getAgent("opencode"))!;
+  assert.equal(opencode.env.OPENCODE_CONFIG_CONTENT, mine);
+  assert.equal(opencode.env.DAEDALUS_OPENCODE_MODEL, "{model}", "its vars may still be read by it");
 });
 
 test("a fresh install gets the built-ins, pointed at {smallModel}", async () => {

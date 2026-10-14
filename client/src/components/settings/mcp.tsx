@@ -198,8 +198,21 @@ export function McpPage() {
    listing, and the row's actions — in one place. Open state is the card's own
    and is not remembered: a list you came to read starts calm. */
 
+/** A built-in whose server is a *thread's* own is never connectable from here,
+    so its row says so instead of reading a connection it cannot make. */
+const isThreadScoped = (server: McpServerDef) => server.type === "builtin" && !!server.threadScoped
+
 function McpStatus({ server }: { server: McpServerDef }) {
-  const { data, error } = useMcpCatalog(server.id)
+  const scoped = isThreadScoped(server)
+  const { data, error } = useMcpCatalog(server.id, !scoped)
+  if (scoped) {
+    return (
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="size-2 rounded-full bg-muted-foreground/30" />
+        <span className="hidden @panel-sm:inline">Per thread</span>
+      </span>
+    )
+  }
   const down = !!error || (!!data && !data.ok && !data.deferred)
   const n = data ? data.tools.length + data.prompts.length + data.resources.length : 0
   const text = down
@@ -329,6 +342,24 @@ function McpCards({
         />
       ))}
     </div>
+  )
+}
+
+/**
+ * Why a thread-scoped built-in has no listing here.
+ *
+ * Its stdio server is synthesized at spawn from the *calling thread*: its env is
+ * that thread's loopback URL (or, for the preview browser, the desktop panel it
+ * drives). There is no such server behind a settings screen to connect to and
+ * nothing to read, so the row explains the absence rather than drawing an
+ * Offline dot and a Check that can only fail.
+ */
+function McpThreadScoped() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Resolved at spawn, on the thread that links it — its connection is that thread's own, so there is
+      nothing to connect to from Settings. Link it to a profile or a thread to give an agent its tools.
+    </p>
   )
 }
 
@@ -475,13 +506,18 @@ function listedWhen(result: McpCheckResult) {
 function McpCheck({ server, settings }: { server: McpServerDef; settings: ServerSettings }) {
   const qc = useQueryClient()
   const key = mcpCatalogKey(settings, server.id)
-  const query = useMcpCatalog(server.id)
+  const scoped = isThreadScoped(server)
+  const query = useMcpCatalog(server.id, !scoped)
   const result = query.data ?? null
   /* The toast flavour, because this button stays on screen: the inline one
      keeps `busy` up on purpose for the callers that navigate away on success,
      which would leave Check reading "Checking…" for as long as the page is
      open. */
   const { busy, run } = useAsyncAction({ toast: true })
+
+  /* Nothing to check: the server it would connect to does not exist without a
+     thread. Saying that beats a Check button that can only ever fail. */
+  if (scoped) return <McpThreadScoped />
 
   const check = () =>
     void run(`Couldn't check ${server.name}`, async () => {

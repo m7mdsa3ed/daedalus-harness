@@ -6,7 +6,6 @@
    — `composer/indicator.tsx`         the shared 24px-trigger-over-a-popover
                                       shape (`StripIndicator`) and the `Ring`
                                       two of the readings print a number in;
-   — `composer/config-indicator.tsx`  a settings change in flight or staged;
    — `composer/context-indicator.tsx` the context ring, the turn's numbers and
                                       the plan behind them;
    — `composer/todo-indicator.tsx`    how far the agent's checklist has got;
@@ -24,7 +23,6 @@
    made the shelf's own ground wear its tone, and it is a `Notice` at the foot
    of the transcript now (`components/thread-view/thread-status.tsx`). */
 export { StripIndicator } from "@/components/composer/indicator"
-export { ConfigIndicator } from "@/components/composer/config-indicator"
 export { ContextIndicator } from "@/components/composer/context-indicator"
 export { TodoIndicator } from "@/components/composer/todo-indicator"
 export { AgentsIndicator, runningAgents } from "@/components/composer/agents-indicator"

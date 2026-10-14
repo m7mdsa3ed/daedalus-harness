@@ -1,6 +1,8 @@
-/* A workflow run drawn as its graph: every phase a column of the steps that
-   run side by side in it, joined to the next phase by the barrier between
-   them. Only the phase joins are drawn — the outline the client receives
+/* A workflow run drawn as a flowchart, top to bottom from Start to End: every
+   phase a row of the steps that run side by side in it, joined to the next
+   phase by the barrier between them, and a running step's node listing what
+   it has been doing. It always fills the flex column it is put in — the caller
+   sizes that box (the Agents panel, or a card's own height). Only the phase joins are drawn — the outline the client receives
    (`group.plan`) names phases and steps, not a step's own `dependsOn`, so an
    edge inside a phase is something this cannot know and does not guess.
 
@@ -17,6 +19,12 @@ export interface GraphStep {
   state: "running" | "completed" | "failed" | "cancelled" | "disconnected" | "pending"
   /** When the step started — the running node's clock counts from it. */
   startedAt?: number
+  /** A running step's latest calls, oldest first. */
+  updates?: string[]
+  /** A settled step's report, on one line. */
+  result?: string
+  /** What the step billed so far, already worded (`12.4k tokens`). */
+  tokens?: string
 }
 
 const TONE = {
@@ -42,7 +50,14 @@ export function WorkflowGraph({
   const now = useElapsed(0, phases.some((phase) => phase.steps.some((step) => step.state === "running")))
   const nodes: FlowchartNode[] = []
   const edges: FlowchartEdge[] = []
-  let prev: string[] = []
+  const steps = phases.flatMap((phase) => phase.steps)
+  const end = steps.some((step) => step.state === "running" || step.state === "pending")
+    ? "pending"
+    : steps.some((step) => step.state === "failed")
+      ? "failed"
+      : "done"
+  nodes.push({ id: "start", label: "Start", shape: "round", tone: "done" })
+  let prev: string[] = ["start"]
   phases.forEach((phase, p) => {
     const ids = phase.steps.map((step, i) => {
       const id = step.id ?? `pending:${p}:${i}`
@@ -56,11 +71,14 @@ export function WorkflowGraph({
             : step.state === "completed"
               ? "done"
               : step.state,
+          step.tokens,
         ]
           .filter(Boolean)
           .join(" · "),
         tone: TONE[step.state],
         shape: "box",
+        updates: step.state === "running" ? step.updates : undefined,
+        result: step.state === "running" ? undefined : step.result,
       })
       return id
     })
@@ -76,15 +94,18 @@ export function WorkflowGraph({
     }
     prev = ids
   })
+  nodes.push({ id: "end", label: end === "pending" ? "End" : end === "failed" ? "Ended with failures" : "Done", shape: "round", tone: end })
+  prev.forEach((from) => edges.push({ from, to: "end", dashed: end === "pending" }))
   return (
     <InteractiveFlowchart
       nodes={nodes}
       edges={edges}
-      direction="right"
+      direction="down"
+      fill
       readOnly
       selectedId={selectedId}
       onNodeClick={(id) => {
-        if (!id.startsWith("pending:") && !id.startsWith("join:")) onSelect(id)
+        if (!id.startsWith("pending:") && !id.startsWith("join:") && id !== "start" && id !== "end") onSelect(id)
       }}
     />
   )

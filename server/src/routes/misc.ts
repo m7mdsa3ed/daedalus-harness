@@ -16,12 +16,17 @@ import { getProject } from "../projects.js";
 import {
   globalRules, projectRules, createRule, updateRule, deleteRule,
 } from "../rules.js";
+import {
+  ModelRoleInputSchema, ModelRolesInputSchema,
+  addModelRole, deleteModelRole, listModelRoles, setModelRoles, updateModelRole,
+} from "../model-roles.js";
 import { listThemes, createTheme, updateTheme, deleteTheme } from "../themes.js";
 import type { Push } from "../push.js";
 import { clearNotifications, listNotifications, markNotificationsRead, unreadNotifications } from "../notifications.js";
 import { addComposerHistory, clearComposerHistory, listComposerHistory } from "../composer-history.js";
 import type { SessionManager } from "../sessions.js";
 import { appVersion, changelog } from "../meta.js";
+import { resolveLinkPreview } from "../link-preview.js";
 import { bearerToken, workspace } from "./helpers.js";
 
 // Server-global web-search backend. This is the default a profile inherits when
@@ -87,6 +92,10 @@ export function miscRoutes(
      About group shows. Authed like every route under the global middleware. */
   app.get("/api/meta", (c) => c.json({ version: appVersion(), changelog: changelog() }));
 
+  /* A pasted link's title and mark for its composer chip — fetched here and
+     inlined (`link-preview.ts`), so the browser asks the page nothing. */
+  app.get("/api/link-preview", async (c) => c.json(await resolveLinkPreview(c.req.query("url") ?? "")));
+
   app.get("/api/config/web-search", (c) => {
     const webSearch = readWebSearch();
     if (!webSearch) return c.json({ configured: false });
@@ -129,6 +138,34 @@ export function miscRoutes(
   })
   app.delete("/api/rules/:id", async (c) =>
     (await deleteRule(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
+  )
+
+  /* Model roles: the free-form vocabulary a profile's models tag themselves with
+     (`ModelDef.roles`), so a subagent is spawned on a role rather than on a
+     hardcoded model (docs/model-roles.md). Global, ordered, the same shape
+     `rules` takes — and exposed the same way. `PUT` replaces the whole ordered
+     list in one write (the Settings save); the single-row routes are for a
+     targeted edit. A deleted role leaves dangling assignments on purpose: a
+     reader ignores an id no row answers for. */
+  app.get("/api/model-roles", async (c) => c.json(await listModelRoles()))
+  app.put("/api/model-roles", async (c) => {
+    const parsed = ModelRolesInputSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    return c.json(await setModelRoles(parsed.data))
+  })
+  app.post("/api/model-roles", async (c) => {
+    const parsed = ModelRoleInputSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    return c.json(await addModelRole(parsed.data), 201)
+  })
+  app.put("/api/model-roles/:id", async (c) => {
+    const parsed = ModelRoleInputSchema.partial().safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    const updated = await updateModelRole(c.req.param("id"), parsed.data)
+    return updated ? c.json(updated) : c.json({ error: "not found" }, 404)
+  })
+  app.delete("/api/model-roles/:id", async (c) =>
+    (await deleteModelRole(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
   )
 
   /* Themes — the studio's saved user-made themes, stored server-side so a

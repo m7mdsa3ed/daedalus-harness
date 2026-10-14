@@ -18,10 +18,13 @@
    messages, the assistant's replies, tool results — about four characters a
    token) is the part the harness can see, and what is left of the request's
    total is "Agent overhead", the system prompt and tool schemas that live
-   inside that agent's own process and are not ours to split. */
+   inside that agent's own process and are not ours to split. Gateway-backed
+   requests can estimate prompt parts from the proxied request and provider
+   usage, but framing and agent-internal content remain overhead. */
 import type * as acp from "@daedalus/acp"
 
 import type { ThreadItem } from "@/lib/store/items"
+import { formatDuration } from "@/lib/tokens"
 import { parseMcpToolName, toolDisplayName, toolNameOf, vendorMeta } from "@/lib/tools"
 
 /** How a request's prompt divided, as our runtime measured it. Absent for any
@@ -30,6 +33,8 @@ import { parseMcpToolName, toolDisplayName, toolNameOf, vendorMeta } from "@/lib
     (everything that is not the system prompt or a tool block) is always there. */
 export interface PromptBreakdown {
   total: number
+  source: "agent" | "gateway"
+  overhead: number
   system: number
   /** Built-in tools only; MCP servers' tools are `mcp`. */
   tools: number
@@ -51,6 +56,8 @@ export function promptBreakdown(usage: acp.UsageUpdate | null | undefined): Prom
     ? null
     : {
         total,
+        source: r.source === "gateway" ? "gateway" : "agent",
+        overhead: num(r.overhead) ?? 0,
         system,
         tools,
         mcp: num(r.mcp) ?? 0,
@@ -88,6 +95,7 @@ const NO_PARTS: PromptParts = { system: 0, tools: 0, mcp: 0, user: 0, assistant:
 export interface RequestParts {
   parts: PromptParts
   inferred: boolean
+  source: "agent" | "gateway" | "transcript"
 }
 
 /** One request's prompt by part. Null only where there is nothing to divide:
@@ -97,12 +105,14 @@ export function promptParts(step: TurnStep): RequestParts | null {
   if (split) {
     const [user, assistant, results] = [split.user ?? 0, split.assistant ?? 0, split.results ?? 0]
     return {
-      inferred: false,
+      inferred: split.source === "gateway",
+      source: split.source,
       parts: {
         ...NO_PARTS,
         system: split.system,
         tools: split.tools,
         mcp: split.mcp,
+        overhead: split.overhead,
         user,
         assistant,
         results,
@@ -122,7 +132,7 @@ export function promptParts(step: TurnStep): RequestParts | null {
   const user = Math.round(h.user * scale)
   const assistant = Math.min(used - user, Math.round(h.assistant * scale))
   const results = Math.min(used - user - assistant, Math.round(h.results * scale))
-  return { inferred: true, parts: { ...NO_PARTS, user, assistant, results, overhead: used - user - assistant - results } }
+  return { inferred: true, source: "transcript", parts: { ...NO_PARTS, user, assistant, results, overhead: used - user - assistant - results } }
 }
 
 /** Requests' prompts added up — what was *billed*, since each request re-sends
@@ -201,6 +211,15 @@ export interface TurnStep {
   history: HistoryCounts
   from: number
   to: number
+  /** What the step produced — the row it was filed under: the call it made,
+      the reply it wrote. */
+  label: string
+  /** The turn it ran in, 1-based. */
+  turn: number
+  /** Wall time since the boundary before it — the user's message for a turn's
+      first step, the previous step's reading after that — so the tool calls
+      that ran in between are inside it. Absent where either end has no stamp. */
+  durationMs?: number
 }
 
 export interface TurnTokens {
@@ -243,6 +262,16 @@ function toolEntries(item: Extract<ThreadItem, { kind: "tool" }>): HistoryEntry[
   ]
 }
 
+/** A step is filed under the transcript's tail when its reading arrived
+    (`markStepUsage`), which is the row that step produced. */
+function stepLabel(item: ThreadItem): string {
+  if (item.kind === "tool") return preview(item.title)
+  if (item.kind === "agent") return preview(item.text)
+  if (item.kind === "thought") return "Thinking"
+  if (item.kind === "user") return "Before any reply"
+  return item.kind
+}
+
 /** The thread's tokens, turn by turn: the same nearest-user-row walk that
     `withStepTurnUsage` does, collecting the step readings filed on the way and
     the transcript as entries, so each request knows what it carried. A
@@ -251,12 +280,16 @@ function toolEntries(item: Extract<ThreadItem, { kind: "tool" }>): HistoryEntry[
 export function tokensByTurn(
   items: ThreadItem[],
   stepUsage: Record<string, acp.UsageUpdate>,
-  turnUsage: Record<string, acp.Usage>
+  turnUsage: Record<string, acp.Usage>,
+  stepAt: Record<string, number> = {}
 ): { turns: TurnTokens[]; entries: HistoryEntry[] } {
   const turns: TurnTokens[] = []
   const entries: HistoryEntry[] = []
   const running: HistoryCounts = { user: 0, assistant: 0, results: 0 }
   let from = 0
+  /** The last step boundary's stamp; a user row resets it, so no step is ever
+      timed across a turn. */
+  let clock: number | undefined
   const add = (entry: HistoryEntry) => {
     entries.push(entry)
     running[entry.part] += entry.tokens
@@ -264,6 +297,7 @@ export function tokensByTurn(
   for (const item of items) {
     if (item.parentId) continue
     if (item.kind === "user") {
+      clock = item.at
       turns.push({ id: item.id, turnId: item.turnId, prompt: item.text, usage: item.turnId ? turnUsage[item.turnId] : undefined, steps: [] })
       add({ part: "user", group: "", name: `#${turns.length} ${preview(item.text)}`, tokens: approx(item.text) })
     } else if (item.kind === "agent") {
@@ -276,7 +310,12 @@ export function tokensByTurn(
       add({ part: "assistant", group: "", name: "Compaction summary", tokens: approx(textOf(item.summary)) })
     }
     const update = stepUsage[item.id]
-    if (update) turns.at(-1)?.steps.push({ update, history: { ...running }, from, to: entries.length })
+    if (update) {
+      const at = stepAt[item.id]
+      const durationMs = at !== undefined && clock !== undefined && at >= clock ? at - clock : undefined
+      if (at !== undefined) clock = at
+      turns.at(-1)?.steps.push({ update, history: { ...running }, from, to: entries.length, label: stepLabel(item), turn: turns.length, durationMs })
+    }
   }
   return { turns: turns.filter((turn) => turn.usage || turn.steps.length > 0), entries }
 }
@@ -376,4 +415,59 @@ export function requestDetail(
     assistant: detail(of("assistant"), parts.assistant),
     results: detail(of("results"), parts.results),
   }
+}
+
+/** One child's spend: a subagent session or a background task/workflow run. */
+export interface SubagentSpend {
+  id: string
+  name: string
+  tokens: number
+  /** The full billed split, when the child's runtime reported one — an async
+      task's totals are a single figure. */
+  usage?: acp.Usage
+  workflow: boolean
+  /** Time spent running, settled turns only; absent while unmeasured. */
+  durationMs?: number
+  running: boolean
+}
+
+/** What every child of the thread billed, biggest first. A `subagent` row and
+    an `async-task` row never describe the same child (a native workflow's
+    steps are synthesized at view time, not stored), so their sum is honest.
+    ponytail: attribution only — whether a child's tokens are also inside the
+    parent's turn total is the runtime's choice (our `task` tool bills its
+    children to the parent; a workflow step is its own session), so callers
+    never add this to the thread total. */
+export function subagentSpend(items: ThreadItem[]): SubagentSpend[] {
+  const out: SubagentSpend[] = []
+  for (const item of items) {
+    if (item.kind === "subagent" && item.usage) {
+      out.push({
+        id: item.id,
+        name: item.name,
+        tokens: item.usage.totalTokens,
+        usage: item.usage,
+        workflow: !!item.workflow,
+        durationMs: item.durationMs,
+        running: item.state === "running",
+      })
+    } else if (item.kind === "async-task" && item.usage?.totalTokens) {
+      out.push({
+        id: item.id,
+        name: item.description || item.name,
+        tokens: item.usage.totalTokens,
+        workflow: true,
+        durationMs: item.usage.durationMs || undefined,
+        running: item.state === "running",
+      })
+    }
+  }
+  return out.sort((a, b) => b.tokens - a.tokens)
+}
+
+/** A child's time as one short phrase: "running", its measured time, or
+    nothing when the runtime gave us no way to tell. */
+export function spendTime(child: SubagentSpend): string | undefined {
+  if (child.running) return "running"
+  return child.durationMs ? formatDuration(child.durationMs) : undefined
 }

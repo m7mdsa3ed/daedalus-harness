@@ -419,7 +419,7 @@ await test("recoverAtBoot closes what the last process left running", async () =
 await test("a script fans out over what a first agent found, as real threads on one card", async () => {
   const view = await runner.startScript(
     parent,
-    `export const meta = {
+    { script: `export const meta = {
        name: 'fanout',
        description: 'Read a list, then one agent per item',
        phases: [{ title: 'Scout' }, { title: 'Read' }],
@@ -430,7 +430,7 @@ await test("a script fans out over what a first agent found, as real threads on 
      log('fanning out over ' + items.length)
      phase('Read')
      const read = await parallel(items.map((it) => () => agent('echo:' + it, { label: 'read:' + it })))
-     return { items, read }`,
+     return { items, read }` },
   );
   assert.equal(view.status, "running");
   const done = await runner.wait(view.id, 30_000);
@@ -469,7 +469,7 @@ await test("a script fans out over what a first agent found, as real threads on 
 await test("a script parses schema output, and a failed agent is a null inside parallel", async () => {
   const view = await runner.startScript(
     parent,
-    `export const meta = { name: 'mixed', description: 'schema and failure' }
+    { script: `export const meta = { name: 'mixed', description: 'schema and failure' }
      const ok = await agent('echo:take it:\\n\\u0060\\u0060\\u0060json\\n{"n":1}\\n\\u0060\\u0060\\u0060', {
        label: 'good',
        schema: { type: 'object', required: ['n'], properties: { n: { type: 'number' } } },
@@ -478,7 +478,7 @@ await test("a script parses schema output, and a failed agent is a null inside p
        () => agent('echo:fine', { label: 'fine' }),
        () => agent('please fail', { label: 'doomed' }),
      ])
-     return { n: ok.n, both }`,
+     return { n: ok.n, both }` },
   );
   const done = await runner.wait(view.id, 30_000);
   assert.ok(done);
@@ -495,17 +495,17 @@ await test("a script parses schema output, and a failed agent is a null inside p
 await test("an unguarded agent failure fails the run; cancel stops one mid-flight", async () => {
   const bad = await runner.startScript(
     parent,
-    `export const meta = { name: 'boom', description: 'unguarded failure' }
+    { script: `export const meta = { name: 'boom', description: 'unguarded failure' }
      await agent('please fail', { label: 'only' })
-     return 'unreachable'`,
+     return 'unreachable'` },
   );
   const failed = await runner.wait(bad.id, 30_000);
   assert.equal(failed?.status, "failed", "a bare await that throws fails the run");
 
   const long = await runner.startScript(
     parent,
-    `export const meta = { name: 'slow', description: 'parks' }
-     await agent('needs permission', { label: 'parked' })`,
+    { script: `export const meta = { name: 'slow', description: 'parks' }
+     await agent('needs permission', { label: 'parked' })` },
   );
   await waitFor(async () => ((await runner.status(long.id))?.steps ?? []).some((s) => s.status === "running"), "the script's agent to start");
   assert.equal(runner.cancel(long.id, "by hand"), true);
@@ -526,12 +526,12 @@ await test("an unguarded agent failure fails the run; cancel stops one mid-fligh
 
 await test("a script is refused what it may not do", async () => {
   await assert.rejects(
-    async () => runner.startScript(parent, "const meta = { name: 'x', description: 'y' }"),
+    async () => runner.startScript(parent, { script: "const meta = { name: 'x', description: 'y' }" }),
     (e: unknown) => e instanceof WorkflowError,
     "meta must be exported",
   );
   await assert.rejects(
-    async () => runner.startScript(parent, "export const meta = { name: computed(), description: 'y' }"),
+    async () => runner.startScript(parent, { script: "export const meta = { name: computed(), description: 'y' }" }),
     (e: unknown) => e instanceof WorkflowError,
     "meta must be a literal, or the run could not be named before it runs",
   );
@@ -539,16 +539,70 @@ await test("a script is refused what it may not do", async () => {
     parentSessionId: parent.id,
   });
   await assert.rejects(
-    async () => runner.startScript(child, "export const meta = { name: 'x', description: 'y' }"),
+    async () => runner.startScript(child, { script: "export const meta = { name: 'x', description: 'y' }" }),
     (e: unknown) => e instanceof WorkflowError && e.status === 409,
     "a step may not start a workflow, whichever engine it would use",
   );
   await manager.retire(child);
   // The clock ban is the sandbox's, but it has to reach the run's own error.
-  const clock = await runner.startScript(parent, "export const meta = { name: 'clock', description: 'reads a clock' }\nreturn Date.now()");
+  const clock = await runner.startScript(parent, { script: "export const meta = { name: 'clock', description: 'reads a clock' }\nreturn Date.now()" });
   const done = await runner.wait(clock.id, 20_000);
   assert.equal(done?.status, "failed");
   assert.match(done!.error ?? "", /unreplayable/);
+});
+
+await test("a relaunch reuses every unchanged agent; a background run tells its parent", async () => {
+  const script = `export const meta = { name: 'again', description: 'resume' }
+    const a = await agent('echo:one', { label: 'one' })
+    const b = await agent('echo:' + (args?.second ?? 'two'), { label: 'two' })
+    return [a, b]`;
+  const first = await runner.wait((await runner.startScript(parent, { script })).id, 30_000);
+  assert.equal(first?.status, "completed", first?.error ?? "");
+  const again = await runner.wait((await runner.startScript(parent, { resumeFromRunId: first!.id, args: { second: "three" } })).id, 30_000);
+  assert.equal(again?.status, "completed", again?.error ?? "");
+  assert.deepEqual(again!.result, ["one", "three"]);
+  assert.equal(again!.steps[0].sessionId, first!.steps[0].sessionId, "an unchanged call answers from the run it resumes");
+  assert.notEqual(again!.steps[1].sessionId, first!.steps[1].sessionId, "a changed one runs again");
+
+  /* Not waited on — which is what makes it a background run: its end is a
+     message on the parent, and that message is the parent's next turn. */
+  const bg = await runner.startScript(parent, { script, notify: true });
+  await waitFor(
+    () => ws.of("turn_started").some((e) => e.text.includes(`<task-id>${bg.id}</task-id>`) && e.text.includes("<status>completed</status>")),
+    "the background run's notification to start a turn on its parent",
+    30_000,
+  );
+});
+
+await test("a wait that times out does not opt out of the notification; the row ends completed", async () => {
+  const short = await runner.startScript(parent, {
+    script: "export const meta = { name: 'short', description: 'outlives its wait' }\nreturn await agent('echo:late', { label: 'late' })",
+    notify: true,
+  });
+  const early = await runner.wait(short.id, 1);
+  assert.equal(early?.status, "running", "the wait gave up before the run ended");
+  await waitFor(
+    () => ws.of("turn_started").some((e) => e.text.includes(`<task-id>${short.id}</task-id>`)),
+    "the notification after a timed-out wait",
+    30_000,
+  );
+  const { eq } = await import("drizzle-orm");
+  await waitFor(async () => {
+    const row = (await db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, short.id)))[0];
+    return row?.status === "completed";
+  }, "the stored row to say completed, not an older 'running'");
+});
+
+await test("a background declarative run with phases tells its parent too", async () => {
+  const bg = await runner.start(parent, {
+    name: "phased",
+    phases: [{ name: "contract", steps: [{ name: "spec", prompt: "echo:S" }] }, { name: "build", steps: [{ name: "impl", prompt: "echo:I" }] }],
+  }, {}, true);
+  await waitFor(
+    () => ws.of("turn_started").some((e) => e.text.includes(`<task-id>${bg.id}</task-id>`)),
+    "the declarative run's notification",
+    30_000,
+  );
 });
 
 console.log("ask");

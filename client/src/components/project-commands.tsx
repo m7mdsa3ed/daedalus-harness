@@ -1,5 +1,15 @@
 import * as React from "react"
-import { FileCode, History, SquareTerminal, TriangleAlert } from "lucide-react"
+import { BookmarkPlus, FileCode, History, SquareTerminal, TriangleAlert } from "lucide-react"
+import { HelperForm } from "@/components/helper-form"
+import { Button } from "@/components/ui/button"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import type { HelperCommand } from "@/lib/settings"
 import type { ProjectScript, ShellUse } from "@/lib/workspace/project-helpers"
 import { useStripSummary } from "./composer-strip"
@@ -137,7 +147,8 @@ export function useProjectCommands(opts: {
         confirm: helper.confirm || undefined,
       }))),
       ...byUse(
-        scripts.map((script) => ({
+        /* A script saved as a helper is offered once, as the helper. */
+        scripts.filter((script) => !helpers.some((helper) => helper.command === script.command)).map((script) => ({
           id: script.command,
           name: script.name,
           command: script.command,
@@ -214,8 +225,19 @@ export function useProjectCommands(opts: {
  * saved one, so saying "no matching command" over a line that is about to run
  * would be the menu arguing with the box.
  */
-export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
+export function ProjectCommandMenu({
+  state,
+  projectId,
+}: {
+  state: ProjectCommandState
+  /** Where a Recent line or a script is saved as a helper; no save button without one. */
+  projectId?: string
+}) {
   const showing = state.matches.length > 0
+  /* The row being saved as a helper. Held here and drawn even once the menu
+     has nothing to show, so the dialog outlives a list that filtered away. */
+  const [saving, setSaving] = React.useState<ProjectCommandSuggestion | null>(null)
+  const [busy, setBusy] = React.useState(false)
   /* Urgent: a menu you are arrow-keying through has to be visible to be a menu,
      so while it is up the shelf is open whatever the summary line would say. */
   useStripSummary(
@@ -228,9 +250,51 @@ export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
         }
       : null
   )
-  if (!showing) return null
+  const dialog = projectId && (
+    <ResponsiveDialog open={saving !== null} onOpenChange={(open) => !open && setSaving(null)}>
+      <ResponsiveDialogContent className="sm:max-w-md">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Save as project command</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            Offered first under <span className="font-mono">!</span> and in the project&rsquo;s Run
+            menu.
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
+        {saving && (
+          <HelperForm
+            id="save-helper-form"
+            key={saving.id}
+            projectId={projectId}
+            /* A script lends its name; a Recent line has none worth keeping
+               ("Run 3 times"), so the name is the one field left to fill. */
+            initial={{ command: saving.command, name: saving.kind === "script" ? saving.name : "" }}
+            /* A script already has a name, so the caret goes nowhere and the
+               keyboard stays down: Save is one tap. */
+            autoFocus={saving.kind !== "script"}
+            actions={false}
+            onBusyChange={setBusy}
+            onDone={() => setSaving(null)}
+          />
+        )}
+        {/* The dialog's own footer, not the form's buttons: it is pinned under
+            the scroll and rides the soft keyboard, and on a phone it stacks
+            the buttons full-width over the home indicator. */}
+        <ResponsiveDialogFooter>
+          <Button type="button" variant="outline" onClick={() => setSaving(null)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="submit" form="save-helper-form" disabled={busy}>
+            <BookmarkPlus /> {busy ? "Saving…" : "Save command"}
+          </Button>
+        </ResponsiveDialogFooter>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
+  )
+  if (!showing) return dialog || null
 
   return (
+    <>
+    {dialog}
     <CompleterList selected={state.selected} count={state.matches.length}>
       {state.matches.map((suggestion, i) => (
         <React.Fragment key={suggestion.id}>
@@ -267,6 +331,25 @@ export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
                 className="size-3 shrink-0 text-amber-500"
                 aria-label="Asks before running"
               />
+            ) : projectId && suggestion.kind !== "helper" ? (
+              /* Not a <button>: the row already is one. Mousedown is stopped
+                 so the row does not pick, and kept from the textarea's focus. */
+              /* A pill with its word where the panel has room, the mark alone
+                 where it does not; 36px under a coarse pointer, where a 24px
+                 mark at the row's edge is a tap on the row instead. */
+              <span
+                role="button"
+                title="Save as a project command"
+                className="-my-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground pointer-coarse:-my-2 pointer-coarse:h-9 pointer-coarse:min-w-9 pointer-coarse:justify-center"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setSaving(suggestion)
+                }}
+              >
+                <BookmarkPlus className="size-3.5 pointer-coarse:size-4" />
+                <span className="hidden text-[11px] @panel-sm:inline pointer-coarse:hidden">Save</span>
+              </span>
             ) : undefined
           }
           selected={i === state.selected}
@@ -276,5 +359,6 @@ export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
         </React.Fragment>
       ))}
     </CompleterList>
+    </>
   )
 }

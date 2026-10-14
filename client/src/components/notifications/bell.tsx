@@ -86,13 +86,13 @@ export function NotificationIconButton() {
         align="start"
         side={isMobile ? "bottom" : "top"}
         sideOffset={8}
-        className={cn(GLASS_SURFACE, "w-[min(24rem,calc(100vw-1rem))] p-0")}
+        className={cn(GLASS_SURFACE, "w-[min(24rem,calc(var(--float-w)-1rem))] p-0")}
       >
         {/* `overflow-hidden` is not decoration: the popup is `rounded-2xl` and
             this column fills it edge to edge, so without it the header's rule,
             the first row's hover fill and the footer's would all paint square
             corners over the card's rounded ones. */}
-        <div className="flex max-h-[min(28rem,var(--panel-h,100svh))] flex-col overflow-hidden rounded-2xl">
+        <div className="flex max-h-[min(28rem,var(--available-height))] flex-col overflow-hidden rounded-2xl">
           {/* Header: the title, the unread count as a plain phrase, and the
               one action that belongs with a glance. The padding is the row's
               own (`items.tsx`, the compact face) so the header, the notices

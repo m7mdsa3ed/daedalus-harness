@@ -3,7 +3,7 @@
    archived, starting, working, held) whose JSX gates kept exactly one from
    speaking. This is that ladder in one pure function, in the same order, so a
    surface draws one slot and cannot say two things. */
-import { retryWhy, workingMessage } from "@/components/composer/activity-line"
+import { retryWhy, shownRetry, workingMessage } from "@/components/composer/activity-line"
 import { describeError } from "@/lib/errors"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
 import { holdOf } from "@/lib/thread/hold"
@@ -25,6 +25,8 @@ export interface ThreadStatus {
   /** Position in the startup sequence; only the opening phases have one. */
   step?: { n: number; of: number }
   detail?: string
+  /** The backoff in progress (`retrying`): which retry of how many, and its wait. */
+  retry?: { attempt: number; of?: number; delayMs?: number }
   /** The cause or stack, folded under a disclosure. */
   more?: string
   /** A fix that can be copied (a missing agent's install line). */
@@ -99,13 +101,15 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
   if (hold.byError) return null
   if (line) return null
   if (!thread.turnActive) return failureStatus(thread)
-  if (thread.retry) {
-    const { attempt, of, error } = thread.retry
+  const retry = shownRetry(thread)
+  if (retry) {
+    const { attempt, of, delayMs, error } = retry
     return {
       kind: "retrying",
       tone: "warn",
-      headline: "Retrying request",
-      detail: `${of ? `${attempt} of ${of} attempts` : `Attempt ${attempt}`}${error ? ` — ${retryWhy(error)}` : ""}`,
+      headline: "Request failed, trying again",
+      detail: error ? retryWhy(error) : undefined,
+      retry: { attempt, of, delayMs },
       more: error ? [describeError(error).title, describeError(error).detail].filter(Boolean).join("\n\n") : undefined,
     }
   }

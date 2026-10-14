@@ -4,6 +4,17 @@ import { join } from "node:path";
 export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh";
 export const EFFORTS: Effort[] = ["minimal", "low", "medium", "high", "xhigh"];
 
+/** One row of `DAEDALUS_AGENT_MODEL_ROLES`: a free-form helper-model tag a
+    subagent may be spawned on. `id` is what assignments point at, `label` is
+    what a person reads, `model` is the resolved model id (`""` when the role is
+    unassigned, meaning the session model). */
+export interface ModelRole {
+  id: string;
+  label: string;
+  description: string;
+  model: string;
+}
+
 export interface AgentEnv {
   apiKey: string | null;
   baseUrl: string | null;
@@ -26,6 +37,14 @@ export interface AgentEnv {
   /** Input modalities by model id (`["text","image"]`), off the same map's
       third element. A model absent here is one the catalog says nothing about. */
   modelModalities: Record<string, string[]>;
+  /** Named helper models a subagent may run on (the `task` tool's `role`), in
+      the vocabulary's order, by id → `{ label, description, model }`. `model`
+      is the profile's first model carrying the role (already resolved, catalog
+      suffix and all), or `""` for an unassigned role — which falls back to the
+      session model. Fixed at spawn: a subagent is the same process, so an
+      assignment change costs a respawn like any spawn-time profile fact. Empty
+      when the profile names none, and the `task` tool then advertises none. */
+  modelRoles: ModelRole[];
   personaFile: string | null;
   /** Path to the model-prompt library (`{version, entries:[{match, prompt}]}`),
       re-read every turn so a library edit or a live model change lands on the
@@ -99,6 +118,34 @@ function modalities(v: string | undefined): AgentEnv["modelModalities"] {
   }
 }
 
+/* The roles list, shaped like `windows()`'s contract: a malformed entry is a
+   dropped entry, a malformed list an empty one. A role worth failing a spawn
+   over is not one the harness would have shipped, and an unparsed table only
+   costs the `task` tool an advert it should not have made. */
+function roles(v: string | undefined): ModelRole[] {
+  const s = str(v);
+  if (s === null) return [];
+  try {
+    const raw: unknown = JSON.parse(s);
+    if (!Array.isArray(raw)) return [];
+    const out: ModelRole[] = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.id !== "string" || e.id === "") continue;
+      out.push({
+        id: e.id,
+        label: typeof e.label === "string" && e.label !== "" ? e.label : e.id,
+        description: typeof e.description === "string" ? e.description : "",
+        model: typeof e.model === "string" ? e.model : "",
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
   const model = str(env.DAEDALUS_AGENT_MODEL) ?? "";
   const effortRaw = str(env.DAEDALUS_AGENT_EFFORT);
@@ -112,6 +159,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     maxOutputTokens: num(env.DAEDALUS_AGENT_MAX_OUTPUT_TOKENS),
     modelWindows: windows(env.DAEDALUS_AGENT_MODEL_WINDOWS),
     modelModalities: modalities(env.DAEDALUS_AGENT_MODEL_WINDOWS),
+    modelRoles: roles(env.DAEDALUS_AGENT_MODEL_ROLES),
     personaFile: str(env.DAEDALUS_AGENT_PERSONA_FILE),
     modelPromptsFile: str(env.DAEDALUS_AGENT_MODEL_PROMPTS_FILE),
     projectInstructions: !["0", "false", "off"].includes(

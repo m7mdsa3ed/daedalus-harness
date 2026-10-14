@@ -425,8 +425,12 @@ export function sendActions(
      * line would leave no trace until the next attach. Drawn here from the
      * answer when that is the case, and *not* when it is not, or a live thread
      * would show the same command twice.
+     *
+     * A draft passes `draftProjectId`: the line goes to the draft door
+     * (`POST /api/shell`), which journals nothing, so the rows drawn here are
+     * the only trace — the draft stays a draft and a reload forgets them.
      */
-    async runShell(sessionId: string, command: string) {
+    async runShell(sessionId: string, command: string, draftProjectId?: string) {
       const shellId = uuid()
       /* Drawn before the request leaves: a `!` line can take seconds, and one
          that showed nothing until it finished would read as a line that was
@@ -443,7 +447,11 @@ export function sendActions(
         output: string
         exitCode: number | null
         timedOut: boolean
-      }>(settings, `/api/sessions/${sessionId}/shell`, { command, shellId }).catch((err) => {
+      }>(
+        settings,
+        draftProjectId ? "/api/shell" : `/api/sessions/${sessionId}/shell`,
+        draftProjectId ? { command, projectId: draftProjectId } : { command, shellId }
+      ).catch((err) => {
         /* The row must settle even when the request dies: the composer no
            longer holds the line (a `!` send is send-and-forget, like a
            prompt), so a `running` row left standing is the only place the

@@ -15,6 +15,7 @@ import {
 } from "./db/index.js";
 import { gatewayUrlFor } from "./gateway-shim.js";
 import { writeCodexModelCatalog } from "./model-catalog.js";
+import type { ModelRole } from "./model-roles.js";
 import { modelPromptsFilePath } from "./model-prompts.js";
 // Type-only: personas.ts imports `usesPersonaFile` from here at runtime, and
 // the dependency has to stay one-directional.
@@ -95,12 +96,21 @@ export interface AgentDef {
    *    `_meta.claudeCode.options` is spread straight into the Agent SDK's query
    *    options, which is where the `thinking` budget goes. Built by
    *    `AcpBridge.sessionMeta`, not here — it is protocol, not environment.
+   *  - `"air-meta"` (claude-code from claude-agent-acp 0.89, daedalus): the AIR
+   *    extension's own key, `_meta.jetbrains.air.customInstructions`, on the
+   *    same requests — appended to the runtime's own system prompt, as
+   *    `{append}` is. The runtime-neutral spelling, which is why it replaced
+   *    `"acp-meta"` for claude-code. codex-acp reads it too but only on
+   *    `session/new` (not resume or load), so a rules change would never
+   *    reach a revived Codex thread — codex stays on `"env"`. The bridge checks
+   *    the runtime advertised `customInstructions` at `initialize` and says so
+   *    when it did not (`AcpBridge.sessionMeta`).
    *  - `"env"` (codex, opencode): a key in the agent's own config template,
    *    filled from `{personaPrompt}` (inline text) or `{personaFile}` (a path).
    *    Which of the two an agent wants is the template's business — it asks by
    *    naming the placeholder — exactly as the Codex catalog does.
    */
-  personaVia?: "acp-meta" | "env" | null;
+  personaVia?: "acp-meta" | "air-meta" | "env" | null;
   /**
    * Whether threads may share one process of this runtime, and how a thread's
    * own env reaches it when they do — or null/absent for one process per
@@ -123,21 +133,6 @@ export interface AgentDef {
    * env). Each shares nothing until it grows a per-session door.
    */
   sharedProcess?: "acp-meta" | null;
-  /**
-   * Where this runtime's subagent transcripts come from when its ACP bridge
-   * does not carry them, or null/absent when ACP is all there is.
-   *
-   *  - `"opencode-http"` (opencode): `opencode acp` drops every event of a
-   *    child session on the floor (`docs/protocol.md`, "Subagents"). The
-   *    process is spawned with `--port <n> --hostname 127.0.0.1` and a
-   *    per-spawn `OPENCODE_SERVER_PASSWORD`, and the server subscribes to
-   *    its `/event` bus and re-emits the children as RFD subagent updates
-   *    (`opencode-subagents.ts`). Retire the day sst/opencode#40654 ships.
-   *
-   * Declarative like the three above it: a fact about the runtime behind
-   * `command`, and not offered on `PUT /api/agents/:id` for the same reason.
-   */
-  subagentFeed?: "opencode-http" | null;
   /**
    * How a rewind (roll the conversation back to before a turn, in place)
    * reaches this runtime, or null/absent when nothing is known to work and
@@ -193,6 +188,26 @@ export interface AgentDef {
    * (`"env"`, through its config template), once their trust review is solved.
    */
   pauseVia?: "acp-meta" | null;
+  /**
+   * How this runtime's *own* subagents take a role's model (docs/model-roles.md,
+   * `rewindVia`'s sibling): a subagent spawned on a role rather than on the
+   * session model.
+   *
+   *  - `"acp-env"` (daedalus): roles ride `DAEDALUS_AGENT_MODEL_ROLES` at spawn
+   *    and its in-process `task` tool reads them directly — nothing per-call
+   *    reaches the child, because a subagent is the same process. A role's
+   *    model is fixed for the process, so an assignment change costs a respawn
+   *    like any spawn-time profile fact.
+   *
+   * Null/absent (claude-code, codex, opencode, anything added): no helper
+   * models — the menus do not offer them and a subagent inherits the session
+   * model. Claude Code had a `"claude-agents-dir"` door (per-role
+   * `.claude/agents/<role>.md` files); it was removed so helper models are our
+   * runtime's alone, and seed 27 takes the value back off existing rows.
+   * Declared with the runtime, never compared against its id, for the same
+   * reason as `rewindVia`.
+   */
+  subagentModelsVia?: "acp-env" | null;
   /**
    * Where this runtime reads the skills, commands and model allowlist the
    * harness projects into the project's cwd (`materialize.ts`).
@@ -389,6 +404,36 @@ function withOpencodeModelPrefix(env: Record<string, string>): Record<string, st
     ...env,
     OPENCODE_CONFIG_CONTENT: template.replace(unprefixed, '"model":"opencode/{env:DAEDALUS_OPENCODE_MODEL}"'),
   };
+}
+
+/** OpenCode's config (seed 30). The profile's endpoint is a provider of its own,
+    `daedalus`, declaring the one model the thread runs — OpenCode 2 resolves
+    `provider/<id>` against that provider's catalog, and reusing the id
+    `opencode` merged in Zen's, which has no gateway model in it: the thread
+    silently came up on a Zen model sent to the gateway. Every key is a harness
+    placeholder, never an `{env:…}` one, so a profile with no endpoint (the
+    Default profile) prunes the whole block and OpenCode keeps its own
+    provider and login — a hollow `opencode` override was a provider with no
+    `baseURL`, and every prompt failed. */
+const OPENCODE_CONFIG =
+  '{"permission":"allow","instructions":["{personaFile}"],"model":"{baseUrl?daedalus/}{model}","provider":{"daedalus":{"npm":"{baseUrl?@ai-sdk/openai-compatible}","name":"{baseUrl?Daedalus}","options":{"baseURL":"{baseUrl}","apiKey":"{apiKey}"},"models":{"{model}":{"name":"{model}"}}}}}';
+
+/** The template seeds 12–21 converge on (after the three moves above), and the
+    env keys it read through `{env:…}`. Only an exact match is replaced — a
+    template someone edited is theirs, and so are its vars. */
+const OPENCODE_CONFIG_21 =
+  '{"permission":"allow","instructions":["{personaFile}"],"model":"opencode/{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}';
+const OPENCODE_VARS_21: Record<string, string> = {
+  DAEDALUS_OPENCODE_API_KEY: "{apiKey}",
+  DAEDALUS_OPENCODE_BASE_URL: "{baseUrl?https://api.opencode.ai}",
+  DAEDALUS_OPENCODE_MODEL: "{model}",
+};
+
+function withOpencodeProvider(env: Record<string, string>): Record<string, string> {
+  if (env.OPENCODE_CONFIG_CONTENT !== OPENCODE_CONFIG_21) return env;
+  const out: Record<string, string> = { ...env, OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG };
+  for (const [key, seeded] of Object.entries(OPENCODE_VARS_21)) if (out[key] === seeded) delete out[key];
+  return out;
 }
 
 /**
@@ -620,6 +665,15 @@ function withSmallModelVar(env: Record<string, string>): Record<string, string> 
   return out;
 }
 
+/** Seed 27: the `CLAUDE_CODE_SUBAGENT_MODEL` key seed 26 put in, taken back —
+    only while it still holds the seeded template, so a value the user wrote
+    there themselves is theirs and stays. */
+export function withoutSubagentModelKey(env: Record<string, string>): Record<string, string> {
+  if (env.CLAUDE_CODE_SUBAGENT_MODEL !== "{subagentModel}") return env;
+  const { CLAUDE_CODE_SUBAGENT_MODEL: _, ...rest } = env;
+  return rest;
+}
+
 /**
  * The env names Claude Code resolves its `sonnet`/`opus`/`fable` aliases
  * through. Unlike the haiku pair these are not side-jobs — they are the models
@@ -754,7 +808,6 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 25,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
@@ -776,12 +829,28 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // token is nowhere near a refresh. Env untouched again.
     // Seed 24 lets threads share one process (`sharedProcess`); env untouched.
     // Seed 25 says a pause reaches it through the harness's hooks (`pauseVia`).
+    // Seed 26 gives a role-aware subagent model: the
+    // `CLAUDE_CODE_SUBAGENT_MODEL` key (pinned to the profile's default helper
+    // model, pruned when it assigns none) and `subagentModelsVia`, whose
+    // `"claude-agents-dir"` value is what `sessions.ts` materialises the
+    // per-role `.claude/agents/<id>.md` files behind. The env changes, so the
+    // probe cache is dropped once.
+    // Seed 27 takes seed 26 back: helper models are the daedalus runtime's
+    // alone, so the column goes null and the env key goes (`sessions.ts` sweeps
+    // the files it wrote).
+    // Seed 28 moves rules from `_meta.systemPrompt` to the AIR extension's
+    // `customInstructions` (`personaVia: "air-meta"`, claude-agent-acp ≥ 0.89).
+    // Only the old default moves; a door the user picked stays.
+    since: 28,
     backfill: (existing) => ({
-      env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
+      env: withoutSubagentModelKey(
+        withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
+      ),
       quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
       liveConfig: existing.liveConfig ?? "acp",
-      personaVia: existing.personaVia ?? "acp-meta",
+      personaVia: !existing.personaVia || existing.personaVia === "acp-meta" ? "air-meta" : existing.personaVia,
       sharedProcess: existing.sharedProcess ?? "acp-meta",
+      subagentModelsVia: null,
       rewindVia: existing.rewindVia ?? "acp-fork-point",
       workflowsVia: existing.workflowsVia ?? "native",
       pauseVia: existing.pauseVia ?? "acp-meta",
@@ -803,7 +872,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     spawnCategories: SPAWN_CATEGORIES,
     quotaProbe: QUOTA_PROBES["claude-code"],
     liveConfig: "acp",
-    personaVia: "acp-meta",
+    personaVia: "air-meta",
     sharedProcess: "acp-meta",
     rewindVia: "acp-fork-point",
     pauseVia: "acp-meta",
@@ -877,16 +946,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // OpenCode does not honor OPENCODE_API_KEY / OPENCODE_BASE_URL /
     // OPENCODE_MODEL as first-class env vars — configuration reaches it via
     // OPENCODE_CONFIG_CONTENT (its documented runtime override env var,
-    // opencode.ai/docs/config). We plumb three harness-controlled vars —
-    // DAEDALUS_OPENCODE_API_KEY / _BASE_URL / _MODEL — from the active profile
-    // and reference them inside the JSON via OpenCode's own {env:...}
-    // substitution. When the profile leaves a value empty the DAEDALUS_* var
-    // is pruned from the spawned env (see resolveEnvValue / pruneJson); the
-    // matching {env:DAEDALUS_*} inside the JSON substitutes to "" and OpenCode
-    // falls back to its own auth cascade (OpenCode app login, ANTHROPIC_API_KEY
-    // / OPENAI_API_KEY already in the host shell). The DAEDALUS_* vars are
-    // normally set in .env (or shell) for a global default; a stored profile
-    // overrides them per-thread.
+    // opencode.ai/docs/config), filled from the profile (`OPENCODE_CONFIG`).
+    // A profile that leaves the endpoint empty prunes the provider block away
+    // (resolveEnvValue / pruneJson) and OpenCode falls back to its own auth
+    // cascade (OpenCode app login, Zen's free models, keys in the host shell).
+    // Seeds 12–21 routed the values through three DAEDALUS_OPENCODE_* vars and
+    // OpenCode's own {env:...} substitution, which the harness cannot prune.
     // Seed 12 adds `instructions`, which is how a persona reaches OpenCode. It
     // is a list of *file paths*, not text, so it takes `{personaFile}` and
     // `writePersonaPrompt` puts the prompt somewhere for it to point at.
@@ -911,12 +976,16 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // together, and a user who renames the provider by hand keeps them in
     // sync themselves. Backfill rewrites only the literal unprefixed substring
     // so a customised template (e.g. `model: "{model}"`) is left alone.
-    since: 21,
+    // Seed 30 is OpenCode 2 (`opencode acp` 2.x). It retires seed 16's
+    // subagent feed: 2.x's `acp` rejects the `--port`/`--hostname` the feed
+    // spawned it with (exit 1 on every thread), and sends its children itself
+    // (`opencode/session/child_update`, subagent-update.ts). And it replaces
+    // the provider block (`withOpencodeProvider`), which 2.x broke both ways.
+    since: 30,
     introduced: 1,
     backfill: (existing) => ({
-      env: withOpencodeBypass(withOpencodePersonaKey(withOpencodeModelPrefix(existing.env))),
+      env: withOpencodeProvider(withOpencodeBypass(withOpencodePersonaKey(withOpencodeModelPrefix(existing.env)))),
       personaVia: existing.personaVia ?? "env",
-      subagentFeed: existing.subagentFeed ?? "opencode-http",
       ...backfill20(existing),
     }),
     id: "opencode",
@@ -926,13 +995,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     ...seed20("opencode"),
     spawnCategories: SPAWN_CATEGORIES,
     personaVia: "env",
-    subagentFeed: "opencode-http",
     env: {
-      DAEDALUS_OPENCODE_API_KEY: "{apiKey}",
-      DAEDALUS_OPENCODE_BASE_URL: "{baseUrl?https://api.opencode.ai}",
-      DAEDALUS_OPENCODE_MODEL: "{model}",
-      OPENCODE_CONFIG_CONTENT:
-        '{"permission":"allow","instructions":["{personaFile}"],"model":"opencode/{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
+      OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG,
     },
   },
   {
@@ -943,8 +1007,9 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // ENOENT that surfaces in the thread. `liveConfig: "acp"` because it takes
     // model and effort over session/set_config_option and reads the
     // materialized allowlist in <cwd>/.claude/settings.local.json as its model
-    // catalog; `personaVia: "env"` through {personaFile}, which is also what
-    // makes `usesPersonaFile` write the prompt to disk. No quota probe: it has
+    // catalog; `personaVia: "air-meta"` — rules ride the session request's
+    // `_meta.jetbrains.air.customInstructions`, the door claude-code takes, and
+    // the runtime advertises it. No quota probe: it has
     // no login of its own, only the profile's key. `{gatewayUrl}` keeps the
     // endpoint retargetable per request when the shim is up, and falls back to
     // the raw base URL (or prunes away entirely on the Default profile).
@@ -968,10 +1033,20 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // windows, because this runtime takes a model change live (`liveConfig`)
     // and the single `{contextWindow}` beside it describes only the model the
     // thread spawned on — see `modelWindowMap`.
-    since: 22,
+    // Seed 26 adds `{modelRoles}` — the profile's role → model map the in-process
+    // `task` tool spawns a subagent on (`DAEDALUS_AGENT_MODEL_ROLES`) — and
+    // `subagentModelsVia: "acp-env"`, which is that same env var said as a fact
+    // about the runtime (`AgentDef.subagentModelsVia`). Env changed, so the
+    // probe cache is dropped once.
+    // Seed 29 moves rules from `{personaFile}` (a file per thread, read once at
+    // construction) to AIR's `customInstructions`, which the runtime reads on
+    // every session/new, load and resume. Only the old default moves; a door
+    // the user picked stays. The env key is left to resolve empty.
+    since: 29,
     introduced: 14,
     backfill: (existing) => ({
       ...backfill20(existing),
+      personaVia: !existing.personaVia || existing.personaVia === "env" ? "air-meta" : existing.personaVia,
       env: {
         DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1",
         // Seed 19: the model-prompt library. Merged only where absent — the
@@ -979,8 +1054,11 @@ const DEFAULT_AGENTS: SeedAgent[] = [
         DAEDALUS_AGENT_MODEL_PROMPTS_FILE: "{modelPromptsFile}",
         // Seed 22: the per-model window map, same bargain.
         DAEDALUS_AGENT_MODEL_WINDOWS: "{modelWindows}",
+        // Seed 26: the role → model map, same bargain.
+        DAEDALUS_AGENT_MODEL_ROLES: "{modelRoles}",
         ...existing.env,
       },
+      subagentModelsVia: existing.subagentModelsVia ?? "acp-env",
       rewindVia: existing.rewindVia ?? "acp-fork-point",
     }),
     id: "daedalus",
@@ -990,7 +1068,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     ...seed20("daedalus"),
     spawnCategories: SPAWN_CATEGORIES,
     liveConfig: "acp",
-    personaVia: "env",
+    personaVia: "air-meta",
+    subagentModelsVia: "acp-env",
     rewindVia: "acp-fork-point",
     env: {
       DAEDALUS_AGENT_API_KEY: "{apiKey}",
@@ -1001,7 +1080,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_AGENT_CONTEXT_WINDOW: "{contextWindow}",
       DAEDALUS_AGENT_MAX_OUTPUT_TOKENS: "{maxOutputTokens}",
       DAEDALUS_AGENT_MODEL_WINDOWS: "{modelWindows}",
-      DAEDALUS_AGENT_PERSONA_FILE: "{personaFile}",
+      DAEDALUS_AGENT_MODEL_ROLES: "{modelRoles}",
       DAEDALUS_AGENT_MODEL_PROMPTS_FILE: "{modelPromptsFile}",
       DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1",
     },
@@ -1044,7 +1123,7 @@ export async function seedAgents(): Promise<void> {
           liveConfig: agent.liveConfig ?? null,
           personaVia: agent.personaVia ?? null,
           sharedProcess: agent.sharedProcess ?? null,
-          subagentFeed: agent.subagentFeed ?? null,
+          subagentModelsVia: agent.subagentModelsVia ?? null,
           rewindVia: agent.rewindVia ?? null,
           workflowsVia: agent.workflowsVia ?? null,
           pauseVia: agent.pauseVia ?? null,
@@ -1073,7 +1152,7 @@ export async function seedAgents(): Promise<void> {
         liveConfig: existing.liveConfig ?? agent.liveConfig ?? null,
         personaVia: existing.personaVia ?? agent.personaVia ?? null,
         sharedProcess: existing.sharedProcess ?? agent.sharedProcess ?? null,
-        subagentFeed: existing.subagentFeed ?? agent.subagentFeed ?? null,
+        subagentModelsVia: existing.subagentModelsVia ?? agent.subagentModelsVia ?? null,
         rewindVia: existing.rewindVia ?? agent.rewindVia ?? null,
         workflowsVia: existing.workflowsVia ?? agent.workflowsVia ?? null,
         pauseVia: existing.pauseVia ?? agent.pauseVia ?? null,
@@ -1184,7 +1263,7 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       quotaProbe: seed.quotaProbe ?? null,
       personaVia: seed.personaVia ?? null,
       sharedProcess: seed.sharedProcess ?? null,
-      subagentFeed: seed.subagentFeed ?? null,
+      subagentModelsVia: seed.subagentModelsVia ?? null,
       rewindVia: seed.rewindVia ?? null,
       workflowsVia: seed.workflowsVia ?? null,
       pauseVia: seed.pauseVia ?? null,
@@ -1382,6 +1461,78 @@ function modelWindowMap(profile: Profile): string {
   return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : "";
 }
 
+/* ── Model roles (docs/model-roles.md) ──
+ *
+ * A thread names a role → model map (`sessions.helper_models`); a subagent may
+ * then be spawned on a role rather than on the session model. The role
+ * *vocabulary* (label/description) lives in `model_roles` and is read once by
+ * the caller — `resolveSpawn` runs on synchronous paths (`checkInstalled`) and
+ * cannot await a query, so the vocabulary travels in as a value, exactly like
+ * the catalog figures do. A helper's `model` is a profile model id, resolved
+ * through `agentModelId` so the catalog's `[1m]` suffix and any per-agent
+ * mapping are applied to it too.
+ */
+
+/** One role as shipped to a runtime: the id an assignment points at, its label
+    and line of prose, and the model id it resolves to (`""` = the session
+    model, the fallback an unassigned role carries). */
+export interface SubagentRoleDef {
+  id: string;
+  label: string;
+  description: string;
+  model: string;
+}
+
+/** The thread's role → model assignment resolved to models, vocabulary labels
+    and all. One entry per `helperModels` row, in its order; empty for a thread
+    that names no helper — the env key then prunes away. `model` comes from the
+    helper's profile model id through `agentModelId`, and is the session model
+    when the helper names nothing the catalog carries (`docs/model-roles.md`).
+    `label`/`description` fall back to the id / nothing for a deleted role. */
+export function modelRoleDefs(
+  agent: AgentDef,
+  profile: Profile,
+  vocabulary: ModelRole[],
+  helpers: { role: string; model: string }[],
+  sessionModel = "",
+): SubagentRoleDef[] {
+  return helpers.map((helper) => {
+    const meta = vocabulary.find((role) => role.id === helper.role);
+    return {
+      id: helper.role,
+      label: meta?.label ?? helper.role,
+      description: meta?.description ?? "",
+      model: helperModelId(agent, profile, helper.model) || sessionModel,
+    };
+  });
+}
+
+/** One helper's model as the runtime should be told it, or "" when it names
+    nothing. A profile with a catalog resolves through it (an id it lacks is
+    nothing); a profile with none — the virtual Default — lets the agent own its
+    models, so the id was picked off the agent's own list and goes through as
+    written. */
+function helperModelId(agent: AgentDef, profile: Profile, modelId: string): string {
+  if (!modelId) return "";
+  const catalog = profile.models ?? [];
+  if (catalog.length === 0) return modelId;
+  return catalog.some((m) => m.id === modelId) ? agentModelId(agent, profile, modelId) : "";
+}
+
+/** `modelRoleDefs` as the JSON string `DAEDALUS_AGENT_MODEL_ROLES` carries, or
+    "" when the thread names no helper — which prunes the key away, like every
+    other empty var. */
+function modelRoleMap(
+  agent: AgentDef,
+  profile: Profile,
+  vocabulary: ModelRole[],
+  helpers: { role: string; model: string }[],
+  sessionModel: string,
+): string {
+  const defs = modelRoleDefs(agent, profile, vocabulary, helpers, sessionModel);
+  return defs.length > 0 ? JSON.stringify(defs) : "";
+}
+
 /** Resolve an agent definition against a profile (agent config) + project (workspace). */
 export function resolveSpawn(
   agent: AgentDef,
@@ -1396,6 +1547,17 @@ export function resolveSpawn(
       for an `"acp-meta"` agent, whose persona travels in the ACP handshake
       instead — see `AgentDef.personaVia`. */
   persona?: PersonaSpawn,
+  /** The model-role vocabulary (`model_roles`) for the role → model map. Read by
+      the caller, not here: this runs on synchronous spawn paths and cannot
+      await a query. Absent (a probe, a `checkInstalled`, a test) resolves every
+      profile the same way — no roles, the map pruned — which is all any caller
+      but the real spawn needs. */
+  modelRoles: ModelRole[] = [],
+  /** The thread's role → model assignment (`sessions.helper_models`), read off
+      the session at the call site for the same reason the vocabulary is. Absent
+      for a probe or a thread that names no helper — the map and the default
+      subagent model both prune away. */
+  helpers: { role: string; model: string }[] = [],
 ) {
   const resolvedModel = model || profile.defaultModel || "";
   // Catalog metadata for the selected model. Fills unquoted JSON slots, so the
@@ -1448,6 +1610,12 @@ export function resolveSpawn(
        existed, so it is never worse. Widen it if a profile change ever lands
        live (today it carries credentials, so it respawns). */
     modelWindows: modelWindowMap(profile),
+    /* The thread's role → model map (docs/model-roles.md). Every helper the
+       thread names appears, in `helper_models` order, resolved through
+       `agentModelId` so the catalog suffix travels; `label`/`description` come
+       from the vocabulary the caller read. Empty (pruned) for a thread that
+       names no helper. */
+    modelRoles: modelRoleMap(agent, profile, modelRoles, helpers, resolvedModel),
     cwd: project.cwd,
     daedalusAgentEntry: DAEDALUS_AGENT_ENTRY,
     /* JSON-escaped, and only ever correct inside a JSON string literal — which

@@ -24,7 +24,7 @@
  * can act for exactly the thread that asked. A step is never handed that
  * server: one level, never a tree.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 import { eq, inArray } from "drizzle-orm";
 import { db, workflowRuns as runsTable, type WorkflowRunStatus, type WorkflowStepRecord } from "./db/index.js";
@@ -32,9 +32,12 @@ import { safeKeyEqual } from "./gateway-shim.js";
 import { checkInstalled } from "./agent-status.js";
 import { getProfile, listProfiles } from "./profiles.js";
 import { getProject } from "./projects.js";
+import { expandPrompts } from "./saved-prompts.js";
+import { createScheduled, fire } from "./scheduler.js";
+import { loadSaved } from "./workflow-saved.js";
 import { listAgents } from "./registry.js";
 import type { ThreadEvent } from "./protocol.js";
-import type { Session, SessionManager, TurnOutcome } from "./sessions.js";
+import { threadCwd, type Session, type SessionManager, type TurnOutcome } from "./sessions.js";
 import {
   InputsSchema,
   LIMITS,
@@ -55,6 +58,7 @@ import { HttpError } from "./http-error.js";
 import {
   SCRIPT_LIMITS,
   ScriptError,
+  type ScriptHooks,
   extractMeta,
   runScript,
   type ScriptMeta,
@@ -117,6 +121,11 @@ interface ScriptState {
   used: Set<string>;
   /** Output tokens every agent of this run has spent, for `budget`. */
   spent: number;
+  /** `resumeFromRunId`: the earlier run's completed agents by call key, in the
+      order they ran. A call whose key is here takes the next one instead of
+      spawning. ponytail: matched by key, not Claude Code's strict prefix —
+      an identical call is an identical answer, and keeping the rest is cheaper. */
+  cache: Map<string, { output: unknown; sessionId: string | null }[]>;
 }
 
 interface Run {
@@ -124,6 +133,10 @@ interface Run {
   parent: Session;
   /** A one-step run from `ask`: drawn as a plain subagent, capped apart. */
   ask?: boolean;
+  /** Started in the background: when it ends, the outcome is sent to the
+      parent thread as a message, which starts its next turn (or waits behind
+      the one running) — Claude Code's `<task-notification>`. */
+  notify?: boolean;
   /** For a script run this grows: each `agent()` appends the step it spawned,
       so one runner, one card and one set of records serve both engines. */
   def: WorkflowDefinition;
@@ -236,7 +249,7 @@ export class WorkflowRunner {
 
   /** Validate and start. Synchronous: the run exists and its first steps are
       spawning by the time this returns. Throws `WorkflowError`. */
-  async start(parent: Session, definition: unknown, inputsRaw?: unknown): Promise<RunView> {
+  async start(parent: Session, definition: unknown, inputsRaw?: unknown, notify = false): Promise<RunView> {
     if (parent.parentSessionId) throw new WorkflowError("a workflow step cannot start a workflow", 409);
     const parsed = WorkflowDefinitionSchema.safeParse(definition);
     if (!parsed.success) throw new WorkflowError(`invalid workflow: ${issues(parsed.error)}`);
@@ -252,7 +265,7 @@ export class WorkflowRunner {
        picked for the thread are the ones its workflow spends. The one way to
        reach a different pair is to name it, which is `ask`. */
     if (!await getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
-    return this.launch(parent, def, inputs);
+    return this.launch(parent, def, inputs, false, notify);
   }
 
   /**
@@ -324,7 +337,7 @@ export class WorkflowRunner {
     return this.launch(parent, { name: `Ask ${pair.agent}`, steps: [step], phases: [], maxParallel: 1 }, {}, true);
   }
 
-  private async launch(parent: Session, def: WorkflowDefinition, inputs: Record<string, unknown>, ask = false): Promise<RunView> {
+  private async launch(parent: Session, def: WorkflowDefinition, inputs: Record<string, unknown>, ask = false, notify = false): Promise<RunView> {
     const active = [...this.runs.values()].filter((r) => r.parent === parent && !!r.ask === ask && !terminal(r.status));
     if (active.length >= (ask ? MAX_ASKS_PER_PARENT : MAX_RUNS_PER_PARENT)) {
       throw new WorkflowError(
@@ -341,6 +354,7 @@ export class WorkflowRunner {
       id: randomUUID(),
       parent,
       ...(ask ? { ask } : {}),
+      ...(notify ? { notify } : {}),
       def,
       inputs,
       status: "running",
@@ -405,9 +419,45 @@ export class WorkflowRunner {
    * literal: the card draws a run's shape from its first step, and a shape that
    * could only be known by running would leave nothing to draw.
    */
-  async startScript(parent: Session, source: unknown, args?: unknown, budgetTotal?: unknown): Promise<RunView> {
+  async startScript(
+    parent: Session,
+    input: { script?: string; name?: string; args?: unknown; tokenBudget?: number; resumeFromRunId?: string; notify?: boolean },
+  ): Promise<RunView> {
     if (parent.parentSessionId) throw new WorkflowError("a workflow step cannot start a workflow", 409);
-    if (typeof source !== "string" || !source.trim()) throw new WorkflowError("script must be a non-empty string");
+    let source: unknown = input.script;
+    let args = input.args;
+    const cache: ScriptState["cache"] = new Map();
+    /* A relaunch: the earlier run's script and args unless new ones are given,
+       and its completed agents as a cache. Same script, same args — every
+       agent answers from the cache and nothing spawns. */
+    if (input.resumeFromRunId) {
+      const prior = (await db.select().from(runsTable).where(eq(runsTable.id, input.resumeFromRunId)).limit(1))[0];
+      if (!prior || prior.parentSessionId !== parent.id) throw new WorkflowError("nothing to resume: no such run on this thread", 404);
+      if (this.runs.get(prior.id) && !terminal(this.runs.get(prior.id)!.status)) {
+        throw new WorkflowError("that run is still going — cancel it before relaunching it", 409);
+      }
+      const priorScript = (prior.definition as { script?: unknown }).script;
+      if (typeof priorScript !== "string") throw new WorkflowError("nothing to resume: that run was not a script");
+      source ??= priorScript;
+      if (args === undefined) args = (prior.inputs as { args?: unknown }).args;
+      for (const s of prior.steps) {
+        if (s.status !== "completed" || !s.key) continue;
+        const list = cache.get(s.key) ?? [];
+        list.push({ output: s.output, sessionId: s.sessionId });
+        cache.set(s.key, list);
+      }
+    }
+    if (source === undefined && input.name) {
+      const project = await getProject(parent.projectId);
+      if (!project) throw new WorkflowError("this thread's project no longer exists", 409);
+      try {
+        source = await loadSaved(project.cwd, threadCwd(parent, project), input.name);
+      } catch (error) {
+        throw new WorkflowError(describe(error), 404);
+      }
+    }
+    if (typeof source !== "string" || !source.trim()) throw new WorkflowError("give a script, a saved workflow's name, or a run to resume");
+    const budgetTotal = input.tokenBudget;
     let meta: ScriptMeta;
     try {
       meta = extractMeta(source);
@@ -436,8 +486,9 @@ export class WorkflowRunner {
     const run: Run = {
       id: randomUUID(),
       parent,
+      ...(input.notify ? { notify: true } : {}),
       def,
-      script: { source, meta, used: new Set(), spent: 0 },
+      script: { source, meta, used: new Set(), spent: 0, cache },
       inputs: {},
       status: "running",
       error: null,
@@ -460,7 +511,8 @@ export class WorkflowRunner {
         parentSessionId: parent.id,
         name: def.name,
         definition: { script: source, meta } as unknown as Record<string, unknown>,
-        inputs: {},
+        // The args, so a relaunch without new ones runs on the same input.
+        inputs: args === undefined ? {} : { args: jsonClone(args) },
         status: run.status,
         error: null,
         steps: [],
@@ -481,6 +533,13 @@ export class WorkflowRunner {
         budgetTotal,
         hooks: {
           agent: (spec) => this.scriptAgent(run, spec),
+          loadWorkflow: async (ref) => {
+            const project = await getProject(run.parent.projectId);
+            if (!project) throw new ScriptError("this thread's project no longer exists");
+            return await loadSaved(project.cwd, threadCwd(run.parent, project), ref).catch((error) => {
+              throw new ScriptError(describe(error));
+            });
+          },
           phase: (title) => this.ensurePhase(run, title),
           log: (message) => this.logLine(run, message),
           spent: () => script.spent,
@@ -533,10 +592,21 @@ export class WorkflowRunner {
    */
   private async scriptAgent(
     run: Run,
-    spec: { prompt: string; label: string; phase: string | null; schema?: Record<string, unknown>; model?: string; effort?: string },
+    spec: Parameters<ScriptHooks["agent"]>[0],
   ): Promise<unknown> {
     const script = run.script!;
-    await this.acquireSlot(run);
+    const key = createHash("sha256")
+      .update(JSON.stringify([spec.prompt, spec.schema ?? null, spec.model ?? null, spec.effort ?? null, spec.isolation ?? null, spec.agentType ?? null]))
+      .digest("hex")
+      .slice(0, 32);
+    const cached = script.cache.get(key)?.shift();
+    /* `agentType` is a saved prompt's handle: its text leads the prompt, which
+       the bridge expands as it does any `@handle`. Refused by name when there
+       is no such prompt, rather than reaching the agent as a literal `@`. */
+    if (spec.agentType && !(await expandPrompts(`@${spec.agentType}`)).names.has(spec.agentType)) {
+      throw new ScriptError(`agent(…, {agentType}): no saved prompt is named @${spec.agentType}`);
+    }
+    if (!cached) await this.acquireSlot(run);
     if (terminal(run.status) || run.abort.signal.aborted) throw new ScriptError("the run was cancelled");
 
     /* Two agents a script labelled alike must still be two rows: the card joins
@@ -560,7 +630,9 @@ export class WorkflowRunner {
       ...(phaseIndex === -1 ? {} : { phase: { index: phaseIndex, name: run.def.phases[phaseIndex].name } }),
       ...(spec.model ? { model: spec.model } : {}),
       ...(spec.effort ? { effort: spec.effort } : {}),
+      ...(spec.isolation ? { isolation: spec.isolation } : {}),
     };
+    if (spec.agentType) step.prompt = `@${spec.agentType}\n\n${spec.prompt}`;
     run.def.steps.push(step);
     if (phaseIndex !== -1) run.def.phases[phaseIndex].steps.push(name);
     run.steps.set(name, {
@@ -573,8 +645,16 @@ export class WorkflowRunner {
       error: null,
       startedAt: null,
       endedAt: null,
+      key,
     });
 
+    if (cached) {
+      // Answered by the run being resumed: no thread, no tokens, same output.
+      const at = Date.now();
+      run.outputs[name] = cached.output;
+      this.patchStep(run, name, { status: "completed", output: cached.output, sessionId: cached.sessionId, startedAt: at, endedAt: at });
+      return cached.output;
+    }
     await this.runStep(run, step);
     const record = run.steps.get(name);
     if (record?.status === "completed") return run.outputs[name];
@@ -611,6 +691,13 @@ export class WorkflowRunner {
       : null;
   }
 
+  /** A script run's source, for saving it — only a run of that thread's. */
+  async scriptOf(parentId: string, runId: string): Promise<string | null> {
+    const row = (await db.select().from(runsTable).where(eq(runsTable.id, runId)).limit(1))[0];
+    const script = row && row.parentSessionId === parentId ? (row.definition as { script?: unknown }).script : null;
+    return typeof script === "string" ? script : null;
+  }
+
   /** `status`, but only for a run of that thread's — the browser's routes
       name a thread, and a run id on another thread is not theirs to touch. */
   async statusFor(parentId: string, runId: string): Promise<RunView | null> {
@@ -638,9 +725,12 @@ export class WorkflowRunner {
     });
   }
 
-  cancel(runId: string, reason = "cancelled"): boolean {
+  /** `quiet`: the caller is the parent's own agent, which hears the outcome
+      in the tool's answer and needs no message about it. */
+  cancel(runId: string, reason = "cancelled", quiet = false): boolean {
     const run = this.runs.get(runId);
     if (!run || terminal(run.status)) return false;
+    if (quiet) run.notify = false;
     this.finishRun(run, "cancelled", reason);
     return true;
   }
@@ -741,6 +831,14 @@ export class WorkflowRunner {
           this.manager.emitOn(row.parentSessionId, stateUpdate(s.sessionId, "disconnected"));
         }
       }
+      /* The agent was told it would hear when the run ends, and this is the
+         end. A scheduled message rather than a prompt now: boot has not
+         adopted the agents yet, and the scheduler starts after it has. */
+      await createScheduled({
+        sessionId: row.parentSessionId,
+        text: notification({ id: row.id, name: row.name, status: "failed", error: "server restarted", createdAt: row.createdAt, endedAt: Date.now(), steps }),
+        nextAt: Date.now(),
+      });
     }
     if (rows.length) console.log(`[workflows] closed ${rows.length} run(s) interrupted by the restart`);
   }
@@ -825,7 +923,10 @@ export class WorkflowRunner {
         restore,
         /* A step works where its parent does — in the parent's worktree, when
            the parent was isolated in one. */
-        worktree: run.parent.worktree ?? undefined,
+        /* Unless the script asked for `isolation: 'worktree'`: then a
+           checkout of its own, so parallel agents editing files cannot
+           collide. Left in place when the step ends, like any thread's. */
+        worktree: step.isolation === "worktree" ? true : run.parent.worktree ?? undefined,
         /* And whether it offers follow-ups, for the same reason: the step's
            answer reads in the parent's transcript, where a missing fence
            would be the inconsistency showing. */
@@ -1033,7 +1134,17 @@ export class WorkflowRunner {
     for (const w of run.resumeWaiters.splice(0)) w();
     this.persist(run);
     const view = this.view(run);
+    /* Someone blocked in `wait_workflow` is handed the outcome right here, so
+       a message saying it again would be news twice. A server shutting down
+       cannot prompt, so it leaves the message for the next boot's scheduler —
+       the row is `cancelled` by then, which boot recovery does not look at. */
+    const told = run.waiters.length > 0;
     for (const w of run.waiters.splice(0)) w(view);
+    if (run.notify && !told) {
+      if (error === "server shutting down") {
+        void createScheduled({ sessionId: run.parent.id, text: notification(view), nextAt: Date.now() }).catch(() => {});
+      } else void fire(run.parent.id, notification(view), this.manager);
+    }
     // Kept for status reads until the parent is done with it; the row is the
     // durable record. A bounded grace so a cancelled run can still be read.
     setTimeout(() => {
@@ -1050,11 +1161,21 @@ export class WorkflowRunner {
     this.persist(run);
   }
 
-  private async persist(run: Run): Promise<void> {
-    await db.update(runsTable)
-      .set({
-        status: run.status, error: run.error, steps: [...run.steps.values()], endedAt: run.endedAt })
-      .where(eq(runsTable.id, run.id));
+  /* One write at a time per run, each reading the run as it is when its turn
+     comes. Fired unawaited from every step change, the writes used to race, and
+     an older "running" could land after the final one — a finished run then
+     read as interrupted at the next boot, which told its parent it had failed. */
+  private persisting = new WeakMap<Run, Promise<void>>();
+  private persist(run: Run): Promise<void> {
+    const next = (this.persisting.get(run) ?? Promise.resolve())
+      .then(() =>
+        db.update(runsTable)
+          .set({ status: run.status, error: run.error, steps: [...run.steps.values()], endedAt: run.endedAt })
+          .where(eq(runsTable.id, run.id)),
+      )
+      .then(() => {}, (error: unknown) => console.error(`[workflows] could not save run ${run.id.slice(0, 8)}`, error));
+    this.persisting.set(run, next);
+    return next;
   }
 
   private view(run: Run): RunView {
@@ -1111,4 +1232,35 @@ function firstLine(text: string): string {
 
 function issues(error: { issues: { path: PropertyKey[]; message: string }[] }): string {
   return error.issues.map((i) => `${i.path.length ? i.path.join(".") + ": " : ""}${i.message}`).join("; ");
+}
+
+function jsonClone(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** What a finished background run says to its parent thread. Shaped like
+    Claude Code's `<task-notification>`, so an agent that knows one reads the
+    other. The full run stays one `workflow_status` call away. */
+const NOTIFY_BYTES = 32 * 1024;
+export function notification(view: RunView): string {
+  const failed = view.steps.filter((s) => s.status === "failed").map((s) => `${s.name}: ${s.error ?? "failed"}`);
+  const body = view.result !== undefined
+    ? JSON.stringify(view.result, null, 2)
+    : JSON.stringify(Object.fromEntries(view.steps.filter((s) => s.status === "completed").map((s) => [s.name, s.output])), null, 2);
+  const result = body.length > NOTIFY_BYTES
+    ? `${body.slice(0, NOTIFY_BYTES)}\n… (truncated — call workflow_status with this runId for the whole of it)`
+    : body;
+  return [
+    "<task-notification>",
+    `<task-id>${view.id}</task-id>`,
+    `<status>${view.status}</status>`,
+    `<summary>Workflow "${view.name}" ${view.status}${view.error ? `: ${view.error}` : ""}</summary>`,
+    ...(failed.length ? [`<failed-agents>\n${failed.join("\n")}\n</failed-agents>`] : []),
+    `<result>\n${result}\n</result>`,
+    "</task-notification>",
+  ].join("\n");
 }

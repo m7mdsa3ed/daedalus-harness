@@ -25,8 +25,16 @@ import { addTps, addUsage, pushUserMessage } from "./messages"
 // ---- reducer ----
 
 export type Action =
-  | { type: "bootstrap"; sessions: SessionMeta[] }
-  | { type: "sessions"; sessions: SessionMeta[] }
+  /** One page of the sidebar's thread list (`GET /api/sessions/page`). `ids`
+      are the *window* rows of this page — the ones `offset` advances by, and
+      (on a `reset`) the only ones the list is allowed to drop; `total` is how
+      many live threads the server holds behind them. `reset` replaces the
+      window, an append extends it. */
+  | { type: "session-page"; sessions: SessionMeta[]; ids: string[]; total: number; reset: boolean }
+  /** Rows loaded outside the page — a thread asked for by id because a tab or a
+      URL names it and it sits past the loaded window. Merged in and never a
+      window row, so a later page cannot drop it. */
+  | { type: "session-extra"; sessions: SessionMeta[] }
   | { type: "draft-session"; session: SessionMeta }
   | { type: "drop-draft-session"; id: string }
   | {
@@ -43,6 +51,7 @@ export type Action =
           | "modeId"
           | "suggestFollowups"
           | "uiBlocks"
+          | "helperModels"
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"
@@ -62,6 +71,7 @@ export type Action =
       effort: string
       suggestFollowups?: boolean
       uiBlocks?: boolean
+      helperModels?: { role: string; model: string }[]
     }
   /** This device's own optimism about a config change, or the end of it.
       `patch: null` clears; anything else **merges**, because the picks are
@@ -109,7 +119,19 @@ export type Action =
   | { type: "thread-carry"; id: string; items: ThreadItem[] }
   /** `sessionId` names a subagent's session when the update is a child's —
       see the `update` event in protocol.ts. Absent = the thread's own. */
-  | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string; at?: number }
+  | {
+      type: "update"
+      id: string
+      update: SessionUpdate
+      allowUserChunks?: boolean
+      sessionId?: string
+      at?: number
+      /** Where the merged run this update stands for ended, on a replay — the
+          other end of `at` (see the `update` event in protocol.ts). */
+      endAt?: number
+      historyText?: string
+      historyAttachments?: TextItem["attachments"]
+    }
   /** `local` = this device typed it (see `TextItem.local`); the replay's own
       user bubbles and the ones a `turn_started` mints are not. */
   | {
@@ -222,39 +244,65 @@ function upsertAsk<T extends { requestId: string }>(
   return replaced
 }
 
+/** One row per id, in first-seen order, with the *latest* reading winning. The
+    store's session list is a union of pages and one-off loads, and the same
+    thread can arrive in more than one of them (a pinned row that is also the
+    first page's) — the freshest copy is the one to keep. */
+function dedupeRows(rows: SessionMeta[]): SessionMeta[] {
+  const order: string[] = []
+  const last = new Map<string, SessionMeta>()
+  for (const row of rows) {
+    if (!last.has(row.id)) order.push(row.id)
+    last.set(row.id, row)
+  }
+  return order.map((id) => last.get(id) as SessionMeta)
+}
+
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "batch":
       return action.actions.reduce(reducer, state)
-    case "bootstrap":
-      return { ...state, sessions: action.sessions }
-    case "sessions": {
-      /* The server's list is authoritative for every thread it knows about —
-         but a draft is precisely one it has not been told about yet, so this
-         merges rather than replaces. Replacing would make a new thread vanish
-         under the user the moment any refresh landed. A draft whose id the
-         server now reports has just been created: the server's row wins and the
-         draft marker goes with it. */
-      const known = new Set(action.sessions.map((session) => session.id))
-      const drafts = state.sessions.filter((session) => session.draft && !known.has(session.id))
-      /* Keep the object a row already had when the server's account of it has
-         not moved (`sameRow`). Every consumer of a row is a subscription, and
-         the most consequential of them is the chat panel, whose reaction to a
-         new row object is to *open the thread* — so replacing the list wholesale
-         turned every list refresh into an open, and an open landing inside
-         another open is two peers on one session. Identity is the cheap half of
-         fixing that; the other half is that opening stops keying on the row at
-         all (see lib/thread/). */
+    case "session-page": {
+      /* The list is a window now (the sidebar pages it), so a page either
+         extends it or — on a `reset` — replaces the window the server just
+         recounted. Identity is kept where the server's account of a row has not
+         moved (`sameRow`), the same bargain the whole-list refresh made: every
+         consumer of a row is a subscription, and the chat panel's reaction to a
+         new row object is to *open the thread*. */
       const previous = new Map(state.sessions.map((session) => [session.id, session]))
-      const sessions = action.sessions.map((next) => {
+      const incoming = action.sessions.map((next) => {
         const old = previous.get(next.id)
         return old && sameRow(old, next) ? old : next
       })
-      const merged = [...drafts, ...sessions]
-      /* And when nothing moved at all, hand back the same *state* object, so
-         the store's subscribers are not woken to be told so. Conservative on
-         purpose: a false negative here costs one array allocation and the
-         renders this used to cost unconditionally. */
+      if (action.reset) {
+        /* A reset is the server's account of the window, so a row it no longer
+           names is gone — purged, or trashed on another device. The rows the
+           window never held stay: a draft, which no server list carries, and a
+           row this device asked for by id (a pinned thread, an open tab), which
+           is not a window row and so is nobody's to drop here. */
+        const window = new Set(state.sessionWindow.ids)
+        const kept = state.sessions.filter((session) => !window.has(session.id))
+        return {
+          ...state,
+          sessions: dedupeRows([...kept, ...incoming]),
+          sessionWindow: { ids: action.ids, total: action.total },
+        }
+      }
+      return {
+        ...state,
+        sessions: dedupeRows([...state.sessions, ...incoming]),
+        sessionWindow: { ids: [...state.sessionWindow.ids, ...action.ids], total: action.total },
+      }
+    }
+    case "session-extra": {
+      const previous = new Map(state.sessions.map((session) => [session.id, session]))
+      const incoming = action.sessions.map((next) => {
+        const old = previous.get(next.id)
+        return old && sameRow(old, next) ? old : next
+      })
+      const merged = dedupeRows([...state.sessions, ...incoming])
+      /* Conservative no-op, so an ensure that named rows already held does not
+         wake every subscriber. */
       const unchanged =
         merged.length === state.sessions.length &&
         merged.every((session, i) => session === state.sessions[i])
@@ -273,6 +321,7 @@ export function reducer(state: State, action: Action): State {
                 // Omitted by a server that predates the toggle — same bargain.
                 ...(action.suggestFollowups === undefined ? {} : { suggestFollowups: action.suggestFollowups }),
                 ...(action.uiBlocks === undefined ? {} : { uiBlocks: action.uiBlocks }),
+                ...(action.helperModels === undefined ? {} : { helperModels: action.helperModels }),
               }
             : session
         ),
@@ -296,13 +345,14 @@ export function reducer(state: State, action: Action): State {
           /* A different agent or profile is a different set of settings, so the
              picks made against the old one are meaningless — carrying them over
              would replay a config id the new agent has never heard of. The mode
-             ids are the agent's own, so they go with the config choices. */
+             ids are the agent's own, and the helper models name ids in the old
+             profile's catalog, so they go with the config choices. */
           const rescoped =
             action.next.agentId !== undefined || action.next.profileId !== undefined
           return {
             ...s,
+            ...(rescoped ? { configChoices: undefined, modeId: undefined, helperModels: undefined } : null),
             ...action.next,
-            ...(rescoped ? { configChoices: undefined, modeId: undefined } : null),
           }
         }),
       }
@@ -405,7 +455,10 @@ export function reducer(state: State, action: Action): State {
             action.update,
             action.allowUserChunks,
             action.sessionId,
-            action.at
+            action.at,
+            action.historyText,
+            action.historyAttachments,
+            action.endAt
           ),
         },
       }

@@ -171,11 +171,12 @@ export function ComposerAddMenu({
         open={library}
         onOpenChange={setLibrary}
         title="Attach from library"
-        onPick={(record) =>
-          void fileActions
-            .fetchFile(record)
-            .then((file) => onLibraryFile([file]))
-            .catch((err) => reportError(err, "Couldn't attach that file"))
+        multiple
+        pickLabel="Attach"
+        onPick={(records) =>
+          void Promise.all(records.map(fileActions.fetchFile))
+            .then(onLibraryFile)
+            .catch((err) => reportError(err, records.length > 1 ? "Couldn't attach those files" : "Couldn't attach that file"))
         }
       />
       <input

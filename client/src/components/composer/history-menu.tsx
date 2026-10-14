@@ -64,7 +64,7 @@ export function ComposerHistorySubmenu({
         {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
-        <DropdownMenuSubContent className="max-h-96 w-[min(28rem,calc(100vw-2rem))] no-scrollbar">
+        <DropdownMenuSubContent className="max-h-96 w-[min(28rem,calc(var(--float-w)-2rem))] no-scrollbar">
           <MenuSearchInput label="prompts" value={query} onChange={setQuery} />
           {shown.map((entry) => (
             <DropdownMenuItem

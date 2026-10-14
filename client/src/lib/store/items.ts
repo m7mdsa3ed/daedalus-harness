@@ -29,6 +29,14 @@ export interface TextItem {
       a session/load replay: the journal carries no clock, so a replayed item
       has no honest time to show and shows none rather than the reload's. */
   at?: number
+  /** Epoch ms the run this item stands for stopped being written — the
+      journal's stamp on the run's LAST chunk, which only the read that merged
+      the run can know (see `endAt` on the protocol's `update`). Replay only,
+      and only ever beside `at`: together they are a run's measured length, so
+      a thought read back from history says "Thought for 12s" instead of having
+      no end to subtract its start from. Live items have neither — the client
+      times those off its own clock. */
+  endedAt?: number
   /** Logical turn restore point, present on user messages. */
   turnId?: string
   /** This device typed this message — set only on the optimistic bubble
@@ -84,6 +92,14 @@ export interface ToolItem {
   startedAt: number
   /** Wall-clock stamp, live only — see TextItem.at. */
   at?: number
+  /** Epoch ms the call reached a terminal status — the journal's stamp on the
+      update that settled it (replay) or this device's clock (live). With
+      `startedAt` it is the call's measured length, which is what a settled row
+      has to print from: the live counter dies with the stream that fed it, and
+      a reloaded transcript had no figure to fall back on. Absent on a call
+      still open, and on one rebuilt from a `session/load` replay, whose stamps
+      are the reload's and not the call's. */
+  endedAt?: number
   /** The item this call belongs to when a subagent made it: the Task that
       launched the subagent (Claude Code), or the `subagent:<sessionId>` item
       of the child session it ran in. Derived from vendor `_meta` through
@@ -115,6 +131,10 @@ export interface SubagentItem {
   task: string
   /** `running` until the parent reports otherwise. */
   state: "running" | SubagentState
+  /** The model the child runs on and the helper role that named it, when the
+      runtime says (`_meta.daedalus` on the spawn — ACP's names neither). */
+  model?: string
+  role?: string
   capabilities: { cancel?: boolean; close?: boolean }
   /** Set when this session is a harness workflow step — the server stamps the
       spawn's `_meta.daedalus.workflow`, read by `lib/tools.workflowInfoOf`.
@@ -125,6 +145,12 @@ export interface SubagentItem {
       child whose runtime never reported any: an agent that does not meter is
       not an agent that spent nothing, so the difference is kept. */
   usage?: acp.Usage
+  /** Wall time this child spent running, summed over every wake — a child
+      woken by a follow-up does not count the idle gap between its turns.
+      Absent until its first turn settles. */
+  durationMs?: number
+  /** When the current run began: the spawn's stamp, or the wake's. */
+  runningSince?: number
   /** The child's own context occupancy, from its `usage_update`. Its window is
       not the thread's — a step is a whole separate session — which is exactly
       why it is stamped here rather than reaching `ThreadState`. */

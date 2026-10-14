@@ -136,7 +136,7 @@ const SCRIPTS = () => [
   const agent = buildAgentApp({
     env,
     makeModel: scriptedModel([
-      toolCallScript("task", { description: "inspect source", prompt: "Inspect the source" }),
+      toolCallScript("task", { description: "inspect source", prompt: "Inspect the source", model: "helper-model" }),
       textScript("Initial child notes. "),
       textScript("Initial parent summary. "),
     ]),
@@ -173,9 +173,12 @@ const SCRIPTS = () => [
     });
     assert.equal(response.stopReason, "end_turn");
     const spawnedAgain = resumedHarness.updatesOf("subagent_spawned").at(-1)?.update as
-      | { subagentSessionId?: string }
+      | { subagentSessionId?: string; _meta?: { daedalus?: { model?: string } } }
       | undefined;
     assert.equal(spawnedAgain?.subagentSessionId, childId, "follow-up reuses the child identity");
+    /* send_message names no model: the child keeps the one it was spawned on,
+       not the session's — a follow-up to the advisor is still the advisor's. */
+    assert.equal(spawnedAgain?._meta?.daedalus?.model, "helper-model", "follow-up runs on the child's model");
     const continued = resumedHarness
       .updatesOf("agent_message_chunk")
       .filter((u) => u.sessionId === childId)
@@ -185,6 +188,7 @@ const SCRIPTS = () => [
     const store = new (await import("../src/persistence.js")).SessionStore(env.home);
     const child = store.subagent(sessionId, childId);
     assert.equal(child?.status, "completed");
+    assert.equal(child?.model, "helper-model", "the child's model is saved with it");
     assert.ok(child?.messages.some((message) => message.role === "user" && JSON.stringify(message).includes("Continue and report")));
     assert.ok(child?.messages.some((message) => message.role === "assistant" && JSON.stringify(message).includes("Initial child notes")));
     assert.ok(child?.messages.some((message) => message.role === "assistant" && JSON.stringify(message).includes("Follow-up child findings")));

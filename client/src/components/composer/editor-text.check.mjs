@@ -13,10 +13,11 @@ import { docToText, offsetToPos, posToOffset, textToContent } from "./editor-tex
 
 // The schema the editor builds, minus the React node views.
 const schema = getSchema([
-  StarterKit.configure({ blockquote: false, bulletList: false, codeBlock: false, hardBreak: false, heading: false, horizontalRule: false, listItem: false, orderedList: false }),
+  StarterKit.configure({ blockquote: false, bulletList: false, codeBlock: false, hardBreak: false, heading: false, horizontalRule: false, link: false, listItem: false, orderedList: false }),
   Node.create({ name: "pasteToken", group: "inline", inline: true, atom: true, addAttributes: () => ({ n: { default: 0 } }) }),
   Node.create({ name: "mention", group: "inline", inline: true, atom: true, addAttributes: () => ({ path: { default: "" } }) }),
   Node.create({ name: "quote", group: "inline", inline: true, atom: true, addAttributes: () => ({ text: { default: "" } }) }),
+  Node.create({ name: "link", group: "inline", inline: true, atom: true, addAttributes: () => ({ url: { default: "" } }) }),
 ])
 const load = (text, pastes = [1]) => schema.nodeFromJSON(textToContent(text, new Set(pastes)))
 
@@ -38,8 +39,13 @@ for (const text of [
   "@/var/www/app",
   "@src/ drilling",
   "mail me@x.com, @channel, @a.ts, (@b/c)",
+  "work @DAE-12 and @DAE-3",
   "typed\n\n> q\n\n",
   "> a\n\n> b\n\n",
+  "see https://example.com/x now",
+  "go to https://example.com.",
+  "https://a.dev",
+  "trailing https://example.com/path,",
 ]) {
   assert.strictEqual(docToText(load(text)), text, JSON.stringify(text))
 }
@@ -54,6 +60,18 @@ for (const text of [
   assert.strictEqual(doc.child(2).child(0).attrs.text, "q")
   assert.strictEqual(doc.child(2).child(1).text, "why?")
   assert.strictEqual(load("@src/ and @a.ts,").child(0).childCount, 1, "open or punctuated: text")
+  assert.strictEqual(load("do @DAE-12 now").child(0).child(1).attrs.path, "DAE-12", "a task key is a chip")
+  assert.strictEqual(load("@dae-12 @DAE-x").child(0).childCount, 1, "not a task key: text")
+}
+
+// A URL is a link chip, with its sentence's punctuation left outside it.
+{
+  const doc = load("see https://example.com/x now")
+  assert.strictEqual(doc.child(0).child(1).type.name, "link", "a URL is a chip")
+  assert.strictEqual(doc.child(0).child(1).attrs.url, "https://example.com/x")
+  assert.strictEqual(load("go to https://example.com.").child(0).child(1).attrs.url, "https://example.com", "trailing period trimmed")
+  assert.strictEqual(load("trailing https://example.com/path,").child(0).child(1).attrs.url, "https://example.com/path", "trailing comma trimmed")
+  assert.strictEqual(load("visit https://example.com/ please").child(0).child(1).attrs.url, "https://example.com/", "a trailing slash is the URL's")
 }
 
 // A quote typed after text on the same line goes out on a line of its own.

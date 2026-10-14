@@ -51,11 +51,17 @@ export const promptsKey = (s: ServerSettings) => scope(s).concat(["prompts"])
 export const modelPromptsKey = (s: ServerSettings) => scope(s).concat(["model-prompts"])
 /** The rules list (`GET /api/rules`) and individual rule CRUD. */
 export const rulesKey = (s: ServerSettings) => scope(s).concat(["rules"])
+/** The model-role vocabulary (`GET /api/model-roles`) and its CRUD. */
+export const modelRolesKey = (s: ServerSettings) => scope(s).concat(["model-roles"])
 /** The coding-plan presets a new profile starts from — read once per session,
     since the list is the server build's and the catalogs are models.dev's. */
 export const profilePresetsKey = (s: ServerSettings) => scope(s).concat(["profile-presets"])
 /** The deployment's app version and parsed changelog (`GET /api/meta`). */
 export const appMetaKey = (s: ServerSettings) => scope(s).concat(["app-meta"])
+/** A pasted link's title and mark, the composer chip's (`GET /api/link-preview`).
+    Keyed by URL, so two of the same link cost one fetch. */
+export const linkPreviewKey = (s: ServerSettings, url: string) =>
+  scope(s).concat(["link-preview", url])
 
 /* Automations (Phase 3 moves these out of the reducer). */
 export const scheduledKey = (s: ServerSettings) => scope(s).concat(["scheduled"])

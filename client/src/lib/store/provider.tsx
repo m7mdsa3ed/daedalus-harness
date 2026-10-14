@@ -6,6 +6,7 @@ import { emptyThread, type State, type ThreadState } from "./thread"
 
 export const initialState: State = {
   sessions: [],
+  sessionWindow: { ids: [], total: 0 },
   threads: {},
 }
 

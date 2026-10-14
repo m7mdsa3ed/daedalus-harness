@@ -1,10 +1,10 @@
 /* ── The device safe-area insets, as numbers ──
    `env(safe-area-inset-*)` is CSS-only: it cannot be read from script and it
    cannot be read by anything that positions in JS. The shell pads itself in CSS
-   (`--app-inset-top`, the sidebar, the composer), but a portaled flyout is
-   placed by floating-ui against a rect it computes in numbers — so without this
-   module a dropdown anchored near the top lands under the status bar and one
-   near an edge under the notch, because the shell's padding is invisible to it.
+   (`--app-inset-top`, the sidebar, the composer) and Base UI's flyouts and
+   dialogs are boxed in CSS (the float box, index.css), but a surface that
+   places itself in numbers outside a Base UI portal — the aside window — needs
+   the clearance as numbers, or it is dragged under the status bar or a notch.
 
    Measuring takes the probe trick: an invisible fixed element whose padding is
    the four env() values; `getComputedStyle` then answers in used pixels. The

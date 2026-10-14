@@ -301,13 +301,13 @@ export function SidebarUsage() {
         align="start"
         side={isMobile ? "bottom" : "top"}
         sideOffset={8}
-        className={cn(GLASS_SURFACE, "w-[min(22rem,calc(100vw-1rem))] p-0")}
+        className={cn(GLASS_SURFACE, "w-[min(22rem,calc(var(--float-w)-1rem))] p-0")}
       >
         {/* `overflow-hidden` on the column, not the popup: the header rule,
             the rows' hover and the footer's ground would otherwise paint
             square corners over the card's rounded ones. The list is the
             half that scrolls, so the header and the way out stay put. */}
-        <div className="flex max-h-[min(26rem,var(--panel-h,100svh))] flex-col overflow-hidden rounded-2xl">
+        <div className="flex max-h-[min(26rem,var(--available-height))] flex-col overflow-hidden rounded-2xl">
           <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
             <GaugeIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">

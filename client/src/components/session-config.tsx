@@ -9,18 +9,18 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons"
-import { type ChoicePick, HelperModelRow, MenuRow, MenuRowSkeleton, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
+import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
 import { DraftConfigPopover } from "@/components/draft-config"
 import { ThreadToolsSections } from "@/components/thread-tools/menu"
 import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows"
 import { ConfigDrawer, type DrawerRow, type DrawerRows } from "@/components/config-drawer"
 import { useIsMobile } from "@/hooks/use-device"
+import { useMenuShortcut } from "@/hooks/use-hotkey"
 import { useAddModel, useNewProfile } from "@/lib/catalog-add"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
@@ -28,6 +28,7 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
+import { useModelRoles } from "@/lib/queries/model-roles"
 import { configView, stagedPicks, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
@@ -136,6 +137,8 @@ export function SessionConfigPopover({
   }, [actions, unanswered, meta?.profileId, agentId, meta?.projectId])
   const newProfile = useNewProfile()
   const addModel = useAddModel()
+  /* The role vocabulary the helper-model rows pick from (docs/model-roles.md). */
+  const modelRoles = useModelRoles()
   // On a phone the whole menu is a sheet (`ConfigDrawer`).
   const isMobile = useIsMobile()
   const local = React.useState(false)
@@ -196,15 +199,11 @@ export function SessionConfigPopover({
 
 
   /* The same settings as one string, for the collapsed trigger's tooltip and
-     its accessible name — and what is true about them that the values alone
-     cannot say: a pick that has not landed yet, or one waiting for the send
-     that will spend the spawn. */
-  const triggerLabel = [
-    [modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
-    meta.configPending ? "— applying…" : meta.configStaged ? "— when you next send" : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
+     its accessible name. What is true about them that the values alone cannot
+     say — a pick that has not landed yet, or one waiting for the send that will
+     spend the spawn — is the transcript's to tell (`pending-settings.tsx`), not
+     a second reading here. */
+  const triggerLabel = [modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ")
 
   /** Live ACP change: one call to the running agent, safe mid-turn. Optimistic
       in the store, so the row moves on the click and a refusal puts it back. */
@@ -294,27 +293,31 @@ export function SessionConfigPopover({
         }
       : null
 
-  /* The same settings as the dropdown below, as the phone's sheet reads them. */
+  /* The same settings as the dropdown below, as the phone's sheet reads them.
+     A staged change is not one of them: the transcript owns that reading, and
+     the picks below already draw the staged values (`configView`). */
   const drawerRows: DrawerRows = [
-    thread.stagedConfig && { type: "label", text: "Applies when you next send" },
-    thread.stagedConfig && {
-      type: "action",
-      label: thread.turnActive ? "Steer now" : "Apply now",
-      icon: <CheckIcon className="size-4" />,
-      onClick: () =>
-        void actions.applyStagedConfig(sessionId).catch((err) => reportError(err, "Couldn't apply that change")),
-    },
-    thread.stagedConfig && {
-      type: "action",
-      label: "Cancel the change",
-      icon: <XIcon className="size-4" />,
-      onClick: () =>
-        void actions.cancelStagedConfig(sessionId).catch((err) => reportError(err, "Couldn't cancel that change")),
-    },
     { type: "label", text: "Session" },
     { type: "pick", pick: profilePick },
     modelPick && { type: "pick", pick: modelPick },
     effortPick && { type: "pick", pick: effortPick },
+    agent?.subagentModelsVia === "acp-env" &&
+      modelRoles.length > 0 &&
+      (modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE).length ?? 0) > 0 && {
+        type: "page",
+        label: "Helper models",
+        icon: <BotIcon className="size-4 text-muted-foreground" />,
+        value: (meta.helperModels ?? []).length ? `${meta.helperModels!.length} assigned` : "Not set",
+        content: (
+          <HelperModelsSub
+            drawer
+            rows={meta.helperModels ?? []}
+            roles={modelRoles}
+            models={modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE) ?? []}
+            onChange={(helperModels) => actions.changeHelperModels(row, helperModels)}
+          />
+        ),
+      },
     ...toolRows,
     { type: "label", text: "Session settings" },
     {
@@ -436,52 +439,11 @@ export function SessionConfigPopover({
               mode={modeLabel}
               modeId={modes?.currentModeId}
             />
-            {/* Whether the picked value is true yet: a spinner while the change
-                is in flight, a clock while it waits for the send that will
-                spend the spawn, nothing the rest of the time. */}
-            {meta.configPending ? (
-              <Loader2Icon className="size-3 shrink-0 animate-spin" />
-            ) : meta.configStaged ? (
-              <ClockIcon className="size-3 shrink-0" />
-            ) : null}
           </Button>
           )
         }
       />
-      <DropdownMenuContent align="start" className="w-60">
-        {/* What is waiting, and the one thing to do about it. First, because it
-            describes every row underneath: those rows already draw the staged
-            values, and without this they would look applied. */}
-        {thread.stagedConfig && (
-          <>
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-muted-foreground">
-                Applies when you next send
-              </DropdownMenuLabel>
-              <DropdownMenuItem
-                onClick={() =>
-                  void actions
-                    .applyStagedConfig(sessionId)
-                    .catch((err) => reportError(err, "Couldn't apply that change"))
-                }
-              >
-                <CheckIcon className="size-4" />
-                {thread.turnActive ? "Steer now" : "Apply now"}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() =>
-                  void actions
-                    .cancelStagedConfig(sessionId)
-                    .catch((err) => reportError(err, "Couldn't cancel that change"))
-                }
-              >
-                <XIcon className="size-4" />
-                Cancel the change
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-          </>
-        )}
+      <DropdownMenuContent align="start" className="w-60" finalFocus={shell?.finalFocus}>
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session</DropdownMenuLabel>
           {/* Drawn on a single profile too — the row is also the door to
@@ -500,7 +462,14 @@ export function SessionConfigPopover({
           ) : (
             unanswered && <MenuRowSkeleton label="Effort" />
           )}
-          <HelperModelRow profile={profile} />
+          {meta && agent?.subagentModelsVia === "acp-env" && (
+            <HelperModelsSub
+              rows={meta.helperModels ?? []}
+              roles={modelRoles}
+              models={modelPick?.choices.filter((c) => c.value !== DEFAULT_CHOICE) ?? []}
+              onChange={(helperModels) => actions.changeHelperModels(row, helperModels)}
+            />
+          )}
         </DropdownMenuGroup>
         {/* What the thread is running with. Read-only once it has started:
             the links are what a revive spawns with. */}
@@ -596,6 +565,8 @@ export type PopoverShell = {
   setOpen: (open: boolean) => void
   drawerOpen: boolean
   setDrawerOpen: (open: boolean) => void
+  /** Where a close sends the caret — see `useMenuShortcut`. */
+  finalFocus?: () => HTMLElement | true
 }
 
 /**
@@ -610,16 +581,21 @@ export function ConfigPopover({
   sessionId,
   actions,
   thread,
+  keys = false,
 }: {
   meta: SessionMeta
   sessionId: string
   actions: Actions
   thread: ThreadState
+  /** Answer `changeModel` — only the composer in front of you may. */
+  keys?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
   const [drawerOpen, setDrawerOpen] = React.useState(false)
+  const isMobile = useIsMobile()
+  const finalFocus = useMenuShortcut("changeModel", () => (isMobile ? setDrawerOpen(true) : setOpen(!open)), keys)
   const profiles = useProfiles()
-  const shell = { open, setOpen, drawerOpen, setDrawerOpen }
+  const shell = { open, setOpen, drawerOpen, setDrawerOpen, finalFocus }
   const ready = !meta.draft && profiles.some((p) => p.id === meta.profileId)
   return ready ? (
     <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} shell={shell} />

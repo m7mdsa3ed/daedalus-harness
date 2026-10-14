@@ -1,6 +1,6 @@
 import { durable, type Handle } from "./sandbox/index.js";
 import { killSessionTerminals } from "./terminals.js";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +9,8 @@ import type { WebSocket } from "ws";
 import type * as acp from "./acp.js";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
-import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
-import { mcpServers as mcpLibrary } from "./library.js";
+import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace, sweepSubagentRoles } from "./materialize.js";
+import { commands as commandLibrary, mcpServers as mcpLibrary, skills as skillLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
 import { resolvePersonaSpawn } from "./personas.js";
@@ -25,6 +25,7 @@ import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./pro
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
+import { clearGatewayPrompts, takeGatewayPrompt } from "./gateway-token-breakdown.js";
 import { pauseHookUrlFor } from "./pause-hooks.js";
 import { HttpError } from "./http-error.js";
 import * as git from "./git.js";
@@ -46,8 +47,6 @@ import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./
 import { profileUsage } from "./usage-api.js";
 import { SessionJournal } from "./session-journal.js";
 import { TurnChangesRecorder } from "./turn-changes.js";
-import { OpencodeSubagentFeed } from "./opencode-subagents.js";
-import { PortPool } from "./net.js";
 import { SessionSocket } from "./session-socket.js";
 import {
   JOURNALED_EVENTS,
@@ -179,6 +178,12 @@ export interface Session {
       them off a live process, so a revive with none (idle-retired,
       pre-restart) used to bring the thread back on the agent's defaults. */
   configChoices: Record<string, string | boolean>;
+  /** The thread's role → model assignment (`docs/model-roles.md`): one entry per
+      `model_roles` row, `role` a role id and `model` a profile model id (`""` =
+      the session model). A spawn input like model and effort — it builds
+      `DAEDALUS_AGENT_MODEL_ROLES` and the materialised subagent files at spawn,
+      so changing it costs a respawn. The column's order is the assignment. */
+  helperModels: { role: string; model: string }[];
   /** Whether the agent closes each answer with follow-up prompt suggestions
       in a `suggest-prompts` fenced block (`personas.ts`). Same spawn-input
       bargain: read only at session creation/load, so toggling
@@ -291,6 +296,9 @@ export interface Session {
       replayed into the emptied log. A spawn that fails leaves the old journal
       exactly as it was. See `respawnNow`. */
   loadBuffer?: Array<[ThreadEvent, Peer | undefined, boolean]> | null;
+  /** Original prompt text and attachment refs from old turn boundaries, aligned
+      with user chunks while a `session/load` refills a cleared journal. */
+  loadAttachmentTurns?: { text: string; attachments: AttachmentRef[] }[];
   /** The journal is this thread's conversation, whole: written live by a
       handshake that succeeded in *this* server run, not pruned since, and not
       forked from by a load that fell back to a fresh session. What lets a
@@ -806,6 +814,9 @@ export class SessionManager {
         // column existed never recorded one, and "none recorded" is the empty
         // set, not a reason to restore anything.
         configChoices: row.configChoices ?? {},
+        // A thread that names no helper reads as the empty map — the same thing
+        // a row written before the column existed was.
+        helperModels: row.helperModels ?? [],
         // Absent on rows written before the toggle existed — which never asked
         // either way — so missing reads as the default: on.
         suggestFollowups: row.suggestFollowups ?? true,
@@ -1229,6 +1240,35 @@ export class SessionManager {
    * shown the result and being told again would double it.
    */
   private emit(session: Session, event: ThreadEvent, except?: Peer, mirrored = false): void {
+    if (event.ev === "turn_started" || event.ev === "turn_ended") clearGatewayPrompts(session.id);
+    if (
+      event.ev === "update" &&
+      !event.historyReplay &&
+      !event.sessionId &&
+      event.update.sessionUpdate === "usage_update"
+    ) {
+      const update = event.update as acp.UsageUpdate;
+      const meta = update._meta && typeof update._meta === "object" ? update._meta as Record<string, unknown> : {};
+      const daedalus = meta.daedalus && typeof meta.daedalus === "object"
+        ? meta.daedalus as Record<string, unknown>
+        : {};
+      const breakdown = daedalus.breakdown && typeof daedalus.breakdown === "object"
+        ? daedalus.breakdown as Record<string, unknown>
+        : null;
+      if (!breakdown) {
+        const gateway = takeGatewayPrompt(session.id, update.used);
+        if (gateway) {
+          event = {
+            ...event,
+            update: {
+              ...update,
+              sessionUpdate: "usage_update",
+              _meta: { ...meta, daedalus: { ...daedalus, breakdown: gateway } },
+            },
+          };
+        }
+      }
+    }
     /* Closing a bridge rejects whatever it had in flight, and those rejections
        land a microtask later — after a purge has already deleted the row the
        event rows point at. Nothing is listening for them either way. */
@@ -1240,6 +1280,27 @@ export class SessionManager {
        what took the turn boundaries with it, which `rewindPoint`, the turn
        table of contents and every window are read from. See `respawnNow`. */
     if (session.quietLoad && event.ev === "update" && event.historyReplay) return;
+    if (
+      session.loadAttachmentTurns &&
+      event.ev === "update" &&
+      event.historyReplay &&
+      event.update.sessionUpdate === "user_message_chunk" &&
+      event.update.content.type === "text"
+    ) {
+      const text = event.update.content.text;
+      const match = session.loadAttachmentTurns.findIndex((turn) =>
+        turn.attachments.length > 0 &&
+        turn.attachments.every((ref) => text.includes(`[attached: ${ref.name}`)),
+      );
+      if (match >= 0) {
+        const turn = session.loadAttachmentTurns.splice(match, 1)[0];
+        event = {
+          ...event,
+          historyText: turn.text,
+          historyAttachments: turn.attachments,
+        };
+      }
+    }
     if (session.loadBuffer && JOURNALED.has(event.ev)) {
       session.loadBuffer.push([event, except, mirrored]);
       return;
@@ -1599,6 +1660,11 @@ export class SessionManager {
       /** Whether answers may carry a drawn view — the same draft-picked,
           spawn-input bargain as the suggestions toggle. */
       uiBlocks?: boolean;
+      /** The thread's role → model assignment, picked on the draft
+          (`docs/model-roles.md`) — a spawn input like model and effort: written
+          on the row and read at spawn, so a later change costs a respawn.
+          Absent reads as no helpers. */
+      helperModels?: { role: string; model: string }[];
       /** The permission mode picked on the draft, out of the agent's probed
           `modes`. Applied over `session/set_mode` right after session/new —
           the same door a live mode change uses, so a later respawn puts it
@@ -1650,6 +1716,7 @@ export class SessionManager {
         modeId: opts.modeId,
         suggestFollowups: opts.suggestFollowups,
         uiBlocks: opts.uiBlocks,
+        helperModels: opts.helperModels,
         title: opts.title,
         parentSessionId: opts.parentSessionId,
         autonomy: opts.autonomy,
@@ -1764,6 +1831,7 @@ export class SessionManager {
       modeId?: string | null;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
+      helperModels?: { role: string; model: string }[];
       title?: string;
       parentSessionId?: string;
       autonomy?: AutonomyPolicy;
@@ -1800,6 +1868,10 @@ export class SessionManager {
          the moment the agent confirms them (`onSpawnStateChange`), so a fresh
          row starts empty rather than claiming settings no process has taken. */
       configChoices: {},
+      /* A draft's role → model assignment is a spawn input like model and
+         effort (not a selector the agent confirms), so it is written here
+         rather than left for `onSpawnStateChange`. */
+      helperModels: opts.helperModels ?? [],
       suggestFollowups: opts.suggestFollowups ?? true,
       uiBlocks: opts.uiBlocks ?? true,
       title: opts.title ?? "New thread",
@@ -1937,6 +2009,9 @@ export class SessionManager {
     if (agent?.liveConfig === "acp" && allowlist) {
       materializeModelAllowlist(threadCwd(session, project), allowlist, modelAllowlistFor(agent, profile, await listProfiles()));
     }
+    /* Helper models used to reach Claude Code as per-role agent files; they
+       are our runtime's alone now, so the files that wrote are taken back. */
+    if (allowlist) sweepSubagentRoles(threadCwd(session, project), allowlist);
     session.spawnProfileId = profile.id;
     session.viaGateway = !!gatewayUrlFor(profile.id, session.agentId, profileBaseUrl(profile, session.agentId), session.id);
     /* Resolved once and handed to both halves, because which half uses it is
@@ -1970,21 +2045,9 @@ export class SessionManager {
       },
       rules,
     );
-    /* An agent whose children never reach ACP is given a port and a secret so
-       the server can read them off its own event bus (opencode-subagents.ts).
-       Minted here, per spawn, never stored — like the gateway key. The pool
-       is empty only in the first moments after boot; a thread spawned then
-       runs without the feed and the log says so, rather than waiting. */
     const adoptedBy = this.adopting.get(session.id);
     this.adopting.delete(session.id);
-    // An adopted process already has its environment (and its feed's password).
-    const wantsFeed = agent?.subagentFeed === "opencode-http" && !adoptedBy;
-    const feedPort = wantsFeed ? this.ports.take() : undefined;
-    const sidecar = feedPort ? { port: feedPort, password: randomBytes(24).toString("hex") } : undefined;
-    if (wantsFeed && !sidecar) console.warn(`[${session.id.slice(0, 8)}] no port ready for the subagent feed; spawning without it`);
-    let spec: Awaited<ReturnType<typeof resolveAgentSpawn>>;
-    try {
-      spec = await resolveAgentSpawn(
+    const spec = await resolveAgentSpawn(
         profile,
         session.agentId,
         /* The agent runs where the thread does — its worktree, when it has one. */
@@ -1993,39 +2056,23 @@ export class SessionManager {
         ownsCatalog ? effort : undefined,
         session.id,
         persona,
-        sidecar,
         /* Nobody is going to change the model for a workflow step or a scheduled
            run, and `whenTurnSettled` is what both wait on — so a held turn there
            is a run that never reports. */
         unattended,
+        /* The thread's role → model map, read off the session: a spawn input
+           like model and effort, so `start` places it and a revive from the row
+           alone carries it. */
+        session.helperModels,
       );
-    } catch (error) {
-      if (feedPort) this.ports.give(feedPort);
-      throw error;
-    }
     /* A runtime that takes env per session (`AgentDef.sharedProcess`) is
        spawned with none of the thread's: all of it — gateway URL, key, model
        vars — rides this session's `_meta` instead, so every thread in this cwd
-       keys the same process and a warm one is simply handed over. A sidecar is
-       one port per process, so a thread that has one never shares. */
-    const shared = agent?.sharedProcess === "acp-meta" && !sidecar;
+       keys the same process and a warm one is simply handed over. */
+    const shared = agent?.sharedProcess === "acp-meta";
     const sessionEnv = shared ? spec.env : undefined;
     if (shared) spec.env = {};
-    const conn = adoptedBy?.conn ?? await pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, async () => {
-      const proc = await spawnProcess(spec);
-      const feed = sidecar
-        ? new OpencodeSubagentFeed({
-            ...sidecar,
-            /* The bridge below fills this on `session/new`/`session/load`; the
-               feed holds a child seen before then and re-checks it after. Read
-               through the session so a respawn's stale feed sees null, not the
-               successor's id. */
-            rootSessionId: () => (session.proc === proc ? session.bridge?.acpSessionId ?? null : null),
-          })
-        : undefined;
-      if (feed) proc.on("close", () => feed.close());
-      return { proc, extra: feed?.stream };
-    });
+    const conn = adoptedBy?.conn ?? await pool.acquire(session.agentId, shared ? AcpPool.key(spec) : null, () => spawnProcess(spec));
     const proc = conn.proc;
     const { mcpServers, websearchViaMcp, workflowViaMcp } = servers;
     session.websearchViaMcp = websearchViaMcp;
@@ -2048,7 +2095,8 @@ export class SessionManager {
          runtime as two literal name lists; it is the row's, so an agent with
          no entry keeps its built-ins and one that grows a switch can say so. */
       builtinTools: agent?.builtinTools ?? null,
-      persona: agent?.personaVia === "acp-meta" ? persona : undefined,
+      persona: agent?.personaVia === "acp-meta" || agent?.personaVia === "air-meta" ? persona : undefined,
+      personaVia: agent?.personaVia === "air-meta" ? "air-meta" : "acp-meta",
       /* A runtime with no pause of its own is held by the harness's hooks when
          its row names the door; the URL names the thread, not the process, so
          a shared process's sessions are held one at a time. */
@@ -2261,6 +2309,7 @@ export class SessionManager {
       effort?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
+      helperModels?: { role: string; model: string }[];
     },
     opts: { defer?: boolean; follow?: boolean } = {},
   ): Promise<{ live: boolean; staged?: StagedConfig; restarting?: boolean }> {
@@ -2311,6 +2360,9 @@ export class SessionManager {
        comes back is the one the user asked for. */
     if (next.suggestFollowups !== undefined) session.suggestFollowups = next.suggestFollowups;
     if (next.uiBlocks !== undefined) session.uiBlocks = next.uiBlocks;
+    /* The role → model map is spawn-time like the toggles above: written here so
+       the process that comes back reads it off the session at spawn. */
+    if (next.helperModels !== undefined) session.helperModels = next.helperModels;
     /* Everything staged is about to be superseded by a process spawned on these
        settings — and it is dropped before the restart is announced, so a peer
        that reattaches at `ready` cannot be handed a stale one on `caught_up`. */
@@ -2408,6 +2460,7 @@ export class SessionManager {
       effort: session.effort,
       suggestFollowups: session.suggestFollowups,
       uiBlocks: session.uiBlocks,
+      helperModels: session.helperModels,
     });
     /* The load came back without the conversation, so the journal is no longer
        a record of what this process holds — and the peer that has not been
@@ -2442,6 +2495,7 @@ export class SessionManager {
       effort?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
+      helperModels?: { role: string; model: string }[];
     },
   ): StagedConfig {
     const staged: StagedConfig = {
@@ -2451,6 +2505,7 @@ export class SessionManager {
       ...(next.effort !== undefined ? { effort: next.effort } : {}),
       ...(next.suggestFollowups !== undefined ? { suggestFollowups: next.suggestFollowups } : {}),
       ...(next.uiBlocks !== undefined ? { uiBlocks: next.uiBlocks } : {}),
+      ...(next.helperModels !== undefined ? { helperModels: next.helperModels } : {}),
     };
     this.setStaged(session, staged);
     return staged;
@@ -2575,6 +2630,8 @@ export class SessionManager {
           model,
           effort,
           ...(staged.suggestFollowups !== undefined ? { suggestFollowups: staged.suggestFollowups } : {}),
+          ...(staged.uiBlocks !== undefined ? { uiBlocks: staged.uiBlocks } : {}),
+          ...(staged.helperModels !== undefined ? { helperModels: staged.helperModels } : {}),
         },
         { defer: false },
       );
@@ -2695,6 +2752,9 @@ export class SessionManager {
     "Effort",
     "Follow-ups",
     "Drawn UI",
+    "MCP",
+    "Skills",
+    "Commands",
   ];
 
   private async configLabels(session: Session): Promise<Record<ConfigNoticeLabel, string>> {
@@ -2713,6 +2773,28 @@ export class SessionManager {
       // Never diffed here: the mode travels its own door and writes its own row
       // (`AcpBridge.setMode`). Present so the record is total.
       Mode: session.modeId ?? "",
+      ...(await this.linkLabels(session)),
+    };
+  }
+
+  /** A thread's tool links as words for a config row — one reading per kind,
+      the ids resolved against the library so `MCP: none → Workflow` names a
+      server rather than a uuid. Read off `session.links`, which is the active
+      selection: `applyStagedLinks` writes it before the notices are taken, so
+      the diff is between two readings and never a guess from the patch. An
+      emptied set reads `none`, matching the menus' own word for it. */
+  private async linkLabels(session: Session): Promise<{ MCP: string; Skills: string; Commands: string }> {
+    const [mcp, skills, commands] = await Promise.all([
+      mcpLibrary.list(),
+      skillLibrary.list(),
+      commandLibrary.list(),
+    ]);
+    const names = (list: { id: string; name: string }[], ids: string[]): string =>
+      ids.length === 0 ? "none" : ids.map((id) => list.find((item) => item.id === id)?.name ?? id).join(", ");
+    return {
+      MCP: names(mcp, session.links.mcpServerIds),
+      Skills: names(skills, session.links.skillIds),
+      Commands: names(commands, session.links.commandIds),
     };
   }
 
@@ -2741,11 +2823,16 @@ export class SessionManager {
       effort?: string;
       suggestFollowups?: boolean;
       uiBlocks?: boolean;
+      helperModels?: { role: string; model: string }[];
     },
   ): Promise<boolean> {
     const agent = await getAgent(session.agentId);
     if (!agent?.liveConfig) return false;
     if (next.agentId !== session.agentId) return false;
+    /* The role → model map is spawn text (`DAEDALUS_AGENT_MODEL_ROLES`) and a
+       materialised set of files, both read once at spawn — so a thread that
+       moves it needs the new process, exactly like a profile move. */
+    if (next.helperModels !== undefined) return false;
     /* Nothing to be clever about: `_meta` is read at `session/new`/`session/load`
        and codex's config is read at spawn. The suggestions trailer is spawn text, so a
        thread that flips it needs the new process rather than a live patch. */
@@ -2824,6 +2911,7 @@ export class SessionManager {
       effort,
       suggestFollowups: session.suggestFollowups,
       uiBlocks: session.uiBlocks,
+      helperModels: session.helperModels,
     });
     /* What moved is said by `applyConfig`, which owns both outcomes and can
        therefore say the same thing whether the change was live or cost the
@@ -2979,6 +3067,7 @@ export class SessionManager {
          reads them off the session. Same bargain as `applyConfig`'s. */
       if (staged.suggestFollowups !== undefined) session.suggestFollowups = staged.suggestFollowups;
       if (staged.uiBlocks !== undefined) session.uiBlocks = staged.uiBlocks;
+      if (staged.helperModels !== undefined) session.helperModels = staged.helperModels;
       await this.applyStagedLinks(session, staged);
     }
     this.clearStaged(session);
@@ -3039,6 +3128,7 @@ export class SessionManager {
        — used to have already destroyed the only readable copy of the thread. */
     if (keep) session.quietLoad = true;
     else {
+      session.loadAttachmentTurns = await this.log.turnAttachments(session.id);
       /* The old bridge's close lands a microtask or two later, and the turn it
          interrupted ends in the log being *kept* until this spawn proves
          itself — the same tick `processGone` waits for. */
@@ -3078,9 +3168,10 @@ export class SessionManager {
       throw error;
     } finally {
       /* The load is over either way it went, and a flag left standing would
-         silence the next turn's updates. */
+         silence the next turn's updates or apply stale attachment refs. */
       session.quietLoad = false;
       session.loadBuffer = null;
+      session.loadAttachmentTurns = undefined;
     }
     /* A fold moved settings nobody has announced yet — `restartWith` says what
        it moved because it knows, and this spawn happened for some other reason
@@ -3106,6 +3197,7 @@ export class SessionManager {
         effort: session.effort,
           suggestFollowups: session.suggestFollowups,
         uiBlocks: session.uiBlocks,
+        helperModels: session.helperModels,
       });
     }
     return session;
@@ -3520,10 +3612,6 @@ export class SessionManager {
   /** The queue block — the drain, the edits, steer and "send now" — lives in
       session-queue.ts, behind a port of exactly the two prompt-path steps it
       drives. The public methods below keep the manager's surface identical. */
-  /** Loopback ports for spawns that need one (`subagentFeed`), bound ahead of
-      time because `start` is synchronous — see net.ts. */
-  private readonly ports = new PortPool();
-
   /** Per-turn worktree snapshots and their diffs — see turn-changes.ts. */
   readonly turnChanges = new TurnChangesRecorder({
     cwdOf: (id) => {
@@ -3722,6 +3810,7 @@ export class SessionManager {
       model: s.model,
       effort: s.effort,
       modeId: s.modeId,
+      helperModels: s.helperModels,
       suggestFollowups: s.suggestFollowups,
       uiBlocks: s.uiBlocks,
       title: s.title,
@@ -3982,7 +4071,8 @@ function hasSpawnFields(staged: StagedConfig): boolean {
     staged.model !== undefined ||
     staged.effort !== undefined ||
     staged.suggestFollowups !== undefined ||
-    staged.uiBlocks !== undefined
+    staged.uiBlocks !== undefined ||
+    staged.helperModels !== undefined
   );
 }
 
@@ -4017,6 +4107,7 @@ function rowValues(s: Session) {
     effort: s.effort,
     modeId: s.modeId,
     configChoices: s.configChoices,
+    helperModels: s.helperModels,
     suggestFollowups: s.suggestFollowups,
     uiBlocks: s.uiBlocks,
     title: s.title,

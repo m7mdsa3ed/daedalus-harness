@@ -16,11 +16,11 @@ const { resolveDelivery, isTextish } = await import("../src/delivery.js");
 /* The client's own module, imported across the package boundary: it is pure and
    has no DOM in the paths under test, and duplicating the fence rule into a
    fixture here is exactly how the two would drift. The path is built rather
-   than written literally because tsconfig forbids a `.ts` specifier. */
-const pastes = (await import(
-  new URL("../../client/src/lib/pastes.ts", import.meta.url).href
-)) as typeof import("../../client/src/lib/pastes.js");
-const { expandPastes, isLongPaste, mintPaste, pasteToken, livePastes, dropPaste } = pastes;
+   than written literally because tsconfig forbids a `.ts` specifier — and it is
+   untyped on purpose: a `typeof import(…)` pulls the client's bundler-resolved
+   modules (extensionless siblings) into this NodeNext typecheck. */
+const pastes = await import(new URL("../../client/src/lib/pastes.ts", import.meta.url).href);
+const { expandPastes, isLongPaste, mintPaste, pasteToken, livePastes } = pastes;
 
 let passed = 0;
 const failures: string[] = [];
@@ -158,11 +158,14 @@ test("numbering is stable, not positional", () => {
   const one = mintPaste([], "a".repeat(2000));
   const two = mintPaste([one], "b".repeat(2000));
   const three = mintPaste([one, two], "c".repeat(2000));
-  const text = `${pasteToken(1)} ${pasteToken(2)} ${pasteToken(3)}`;
-  const after = dropPaste(text, [one, two, three], 2);
-  assert.deepEqual(after.pastes.map((p) => p.n), [1, 3]);
-  assert.equal(after.text.includes(pasteToken(2)), false);
-  assert.equal(after.text.includes(pasteToken(3)), true);
+  /* Removing a chip is the editor's own `deleteNode`, not an imperative
+     `dropPaste` — what the composer derives is the live set. #2 gone leaves
+     #1 and #3 numbered exactly as they were. */
+  const text = `${pasteToken(1)} ${pasteToken(3)}`;
+  assert.deepEqual(livePastes(text, [one, two, three]).map((p: { n: number }) => p.n), [1, 3]);
+  /* And the number a deleted paste freed is never handed out again: the next
+     paste is #4, because `mintPaste` numbers off the maximum, not the count. */
+  assert.equal(mintPaste([one, two, three], "d".repeat(2000)).n, 4);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

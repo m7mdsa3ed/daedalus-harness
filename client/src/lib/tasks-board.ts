@@ -1,4 +1,5 @@
 import { api, type ServerSettings } from "./settings"
+import { TASK_MENTION_RE, splitTaskContext } from "./task-mentions"
 
 /* ── Tasks ──
    The client half of the task workspace (server: src/tasks-board.ts). Same
@@ -209,6 +210,19 @@ export const fetchTaskDetail = (settings: ServerSettings, id: string, signal?: A
 
 export const fetchTaskByKey = (settings: ServerSettings, key: string) =>
   api<Task>(settings, `/api/tasks/by-key/${encodeURIComponent(key)}`)
+
+/** `text` with the board's tasks appended for every `@KEY-12` it mentions, at
+    send (`lib/task-mentions.ts`). A message that already carries a block — one
+    recalled from history — is given a fresh one, never a second. */
+export async function withTaskContext(settings: ServerSettings, text: string): Promise<string> {
+  const typed = splitTaskContext(text).text
+  if (!TASK_MENTION_RE.test(typed)) return typed
+  const { text: block } = await api<{ text: string }>(settings, "/api/tasks/mention-context", {
+    method: "POST",
+    body: JSON.stringify({ text: typed }),
+  })
+  return typed + block
+}
 
 export function createTask(settings: ServerSettings, input: TaskInput & { title: string }): Promise<Task> {
   return api<Task>(settings, "/api/tasks", { method: "POST", body: JSON.stringify(input) })

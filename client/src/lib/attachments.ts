@@ -24,7 +24,7 @@ import { ApiError, type ServerSettings } from "./settings"
     is refused before it is uploaded, not after. */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 /** Mirrors the server's `MAX_ATTACHMENTS`. */
-export const MAX_ATTACHMENTS = 10
+export const MAX_ATTACHMENTS = 15
 
 /** `12.4 KB`. The size on a chip is a rough scale, not an audit — one decimal
     past KB, none below it. */
@@ -86,6 +86,21 @@ export async function deleteAttachment(settings: ServerSettings, id: string): Pr
   })
   // Already gone is the state we were asking for.
   if (!response.ok && response.status !== 404) throw await failure(response, path)
+}
+
+/** Save an attachment to disk. Fetched on the click, never ahead of it: a
+    transcript of fifteen 10MB files must not cost 150MB just to be drawn. */
+export async function downloadAttachment(
+  settings: ServerSettings,
+  attachment: { id: string; name: string; inlineData?: string }
+): Promise<void> {
+  const url = attachment.inlineData ?? (await attachmentObjectUrl(settings, attachment.id))
+  const link = document.createElement("a")
+  link.href = url
+  link.download = attachment.name
+  link.click()
+  // The click has handed the URL to the download before the next task runs.
+  if (!attachment.inlineData) setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /**

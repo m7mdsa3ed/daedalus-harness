@@ -64,15 +64,25 @@
    the foot of the transcript (`components/thread-view/thread-status.tsx`). */
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowUp, AudioLines, Mic, Pause, Play, Square } from "lucide-react"
+import {
+  ArrowUp,
+  AudioLines,
+  ChevronDown,
+  Maximize2,
+  MessageSquareText,
+  Mic,
+  Minimize2,
+  Pause,
+  Play,
+  Square,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { McpSelected } from "@/components/composer/mcp-avatars"
+import { McpPicker } from "@/components/composer/mcp-avatars"
 import {
   AgentsIndicator,
   ChangesIndicator,
-  ConfigIndicator,
   ContextIndicator,
   RepoIndicator,
   TodoIndicator,
@@ -108,6 +118,8 @@ import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { consumeComposerFocusRequest, useComposerFocusRequest } from "@/lib/composer-focus"
 import { consumeComposerInsertRequest, useComposerInsertRequest } from "@/lib/composer-insert"
 import { reportError } from "@/lib/errors"
+import { withTaskContext } from "@/lib/tasks-board"
+import { HARNESS_MCP_ID, splitTaskContext } from "@/lib/task-mentions"
 import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
 import { useServer } from "@/lib/server-context"
 import { useChords } from "@/lib/keybindings"
@@ -177,6 +189,7 @@ export function Composer({
   beforeSend,
   placeholder,
   autoFocus,
+  collapsed = false,
   ref,
 }: {
   sessionId: string
@@ -200,6 +213,13 @@ export function Composer({
       whose route is `/` and whose only purpose is this box. Still refused on
       touch, and still only for a draft. */
   autoFocus?: boolean
+  /** The reader has scrolled away from the tail of the transcript, so the box
+      rides down out of the way until they come back to it. Read off the
+      scroller's own pin by `ThreadView` (`useFollowStream`), never state of this
+      component's own, so it is the same fact the scroll-to-end button draws.
+      The reserved height stays (`--composer-dock-h`): collapsing must not
+      re-flow the transcript under somebody who is reading it. */
+  collapsed?: boolean
   ref?: React.Ref<ComposerHandle>
 }) {
   const navigate = useNavigate()
@@ -212,7 +232,22 @@ export function Composer({
      was written in: a send that fails asks whether the composer is still the
      empty one it left behind before putting the words back. */
   const textRef = React.useRef(text)
+  const expandingTasks = React.useRef(false)
   const composerRef = React.useRef<TextSurface>(null)
+  const [expanded, setExpanded] = React.useState(false)
+  const [editorOverflows, setEditorOverflows] = React.useState(false)
+  const onEditorOverflowChange = React.useCallback((overflowing: boolean) => {
+    setEditorOverflows(overflowing)
+  }, [])
+  /* Words put in the box from outside it — a suggested follow-up, a queued row's
+     Edit, an "Ask about this", the enhancer's rewrite — have to be *seen*, so a
+     fill while the box is scrolled away re-opens it. Handed back to the scroll
+     the moment the reader is at the tail again, which is the state the pin was
+     clean in; the box is an overlay, so re-opening one moves nothing. */
+  const [revealed, setRevealed] = React.useState(false)
+  React.useEffect(() => {
+    if (!collapsed) setRevealed(false)
+  }, [collapsed])
   textRef.current = text
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
@@ -349,10 +384,10 @@ export function Composer({
       return
     }
     /* A `!` line is run against the project and written into the transcript —
-       it is not a prompt, so the agent never sees it. Only a started thread can
-       take one: the result is journaled on a real session, and a draft has no
-       row to journal into (its first message is what makes one). */
-    const line = draft ? null : shellLineFor(value)
+       it is not a prompt, so the agent never sees it. On a started thread it is
+       journaled; on a draft it is drawn locally and nothing is saved, so the
+       draft stays a draft (`actions.runShell`). */
+    const line = draft && !meta?.projectId ? null : shellLineFor(value)
     if (line) {
       void runProjectCommand(line)
       return
@@ -360,7 +395,25 @@ export function Composer({
     /* The tokens become their bodies here, at the last moment, exactly as
        `mentions.ts` derives resource links from the text at the last moment.
        Everything downstream sees the string it always did. */
-    const outgoing = expandPastes(value, pastes)
+    let outgoing = expandPastes(value, pastes)
+    /* A task mention brings the task along, appended the way a paste's body
+       is — only where the agent has the Harness MCP the block tells it to use
+       (`lib/task-mentions.ts`). Read before the box clears, so a failed read
+       leaves the words where they were; and once, however often Enter lands. */
+    if (meta?.mcpServerIds?.includes(HARNESS_MCP_ID)) {
+      if (expandingTasks.current) return
+      expandingTasks.current = true
+      try {
+        outgoing = await withTaskContext(server, outgoing)
+      } catch (err) {
+        reportError(err, "Couldn't read the mentioned task")
+        return
+      } finally {
+        expandingTasks.current = false
+      }
+    } else {
+      outgoing = splitTaskContext(outgoing).text
+    }
     const attachments = files.ready.map(({ id, name, mimeType, size }) => ({
       id,
       name,
@@ -465,21 +518,20 @@ export function Composer({
      above runs the line it names against the project and writes the result
      into the transcript, so nothing travels to the agent. The helper rows
      ride on `useProjects()` — the server folds a project's helpers into its
-     list — and the script rows on one query per project, both offered only
-     on a started thread, because a draft has no journal to write the result
-     to. */
+     list — and the script rows on one query per project. A draft is offered
+     them too: its line runs without a journal and leaves the draft a draft. */
   const projects = useProjects()
   const project = meta?.projectId
     ? projects.find((candidate) => candidate.id === meta.projectId)
     : undefined
-  const helpers = draft ? [] : (project?.helpers ?? [])
-  const scripts = useProjectScripts(meta?.projectId ?? "", !draft && Boolean(meta?.projectId)).data ?? []
+  const helpers = project?.helpers ?? []
+  const scripts = useProjectScripts(meta?.projectId ?? "", Boolean(meta?.projectId)).data ?? []
   /* Plus what has already been run here — a routine is re-run far more often
      than it is written, and the server's tally is what puts the daily line at
      the top of the menu. The server's, not this device's: the line you build
      with belongs to the workspace, so the phone offers what the desktop ran. */
   const shellHistory =
-    useShellHistory(meta?.projectId ?? "", !draft && Boolean(meta?.projectId)).data ?? []
+    useShellHistory(meta?.projectId ?? "", Boolean(meta?.projectId)).data ?? []
   const invalidateShellHistory = useInvalidateShellHistory()
   const commands = useProjectCommands({ text, helpers, scripts, history: shellHistory, setText })
   /* The line runs in the project and its output lands in the transcript as a
@@ -496,7 +548,7 @@ export function Composer({
     setText("")
     clearDraft(sessionId)
     void actions
-      .runShell(sessionId, line)
+      .runShell(sessionId, line, draft ? meta?.projectId : undefined)
       .catch((err) => {
         reportError(err, `Couldn't run ${line}`)
       })
@@ -599,6 +651,7 @@ export function Composer({
      is the same act — replaced, unsent, caret at the end. */
   const applySuggestion = React.useCallback(
     (prompt: string) => {
+      setRevealed(true)
       setText(prompt)
       mentions.requestCaret(prompt.length)
       requestAnimationFrame(() => composerRef.current?.focus())
@@ -625,6 +678,7 @@ export function Composer({
   React.useEffect(() => {
     if (!insertRequest) return
     consumeComposerInsertRequest(sessionId, insertRequest.revision)
+    setRevealed(true)
     const typed = textRef.current.replace(/\s+$/, "")
     const next = typed ? `${typed}\n\n${insertRequest.text}` : insertRequest.text
     setText(next)
@@ -652,7 +706,20 @@ export function Composer({
       return true
     }
     const plain = event.clipboardData?.getData("text/plain")
-    if (!plain || !isLongPaste(plain)) return false
+    if (!plain) return false
+    /* A short paste carrying a link is taken too, so the URL becomes the same
+       chip a typed one does — ProseMirror's input rules never see a paste. It
+       goes through `setText`, which reparses into the box's link atoms, and the
+       caret is re-applied after the render (`file-mentions.tsx`'s slot). */
+    if (!isLongPaste(plain) && /https?:\/\//i.test(plain)) {
+      event.preventDefault()
+      const el = composerRef.current
+      const [start, end] = selectionOf(el, text.length)
+      mentions.requestCaret(start + plain.length)
+      setText(text.slice(0, start) + plain + text.slice(end))
+      return true
+    }
+    if (!isLongPaste(plain)) return false
     event.preventDefault()
     const el = composerRef.current
     const [start, end] = selectionOf(el, text.length)
@@ -698,9 +765,52 @@ export function Composer({
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
 
+  /* Away only while the scroll says so and nothing has just been put in the box
+     — see `revealed` above. */
+  const away = collapsed && !revealed
+
   return (
-    <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,var(--safe-bottom))]">
+    /* Collapsed: the reader has left the tail, so the shelf rides down out of
+       the way and the card morphs into a pill — a transform, an opacity and a
+       clip, never `hidden`, so the height it reserves for the transcript
+       (measured off this element as `--composer-dock-h`) does not move and the
+       words being read stay put. `inert` too, or the box would keep the caret
+       and the tab order while it is clipped away. What brings it back is the
+       reader's own gesture: the pill, reaching the bottom (which re-pins the
+       scroller, `useFollowStream`), or the scroll-to-end button. */
+    <div
+      className={cn(
+        "relative px-4 pt-1 pb-[max(0.75rem,var(--safe-bottom))]",
+        away ? "pointer-events-none" : "pointer-events-auto"
+      )}
+    >
+      {/* Away, the card morphs into this pill (its clip-path below shrinks onto
+          exactly this box), and a click is the reader asking for the box back:
+          the same `revealed` a fill sets, handed back to the scroll at the tail. */}
+      <button
+        type="button"
+        tabIndex={away ? 0 : -1}
+        aria-hidden={!away || undefined}
+        onClick={() => {
+          setRevealed(true)
+          requestAnimationFrame(() => composerRef.current?.focus())
+        }}
+        className={cn(
+          "absolute bottom-[max(0.75rem,var(--safe-bottom))] left-1/2 z-20 flex h-9 w-40 -translate-x-1/2 items-center justify-center gap-1.5 rounded-full px-3 text-xs text-muted-foreground shadow-glass-lg hover:text-foreground",
+          "transition-opacity duration-300 ease-out motion-reduce:transition-none",
+          away ? "pointer-events-auto opacity-100 delay-100" : "pointer-events-none opacity-0"
+        )}
+      >
+        <MessageSquareText className="size-3.5 shrink-0" />
+        <span className="truncate">{text.trim() || "Message the agent"}</span>
+      </button>
       <ComposerStrip
+        aria-hidden={away || undefined}
+        inert={away || undefined}
+        className={cn(
+          "transition-[translate,opacity] duration-300 ease-out motion-reduce:transition-none",
+          away && "translate-y-6 opacity-0"
+        )}
         /* ── The scope row ──
            Where this thread runs, what it carries, how full it is — the shelf's
            floor, under whatever the turn has put on it. It survives the first
@@ -722,6 +832,7 @@ export function Composer({
               actions={actions}
               editable={draft}
               showSelectedMcps={false}
+              keys={routed || autoFocus}
               /* The readings, in one cluster at the row's end: how far the
                  checklist has got, how many workers are out, what the last turn
                  wrote, how full the window is. Four answers of the same *kind*
@@ -732,7 +843,6 @@ export function Composer({
                  nothing to say, so an idle thread's cluster is the ring alone. */
               trailing={
                 <>
-                  <ConfigIndicator thread={thread} sessionId={sessionId} actions={actions} />
                   <TodoIndicator thread={thread} />
                   <AgentsIndicator thread={thread} />
                   <ChangesIndicator changes={changes} />
@@ -771,7 +881,7 @@ export function Composer({
             the turn. It is a row, not an overlay, so the plan and the history
             notice stay readable while you complete a command. */}
         <SlashCommandMenu state={slash} />
-        <ProjectCommandMenu state={commands} />
+        <ProjectCommandMenu state={commands} projectId={meta?.projectId ?? undefined} />
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
@@ -793,11 +903,21 @@ export function Composer({
           child, so a boolean would flicker the whole way across. */}
       <div
         data-slot="composer-card"
+        aria-hidden={away || undefined}
+        inert={away || undefined}
         className={cn(
           "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl p-2 shadow-glass-lg",
+          /* The morph: clipped down to the pill's box (10rem × 2.25rem, bottom
+             centre) while away. Open is a negative inset, not `none`, so the
+             two shapes interpolate and the 4rem shadow is not clipped off. A
+             clip moves no layout, so `--composer-dock-h` holds. */
+          "transition-[clip-path,ring-color] duration-300 ease-out motion-reduce:transition-none",
+          "[&>*]:transition-opacity [&>*]:duration-200",
+          away
+            ? "[clip-path:inset(calc(100%_-_2.25rem)_calc(50%_-_5rem)_0_round_9999px)] [&>*]:opacity-0"
+            : "[clip-path:inset(-5rem)]",
           /* Keep the glass surface consistent while the transcript streams. */
           "bg-composer/70 backdrop-blur-xl backdrop-saturate-150",
-          "transition-[ring-color] duration-200",
           voice.listening && "ring-1 ring-destructive/40"
         )}
         onDragOver={(e) => {
@@ -854,6 +974,9 @@ export function Composer({
           onSelect={mentions.onSelect}
           onPaste={onPaste}
           pastes={shownPastes}
+          onOverflowChange={onEditorOverflowChange}
+          expanded={expanded}
+          coarse={coarse}
           onKeyDown={composerKeyDown({
             slash,
             commands,
@@ -883,8 +1006,8 @@ export function Composer({
             "w-full text-xs md:text-xs",
             /* Clear of the enhance button in the corner. */
             "pr-7",
-            /* The box grows to ten lines and then scrolls. */
-            "max-h-40",
+            /* Keep the compact default, with more room available on demand. */
+            expanded ? "max-h-[min(50vh,32rem)]" : "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons
                is how the row stays visually centred while the targets grow. */
             coarse && "[&_.tiptap]:min-h-11"
@@ -930,12 +1053,14 @@ export function Composer({
             onClear={clearAll}
           />
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* Who answers. The MCPs this thread carries are a reading, and
-                live in the footer's cluster. */}
-            {meta && <ConfigPopover meta={meta} sessionId={sessionId} actions={actions} thread={thread} />}
-            {/* The MCPs it will carry, read here beside the model; picked in that
-                menu's Tools section. */}
-            {meta && <McpSelected meta={meta} />}
+            {/* Who answers. */}
+            {/* `keys`: Alt+M / Alt+S open these from anywhere in the thread in
+                front — the menus are already arrow/typeahead/Space driven. */}
+            {meta && (
+              <ConfigPopover meta={meta} sessionId={sessionId} actions={actions} thread={thread} keys={routed || autoFocus} />
+            )}
+            {/* The MCPs it will carry, read and picked here beside the model. */}
+            {meta && <McpPicker meta={meta} actions={actions} keys={routed || autoFocus} />}
           </div>
           {/* How long the prompt is, once that is worth knowing. The token
               figure is an estimate and is printed as one (the tilde); it is
@@ -948,6 +1073,23 @@ export function Composer({
             >
               {formatTokens(chars)} · ~{formatTokens(Math.ceil(chars / 4))} tok
             </span>
+          )}
+          {(editorOverflows || expanded) && (
+            <Button
+              variant="ghost"
+              size={iconSize}
+              className={cn(
+                "shrink-0 rounded-full bg-foreground/10 text-muted-foreground hover:bg-foreground/15 hover:text-foreground dark:bg-muted dark:hover:bg-muted/70",
+                iconFit,
+                expanded && "text-primary hover:text-primary"
+              )}
+              onClick={() => setExpanded((current) => !current)}
+              title={expanded ? "Collapse composer" : "Expand composer"}
+              aria-label={expanded ? "Collapse composer" : "Expand composer"}
+              aria-pressed={expanded}
+            >
+              {expanded ? <Minimize2 /> : <Maximize2 />}
+            </Button>
           )}
           {voice.supported && (voice.listening || (!hasContent && !gated)) && (
             <Button

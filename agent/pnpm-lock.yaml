@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: 1.5.1
-        version: 1.5.1(zod@4.5.4)
+        specifier: 1.8.0
+        version: 1.8.0(zod@4.5.4)
       '@ai-sdk/openai-compatible':
         specifier: ^3.0.62
         version: 3.0.62(zod@4.5.4)
@@ -60,8 +60,8 @@ importers:
 
 packages:
 
-  '@agentclientprotocol/sdk@1.5.1':
-    resolution: {integrity: sha512-nSUIrC1fOR9+ppKfx9KdwjBBND2sAPzFHo4yVQrGbXZHnayUYpwL8CDVR5LSxbapY/oKMOzNP0wvwfyx3PS2KA==}
+  '@agentclientprotocol/sdk@1.8.0':
+    resolution: {integrity: sha512-fbP7qHZsFyTJVT0/RPrcWJ8An26qLXHEuGCHHEKDyxD1xpXV+Ejyh2LAE6vBAFePkpVjZeeohnbgvuEhZ7wLMg==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -863,7 +863,7 @@ packages:
 
 snapshots:
 
-  '@agentclientprotocol/sdk@1.5.1(zod@4.5.4)':
+  '@agentclientprotocol/sdk@1.8.0(zod@4.5.4)':
     dependencies:
       zod: 4.5.4
 

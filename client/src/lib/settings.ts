@@ -324,6 +324,10 @@ export interface AgentDef {
       not read them — a link that lands somewhere nothing looks used to be
       indistinguishable from one that works. */
   workspaceLayout?: { dir: string; skills?: string | null; commands?: string | null } | null
+  /** Whether this runtime's subagents take helper models (docs/model-roles.md):
+      `"acp-env"` is ours, and the only one. The client reads it for one thing —
+      whether the menus offer Helper models at all. */
+  subagentModelsVia?: "acp-env" | null
   /** The shell line that installs this agent's binary, shown beside a row
       measured as missing. Editable, like `icon`. */
   install?: string | null
@@ -465,6 +469,12 @@ export interface McpServerBuiltin {
   type: "builtin"
   name: string
   builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser"
+  /** Only ever present on the rows whose server is synthesized from a *thread*
+      (`workflow`, `agents`, `harness`, `browser`): its connection is the
+      calling thread's own, so no session means nothing to connect to — the
+      settings list explains that rather than reading a server that is not
+      there. Absent on `web-search` and `knowledge`, which resolve without one. */
+  threadScoped?: boolean
 }
 
 /** Library entries projects, profiles and threads link to by id. */
@@ -704,6 +714,20 @@ export interface ModelOption {
   iconUrl?: string
   /** User-defined group label for organising models in the picker. */
   group?: string
+  /** Model-role ids (`ModelRole.id`) this model serves — a subagent spawned on
+      a role runs on the first model carrying it. Absent/empty = none. */
+  roles?: string[]
+}
+
+/** A model-role row (`model_roles`): the free-form, ordered vocabulary a
+    profile's models tag themselves with, so a subagent is spawned on a role
+    rather than on a hardcoded "small" model. `id` is what an assignment points
+    at and is stable; `label` is what a person reads. See docs/model-roles.md. */
+export interface ModelRole {
+  id: string
+  label: string
+  description: string
+  sortOrder?: number
 }
 
 /** A model the agent itself advertised (POST /api/profiles/:id/fetch-models),
@@ -778,6 +802,9 @@ export interface ProjectDefaults {
   effort: string
   modeId: string
   configChoices: Record<string, string | boolean>
+  /** The role→model helper map a thread here opens on (docs/model-roles.md):
+      one entry per role, `model: ""` for the session model. */
+  helperModels: { role: string; model: string }[]
   mcpServerIds: string[]
   skillIds: string[]
   commandIds: string[]
@@ -880,6 +907,13 @@ export interface SessionMeta {
       by the server right after session/new; once the thread runs, its own
       `modes` state is the only truth and this is dead weight the merge drops. */
   modeId?: string
+  /** The thread's helper models (docs/model-roles.md): one entry per role in
+      the thread's own order, `role` a `ModelRole.id` and `model` a profile
+      model id (`""` = the session model). A spawn input like `model`/`effort`,
+      so a change costs a respawn — chosen on the draft menu and edited on a
+      started thread through the config route. Absent from a server that
+      predates it, which reads as none. */
+  helperModels?: { role: string; model: string }[]
   /** This thread's library picks. Staged changes are overlaid from live thread
       state until the next spawn applies them. */
   mcpServerIds?: string[]
@@ -910,6 +944,23 @@ export interface SessionMeta {
   isolate?: boolean
 }
 
+/**
+ * One page of the sidebar's thread list (`GET /api/sessions/page`).
+ *
+ * The sidebar loads threads on demand rather than pulling every thread the
+ * server holds, so the list it draws is a *window*: `sessions` is the page,
+ * `total` is how many live threads sit behind it (what "load more" counts
+ * against), and `trashed` and `pinned` are the two sets a recent window can
+ * never carry — deleted rows, which are too old to fall in a page, and pinned
+ * rows, which are drawn wherever their age puts them.
+ */
+export interface SessionPage {
+  sessions: SessionMeta[]
+  total: number
+  trashed: SessionMeta[]
+  pinned: SessionMeta[]
+}
+
 /** A thread that is nobody's workflow step. Half of `isListed`, which is what
     every list actually asks for. */
 const isTopLevel = (s: SessionMeta): boolean => !s.parentSessionId
@@ -929,6 +980,15 @@ export const isListed = (s: SessionMeta): boolean => isTopLevel(s) && !s.draft
 
 const sameIds = (a?: string[], b?: string[]): boolean =>
   a === b || (!!a && !!b && a.length === b.length && a.every((id, i) => id === b[i]))
+
+/** Two readings of the thread's helper map, entry for entry (order is the
+    assignment, so a reorder counts as a change). */
+const sameHelperModels = (
+  a?: { role: string; model: string }[],
+  b?: { role: string; model: string }[]
+): boolean =>
+  a === b ||
+  (!!a && !!b && a.length === b.length && a.every((e, i) => e.role === b[i].role && e.model === b[i].model))
 
 /**
  * Whether two readings of one thread say the same thing.
@@ -990,7 +1050,8 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.worktree?.exists === b.worktree?.exists &&
     sameIds(a.mcpServerIds, b.mcpServerIds) &&
     sameIds(a.skillIds, b.skillIds) &&
-    sameIds(a.commandIds, b.commandIds)
+    sameIds(a.commandIds, b.commandIds) &&
+    sameHelperModels(a.helperModels, b.helperModels)
   )
 }
 
@@ -1157,6 +1218,8 @@ export interface Routine {
   /** Picks against the agent's advertised selectors, replayed after
       `session/new`. Opaque ACP option ids — never enumerated. */
   configChoices: Record<string, string | boolean>
+  /** The role→model helper map a run's thread starts with (docs/model-roles.md). */
+  helperModels: { role: string; model: string }[]
   body: RoutineBody
   /** An optional JSON schema for the run's answer, which buys the run one
       repair turn and then a structured `RoutineRun.verdict`. Null means the
@@ -1191,6 +1254,7 @@ export interface RoutineInput {
   model?: string
   effort?: string
   configChoices?: Record<string, string | boolean>
+  helperModels?: { role: string; model: string }[]
   body: RoutineBody
   output?: Record<string, unknown> | null
   onFinish?: OnFinishAction[]

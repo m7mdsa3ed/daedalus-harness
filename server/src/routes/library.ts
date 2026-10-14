@@ -10,6 +10,7 @@ import {
   mcpServers,
   skills,
   isBuiltinMcp,
+  isThreadScopedBuiltin,
 } from "../library.js";
 import { ModelPromptInputSchema, modelPrompts, modelPromptsFilePath, writeModelPromptsLibrary } from "../model-prompts.js";
 import { PromptInputSchema, savedPrompts } from "../saved-prompts.js";
@@ -133,8 +134,15 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const { servers } = await mcpServersFor({ mcpServerIds: [id] }, project, getConfig(), null);
     const def = servers[0];
     if (def) return { def, project };
-    /* The two cases worth naming rather than reporting as a failure: an OAuth
-       server nobody has connected, and a builtin whose backend is unconfigured. */
+    /* The cases worth naming rather than reporting as a failure: a builtin whose
+       server is a thread's own (so no session means nothing to connect to), a
+       builtin whose backend is unconfigured, and an OAuth server nobody has
+       connected. */
+    if (row.type === "builtin" && row.builtin && isThreadScopedBuiltin(row.builtin)) {
+      return {
+        unavailable: `The ${row.builtin} server is resolved at spawn, on the thread that links it — there is no such server without a thread, so it cannot be listed from Settings.`,
+      };
+    }
     return {
       unavailable:
         row.type === "builtin"

@@ -7,16 +7,16 @@ import { randomUUID } from "node:crypto";
  * of retyped into every thread.
  *
  * Two layers, general to specific: global rules (projectId = null) and
- * project-scoped rules (projectId set). A spawn composes both with
- * `spawnRules` — undefined when neither layer says anything.
+ * project-scoped rules (projectId set). A spawn reads both, global first
+ * (sessions.ts), and `resolvePersonaSpawn` (personas.ts) joins them into the
+ * one text block each runtime receives through its door
+ * (`AgentDef.personaVia`) — AIR's `_meta.jetbrains.air.customInstructions`
+ * for claude-code and the daedalus agent, codex's `developer_instructions`,
+ * opencode's instructions file — and no door learns rules exist. A rules
+ * change is a spawn-time fact: live threads pick it up on their next respawn.
  *
- * Each rule has a title and content, so they can be managed
- * individually rather than as one blob of text. `spawnRules` joins
- * them all into the text block each runtime receives through its
- * existing door — claude-code's `_meta.systemPrompt.append`,
- * codex's `developer_instructions`, opencode's instructions file —
- * and no door learns rules exist. A rules change is
- * a spawn-time fact: live threads pick it up on their next respawn.
+ * Each rule has a title and content, so they can be managed individually
+ * rather than as one blob of text.
  */
 
 /** A rule row as stored. */
@@ -71,28 +71,6 @@ export async function updateRule(id: string, input: { title?: string; content?: 
 /** Delete a rule. Returns true if it existed. */
 export async function deleteRule(id: string): Promise<boolean> {
   return ((await db.delete(rulesTable).where(eq(rulesTable.id, id))).rowCount ?? 0) > 0
-}
-
-/** Compose the rules text a spawn starts from: global rules first,
-    then the project's own, joined by double newlines.
-    Undefined when neither layer says anything. */
-export function spawnRules(projectRules?: string | null): string | undefined {
-  const parts = [globalRulesText(), (projectRules ?? "").trim() || undefined].filter(Boolean)
-  return parts.length > 0 ? parts.join("\n\n") : undefined
-}
-
-/** The text of all global rules joined, for embedding in spawn. */
-async function globalRulesText(): Promise<string | undefined> {
-  const rows = await globalRules()
-  if (rows.length === 0) return undefined
-  return rows.map((r) => r.content).join("\n\n")
-}
-
-/** The text of all project rules joined, for embedding in spawn. */
-async function projectRulesText(projectId: string): Promise<string | undefined> {
-  const rows = await projectRules(projectId)
-  if (rows.length === 0) return undefined
-  return rows.map((r) => r.content).join("\n\n")
 }
 
 /** Initialize the rules table from the old app_settings blob.

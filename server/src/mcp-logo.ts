@@ -10,8 +10,9 @@ const MAX_BYTES = 64 * 1024;
 const TIMEOUT_MS = 4000;
 
 /** One image, or null: https only, an `image/*` answer, small. A failure is an
-    absent logo, never an error — the mark underneath is the fallback. */
-async function fetchImage(url: string): Promise<string | null> {
+    absent logo, never an error — the mark underneath is the fallback. Shared
+    with `link-preview.ts`, which inlines a page's own image the same way. */
+export async function fetchImage(url: string): Promise<string | null> {
   try {
     if (!url.startsWith("https://")) return null;
     const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: "follow" });

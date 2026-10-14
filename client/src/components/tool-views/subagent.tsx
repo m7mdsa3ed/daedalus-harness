@@ -13,13 +13,15 @@ import {
   Prose,
   SmartBlock,
 } from "@/components/tool-parts"
+import { ReportBlock } from "@/components/tool-views/report"
 import { useTaskEvents, watchTask } from "@/lib/task-events"
 import { loadSettings } from "@/lib/settings"
 import {
+  agentLabel,
+  extractAgentMessage,
   extractBackgroundTask,
   extractSubagent,
   taskAgentRows,
-  taskFindings,
   toolOutputText,
   type BackgroundTask,
 } from "@/lib/tools"
@@ -61,7 +63,6 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
   }, [task.transcriptDir])
 
   const rows = taskAgentRows(events)
-  const findings = taskFindings(rows)
   const finished = rows.filter((row) => row.done).length
 
   if (rows.length === 0) {
@@ -111,19 +112,26 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
           </li>
         ))}
       </ul>
-      {findings.length > 0 && (
-        <div className={cn(PANE, "max-h-56 overflow-auto")}>
-          <ul className="divide-y divide-border/40">
-            {findings.map((title, index) => (
-              <li key={index} className="px-2.5 py-1 text-[11px] text-muted-foreground">
-                {title}
-              </li>
-            ))}
-          </ul>
+      {rows.some((row) => row.done && row.result !== undefined) && (
+        <div className="space-y-2">
+          {rows.map((row, index) => {
+            if (!row.done || row.result === undefined) return null
+            return (
+              <div key={row.agentId} className="space-y-1">
+                <p className="text-[10px] font-medium text-muted-foreground">Agent {index + 1} result</p>
+                <BackgroundAgentResult value={row.result} />
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
   )
+}
+
+function BackgroundAgentResult({ value }: { value: unknown }) {
+  const text = typeof value === "string" ? value : JSON.stringify(value) ?? String(value)
+  return <ReportBlock text={text} />
 }
 
 // ─── Subagents ───────────────────────────────────────────────────────────────
@@ -196,7 +204,7 @@ const BRIEF_FOLD = "max-h-24"
  * Shared with the subagent rows that carry their brief on the session rather
  * than on a call (`SubagentBody`).
  */
-export function BriefSection({ text }: { text: string }) {
+export function BriefSection({ text, label = "Brief" }: { text: string; label?: string }) {
   const [full, setFull] = React.useState(false)
   const body = React.useRef<HTMLDivElement>(null)
   const [overflows, setOverflows] = React.useState(false)
@@ -213,7 +221,7 @@ export function BriefSection({ text }: { text: string }) {
   }, [text, full])
 
   return (
-    <DetailSection label="Brief">
+    <DetailSection label={label}>
       <div className={cn(PANE_PAD, "min-w-0")}>
         <div
           ref={body}
@@ -245,7 +253,7 @@ export function SubagentReport({ item, active }: { item: ToolItem; active: boole
   const call = extractSubagent(item)
   const task = extractBackgroundTask(item)
   if (!call) return null
-  const raw = toolOutputText(item)
+  const raw = toolOutputText(item, Number.MAX_SAFE_INTEGER)
   const text = call.result ?? raw.text
   const truncated = call.result ? false : raw.truncated
   const failed = item.status === "failed" || call.state === "error" || call.state === "failed"
@@ -255,7 +263,7 @@ export function SubagentReport({ item, active }: { item: ToolItem; active: boole
   }
   return (
     <DetailSection label={failed ? "Error" : active ? "Report so far" : "Report"}>
-      <SmartBlock text={truncated ? `${text}\n\n… output truncated` : text} tone={failed ? "error" : undefined} />
+      <ReportBlock text={truncated ? `${text}\n\n… output truncated` : text} tone={failed ? "error" : undefined} />
     </DetailSection>
   )
 }
@@ -271,3 +279,28 @@ export function SubagentDetail({ item, active }: { item: ToolItem; active: boole
 
 const formatSeconds = (seconds: number): string =>
   seconds < 60 ? `${Math.round(seconds)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+
+/** A follow-up to a subagent: what was said, then what came back. Claude Code
+    answers with one status line (a miss is an error to read, a resume names the
+    agent it woke); our runtime answers with the child's whole report. */
+export function AgentMessageDetail({ item, active }: { item: ToolItem; active: boolean }) {
+  const call = extractAgentMessage(item)
+  if (!call) return null
+  const failed = item.status === "failed" || call.delivered === false
+  return (
+    <div className="space-y-2">
+      {call.message && <BriefSection text={call.message} label="Message" />}
+      {call.resumed && !failed ? (
+        <p className="text-[11px] text-muted-foreground">
+          Resumed agent {agentLabel(call.resumed)}. Its work continues as a subagent of this thread.
+        </p>
+      ) : call.reply ? (
+        <DetailSection label={failed ? "Not delivered" : "Reply"}>
+          <SmartBlock text={call.reply} tone={failed ? "error" : undefined} />
+        </DetailSection>
+      ) : (
+        active && <ToolCallSkeleton className="py-1" />
+      )}
+    </div>
+  )
+}

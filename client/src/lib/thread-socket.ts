@@ -109,7 +109,17 @@ export interface ThreadCallbacks {
   /** `historyReplay` is true for the updates a `session/load` streamed back —
       the reducer takes user chunks only then. `sessionId` is set when the
       update is a subagent's (see the `update` event in the protocol). */
-  onUpdate: (update: SessionUpdate, historyReplay: boolean, sessionId?: string, at?: number) => void
+  onUpdate: (
+    update: SessionUpdate,
+    historyReplay: boolean,
+    sessionId?: string,
+    at?: number,
+    historyText?: string,
+    historyAttachments?: AttachmentRef[],
+    /** Where the merged run this update stands for ended — see the `update`
+        event in the protocol. Only a replay has one. */
+    endAt?: number
+  ) => void
   onSessionTitle: (title: string) => void
   /** The agent is asking something. Answer with `answerPermission`. */
   onPermission: (requestId: string, request: acp.RequestPermissionRequest) => void
@@ -143,7 +153,8 @@ export interface ThreadCallbacks {
     model: string,
     effort: string,
     suggestFollowups?: boolean,
-    uiBlocks?: boolean
+    uiBlocks?: boolean,
+    helperModels?: { role: string; model: string }[]
   ) => void
   /** A config change is waiting for the running turn to end, or no longer is
       (`null`). Absolute and from every peer's point of view identical — this
@@ -702,7 +713,8 @@ export class ThreadSocket {
           event.model,
           event.effort,
           event.suggestFollowups,
-          event.uiBlocks
+          event.uiBlocks,
+          event.helperModels
         )
         return
       case "staged_config":
@@ -747,7 +759,12 @@ export class ThreadSocket {
           event.update,
           event.historyReplay,
           event.sessionId,
-          this.catchingUp ? event.at : undefined
+          this.catchingUp ? event.at : undefined,
+          event.historyText,
+          event.historyAttachments,
+          // With `at`, and on the same terms: a live update has no run behind
+          // it to have measured, so the field is the replay's alone.
+          this.catchingUp ? event.endAt : undefined
         )
         return
       case "session_config":

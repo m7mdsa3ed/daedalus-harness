@@ -191,10 +191,20 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   event count and a merged row is one row for many of them — and every way of answering that
   either loses the run's tail or repeats its head; computed per request from rows nothing has
   touched, a resume simply merges what it asked for and the run is cut exactly where the
-  cursor is. Postgres decides the boundaries (`lag` over a signature that is the whole event
-  minus its `seq` and its text, so a runtime that starts sending a new key on a chunk breaks
-  the run instead of being merged away), and the merged event stands at the **last** seq of
-  its run, because the client advances to `seq + 1` and everything up to there is now in it.
+  cursor is. Postgres decides the boundaries — `lag` over a signature that is the whole event
+  minus what the journal itself added to it (its `seq`, and the `at` stamp `append` writes on
+  every row) and minus the text, so a runtime that starts sending a new key on a chunk breaks
+  the run instead of being merged away. **The clock is on that list for the same reason the seq
+  is.** Left in the signature, `at` made every chunk its own run — two chunks of one run differ
+  in it whenever they land in different milliseconds, which is all of them — so a streamed run
+  stopped merging into the one event it draws. The merged event stands at the **last** seq of
+  its run, because the client advances to `seq + 1` and everything up to there is now in it,
+  and it carries an **`endAt`**: where the run stopped being written. That is the half the
+  client cannot see for itself — it holds one event per run, and an event's own `at` is when the
+  run *began* — so `at` beside `endAt` is a step's measured length, and it replays: a reloaded
+  thought says "Thought for 12s" instead of having no end to subtract its start from. A run of
+  one row is left exactly as the log wrote it: nothing merged it, so there is no second end to
+  state and a replay stays the log.
   Two things downstream are therefore counted and not lengths: `EarlierPage.from` states
   where a page begins (subtracting the page's length from the window left it short, and the
   next page would fold turns already on screen a second time), and the replay progress bar
@@ -683,43 +693,61 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   XML arrive — `parseTaskWrapper` unwraps it); its `acp-subagent-events` branch (PR #40654)
   projects the child onto the root with `_meta["opencode/child-session"] = {id, parentID,
   depth, title}` and tool ids namespaced `<childSid>:<callId>`, which is read as a third
-  shape. **Until that branch ships, the harness reads OpenCode's children itself, on the
-  server, and there is no fourth shape.** `opencode acp` runs OpenCode's HTTP server in the
-  same process, and its `/event` SSE bus carries every session's events — the bridge's
-  filter is what drops the children, not the data. An agent whose `subagentFeed` is
-  `"opencode-http"` is spawned with `--port <n> --hostname 127.0.0.1` and a per-spawn
-  `OPENCODE_SERVER_PASSWORD` (minted in `SessionManager.start` from a `PortPool`, never
-  stored — the probe spawns without either). `server/src/opencode-subagents.ts` subscribes
-  with Basic auth, retrying while the server comes up, keeps an allowlist rooted at the
-  bridge's `acpSessionId` (a `session.created` seen before the handshake answers is held and
-  re-checked; the `task` tool's `metadata.sessionId` is the fallback when one was missed),
-  and translates the child's bus events into the RFD sequence: `subagent_spawned` on the
-  parent, the child's `agent_message_chunk`/`agent_thought_chunk`/`tool_call`/
-  `tool_call_update` on the child's own session id, `_daedalus/subagent_usage` per
-  `step-finish`, `subagent_state_update` on idle or `session.error`. Those frames are merged
-  into the stdio stream by `agentStream(proc, extra)` **ahead of** the RFD rewrite, so the
-  bridge, the journal, replay and the client tree see exactly what a Codex child looks like.
-  The root's own parts and every user-role part are ignored (ACP already carried the
-  former; the brief is on the `task` row). Not covered: a revive (`respawnNow` clears the
-  journal and `session/load` replays the parent alone, so children vanish until the next
-  task runs — a `GET /session/{root}/children` backfill is the documented follow-up), and a
-  child's permission asks, which OpenCode's bridge also drops and the seeded
-  `"permission":"allow"` makes moot. `pnpm test:opencode-subagents`. Two things on the server make the RFD path possible. The SDK's `SessionUpdate`
+  shape. **OpenCode 2 (`@opencode/cli`, 2.0.26) ships it — but OpenCode 1 does not, so
+  until the opencode row runs 2.x the harness reads OpenCode's children itself, on the
+  server, and there is no fourth shape.** 2.x's `opencode acp` projects a child onto the
+  root with `_meta["opencode/child-session"]` and no lifecycle; a client that opts in with
+  `clientCapabilities._meta["opencode/child-session-updates"]` (we do) gets the child on an
+  extension notification instead — `opencode/session/child_update {rootSessionId,
+  childSessionId, parentSessionId, depth, title?, type}`, `status` created/running/completed/
+  interrupted/failed or `update` carrying the child's `SessionUpdate`, sent **without**
+  ACP's `_` prefix — which `agentStream` translates into the RFD sequence the feed below
+  synthesises (`translateOpencodeChildUpdate`). Its `subagent` call names the child only
+  on completion (`rawOutput.metadata.sessionID`, a `<subagent sessionID state>` wrapper in
+  the content), so the client links a running call to its child by title (= the call's
+  `description`). **This is the only OpenCode path** (seed 30): 1.x dropped every child
+  event, and the harness used to read them off the process's `/event` bus through a sidecar
+  (`subagentFeed: "opencode-http"`, spawned with `--port`/`--hostname`). 2.x's `acp` rejects
+  those flags — every thread exited 1 — so the sidecar is gone. 2.x attaches to a shared
+  background service (`opencode service`), and a per-thread `OPENCODE_CONFIG_CONTENT` still
+  reaches the session (checked against 2.0.29: the env's model is the session's). Not
+  covered: children after a revive (`session/load` replays the parent alone). Two things on the server make the RFD path possible. The SDK's `SessionUpdate`
   union is **closed** and `acp.client()` validates every `session/update` against it in a
   router that runs *before any handler* — so `agentStream` re-addresses the two RFD
   variants to `_daedalus/subagent_update` on the way in and the bridge listens on both
   names (`protocol.ts` declares `SubagentSpawned`/`SubagentStateUpdate` and the widened
-  `SessionUpdate` both ends use). And the `update` event gains an optional `sessionId`,
+  `SessionUpdate` both ends use). **The RFD has since moved on and the SDK with it**: from
+  SDK 1.6 the union carries one upsert, `subagent_update {sessionId (child), title?,
+  description?, capabilities?, state?}` on the parent's session, with `state` a snapshot
+  (`running`, `idle` + `stopReason`, `requires_action`, `unknown`), and the draft pair is
+  gone from it. The adapters (claude-agent-acp 0.89, codex-acp 2.2) still send the draft —
+  so the reroute stays — and a runtime that switches is **translated into the draft pair
+  in the same rewrite** (`server/src/subagent-update.ts`, per-process state because an
+  upsert omits what it does not change): first sight or a rename or a wake-up is a
+  `subagent_spawned`, `idle` is a `subagent_state_update` (`cancelled` → cancelled,
+  `error`/`refusal` → failed, else completed). Nothing downstream learns a second shape.
+  The RFD's `session_message(_chunk)` (messages between sessions) passes through unread.
+  And the `update` event gains an optional `sessionId`,
   set **only** when the update is a child's, so every event journaled before subagents
   existed keeps its exact shape. On the client, ownership is resolved in one place —
   `applySessionUpdate`'s `owner`: `lib/tools.parentToolIdOf(_meta)` first (the two `_meta`
   shapes; the store still never reads `_meta` itself), else the child session id when the
-  event carries one. The meta outranks the session on purpose: a workflow step's own Task
-  tree arrives mirrored with the step's `sessionId` AND the Task attribution, and
-  session-first filed every inner row under the step — the tree Claude Code's native
-  transcript nests, flattened. The tool row the meta names travels on the same mirrored
-  stream, so the head always exists. `owner` lands as `parentId` on every item; `subagent_spawned` becomes a
-  `SubagentItem` (`subagent:<sessionId>`) for children no tool call launched. The store
+  event carries one. The meta outranks the session on purpose — **but only when the tool
+  row it names exists**: a workflow step's own Task tree arrives mirrored with the step's
+  `sessionId` AND the Task attribution, and session-first filed every inner row under the
+  step — the tree Claude Code's native transcript nests, flattened. Yet claude-agent-acp
+  with native subagent sessions **withholds the Task/Agent row itself** (its "control"
+  updates return null) while every child update keeps `parentToolUseId`; meta-first there
+  filed the whole child under a head that never arrives and it drew flat. Codex does the
+  same with `spawnAgent`. `owner` lands as `parentId` on every item; `subagent_spawned` becomes a
+  `SubagentItem` (`subagent:<sessionId>`), and Claude's spawn `prompt` (the full brief) is
+  kept on it. **One subagent is one step, whatever announced it**: a session whose launch
+  call also arrived — ours (`_meta.daedalus.parentToolUseId` on the spawn) or OpenCode's
+  `task` (its output names the child session) — is folded with it at view time
+  (`sessionLaunches` → `SubagentGroup.launch`: the call gives brief, report and agent type,
+  the session the rail, state and usage), and Codex's later `sendInput`/`wait`/`closeAgent`
+  rows nest under the child session they name. `client/src/lib/subagents.check.mjs` drives
+  every shape through the reducer and row builder. The store
   stays **flat** (arrival order, reducer/replay/`settleTools` untouched) and
   `lib/transcript-rows.ts` builds the tree at view time — `buildRows` = nest, then group —
   keyed on the *full* id set because a child can precede its parent; orphans stay flat;

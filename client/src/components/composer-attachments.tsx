@@ -1,12 +1,21 @@
 import * as React from "react"
 import {
   ClipboardListIcon,
+  FileArchiveIcon,
+  FileAudioIcon,
+  FileCodeIcon,
   FileIcon,
+  FileJsonIcon,
+  FileSpreadsheetIcon,
   FileTextIcon,
+  FileVideoIcon,
   ImageIcon,
+  LinkIcon,
   MessageSquareQuoteIcon,
   PaperclipIcon,
+  RotateCwIcon,
   XIcon,
+  type LucideIcon,
 } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
@@ -16,7 +25,6 @@ import {
   AttachmentActions,
   AttachmentContent,
   AttachmentDescription,
-  AttachmentGroup,
   AttachmentMedia,
   AttachmentTitle,
   AttachmentTrigger,
@@ -24,7 +32,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
 import { resolveDelivery } from "@daedalus/delivery"
-import { attachmentObjectUrl } from "@/lib/attachments"
+import { attachmentObjectUrl, formatBytes } from "@/lib/attachments"
 import { useServer } from "@/lib/server-context"
 import type { DraftAttachment } from "@/lib/draft-attachments"
 import { optionKey, usePromptCapabilities } from "@/lib/agent-options"
@@ -127,6 +135,7 @@ export function ComposerAttachments({
 }) {
   if (attachments.length === 0) return null
   const label = `${attachments.length} file${attachments.length === 1 ? "" : "s"}`
+  const total = attachments.reduce((sum, entry) => sum + entry.size, 0)
   return (
     <ComposerStripItem
       summary={{
@@ -137,19 +146,91 @@ export function ComposerAttachments({
       }}
       className={cn(SHELF_PAD, "py-1.5")}
     >
-      <AttachmentGroup className="gap-2 py-0">
-        {attachments.map((entry) => (
-          <FileChip
-            key={entry.id}
-            attachment={entry}
-            delivery={delivery}
-            onRemove={() => onRemoveAttachment(entry.id)}
-            onRetry={() => onRetryAttachment(entry.id)}
-          />
-        ))}
-      </AttachmentGroup>
+      {attachments.length > 1 && (
+        <div className="mb-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="tabular-nums">
+            {label} · {formatBytes(total)}
+          </span>
+          <button
+            type="button"
+            onClick={() => attachments.forEach((entry) => onRemoveAttachment(entry.id))}
+            className="rounded-md px-1.5 py-0.5 hover:bg-foreground/10 hover:text-foreground pointer-coarse:py-1.5"
+          >
+            Remove all
+          </button>
+        </div>
+      )}
+      {/* Wrapped, not a sideways scroller: fifteen chips in one row hid all but
+          three of them. The cap keeps a full pile from pushing the box off the
+          screen; past it the pile scrolls on its own. */}
+      <div className="flex max-h-36 flex-wrap items-center gap-2 overflow-y-auto overscroll-contain">
+        {attachments.map((entry) =>
+          entry.mimeType.startsWith("image/") ? (
+            <ImageTile
+              key={entry.id}
+              attachment={entry}
+              delivery={delivery}
+              onRemove={() => onRemoveAttachment(entry.id)}
+              onRetry={() => onRetryAttachment(entry.id)}
+            />
+          ) : (
+            <FileChip
+              key={entry.id}
+              attachment={entry}
+              delivery={delivery}
+              onRemove={() => onRemoveAttachment(entry.id)}
+              onRetry={() => onRetryAttachment(entry.id)}
+            />
+          )
+        )}
+      </div>
     </ComposerStripItem>
   )
+}
+
+/** The forecast for a ready attachment, from the same `resolveDelivery` the
+    bridge calls. */
+function forecast(attachment: DraftAttachment, delivery: AttachmentDelivery) {
+  if (attachment.status !== "ready") return null
+  return resolveDelivery(attachment.mimeType, attachment.size, {
+    caps: delivery.caps,
+    modalities: delivery.modalities,
+    hasCatalog: delivery.hasCatalog,
+    /* A forecast, so the budget is the whole of it: what the *other* chips
+       will have spent by the time this one is packed is the bridge's to know,
+       and guessing it here would make a chip's note change as its neighbours
+       came and went. */
+    inlineBudgetLeft: Number.POSITIVE_INFINITY,
+  })
+}
+
+/** A lucide glyph per broad file type — the mime type first, the extension
+    where a browser handed over `application/octet-stream`. */
+export function fileGlyph(mimeType: string, name: string): LucideIcon {
+  const type = mimeType.toLowerCase()
+  const ext = fileExtension(name).toLowerCase()
+  if (type.startsWith("image/")) return ImageIcon
+  if (type.startsWith("audio/")) return FileAudioIcon
+  if (type.startsWith("video/")) return FileVideoIcon
+  if (type.includes("json") || ext === "json") return FileJsonIcon
+  if (/zip|tar|gzip|7z|rar|compressed/.test(type) || ["zip", "tar", "gz", "tgz", "7z", "rar"].includes(ext))
+    return FileArchiveIcon
+  if (/csv|spreadsheet|excel/.test(type) || ["csv", "tsv", "xls", "xlsx", "ods"].includes(ext))
+    return FileSpreadsheetIcon
+  if (
+    /javascript|typescript|x-python|x-sh|xml|yaml|toml/.test(type) ||
+    ["js", "jsx", "ts", "tsx", "py", "rs", "go", "sh", "rb", "java", "c", "cpp", "h", "css", "html", "yml", "yaml", "toml", "sql"].includes(ext)
+  )
+    return FileCodeIcon
+  if (type.startsWith("text/") || type === "application/pdf" || ["md", "txt", "pdf", "doc", "docx"].includes(ext))
+    return FileTextIcon
+  return FileIcon
+}
+
+/** `PDF` for `report.pdf`; empty for a name with no extension. */
+export function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".")
+  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toUpperCase() : ""
 }
 
 /**
@@ -175,37 +256,17 @@ function FileChip({
   onRemove: () => void
   onRetry: () => void
 }) {
-  const image = attachment.mimeType.startsWith("image/")
-  const thumb = useAttachmentUrl(attachment.status === "ready" && image ? attachment.id : null)
-  const note =
-    attachment.status === "ready"
-      ? resolveDelivery(attachment.mimeType, attachment.size, {
-          caps: delivery.caps,
-          modalities: delivery.modalities,
-          hasCatalog: delivery.hasCatalog,
-          /* A forecast, so the budget is the whole of it: what the *other*
-             chips will have spent by the time this one is packed is the
-             bridge's to know, and guessing it here would make a chip's note
-             change as its neighbours came and went. */
-          inlineBudgetLeft: Number.POSITIVE_INFINITY,
-        }).reason
-      : null
-  const Icon = image ? ImageIcon : attachment.mimeType.startsWith("text/") ? FileTextIcon : FileIcon
+  const note = forecast(attachment, delivery)?.reason
+  const Icon = fileGlyph(attachment.mimeType, attachment.name)
+  const ext = fileExtension(attachment.name)
   return (
     <Attachment
       size="sm"
       state={attachment.status === "ready" ? "done" : attachment.status}
-      className="min-w-0"
+      className="max-w-full min-w-0 @panel-sm:max-w-64"
+      title={note ? `${attachment.name} — ${note}` : attachment.name}
     >
-      <AttachmentMedia variant={thumb ? "image" : "icon"}>
-        {attachment.status === "uploading" ? (
-          <Spinner />
-        ) : thumb ? (
-          <img src={thumb} alt="" />
-        ) : (
-          <Icon />
-        )}
-      </AttachmentMedia>
+      <AttachmentMedia>{attachment.status === "uploading" ? <Spinner /> : <Icon />}</AttachmentMedia>
       <AttachmentContent>
         <AttachmentTitle>{attachment.name}</AttachmentTitle>
         <AttachmentDescription className={cn(attachment.status === "error" && "text-destructive")}>
@@ -213,7 +274,7 @@ function FileChip({
             ? "Uploading…"
             : attachment.status === "error"
               ? (attachment.error ?? "Upload failed") + " — tap to retry"
-              : note}
+              : [ext, formatBytes(attachment.size), note].filter(Boolean).join(" · ")}
         </AttachmentDescription>
       </AttachmentContent>
       {attachment.status === "error" && (
@@ -225,6 +286,74 @@ function FileChip({
         </AttachmentAction>
       </AttachmentActions>
     </Attachment>
+  )
+}
+
+/**
+ * An image is its own picture, not a chip with a postage stamp in it. The
+ * forecast still has to be said, so the tile carries it as its tooltip, and
+ * when the model will *not* see the pixels (sent as a path instead) a mark on
+ * the corner says so without a hover — that is the case the note exists for.
+ */
+function ImageTile({
+  attachment,
+  delivery,
+  onRemove,
+  onRetry,
+}: {
+  attachment: DraftAttachment
+  delivery: AttachmentDelivery
+  onRemove: () => void
+  onRetry: () => void
+}) {
+  const thumb = useAttachmentUrl(attachment.status === "ready" ? attachment.id : null)
+  const outcome = forecast(attachment, delivery)
+  const failed = attachment.status === "error"
+  const title = failed
+    ? `${attachment.error ?? "Upload failed"} — click to retry`
+    : outcome
+      ? `${attachment.name} · ${formatBytes(attachment.size)} — ${outcome.reason}`
+      : attachment.name
+  return (
+    <div
+      data-slot="attachment"
+      title={title}
+      className={cn(
+        "group/tile relative size-14 shrink-0 overflow-hidden rounded-xl border bg-muted",
+        failed && "border-destructive/40 bg-destructive/10 text-destructive"
+      )}
+    >
+      {thumb ? (
+        <img src={thumb} alt={attachment.name} className="size-full object-cover" />
+      ) : (
+        <div className="flex size-full items-center justify-center text-muted-foreground">
+          {attachment.status === "uploading" ? <Spinner /> : <ImageIcon className="size-5" />}
+        </div>
+      )}
+      {failed && (
+        <button
+          type="button"
+          onClick={onRetry}
+          aria-label={`Retry uploading ${attachment.name}`}
+          className="absolute inset-0 flex items-center justify-center bg-destructive/10 text-destructive"
+        >
+          <RotateCwIcon className="size-4" />
+        </button>
+      )}
+      {outcome && outcome.delivery === "link" && (
+        <span className="absolute bottom-1 left-1 flex size-4 items-center justify-center rounded-full bg-background/90 text-muted-foreground shadow-sm">
+          <LinkIcon className="size-2.5" />
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${attachment.name}`}
+        className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover/tile:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+      >
+        <XIcon className="size-3" />
+      </button>
+    </div>
   )
 }
 
@@ -244,27 +373,35 @@ function FileChip({
  * already reading from, so the two cannot disagree.
  */
 export function useAttachmentUrl(id: string | null): string | undefined {
+  return useAttachmentBlob(id).url
+}
+
+/** `useAttachmentUrl`, plus whether the fetch failed — so a caller can tell
+    "still loading" from "the harness no longer has this file" instead of
+    drawing every image as missing until its bytes arrive. */
+export function useAttachmentBlob(id: string | null): { url?: string; failed: boolean } {
   const settings = useServer()
-  const [url, setUrl] = React.useState<string>()
+  const [state, setState] = React.useState<{ url?: string; failed: boolean }>({ failed: false })
   React.useEffect(() => {
-    setUrl(undefined)
+    setState({ failed: false })
     if (!id) return
     const controller = new AbortController()
     let created: string | undefined
     attachmentObjectUrl(settings, id, controller.signal)
       .then((next) => {
         created = next
-        setUrl(next)
+        setState({ url: next, failed: false })
       })
       .catch(() => {
         // A 404 is the "missing" state (a restored backup carries no bytes) and
         // is drawn by the caller's fallback, not reported: the transcript is
         // full of them at once or not at all.
+        if (!controller.signal.aborted) setState({ failed: true })
       })
     return () => {
       controller.abort()
       if (created) URL.revokeObjectURL(created)
     }
   }, [id, settings])
-  return url
+  return state
 }

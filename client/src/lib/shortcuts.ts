@@ -19,8 +19,12 @@ const APPLE =
   /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent)
 
 /** `KeyboardEvent.key`, in the vocabulary the chords are written in. */
-function normalizeKey(key: string): string {
-  const k = key.toLowerCase()
+function normalizeKey(event: KeyboardEvent | React.KeyboardEvent): string {
+  let k = event.key.toLowerCase()
+  /* macOS's Option is a character layer: ⌥P types "π", so every alt+letter
+     chord would be dead there. The physical key is what the chord means. */
+  const code = /^(?:Key([A-Z])|Digit(\d))$/.exec(event.code ?? "")
+  if (event.altKey && code && !/^[a-z0-9]$/.test(k)) k = (code[1] ?? code[2]).toLowerCase()
   if (k === "escape") return "esc"
   if (k === " " || k === "spacebar") return "space"
   if (k.startsWith("arrow")) return k.slice(5)
@@ -40,7 +44,7 @@ export function matchesChord(
      shift+/ on most layouts, and requiring the modifier too would never match. */
   const shiftMatters = key.length > 1 || /^[a-z0-9]$/.test(key)
   if (shiftMatters && event.shiftKey !== mods.has("shift")) return false
-  return normalizeKey(event.key) === key
+  return normalizeKey(event) === key
 }
 
 /** True while the event is going into something being typed into — the one
@@ -100,7 +104,7 @@ export function formatChord(chord: string): string {
     a press that is only modifiers, which is every intermediate state of typing
     a chord. */
 export function chordFromEvent(event: KeyboardEvent | React.KeyboardEvent): string | null {
-  const key = normalizeKey(event.key)
+  const key = normalizeKey(event)
   if (["shift", "control", "alt", "meta", "os", "dead", "unidentified"].includes(key)) return null
   const parts: string[] = []
   if (event.metaKey || event.ctrlKey) parts.push("mod")
@@ -206,6 +210,7 @@ export type ShortcutId =
   | "terminal"
   | "changeModel"
   | "changeProject"
+  | "chooseMcp"
   | "threadSearch"
   | "sendReview"
   | "viewOptions"
@@ -303,6 +308,8 @@ export const KEYS = {
       spoken for here, and ⌥M/⌥P/⌥V are claimed by no browser and no OS. */
   changeModel: "alt+m",
   changeProject: "alt+p",
+  /** S for servers — the menu is "MCP servers"; ⌥T is the sidebar filter's. */
+  chooseMcp: "alt+s",
   threadSearch: "mod+f",
   viewOptions: "alt+v",
   /** Filter the sidebar's loaded threads. Alt+T for Threads: ⌘F is the transcript's find, and ⌘⇧F the file search. */
@@ -430,10 +437,10 @@ export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "changeModel",
     scope: "Thread",
-    label: "Change model",
+    label: "Change model and options",
     chords: [KEYS.changeModel],
     rebindable: true,
-    note: "Opens the palette on the models the thread in front of you advertises. An agent that offers no model selector has none to list.",
+    note: "Opens the composer's config menu — agent, profile, model, effort, mode and the agent's own options — on the thread in front of you.",
   },
   {
     id: "changeProject",
@@ -441,7 +448,15 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Change project",
     chords: [KEYS.changeProject],
     rebindable: true,
-    note: "Only until the first message: a started thread's project is the agent's cwd, so the page reads it out instead of offering it.",
+    note: "Opens the composer's project picker. Only until the first message: a started thread's project is the agent's cwd, so the row reads it out instead of offering it.",
+  },
+  {
+    id: "chooseMcp",
+    scope: "Thread",
+    label: "Pick MCP servers",
+    chords: [KEYS.chooseMcp],
+    rebindable: true,
+    note: "Opens the composer's MCP checklist. Space toggles a server; on a started thread the pick applies on the next send.",
   },
   {
     id: "threadSearch",

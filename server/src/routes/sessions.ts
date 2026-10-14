@@ -25,6 +25,24 @@ import { workspace } from "./helpers.js";
 
 const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/* The sidebar's page size, and the ceiling a caller may ask for. A page is a
+   screenful-and-then-some of threads; the top end is the most a single read of
+   the list is allowed to cost, since every row carries live state. */
+const PAGE_SIZE_DEFAULT = 40;
+const PAGE_SIZE_MAX = 200;
+
+/** A query number, clamped into range — `fallback` when absent or unparseable. */
+function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const value = raw === undefined ? NaN : Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/* The thread's role → model assignment (`docs/model-roles.md`): a role id and a
+   profile model id (`""` = the session model). Shared by the create route and
+   the config route, which both carry it as a spawn input. */
+const helperModelsSchema = z.array(z.object({ role: z.string(), model: z.string() }));
+
 /** Threads: list, create, respawn/revive, stderr, delete/restore. */
 /** What `POST /api/sessions` answers: the thread, and — when the create carried
     the first message — the turn it started, or why it could not. */
@@ -40,10 +58,49 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   const creating = new Map<string, Promise<Created>>();
 
   /* Live threads by default; `?deleted=1` includes the trash (what the client's
-     sidebar asks for, since its Trash section renders from the same list). */
+     sidebar asks for, since its Trash section renders from the same list).
+
+     `?ids=a,b` answers just those rows, whatever their age. The sidebar reads a
+     *page* of the list (the route below), so a tool or a reconnect that needs
+     one thread's current row — a thread outside the loaded window — asks for it
+     by name rather than pulling the whole list with it. */
   app.get("/api/sessions", (c) => {
     const list = sessions.list();
+    const idsParam = c.req.query("ids");
+    if (idsParam !== undefined) {
+      const ids = new Set(idsParam.split(",").map((s) => s.trim()).filter(Boolean));
+      return c.json(list.filter((s) => ids.has(s.id)));
+    }
     return c.json(c.req.query("deleted") === "1" ? list : list.filter((s) => s.deletedAt === null));
+  });
+
+  /* ── One page of the sidebar's list ──
+     The sidebar must not pull every thread the server has ever held just to
+     draw its top few, so this answers a slice by activity — newest first, the
+     order the sidebar sorts in — the count behind it, and the two sets a paged
+     list can never leave to the window: every trashed thread (deleted rows are
+     too old to ever fall in a recent page, and the Trash section draws from the
+     same response) and every pinned thread (a pin is deliberate and is drawn
+     wherever its age puts it). The client folds these back into one list and
+     advances `offset` by `sessions.length`; `total` is over live rows only, so
+     "load more" knows where the window ends. */
+  app.get("/api/sessions/page", (c) => {
+    const all = sessions.list();
+    const live = all.filter((s) => s.deletedAt === null).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    const trashed = all
+      .filter((s) => s.deletedAt !== null)
+      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
+    const pinned = live
+      .filter((s) => s.pinnedAt)
+      .sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0));
+    const limit = clampInt(c.req.query("limit"), PAGE_SIZE_DEFAULT, 1, PAGE_SIZE_MAX);
+    const offset = clampInt(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+    return c.json({
+      sessions: live.slice(offset, offset + limit),
+      total: live.length,
+      trashed,
+      pinned,
+    });
   });
 
   /* The branch and uncommitted line counts of every listed thread's checkout,
@@ -104,6 +161,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       suggestFollowups,
       uiBlocks,
       configChoices,
+      helperModels: rawHelperModels,
       title,
       mcpServerIds,
       skillIds,
@@ -117,6 +175,13 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     // ids link nothing (db/links.ts), so nothing here has to be validated.
     const ids = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    /* The draft's role → model assignment (`docs/model-roles.md`): a spawn input
+       like model and effort, so it is written on the row at create. Absent reads
+       as no helpers; a malformed one is refused rather than silently dropped. */
+    const parsedHelpers = helperModelsSchema.safeParse(rawHelperModels ?? []);
+    if (!parsedHelpers.success) {
+      return c.json({ error: "helperModels must be an array of { role, model }" }, 400);
+    }
     const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     // The thread is a (profile, agent) pair. `agentId` may be left out only when
@@ -174,6 +239,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         // costs the pick, not the thread. The bridge guards on the agent's own
         // mode list, so this needs no per-agent knowledge here.
         modeId: typeof modeId === "string" && modeId ? modeId : undefined,
+        /* The draft's role → model assignment. A malformed one was refused above,
+           so this is the shape the row wants. */
+        helperModels: parsedHelpers.data,
         /* A draft can be renamed before it has ever been sent to, and that name
            has to survive becoming a real thread — `create` keeps it and the
            first-prompt sniff then leaves it alone. */
@@ -420,10 +488,16 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        change it was asked to take. This is what answers a caller that does
        not. */
     const staged = body.defer === false ? (sessions.stagedRequest(session.id) ?? {}) : {};
-    const { profileId, agentId: askedAgent, model, effort, suggestFollowups, uiBlocks } = {
+    const { profileId, agentId: askedAgent, model, effort, suggestFollowups, uiBlocks, helperModels } = {
       ...staged,
       ...body,
     };
+    /* The thread's role → model map, patched like model and effort: spawn-time,
+       so it stages and costs a respawn. Absent means unchanged. */
+    const parsedHelpers = helperModels === undefined ? null : helperModelsSchema.safeParse(helperModels);
+    if (parsedHelpers && !parsedHelpers.success) {
+      return c.json({ error: "helperModels must be an array of { role, model }" }, 400);
+    }
     const profile = await getProfile(profileId ?? session.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = askedAgent ?? session.agentId;
@@ -446,6 +520,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         // Same bargain for the drawn-UI lane: system-prompt text, so a flip
         // costs the process.
         uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
+        // The role → model map: read at spawn (the env var and the materialised
+        // files), so a change costs the process like a profile move.
+        helperModels: parsedHelpers ? parsedHelpers.data : undefined,
       },
       {
         defer: body.defer === false ? false : undefined,
@@ -858,6 +935,30 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       },
     });
     return c.json({ shellId, command, ...result });
+  });
+
+  /* The same line from a draft, which has no row to journal into and must not
+     get one for this: the line runs in the project root (a draft's worktree
+     does not exist yet) and the answer is the only record — nothing is
+     journaled, fanned out or tallied. The draft draws it from this reply. */
+  const DraftShellSchema = z.object({ command: z.string(), projectId: z.string() });
+
+  app.post("/api/shell", async (c) => {
+    const parsed = DraftShellSchema.safeParse(await c.req.json().catch(() => ({})));
+    const typed = parsed.success ? parsed.data.command.trim() : "";
+    if (!parsed.success || !typed) return c.json({ error: "command and projectId are required" }, 400);
+    const { projectId } = parsed.data;
+    const root = await projectRoot(projectId);
+    const helper = (await listHelpers(projectId)).find(
+      (candidate) => candidate.command.trim() === typed || candidate.name === typed,
+    );
+    const command = helper?.command ?? typed;
+    const result = await runShellLine({
+      cwd: containedPath(root, helper?.cwd ?? null),
+      command,
+      env: helper?.env ?? undefined,
+    });
+    return c.json({ command, ...result });
   });
 
   /* The same rewrite for a draft, which has no server row yet: the profile and

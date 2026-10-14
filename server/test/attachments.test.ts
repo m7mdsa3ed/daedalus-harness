@@ -41,6 +41,8 @@ const {
   sweepAttachments,
 } = await import("../src/attachments.js");
 const { attachmentBlocks } = await import("../src/attachment-blocks.js");
+const { db, sessions } = await import("../src/db/index.js");
+const { eq } = await import("drizzle-orm");
 const { enqueue, listQueue } = await import("../src/queue.js");
 
 let passed = 0;
@@ -241,16 +243,43 @@ await test("a prompt carries the blocks and journals the refs", async () => {
   assert.match(said, /blocks:image,resource_link/);
 });
 
-await test("…and the turn_started that other peers see names them", () => {
+await test("a load replay keeps attached files as refs instead of text", async () => {
+  await db.update(sessions).set({ acpSessionId: "acp-123" }).where(eq(sessions.id, session.id));
+  session.acpSessionId = "acp-123";
+  session.journalClean = false;
+  const before = (await manager.journal(session.id))!.events;
+  const started = before.find((event) => event.ev === "turn_started");
+  assert.ok(started && started.ev === "turn_started");
+  assert.ok(started.text === "attachments:");
+  await manager.respawn(session.id, profile, "fake", project, session.model, session.effort, { revive: true, clear: true });
+  const recovered = (await manager.journal(session.id))!.events;
+  const userChunk = recovered.find(
+    (event) => event.ev === "update" && event.historyReplay && event.update.sessionUpdate === "user_message_chunk",
+  );
+  assert.ok(userChunk && userChunk.ev === "update");
+  assert.equal(userChunk.historyText, started.text);
+  assert.deepEqual(userChunk.historyAttachments?.map((ref) => ref.id), [imageId, pdfId]);
+});
+
+await test("the refilled journal keeps recovered attachment refs for the next restart", async () => {
+  const { SessionJournal } = await import("../src/session-journal.js");
+  const journal = new SessionJournal(db);
+  assert.deepEqual(
+    (await journal.turnAttachments(session.id)).map(({ text, attachments }) => ({
+      text,
+      attachments: attachments.map((ref) => ref.id),
+    })),
+    [{ text: "attachments:", attachments: [imageId, pdfId] }],
+  );
+});
+
+await test("a load-rebuilt journal exposes refs in replayed user chunks", async () => {
   const other = new MockWs();
-  return manager.attach(session.id, other as never).then(() => {
-    const started = other.of("turn_started").at(-1);
-    assert.deepEqual(
-      started?.attachments?.map((a) => a.name),
-      ["shot.png", "spec.pdf"],
-      "refs are journaled, so a replayed bubble draws the same chips",
-    );
-  });
+  assert.equal(await manager.attach(session.id, other as never), null);
+  const restored = other.of("update").find(
+    (event) => event.historyReplay && event.update.sessionUpdate === "user_message_chunk",
+  );
+  assert.deepEqual(restored?.historyAttachments?.map((ref) => ref.name), ["shot.png", "spec.pdf"]);
 });
 
 await test("a claimed attachment belongs to the thread", async () => {

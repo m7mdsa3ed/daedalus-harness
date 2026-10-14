@@ -22,7 +22,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { readSearchEnv, runFetch, runSearch } from "./websearch.js";
 
-const server = new McpServer({ name: "web-search", version: "1.0.0" });
+const server = new McpServer(
+  { name: "web-search", version: "1.0.0" },
+  {
+    instructions:
+      "Live web access for this thread: web_search finds current information by query, web_fetch reads one URL's text. Prefer these to guessing at anything that changes, and follow up a search with web_fetch when a result's snippet is not enough.",
+  },
+);
 
 server.registerTool(
   "web_search",

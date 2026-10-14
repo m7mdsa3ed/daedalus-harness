@@ -41,7 +41,7 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_INLINE_PROMPT_BYTES = 20 * 1024 * 1024;
 
 /** Per prompt. Past this it is not a message with attachments, it is a upload. */
-export const MAX_ATTACHMENTS = 10;
+export const MAX_ATTACHMENTS = 15;
 
 /** Unclaimed uploads older than this are swept: an upload whose prompt was
     never sent is a draft the user abandoned. */

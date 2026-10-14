@@ -17,9 +17,12 @@ import assert from "node:assert/strict";
 const { buildRows } = (await import(
   new URL("../../client/src/lib/transcript-rows.ts", import.meta.url).href
 )) as { buildRows: (items: unknown[], groupTools: boolean, turnActive?: boolean) => any[] };
-const { workflowAgentItems } = (await import(
+const { workflowAgentItems, extractToolSearch } = (await import(
   new URL("../../client/src/lib/tools.ts", import.meta.url).href
-)) as { workflowAgentItems: (events: unknown[]) => any[] };
+)) as {
+  workflowAgentItems: (events: unknown[]) => any[];
+  extractToolSearch: (item: any) => any;
+};
 
 const launch = (id: string, taskId?: string) => ({
   kind: "tool", id, title: "Workflow", status: "completed",
@@ -246,8 +249,51 @@ const stepsOf = (run: any) =>
   assert.equal(items[2].rawOutput, "a\nb", "a string result is kept whole");
   assert.equal(items[3].rawOutput, "boom", "a block-list result keeps its text");
   assert.deepEqual(items[2].rawInput, { command: "ls" }, "the call's input is what identifies it");
+  assert.deepEqual(items[2].content, [{
+    type: "content", content: { type: "text", text: "a\nb" },
+  }], "string results are normalized for the shared ACP content renderer");
+  assert.deepEqual(items[3].content, [{
+    type: "content", content: { type: "text", text: "boom" },
+  }], "block-list text results are normalized for the shared ACP content renderer");
   // And they are rows like any others, which is the point of converting at all.
   assert.deepEqual(buildRows(items, false, false).map((r: any) => r.kind), ["agent", "thought", "tool", "tool", "tool"]);
+}
+
+// ---- native tool-search results use the same parser as streamed tool calls ----
+{
+  const record = (type: string, content: unknown[]) => ({ type, message: { role: type, content } });
+  const items = workflowAgentItems([
+    record("assistant", [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "weather" } }]),
+    record("user", [{
+      type: "tool_result",
+      tool_use_id: "search-1",
+      content: [{ type: "text", text: "Tool: weather_lookup" }],
+    }]),
+  ]);
+  assert.deepEqual(extractToolSearch(items[0]), {
+    query: "weather",
+    selected: [],
+    tools: [{ name: "weather_lookup" }],
+  }, "the standard tool-search extractor reads the native transcript result");
+  assert.deepEqual(items[0].content, [{
+    type: "content", content: { type: "text", text: "Tool: weather_lookup" },
+  }], "native tool-search text uses the standard content block shape");
+}
+
+// ---- native image results remain visible through the shared content renderer ----
+{
+  const record = (type: string, content: unknown[]) => ({ type, message: { role: type, content } });
+  const items = workflowAgentItems([
+    record("assistant", [{ type: "tool_use", id: "image-1", name: "ImageTool", input: {} }]),
+    record("user", [{
+      type: "tool_result",
+      tool_use_id: "image-1",
+      content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } }],
+    }]),
+  ]);
+  assert.deepEqual(items[0].content, [{
+    type: "content", content: { type: "image", mimeType: "image/png", data: "ZmFrZQ==" },
+  }], "native images use the standard ACP content block shape");
 }
 
 console.log("native-workflow-rows: ok");

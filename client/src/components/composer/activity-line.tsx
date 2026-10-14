@@ -41,6 +41,12 @@ export function retryWhy(error: unknown): string {
   return first || info.title
 }
 
+/** The first retry is a blip (2s, usually invisible): it is said only once a
+    second one is needed, so a request that recovers on its own draws nothing. */
+export function shownRetry(thread: ThreadState): NonNullable<ThreadState["retry"]> | null {
+  return thread.retry && thread.retry.attempt >= 2 ? thread.retry : null
+}
+
 export function workingMessage(thread: ThreadState): string {
   /* Before everything else: a held turn is not doing any of it. Read off the
      hold rather than the transcript, whose newest item is whatever the turn
@@ -56,10 +62,11 @@ export function workingMessage(thread: ThreadState): string {
      while there is still a chance it fixes itself. Named with the failure, not
      just the count: "Retrying (1 of 2)" alone leaves the reader waiting to find
      out what for. */
-  if (thread.retry) {
-    const of = thread.retry.of ? ` of ${thread.retry.of}` : ""
-    const why = thread.retry.error ? retryWhy(thread.retry.error) : ""
-    return `Retrying (${thread.retry.attempt}${of})${why ? ` — ${why}` : ""}`
+  const retry = shownRetry(thread)
+  if (retry) {
+    const of = retry.of ? ` of ${retry.of}` : ""
+    const why = retry.error ? retryWhy(retry.error) : ""
+    return `Retrying (${retry.attempt}${of})${why ? ` — ${why}` : ""}`
   }
   if (thread.permissions.length > 0) return "Waiting for your approval"
   if (thread.elicitations.length > 0) return "Waiting for your answer"

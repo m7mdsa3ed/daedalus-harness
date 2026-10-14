@@ -17,9 +17,14 @@ import type { AttachmentRef } from "@daedalus/protocol"
 
 /* Keyed by the session id, exactly as the draft and its pastes are — see
    lib/drafts. */
-const PREFIX = "ui.draft-attachments."
+import { IS_POPOUT, POPOUT_WINDOW_ID } from "./popout"
 
-const storageKey = (sessionId: string): string => PREFIX + sessionId
+const PREFIX = "ui.draft-attachments."
+const STORAGE_PREFIX = IS_POPOUT ? `${PREFIX}window.${POPOUT_WINDOW_ID ?? "unscoped"}.` : PREFIX
+const otherWindowKey = (key: string) =>
+  key.startsWith(`${PREFIX}window.`) && (!IS_POPOUT || !key.startsWith(STORAGE_PREFIX))
+
+const storageKey = (sessionId: string): string => STORAGE_PREFIX + sessionId
 
 /** A chip in the composer. `status` is this device's view of the upload; only
     `ready` ones are persisted, and only `ready` ones may be sent. */
@@ -76,7 +81,8 @@ export function pruneDraftAttachments(sessionIds: Iterable<string>): void {
   const live = new Set(sessionIds)
   try {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(PREFIX) && !live.has(key.slice(PREFIX.length))) {
+      if (otherWindowKey(key) || !key.startsWith(STORAGE_PREFIX)) continue
+      if (!live.has(key.slice(STORAGE_PREFIX.length))) {
         localStorage.removeItem(key)
       }
     }

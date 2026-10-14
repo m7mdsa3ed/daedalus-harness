@@ -18,7 +18,9 @@
    does not: it is *about this group*. Once tabs stop fitting, the strip scrolls
    and the tab you want is off the end of a row with no scrollbar to speak of —
    so the list is the way back to a panel you cannot see, and it says what each
-   one is doing (`panel-status`) rather than only what it is called. */
+   one is doing (`panel-status`) rather than only what it is called. It also
+   carries the group's own **Close all** at its foot, so tidying a strip is not a
+   hunt through one tab's ⋮ menu — and the phone's grid carries the same row. */
 import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
 import { ChevronDownIcon, HistoryIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
@@ -28,15 +30,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  MorphingDialog,
-  MorphingDialogContent,
-  MorphingDialogOpen,
-  MorphingDialogSource,
-  useMorphingDialog,
-} from "@/components/ui/morphing-dialog"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useStoreSelect } from "@/lib/store"
 import { useIsMobile } from "@/hooks/use-device"
@@ -142,34 +139,21 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
 }
 
 /* The phone's switcher, Chrome Android's: the strip's button is a rounded square
-   holding the tab count, and it morphs into a full panel of rows — the same
-   `MorphingDialog` the workflow run's full screen uses, so the two grow out of
-   their source the same way. */
-function TabGrid(props: {
-  panels: IDockviewPanel[]
-  onClose: (id: string) => void
-  onNew?: () => void
-  onOpenThread: (id: string) => void
-}) {
-  return (
-    <MorphingDialog>
-      <TabGridBody {...props} />
-    </MorphingDialog>
-  )
-}
-
-function TabGridBody({
+   holding the tab count, and it opens a full panel of rows. */
+function TabGrid({
   panels,
   onClose,
+  onCloseAll,
   onNew,
   onOpenThread,
 }: {
   panels: IDockviewPanel[]
   onClose: (id: string) => void
+  onCloseAll: () => void
   onNew?: () => void
   onOpenThread: (id: string) => void
 }) {
-  const { open, setOpen } = useMorphingDialog()
+  const [open, setOpen] = React.useState(false)
   /* Recents, as the sidebar draws them: listed threads with no tab open, newest
      activity first. Only read while the grid is open. */
   const sessions = useStoreSelect((state) => state.sessions)
@@ -187,33 +171,46 @@ function TabGridBody({
     const show = () => setOpen(true)
     window.addEventListener(TAB_GRID_EVENT, show)
     return () => window.removeEventListener(TAB_GRID_EVENT, show)
-  }, [setOpen])
+  }, [])
   return (
-    <>
-      {/* The button stays put and stays drawn: the morph's source is an empty,
-          invisible box laid over it, so nothing blinks out when the panel
-          takes the layout id. Its radius is a style, so motion corrects it
-          while it scales, and it is the panel's own 16: a 9999 pill tweened
-          to 16 stays a pill for most of the spring and snaps square at the
-          end. The button is a circle at most 32px, so 16 is still round. */}
-      <span className="relative grid">
-        <MorphingDialogOpen
-          title={`Switch tabs (${panels.length})`}
-          className={cn(STRIP_CONTROL, "grid place-items-center")}
-        >
-          <span className="grid size-5 place-items-center rounded-[6px] border-[1.5px] border-current text-[11px] font-semibold leading-none tabular-nums">
-            {panels.length}
-          </span>
-        </MorphingDialogOpen>
-        <MorphingDialogSource className="pointer-events-none absolute inset-0" style={{ borderRadius: 16 }} />
-      </span>
-      <MorphingDialogContent plain label={`${panels.length} tabs`}>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <button
+            type="button"
+            title={`Switch tabs (${panels.length})`}
+            className={cn(STRIP_CONTROL, "grid place-items-center")}
+          />
+        }
+      >
+        <span className="grid size-5 place-items-center rounded-[6px] border-[1.5px] border-current text-[11px] font-semibold leading-none tabular-nums">
+          {panels.length}
+        </span>
+      </DialogTrigger>
+      <DialogContent className="flex h-[calc(var(--float-h)-1rem)] w-[calc(var(--float-w)-1rem)] max-w-none flex-col gap-0 overflow-hidden p-0">
+        <DialogTitle className="sr-only">{`${panels.length} tabs`}</DialogTitle>
         <div className="flex h-12 shrink-0 items-center pr-14 pl-4">
           <span className="text-base font-semibold">
             Tabs <span className="ml-1 text-sm font-normal text-muted-foreground tabular-nums">{panels.length}</span>
           </span>
+          {/* The same tidy-up the desktop list carries, for the strip a phone
+              folds to one tab: the grid is the only place the others are, so it
+              is the only place the group can be closed from. Closing the grid
+              first keeps the panel from standing over a dock that is now empty. */}
+          {panels.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onCloseAll()
+              }}
+              className="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground active:bg-sidebar-accent/60"
+            >
+              Close all
+            </button>
+          )}
         </div>
-        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-[max(4rem,calc(var(--safe-bottom)+3.5rem))]">
+        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-16">
           {panels.map((panel) => (
             <TabCard key={panel.id} panel={panel} onPick={() => setOpen(false)} onClose={() => onClose(panel.id)} />
           ))}
@@ -250,14 +247,14 @@ function TabGridBody({
                     setOpen(false)
                     onNew()
                   }}
-                  className="absolute right-4 bottom-[max(1rem,var(--safe-bottom))] flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg active:scale-95"
+                  className="absolute right-4 bottom-4 flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg active:scale-95"
                 >
                   <PlusIcon className="size-4" />
                   New tab
                 </button>
               )}
-      </MorphingDialogContent>
-    </>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -397,6 +394,7 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
         <TabGrid
           panels={panels}
           onClose={(id) => void dock.closePanel(id)}
+          onCloseAll={() => panels[0] && void dock.closeGroup(panels[0].id)}
           onOpenThread={(id) => dock.openChat(id, { newTab: true, into: { group: group.id } })}
           onNew={
             onNewTab &&
@@ -432,11 +430,26 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
             fix `workspace/panel-items` needed for the same reason. */}
         <DropdownMenuContent
           align="end"
-          className="w-auto max-w-[min(22rem,calc(100vw-1.5rem))] min-w-56"
+          className="w-auto max-w-[min(22rem,calc(var(--float-w)-1.5rem))] min-w-56"
         >
           {panels.map((panel) => (
             <TabRow key={panel.id} panel={panel} onClose={() => void dock.closePanel(panel.id)} />
           ))}
+          {/* The group's own close-all, at the foot of its list. The per-tab ⋮
+              carries the same row; a reader tidying a strip should not have to
+              open one tab's menu to close the rest of them. It closes the tabs
+              of *this* strip — the +'s own group — and steps over pinned tabs,
+              exactly as the row in the tab menu does. Named for a lone tab it
+              is meaningless, so it is disabled rather than hidden: a list whose
+              actions move as tabs close is worse than a row that says "not yet". */}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={panels.length < 2}
+            onClick={() => panels[0] && void dock.closeGroup(panels[0].id)}
+            className={MENU_ROW}
+          >
+            <MenuRow icon={<XIcon />} label="Close all" />
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       )}

@@ -1,15 +1,29 @@
-/* ── A thread in a window of its own (desktop shell) ──
-   `electron/main.cjs` opens `/t/<id>?popout=1` on the main window's origin, so
-   the popout shares every device-local store with it. That is the danger as
-   much as the point: the dock layout, the draft rows and the boot prune are
-   the main window's, and a second shell writing them would close its tabs.
-   So a popout draws the one transcript (`App.tsx` → `PopoutThread`), mounts no
-   dock, never saves a layout (`saveLayout`), never restores or prunes drafts
-   (`bootstrap`), and raises no notifications — the main window already does.
+/* ── A full workspace in its own window ──
+   This window shares the origin and device-local storage with the main app, so
+   its dock is scoped by a stable window id. `popout` remains the window's
+   identity across route changes and reloads, independent of the URL: the
+   desktop shell passes it through the preload, and a browser window opened
+   with `?popout=1&windowId=…` (dock.tsx `popoutPanel`) keeps it in its own
+   sessionStorage, because the first navigation drops the query. */
+const BROWSER_KEY = "daedalus.popoutWindowId"
 
-   Read once, at load: the flag is the window's identity, not a route. The
-   shell's own answer (`desktop.popout`, a process argument) is what survives a
-   reload after something in the transcript navigated the URL off `?popout=1`. */
+function browserWindowId(): string | null {
+  const fromUrl = new URLSearchParams(window.location.search)
+  const id = fromUrl.has("popout") ? fromUrl.get("windowId") : null
+  try {
+    if (id) sessionStorage.setItem(BROWSER_KEY, id)
+    return id ?? sessionStorage.getItem(BROWSER_KEY)
+  } catch {
+    return id
+  }
+}
+
+const BROWSER_ID = typeof window !== "undefined" && !window.desktop?.popout ? browserWindowId() : null
+
 export const IS_POPOUT =
   typeof window !== "undefined" &&
-  (!!window.desktop?.popout || new URLSearchParams(window.location.search).has("popout"))
+  (!!window.desktop?.popout || !!BROWSER_ID || new URLSearchParams(window.location.search).has("popout"))
+
+/** Stable for this window's lifetime; isolates its workspace layout. */
+export const POPOUT_WINDOW_ID =
+  typeof window !== "undefined" ? window.desktop?.popoutId ?? BROWSER_ID : null

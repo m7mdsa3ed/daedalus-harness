@@ -81,6 +81,7 @@ if (!dir) {
 
 const AGENT_FILE = join(dir, "dist", "acp-agent.js");
 const TASKS_FILE = join(dir, "dist", "async-tasks.js");
+const NATIVE_FILE = join(dir, "dist", "native-subagents.js");
 
 const edits = [
   {
@@ -116,6 +117,130 @@ const edits = [
             ...(usage ? { usage } : {}),
             ...(workflowProgress ? { workflowProgress } : {}),`,
     done: "...(workflowProgress ? { workflowProgress } : {}),",
+  },
+  /*
+   * Subagents across a restart. A `session/load` replays each Agent launch as
+   * a `:replay-subagent:` child, but never registers it in the live registry
+   * under the SDK's agent id. So when the model resumes one with SendMessage
+   * after the load, `taskResumed` finds no previous child and does nothing.
+   * The resumed child then runs with nobody announcing it, and every frame it
+   * sends is buffered under its launch tool id and never delivered: the
+   * harness sees no subagent at all. The next three edits close that.
+   */
+  {
+    file: AGENT_FILE,
+    what: "acp-agent.js: a background launch's result is not its end",
+    // The launch answers "Async agent launched" at once, which the replay read
+    // as `completed`. A child killed mid-run then looks finished; with no
+    // result, the replay's own fallback says `disconnected`.
+    needle: `function replaySubagentTerminalState(block) {
+    if (block.is_error !== true)
+        return "completed";`,
+    replacement: `function replaySubagentTerminalState(block) {
+    if (block.is_error !== true)
+        return /^\\s*Async agent launched\\b/.test(replayContentText(block.content)) ? undefined : "completed";`,
+    done: "/^\\s*Async agent launched\\b/.test(",
+  },
+  {
+    file: AGENT_FILE,
+    what: "acp-agent.js: register replayed subagents under their agent id",
+    needle: `                        state: child.reconstructable
+                            ? (child.notifiedState ?? child.terminalState ?? "disconnected")
+                            : "disconnected",
+                    },
+                }));
+            }
+        }`,
+    replacement: `                        state: child.reconstructable
+                            ? (child.notifiedState ?? child.terminalState ?? "disconnected")
+                            : "disconnected",
+                    },
+                }));
+            }
+            // daedalus: a finished child under its SDK agent id, so a SendMessage
+            // resume after this load opens a new generation (subagent_spawned)
+            // and the turn holds for it, as a live resume does.
+            const liveState = replayState();
+            if (liveState) {
+                const liveChildren = (liveState.nativeSubagentsByTaskId ??= new Map());
+                const resumable = (liveState.resumableSubagents ??= new Map());
+                for (const [toolUseId, child] of replayChildren) {
+                    const agentId = subagents.ids.get(toolUseId);
+                    if (!agentId || !child.announced || liveChildren.has(agentId))
+                        continue;
+                    liveChildren.set(agentId, {
+                        sessionId: child.sessionId,
+                        parentSessionId: sessionId,
+                        parentToolUseId: toolUseId,
+                        name: child.name,
+                        task: child.task,
+                        announced: true,
+                        terminalState: child.reconstructable
+                            ? (child.notifiedState ?? child.terminalState ?? "disconnected")
+                            : "disconnected",
+                    });
+                    resumable.set(agentId, { parentToolUseId: toolUseId });
+                }
+            }
+        }`,
+    done: "// daedalus: a finished child under its SDK agent id",
+  },
+  {
+    file: AGENT_FILE,
+    what: "acp-agent.js: the loaded session keeps what the replay registered",
+    // The replay runs while the CLI starts, into the pending state; the session
+    // record is built from it. Created up front so both hold the same maps
+    // whichever finishes first.
+    needle: `                cwd: params.cwd,
+                taskState: new Map(),
+                forwardSubagentText: this.forwardsSubagentText(params._meta),`,
+    replacement: `                cwd: params.cwd,
+                taskState: new Map(),
+                nativeSubagentsByTaskId: new Map(),
+                resumableSubagents: new Map(),
+                forwardSubagentText: this.forwardsSubagentText(params._meta),`,
+    done: `                nativeSubagentsByTaskId: new Map(),
+                resumableSubagents: new Map(),
+                forwardSubagentText:`,
+  },
+  {
+    file: AGENT_FILE,
+    what: "acp-agent.js: the session record adopts the replay's subagent maps",
+    needle: `                liveBackgroundTasks: new Map(),
+                nativeSubagentsByTaskId: new Map(),`,
+    replacement: `                liveBackgroundTasks: new Map(),
+                nativeSubagentsByTaskId: creationOpts.replayState?.nativeSubagentsByTaskId ?? new Map(),
+                resumableSubagents: creationOpts.replayState?.resumableSubagents,`,
+    done: "nativeSubagentsByTaskId: creationOpts.replayState?.nativeSubagentsByTaskId ?? new Map(),",
+  },
+  /*
+   * A resume speaks two ids, restart or not. The SDK names a resumed task by
+   * the SendMessage call that woke it (`task_started` and `task_notification`
+   * carry that id), but the child's own frames keep the id of the Agent call
+   * that first launched it. Upstream keys the new generation on the
+   * SendMessage id, so every frame the child sends is "unattributed" and
+   * dropped once the pending buffer fills, and its end is never matched, so
+   * the row says running forever.
+   */
+  {
+    file: NATIVE_FILE,
+    what: "native-subagents.js: a resumed generation keeps its launch's tool id",
+    needle: `            parentToolUseId: task.toolUseId ?? undefined,`,
+    replacement: `            parentToolUseId: previous?.parentToolUseId ?? task.toolUseId ?? undefined,`,
+    done: "parentToolUseId: previous?.parentToolUseId ?? task.toolUseId ?? undefined,",
+  },
+  {
+    file: NATIVE_FILE,
+    what: "native-subagents.js: a resumed task's end is matched by its task id",
+    needle: `        const child = toolUseId ? this.childByParentToolUse.get(toolUseId) : this.children.get(taskId);
+        if (child && toolUseId && this.taskByToolUse.get(toolUseId) !== taskId)
+            return;`,
+    replacement: `        // daedalus: a resumed task ends under the SendMessage id, which owns no child.
+        const child = (toolUseId && this.childByParentToolUse.get(toolUseId)) || this.children.get(taskId);
+        const toolOwner = toolUseId ? this.taskByToolUse.get(toolUseId) : undefined;
+        if (toolOwner !== undefined && toolOwner !== taskId)
+            return;`,
+    done: "// daedalus: a resumed task ends under the SendMessage id",
   },
 ];
 

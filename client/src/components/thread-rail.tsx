@@ -478,7 +478,7 @@ export function ThreadRail({
         side={edge === "right" ? "left" : "right"}
         align="center"
         sideOffset={coarse ? 16 : 8}
-        className="pointer-events-none w-64 max-w-[calc(100vw-4rem)] gap-1 rounded-xl bg-popover/95 p-2.5 text-xs shadow-lg backdrop-blur-sm"
+        className="pointer-events-none w-64 max-w-[calc(var(--float-w)-4rem)] gap-1 rounded-xl bg-popover/95 p-2.5 text-xs shadow-lg backdrop-blur-sm"
       >
         {preview && (
           <>

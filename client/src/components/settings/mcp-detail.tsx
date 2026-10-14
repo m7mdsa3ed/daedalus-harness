@@ -43,7 +43,10 @@ export function McpDetailPage() {
   const servers = useMcpServers()
   const server = servers.find((s) => s.id === entryId)
   const projects = useProjects()
-  const query = useMcpCatalog(entryId)
+  /* A thread-scoped built-in has no server to connect to without a thread, so
+     this page never reads one — it explains, like the row it was opened from. */
+  const scoped = server?.type === "builtin" && !!server.threadScoped
+  const query = useMcpCatalog(entryId, !scoped)
   const { busy, run } = useAsyncAction({ toast: true })
 
   /* Which project a listing is read against. It matters only for the harness's
@@ -66,6 +69,26 @@ export function McpDetailPage() {
 
   // A row still loading is an empty list, not a missing server.
   if (!server) return servers.length === 0 ? null : <Navigate to={settingsPath("mcp")} replace />
+
+  /* Reached by a direct URL, normally: nothing links here for a thread-scoped
+     built-in. There is nothing to list, so the page says why rather than
+     offering a Check that cannot connect. */
+  if (scoped) {
+    return (
+      <div className="mx-auto w-full max-w-7xl">
+        <FormPageHeader
+          title={server.name}
+          description={mcpSubtitle(server)}
+          onBack={() => void navigate(settingsPath("mcp"))}
+        />
+        <Notice tone="info" title="Listed on the thread that links it">
+          This built-in is resolved at spawn, on the calling thread — its connection is that thread's own,
+          so there is no server here to connect to. Link it to a profile or a thread to give an agent its
+          tools, and read what it offers from that thread.
+        </Notice>
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto w-full max-w-7xl">

@@ -3,7 +3,8 @@
      ../server/node_modules/.bin/tsx src/lib/token-breakdown.check.mjs   (from client/)
 */
 import assert from "node:assert/strict"
-import { promptParts, requestDetail, sumPromptParts, tokensByTurn } from "./token-breakdown.ts"
+import { promptParts, requestDetail, spendTime, subagentSpend, sumPromptParts, tokensByTurn } from "./token-breakdown.ts"
+import { applySessionUpdate } from "./store/session-update.ts"
 const total = (rows) => rows.reduce((n, r) => n + r.tokens, 0)
 const tool = (id, title, out) => ({ kind: "tool", id, name: "read_file", title, rawInput: { path: title }, content: [{ type: "content", content: { type: "text", text: out } }], locations: [], status: "completed", startedAt: 0 })
 const items = [
@@ -50,4 +51,34 @@ assert.equal(md.mcp.find((r) => r.name === "gh").children.length, 2, "MCP tools 
 const two = tokensByTurn([...items, { kind: "agent", id: "a2", text: "more" }], { a1: { used: 9000, size: 1, _meta: meta }, a2: { used: 9100, size: 1, _meta: { daedalus: { breakdown: { ...meta.daedalus.breakdown, items: undefined } } } } }, {})
 const p2 = promptParts(two.turns[0].steps[1])
 assert.equal(total(requestDetail(two.turns[0].steps, 1, two.entries, p2.parts).tools), 2000, "item lists carry forward")
+// --- steps carry what they produced and the turn they ran in ---
+{
+  const flat = tokensByTurn(
+    [{ ...items[0], at: 1_000 }, ...items.slice(1), { kind: "user", id: "u2", text: "again", turnId: "t2", at: 60_000 }, tool("k3", "Edit c.ts", "ok")],
+    { k1: { used: 100, size: 1 }, a1: { used: 200, size: 1 }, k3: { used: 300, size: 1 } },
+    {},
+    { k1: 4_000, a1: 9_000, k3: 62_000 }
+  ).turns.flatMap((turn) => turn.steps)
+  assert.deepEqual(flat.map((s) => [s.label, s.turn]), [["Read a.ts", 1], ["c".repeat(60) + "…", 1], ["Edit c.ts", 2]])
+  // from the message, then from the step before; the new turn's message resets the clock
+  assert.deepEqual(flat.map((s) => s.durationMs), [3_000, 5_000, 2_000])
+}
+// --- subagent time: summed over wakes, idle gap and a restated end excluded ---
+{
+  const up = (list, update, stamp) => applySessionUpdate(list, update, false, undefined, stamp)
+  const spawn = { sessionUpdate: "subagent_spawned", subagentSessionId: "c1", name: "child", task: "t" }
+  const end = { sessionUpdate: "subagent_state_update", subagentSessionId: "c1", state: "completed" }
+  const usage = { sessionUpdate: "_daedalus/subagent_usage", subagentSessionId: "c1", usage: { totalTokens: 10, inputTokens: 6, outputTokens: 4 } }
+  let list = up([], spawn, 1_000)
+  list = up(list, spawn, 2_000) // restated while running: same run
+  list = up(list, end, 31_000) // 30s
+  list = up(list, end, 40_000) // restated end: not a second turn
+  list = up(list, usage, 40_000)
+  list = up(list, spawn, 100_000) // woken after 60s idle
+  assert.equal(spendTime(subagentSpend(list)[0]), "running", "a woken child reads as running")
+  list = up(list, end, 112_000) // +12s
+  const [child] = subagentSpend(list)
+  assert.equal(child.durationMs, 42_000, "running time only, over both wakes")
+  assert.equal(spendTime(child), "42s")
+}
 console.log("token breakdown checks ok")

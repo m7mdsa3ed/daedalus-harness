@@ -146,7 +146,7 @@ async function deliver(row: ScheduledMessage, manager: SessionManager): Promise<
 
 /** Send one prompt, reviving the thread's process first if it has no live one.
     A prompt that lands mid-turn is queued behind it (see SessionManager.prompt). */
-async function fire(sessionId: string, text: string, manager: SessionManager): Promise<void> {
+export async function fire(sessionId: string, text: string, manager: SessionManager): Promise<void> {
   const session = manager.get(sessionId);
   if (!session || session.deletedAt !== null) return;
   try {

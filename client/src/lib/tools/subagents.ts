@@ -64,7 +64,9 @@ export function isSubagentLaunch(item: Pick<ToolItem, "title" | "meta" | "rawInp
   return true
 }
 
-export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "rawOutput">): SubagentCall | null {
+export function extractSubagent(
+  item: Pick<ToolItem, "title" | "meta" | "rawInput" | "rawOutput"> & { content?: ToolItem["content"] }
+): SubagentCall | null {
   const codex = asRecord(vendorMeta(item.meta, "codex")?.subagent)
   if (codex) {
     const path = str(codex.path)
@@ -125,10 +127,16 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
   }
   /* OpenCode wraps the child's report in `<task id state>…<task_result>…`
      and reports the child session in `rawOutput.metadata`; Claude Code's
-     `rawOutput` is the report itself. */
+     `rawOutput` is the report itself. OpenCode 2's `subagent` puts the
+     wrapper — `<subagent sessionID state>…` — in the content blocks instead,
+     and its `rawOutput` is the metadata alone (`sessionID`, `status`). */
   const output = asRecord(item.rawOutput)
-  const wrapper = parseTaskWrapper(str(output?.output))
-  const model = asRecord(asRecord(output?.metadata)?.model)
+  const metadata = asRecord(output?.metadata)
+  const contentText = item.content
+    ?.map((block) => (block.type === "content" && block.content.type === "text" ? block.content.text : ""))
+    .join("")
+  const wrapper = parseTaskWrapper(str(output?.output)) ?? parseTaskWrapper(contentText)
+  const model = asRecord(metadata?.model)
   const elapsed = response?.elapsedTimeSeconds
   const background =
     response?.isAsync === true ||
@@ -146,8 +154,8 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
     model: str(input?.model) ?? str(model?.modelID) ?? undefined,
     elapsedSeconds: typeof elapsed === "number" ? elapsed : undefined,
     background: background || undefined,
-    sessionId: wrapper?.id ?? str(asRecord(output?.metadata)?.sessionId) ?? undefined,
-    state: wrapper?.state,
+    sessionId: wrapper?.id ?? str(metadata?.sessionId) ?? str(metadata?.sessionID) ?? undefined,
+    state: wrapper?.state ?? str(metadata?.status) ?? undefined,
     result: wrapper?.result,
   }
 }
@@ -159,7 +167,59 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
  * it is still streaming. Null when the text is not that block, which is what
  * lets every other runtime's plain-text report through untouched.
  */
-const TASK_WRAPPER_RE = /^\s*<task\b([^>]*)>([\s\S]*?)(?:<\/task>|$)/
+/**
+ * A follow-up sent to a subagent that already exists, which is how a stopped
+ * one is resumed. Two dialects: Claude Code's `SendMessage` takes
+ * `{to, message, summary}` and answers `{success, message, resumedAgentId?}`;
+ * the Daedalus agent's `send_message` takes `{agent, message}` and answers
+ * with the child's report.
+ */
+export interface AgentMessageCall {
+  /** The agent's name or id. Empty until the input streams in. */
+  to: string
+  message?: string
+  /** Claude Code's 5-10 word recap of the message. */
+  summary?: string
+  /** Claude Code's verdict. False when no agent by that name was reachable. */
+  delivered?: boolean
+  /** Claude Code: the agent it woke, when the message resumed a finished one. */
+  resumed?: string
+  /** What came back: Claude Code's status line, or our runtime's report. */
+  reply?: string
+}
+
+export function extractAgentMessage(
+  item: Pick<ToolItem, "title" | "meta" | "rawInput" | "rawOutput"> & { content?: ToolItem["content"] }
+): AgentMessageCall | null {
+  if (!isOneOf(item, ["sendmessage", "send_message"])) return null
+  const input = asRecord(item.rawInput)
+  const text =
+    str(item.rawOutput) ??
+    item.content
+      ?.map((block) => (block.type === "content" && block.content.type === "text" ? block.content.text : ""))
+      .join("")
+      .trim()
+  let answer: Record<string, unknown> | null = null
+  try {
+    answer = text?.startsWith("{") ? asRecord(JSON.parse(text)) : null
+  } catch {
+    // Not JSON: our runtime's report, kept as text below.
+  }
+  return {
+    to: str(input?.to) ?? str(input?.agent) ?? "",
+    message: str(input?.message) ?? undefined,
+    summary: str(input?.summary) ?? undefined,
+    delivered: typeof answer?.success === "boolean" ? answer.success : undefined,
+    resumed: str(answer?.resumedAgentId) ?? undefined,
+    reply: (answer ? str(answer.message) : text) || undefined,
+  }
+}
+
+/** An agent's opaque id cut the way Claude Code cuts it (`afdd444`), so a row
+    is not a line of hex. A name passes through. */
+export const agentLabel = (to: string): string => (/^[0-9a-f-]{16,}$/i.test(to) ? to.slice(0, 7) : to)
+
+const TASK_WRAPPER_RE =/^\s*<(?:task|subagent)\b([^>]*)>([\s\S]*?)(?:<\/(?:task|subagent)>|$)/
 const attr = (attrs: string, name: string): string | undefined =>
   new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1]
 
@@ -172,7 +232,7 @@ export function parseTaskWrapper(
   const body = match[2]
   const result = tagText(body, "task_result") ?? tagText(body, "task_error") ?? body.trim()
   return {
-    id: attr(match[1], "id"),
+    id: attr(match[1], "id") ?? attr(match[1], "sessionID"),
     state: attr(match[1], "state"),
     result: result || undefined,
   }
@@ -206,6 +266,13 @@ export function parentToolIdOf(meta: unknown): string | undefined {
   const opencode = str(asRecord(record?.["opencode/child-session"])?.id)
   if (opencode) return subagentItemId(opencode)
   return undefined
+}
+
+/** The model a spawn says its child runs on, and the helper role that picked
+    it — our runtime's `_meta.daedalus.{model,role}` on `subagent_spawned`. */
+export function spawnModelOf(meta: unknown): { model?: string; role?: string } {
+  const daedalus = vendorMeta(meta, "daedalus")
+  return { model: str(daedalus?.model) ?? undefined, role: str(daedalus?.role) ?? undefined }
 }
 
 /** The item id of a subagent session — the RFD's `subagentSessionId`, or the

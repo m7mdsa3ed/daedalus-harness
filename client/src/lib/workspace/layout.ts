@@ -23,18 +23,19 @@ import type { SerializedDockview } from "dockview-react"
 
 import { isPanelKind, panelId as panelIdOf, parsePanel, type PanelDescriptor } from "./panels"
 import { loadActiveSpace } from "../spaces"
-import { IS_POPOUT } from "../popout"
+import { IS_POPOUT, POPOUT_WINDOW_ID } from "../popout"
 
 const PREFIX = "daedalus.dock.v2"
 const LEGACY_KEY = "daedalus.sessionDock.v1"
 
-/** The dock's key for one server **and one space**: each space keeps its own
-    tabs, so switching spaces swaps the desk rather than leaving the other
-    space's panels open. `spaceId` is omitted only by a caller that has already
-    resolved it (`loadActiveSpace`) or by the space-less read a device makes
-    before it has ever chosen one. */
+/** The dock's key for one server, space, and (for Electron thread windows)
+    window. Each workspace has its own tabs and never overwrites the main dock.
+    `spaceId` is omitted only before the active space is resolved. */
 export function layoutKey(serverId: string, spaceId?: string): string {
-  return spaceId ? `${PREFIX}:${serverId}:${spaceId}` : `${PREFIX}:${serverId}`
+  const windowScope = IS_POPOUT && POPOUT_WINDOW_ID ? `:window:${POPOUT_WINDOW_ID}` : ""
+  return spaceId
+    ? `${PREFIX}:${serverId}:${spaceId}${windowScope}`
+    : `${PREFIX}:${serverId}${windowScope}`
 }
 
 /** This device's space for a server, or "" when none is chosen yet — the
@@ -318,11 +319,11 @@ export function pruneLayout(layout: SerializedDockview): SerializedDockview | nu
 }
 
 /**
- * The layout for a server, already pruned, or null for a fresh dock.
+ * The layout for a server and space, already pruned, or null for a fresh dock.
+ * Electron thread windows include their stable per-window scope so they can
+ * navigate and persist tabs without reading or overwriting the main dock.
  *
- * v1's key is read once as a fallback and left in place rather than deleted: it
- * held only chat panels, whose params this build still parses, and a user who
- * downgrades should find their tabs where they left them.
+ * v1's key is read once as a fallback rather than deleted for the main window.
  */
 export function loadLayout(serverId: string, spaceId?: string): SerializedDockview | null {
   const read = (key: string): SerializedDockview | null => {
@@ -337,15 +338,16 @@ export function loadLayout(serverId: string, spaceId?: string): SerializedDockvi
     }
   }
   const space = spaceOf(serverId, spaceId)
+  if (IS_POPOUT && !POPOUT_WINDOW_ID) return null
   /* The v1 key is read only for the space-less case — once a space is chosen,
      the dock is that space's. Kept in place rather than deleted so a downgrade
      finds its tabs where it left them. */
+  if (IS_POPOUT) return read(layoutKey(serverId, space))
   return read(layoutKey(serverId, space)) ?? (space ? null : read(LEGACY_KEY))
 }
 
 export function saveLayout(serverId: string, layout: SerializedDockview, spaceId?: string): void {
-  // A popout mounts no dock; this is the backstop that it never writes one.
-  if (IS_POPOUT) return
+  if (IS_POPOUT && !POPOUT_WINDOW_ID) return
   try {
     localStorage.setItem(layoutKey(serverId, spaceOf(serverId, spaceId)), JSON.stringify(layout))
   } catch (error) {
@@ -364,7 +366,7 @@ export function saveLayout(serverId: string, layout: SerializedDockview, spaceId
 const stashKey = (serverId: string, spaceId: string) => `${layoutKey(serverId, spaceId)}:pending`
 
 export function stashPanels(serverId: string, spaceId: string, panels: PanelDescriptor[]): void {
-  if (IS_POPOUT || !spaceId || panels.length === 0) return
+  if (!spaceId || panels.length === 0) return
   try {
     const kept = takeStashedPanels(serverId, spaceId, { keep: true })
     const ids = new Set(kept.map(panelIdOf))
@@ -408,6 +410,61 @@ export function clearLayout(serverId: string): void {
   }
 }
 
+/**
+ * Every thread id a saved dock on this server still names — the active space,
+ * the other spaces, whatever was filed to one, and the legacy key.
+ *
+ * The thread list is a *page* now (the sidebar pages it), so a restored tab can
+ * point at a thread past the window — and boot's own prune closes any chat panel
+ * whose session the store does not hold. This is what boot reads to load those
+ * threads before the prune runs, so the restore keeps every tab it had. Chat
+ * panels only: nothing else in a dock is a thread.
+ */
+export function savedThreadIds(serverId: string): string[] {
+  if (IS_POPOUT && !POPOUT_WINDOW_ID) return []
+  const ids = new Set<string>()
+  const add = (panels: unknown) => {
+    if (!panels || typeof panels !== "object") return
+    for (const state of Object.values(
+      panels as Record<string, { contentComponent?: unknown; params?: unknown }>
+    )) {
+      const descriptor = parsePanel(state?.contentComponent, state?.params)
+      if (descriptor?.kind === "chat") ids.add(descriptor.sessionId)
+    }
+  }
+  try {
+    const prefix = `${PREFIX}:${serverId}`
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (
+        IS_POPOUT &&
+        (!POPOUT_WINDOW_ID || !key?.includes(`:window:${POPOUT_WINDOW_ID}`))
+      ) continue
+      const isCurrentLayout = key === prefix || key?.startsWith(`${prefix}:`)
+      const isLegacyMainLayout = !IS_POPOUT && key === LEGACY_KEY
+      if (!key || (!isCurrentLayout && !isLegacyMainLayout)) continue
+      const raw = localStorage.getItem(key)
+      if (!raw) continue
+      const parsed: unknown = JSON.parse(raw) as unknown
+      /* A stash is a plain descriptor list; a layout is a grid whose `panels`
+         carry the descriptors (a group's own layout is already unpacked out of
+         them by `pruneLayout`). */
+      if (Array.isArray(parsed)) {
+        for (const panel of parsed) {
+          if (!panel || typeof panel !== "object" || (panel as { kind?: unknown }).kind !== "chat") continue
+          const id = (panel as { sessionId?: unknown }).sessionId
+          if (typeof id === "string" && id) ids.add(id)
+        }
+        continue
+      }
+      add(pruneLayout(parsed as SerializedDockview)?.panels)
+    }
+  } catch {
+    /* Unreadable storage reads as no saved tabs; the dock still opens. */
+  }
+  return [...ids]
+}
+
 /* ── Named layouts ──
    The dock above is the *current* one — written on every change, restored on
    every boot, one per server. A named layout is a different thing: a snapshot
@@ -432,7 +489,10 @@ export interface SavedLayout {
   layout: SerializedDockview
 }
 
-const layoutsKey = (serverId: string): string => `${LAYOUTS_PREFIX}:${serverId}`
+const layoutsKey = (serverId: string): string =>
+  IS_POPOUT && POPOUT_WINDOW_ID
+    ? `${LAYOUTS_PREFIX}:${serverId}:window:${POPOUT_WINDOW_ID}`
+    : `${LAYOUTS_PREFIX}:${serverId}`
 
 function readLayouts(serverId: string): SavedLayout[] {
   try {

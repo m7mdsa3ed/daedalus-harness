@@ -9,6 +9,7 @@ import {
   subagentItemId,
   toolNameOf,
   vendorMeta,
+  spawnModelOf,
   workflowInfoOf,
 } from "../tools"
 import { mintItemId } from "./items"
@@ -34,16 +35,20 @@ function appendText(
   kind: TextItem["kind"],
   text: string,
   at?: number,
-  parentId?: string
+  parentId?: string,
+  endedAt?: number
 ): ThreadItem[] {
   const last = items[items.length - 1]
   /* Same kind AND same owner: a subagent's prose and the parent's resuming
      after it are two runs, not one. Without the second test the parent's next
      sentence was glued onto the child's last one — inside the child's rail. */
   if (last && last.kind === kind && last.parentId === parentId) {
-    return [...items.slice(0, -1), { ...last, text: last.text + text }]
+    /* The run's end moves with every chunk that joins it, so the item ends up
+       holding the last one: a run the replay split at its size cap arrives as
+       two merged events, and the second's end is the run's own. */
+    return [...items.slice(0, -1), { ...last, text: last.text + text, endedAt: endedAt ?? last.endedAt }]
   }
-  return [...items, { kind, id: mintItemId(kind), text, at, parentId }]
+  return [...items, { kind, id: mintItemId(kind), text, at, endedAt, parentId }]
 }
 
 /* Agents write a synthetic user turn when a prompt is cancelled, so the model
@@ -55,6 +60,11 @@ function appendText(
    Anchored on the whole (trimmed) chunk: quoting the phrase inside a real
    message must still render as that message. Pattern mirrors claude-agent-sdk's. */
 const SYNTHETIC_USER_RE = /^\[(Request interrupted by user[^\]]*)\]$/
+
+/** ACP's two terminal tool statuses — after either, nothing more is coming for
+    the call, so the update that carries one is the call's own ending. */
+const isSettledStatus = (status: string | null | undefined): boolean =>
+  status === "completed" || status === "failed"
 
 const metaOf = (update: object): Record<string, unknown> | undefined =>
   (update as { _meta?: Record<string, unknown> | null })._meta ?? undefined
@@ -164,28 +174,44 @@ export function applySessionUpdate(
   update: SessionUpdate,
   allowUserChunks = false,
   sessionId?: string,
-  stamp?: number
+  stamp?: number,
+  historyText?: string,
+  historyAttachments?: TextItem["attachments"],
+  endStamp?: number
 ): ThreadItem[] {
   /* `allowUserChunks` is set only by the replay path, so it doubles as "this is
-     history": replayed items get no timestamp rather than the reload's. */
+     history": replayed items get no timestamp rather than the reload's. The run's
+     own end rides the same rule — an item with no honest start can have no
+     honest length either. */
   const now = stamp ?? Date.now()
   const at = allowUserChunks ? undefined : now
+  const endedAt = allowUserChunks ? undefined : endStamp
   /* Whose item this is. The vendor `_meta` naming a parent tool call (Claude
-     Code's Task, or the child session OpenCode projects) wins even over an
-     update that arrived on a subagent's session (the RFD: `sessionId` names
-     the child): a workflow step's own Task tree arrives mirrored WITH the
-     step's session id AND the Task attribution, and filing it under the step
-     flattened the tree Claude Code's native transcript nests. The tool row the
-     meta names travels on the same mirrored stream, so the head always exists.
-     No meta, but a session — the child's item. Neither — the thread's own. */
-  const owner =
-    parentToolIdOf(metaOf(update)) ?? (sessionId ? subagentItemId(sessionId) : undefined)
+     Code's Task, or the child session OpenCode projects) wins over an update
+     that arrived on a subagent's session (the RFD: `sessionId` names the
+     child) — but only when that tool row exists. A workflow step's own Task
+     tree arrives mirrored WITH the step's session id AND the Task attribution,
+     and filing it under the step flattened the tree Claude Code's native
+     transcript nests. But claude-agent-acp with native subagent sessions never
+     sends the Task row at all, while every child update keeps its
+     `parentToolUseId`: meta-first there filed the whole child under a head
+     that never arrives, and it drew flat. So a missing tool yields to the
+     session. No meta, but a session — the child's item. Neither — the
+     thread's own. */
+  // ponytail: O(n) scan per child update that carries both; index ids if replay of huge transcripts gets slow.
+  const ownerOf = (metaParent: string | undefined): string | undefined =>
+    metaParent !== undefined && (!sessionId || items.some((i) => i.id === metaParent))
+      ? metaParent
+      : sessionId
+        ? subagentItemId(sessionId)
+        : undefined
+  const owner = ownerOf(parentToolIdOf(metaOf(update)))
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
     case "agent_thought_chunk": {
       if (update.content.type !== "text") return items
       const kind = update.sessionUpdate === "agent_message_chunk" ? "agent" : "thought"
-      return appendText(items, kind, update.content.text, at, owner)
+      return appendText(items, kind, update.content.text, at, owner, endedAt)
     }
     case "user_message_chunk": {
       /* An image the agent is replaying back at us. It reaches here only on a
@@ -217,6 +243,17 @@ export function applySessionUpdate(
          chunk it has to pass through LIVE as well as on replay, and it must
          not render as a bubble of XML. `notice` is the existing home for an
          agent-authored transcript event; the renderer parses the block. */
+      if (historyAttachments?.length) {
+        const text = historyText ?? update.content.text
+        const last = items[items.length - 1]
+        if (last?.kind === "user" && !last.parentId) {
+          return [
+            ...items.slice(0, -1),
+            { ...last, text: last.text + text, attachments: [...(last.attachments ?? []), ...historyAttachments] },
+          ]
+        }
+        return [...items, { kind: "user", id: mintItemId("user"), text, at, attachments: historyAttachments }]
+      }
       if (parseTaskNotification(update.content.text)) {
         const text = update.content.text.trim()
         /* Deduped across the whole transcript, not just against the previous
@@ -258,15 +295,22 @@ export function applySessionUpdate(
         terminal: applyTerminalMeta(undefined, metaOf(update)),
         startedAt: now,
         at,
+        // An agent may announce a call already finished, and then this is the
+        // only update it ever sends.
+        endedAt: allowUserChunks || !isSettledStatus(update.status) ? undefined : now,
       }
       const existing = items.find((i): i is ToolItem => i.kind === "tool" && i.id === item.id)
-      /* A re-announced call is replaced wholesale, bar one thing it may have
-         learned since: who it belongs to. Claude Code's attribution is
+      /* A re-announced call is replaced wholesale, bar what it may have learned
+         since: who it belongs to, and when it settled — a call that has reached
+         a terminal status has not un-reached it. Claude Code's attribution is
          best-effort — a child's `tool_call` can go out before the runtime
          knows which Task it serves and be told on a later update — so an
          owner once learned is never forgotten. */
       item.parentId = owner ?? existing?.parentId
       item.name = item.name ?? existing?.name
+      /* The FIRST ending, not the latest: a restatement arrives later simply
+         because it was sent later, and the call did not end twice. */
+      item.endedAt = existing?.endedAt ?? item.endedAt
       if (existing) {
         return items.map((i) => (i.kind === "tool" && i.id === item.id ? item : i))
       }
@@ -276,10 +320,17 @@ export function applySessionUpdate(
       return items.map((i) => {
         if (i.kind !== "tool" || i.id !== update.toolCallId) return i
         const meta = mergeMeta(i.meta, metaOf(update))
+        const status = update.status ?? i.status
         return {
           ...i,
           title: update.title ?? i.title,
-          status: update.status ?? i.status,
+          status,
+          /* Where the call stopped, for the row to say how long it took once
+             nothing is ticking any more. First one wins — a runtime that
+             restates a terminal update has not moved the ending — and a
+             `session/load` replay is left without one, its stamps being the
+             reload's rather than the call's (`at` above makes the same call). */
+          endedAt: i.endedAt ?? (allowUserChunks || !isSettledStatus(status) ? undefined : now),
           toolKind: update.kind ?? i.toolKind,
           rawInput: update.rawInput ?? i.rawInput,
           rawOutput: update.rawOutput ?? i.rawOutput,
@@ -291,7 +342,7 @@ export function applySessionUpdate(
           // without the parent must not lose an attribution already learned —
           // and the meta's tool parent outranks the session owner here for the
           // same reason it does in `owner` above.
-          parentId: parentToolIdOf(meta) ?? owner ?? i.parentId,
+          parentId: ownerOf(parentToolIdOf(meta)) ?? i.parentId,
         }
       })
     case "plan": {
@@ -394,6 +445,8 @@ export function applySessionUpdate(
          a `session/load` restates spawns it has already sent. */
       const id = subagentItemId(update.subagentSessionId)
       const existing = items.find((i): i is SubagentItem => i.kind === "subagent" && i.id === id)
+      const daedalusBrief = vendorMeta(metaOf(update), "daedalus")?.prompt
+      const spawnBrief = typeof daedalusBrief === "string" ? daedalusBrief : undefined
       const item: SubagentItem = {
         kind: "subagent",
         id,
@@ -402,8 +455,18 @@ export function applySessionUpdate(
         task: update.task,
         capabilities: update.capabilities ?? {},
         workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
+        /* A `session/load` restating the spawn keeps what the first one said. */
+        model: spawnModelOf(metaOf(update)).model ?? existing?.model,
+        role: spawnModelOf(metaOf(update)).role ?? existing?.role,
+        /* Our runtime trims `task` for the RFD and sends the whole brief in
+           `_meta.daedalus.prompt`. */
+        prompt: update.prompt ?? spawnBrief ?? existing?.prompt,
         usage: existing?.usage,
         context: existing?.context,
+        durationMs: existing?.durationMs,
+        /* A restated spawn keeps the run it restates; a settled child spawned
+           again is a wake, and its clock starts here. */
+        runningSince: existing?.state === "running" ? (existing.runningSince ?? now) : now,
         state: "running",
         startedAt: existing?.startedAt ?? now,
         at: existing?.at ?? at,
@@ -415,7 +478,18 @@ export function applySessionUpdate(
     }
     case "subagent_state_update": {
       const id = subagentItemId(update.subagentSessionId)
-      return items.map((i) => (i.kind === "subagent" && i.id === id ? { ...i, state: update.state } : i))
+      /* Only a running child's settle adds time — a restated end is not a second turn. */
+      return items.map((i) =>
+        i.kind === "subagent" && i.id === id
+          ? {
+              ...i,
+              state: update.state,
+              ...(i.state === "running"
+                ? { durationMs: (i.durationMs ?? 0) + Math.max(0, now - (i.runningSince ?? i.startedAt)) }
+                : {}),
+            }
+          : i
+      )
     }
     /* ── Async background tasks ──
        A dynamic workflow, announced by the adapter's AIR lifecycle. Only a
@@ -658,9 +732,10 @@ export function applySessionUpdate(
  */
 function markStepUsage(
   thread: ThreadState,
-  update: acp.UsageUpdate
-): Pick<ThreadState, "stepUsage" | "usageMark"> {
-  const kept = { stepUsage: thread.stepUsage, usageMark: thread.usageMark }
+  update: acp.UsageUpdate,
+  at: number
+): Pick<ThreadState, "stepUsage" | "stepAt" | "usageMark"> {
+  const kept = { stepUsage: thread.stepUsage, stepAt: thread.stepAt, usageMark: thread.usageMark }
   if (!(update.used > 0)) return kept
   let tail: ThreadItem | undefined
   for (let i = thread.items.length - 1; i >= 0; i--) {
@@ -670,7 +745,7 @@ function markStepUsage(
     }
   }
   if (!tail || thread.usageMark === tail.id) return kept
-  return { stepUsage: { ...thread.stepUsage, [tail.id]: update }, usageMark: tail.id }
+  return { stepUsage: { ...thread.stepUsage, [tail.id]: update }, stepAt: { ...thread.stepAt, [tail.id]: at }, usageMark: tail.id }
 }
 
 /** Folds a step's own bill into the running turn's, when the runtime says it. */
@@ -685,7 +760,10 @@ export function applyMetaUpdate(
   update: SessionUpdate,
   allowUserChunks = false,
   sessionId?: string,
-  stamp?: number
+  stamp?: number,
+  historyText?: string,
+  historyAttachments?: TextItem["attachments"],
+  endStamp?: number
 ): ThreadState {
   /* A subagent's session-level state is its own — its mode, its options, its
      context window. None of it describes the thread, so none of it reaches
@@ -700,7 +778,10 @@ export function applyMetaUpdate(
      context occupancy is not the thread's, but it IS the step's, and the step
      is an item. Everything else about a child's session dies here. */
   if (sessionId && update.sessionUpdate === "usage_update")
-    return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId, stamp) }
+    return {
+      ...thread,
+      items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId, stamp, historyText, historyAttachments),
+    }
   switch (update.sessionUpdate) {
     case "current_mode_update":
       return thread.modes
@@ -711,9 +792,12 @@ export function applyMetaUpdate(
     case "available_commands_update":
       return { ...thread, availableCommands: update.availableCommands }
     case "usage_update":
-      return { ...thread, context: update, ...markStepUsage(thread, update), ...liveStep(thread, update) }
+      return { ...thread, context: update, ...markStepUsage(thread, update, stamp ?? Date.now()), ...liveStep(thread, update) }
     default:
-      return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId, stamp) }
+      return {
+        ...thread,
+        items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId, stamp, historyText, historyAttachments, endStamp),
+      }
   }
 }
 

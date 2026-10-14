@@ -697,17 +697,6 @@ function useTabMenuItems({
               })
             },
           },
-          /* The desktop shell's own window for a thread: the transcript alone,
-             full-window, no dock (lib/popout.ts). A sent thread only — a draft
-             has no row a second window could load. */
-          ...(meta && !meta.draft && window.desktop?.openThreadWindow
-            ? ([
-                {
-                  label: "Open thread in its own window",
-                  onClick: () => void window.desktop?.openThreadWindow?.(meta.id),
-                },
-              ] satisfies MenuItemSpec[])
-            : []),
         ] satisfies MenuItemSpec[])),
     /* The project's saved shell lines, on the tab of a thread that belongs to
        it: a helper acts on one project, and which project that is, is a fact

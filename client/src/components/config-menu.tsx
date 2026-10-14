@@ -6,7 +6,7 @@
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@daedalus/acp"
 import * as React from "react"
-import { CheckIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon } from "lucide-react"
+import { CheckIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react"
 import {
   DropdownMenuCheckboxItem,
   DropdownMenuItem,
@@ -20,11 +20,10 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { flattenSelectOptions, recommendedValue } from "@/lib/session-options"
-import { reportError } from "@/lib/errors"
+import type { ModelRole } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { useSetProfileFlags } from "@/lib/queries/catalog"
-import type { Profile } from "@/lib/settings"
 import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export interface Choice {
   value: string
@@ -40,6 +39,25 @@ export interface Choice {
   /** A muted word on the row's end that is a *fact about the choice*, not a
       recommendation — "Not installed". The row stays pickable. */
   note?: string
+}
+
+interface ChoiceSection {
+  group?: string
+  choices: Choice[]
+}
+
+/** Collect matching groups together, ordered by their first choice. */
+function groupChoices(choices: Choice[]): ChoiceSection[] {
+  const sections = new Map<string | undefined, ChoiceSection>()
+  for (const choice of choices) {
+    let section = sections.get(choice.group)
+    if (!section) {
+      section = { group: choice.group, choices: [] }
+      sections.set(choice.group, section)
+    }
+    section.choices.push(choice)
+  }
+  return [...sections.values()]
 }
 
 /** The row that makes the list longer, at the foot of a submenu: "Add model…",
@@ -161,7 +179,7 @@ export function ChoiceList({
 }: ChoicePick) {
   const [query, setQuery] = React.useState("")
   const shown = menuFilter(choices, query)
-  let prevGroup: string | undefined
+  const sections = groupChoices(shown)
   return (
     <div className="flex flex-col">
       <div className="relative pb-2">
@@ -175,17 +193,16 @@ export function ChoiceList({
         />
       </div>
       <div className="pb-2">
-        {shown.map((choice) => {
-          const heading = choice.group && choice.group !== prevGroup ? choice.group : null
-          prevGroup = choice.group
-          return (
-            <React.Fragment key={choice.value}>
-              {heading && (
-                <div className="px-2 pt-3 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
-                  {heading}
-                </div>
-              )}
+        {sections.map((section, index) => (
+          <React.Fragment key={`section-${index}`}>
+            {section.group && (
+              <div className="px-2 pt-3 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                {section.group}
+              </div>
+            )}
+            {section.choices.map((choice) => (
               <button
+                key={choice.value}
                 type="button"
                 onClick={() => choice.value !== value && onSelect(choice.value)}
                 className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
@@ -206,9 +223,9 @@ export function ChoiceList({
                   className={cn("size-4 shrink-0", choice.value === value ? "opacity-100" : "opacity-0")}
                 />
               </button>
-            </React.Fragment>
-          )
-        })}
+            ))}
+          </React.Fragment>
+        ))}
         {shown.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">No match</p>}
       </div>
       {add && (
@@ -244,47 +261,26 @@ export function MenuRow({
   const searchable = choices.length > SEARCH_THRESHOLD
   const shown = searchable ? menuFilter(choices, query) : choices
 
-  /* When any choice carries a group, the submenu is partitioned into labelled
-     sections.  The array order is the display order; a group label is drawn the
-     first time its value appears, and a separator is drawn between adjacent
-     groups.  Choices without a group go under no heading. */
-  const hasGroups = shown.some((c) => c.group)
+  const sections = groupChoices(shown)
 
-  /** Render one choice item, optionally preceded by a group header. */
-  const renderChoice = (choice: Choice, prevGroup: string | undefined) => {
-    const parts: React.ReactNode[] = []
-    if (hasGroups && choice.group !== prevGroup) {
-      if (prevGroup !== undefined) {
-        parts.push(<DropdownMenuSeparator key={`sep-${choice.group ?? "none"}`} />)
-      }
-      if (choice.group) {
-        parts.push(
-          <DropdownMenuLabel key={`lbl-${choice.group}`} className="text-[11px] tracking-wide uppercase pt-1 pb-0.5">
-            {choice.group}
-          </DropdownMenuLabel>,
-        )
-      }
-    }
-    parts.push(
-      <DropdownMenuRadioItem key={choice.value} value={choice.value}>
-        {choice.icon}
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate">{choice.name}</span>
+  const renderChoice = (choice: Choice) => (
+    <DropdownMenuRadioItem key={choice.value} value={choice.value}>
+      {choice.icon}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">{choice.name}</span>
+      </span>
+      {(choice.note || choice.recommended) && (
+        <span
+          className={cn(
+            "ml-auto shrink-0 pl-2 text-[11px]",
+            choice.note ? "text-destructive" : "text-muted-foreground"
+          )}
+        >
+          {choice.note ?? "Recommended"}
         </span>
-        {(choice.note || choice.recommended) && (
-          <span
-            className={cn(
-              "ml-auto shrink-0 pl-2 text-[11px]",
-              choice.note ? "text-destructive" : "text-muted-foreground"
-            )}
-          >
-            {choice.note ?? "Recommended"}
-          </span>
-        )}
-      </DropdownMenuRadioItem>,
-    )
-    return parts
-  }
+      )}
+    </DropdownMenuRadioItem>
+  )
 
   return (
     <DropdownMenuSub open={submenuOpen} onOpenChange={setSubmenuOpen}>
@@ -305,14 +301,20 @@ export function MenuRow({
               next && next !== value && onSelect(next)
             }}
           >
-            {(() => {
-              let prevGroup: string | undefined
-              return shown.flatMap((choice) => {
-                const parts = renderChoice(choice, prevGroup)
-                prevGroup = choice.group
-                return parts
-              })
-            })()}
+            {sections.flatMap((section, index) => [
+              ...(index > 0 ? [<DropdownMenuSeparator key={`sep-${section.group ?? "ungrouped"}`} />] : []),
+              ...(section.group
+                ? [
+                    <DropdownMenuLabel
+                      key={`lbl-${section.group}`}
+                      className="pt-1 pb-0.5 text-[11px] tracking-wide uppercase"
+                    >
+                      {section.group}
+                    </DropdownMenuLabel>,
+                  ]
+                : []),
+              ...section.choices.map(renderChoice),
+            ])}
           </DropdownMenuRadioGroup>
           {/* Absence is said, because a filter that matches nothing and a
               catalog that is empty look identical as a blank popup. */}
@@ -396,6 +398,192 @@ export function MenuRowSkeleton({ label }: { label: string }) {
   )
 }
 
+/** One role→model entry of the thread's helper map (docs/model-roles.md). */
+export interface HelperModelRow {
+  role: string
+  model: string
+}
+
+const SESSION_MODEL_CHOICE = "__session_model__"
+
+/**
+ * The thread's helper models, as a submenu: a row per role, each picking the
+ * model a subagent spawned on that role runs on (docs/model-roles.md). Chosen
+ * on the draft menu and edited on a started thread — a spawn input, so a change
+ * costs a respawn and the caller routes it accordingly.
+ *
+ * Each assigned role gets one model picker (`""` = the session model), plus a
+ * Remove action. The models are the Model row's own choices — the profile's
+ * catalog where it has one, the agent's own list where it defers (the virtual
+ * Default), which the server then passes through as written. Drawn only when
+ * both lists have something in them. One entry per role, so Add appears only
+ * while some role is still unassigned.
+ */
+export function HelperModelsSub({
+  rows,
+  roles,
+  models,
+  onChange,
+  drawer = false,
+}: {
+  rows: HelperModelRow[]
+  /** The whole `model_roles` vocabulary, in its own order. */
+  roles: ModelRole[]
+  /** The Model row's choices, minus its own "default" row. */
+  models: Choice[]
+  onChange: (next: HelperModelRow[]) => void
+  /** Draw a full-width editor page inside the mobile config drawer. */
+  drawer?: boolean
+}) {
+  if (roles.length === 0 || models.length === 0) return null
+  const modelChoices: Choice[] = [{ value: SESSION_MODEL_CHOICE, name: "Session model" }, ...models]
+  const used = new Set(rows.map((row) => row.role))
+  const addRole = roles.find((role) => !used.has(role.id))
+  const replace = (index: number, patch: Partial<HelperModelRow>) =>
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  const remove = (index: number) => onChange(rows.filter((_, i) => i !== index))
+
+  if (drawer) {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+          Choose the model each helper role uses. Session model follows the main model above.
+        </p>
+        {rows.length === 0 && (
+          <div className="rounded-xl bg-muted/50 px-3 py-4 text-sm text-muted-foreground">
+            No helper roles assigned yet. Add one to choose a model for that kind of task.
+          </div>
+        )}
+        {rows.map((row, index) => {
+          const role = roles.find((candidate) => candidate.id === row.role)
+          const model = models.find((candidate) => candidate.value === row.model)
+          return (
+            <section key={`${row.role}-${index}`} className="rounded-xl border bg-card p-3">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-medium">{role?.label ?? row.role}</h3>
+                  {role?.description && (
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{role.description}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  aria-label={`Remove ${role?.label ?? row.role} helper model`}
+                  className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Trash2Icon className="size-4" />
+                </button>
+              </div>
+              <Select
+                value={row.model || SESSION_MODEL_CHOICE}
+                onValueChange={(model) =>
+                  model !== null && replace(index, { model: model === SESSION_MODEL_CHOICE ? "" : model })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue>{model?.name ?? (row.model || "Session model")}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SESSION_MODEL_CHOICE}>Session model</SelectItem>
+                  {models.map((choice) => (
+                    <SelectItem key={choice.value} value={choice.value}>
+                      <span className="flex items-center gap-2">
+                        {choice.icon}
+                        {choice.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                {row.model ? "Fixed to this model for helper tasks." : "Uses the thread's selected model."}
+              </p>
+            </section>
+          )
+        })}
+        {addRole ? (
+          <button
+            type="button"
+            onClick={() => onChange([...rows, { role: addRole.id, model: "" }])}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 text-sm font-medium text-muted-foreground hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
+          >
+            <PlusIcon className="size-4" />
+            Add {addRole.label}
+          </button>
+        ) : (
+          <p className="px-1 text-xs text-muted-foreground">Every helper role has a model assignment.</p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <span className="flex-1">Helper models</span>
+        {rows.length > 0 && (
+          <span className="text-xs tabular-nums text-muted-foreground">{rows.length}</span>
+        )}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuPortal>
+        <DropdownMenuSubContent className="w-72 no-scrollbar">
+          {rows.map((row, index) => {
+            const role = roles.find((r) => r.id === row.role)
+            const model = models.find((m) => m.value === row.model)
+            return (
+              <DropdownMenuSub key={`${row.role}-${index}`}>
+                <DropdownMenuSubTrigger>
+                  <span className="min-w-0 flex-1 truncate">{role?.label ?? row.role}</span>
+                  <span className="max-w-24 truncate text-xs text-muted-foreground">
+                    {model?.name ?? (row.model || "Session model")}
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuSubContent className="max-w-80 no-scrollbar">
+                    <MenuRow
+                      label="Model"
+                      value={row.model}
+                      choices={modelChoices}
+                      onSelect={(model) => replace(index, { model })}
+                    />
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem closeOnClick={false} onClick={() => remove(index)}>
+                      <Trash2Icon className="size-4 text-muted-foreground" />
+                      Remove
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuPortal>
+              </DropdownMenuSub>
+            )
+          })}
+          {/* Not `MenuAddItem`: that one closes because its callers open a
+              dialog, and here the new row has to stay in view to be filled. */}
+          {addRole ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                closeOnClick={false}
+                onClick={() => onChange([...rows, { role: addRole.id, model: "" }])}
+              >
+                <PlusIcon className="size-4 text-muted-foreground" />
+                Add helper model
+              </DropdownMenuItem>
+            </>
+          ) : (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled className="text-xs">
+                Every role is assigned
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuSubContent>
+      </DropdownMenuPortal>
+    </DropdownMenuSub>
+  )
+}
+
 /** A select option's choices, flattened out of any groups the agent used. */
 export const selectChoices = (option: acp.SessionConfigOption): Choice[] => {
   if (option.type !== "select") return []
@@ -457,33 +645,3 @@ export function PillLabel({
     </span>
   )
 }
-
-/**
- * The profile's helper model — what the agent's side-jobs run on — as one more
- * row of the settings menu. It edits the *profile* (`smallModel`), never the
- * thread: the helper goes to the same endpoint with the same key, so it is one
- * of this provider's models, and every thread on the profile takes it from its
- * next start. Drawn only where the profile owns a catalog to pick from.
- */
-export function HelperModelRow({ profile }: { profile: Profile }) {
-  const setFlags = useSetProfileFlags()
-  if (profile.virtual || profile.models.length === 0) return null
-  return (
-    <MenuRow
-      label="Helper model"
-      value={profile.smallModel || SAME_AS_THREAD}
-      choices={[
-        { value: SAME_AS_THREAD, name: "Same as thread" },
-        ...profile.models.map((m) => ({ value: m.id, name: m.label, group: m.group || undefined })),
-      ]}
-      onSelect={(value) =>
-        void setFlags
-          .mutateAsync({ id: profile.id, smallModel: value === SAME_AS_THREAD ? "" : value })
-          .catch((err) => reportError(err, "Couldn't change the helper model"))
-      }
-    />
-  )
-}
-
-/** Sentinel for "the session model", which is not itself a model id. */
-const SAME_AS_THREAD = "__same__"

@@ -90,7 +90,7 @@ export function SettingsNav() {
 
   return (
     <>
-      <SidebarGroup className={cn(TIER, GROUP)}>
+      <SidebarGroup className={cn(TIER, GROUP, "border-b border-sidebar-border pb-3")}>
         <SidebarGroupContent>
           <SidebarMenu className={MENU}>
             <SidebarMenuItem>
@@ -109,21 +109,23 @@ export function SettingsNav() {
         </SidebarGroupContent>
       </SidebarGroup>
 
-      {SETTINGS_NAV_GROUPS.map((group) => (
-        <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
-          <SidebarGroupLabel className={GROUP_LABEL}>
-            <span className="truncate">{group.label}</span>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu className={MENU}>
-              {group.sections.map((id) => {
-                const meta = sectionMeta(id)
-                return row(id, meta.label, meta.icon)
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ))}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain group-data-[collapsible=icon]:overflow-hidden">
+        {SETTINGS_NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
+            <SidebarGroupLabel className={GROUP_LABEL}>
+              <span className="truncate">{group.label}</span>
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className={MENU}>
+                {group.sections.map((id) => {
+                  const meta = sectionMeta(id)
+                  return row(id, meta.label, meta.icon)
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
+      </div>
     </>
   )
 }

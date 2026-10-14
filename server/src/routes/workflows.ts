@@ -1,7 +1,9 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { SessionManager } from "../sessions.js";
+import { getProject } from "../projects.js";
 import { WorkflowError, type WorkflowRunner } from "../workflows.js";
+import { listSaved, saveWorkflow } from "../workflow-saved.js";
 
 /** How long one long-poll may hold before answering with the run as it stands.
     Under every agent runtime's MCP tool timeout we know of (codex: 60s). */
@@ -17,10 +19,13 @@ const AskInput = z.object({
   timeoutSec: z.number().int().positive().optional(),
 });
 const ScriptInput = z.object({
-  script: z.string().min(1),
+  script: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  resumeFromRunId: z.string().min(1).optional(),
   args: z.unknown().optional(),
   tokenBudget: z.number().int().positive().optional(),
 });
+const SaveInput = z.object({ runId: z.string().min(1), scope: z.enum(["project", "personal"]).default("project") });
 
 /**
  * The loopback the `workflow` and `agents` MCP servers drive — outside `/api`, so outside
@@ -41,12 +46,41 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     const body = ScriptInput.safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ error: body.error.issues }, 400);
     try {
-      const view = await runner.startScript(parent, body.data.script, body.data.args, body.data.tokenBudget);
+      /* Every run tells its thread when it ends — a wait included, because a
+         wait that times out leaves the run going. A wait still blocked when it
+         ends is handed the outcome instead, and nothing is sent after it. */
       const wait = waitSec(c.req.query("wait"));
+      const view = await runner.startScript(parent, { ...body.data, notify: true });
       return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
     } catch (error) {
       if (error instanceof WorkflowError) return c.json({ error: error.message }, error.status);
       throw error;
+    }
+  });
+
+  /* Saved workflows: the project's `.claude/workflows/` and the personal one,
+     the directories Claude Code reads, so either tool runs what the other saved. */
+  app.get(`${base}/saved`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const project = await getProject(parent.projectId);
+    if (!project) return c.json({ error: "this thread's project no longer exists" }, 409);
+    return c.json({ workflows: await listSaved(project.cwd) });
+  });
+
+  app.post(`${base}/saved`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = SaveInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: body.error.issues }, 400);
+    const project = await getProject(parent.projectId);
+    if (!project) return c.json({ error: "this thread's project no longer exists" }, 409);
+    const source = await runner.scriptOf(parent.id, body.data.runId);
+    if (!source) return c.json({ error: "no script run with that id on this thread" }, 404);
+    try {
+      return c.json(await saveWorkflow(project.cwd, source, body.data.scope), 201);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }
   });
 
@@ -79,8 +113,8 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     const body = RunInput.safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ error: body.error.issues }, 400);
     try {
-      const view = await runner.start(parent, body.data.definition, body.data.inputs);
       const wait = waitSec(c.req.query("wait"));
+      const view = await runner.start(parent, body.data.definition, body.data.inputs, true);
       return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
     } catch (error) {
       if (error instanceof WorkflowError) return c.json({ error: error.message }, error.status);
@@ -101,7 +135,7 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
     if (!parent) return c.json({ error: "not found" }, 404);
     const id = c.req.param("id");
-    runner.cancel(id, "cancelled by the agent");
+    runner.cancel(id, "cancelled by the agent", true);
     const view = await runner.status(id);
     return view ? c.json(view) : c.json({ error: "no such run" }, 404);
   });

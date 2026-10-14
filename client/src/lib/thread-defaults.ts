@@ -65,6 +65,7 @@ export const emptyDefaults = (): ProjectDefaults => ({
   effort: "",
   modeId: "",
   configChoices: {},
+  helperModels: [],
   mcpServerIds: [],
   skillIds: [],
   commandIds: [],

@@ -14,6 +14,7 @@ import { expandPrompts } from "./saved-prompts.js";
 import { attachmentBlocks } from "./attachment-blocks.js";
 import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
+import { listModelRoles } from "./model-roles.js";
 import type {
   AttachmentRef,
   AutoAnswer,
@@ -36,6 +37,13 @@ import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import type { BuiltinToolOverrides } from "./db/schema.js";
 import type { AcpConnection, ConnectionRoute } from "./acp-connection.js";
 import type { OrphanPrompt, WireLedger } from "./adopt-state.js";
+import {
+  isRfdSubagentUpdate,
+  OPENCODE_CHILD_UPDATE_METHODS,
+  translateOpencodeChildUpdate,
+  translateSubagentUpdate,
+  type KnownSubagent,
+} from "./subagent-update.js";
 
 /**
  * The ACP client, server-side.
@@ -79,13 +87,6 @@ export async function spawnAgent(
       `"acp-meta"` agent's persona travels in the handshake instead
       (`sessionMeta`), and the probe has no thread and passes nothing. */
   persona?: PersonaSpawn,
-  /** The loopback port and secret an agent with a `subagentFeed` is given so
-      the server can read its event bus (`opencode-subagents.ts`). Minted per
-      spawn by the SessionManager and never stored; the probe passes nothing
-      and gets a process with no bus, which is all a probe needs. Appended to
-      the resolved args and env here so the registry's own `args` — the
-      user's — are never edited. */
-  sidecar?: { port: number; password: string },
   /** No human in front of this thread — a workflow step, a scheduled run. The
       harness's own runtime holds a failed turn at its step boundary and waits
       to be told what model to try instead; with nobody at a config menu that
@@ -94,7 +95,7 @@ export async function spawnAgent(
       which reads none of these vars. */
   unattended?: boolean,
 ): Promise<Handle> {
-  return spawnProcess(await resolveAgentSpawn(profile, agentId, project, model, effort, sessionId, persona, sidecar, unattended));
+  return spawnProcess(await resolveAgentSpawn(profile, agentId, project, model, effort, sessionId, persona, unattended));
 }
 
 export type { SpawnSpec };
@@ -115,8 +116,11 @@ export async function resolveAgentSpawn(
   effort?: string,
   sessionId?: string,
   persona?: PersonaSpawn,
-  sidecar?: { port: number; password: string },
   unattended?: boolean,
+  /** The thread's role → model assignment (`sessions.helper_models`), read off
+      the session by the caller — `resolveSpawn` is synchronous and cannot query.
+      Absent for the probe, which has no thread. */
+  helperModels?: { role: string; model: string }[],
 ): Promise<SpawnSpec> {
   const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -126,6 +130,10 @@ export async function resolveAgentSpawn(
   // Skills/commands are NOT materialized here: what belongs in the cwd is the
   // union across the project's live threads, which only the SessionManager
   // knows (`materializeFor`). The probe writes the project's own set itself.
+  /* The role vocabulary and the thread's role → model map, read here because
+     `resolveSpawn` is synchronous (it is also called by `checkInstalled` and the
+     probes, which spawn nothing a role would reach). Only the daedalus runtime's
+     env names it, and this is the one path that spawns it for real. */
   const { command, args, env, cwd } = resolveSpawn(
     agent,
     profile,
@@ -134,11 +142,9 @@ export async function resolveAgentSpawn(
     effort,
     sessionId,
     agent.personaVia === "env" ? persona : undefined,
+    await listModelRoles(),
+    helperModels,
   );
-  if (sidecar && agent.subagentFeed === "opencode-http") {
-    args.push("--port", String(sidecar.port), "--hostname", "127.0.0.1");
-    env.OPENCODE_SERVER_PASSWORD = sidecar.password;
-  }
   if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
   return { command, args, env, cwd };
 }
@@ -312,7 +318,9 @@ export const parseRetryParams = (params: unknown): RetryParams => (params ?? {})
  * dropped before a handler registered with its own parser gets a look. So the
  * two are moved to a private method name on the way in (`agentStream`), where
  * the SDK has nothing to say about them, and the bridge listens on both names.
- * Goes away the day the SDK's union carries the RFD. The agent runtime meets
+ * The SDK's union now carries the RFD's *current* shape (`subagent_update`,
+ * translated into this pair in `subagent-update.ts`), but the adapters still
+ * send the draft, so the detour stays until they move. The agent runtime meets
  * the same closed schema from the other side (`agent/src/app.ts`, the identity
  * parser on `initialize`); the one fact behind both is written up once in
  * docs/protocol.md ("The SDK seam").
@@ -435,7 +443,10 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
   // prose and thinking — the part that says what it concluded — unless
   // the client says it can render a nested transcript. The rest is AIR's
   // (`AIR_META`, above).
-  _meta: { "subagent-transcript": true, ...AIR_META },
+  // OpenCode 2's version: a child's work on its own extension notification
+  // (`translateOpencodeChildUpdate`). Unclaimed, it projects the child onto the
+  // root session with no lifecycle at all — no spawn, no ending.
+  _meta: { "subagent-transcript": true, "opencode/child-session-updates": true, ...AIR_META },
 };
 
 /** The ndJSON stream over a spawned agent's stdio. From here on the SDK owns
@@ -444,15 +455,7 @@ export const CLIENT_CAPABILITIES: acp.ClientCapabilities = {
     subagent variant is re-addressed to `SUBAGENT_UPDATE_METHOD` (see there). */
 export function agentStream(
   proc: Handle,
-  /** A second source of inbound frames, merged ahead of the rewrite — the
-      OpenCode sidecar's synthesized `session/update`s, addressed to a child's
-      session id (`opencode-subagents.ts`). The merged stream ends when
-      **stdout** ends: the process is the conversation, and a feed that
-      outlives it has nothing left to say. */
-  extra?: ReadableStream<acp.AnyMessage>,
-  /** Id shifting and progress bookkeeping on the pipes (`adopt-state.ts`). It
-      counts the primary stream only, so the offset is the process's, not the
-      sidecar's. */
+  /** Id shifting and progress bookkeeping on the pipes (`adopt-state.ts`). */
   ledger?: WireLedger,
 ): acp.Stream {
   const stdout = Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>;
@@ -467,39 +470,33 @@ export function agentStream(
     void out.readable.pipeTo(raw.writable).catch(() => {});
     stream = { writable: out.writable, readable: raw.readable.pipeThrough(ledger.inbound()) };
   }
+  /* The children this process has announced through the current RFD's
+     upsert, so each `subagent_update` can be said as the draft pair. */
+  const known = new Map<string, KnownSubagent>();
   const reroute = new TransformStream<acp.AnyMessage, acp.AnyMessage>({
     transform(message, controller) {
+      const params = "method" in message && message.method === acp.methods.client.session.update
+        ? (message.params as { sessionId?: unknown; update?: unknown } | undefined)
+        : undefined;
+      if (params && typeof params.sessionId === "string" && isRfdSubagentUpdate(params.update)) {
+        for (const note of translateSubagentUpdate(params.sessionId, params.update, known)) {
+          controller.enqueue({ jsonrpc: "2.0", method: SUBAGENT_UPDATE_METHOD, params: note } as acp.AnyMessage);
+        }
+        return;
+      }
+      if ("method" in message && OPENCODE_CHILD_UPDATE_METHODS.has(message.method)) {
+        for (const note of translateOpencodeChildUpdate(message.params)) {
+          const frame = { jsonrpc: "2.0", method: acp.methods.client.session.update, params: note } as acp.AnyMessage;
+          controller.enqueue(isSubagentUpdate(frame) ? { ...frame, method: SUBAGENT_UPDATE_METHOD } : frame);
+        }
+        return;
+      }
       controller.enqueue(
         isSubagentUpdate(message) ? { ...message, method: SUBAGENT_UPDATE_METHOD } : message,
       );
     },
   });
-  const inbound = extra ? mergeReadables(stream.readable, extra) : stream.readable;
-  return { writable: stream.writable, readable: inbound.pipeThrough(reroute) };
-}
-
-/** `primary` and `extra` interleaved in arrival order; closes with `primary`.
-    Exported for the unit test. */
-export function mergeReadables<T>(primary: ReadableStream<T>, extra: ReadableStream<T>): ReadableStream<T> {
-  const merged = new TransformStream<T, T>();
-  const writer = merged.writable.getWriter();
-  const pump = async (source: ReadableStream<T>) => {
-    const reader = source.getReader();
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        await writer.write(value);
-      }
-    } catch {
-      /* the writer closed under us — the primary ended */
-    } finally {
-      reader.releaseLock();
-    }
-  };
-  void pump(extra);
-  void pump(primary).then(() => writer.close().catch(() => {}));
-  return merged.readable;
+  return { writable: stream.writable, readable: stream.readable.pipeThrough(reroute) };
 }
 
 /** An agent request the agent is currently blocked on. Held here rather than in
@@ -680,11 +677,14 @@ export interface BridgeOptions {
   /** The harness's workflow MCP server is replacing the runtime's own
       orchestration tool, for the same reason and with the same allow rule. */
   workflowViaMcp?: boolean;
-  /** The thread's persona, for an agent whose `personaVia` is `"acp-meta"` —
-      see `sessionMeta`. Undefined for every other agent and for a thread with
-      no persona; an `"env"` agent's persona was placed by `resolveSpawn`
-      before this process existed. */
+  /** The thread's persona, for an agent whose `personaVia` is `"acp-meta"` or
+      `"air-meta"` — see `sessionMeta`. Undefined for every other agent and for
+      a thread with no persona; an `"env"` agent's persona was placed by
+      `resolveSpawn` before this process existed. */
   persona?: PersonaSpawn;
+  /** Which `_meta` key carries `persona`: `_meta.systemPrompt.append`
+      (`"acp-meta"`) or the AIR extension's `customInstructions`. */
+  personaVia?: "acp-meta" | "air-meta";
   /** Which of the runtime's own tools the two flags above replace, and how it
       is told to switch them off (`AgentDef.builtinTools`). Null/absent — every
       runtime but claude-code today — means its built-ins stay on beside ours,
@@ -991,7 +991,17 @@ export class AcpBridge implements ConnectionRoute {
     }
     if (disallowedTools.length > 0) Object.assign(options, { disallowedTools, allowedTools });
 
-    if (opts.persona) meta.systemPrompt = { append: opts.persona.prompt }; // "persona" = spawn instructions, see personas.ts
+    // "persona" = spawn instructions, see personas.ts. Either key appends to
+    // the runtime's own system prompt; never both, or it is said twice.
+    if (opts.persona && opts.personaVia === "air-meta") {
+      /* Sent regardless — an agent that ignores the key loses nothing — but a
+         row naming a door the runtime never advertised is rules going nowhere,
+         which is worth one line in the log rather than none. */
+      if (!this.airCapabilities.includes("customInstructions")) {
+        console.warn(`agent did not advertise AIR customInstructions; this thread's rules may not reach it`);
+      }
+      meta.jetbrains = { air: { customInstructions: opts.persona.prompt } };
+    } else if (opts.persona) meta.systemPrompt = { append: opts.persona.prompt };
 
     if (opts.sessionEnv && Object.keys(opts.sessionEnv).length > 0) options.env = opts.sessionEnv;
     /* The adapter takes one `settings` object and nothing else sets it, so it
@@ -2068,6 +2078,13 @@ export class AcpBridge implements ConnectionRoute {
     return Boolean(meta?.[PAUSE_CAPABILITY]);
   }
 
+  /** What the runtime advertised under `_meta.jetbrains.air.capabilities`. */
+  private get airCapabilities(): readonly unknown[] {
+    const meta = this.agentCapabilities._meta as { jetbrains?: { air?: { capabilities?: unknown } } } | null | undefined;
+    const caps = meta?.jetbrains?.air?.capabilities;
+    return Array.isArray(caps) ? caps : [];
+  }
+
   /** Whether the runtime sends spans of its own (bridge-trace.ts). */
   get selfTraced(): boolean {
     const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
@@ -2569,7 +2586,14 @@ export class AcpBridge implements ConnectionRoute {
 /** What a setting change row can be about. The suggestions toggle
     joined the list late and are the reason it is a type: both always cost a
     respawn, so both used to change the way the agent answers with nothing
-    anywhere saying they had. */
+    anywhere saying they had.
+
+    The tool links (`MCP`, `Skills`, `Commands`) joined last, for the same
+    reason: a thread's tools are fixed when the runtime session is created, so a
+    link change respawns like the spawn settings above do — and, until these
+    were named, a thread came back carrying a different toolset with the
+    transcript saying nothing about it. `SessionManager.linkLabels` supplies
+    their values. */
 export type ConfigNoticeLabel =
   | "Mode"
   | "Model"
@@ -2577,7 +2601,10 @@ export type ConfigNoticeLabel =
   | "Profile"
   | "Agent"
   | "Follow-ups"
-  | "Drawn UI";
+  | "Drawn UI"
+  | "MCP"
+  | "Skills"
+  | "Commands";
 
 /** One transcript line for a setting change (`Mode: Plan → Build`).
     Exported for tests. */

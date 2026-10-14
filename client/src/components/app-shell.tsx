@@ -9,7 +9,7 @@
    The sidebar's own pieces are `components/sidebar/`; the route tree and the
    page titles are `components/routes.tsx`, the only importer of the pages. */
 import * as React from "react"
-import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon } from "lucide-react"
+import { FocusIcon, GitBranch, SearchIcon, Settings, SlidersHorizontalIcon, XIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
 import { Button } from "@/components/ui/button"
@@ -71,6 +71,8 @@ import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
 import { loadActiveSpace } from "@/lib/spaces"
 import { IS_POPOUT } from "@/lib/popout"
+import { setFocusMode, useFocusMode } from "@/lib/focus-mode"
+import { useActiveChat } from "@/lib/workspace/open-threads"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -141,6 +143,30 @@ export function AppShell({
      than to any route or dock group under it. */
   const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
+  /* Focus mode is a presentation over the workspace, never an edit of it: the
+     sidebar is held shut without writing its saved state, the chat's group is
+     maximized (dockview keeps the rest mounted, so background threads stay
+     connected) and the other tabs are hidden by CSS (`[data-focus-mode]`). It
+     only applies while a chat is in front — a page tab gets the chrome back. */
+  const activeChat = useActiveChat()
+  const focused = useFocusMode() && !!activeChat
+  const maximizedRef = React.useRef(false)
+  React.useEffect(() => {
+    const api = dock.apiRef.current
+    if (!api) return
+    if (!focused) {
+      if (maximizedRef.current && api.hasMaximizedGroup()) api.exitMaximizedGroup()
+      maximizedRef.current = false
+      return
+    }
+    /* Re-run on a chat switch (palette, ⌘1…9): a chat in another group has to
+       take the maximize, or it would open behind the one already filling the
+       grid. A float is left as it is. */
+    const panel = api.activePanel
+    if (!panel || panel.group.api.location.type !== "grid" || panel.api.isMaximized()) return
+    if (!api.hasMaximizedGroup()) maximizedRef.current = true
+    api.maximizeGroup(panel)
+  }, [dock, focused, activeChat])
   const closeOpenThread = React.useCallback(
     (session: SessionMeta) =>
       void dock.closePanel(panelId({ kind: "chat", sessionId: session.id })),
@@ -361,7 +387,7 @@ export function AppShell({
      switch files the tabs you were looking at under the space you were in and
      brings in the next space's. */
   React.useEffect(() => {
-    if (loading || failed || IS_POPOUT) return
+    if (loading || failed) return
     const previous = spaceRef.current
     spaceRef.current = activeSpaceId
     if (previous === activeSpaceId) return
@@ -383,6 +409,7 @@ export function AppShell({
       const route = routeRef.current
       if (route.sessionId) dock.openChat(route.sessionId, { newTab: true })
       else dock.openPage(route.path)
+      window.desktop?.signalWorkspaceReady?.()
     },
     [dock]
   )
@@ -495,13 +522,10 @@ export function AppShell({
      lib/shortcuts, which is also what the help sheet prints. */
   useShortcut("newThread", () => startRef.current.startThread())
   useShortcut("terminal", () => openWorkspacePanel("terminal", true))
-  /* The two chords that open a chooser rather than doing a thing. They go
-     through the palette's own pages — one list per question, whether it was
-     reached by chord or by typing its row — and the palette answers for a
-     thread that has nothing to offer (no model selector, no draft) by listing
-     nothing, which is the same answer its row's absence gives. */
-  useShortcut("changeModel", () => palette.openAt("model"))
-  useShortcut("changeProject", () => palette.openAt("project"))
+  /* changeModel / changeProject / chooseMcp are the composer's: they open its
+     own menus (`Composer`, `ConfigPopover`), which list everything — a draft's
+     agent and profile, effort, mode, MCPs — where the palette's pages list only
+     a live agent's selectors. */
   useShortcut("threadSearch", () => {
     if (!sessionId) return false
     palette.openAt("thread-search")
@@ -526,6 +550,7 @@ export function AppShell({
 
   return (
     <PersistedSidebarProvider
+      focused={focused}
       style={{
         "--sidebar-width": sidebar.width,
         height: "100dvh",
@@ -690,7 +715,7 @@ export function AppShell({
           with no height declared this resolves to exactly `100dvh - 16px`.
           `min-h-0` still has to be here: stretch gives a definite height, and
           `min-h-0` is what lets the scrolling column inside shrink to it. */}
-      <SidebarInset className="flex min-h-0 flex-col overflow-hidden">
+      <SidebarInset data-focus-mode={focused || undefined} className="flex min-h-0 flex-col overflow-hidden">
         {/* An overlay spanning the whole top, INSIDE `SidebarInset` — it is the
             card's bar, not the window's. The dock's top groups join this row
             (`data-header-band`; `syncHeaderOverlap` in workspace/dock-header.ts measures
@@ -742,35 +767,74 @@ export function AppShell({
               cluster stands in that row, and 8px here against 4px there read
               as two spacings on one line. */}
           <div data-header-left className="flex min-w-0 items-center gap-1">
-            <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
-            {/* Which space the app is showing — the one control in this row that
-                says where you are, beside the one that opens the list of where
-                you can go. */}
-            {/* Height of the chip, width of its label: HEADER_CHIP is a square,
-                which clipped the name down to the glyph. */}
-            <SpaceSwitcher
-              className={cn(
-                "h-[var(--dock-chip-h)] shrink-0 px-2.5 max-md:size-[var(--dock-chip-h)] max-md:justify-center max-md:gap-0 max-md:px-0",
-                STRIP_GROUND
+            {focused ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Exit focus mode"
+                aria-label="Exit focus mode"
+                className={cn(HEADER_CHIP, "pointer-events-auto shrink-0 [-webkit-app-region:no-drag]")}
+                onClick={() => setFocusMode(false)}
+              >
+                <FocusIcon className="size-3.5" />
+              </Button>
+            ) : (
+              <>
+              <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
+              {/* Which space the app is showing — the one control in this row that
+                  says where you are, beside the one that opens the list of where
+                  you can go. */}
+              {/* Height of the chip, width of its label: HEADER_CHIP is a square,
+                  which clipped the name down to the glyph. */}
+              <SpaceSwitcher
+                className={cn(
+                  "h-[var(--dock-chip-h)] shrink-0 px-2.5 max-md:size-[var(--dock-chip-h)] max-md:justify-center max-md:gap-0 max-md:px-0",
+                  STRIP_GROUND
+                )}
+              />
+              {/* How transcripts are drawn, on this device — beside the one other
+                  control that is also this device's and not this route's.
+                  Sliders, not a cog: a cog in this app means the *server's*
+                  settings route. */}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="View settings"
+                title="How transcripts are drawn, on this device"
+                className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
+                onClick={() => setViewSettings(true)}
+              >
+                <SlidersHorizontalIcon className="size-3.5" />
+              </Button>
+              {activeChat && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Focus on this thread"
+                  aria-label="Focus mode"
+                  className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
+                  onClick={() => setFocusMode(true)}
+                >
+                  <FocusIcon className="size-3.5" />
+                </Button>
               )}
-            />
-            {/* How transcripts are drawn, on this device — beside the one other
-                control that is also this device's and not this route's.
-                Sliders, not a cog: a cog in this app means the *server's*
-                settings route. */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="View settings"
-              title="How transcripts are drawn, on this device"
-              className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
-              onClick={() => setViewSettings(true)}
-            >
-              <SlidersHorizontalIcon className="size-3.5" />
-            </Button>
+              </>
+            )}
             {/* A branch says where it came from, once, beside the tab that
                 names it — the one thing provenance is for. Clicking goes to the
                 parent thread as it is now, not to the turn it was cut at. */}
+            {IS_POPOUT && window.desktop?.closeWindow && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className={cn(HEADER_CHIP, "pointer-events-auto shrink-0 [-webkit-app-region:no-drag]")}
+                onClick={() => void window.desktop?.closeWindow?.()}
+                title="Close window"
+                aria-label="Close window"
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            )}
             {forkedFrom && (
               <button
                 type="button"
@@ -841,11 +905,12 @@ export function AppShell({
     toggle re-rendered the whole shell — the dock, the sidebar, every panel.
     Here `children` are the same elements the shell last made, and React skips
     them; only what reads the sidebar's context re-renders. */
-function PersistedSidebarProvider(
-  props: Omit<React.ComponentProps<typeof SidebarProvider>, "open" | "onOpenChange">
-) {
+function PersistedSidebarProvider({
+  focused,
+  ...props
+}: Omit<React.ComponentProps<typeof SidebarProvider>, "open" | "onOpenChange"> & { focused: boolean }) {
   const { open } = useSidebarLayout()
-  return <SidebarProvider {...props} open={open} onOpenChange={setSidebarOpen} />
+  return <SidebarProvider {...props} open={open && !focused} onOpenChange={setSidebarOpen} />
 }
 
 const setSidebarOpen = (open: boolean) => setSidebarLayout("open", open)

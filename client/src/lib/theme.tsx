@@ -288,6 +288,7 @@ declare global {
       vibrancy: boolean
       /** This window is a single-thread popout (lib/popout.ts). */
       popout?: boolean
+      popoutId?: string
       setTitleBarTheme?: (resolved: "light" | "dark", source: Theme, colorTheme: ColorTheme) => void
       writeClipboard?: (text: string) => Promise<boolean>
       /** Raise an OS notification through the main process (lib/notifications). */
@@ -303,6 +304,10 @@ declare global {
       setWindowMaterial?: (material: "acrylic" | "mica") => Promise<{ ok: true } | { ok: false; error: string }>
       /** A thread in a window of its own, drawn with no shell (`lib/popout.ts`). */
       openThreadWindow?: (sessionId: string) => Promise<boolean>
+      /** Close only the current Electron window. */
+      closeWindow?: () => Promise<boolean>
+      /** Notify the main process after the full app workspace mounts. */
+      signalWorkspaceReady?: () => void
       /** Drive: a CDP connection to a `<webview>` guest of this window (lib/browser-host.ts). */
       cdp?: {
         reset: (guestId: number) => void

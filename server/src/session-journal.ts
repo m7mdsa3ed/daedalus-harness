@@ -152,6 +152,43 @@ export class SessionJournal {
     }
   }
 
+  /** Attachment refs from the turn boundaries, in conversation order. Used
+      before a load clears the journal so restored user chunks can retain their
+      attachment chips without copying the whole event log into memory. */
+  async turnAttachments(
+    sessionId: string,
+  ): Promise<{ text: string; attachments: NonNullable<Extract<ThreadEvent, { ev: "turn_started" }>["attachments"]> }[]> {
+    await this.flush();
+    const rows = await this.db
+      .select({ payload: eventsTable.payload })
+      .from(eventsTable)
+      .where(and(
+        eq(eventsTable.sessionId, sessionId),
+        or(
+          eq(eventsTable.kind, "turn_started"),
+          sql`${eventsTable.payload}->>'historyAttachments' is not null`,
+        ),
+      ))
+      .orderBy(asc(eventsTable.seq));
+    const turns: { text: string; attachments: NonNullable<Extract<ThreadEvent, { ev: "turn_started" }>["attachments"]> }[] = [];
+    for (const row of rows) {
+      const event = row.payload as JournaledEvent;
+      if (event.ev === "turn_started") {
+        turns.push({ text: event.text, attachments: event.attachments ?? [] });
+      } else if (
+        event.ev === "update" &&
+        event.update.sessionUpdate === "user_message_chunk" &&
+        event.historyAttachments?.length
+      ) {
+        const text = event.historyText ?? (event.update.content.type === "text" ? event.update.content.text : "");
+        if (text && !turns.some((turn) => turn.text === text && turn.attachments.length > 0)) {
+          turns.push({ text, attachments: event.historyAttachments });
+        }
+      }
+    }
+    return turns;
+  }
+
   /** Events in `[from, from + limit)`, in order. A range scan on (session_id,
       seq). Parsed — the replay path deliberately does not use this; see
       `replayFrames`. */
@@ -185,20 +222,28 @@ export class SessionJournal {
       and payload->'update'->'content'->>'type' = 'text'`;
 
   /**
-   * What makes two chunks the same run: everything about the event except its
-   * `seq` and the text itself.
+   * What makes two chunks the same run: everything about the event except what
+   * the journal itself added to it — `seq` and `at` — and the text.
+   *
+   * **`at` belongs on that list for the same reason `seq` does, and it is the
+   * one that was missed.** It is the write stamp `append` puts on every row, so
+   * of course it differs between two chunks; left in the signature it made
+   * every chunk its own run, and a real streamed run — one chunk per
+   * millisecond at best — stopped merging the moment a chunk landed in the next
+   * millisecond. Which is all of them. The run is identical apart from the text
+   * and the clock it was written at, and nothing else may enter this.
    *
    * Spelled as three fragments rather than a list of fields because the list is
    * the thing that goes stale — a runtime that starts sending a new key on a
    * chunk (`messageId` was one, `_meta` another) would otherwise merge two
    * chunks that differ in it. Each fragment serializes only what is left after
    * the text is removed, so the comparison never touches the bytes it exists to
-   * avoid moving: the top level minus `seq` and `update` (`ev`,
+   * avoid moving: the top level minus `seq`, `at` and `update` (`ev`,
    * `historyReplay`, a subagent's `sessionId`), the update minus its content
    * (`sessionUpdate`, `messageId`, `_meta`), and the content minus its text
    * (`type`, `annotations`, its own `_meta`).
    */
-  private static readonly RUN_SIGNATURE = sql`(payload - 'seq' - 'update')::text
+  private static readonly RUN_SIGNATURE = sql`(payload - 'seq' - 'at' - 'update')::text
       || ((payload->'update') - 'content')::text
       || ((payload->'update'->'content') - 'text')::text`;
 
@@ -226,8 +271,8 @@ export class SessionJournal {
     from: number,
     limit: number,
   ): Promise<{ rows: number; bytes: number; events: string[] }> {
-    const page = await this.db.execute<{ seq: number; txt: string | null; body: string | null }>(sql`
-      select seq, txt,
+    const page = await this.db.execute<{ seq: number; at: string | null; txt: string | null; body: string | null }>(sql`
+      select seq, at, txt,
              /* The envelope, and only where one is needed: a row that is not a
                 chunk at all, or the first chunk of a run. A continuation ships
                 its text alone. The case is out here, past the subquery, so the
@@ -237,6 +282,12 @@ export class SessionJournal {
                   then payload::text end as body
         from (
           select seq, payload,
+                 /* The row's own stamp, read off the payload rather than the
+                    at column: the column is defaulted to 0 on every row that
+                    predates it, while a payload only carries at when it was
+                    written with one. Read, never sent — what ships is the run's
+                    end, stamped on the merged event below. */
+                 payload->>'at' as at,
                  case when ${SessionJournal.RUN_CHUNK} then ${SessionJournal.RUN_SIGNATURE} end as sig,
                  case when ${SessionJournal.RUN_CHUNK} then payload->'update'->'content'->>'text' end as txt
             from session_events
@@ -253,7 +304,7 @@ export class SessionJournal {
        apart from `template` so a run that hits the size cap can be closed and
        reopened from the same envelope — its continuations carry no envelope of
        their own and would otherwise have nothing to be folded into. */
-    let run: { head: JournaledEvent; texts: string[]; lastSeq: number; size: number } | null = null;
+    let run: { head: JournaledEvent; texts: string[]; lastSeq: number; lastAt: string | null; size: number } | null = null;
     let template: string | null = null;
     const close = () => {
       if (!run) return;
@@ -262,7 +313,18 @@ export class SessionJournal {
          is now in this event. Stamping the run's first seq would make a
          reconnect ask for chunks it already holds. */
       const head = run.head as JournaledEvent & { seq: number; update: { content: { text: string } } };
+      /* Whether this event stands for more than the one row it was built from.
+         A run of one is left exactly as the log wrote it, which is what keeps
+         the read's one rule honest — a replay is the log, up to the merge — and
+         only a merge has something to add. */
+      const merged = run.lastSeq !== head.seq;
       head.seq = run.lastSeq;
+      /* And it carries where the run ENDED, which the head's own `at` cannot
+         say: `at` is the head row's stamp — when the run began — and the
+         chunks that continue it carry no envelope of their own for the client
+         to read an end off. A step's length is the gap between the two, and
+         only the read that merged the run knows it. */
+      if (merged && run.lastAt !== null) (head as { endAt?: number }).endAt = Number(run.lastAt);
       head.update.content.text = run.texts.join("");
       events.push(JSON.stringify(head));
       run = null;
@@ -285,10 +347,11 @@ export class SessionJournal {
       }
       if (!run) {
         if (template === null) continue; // unreachable: a page's first row always ships a body
-        run = { head: JSON.parse(template) as JournaledEvent, texts: [], lastSeq: row.seq, size: 0 };
+        run = { head: JSON.parse(template) as JournaledEvent, texts: [], lastSeq: row.seq, lastAt: row.at, size: 0 };
       }
       run.texts.push(row.txt);
       run.lastSeq = row.seq;
+      if (row.at !== null) run.lastAt = row.at;
       run.size += row.txt.length;
       /* A run is still bounded. A turn that thinks for an hour is one item on
          screen either way, but it must not become one string this process

@@ -209,18 +209,21 @@ export const agents = pgTable("agents", {
       `"acp-meta"` = the ACP `_meta` block on session/new and session/load,
       `"env"` = a key in its own config template, filled from `{personaPrompt}`
       or `{personaFile}`. Null = no known door, and a persona is not applied. */
-  personaVia: text("persona_via").$type<"acp-meta" | "env">(),
+  personaVia: text("persona_via").$type<"acp-meta" | "air-meta" | "env">(),
   /** Whether threads may share one process of this runtime, and the door each
       thread's env goes through when they do (`AgentDef.sharedProcess`).
       `"acp-meta"` = the ACP `_meta` on session/new|resume|load. Null = one
       process per thread. */
   sharedProcess: text("shared_process").$type<"acp-meta">(),
-  /** Where this runtime's subagent transcripts come from when its ACP bridge
-      does not carry them. `"opencode-http"` = the sidecar in
-      `opencode-subagents.ts`: the process is spawned with an HTTP port and the
-      server subscribes to its event bus for the children ACP drops. Null =
-      whatever arrives over ACP is all there is. */
+  /** Legacy, read by nothing: OpenCode 1.x's subagent sidecar, retired with
+      OpenCode 2 (seed 30). Declared so a push does not drop the column. */
   subagentFeed: text("subagent_feed").$type<"opencode-http">(),
+  /** How this runtime's *own* subagents take a role's model (docs/model-roles.md):
+      `"acp-env"` = roles ride `DAEDALUS_AGENT_MODEL_ROLES` at spawn and its
+      in-process `task` tool reads them. Null/absent = no helper models, and a
+      subagent inherits the session model. Declared with the agent, never
+      compared against its id. */
+  subagentModelsVia: text("subagent_models_via").$type<"acp-env">(),
   /** Which door this runtime opens for a rewind's conversation half
       (`registry.ts › AgentDef.rewindVia`): `"acp-fork-point"` = `session/fork`
       with the jetbrains.air fork point. Null = rewind is not offered. */
@@ -700,8 +703,8 @@ export const appSettings = pgTable("app_settings", {
 
 /** An individual standing instruction rule. Global rules (null projectId)
     apply to every thread; project-scoped rules (a projectId) apply to
-    threads spawned in that project. Both layers are composed by
-    `spawnRules` in rules.ts — global first, then project. Each rule
+    threads spawned in that project. Both layers are composed at
+    spawn by `resolvePersonaSpawn` in personas.ts — global first, then project. Each rule
     has a title and content so they can be managed individually rather
     than as one blob of text. */
 export const rules = pgTable("rules", {
@@ -715,6 +718,24 @@ export const rules = pgTable("rules", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 }, (t) => [index("rules_project").on(t.projectId)]);
+
+/** A model role — a free-form, ordered tag a profile's models carry
+    (`ModelDef.roles`), so a subagent is spawned on a role (e.g. "small",
+    "advisor") rather than a hardcoded model. Global: one vocabulary per server,
+    edited in Settings. No foreign key runs from an assignment to a row — the
+    assignments are JSON on the model — so a deleted role leaves dangling tags a
+    reader ignores. `label` is what a person reads, `id` is what assignments point
+    at, so a rename does not strand every tag. See docs/model-roles.md. */
+export const modelRoles = pgTable("model_roles", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  /** One line for the agent, e.g. "Cheap side-jobs". */
+  description: text("description").notNull().default(""),
+  /** Declared order, used when listing. */
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
 
 /** A user-made theme, exactly as the studio edits it: the per-mode colour
     halves `light`/`dark` and the mode-independent `base` (radius, the three
@@ -749,16 +770,6 @@ export const voiceProviders = pgTable("voice_providers", {
   model: text("model").notNull(),
   voice: text("voice").notNull().default(""),
   isDefault: boolean("is_default").notNull().default(false),
-  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-});
-
-/** Batch speech generation providers. Keys remain server-side and provider ids
-    are data, so adding a TTS adapter does not require a schema migration. */
-export const videoTtsProviders = pgTable("video_tts_providers", {
-  provider: text("provider").primaryKey(),
-  apiKey: text("api_key").notNull(),
-  model: text("model").notNull(),
-  voice: text("voice").notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 
@@ -860,6 +871,16 @@ export const sessions = pgTable(
       .$type<Record<string, string | boolean>>()
       .notNull()
       .default({}),
+    /** The thread's role → model assignment (`docs/model-roles.md`): one entry
+        per `model_roles` row, `role` a role id and `model` a profile model id
+        (`""` = the session model). The column's own order is the assignment —
+        `profile.models[]` order is never consulted. A spawn input like model and
+        effort: read at spawn to build `DAEDALUS_AGENT_MODEL_ROLES` and the
+        materialised subagent files, so changing it costs a respawn. */
+    helperModels: jsonb("helper_models")
+      .$type<{ role: string; model: string }[]>()
+      .notNull()
+      .default([]),
     /** True when the agent should close each answer with follow-up prompt
         suggestions in a `suggest-prompts` fenced block (`personas.ts`). On
         unless turned off. A spawn input like the persona: every runtime reads
@@ -999,41 +1020,6 @@ export const sessions = pgTable(
  * points at a deleted run. Step threads themselves are ordinary `sessions`
  * rows carrying `parent_session_id`.
  */
-/** Thread-owned video document. Scenes stay declarative JSON so agents can
-    propose edits without ever supplying executable render code. */
-export const sessionVideos = pgTable(
-  "session_videos",
-  {
-    sessionId: text("session_id")
-      .primaryKey()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    document: jsonb("document").$type<Record<string, unknown>>().notNull(),
-    revision: integer("revision").notNull().default(1),
-    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-  },
-  (t) => [index("session_videos_updated").on(t.updatedAt)],
-);
-
-/** Immutable render attempts and outputs for a thread's video document. */
-export const sessionVideoRenders = pgTable(
-  "session_video_renders",
-  {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    revision: integer("revision").notNull(),
-    document: jsonb("document").$type<Record<string, unknown>>().notNull(),
-    status: text("status", { enum: ["queued", "rendering", "completed", "failed"] }).notNull(),
-    progress: integer("progress").notNull().default(0),
-    outputPath: text("output_path"),
-    error: text("error"),
-    createdAt: bigint("created_at", { mode: "number" }).notNull(),
-    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
-  },
-  (t) => [index("session_video_renders_session").on(t.sessionId, t.createdAt)],
-);
-
 export const workflowRuns = pgTable(
   "workflow_runs",
   {
@@ -1076,6 +1062,9 @@ export interface WorkflowStepRecord {
   error: string | null;
   startedAt: number | null;
   endedAt: number | null;
+  /** A script agent's call (prompt and options, hashed): what a relaunch with
+      `resumeFromRunId` matches to reuse this step's output. */
+  key?: string;
 }
 
 /**

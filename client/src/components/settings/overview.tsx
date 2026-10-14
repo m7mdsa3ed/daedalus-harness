@@ -3,7 +3,7 @@
    one page of links. In a wide panel the rail already lists them, so this is a
    landing rather than the only way in; in a narrow one the rail is a picker
    that closes on every pick, and without this page "Settings" dropped you
-   straight into General with the other nineteen sections behind a menu. Every
+   straight into General with the other sections behind a menu. Every
    opener that means *settings*, not a section, lands here (`settingsRootPath`);
    the rail's rows and the palette still go straight to a section. */
 import { ChevronRight } from "lucide-react"

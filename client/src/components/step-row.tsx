@@ -141,14 +141,17 @@ export const StepRow = React.memo(function StepRow({
   metric,
   control,
   detail,
+  foldedTarget,
   below,
   firstRow,
   belowFlush = false,
   startedAt,
+  endedAt,
   mono = true,
   defaultOpen = false,
   openSetting,
   autoOpen,
+  plain = false,
   icon: Icon,
   iconAccent,
   iconChip,
@@ -190,6 +193,8 @@ export const StepRow = React.memo(function StepRow({
       takes the row's gap instead of a separator dot in front of it. */
   control?: React.ReactNode
   detail?: React.ReactNode
+  /** Alternate folded content shown beneath the headline. */
+  foldedTarget?: React.ReactNode
   /** Content beside the title, on its first row rather than underneath. */
   firstRow?: React.ReactNode
   /** A strip under the header that stays whether or not the row is open —
@@ -202,7 +207,14 @@ export const StepRow = React.memo(function StepRow({
       that hangs a rail off the mark (a subagent's latest steps) brings its own
       indent, and the title's on top of it cost a nested worker 22px a level. */
   belowFlush?: boolean
+  /** When the step began. With `endedAt` it is a length: while the step is
+      live the row ticks from it, and once it has stopped the two together are
+      how long it took — the half a replay has to bring with it, since the
+      ticking one does not survive a reload. */
   startedAt?: number
+  /** When the step stopped. Absent on a step still running, and on one whose
+      runtime never said. */
+  endedAt?: number
   mono?: boolean
   /** Start expanded — edits show their diff without a click (see ToolStep). */
   defaultOpen?: boolean
@@ -216,6 +228,8 @@ export const StepRow = React.memo(function StepRow({
       click still outranks it, so a reader who opened the folded detail keeps it
       open. `undefined` leaves the row on the ordinary latch. */
   autoOpen?: boolean
+  /** Draw the row like plain transcript prose, without step chrome or gutter. */
+  plain?: boolean
   /** Leading mark. On an expandable row it swaps for a chevron on hover, so
       the disclosure affordance appears where the eye already is instead of at
       the far end of the line. */
@@ -280,6 +294,16 @@ export const StepRow = React.memo(function StepRow({
   const active = status === "in_progress" || status === "pending"
   const failed = status === "failed"
   const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
+  /* A step that has stopped, whose two ends both came with its updates: the
+     figure is the step's own wall time and not this device's guess at it. A
+     live counter cannot cover this — it stops ticking with the stream that fed
+     it, and a reloaded transcript still has to say how long the step took. Same
+     reading either way, so it takes the same gate and formatter below. */
+  const settledMs =
+    !active && startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
+      ? endedAt - startedAt
+      : null
+  const clockMs = elapsedMs ?? settledMs
   const runDir = React.useContext(StepDirContext)
   const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)
 
@@ -327,7 +351,8 @@ export const StepRow = React.memo(function StepRow({
           // negative start margin, which left the row's content edge 12px shy
           // of the right edge that messages run to.
           "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-150",
-          expandable && "hover:bg-muted/40",
+          plain && "mx-0 w-full px-0 py-0 hover:bg-transparent",
+          expandable && !plain && "hover:bg-muted/40",
           toolLayout === "cards" && "mx-0 w-full rounded-md hover:bg-muted/60",
           toolLayout === "compact" && "py-0",
           toolLayout === "rail" && "mx-0 w-full hover:bg-muted/30",
@@ -341,9 +366,10 @@ export const StepRow = React.memo(function StepRow({
           type="button"
           disabled={!expandable}
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-start gap-2 text-start"
+          aria-expanded={expandable ? open : undefined}
+          className={cn("flex min-w-0 flex-1 items-start gap-2 text-start", plain && "gap-0")}
         >
-          {Icon && (
+          {!plain && Icon && (
             <span
               className={cn(
                 // h-6, not size-3.5: the mark has to occupy a whole line box, or
@@ -369,12 +395,14 @@ export const StepRow = React.memo(function StepRow({
                   )}
                 />
               )}
-              <Icon
-                className={cn(
-                  "relative size-3 transition-opacity duration-100",
-                  expandable && (open ? "opacity-0" : "group-hover/step:opacity-0")
-                )}
-              />
+              {Icon && (
+                <Icon
+                  className={cn(
+                    "relative size-3 transition-opacity duration-100",
+                    expandable && (open ? "opacity-0" : "group-hover/step:opacity-0")
+                  )}
+                />
+              )}
               {expandable && (
                 <ChevronRightIcon
                   aria-hidden
@@ -389,50 +417,39 @@ export const StepRow = React.memo(function StepRow({
               )}
             </span>
           )}
-          {/* Steps are what the agent did, not what it said: the whole row sits at
-              caption weight so prose stays the thing you read. */}
-          <span className="flex min-w-0 flex-1 flex-col">
-            {/* The title and the file it acted on are one part, not two: the
-                chip is the object of the verb beside it, so they sharpen
-                together or the row reads as "Read" … "package.json". */}
-            <span className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-1.5">
-              <span
-                className={cn(
-                  "min-w-0 truncate text-xs leading-6",
-                  mono && "font-mono",
-                  failed ? "text-destructive" : "text-muted-foreground",
-                  active && "harness-shimmer"
-                )}
-              >
-                {open && openTarget !== undefined ? openTarget : target}
-              </span>
-              {/* The file a step acted on, as a chip: the path is gone in the
-                  basename, so the row says "Read" + `package.json` instead of an
-                  elided "/var/www/…/package.json". Baseline-aligned with the
-                  title so it reads on the same line, never on a second row. */}
-              {file && <FileBadge file={file} filePath={filePath} range={fileRange} />}
+          {plain ? (
+            <div className="min-w-0 flex-1 text-start text-sm leading-relaxed text-muted-foreground">
+              {!open && foldedTarget ? foldedTarget : detail}
+            </div>
+          ) : (
+            <span className="flex min-w-0 flex-1 flex-col">
+              <div className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-1.5">
+                <span
+                  className={cn(
+                    "min-w-0 truncate text-xs leading-6",
+                    mono && "font-mono",
+                    failed ? "text-destructive" : "text-muted-foreground",
+                    active && "harness-shimmer"
+                  )}
+                >
+                  {open && openTarget !== undefined ? openTarget : target}
+                </span>
+                {file && <FileBadge file={file} filePath={filePath} range={fileRange} />}
+              </div>
+              {caption && (
+                <span
+                  dir="auto"
+                  className={cn(
+                    "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
+                    d === "rtl" ? "text-right" : "text-left",
+                    mono && "font-mono"
+                  )}
+                >
+                  {caption}
+                </span>
+              )}
             </span>
-            {/* The command under its description. One notch quieter and one notch
-                smaller than the title, and always mono — it is the literal thing
-                that ran, so it is read as code even when the line above it is
-                prose. `-mt-1` claws back the slack in the two leadings so the
-                pair reads as one row rather than as two. */}
-            {caption && (
-              <span
-                dir="auto"
-                className={cn(
-                  "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
-                  d === "rtl" ? "text-right" : "text-left",
-                  // Mono follows the title: a caption under a command is the
-                  // literal thing that ran, but under prose (a subagent's
-                  // model, a run's live step) it is prose too.
-                  mono && "font-mono"
-                )}
-              >
-                {caption}
-              </span>
-            )}
-          </span>
+          )}
 
         </button>
         {firstRow}
@@ -442,7 +459,7 @@ export const StepRow = React.memo(function StepRow({
             its own colour, but at the group's size and not its own. */}
         <StepMeta
           parts={[
-            elapsedMs !== null && elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null,
+            clockMs !== null && clockMs >= 2000 ? formatElapsed(clockMs) : null,
             ...(metric ?? []),
             failed ? <span className="text-destructive">failed</span> : label,
           ]}
@@ -455,10 +472,10 @@ export const StepRow = React.memo(function StepRow({
           only during this short transition; once open it returns to natural
           height and can stream or scroll normally. */}
       {belowContent && (
-        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && "ps-7")}>{belowContent}</div>
+        <div className={cn("harness-fade-in mb-1 min-w-0", !belowFlush && !plain && "ps-7")}>{belowContent}</div>
       )}
       <AnimatePresence initial={false}>
-        {expandable && open && (
+        {expandable && open && !plain && (
           <m.div
             key="step-detail-clip"
             ref={detailClipRef}
@@ -478,7 +495,7 @@ export const StepRow = React.memo(function StepRow({
                 outside its height and snapped away after every collapse (14px). */}
             <div
             className={cn(
-            "mt-1 mb-2.5 min-w-0 space-y-2",
+            plain ? "mt-0 mb-2.5 min-w-0 space-y-2" : "mt-1 mb-2.5 min-w-0 space-y-2",
             toolLayout === "cards" && "mt-2 border-t border-border/50 pt-2",
             toolLayout === "compact" && "mt-0.5 mb-1 space-y-1",
             toolLayout === "rail" && "mt-1 ps-3",

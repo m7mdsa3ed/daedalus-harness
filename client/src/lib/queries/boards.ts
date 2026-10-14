@@ -6,7 +6,7 @@
    links, children) is its own key, invalidated by anything that touches it. */
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
-import type { Board, BoardList, BoardStatus, BoardView, Sprint, ViewKind } from "@/lib/boards"
+import type { Board, BoardList, BoardStatus, BoardsPayload, BoardView, Sprint, ViewKind } from "@/lib/boards"
 import {
   completeSprint,
   createBoard,
@@ -106,13 +106,15 @@ export function useBoardsEnabled(enabled: boolean) {
   }
 }
 
-/** Every task, across every board — the page filters by board. */
-export function useTasksQuery() {
+/** Every task, across every board — the page filters by board. `enabled`
+    lets the composer's `@` menu ask only once it offers tasks. */
+export function useTasksQuery(enabled = true) {
   const settings = useServer()
   return useQuery({
     queryKey: tasksKey(settings),
     queryFn: ({ signal }) => fetchTasks(settings, signal),
     staleTime: 15_000,
+    enabled,
   })
 }
 
@@ -170,6 +172,52 @@ function useTaskCache() {
   }
 }
 
+/* ── Optimistic writes ──
+   A move must land where it was dropped *now*, not after the round trip.
+   TanStack Query's optimistic-update recipe: in onMutate cancel in-flight
+   reads of the list (so a stale answer cannot overwrite the prediction),
+   snapshot it, write the predicted rows; on error put the snapshot back and
+   re-read. Success still adopts the server's rows — the prediction is a
+   preview, the server stays the authority. Completion follows the target
+   column's category, as the server's rule does. */
+type Snapshot = { previous?: Task[] }
+
+function useOptimisticTasks() {
+  const settings = useServer()
+  const qc = useQueryClient()
+  return {
+    async apply(patch: (task: Task, doneIds: Set<string>, now: number) => Task): Promise<Snapshot> {
+      await qc.cancelQueries({ queryKey: tasksKey(settings) })
+      const previous = qc.getQueryData<Task[]>(tasksKey(settings))
+      const statuses = qc.getQueryData<BoardsPayload>(boardsKey(settings))?.statuses ?? []
+      const doneIds = new Set(statuses.filter((s) => s.category === "done").map((s) => s.id))
+      const now = Date.now()
+      const changed: Task[] = []
+      qc.setQueryData<Task[]>(tasksKey(settings), (prev) =>
+        prev?.map((t) => {
+          const next = patch(t, doneIds, now)
+          if (next !== t) changed.push(next)
+          return next
+        }),
+      )
+      // The open detail panel reads its own key; keep it in step with the list.
+      for (const row of changed)
+        qc.setQueryData<TaskDetail>(taskDetailKey(settings, row.id), (prev) => (prev ? { ...prev, task: row } : prev))
+      return { previous }
+    },
+    rollback(snapshot: unknown) {
+      const previous = (snapshot as Snapshot | undefined)?.previous
+      if (previous) qc.setQueryData(tasksKey(settings), previous)
+      void qc.invalidateQueries({ queryKey: tasksKey(settings) })
+      void qc.invalidateQueries({ queryKey: taskDetailKey(settings) })
+    },
+  }
+}
+
+/** Completion after a column change: kept if it stays done, stamped on entering done, cleared on leaving. */
+const completion = (task: Task, statusId: string, doneIds: Set<string>, now: number) =>
+  statusId === task.statusId ? task.completedAt : doneIds.has(statusId) ? (task.completedAt ?? now) : null
+
 export function useCreateTask() {
   const cache = useTaskCache()
   return useApiMutation<{ input: TaskInput & { title: string } }, Task>(
@@ -185,6 +233,7 @@ export function useCreateTask() {
 
 export function useUpdateTask() {
   const cache = useTaskCache()
+  const optimistic = useOptimisticTasks()
   return useApiMutation<{ id: string; input: TaskInput }, Task>(
     [],
     (settings, { id, input }) => updateTask(settings, id, input),
@@ -193,6 +242,25 @@ export function useUpdateTask() {
       // The activity log grew; the parent may have gained or lost a child.
       cache.invalidateDetail(task.id)
       if (task.parentId) cache.invalidateDetail(task.parentId)
+    },
+    {
+      onMutate: ({ id, input }) => {
+        const { checklist, custom, ...fields } = input
+        return optimistic.apply((t, doneIds, now) => {
+          if (t.id !== id) return t
+          return {
+            ...t,
+            ...fields,
+            archived: fields.archived ?? t.archived,
+            // New items have no id until the server answers; a temporary one keeps React keys stable.
+            checklist: checklist ? checklist.map((c, i) => ({ ...c, id: c.id ?? `pending-${i}` })) : t.checklist,
+            custom: custom ? { ...t.custom, ...custom } : t.custom,
+            completedAt: fields.statusId ? completion(t, fields.statusId, doneIds, now) : t.completedAt,
+            updatedAt: now,
+          }
+        })
+      },
+      onError: (_err, _input, snapshot) => optimistic.rollback(snapshot),
     },
   )
 }
@@ -223,12 +291,33 @@ export function useDeleteTask() {
 
 /** Atomically commit a reorder / status move; the server's authoritative list
     replaces the cache, so the client never invents an ordering. */
+const REORDER_KEY = ["tasks", "reorder"] as const
+
 export function useReorderTasks() {
   const cache = useTaskCache()
+  const optimistic = useOptimisticTasks()
+  const qc = useQueryClient()
   return useApiMutation<{ entries: ReorderEntry[]; board: string }, Task[]>(
     [],
     (settings, { entries, board }) => reorderTasks(settings, entries, board),
-    (rows) => cache.setAll(rows),
+    (rows) => {
+      /* Two quick drags: the first answer predates the second drop, and
+         adopting it would flash the card back. Only the last one in flight
+         writes; its answer already contains every earlier move. */
+      if (qc.isMutating({ mutationKey: REORDER_KEY }) === 1) cache.setAll(rows)
+    },
+    {
+      mutationKey: REORDER_KEY,
+      onMutate: ({ entries }) => {
+        const byId = new Map(entries.map((e) => [e.id, e]))
+        return optimistic.apply((t, doneIds, now) => {
+          const e = byId.get(t.id)
+          if (!e || (e.statusId === t.statusId && e.order === t.order)) return t
+          return { ...t, statusId: e.statusId, order: e.order, completedAt: completion(t, e.statusId, doneIds, now), updatedAt: now }
+        })
+      },
+      onError: (_err, _input, snapshot) => optimistic.rollback(snapshot),
+    },
   )
 }
 

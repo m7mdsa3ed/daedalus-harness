@@ -55,13 +55,8 @@ import { Accordion as UiAccordion, AccordionContent, AccordionItem, AccordionTri
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { DiffView } from "@/components/ui/diff-view"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
-import {
-  MorphingDialog,
-  MorphingDialogContent,
-  MorphingDialogOpen,
-  MorphingDialogSource,
-} from "@/components/ui/morphing-dialog"
 import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Notice } from "@/components/notice"
 import { TodoChecklist } from "@/components/todo-checklist"
@@ -816,21 +811,27 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
       {/* The figure opens into a reader: two charts, so the one in the panel
           is a fresh sketch — an arrangement made there is gone on close, the
           same as a reload. */}
-      <MorphingDialog>
-        <MorphingDialogSource className="relative rounded-md">
+      <Dialog>
+        <div className="relative rounded-md">
           <InteractiveFlowchart key={chartKey} {...chart} />
-          <MorphingDialogOpen
-            title="Full screen"
-            className="absolute top-2 right-2 z-10 inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+          <DialogTrigger
+            render={
+              <button
+                type="button"
+                title="Full screen"
+                className="absolute top-2 right-2 z-10 inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+              />
+            }
           >
             <Maximize2 aria-hidden className="size-3.5" />
             <span className="sr-only">Full screen</span>
-          </MorphingDialogOpen>
-        </MorphingDialogSource>
-        <MorphingDialogContent label={props.caption ?? "Flowchart"}>
+          </DialogTrigger>
+        </div>
+        <DialogContent className="flex h-[calc(var(--float-h)-2rem)] w-[min(64rem,calc(var(--float-w)-1rem))] max-w-none flex-col gap-0 overflow-hidden p-2 sm:max-w-[calc(var(--float-w)-2rem)]">
+          <DialogTitle className="sr-only">{props.caption ?? "Flowchart"}</DialogTitle>
           <InteractiveFlowchart key={chartKey} {...chart} fill />
-        </MorphingDialogContent>
-      </MorphingDialog>
+        </DialogContent>
+      </Dialog>
       {props.caption && <p className={cn(META, "px-1")}>{props.caption}</p>}
       <p className="px-1 text-[10px] text-muted-foreground/75">
         Drag nodes; drag between handles to connect. Select an edge or node and press Delete to remove it.
@@ -1215,6 +1216,81 @@ const Heatmap = defineComponent({
   },
 })
 
+const Map = defineComponent({
+  name: "Map",
+  description:
+    "An offline world map with labeled markers. Give each location a label, latitude and longitude in degrees, and an optional detail; no tiles or network data are loaded.",
+  props: z.object({
+    locations: z.array(
+      z.object({
+        label: z.string(),
+        latitude: z.number().min(-90).max(90),
+        longitude: z.number().min(-180).max(180),
+        detail: z.string().optional(),
+      })
+    ),
+    title: z.string().optional(),
+  }),
+  component: ({ props }) => (
+    <Box className="w-full overflow-hidden">
+      {props.title && <BoxHeader title={props.title} />}
+      <div className="bg-[linear-gradient(180deg,color-mix(in_oklch,var(--chart-2)_8%,var(--card)),var(--card))] px-2 py-3 @panel-sm:px-4">
+        <svg
+          className="block h-auto w-full"
+          viewBox="0 0 1000 500"
+          preserveAspectRatio="xMidYMid meet"
+          aria-hidden="true"
+        >
+          <g fill="none" stroke="var(--border)" strokeOpacity="0.55" strokeWidth="1" strokeDasharray="3 7">
+            <path d="M0 125H1000M0 250H1000M0 375H1000" />
+            <path d="M250 0V500M500 0V500M750 0V500" />
+          </g>
+          <g fill="color-mix(in oklch, var(--chart-2) 24%, var(--muted))" stroke="color-mix(in oklch, var(--chart-2) 40%, var(--border))" strokeWidth="2" strokeLinejoin="round">
+            <path d="M76 112 91 91 122 75 154 67 182 78 201 70 220 90 247 94 263 113 252 136 231 148 220 168 200 178 188 205 169 225 154 219 144 195 124 180 113 157 93 151 85 132 72 125Z" />
+            <path d="m227 197 16 7 15 17 22 5 12 20 19 13-8 28-14 26-7 33-16 31-7 33-15 23-12-14-4-34-12-26-5-37-13-24 6-27-8-19 10-24Z" />
+            <path d="m287 104 11-16 17-7 13 12-5 19-16 7Z" />
+            <path d="m339 88 10-20 22-12 20 7 8 19-15 17-25 2Z" />
+            <path d="m434 123 16-17 25 3 14 15-9 19-26 3-16-9Z" />
+            <path d="m450 155 22-12 31 8 20 24-5 36-17 25-8 36-16 36-9 37-19 27-13-20-3-40-13-31 3-42-10-34 8-36Z" />
+            <path d="m499 104 24-21 43-9 23 12 35-6 34 14 39-1 31 14 48-4 35 20 57-6 31 16-8 21-43 5-25 18-38-5-24 19-35-5-19 20-34-6-24-19-34 6-16-20-33 4-23-18-35 2-19-18-32 2-15-17Z" />
+            <path d="m751 256 24-14 34 4 15 17-12 19-34 4-23-12Z" />
+            <path d="m790 337 25-15 37 7 28 21-6 26-26 14-38-7-24-20Z" />
+            <path d="M421 463 454 451 493 456 531 450 568 459 604 454 641 464 678 457 717 466 756 461 794 469 827 464 865 472 901 467 938 476 956 493 917 499 866 495 816 501 766 495 716 500 668 494 619 499 568 493 519 498 471 492 432 499 403 486Z" />
+          </g>
+          {props.locations.map((location, index) => {
+            const x = ((location.longitude + 180) / 360) * 1000
+            const y = ((90 - location.latitude) / 180) * 500
+            const color = chartColor(index)
+            return (
+              <g key={`${location.label}-${index}`}>
+                <circle cx={x} cy={y} r="12" fill={color} fillOpacity="0.18" />
+                <circle cx={x} cy={y} r="5.5" fill={color} stroke="var(--card)" strokeWidth="2.5">
+                  <title>{`${location.label}: ${location.latitude.toFixed(2)}, ${location.longitude.toFixed(2)}${location.detail ? ` - ${location.detail}` : ""}`}</title>
+                </circle>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      {props.locations.length > 0 ? (
+        <ul className={cn("grid grid-cols-1 divide-y divide-border/50 @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
+          {props.locations.map((location, index) => (
+            <li key={`${location.label}-${index}`} className="flex min-w-0 items-start gap-2.5 py-2 @panel-sm:[&:nth-child(n+3)]:border-t @panel-sm:[&:nth-child(n+3)]:border-border/50">
+              <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: chartColor(index) }} />
+              <span className="min-w-0 flex-1">
+                <span className={cn(BODY, "block font-medium")}>{location.label}</span>
+                <span className={META}>{location.latitude.toFixed(2)}, {location.longitude.toFixed(2)}{location.detail ? ` · ${location.detail}` : ""}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className={cn(META, PAD)}>No locations to plot.</div>
+      )}
+    </Box>
+  ),
+})
+
 const Funnel = defineComponent({
   name: "Funnel",
   description: "A staged funnel showing volume and retention through each step.",
@@ -1361,6 +1437,7 @@ export const openuiLibrary = createLibrary({
     Stat,
     Sparkline,
     Heatmap,
+    Map,
     Funnel,
     Waterfall,
     Table,
@@ -1413,7 +1490,15 @@ export const openuiLibrary = createLibrary({
       notes: [
         "- Flowchart is the only diagram component. Give nodes and edges; every edge's `from` and `to` must match node ids.",
         "- Flowcharts are locally interactive: readers can move nodes, connect handles, select elements and delete them. Edits are temporary and do not change the generated answer or run tools.",
-        '- Keep a flowchart under ~12 nodes and use direction "right" for a pipeline, "down" for a hierarchy; a wide graph does not survive a narrow panel.',
+        '- Keep a flowchart under ~12 nodes. Its layout responds to the available panel width: rightward pipelines automatically become vertical in narrow panels, and wide sibling layers wrap to fit.',
+      ],
+    },
+    {
+      name: "Maps",
+      components: ["Map"],
+      notes: [
+        "- Map coordinates are latitude and longitude in degrees; latitude is -90 to 90 and longitude is -180 to 180.",
+        "- Map draws an offline world outline and the supplied labeled markers only; it does not fetch tiles or resolve place names.",
       ],
     },
     {

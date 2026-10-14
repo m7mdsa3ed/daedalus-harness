@@ -46,7 +46,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { FolderIcon, History as HistoryIcon, Layers, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
+import { ChevronRight, FolderIcon, History as HistoryIcon, Layers, Loader2, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -256,6 +256,77 @@ export function ThreadSidebar({
     () => ({ actions, status, pinSet, held, unread, projectNames }),
     [actions, status, pinSet, held, unread, projectNames]
   )
+
+  /* ── Threads arrive a page at a time ──
+     The store holds a window of the list, not the whole of it (the server
+     pages it — `GET /api/sessions/page`), so two things keep the rows the
+     sidebar needs in hand. Whatever the toolbar's pin, the tabs opened here and
+     the thread in front of you name is loaded on sight, so a tab or a pin never
+     goes missing; and the bottom of the panel is a sentinel that asks for the
+     next page as you reach it. Loaded rows the in-panel filter hides are still
+     loaded — nothing here re-fetches or drops a row to filter it. */
+  const sessionWindow = useStoreSelect((state) => state.sessionWindow)
+  React.useEffect(() => {
+    const needed = [...openIds, activeThreadId].filter((id): id is string => !!id)
+    if (needed.length === 0) return
+    void actions.ensureSessionsLoaded(needed).catch(() => {
+      /* Ambient: a thread that could not be looked up simply does not draw. */
+    })
+  }, [actions, openIds, activeThreadId])
+
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const sentinelRef = React.useRef<HTMLDivElement>(null)
+  /* Handed to the effect below through a ref: the loader is async and has to
+     read the window as it stands *after* a page lands, not as this render
+     closed over it. */
+  const windowRef = React.useRef(sessionWindow)
+  windowRef.current = sessionWindow
+  const busyRef = React.useRef(false)
+  React.useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return
+    const scroller = node.closest<HTMLElement>('[data-sidebar="content"]')
+    let cancelled = false
+    const load = async () => {
+      if (cancelled || busyRef.current) return
+      const seen = windowRef.current
+      if (seen.ids.length >= seen.total) return
+      /* Nothing is scrolled and nothing overflows: there is no long tail to
+         reach, so loading one would grow a list nobody is looking at (a page's
+         rows land in fold-shut folders). Wait for the panel to be tall enough
+         to scroll at all. */
+      if (scroller && scroller.scrollHeight <= scroller.clientHeight + 8) return
+      const box = scroller?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight }
+      // Only when the sentinel is at (or near) the foot of what is in front.
+      if (node.getBoundingClientRect().top > box.bottom + 240) return
+      const before = seen.ids.length
+      busyRef.current = true
+      setLoadingMore(true)
+      try {
+        await actions.loadMoreSessions()
+      } catch {
+        /* Quiet: the list simply stops growing, exactly as it would offline. */
+      } finally {
+        busyRef.current = false
+        setLoadingMore(false)
+      }
+      /* Still in view and the page grew — the reader is at the bottom of a
+         panel with room left, so fill it rather than making them jiggle the
+         scrollbar. A page that did not grow ends the walk. */
+      if (windowRef.current.ids.length > before) void load()
+    }
+    const target: HTMLElement | Window = scroller ?? window
+    target.addEventListener("scroll", load, { passive: true })
+    window.addEventListener("resize", load)
+    void load()
+    return () => {
+      cancelled = true
+      target.removeEventListener("scroll", load)
+      window.removeEventListener("resize", load)
+    }
+  }, [actions, sessionWindow.total])
+
+  const hasMore = sessionWindow.ids.length < sessionWindow.total
   const filtered = view.filter !== "all"
   const searched = query.trim() !== ""
   const nothingLive = live.length === 0
@@ -460,6 +531,37 @@ export function ThreadSidebar({
           <ThreadList sessions={trashed} trash limit={PROJECT_PAGE_SIZE} />
           <EmptyTrash sessions={trashed} actions={actions} />
         </FoldableGroup>
+      )}
+
+      {/* The end of the loaded window, and the sentinel the scroll watches for.
+          A page trades the whole list for a window, so this is where the rest of
+          the history arrives — as the reader reaches the foot of the panel, or
+          when the button below is tapped (a phone, or a panel too short to
+          scroll). It draws nothing once the window has caught up with the
+          server's count. */}
+      {(hasMore || loadingMore) && (
+        <div ref={sentinelRef} className="px-2 pt-1 pb-4">
+          <button
+            type="button"
+            disabled={loadingMore}
+            onClick={() => {
+              void actions.loadMoreSessions().catch(() => {
+                /* Quiet: the window simply stops where it is. */
+              })
+            }}
+            className="flex h-8 w-full items-center justify-center gap-2 rounded-lg text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 group-data-[collapsible=icon]:hidden"
+          >
+            {loadingMore ? (
+              <Loader2 aria-hidden className="size-3.5 animate-spin" />
+            ) : (
+              <ChevronRight aria-hidden className="size-4" />
+            )}
+            <span>{loadingMore ? "Loading more\u2026" : "Load more threads"}</span>
+          </button>
+          <span className="sr-only">
+            {sessionWindow.ids.length} of {sessionWindow.total} threads loaded
+          </span>
+        </div>
       )}
     </SidebarEnvContext.Provider>
   )

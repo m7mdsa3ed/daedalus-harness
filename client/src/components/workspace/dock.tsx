@@ -39,6 +39,7 @@ import {
 } from "@/components/workspace/dock-context"
 import { navigateTo, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
+import { useStoreHandle } from "@/lib/store"
 import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
 import { MOBILE_BREAKPOINT } from "@/hooks/use-device"
 import {
@@ -142,6 +143,7 @@ export interface DockController extends WorkspaceDock {
 
 export function useWorkspaceDock(): DockController {
   const apiRef = React.useRef<DockviewApi | null>(null)
+  const store = useStoreHandle()
   const closedRef = React.useRef<{ panel: PanelDescriptor; title: string }[]>([])
   const guardsRef = React.useRef(new Map<string, CloseGuard>())
   /* Programmatic removals — a preset rebuild, a prune, replacing a tab — are
@@ -571,16 +573,32 @@ export function useWorkspaceDock(): DockController {
   const isPinned = React.useCallback((id: string) => isPanelPinned(id), [])
 
   /* ── Its own window ──
-     A popout is a real browser window holding this panel, rendered by the same
-     React tree (Dockview reparents the DOM). A *user gesture* only: `window.open`
-     off one is a popup, and a browser blocks it — which is also why a
-     popped-out panel comes home rather than reopening on the next load
+     A sent thread opens as the whole app in a window of its own (its own dock,
+     sidebar and socket; `lib/popout.ts` scopes its layout): Dockview's popout
+     reparents the panel's DOM into a bare `popout.html` while this window's
+     React tree keeps rendering it, so the window held one tab and nothing
+     else, and every ResizeObserver/rAF the transcript is measured by belonged
+     to *this* document — it drew nothing until a resize made Dockview lay the
+     other window out. Every other panel (and a draft, which has no row a
+     second window could load) keeps Dockview's popout. A *user gesture* only:
+     `window.open` off one is a popup, and a browser blocks it — which is also
+     why a popped-out panel comes home rather than reopening on the next load
      (`dockPopouts`). */
   const popoutPanel = React.useCallback(
     async (id?: string) => {
       const api = apiRef.current
       const panel = panelFor(id)
       if (!api || !panel) return false
+      const descriptor = descriptorOf(panel)
+      if (descriptor?.kind === "chat") {
+        const { sessionId } = descriptor
+        const meta = store.getState().sessions.find((session) => session.id === sessionId)
+        if (meta && !meta.draft) {
+          if (window.desktop?.openThreadWindow) return window.desktop.openThreadWindow(sessionId)
+          const url = `${threadPath(sessionId)}?popout=1&windowId=${crypto.randomUUID()}`
+          return !!window.open(url, "_blank", "popup,width=1100,height=820")
+        }
+      }
       try {
         return await api.addPopoutGroup(panel, { popoutUrl: `${import.meta.env.BASE_URL}popout.html` })
       } catch (error) {
@@ -588,7 +606,7 @@ export function useWorkspaceDock(): DockController {
         return false
       }
     },
-    [panelFor]
+    [panelFor, store]
   )
 
   /* Floating is the same move without a window. Toggling back docks it into

@@ -18,7 +18,6 @@ import { Badge } from "@/components/ui/badge"
 import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon } from "@/components/entity-icon"
 import { ThreadInfoCard } from "./thread-info-card"
-import { ChatPanelIcon } from "@/components/workspace/panel-kinds"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
@@ -111,23 +110,16 @@ export const ThreadRow = React.memo(function ThreadRow({
      `memo`, so every row in the list re-rendered on each sidebar toggle. */
   const isMobile = useIsMobile()
   /* ── Two lines ──
-     The title owns the first line and the status is *beside* it, because the
-     status is about the title; the second line says where the thread runs and
-     when it last spoke. One line could hold neither once a title was long, and
-     the project — which the ⋯ card was the only place to find — is on every row
-     here, which is what a list holding several projects needs. */
+     The title owns the first line with the status badge beside it. The second
+     line carries the agent, the project and when the thread last spoke — the
+     facts a title cannot, and which the ⋯ card was once the only place to read. */
   const row = (
     <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
-      {/* A running turn is the title itself shimmering — the pale band that the
-          working line and a live thought already use — rather than a badge
-          beside it: the row *is* the thing in motion. A reconcile pulse is the
-          opposite: something happening *to* the thread, not in it. */}
       <span
         className={cn(
           "col-start-1 row-start-1 truncate",
           (session.exited || trash) && "text-muted-foreground",
           trash && "line-through",
-          state === "running" && "harness-shimmer",
           (state === "reconnecting" || state === "offline") && "animate-pulse"
         )}
       >
@@ -144,23 +136,27 @@ export const ThreadRow = React.memo(function ThreadRow({
           (state === "waiting" || state === "failed") && "pr-6"
         )}
       >
-        <ThreadStateBadge state={state} held={held} unread={unread && !trash} />
+        {state === "running" && !held ? (
+          <span title="Running" aria-label="Running" role="img">
+            <Loader2 className="size-3 animate-spin text-muted-foreground" />
+          </span>
+        ) : (
+          <ThreadStateBadge state={state} held={held} unread={unread && !trash} />
+        )}
         {(state === "reconnecting" || state === "offline") && (
           <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground/60" />
         )}
       </span>
-      {/* The second line: where it runs, and when it last spoke — the two facts a
-          title cannot carry and the ⋯ card was the only place to read. */}
-      <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 text-[11px] leading-4 text-muted-foreground">
-        {/* The tab strip's own mark — agent over project — so a row and the tab
-            it opens are visibly the same thread. Project folders drop the project. */}
-        <span aria-hidden title={showProject ? project : undefined} className="shrink-0">
-          {showProject ? (
-            <ChatPanelIcon agentId={session.agentId} projectId={session.projectId} className="size-3.5" />
-          ) : (
-            <AgentIcon agentId={session.agentId} className="size-3.5" />
-          )}
-        </span>
+      {/* The second line: the agent, where the thread runs, and when it last
+          spoke. The mark is the agent's alone, not the tab's paired
+          agent-over-project stack: that pairing is drawn for a 28px tab slot,
+          and squeezed into this line's 14px one the two discs overflowed their
+          box and ran into the project name beside them. The project is named on
+          this line anyway, so the mark carries the one fact the line does not —
+          which runtime the thread belongs to — and every row reads the same,
+          a folder's own threads included. */}
+      <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+        <AgentIcon agentId={session.agentId} className="size-3.5" />
         {/* An aside is flagged on the row: a thread started from a passage of
             another (`asideQuote`), whose card names that thread. */}
         {session.asideQuote && (
@@ -169,9 +165,13 @@ export const ThreadRow = React.memo(function ThreadRow({
           </span>
         )}
         {showProject && <span className="truncate">{project}</span>}
-        <span aria-hidden className="opacity-50">
-          ·
-        </span>
+        {/* The separator belongs between two things: a folder's own thread names
+            no project, and its age used to stand behind a leading dot. */}
+        {(showProject || session.asideQuote) && (
+          <span aria-hidden className="shrink-0 opacity-50">
+            ·
+          </span>
+        )}
         <span className="shrink-0 tabular-nums">{shortAge(activityAt(session))}</span>
       </span>
     </span>
@@ -234,7 +234,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           side={isMobile ? "bottom" : "right"}
           align={isMobile ? "end" : "start"}
           sideOffset={isMobile ? 8 : 4}
-          className="w-72 max-w-[calc(100vw-1rem)]"
+          className="w-72 max-w-[calc(var(--float-w)-1rem)]"
         >
           <div className="px-2 pt-1.5 pb-1">{card}</div>
           <DropdownMenuSeparator />
@@ -277,18 +277,12 @@ function ThreadStateBadge({ state, held, unread }: { state: ThreadStatus; held: 
     )
   }
   /* The quiet states are glyphs, one slot, in the order they matter: a held
-     turn (stopped, waiting for a model change and a resume), a turn running,
-     and a finished one nobody has looked at. */
+     turn (stopped, waiting for a model change and a resume), and a finished
+     one nobody has looked at. Running is shown in the first-row status slot. */
   if (held)
     return (
       <span title="Held at an error — waiting for a model change and a resume" aria-label="Held" role="img">
         <Pause className="size-3 text-amber-600 dark:text-amber-400" />
-      </span>
-    )
-  if (state === "running")
-    return (
-      <span title="Running" aria-label="Running" role="img">
-        <Loader2 className="size-3 animate-spin text-muted-foreground" />
       </span>
     )
   if (unread) return <span role="img" aria-label="Finished, unread" title="Finished since you last looked" className="size-2 rounded-full bg-primary" />

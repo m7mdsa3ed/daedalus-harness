@@ -2,15 +2,15 @@
    (`ConfigDrawer`): one drill-down row per kind, its page a list of switches.
    Reads the same links `ThreadToolsSections` does (`useThreadToolLinks`), so
    what a switch writes is what a menu toggle writes — a draft's pick, or a
-   started thread's change staged for the next send. */
-import { KeyRoundIcon, BlocksIcon, ServerIcon, SlashSquareIcon } from "lucide-react"
+   started thread's change staged for the next send. MCP servers are the
+   composer chip's (`composer/mcp-avatars.tsx`), not a drawer page. */
+import { KeyRoundIcon, BlocksIcon, SlashSquareIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import type { DrawerRow } from "@/components/config-drawer"
-import { McpIcon } from "@/components/entity-icon"
 import { Switch } from "@/components/ui/switch"
 import type { Actions } from "@/lib/actions"
-import { mcpSubtitle, type SessionMeta } from "@/lib/settings"
+import type { SessionMeta } from "@/lib/settings"
 import { useThreadToolLinks } from "./menu"
 
 function SwitchList<T extends { id: string; name: string }>({
@@ -78,18 +78,6 @@ export function useToolDrawerRows(meta: SessionMeta, actions: Actions, remember 
   )
   return [
     { type: "label", text: "Tools" },
-    {
-      type: "page",
-      label: "MCP servers",
-      icon: <ServerIcon className={iconClass} />,
-      value: count("mcpServerIds", mcpServers.length),
-      content: list(
-        "mcpServerIds",
-        [...mcpServers.filter((s) => s.type !== "builtin"), ...mcpServers.filter((s) => s.type === "builtin")],
-        mcpSubtitle,
-        (server) => <McpIcon server={server} className="size-4 shrink-0" />
-      ),
-    },
     {
       type: "page",
       label: "Skills",

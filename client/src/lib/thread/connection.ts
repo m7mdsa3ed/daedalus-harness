@@ -491,7 +491,26 @@ export class ThreadConnection {
    */
   openFromStore(opts: ConnectOpts = {}): Promise<void> {
     return this.run(async () => {
-      const meta = this.deps.getState().sessions.find((s) => s.id === this.id)
+      let meta = this.deps.getState().sessions.find((s) => s.id === this.id)
+      if (!meta) {
+        /* The list is a window now, so a row can be absent for a reason that is
+           nobody's fault: a tab restored from a layout older than the window, a
+           deep link, a thread reached from the palette. Ask for exactly this
+           one and open on the answer — the fetch's own rows are used directly
+           rather than re-read, because `getState()` is the last *committed*
+           state and would not show them until after this chain has moved on. */
+        try {
+          const rows = await api<SessionMeta[]>(
+            this.deps.settings,
+            `/api/sessions?ids=${encodeURIComponent(this.id)}`
+          )
+          if (rows.length > 0) this.deps.dispatch({ type: "session-extra", sessions: rows })
+          meta = rows.find((s) => s.id === this.id)
+        } catch {
+          /* Fall through to the absent answer below — an error here is the
+             same "not on this server" the row's absence already says. */
+        }
+      }
       if (!meta) {
         /* Not an error for a panel that opened before the list landed — the key
            it watches changes when it does, and this runs again. It *is* an error
@@ -847,9 +866,8 @@ export class ThreadConnection {
   ): Promise<void> {
     const revive = opts.revive ?? true
     /* An automatic attempt asks the cheap unauthenticated question first. Every
-       rung of every thread's ladder otherwise costs a full
-       `/api/sessions?deleted=1` — the whole list, deleted rows included, once
-       per open transcript per round — to discover what one shared health probe
+       rung of every thread's ladder otherwise costs a session read — once per
+       open transcript per round — to discover what one shared health probe
        already knows. A user-initiated reconnect skips the gate: it was asked
        for, and it should fail against the real route rather than against a
        probe. */
@@ -872,9 +890,16 @@ export class ThreadConnection {
        stray close belongs to nobody and is dropped where every other superseded
        socket's is. */
     this.detach()
-    const sessions = await api<SessionMeta[]>(this.deps.settings, "/api/sessions?deleted=1")
-    this.deps.dispatch({ type: "sessions", sessions })
-    const meta = sessions.find((s) => s.id === this.id)
+    /* This thread's row alone. The list is a window now (the sidebar pages it),
+       and a reconnect is about one thread — walking every rung of the ladder
+       with the whole list was the cost this reads around, and with a window it
+       would not even answer for a thread past it. By id, it always does. */
+    const rows = await api<SessionMeta[]>(
+      this.deps.settings,
+      `/api/sessions?ids=${encodeURIComponent(this.id)}`
+    )
+    if (rows.length > 0) this.deps.dispatch({ type: "session-extra", sessions: rows })
+    const meta = rows.find((s) => s.id === this.id)
     if (!meta) throw new Error("This thread no longer exists on the server.")
     /* Deleted mid-connection (another tab, another device): reconnecting is not
        a thing that can succeed, so stop the ladder and say what happened once,

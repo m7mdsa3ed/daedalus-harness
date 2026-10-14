@@ -1465,6 +1465,25 @@ assert.equal(styled.suggestFollowups, false, "the row records the toggle is off 
 const droppedMeta = metaLog().slice(dropped).find((e) => e.meta);
 assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told nothing about one");
 
+// The AIR door (`personaVia: "air-meta"`, claude-code's): the same text on the
+// extension's `customInstructions`, and never on `systemPrompt` as well —
+// claude-agent-acp lets a `systemPrompt` override it, and both would say it twice.
+{
+const { eq } = await import("drizzle-orm");
+const { db, agents: agentsTable } = await import("../src/db/index.js");
+await db.update(agentsTable).set({ personaVia: "air-meta" }).where(eq(agentsTable.id, "fake"));
+const beforeAir = metaLog().length;
+const air = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
+  suggestFollowups: true,
+  uiBlocks: false,
+});
+await air.bridge!.ready;
+const airMeta = metaLog().slice(beforeAir).find((e) => e.method === "session/new");
+assert.equal(airMeta!.meta?.jetbrains?.air?.customInstructions, SUGGEST_FOLLOWUPS_INSTRUCTIONS, "rules ride the AIR key");
+assert.equal(airMeta!.meta?.systemPrompt, undefined, "and only the AIR key");
+await db.update(agentsTable).set({ personaVia: "acp-meta" }).where(eq(agentsTable.id, "fake"));
+}
+
 /* --- a frozen peer is not a watching peer ---
    The server pushes a "Turn finished" notification only for a thread nobody is
    watching, and an attached socket used to be the whole of that test. It is

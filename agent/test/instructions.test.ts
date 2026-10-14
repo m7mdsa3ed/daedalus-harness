@@ -175,7 +175,9 @@ process.env.HOME = home;
 // --- end to end: it actually reaches the model ---
 {
   let sawSystem = "";
-  const env = testEnv({ projectInstructions: true });
+  const personaFile = join(outside, "persona-e2e.md");
+  writeFileSync(personaFile, "FROM THE FILE: must lose to the request");
+  const env = testEnv({ projectInstructions: true, personaFile });
   const agent = buildAgentApp({
     env,
     makeModel: (e, id) => {
@@ -196,11 +198,28 @@ process.env.HOME = home;
   });
   const { app: client } = makeClient();
   await client.connectWith(agent, async (ctx) => {
-    await initialize(ctx);
-    const { sessionId } = await ctx.request("session/new", { cwd: pkg, mcpServers: [] });
+    const init = await initialize(ctx);
+    const air = (init.agentCapabilities?._meta as { jetbrains?: { air?: { capabilities?: string[] } } })
+      ?.jetbrains?.air;
+    assert.ok(air?.capabilities?.includes("customInstructions"), "advertises AIR customInstructions");
+
+    const rules = (text: string) => ({ jetbrains: { air: { customInstructions: text } } });
+    const { sessionId } = await ctx.request("session/new", {
+      cwd: pkg,
+      mcpServers: [],
+      _meta: rules("HARNESS RULE: cite files"),
+    });
     await ctx.request("session/prompt", { sessionId, prompt: promptOf("hello") });
+    assert.ok(sawSystem.includes("PACKAGE RULE"), "the repo's rules reached the request");
+    assert.ok(sawSystem.includes("HARNESS RULE: cite files"), "customInstructions reached the request");
+    assert.ok(!sawSystem.includes("FROM THE FILE"), "the request outranks the env file");
+
+    // A resume carries the instructions as they are now — a respawn's rules change.
+    await ctx.request("session/resume", { sessionId, cwd: pkg, mcpServers: [], _meta: rules("HARNESS RULE: edited") });
+    await ctx.request("session/prompt", { sessionId, prompt: promptOf("again") });
+    assert.ok(sawSystem.includes("HARNESS RULE: edited"), "resume applies the new instructions");
+    assert.ok(!sawSystem.includes("cite files"), "and drops the old ones");
   });
-  assert.ok(sawSystem.includes("PACKAGE RULE"), "the repo's rules reached the request");
   console.log("instructions: end to end ok");
 }
 

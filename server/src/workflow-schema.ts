@@ -140,6 +140,8 @@ export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & {
       parent does; a script may spend a cheaper model on a mechanical stage. */
   model?: string;
   effort?: string;
+  /** `agent(…, {isolation: 'worktree'})`: a checkout of its own. */
+  isolation?: "worktree";
   /* ── Set only by `WorkflowRunner.ask` ──
      An ask is a one-step run on a pair of the caller's choosing rather than
      the parent's own, drawn as a plain subagent named `label`. */

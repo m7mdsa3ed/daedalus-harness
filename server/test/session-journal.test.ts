@@ -342,6 +342,58 @@ await test("a run of chunks replays as one event, standing at the run's last seq
   assert.equal(events[2].seq, 6, "and the log's own numbering is untouched");
 });
 
+await test("a merged run carries both its ends, so its length is measured", async () => {
+  /* The whole point of `endAt`: `at` alone is when a run began, and a run the
+     read merged into one event has no continuation left for a client to read an
+     end off. A step's length is the gap, and this read is the only place that
+     can see it — a replayed thought that could not say it said nothing at all. */
+  const s = await owner();
+  /* A gap between the chunks, because a run is not a millisecond long: before
+     `at` was struck out of the signature these three replayed as three events
+     and this read had nothing to merge at all. */
+  for (const piece of ["Let", " me", " think"]) {
+    journal.append(s, update(piece));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  journal.append(s, solid("a tool"));
+  journal.append(s, update("alone"));
+  const rows = await journal.eventsFrom(s.id, 0);
+  const events = await replayed(s.id);
+  assert.equal(events.length, 3, "one event for the run, then the tool, then the lone chunk");
+  const run = events[0] as { at?: number; endAt?: number };
+  assert.equal(run.at, (rows[0] as { at?: number }).at, "the run's start is its head row's stamp");
+  assert.equal(run.endAt, (rows[2] as { at?: number }).at, "and its end the last chunk's");
+  assert.ok((run.endAt ?? 0) > (run.at ?? 0), "which is where the length comes from");
+  /* Nothing merged the other two: a tool call is not a run, and a chunk with no
+     run behind it is the row the log holds. Neither gains an end it never had,
+     which is what keeps a replay the log. */
+  assert.equal((events[1] as { endAt?: number }).endAt, undefined, "no run, no end");
+  assert.equal((events[2] as { endAt?: number }).endAt, undefined, "a run of one stands as written");
+});
+
+await test("a run cut at the size cap still ends where it really ended", async () => {
+  /* Split into two events, a client merges them back into one item: the first
+     supplies the start and the second the end, so each piece's own end has to
+     be the run's progress and not the whole run restated twice. */
+  const s = await owner();
+  /* Three pieces, because the cut is made on the row that busts the budget
+     rather than before it: the first two are one event and the third is the
+     piece that reopens from the same head. */
+  const piece = "y".repeat(Math.ceil(REPLAY_CHUNK_BYTES * 0.6));
+  for (let i = 0; i < 3; i += 1) {
+    journal.append(s, update(piece));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const rows = await journal.eventsFrom(s.id, 0);
+  const events = await replayed(s.id);
+  assert.equal(events.length, 2, "one run, cut in two on the byte budget");
+  const [first, second] = events as { at?: number; endAt?: number }[];
+  assert.equal(first.at, (rows[0] as { at?: number }).at, "the first piece began with the run");
+  assert.equal(first.endAt, (rows[1] as { at?: number }).at, "and ended where it was cut");
+  assert.equal(second.at, (rows[0] as { at?: number }).at, "the second reopens from the same head");
+  assert.equal(second.endAt, (rows[2] as { at?: number }).at, "and ends with the run");
+});
+
 await test("a resume inside a run gets the tail of it, exactly once", async () => {
   // The reason this is a read and not a write: the journal still holds one row
   // per chunk, so a cursor landing mid-run cuts the run where the cursor is.

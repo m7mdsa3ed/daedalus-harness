@@ -32,9 +32,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  HelperModelRow,
   MenuAddItem,
   type ChoicePick,
+  HelperModelsSub,
   MenuRow,
   PILL,
   PillLabel,
@@ -55,7 +55,9 @@ import { SHELF_PAD } from "@/components/composer-strip";
 import { ConfigDrawer, type DrawerRows } from "@/components/config-drawer";
 import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows";
 import { useIsMobile } from "@/hooks/use-device";
-import { McpSelected } from "@/components/composer/mcp-avatars";
+import { useMenuShortcut } from "@/hooks/use-hotkey";
+import type { ShortcutId } from "@/lib/shortcuts";
+import { McpPicker } from "@/components/composer/mcp-avatars";
 import { ThreadToolsSections } from "@/components/thread-tools/menu";
 import { cn } from "@/lib/utils";
 import type { Actions } from "@/lib/actions";
@@ -80,6 +82,7 @@ import {
 } from "@/lib/queries/catalog";
 import { gitReposKey } from "@/lib/queries/keys";
 import { useServer } from "@/lib/server-context";
+import { useModelRoles } from "@/lib/queries/model-roles";
 import { gitRepos } from "@/lib/workspace/git-api";
 
 const DEFAULT_CHOICE = "__default__";
@@ -158,6 +161,7 @@ export function DraftScopeRow({
   editable = true,
   trailing,
   showSelectedMcps = true,
+  keys = false,
 }: {
   meta: SessionMeta;
   actions: Actions;
@@ -174,6 +178,9 @@ export function DraftScopeRow({
   /** Keep the scope path focused on location when the composer has its own
       selected-MCP readout beside model configuration. */
   showSelectedMcps?: boolean;
+  /** Answer `changeProject` (and `chooseMcp` when the MCPs are drawn here) —
+      only the composer in front of you may. */
+  keys?: boolean;
 }) {
   const { projects, project, configure } = useDraft(meta, actions, remember);
   /* Only the space in front of you — plus the draft's own project, so the
@@ -213,6 +220,7 @@ export function DraftScopeRow({
               icon: <ProjectIcon project={p} className="size-4" />,
             }))}
             onSelect={(id) => configure({ projectId: id })}
+            shortcut={keys ? "changeProject" : undefined}
             add={{
               label: "New project…",
               onSelect: () => newProject((id) => configure({ projectId: id })),
@@ -240,7 +248,9 @@ export function DraftScopeRow({
           editable={editable && remember}
           onToggle={(isolate) => configure({ isolate })}
         />
-        {showSelectedMcps && <McpSelected meta={meta} />}
+        {showSelectedMcps && (
+          <McpPicker meta={meta} actions={actions} remember={remember} keys={keys} />
+        )}
       </nav>
       {trailing && <span className="flex shrink-0 items-center gap-0.5">{trailing}</span>}
     </div>
@@ -348,6 +358,7 @@ export function PickerMenu({
   options,
   onSelect,
   add,
+  shortcut,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -362,8 +373,15 @@ export function PickerMenu({
   onSelect: (value: string) => void;
   /** The row that makes this catalog longer — see `MenuAdd`. */
   add?: MenuAdd;
+  /** A named shortcut that opens this menu; absent, no key does. */
+  shortcut?: ShortcutId;
 }) {
   const [open, setOpen] = React.useState(false);
+  const finalFocus = useMenuShortcut(
+    shortcut ?? "changeProject",
+    () => setOpen(!open),
+    !!shortcut,
+  );
   const [query, setQuery] = React.useState("");
   React.useEffect(() => {
     if (!open) setQuery("");
@@ -400,7 +418,11 @@ export function PickerMenu({
           </Button>
         }
       />
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent
+        align="start"
+        className="w-56"
+        finalFocus={finalFocus}
+      >
         {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: it reads its group
             from context and throws outside one, so the label and its items are
             wrapped together rather than sitting loose in the content. */}
@@ -516,6 +538,8 @@ export function DraftConfigPopover({
   );
   const newProfile = useNewProfile();
   const addModel = useAddModel();
+  /* The role vocabulary the helper-model rows pick from (docs/model-roles.md). */
+  const modelRoles = useModelRoles();
   /* The measured install state Settings › Agents draws from (one shared,
      server-cached query) — read so a runtime that cannot start is marked
      before the first message is spent on finding out. `installed === false`
@@ -712,6 +736,24 @@ export function DraftConfigPopover({
     { type: "pick", pick: profilePick },
     modelPick && { type: "pick", pick: modelPick },
     effortPick && { type: "pick", pick: effortPick },
+    profile &&
+      agent?.subagentModelsVia === "acp-env" &&
+      modelRoles.length > 0 &&
+      (modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE).length ?? 0) > 0 && {
+        type: "page",
+        label: "Helper models",
+        icon: <BotIcon className="size-4 text-muted-foreground" />,
+        value: (meta.helperModels ?? []).length ? `${meta.helperModels!.length} assigned` : "Not set",
+        content: (
+          <HelperModelsSub
+            drawer
+            rows={meta.helperModels ?? []}
+            roles={modelRoles}
+            models={modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE) ?? []}
+            onChange={(helperModels) => configure({ helperModels })}
+          />
+        ),
+      },
     ...toolRows,
     { type: "label", text: "Session settings" },
     {
@@ -843,7 +885,7 @@ export function DraftConfigPopover({
           </Button>
         }
       />
-      <DropdownMenuContent align="start" className="w-60">
+      <DropdownMenuContent align="start" className="w-60" finalFocus={shell?.finalFocus}>
         <DropdownMenuGroup>
           <DropdownMenuLabel>Start this thread with</DropdownMenuLabel>
           {/* First, because it decides what every row below it even means —
@@ -866,7 +908,14 @@ export function DraftConfigPopover({
             <MenuRow {...modelPick} />
           )}
           {effortPick && <MenuRow {...effortPick} />}
-          {profile && <HelperModelRow profile={profile} />}
+          {profile && agent?.subagentModelsVia === "acp-env" && (
+            <HelperModelsSub
+              rows={meta.helperModels ?? []}
+              roles={modelRoles}
+              models={modelPick?.choices.filter((c) => c.value !== DEFAULT_CHOICE) ?? []}
+              onChange={(helperModels) => configure({ helperModels })}
+            />
+          )}
           {nothingYet &&
             (!profile ? (
               <DropdownMenuItem disabled className="whitespace-normal text-xs">

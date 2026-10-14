@@ -41,6 +41,7 @@ const chrome = () => ({
 })
 // The windows built with chrome(), whose caption buttons follow the theme.
 const framelessWindows = new Set()
+const workspaceReady = new Map()
 
 /* ── What the window's material is tinted with ──
    Windows composites the window's own backgroundColor OVER the material, at
@@ -199,30 +200,68 @@ ipcMain.handle("set-quick-entry", (_event, accelerator) => {
   return { ok: true }
 })
 
-/* ── A thread in a window of its own ──
-   Same origin as the main window, so it shares every device-local store; the
-   `?popout=1` flag is what makes the renderer draw the one transcript and none
-   of the shell (`lib/popout.ts`) — and never save a layout or restore a draft
-   over the main window's. Frameless like the main window; its band is the drag handle. */
+/* ── A full workspace in its own window ──
+   Same origin as the main window, with a stable window id passed through the
+   preload so the workspace can isolate its dock and drafts. */
+ipcMain.on("workspace-ready", (event) => {
+  const reveal = workspaceReady.get(event.sender.id)
+  if (!reveal) return
+  workspaceReady.delete(event.sender.id)
+  reveal()
+})
+
+ipcMain.handle("close-window", (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender)
+  if (!owner || owner.isDestroyed()) return false
+  owner.close()
+  return true
+})
+
 ipcMain.handle("open-thread-window", (_event, sessionId) => {
   if (!win || win.isDestroyed() || typeof sessionId !== "string" || !sessionId) return false
   const origin = new URL(win.webContents.getURL()).origin
+  const popoutId = `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const popout = new BrowserWindow({
-    width: 760,
+    width: 1100,
     height: 820,
-    minWidth: 420,
-    minHeight: 400,
+    minWidth: 760,
+    minHeight: 520,
+    show: false,
     icon: iconFile(),
     autoHideMenuBar: true,
     ...chrome(),
     ...material(),
     // Survives any navigation inside the window, unlike the URL flag (preload → desktop.popout).
-    webPreferences: { ...webPreferences(), additionalArguments: ["--daedalus-popout"] },
+    webPreferences: { ...webPreferences(), additionalArguments: ["--daedalus-popout", `--daedalus-popout-id=${popoutId}`] },
   })
   guardWindow(popout)
   framelessWindows.add(popout)
   popout.on("closed", () => framelessWindows.delete(popout))
-  void popout.loadURL(`${origin}/t/${encodeURIComponent(sessionId)}?popout=1`)
+
+  let revealed = false
+  let revealTimeout
+  const reveal = () => {
+    if (revealed || popout.isDestroyed()) return
+    revealed = true
+    if (revealTimeout) clearTimeout(revealTimeout)
+    if (!popout.isVisible()) popout.show()
+  }
+  const webContentsId = popout.webContents.id
+  workspaceReady.set(webContentsId, reveal)
+  revealTimeout = setTimeout(reveal, 4000)
+  popout.once("closed", () => {
+    workspaceReady.delete(webContentsId)
+    if (revealTimeout) clearTimeout(revealTimeout)
+  })
+  popout.webContents.once("did-fail-load", (_event, code, description, url) => {
+    console.error(`[daedalus] popout load failed ${code} ${description} -- ${url}`)
+    reveal()
+  })
+
+  void popout.loadURL(`${origin}/t/${encodeURIComponent(sessionId)}?popout=1`).catch((error) => {
+    console.error(`[daedalus] popout load failed: ${error}`)
+    reveal()
+  })
   return true
 })
 
@@ -651,8 +690,27 @@ function guardWindow(w) {
     }
   })
   w.webContents.on("will-navigate", (event, url) => {
+    let target
+    try {
+      target = new URL(url)
+    } catch {
+      event.preventDefault()
+      return
+    }
+
     const base = w.webContents.getURL()
-    if (new URL(url).origin !== new URL(base).origin) {
+    // A newly created popout can navigate before Chromium has assigned its URL.
+    // Its initial URL was already checked by setWindowOpenHandler above.
+    if (!base) return
+
+    let baseOrigin
+    try {
+      baseOrigin = new URL(base).origin
+    } catch {
+      event.preventDefault()
+      return
+    }
+    if (target.origin !== baseOrigin) {
       event.preventDefault()
       shell.openExternal(url)
     }

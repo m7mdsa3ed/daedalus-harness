@@ -197,7 +197,7 @@ export const foldRewind: Fold<"onRewind"> = (ctx) => {
   ctx.sink.send({
     type: "thread-reset",
     id,
-    thread: { ...current, items: [], stepUsage: {}, usageMark: null },
+    thread: { ...current, items: [], stepUsage: {}, stepAt: {}, usageMark: null },
   })
 }
 

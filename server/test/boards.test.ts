@@ -7,6 +7,7 @@
 // Runs against a real (temp) database — importing db/index.js pushes the schema
 // into whatever DAEDALUS_DATA_DIR points at. Run: pnpm test:boards
 import "./require-temp-data.js";
+import { expandTaskMentions, taskMentionKeys } from "../src/task-mentions.js";
 import assert from "node:assert/strict";
 import { asc, eq } from "drizzle-orm";
 import {
@@ -394,6 +395,29 @@ await test("an agent's write carries its actor, and the actor outranks a claimed
   assert.equal(rows.find((r) => r.field === "priority")!.actor, "Claude Code · fix it");
   assert.equal(rows.find((r) => r.field === "commented")!.actor, "Claude Code · fix it");
   assert.equal(rows.find((r) => r.field === "created")!.actor, null);
+});
+
+await test("an @KEY-N mention expands into the task, its links and how to work it", async () => {
+  await reset();
+  const key = (await db.select().from(boardsTable).where(eq(boardsTable.id, "default")))[0]!.key;
+  const parent = await createTask({ title: "Parent", checklist: [{ text: "step one", done: false }] });
+  const other = await createTask({ title: "Other" });
+  await addLink(parent.id, { toId: other.id, kind: "blocks" });
+  await addComment(parent.id, { body: "a finding" });
+  assert.deepEqual(taskMentionKeys(`do @${key}-${parent.number}, then @${key}-${parent.number}. not me@${key}-1 or @lower-1`), [`${key}-${parent.number}`]);
+  const out = await expandTaskMentions(`work @${key}-${parent.number} and @${key}-999`);
+  assert.deepEqual([...out.keys], [`${key}-${parent.number}`], "an unknown key is left alone");
+  assert.match(out.text, /tasks_update/);
+  assert.match(out.text, /do not fetch it again/, "the block is the task; no second read");
+  assert.match(out.text, new RegExp(`<task key="${key}-${parent.number}" id="${parent.id}">`));
+  assert.match(out.text, /- \[ \] step one/);
+  assert.match(out.text, new RegExp(`blocks ${key}-${other.number} "Other"`));
+  assert.match(out.text, /a finding/);
+  assert.match(out.text, /\[done\]/, "the done column is named so the agent can finish");
+  assert.match(out.text, /^\n\n<tasks>\n[\s\S]*\n<\/tasks>$/, "one block the bubble can fold away");
+  await updateTask(parent.id, { description: "x </task> y" });
+  assert.equal((await expandTaskMentions(`@${key}-${parent.number}`)).text.match(/<\/task>/g)!.length, 1, "text cannot close the block");
+  assert.deepEqual(await expandTaskMentions("no mentions"), { text: "", keys: new Set() });
 });
 
 console.log(`\nboards: ${passed} passed, 0 failed`);

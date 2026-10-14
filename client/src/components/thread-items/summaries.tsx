@@ -145,16 +145,3 @@ export function RunSummary({ summary }: { summary: ReturnType<typeof summarise> 
     </>
   )
 }
-
-const THOUGHT_SNIPPET = 96
-
-/** The line of a thought that stands for it in a folded row: the first while
-    it is settled, the tail of the newest while it streams (see the `thought`
-    case). Markdown marks are stripped — the row is one plain line. */
-export function thoughtPreview(reasoning: string, streaming: boolean): string {
-  const lines = reasoning.split("\n").filter((line) => line.trim())
-  if (lines.length === 0) return streaming ? "Thinking…" : "…"
-  const line = (streaming ? lines[lines.length - 1] : lines[0]).replace(/[`*_~#>]/g, "").trim()
-  if (!streaming || line.length <= THOUGHT_SNIPPET) return line
-  return "…" + line.slice(-THOUGHT_SNIPPET).replace(/^\S*\s/, "")
-}

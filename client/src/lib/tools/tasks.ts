@@ -1,5 +1,6 @@
 /* ── Background tasks ── work a tool call launched that outlives its turn, and
    the task-notification blocks the harness injects when it finishes. */
+import type * as acp from "@daedalus/acp"
 import type { TextItem, ThreadItem, ToolItem } from "../store"
 import { asRecord, str, tagText, vendorMeta } from "./helpers"
 
@@ -250,7 +251,7 @@ export function workflowAgentItems(events: unknown[]): ThreadItem[] {
           kind: "tool",
           id,
           title: str(block.name) ?? "tool",
-          name: str(block.name) ?? undefined,
+          name: str(block.name)?.toLowerCase(),
           status: "in_progress",
           rawInput: block.input,
           content: [],
@@ -266,15 +267,39 @@ export function workflowAgentItems(events: unknown[]): ThreadItem[] {
         if (!call) continue
         call.status = block.is_error === true ? "failed" : "completed"
         call.rawOutput = toolResultText(block.content)
+        call.content = toolResultContent(block.content)
       }
     }
   }
   return items
 }
 
-/** A tool result is a string, or the block list the API returns. Only its text
-    is kept: an image a worker's tool returned has no row here, and quoting its
-    base64 into one would be worse than leaving it out. */
+/**
+ * A native workflow agent's whole answer, read off its transcript.
+ *
+ * The runtime's `resultPreview` is cut at 400 characters, which is half a
+ * sentence of prose and never a whole JSON report. The answer itself is the
+ * agent's last `StructuredOutput` call (a step with a schema) or else its last
+ * text.
+ */
+export function workflowAgentResult(events: unknown[]): string | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const record = asRecord(events[i])
+    const content = asRecord(record?.message)?.content
+    if (str(record?.type) !== "assistant" || !Array.isArray(content)) continue
+    for (let j = content.length - 1; j >= 0; j--) {
+      const block = asRecord(content[j])
+      if (str(block?.type) === "tool_use" && str(block?.name) === "StructuredOutput") {
+        return JSON.stringify(block?.input, null, 2)
+      }
+      const text = str(block?.type) === "text" ? str(block?.text) : undefined
+      if (text?.trim()) return text
+    }
+  }
+  return undefined
+}
+
+/** The text a standard tool view reads when rawOutput has no richer shape. */
 function toolResultText(value: unknown): string {
   if (typeof value === "string") return value
   if (!Array.isArray(value)) return ""
@@ -282,4 +307,30 @@ function toolResultText(value: unknown): string {
     .map((entry) => str(asRecord(entry)?.text) ?? "")
     .filter(Boolean)
     .join("\n")
+}
+
+/** Normalize Claude's result blocks to ACP's renderer shape so native workflow
+    rows use the same content views and extractors as streamed tool calls. */
+function toolResultContent(value: unknown): acp.ToolCallContent[] {
+  if (typeof value === "string") {
+    return value ? [{ type: "content", content: { type: "text", text: value } }] : []
+  }
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry): acp.ToolCallContent[] => {
+    const block = asRecord(entry)
+    if (!block) return []
+    if (str(block.type) === "text") {
+      const text = str(block.text)
+      return text ? [{ type: "content", content: { type: "text", text } }] : []
+    }
+    if (str(block.type) === "image") {
+      const source = asRecord(block.source)
+      const data = str(source?.data)
+      const mimeType = str(source?.media_type)
+      return data && mimeType
+        ? [{ type: "content", content: { type: "image", data, mimeType } }]
+        : []
+    }
+    return []
+  })
 }

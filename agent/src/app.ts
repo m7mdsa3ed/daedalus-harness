@@ -41,6 +41,19 @@ export {
 export { COMPACT_CAPABILITY, COMPACT_METHOD, type CompactResponse } from "./compaction.js";
 export { TRACE_CAPABILITY, TRACE_NOTIFICATION } from "./tracing.js";
 
+/* AIR's `customInstructions` (`_meta.jetbrains.air`): the client's standing
+   instructions, sent on every `session/new`, `session/load` and
+   `session/resume` — the same door claude-agent-acp and codex-acp read, so the
+   harness spells it once for every runtime that advertises it. */
+const CUSTOM_INSTRUCTIONS_CAPABILITY = "customInstructions";
+
+/** The instructions a session request carries, or undefined when it names none. */
+export function customInstructions(meta: unknown): string | undefined {
+  const value = (meta as { jetbrains?: { air?: Record<string, unknown> } } | null | undefined)
+    ?.jetbrains?.air?.[CUSTOM_INSTRUCTIONS_CAPABILITY];
+  return typeof value === "string" ? value : undefined;
+}
+
 const sessionRef = (params: unknown): { sessionId: string } => {
   const sessionId = (params as { sessionId?: unknown } | null)?.sessionId;
   if (typeof sessionId !== "string") throw acp.RequestError.invalidParams("sessionId is required");
@@ -80,6 +93,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     cwd: string,
     mcpServers: acp.McpServer[],
     client: acp.AgentContext,
+    meta: unknown,
   ) => {
     /* A re-load of a live id replaces the session: the old handle's MCP
        children must die before fresh ones connect, or every reload leaks a
@@ -91,6 +105,10 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
       await prior.mcp?.close();
     }
     const session = new Session(sessionId, cwd, env);
+    /* The request's instructions outrank the env file: a harness row seeded
+       before this door existed still names `{personaFile}`, and both is the
+       same text said twice. */
+    session.personaText = customInstructions(meta) ?? session.personaText;
     session.skills = scanSkills(cwd);
     const fileCommands = scanCommands(cwd);
     session.mcp = await connectMcpServers(
@@ -114,7 +132,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
   };
 
   const restore = async (
-    params: { sessionId: string; cwd: string; mcpServers?: acp.McpServer[] },
+    params: { sessionId: string; cwd: string; mcpServers?: acp.McpServer[]; _meta?: unknown },
     client: acp.AgentContext,
     replay: boolean,
   ) => {
@@ -127,6 +145,7 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
       params.cwd || history.cwd,
       params.mcpServers ?? [],
       client,
+      params._meta,
     );
     session.messages = history.messages;
     session.lastTokens = history.lastTokens;
@@ -207,14 +226,19 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
              boundary and carry on; the harness reads this to offer it. */
           /* `daedalus/trace`: this runtime's own spans come up as
              `_daedalus/trace`, parented under the prompt's `traceparent`. */
-          _meta: { [PAUSE_CAPABILITY]: true, [COMPACT_CAPABILITY]: true, [TRACE_CAPABILITY]: true },
+          _meta: {
+            [PAUSE_CAPABILITY]: true,
+            [COMPACT_CAPABILITY]: true,
+            [TRACE_CAPABILITY]: true,
+            jetbrains: { air: { version: 1, capabilities: [CUSTOM_INSTRUCTIONS_CAPABILITY] } },
+          },
         },
       } satisfies acp.InitializeResponse;
     })
     .onRequest("session/new", async ({ params, client }) => {
       const sessionId = randomUUID();
       const session = await context.with(sessionContext(sessionId, client, params._meta), () =>
-        openSession(sessionId, params.cwd, params.mcpServers, client),
+        openSession(sessionId, params.cwd, params.mcpServers, client, params._meta),
       );
       store.create(sessionId, params.cwd);
       announceCommands(client, session);

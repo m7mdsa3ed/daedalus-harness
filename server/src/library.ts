@@ -61,6 +61,23 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
 };
 
 /**
+ * The built-ins whose stdio server is synthesized from a *thread*: its env
+ * names the calling session's own loopback URL (`workflow`, `agents`, `harness`)
+ * or the desktop preview that thread is driving (`browser`). There is no such
+ * server without a thread, so a settings screen — or any caller with no session
+ * behind it — can neither connect to one nor list its tools. The two that
+ * resolve without a thread are `web-search` (on `data/config.json`) and
+ * `knowledge` (on the project). Kept here, beside `BUILTIN_MCP`, in the module
+ * that owns the built-in kinds and low enough that nothing imports it upward.
+ */
+const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["workflow", "agents", "harness", "browser"]);
+
+/** Whether a built-in only exists as a thread's own server — see above. */
+export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
+  return THREAD_SCOPED_BUILTINS.has(kind);
+}
+
+/**
  * Built-ins were injected under their kind slug ("web-search") before they had
  * titles. Only that exact value is replaced — like seeding, a name the user
  * chose is theirs. Cheap enough to run on every boot.
@@ -125,7 +142,9 @@ export const CommandInputSchema = z.object({
 export type McpServerInput = z.infer<typeof McpServerInputSchema>;
 export type SkillInput = z.infer<typeof SkillInputSchema>;
 export type CommandInput = z.infer<typeof CommandInputSchema>;
-export type McpServerDef = McpServerInput & { id: string };
+/** `threadScoped` rides only on a `builtin` row: the ones whose server is a
+    thread's own, so a caller with no session resolves them to nothing. */
+export type McpServerDef = McpServerInput & { id: string; threadScoped?: boolean };
 export type SkillDef = SkillInput & { id: string };
 export type CommandDef = CommandInput & { id: string };
 
@@ -135,7 +154,8 @@ type McpRow = typeof mcpServersTable.$inferSelect;
     variant uses are null. These two functions are the only place that knows. */
 function toDef(row: McpRow): McpServerDef {
   if (row.type === "builtin") {
-    return { id: row.id, type: "builtin", name: row.name, builtin: row.builtin ?? "web-search" };
+    const builtin = row.builtin ?? "web-search";
+    return { id: row.id, type: "builtin", name: row.name, builtin, threadScoped: isThreadScopedBuiltin(builtin) };
   }
   return row.type === "http"
     ? {

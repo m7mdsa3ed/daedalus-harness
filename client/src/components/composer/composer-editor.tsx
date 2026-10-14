@@ -17,6 +17,7 @@ import * as React from "react"
 import {
   EditorContent,
   Extension,
+  InputRule,
   Node,
   NodeViewWrapper,
   ReactNodeViewRenderer,
@@ -34,6 +35,7 @@ import {
   chipClass,
   linesLabel,
   quoteFace,
+  useLinkFace,
   useMentionFace,
   type ChipFace,
 } from "@/components/inline-chip"
@@ -149,6 +151,22 @@ function MentionView({ node, deleteNode, selected }: NodeViewProps) {
   )
 }
 
+/* A link typed or pasted is drawn as a chip — the page's title over its host,
+   fetched server-side (`link-preview.ts`). The string keeps the literal URL, so
+   copying out and sending are unchanged. */
+function LinkView({ node, deleteNode, selected }: NodeViewProps) {
+  const url = node.attrs.url as string
+  return (
+    <Chip
+      {...useLinkFace(url)}
+      title={url}
+      selected={selected}
+      onRemove={deleteNode}
+      removeLabel={`Remove ${url}`}
+    />
+  )
+}
+
 const PasteToken = Node.create({
   name: "pasteToken",
   group: "inline",
@@ -205,6 +223,50 @@ const Quote = Node.create({
   addNodeView: () => ReactNodeViewRenderer(QuoteView),
 })
 
+/* A URL. Live chipping is a node *input rule*: a URL typed and then terminated
+   by whitespace becomes the atom in place, of the same characters, so the caret
+   stays at its end and no remap is needed. A *paste* does not reach here — the
+   composer takes a URL-bearing paste through `setText`, which reparses into the
+   same atoms (`textToContent`). The load path and the paste path are therefore
+   one parser, and the input rule is only the keyboard's. */
+const LINK_END = /https?:\/\/[^\s<>()]+[.,;:!?)\]}'"]?\s$/
+const Link = Node.create({
+  name: "link",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes: () => ({
+    url: {
+      default: "",
+      parseHTML: (el) => el.getAttribute("data-url") ?? "",
+      renderHTML: (attrs) => ({ "data-url": attrs.url }),
+    },
+  }),
+  parseHTML: () => [{ tag: "span[data-link]" }],
+  renderHTML: ({ HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { "data-link": "" })],
+  renderText: ({ node }) => node.attrs.url as string,
+  addNodeView: () => ReactNodeViewRenderer(LinkView),
+  addInputRules() {
+    return [
+      new InputRule({
+        find: LINK_END,
+        handler: ({ state, range, match }) => {
+          const url = match[0].replace(/[.,;:!?)\]}'"]?\s$/, "")
+          if (!url) return
+          /* Replace the URL's own characters only — the typed whitespace that
+             triggered the rule, and any sentence punctuation, stay as text. */
+          state.tr.replaceWith(
+            range.from,
+            Math.min(range.from + url.length, range.to),
+            state.schema.nodes.link.create({ url }),
+          )
+        },
+      }),
+    ]
+  },
+})
+
 /* A line break is a new paragraph whichever key made it: the string has one
    kind of newline, so the document does too. */
 const LineBreaks = Extension.create({
@@ -221,6 +283,9 @@ export function ComposerEditor({
   onSelect,
   onPaste,
   onKeyDown,
+  onOverflowChange,
+  expanded,
+  coarse,
   pastes,
   placeholder,
   disabled,
@@ -235,6 +300,9 @@ export function ComposerEditor({
   /** Return true when the paste was taken; otherwise it goes in as plain text. */
   onPaste: (event: ClipboardEvent) => boolean
   onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void
+  onOverflowChange: (overflowing: boolean) => void
+  expanded: boolean
+  coarse: boolean
   pastes: Paste[]
   placeholder: string
   disabled?: boolean
@@ -248,6 +316,7 @@ export function ComposerEditor({
   const agreed = React.useRef(value)
   const latest = React.useRef({ onChange, onSelect, onPaste, placeholder })
   latest.current = { onChange, onSelect, onPaste, placeholder }
+  const editorContentRef = React.useRef<HTMLDivElement>(null)
   const pasteIds = new Set(pastes.map((p) => p.n))
   const pasteIdsRef = React.useRef(pasteIds)
   pasteIdsRef.current = pasteIds
@@ -276,6 +345,7 @@ export function ComposerEditor({
       PasteToken,
       Mention,
       Quote,
+      Link,
       LineBreaks,
     ],
     content: textToContent(value, pasteIds),
@@ -317,6 +387,25 @@ export function ComposerEditor({
     editor.setEditable(!disabled, false)
   }, [editor, disabled])
 
+  React.useEffect(() => {
+    const content = editorContentRef.current
+    const tiptap = content?.querySelector<HTMLElement>(".tiptap")
+    if (!content || !tiptap) return
+
+    const measure = () => {
+      onOverflowChange(tiptap.scrollHeight > 161)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(content)
+    observer.observe(tiptap)
+    window.addEventListener("resize", measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", measure)
+    }
+  }, [editor, expanded, onOverflowChange, value, coarse])
+
   // The placeholder is a decoration; a new one needs a transaction to redraw.
   React.useEffect(() => {
     editor.view.dispatch(editor.state.tr.setMeta("addToHistory", false))
@@ -348,6 +437,7 @@ export function ComposerEditor({
   return (
     <PastesContext.Provider value={pastes}>
       <EditorContent
+        ref={editorContentRef}
         editor={editor}
         onKeyDownCapture={onKeyDown}
         className={cn("composer-editor overflow-y-auto", disabled && "opacity-50", className)}

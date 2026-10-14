@@ -11,6 +11,7 @@ import { HttpError } from "./http-error.js";
 import { migrateLegacyPersonas, seedPrompts } from "./saved-prompts.js";
 import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
+import { seedDefaultModelRoles } from "./model-roles.js";
 import { seedAgents } from "./registry.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
@@ -38,8 +39,6 @@ import { backfillSearchIndex } from "./search.js";
 import { bearerToken } from "./routes/helpers.js";
 import { miscRoutes } from "./routes/misc.js";
 import { voiceRoutes } from "./routes/voice.js";
-import { videoRoutes } from "./routes/video.js";
-import { recoverVideoRenders } from "./video/service.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { spaceRoutes } from "./routes/spaces.js";
 import { workspaceRoutes } from "./routes/workspace.js";
@@ -81,6 +80,9 @@ await seedPrompts();
 await retitleBuiltinMcp();
 await seedModelPrompts();
 await writeModelPromptsLibrary();
+/* The model-role vocabulary: the three defaults, seeded only into an install
+   that has none. See model-roles.ts. */
+await seedDefaultModelRoles();
 /* The tasks board's first board and its four columns, seeded only into an
    install that has none. This is also the boards migration: the seeded column
    ids are the exact strings pre-boards tasks hold in `tasks.status`, so those
@@ -277,9 +279,6 @@ fileRoutes(app);
 libraryRoutes(app, { sessions });
 sessionRoutes(app, { sessions });
 voiceRoutes(app, { sessions });
-videoRoutes(app, { sessions });
-await recoverVideoRenders();
-mark("video renders recovered");
 taskRoutes(app, { sessions, tasks });
 workflowRoutes(app, { runner: workflows, sessions });
 harnessRoutes(app, { runner: workflows });

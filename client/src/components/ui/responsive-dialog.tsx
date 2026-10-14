@@ -31,9 +31,9 @@ import { Cancel01Icon } from "@hugeicons/core-free-icons"
    near-full screen on mobile and the dialog's to 92svh on desktop — it never
    goes fullscreen, so the grab handle and the swipe-to-dismiss stay.
 
-   A reader that wants the window (a whole run's board and graph, a flowchart)
-   is not this component's: it is `morphing-dialog`, which grows out of what it
-   reads.
+   A reader that wants the whole window (a whole run's board and graph, a
+   flowchart) is not this component's: it is `ui/dialog` sized to the window,
+   a full-surface viewer rather than a centred modal or a bottom sheet.
 
    `disableDrawer` is the opt-out for surfaces that own their own anchored
    layout (the command palette): mobile renders the centred dialog instead

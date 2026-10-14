@@ -10,6 +10,7 @@ import {
   CircleDashedIcon,
   FolderIcon,
   GaugeIcon,
+  LocateIcon,
   PanelRightCloseIcon,
   PlugZapIcon,
   WorkflowIcon,
@@ -36,9 +37,19 @@ import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 import { changesTimeline } from "./turn-footers"
 import { ProjectIcon } from "@/components/entity-icon"
-import { collectTools, lastActivityAt, stepNameOf, stepStateOf, subagentHasBody, useStepThread } from "@/components/workflow-run"
+import {
+  agentOutline,
+  collectTools,
+  RUN_VIEWS,
+  RunLayout,
+  RunViewTabs,
+  SEGMENT,
+  stepNameOf,
+  stepStateOf,
+  type StepRowComponent,
+} from "@/components/workflow-run"
 import { SubagentStep } from "@/components/thread-items/rows"
-import { useNow } from "@/components/composer/agents-indicator"
+import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
 import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
@@ -46,7 +57,6 @@ import { TokensPanel } from "./tokens-panel"
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
 import { extractSubagent, formatMcpName, loadedTools, parseMcpToolName, toolHeading, type LoadedTool } from "@/lib/tools"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
-import { DockContext } from "@/components/workspace/dock-context"
 
 function workflowProgress(workflow: WorkflowGroup) {
   const total = workflow.plan?.reduce((sum, phase) => sum + phase.steps.length, 0) ?? workflow.steps.length
@@ -111,198 +121,146 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** Every subagent the thread has launched, running first then newest first —
-    the same groups `AgentsIndicator` counts the active ones of. */
-function AgentsTab({ groups, onJump }: { groups: SubagentGroup[]; onJump: (id: string) => void }) {
-  const sorted = [...groups].sort(
-    (a, b) => Number(b.active) - Number(a.active) || b.head.startedAt - a.head.startedAt
+/** A transcript row the Agents panel reads: a subagent, a workflow run or a
+    batch of parallel subagents — the three shapes `agentOutline` folds into
+    one outline. */
+type AgentRow = Extract<Row, { kind: "subagent-group" | "workflow-group" | "subagent-batch" }>
+const isAgentRow = (row: Row): row is AgentRow =>
+  row.kind === "subagent-group" || row.kind === "workflow-group" || row.kind === "subagent-batch"
+const stepsOf = (row: AgentRow): SubagentGroup[] => (row.kind === "subagent-group" ? [row] : row.steps)
+
+type AgentFilter = "all" | "running" | "done" | "failed"
+/* Per agent, so a filter means the same thing in every layout. */
+const AGENT_FILTERS: Record<AgentFilter, (step: SubagentGroup) => boolean> = {
+  all: () => true,
+  running: (step) => step.active,
+  done: (step) => !step.active && stepStateOf(step) === "completed",
+  failed: (step) => !step.active && stepStateOf(step) !== "completed",
+}
+
+/** Scrolls the transcript to an agent's row — the panel's, read by `LocatableStep`. */
+const AgentJumpContext = React.createContext<((id: string) => void) | null>(null)
+
+/** A step row with a locate button beside it. Module-level, with the jump in
+    context, so its identity is stable and an open row does not remount on
+    every render. A `body` has no header to sit beside, so it gets none. */
+function LocatableStep(props: React.ComponentProps<StepRowComponent>) {
+  const jump = React.useContext(AgentJumpContext)
+  if (props.variant === "body" || !jump) return <SubagentStep {...props} />
+  return (
+    <div className="group/agent flex min-w-0 items-start gap-1">
+      <div className="min-w-0 flex-1">
+        <SubagentStep {...props} />
+      </div>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onClick={() => jump(props.group.id)}
+        className="opacity-0 group-hover/agent:opacity-100 focus-visible:opacity-100"
+        title="Show in the transcript"
+      >
+        <LocateIcon aria-hidden className="size-3.5" />
+      </Button>
+    </div>
   )
-  if (sorted.length === 0)
+}
+
+/** Each workflow run and each subagent has its own layout; only the workers
+    within one workflow/batch share an outline. Rows use the reader's own view
+    options, so a rail groups its tools here as it does in the transcript. */
+function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: SubagentGroup[]; onJump: (id: string) => void }) {
+  const options = useViewOptions()
+  const { agentsView: view } = inspectorPrefs.use()
+  const [filter, setFilter] = React.useState<AgentFilter>("all")
+  const rows = React.useMemo(
+    () => buildRows(thread.items, options.groupTools, thread.turnActive, false, !options.expandEdits).filter(isAgentRow),
+    [thread.items, thread.turnActive, options.groupTools, options.expandEdits]
+  )
+  const entries = React.useMemo(
+    () =>
+      rows.flatMap((row) =>
+        row.kind === "subagent-batch"
+          ? row.steps.map((group) => ({ key: group.id, phases: agentOutline([group]) }))
+          : [{ key: row.id, phases: agentOutline([row]) }]
+      ),
+    [rows]
+  )
+  if (rows.length === 0)
     return (
       <div className="p-3">
         <Empty>No subagents in this thread yet.</Empty>
       </div>
     )
 
-  return <AgentsList groups={sorted} onJump={onJump} />
-}
-
-/** Split out so the clock ticks only while the tab is drawn and a worker is out. */
-function AgentsList({ groups, onJump }: { groups: SubagentGroup[]; onJump: (id: string) => void }) {
-  const now = useNow(groups.some((group) => group.active))
-  const [filter, setFilter] = React.useState<AgentFilter>("all")
+  const steps = rows.flatMap(stepsOf)
   const tokens = sumUsage(groups.map((group) => (group.head.kind === "subagent" ? group.head.usage : null)))
-  const shown = groups.filter((group) => AGENT_FILTERS[filter](group))
+  const match = AGENT_FILTERS[filter]
+  /* "All" keeps a workflow's steps that have not started, so its shape stays whole. */
+  const shownEntries = entries
+    .map((entry) => ({
+      ...entry,
+      phases:
+        filter === "all"
+          ? entry.phases
+          : entry.phases
+              .map((phase) => ({ ...phase, steps: phase.steps.filter((step) => step.group && match(step.group)) }))
+              .filter((phase) => phase.steps.length > 0),
+    }))
+    .filter((entry) => entry.phases.length > 0)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-1 border-b border-border/40 px-2 py-1.5 text-[11px] tabular-nums">
-        {(Object.keys(AGENT_FILTERS) as AgentFilter[]).map((key) => {
-          const count = groups.filter(AGENT_FILTERS[key]).length
-          if (key !== "all" && count === 0 && filter !== key) return null
-          return (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={filter === key}
-              onClick={() => setFilter(key)}
-              className={cn(
-                "rounded px-1.5 py-0.5 capitalize text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                filter === key && "bg-accent text-foreground"
-              )}
-            >
-              {key} {count}
-            </button>
-          )
-        })}
-        {tokens && <span className="ml-auto text-muted-foreground">{formatTokens(tokens.totalTokens)} tokens</span>}
-      </div>
-      <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-1.5">
-        {shown.length === 0 && <li><Empty>No {filter} agents.</Empty></li>}
-        {shown.map((group) => (
-          <AgentCard key={group.id} group={group} now={now} onJump={onJump} />
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-type AgentFilter = "all" | "running" | "done" | "failed"
-const AGENT_FILTERS: Record<AgentFilter, (group: SubagentGroup) => boolean> = {
-  all: () => true,
-  running: (group) => group.active,
-  done: (group) => !group.active && stepStateOf(group) === "completed",
-  failed: (group) => !group.active && stepStateOf(group) !== "completed",
-}
-
-/** What a group did underneath it: tool calls, and subagents of its own. */
-function childCounts(rows: Row[]): { tools: number; agents: number } {
-  let tools = 0
-  let agents = 0
-  for (const row of rows) {
-    if (row.kind === "tool") tools++
-    else if (row.kind === "run") tools += row.items.filter((item) => item.kind === "tool").length
-    else if (row.kind === "tool-group") tools += row.items.filter((item) => item.kind === "tool").length
-    else if (row.kind === "subagent-group") {
-      const inner = childCounts(row.children)
-      agents += 1 + inner.agents
-      tools += inner.tools
-    } else if (row.kind === "workflow-group" || row.kind === "subagent-batch") {
-      const inner = childCounts(row.steps)
-      agents += inner.agents
-      tools += inner.tools
-    }
-  }
-  return { tools, agents }
-}
-
-const STATE_TONE: Record<string, string> = {
-  running: "bg-primary/10 text-primary",
-  failed: "bg-destructive/10 text-destructive",
-  cancelled: "bg-muted text-muted-foreground",
-  disconnected: "bg-muted text-muted-foreground",
-  completed: "bg-foreground/5 text-foreground/70",
-}
-
-/** One subagent in full: who, on what, for how long, what it did and said. */
-function AgentCard({ group, now, onJump }: { group: SubagentGroup; now: number; onJump: (id: string) => void }) {
-  const head = group.head
-  const stepThread = useStepThread(group)
-  const dock = React.useContext(DockContext)
-  const state = stepStateOf(group)
-  const call = head.kind === "tool" ? extractSubagent(head) : null
-  const type = head.kind === "subagent" ? (head.name !== stepNameOf(group) ? head.name : undefined) : call?.agentType
-  const usage = head.kind === "subagent" ? head.usage : undefined
-  const counts = childCounts(group.children)
-  /* Whether the step's own turn parts would draw anything — the transcript's
-     own question, so the card and the row agree on whether there is a body. */
-  const hasBody = subagentHasBody(group, stepThread)
-  /* Claude Code says how long its child ran; everyone else is read off the
-     transcript — now while it runs, else the last thing that arrived under it. */
-  const elapsedMs = call?.elapsedSeconds
-    ? call.elapsedSeconds * 1000
-    : (group.active ? now : Math.max(head.at ?? 0, lastActivityAt(group.children))) - head.startedAt
-
-  const facts = [
-    type,
-    call?.model,
-    call?.background && "background",
-    head.kind === "subagent" && head.workflow && "workflow step",
-    elapsedMs > 0 && formatDuration(elapsedMs),
-    counts.tools > 0 && `${counts.tools} ${counts.tools === 1 ? "tool call" : "tool calls"}`,
-    counts.agents > 0 && `${counts.agents} nested`,
-    usage && `${formatTokens(usage.totalTokens)} tok (${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens)} out)`,
-    head.kind === "subagent" && head.context && `ctx ${formatTokens(head.context.used)}/${formatTokens(head.context.size)}`,
-  ].filter((fact): fact is string => typeof fact === "string" && fact.length > 0)
-
-  return (
-    <li className={cn("rounded-md border border-border/50 bg-card/55", group.active && "border-primary/40")}>
-      <button
-        type="button"
-        onClick={() => onJump(group.id)}
-        className="flex w-full min-w-0 gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:outline-none"
-        title="Show in the transcript"
-      >
-        <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${group.active ? "animate-pulse bg-primary" : state === "failed" ? "bg-destructive" : "bg-border"}`} />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center justify-between gap-2 text-xs">
-            <span className="min-w-0 truncate font-medium">{stepNameOf(group)}</span>
-            <span className={cn("shrink-0 rounded px-1.5 py-px text-[10px] font-medium capitalize", STATE_TONE[state])}>
-              {group.active ? "working" : state}
-            </span>
-          </span>
-          {facts.length > 0 && (
-            <span className="mt-0.5 block truncate text-[10px] tabular-nums text-muted-foreground" title={facts.join(" · ")}>
-              {facts.join(" · ")}
-            </span>
-          )}
-          {group.active && (
-            <span className="mt-0.5 block truncate text-[11px] leading-4 text-foreground/80">{recentStepText(group)}</span>
-          )}
-        </span>
-      </button>
-      {hasBody && (
-        <div className="space-y-1.5 px-2 pt-0.5 pb-2 pl-5.5 text-[11px]">
-          {stepThread && dock && (
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              <button
-                type="button"
-                onClick={() => dock.openChat(stepThread)}
-                className="text-muted-foreground hover:text-foreground"
-                title="Replace this tab with the subagent"
-              >
-                Take over tab
-              </button>
-              <button
-                type="button"
-                onClick={() => dock.openChat(stepThread, { newTab: true })}
-                className="text-muted-foreground hover:text-foreground"
-                title="Open the subagent in a separate thread tab"
-              >
-                Open as thread
-              </button>
+    <ViewOptionsContext.Provider value={options}>
+      <AgentJumpContext.Provider value={onJump}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="space-y-1.5 border-b border-border/40 px-2 py-1.5">
+            <RunViewTabs views={RUN_VIEWS} value={view} onChange={(next) => setInspectorPref("agentsView", next)} label="Agents layout" />
+            <div className="flex flex-wrap items-center gap-1 text-[11px] tabular-nums">
+              {(Object.keys(AGENT_FILTERS) as AgentFilter[]).map((key) => {
+                const count = steps.filter(AGENT_FILTERS[key]).length
+                if (key !== "all" && count === 0 && filter !== key) return null
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={filter === key}
+                    onClick={() => setFilter(key)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded px-1.5 py-0.5 capitalize text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      filter === key && "bg-accent text-foreground"
+                    )}
+                  >
+                    {key !== "all" && <span aria-hidden className={cn("size-1.5 rounded-full", SEGMENT[FILTER_STATE[key]])} />}
+                    {key} {count}
+                  </button>
+                )
+              })}
+              {tokens && <span className="ml-auto text-muted-foreground">{formatTokens(tokens.totalTokens)} tokens</span>}
             </div>
-          )}
-          {/* The step's own turn parts, drawn by the transcript's own component —
-              the brief, the real rail of rows and tool views, the report — so an
-              agent read here is the agent read in the transcript, whether it is
-              an ordinary subagent or a step of a workflow run. One fold, open
-              while it works: a native workflow step fetches its transcript when
-              it opens, and a panel holding thirty of them must not ask for all
-              thirty (see `loadAgentTranscript`). */}
-          <details className="group" open={group.active}>
-            <summary className="cursor-pointer list-none truncate text-muted-foreground hover:text-foreground">
-              <span className="font-medium">What it did</span>
-            </summary>
-            <div className="mt-1.5">
-              <SubagentStep group={group} variant="body" />
-            </div>
-          </details>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+            {shownEntries.length === 0 ? (
+              <Empty>No {filter} agents.</Empty>
+            ) : (
+              <div className="min-h-0 space-y-3">
+                {shownEntries.map(({ key, phases }) => (
+                  <RunLayout
+                    key={`${filter}:${key}`}
+                    phases={phases}
+                    view={view}
+                    active={phases.some((phase) => phase.steps.some((step) => step.group?.active))}
+                    stepRow={LocatableStep}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </li>
+      </AgentJumpContext.Provider>
+    </ViewOptionsContext.Provider>
   )
 }
+
+const FILTER_STATE = { running: "running", done: "completed", failed: "failed" } as const
 
 /** The thread's loaded tools in the panel's own row rhythm (`Metric`'s): name
     and server on one line, what the tool does under it. */
@@ -352,6 +310,21 @@ function WorkflowPreview({ workflows }: { workflows: WorkflowGroup[] }) {
               />
             </div>
             <p className="mt-1 text-[9px] text-muted-foreground">{status}{progress.failed ? ` · ${progress.failed} failed` : ""}</p>
+            {workflow.steps.length > 0 && (
+              <ul className="mt-1.5 space-y-1 border-t border-border/40 pt-1.5">
+                {[...workflow.steps].slice(-3).reverse().map((step) => {
+                  const state = stepStateOf(step)
+                  const label = state === "completed" ? "Done" : state[0].toUpperCase() + state.slice(1)
+                  return (
+                    <li key={step.id} className="flex min-w-0 items-center gap-1.5 text-[10px]">
+                      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", SEGMENT[state])} />
+                      <span className="min-w-0 flex-1 truncate" title={stepNameOf(step)}>{stepNameOf(step)}</span>
+                      <span className="shrink-0 text-muted-foreground">{label}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </li>
         )
       })}
@@ -749,7 +722,7 @@ export function ThreadSection({
         {todos ? <TodoChecklist items={todos} /> : <Empty>The agent has not written a plan in this thread.</Empty>}
       </div>
     )
-  if (section === "agents") return <AgentsTab groups={groups} onJump={onJump} />
+  if (section === "agents") return <AgentsTab thread={thread} groups={groups} onJump={onJump} />
   if (section === "tokens") return <TokensPanel thread={thread} />
   return <DetailsTab thread={thread} meta={meta} rows={rows} />
 }

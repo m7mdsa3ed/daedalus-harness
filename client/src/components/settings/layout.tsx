@@ -49,6 +49,7 @@ import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_OVERVIEW,
   isFullWidthSettings,
+  isWideSettings,
   sectionMeta,
   type SettingsSectionId,
 } from "./sections"
@@ -88,9 +89,13 @@ function SectionPicker({
       />
       <DropdownMenuContent
         align="start"
-        className="max-h-[60svh] w-[min(18rem,calc(100vw-2rem))] overflow-y-auto"
+        className="max-h-[60svh] w-[min(18rem,calc(var(--float-w)-2rem))] overflow-y-auto"
       >
-        <DropdownMenuItem onClick={() => go(null)}>
+        <DropdownMenuItem
+          onClick={() => go(null)}
+          aria-current={section === null ? "true" : undefined}
+          className={section === null ? "bg-accent/60" : undefined}
+        >
           <SETTINGS_OVERVIEW.icon className="size-4" />
           All settings
         </DropdownMenuItem>
@@ -104,7 +109,12 @@ function SectionPicker({
               {group.sections.map((id) => {
                 const meta = sectionMeta(id)
                 return (
-                  <DropdownMenuItem key={id} onClick={() => go(id)}>
+                  <DropdownMenuItem
+                    key={id}
+                    onClick={() => go(id)}
+                    aria-current={section === id ? "true" : undefined}
+                    className={section === id ? "bg-accent/60" : undefined}
+                  >
                     <meta.icon className="size-4" />
                     {meta.label}
                   </DropdownMenuItem>
@@ -152,7 +162,7 @@ export function SettingsLayout({
   return (
     <PageFrame
       scrollRef={scrollRef}
-      width={bare ? "full" : "settings"}
+      width={isWideSettings(location.pathname) ? "full" : "settings"}
       gutter="panel"
       className={bare ? undefined : "pb-24"}
     >

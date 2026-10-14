@@ -147,7 +147,7 @@ function Body({ kind, loaded, name, ext }: { kind: ReturnType<typeof previewKind
    `allow-same-origin` (the parent can reach in) and nothing else — no scripts
    run inside it, and the app's CSS does not reach the slides. Sized to the
    panel once; a resize is a re-open. */
-function Slides({ data, name }: { data: ArrayBuffer; name: string }) {
+export function Slides({ data, name }: { data: ArrayBuffer; name: string }) {
   const ref = React.useRef<HTMLIFrameElement>(null)
   const [error, setError] = React.useState<InlineError | null>(null)
   // A fresh frame's document is swapped in after mount in some browsers, so draw on its load.

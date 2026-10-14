@@ -158,41 +158,6 @@ async function ensureSchema(): Promise<void> {
   await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS rules TEXT`);
   /* A thread's git worktree (worktree.ts). */
   await db.execute(sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS worktree TEXT`);
-  /* Thread-owned declarative video plans, render snapshots and TTS credentials. */
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS video_tts_providers (
-      provider TEXT PRIMARY KEY,
-      api_key TEXT NOT NULL,
-      model TEXT NOT NULL,
-      voice TEXT NOT NULL,
-      updated_at BIGINT NOT NULL
-    )
-  `);
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS session_videos (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-      document JSONB NOT NULL,
-      revision INTEGER NOT NULL DEFAULT 1,
-      updated_at BIGINT NOT NULL
-    )
-  `);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS session_videos_updated ON session_videos(updated_at)`);
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS session_video_renders (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      revision INTEGER NOT NULL,
-      document JSONB NOT NULL,
-      status TEXT NOT NULL,
-      progress INTEGER NOT NULL DEFAULT 0,
-      output_path TEXT,
-      error TEXT,
-      created_at BIGINT NOT NULL,
-      updated_at BIGINT NOT NULL
-    )
-  `);
-  await db.execute(sql`ALTER TABLE session_video_renders ADD COLUMN IF NOT EXISTS document JSONB NOT NULL DEFAULT '{}'::jsonb`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS session_video_renders_session ON session_video_renders(session_id, created_at)`);
   /* Adoptable agent processes (adopt-state.ts). */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS agent_processes (

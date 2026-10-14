@@ -8,7 +8,7 @@ import { extractMcpCall } from "./mcp"
 import { toolKindOf } from "./naming"
 import { toolOutputText } from "./output"
 import { extractFindings, extractPlanProposal, extractQuestions, extractSkill } from "./structured"
-import { extractSubagent } from "./subagents"
+import { agentLabel, extractAgentMessage, extractSubagent } from "./subagents"
 import { hasTerminalContent } from "./terminal"
 import { extractTodos } from "./todos"
 import { extractToolSearch } from "./tool-search"
@@ -48,6 +48,12 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
   /* The harness meta-tools reach every part of the harness, so their row says
      which operation ran, not the first line of its JSON result. */
   if (extractHarnessCall(item)) return harnessSummary(item)
+
+  /* A message's story is whether it landed — Claude Code answers a JSON
+     status, never a line worth freezing on the row. */
+  const message = extractAgentMessage(item)
+  if (message?.delivered === false) return "not delivered"
+  if (message?.resumed) return `resumed ${agentLabel(message.resumed)}`
 
   const diffs = item.content.filter(
     (block): block is Extract<typeof block, { type: "diff" }> => block.type === "diff"
@@ -114,6 +120,7 @@ export type ToolView =
   | "mcp"
   | "harness"
   | "subagent"
+  | "message"
   | "websearch"
   | "webfetch"
   | "questions"
@@ -153,6 +160,7 @@ function computeToolView(item: ToolItem): ToolView {
   if (extractQuestions(item)) return "questions"
   if (extractFindings(item)) return "findings"
   if (extractSubagent(item)) return "subagent"
+  if (extractAgentMessage(item)) return "message"
   if (extractSkill(item)) return "skill"
   if (extractToolSearch(item)) return "toolsearch"
   if (extractWebSearch(item)) return "websearch"

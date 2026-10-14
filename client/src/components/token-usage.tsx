@@ -20,7 +20,7 @@
    not in here: a component that renders nothing is still a component the
    transcript mounts per row. */
 import * as React from "react"
-import { CoinsIcon } from "lucide-react"
+import { CoinsIcon, TimerIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -195,6 +195,17 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
+/** How long a turn took, for a footer with no token figure to ride on — an
+    agent that reports no usage, or a reader who hid tokens. */
+export function TurnTime({ durationMs }: { durationMs: number }) {
+  return (
+    <span className={FIGURE} title="Turn time">
+      <TimerIcon aria-hidden className="size-3 shrink-0" />
+      {formatDuration(durationMs)}
+    </span>
+  )
+}
+
 /**
  * The figure, with the breakdown one hover away.
  *
@@ -242,6 +253,7 @@ export function TokenSummary({
           >
             <CoinsIcon aria-hidden className="size-3 shrink-0" />
             <TokenFigure usage={usage} />
+            {durationMs !== undefined && <span className="text-muted-foreground/80">· {formatDuration(durationMs)}</span>}
             {rate && <span className="text-muted-foreground/80">· {rate}</span>}
           </button>
         }

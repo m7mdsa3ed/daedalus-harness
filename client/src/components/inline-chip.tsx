@@ -8,12 +8,14 @@
    draws it bare. The faces (`useMentionFace`, `quoteFace`) and the previews
    live here too, so the two sides cannot drift apart. */
 import * as React from "react"
-import { AtSignIcon, FileTextIcon, type LucideIcon } from "lucide-react"
+import { AtSignIcon, FileTextIcon, LinkIcon, SquareCheckIcon, type LucideIcon } from "lucide-react"
+import { TASK_KEY } from "@/lib/task-mentions"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { CopyButton } from "@/components/ui/copy-button"
 import { ProjectIcon } from "@/components/entity-icon"
 import { useProjects } from "@/lib/queries/catalog"
+import { useLinkPreview } from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
 
 /** The pill. `trailing` narrows the end inset for a control drawn after the face.
@@ -24,9 +26,10 @@ import { cn } from "@/lib/utils"
  * text it rides in — `align-baseline` had nothing true to align to. Aligning the
  * face's own label puts the pill's text on the line's baseline; a control drawn
  * after the face (`trailing`) centres itself back with `self-center`. */
-export function chipClass(opts: { selected?: boolean; trailing?: boolean } = {}) {
+export function chipClass(opts: { selected?: boolean; trailing?: boolean; link?: boolean } = {}) {
   return cn(
-    "mx-px inline-flex max-w-[min(20rem,100%)] items-baseline gap-0.5 rounded-md bg-foreground/[0.06] py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-foreground/[0.1]",
+    "mx-px inline-flex items-baseline gap-0.5 rounded-md bg-foreground/[0.06] py-px ps-1.5 align-baseline text-[0.9em] leading-snug text-foreground not-prose transition-colors hover:bg-foreground/[0.1]",
+    opts.link ? "max-w-[min(16rem,100%)]" : "max-w-[min(20rem,100%)]",
     opts.trailing ? "pe-0.5" : "pe-1.5",
     opts.selected && "bg-primary/15 hover:bg-primary/15"
   )
@@ -70,7 +73,7 @@ export function ChipBody({
         >
           {face}
         </PopoverTrigger>
-        <PopoverContent className="w-[min(32rem,calc(100vw-2rem))] p-0">{preview}</PopoverContent>
+        <PopoverContent className="w-[min(32rem,calc(var(--float-w)-2rem))] p-0">{preview}</PopoverContent>
       </Popover>
     )
   }
@@ -89,6 +92,8 @@ export function ChipBody({
 export function useMentionFace(path: string): ChipFace {
   const trimmed = path.replace(/\/+$/, "")
   const project = useProjects().find((p) => p.cwd.replace(/\/+$/, "") === trimmed)
+  // A board task (`@DAE-12`, file-mentions.tsx) is named by its key.
+  if (TASK_KEY.test(path)) return { icon: SquareCheckIcon, label: path }
   if (project) {
     return {
       icon: AtSignIcon,
@@ -108,6 +113,35 @@ export function quoteFace(text: string): { label: string; aside?: string } {
   return { label: first || "Quote", aside: lines.length > 1 ? `+${lines.length - 1}` : undefined }
 }
 
+/** A link's hostname — the chip says this until the page's title arrives, and
+    what it falls back to when the page answers with none. */
+export function linkHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || url
+  } catch {
+    return url
+  }
+}
+
+/* A link says what it *is* once the page answers: the title as the label, the
+   host as the aside, the page's own image in the icon's place (the slot a
+   project's logo uses). Until then — and for a page that answers with nothing —
+   it is the host, with a chain-link glyph. The page is fetched by the server
+   (`link-preview.ts`), so the browser asks the link's host nothing. */
+export function useLinkFace(url: string): ChipFace {
+  const preview = useLinkPreview(url).data
+  const host = linkHost(url)
+  const title = preview?.title?.trim()
+  return {
+    icon: LinkIcon,
+    ...(preview?.image
+      ? { mark: <img src={preview.image} alt="" aria-hidden className="size-3.5 self-center rounded-sm object-contain" /> }
+      : {}),
+    label: title || host,
+    aside: title ? host : undefined,
+  }
+}
+
 export const linesLabel = (lines: number) =>
   `${lines.toLocaleString()} line${lines === 1 ? "" : "s"}`
 
@@ -123,5 +157,28 @@ export function ChipPreview({ caption, text }: { caption?: string; text: string 
         {text}
       </pre>
     </>
+  )
+}
+
+/* A link's chip, drawn bare — the transcript's face for one, and the box's
+   node view wraps the same face with its ✕. The whole pill is the link, so the
+   `a` here is the chip and carries the target every other markdown link gets. */
+export function LinkChip({ url, text }: { url: string; text?: string }) {
+  const face = useLinkFace(url)
+  /* An authored label (`[docs](https://…)`) keeps its words; a *bare* URL —
+     GFM autolinks it and the anchor's own text is the URL — takes the page's
+     title, and the host until it answers. */
+  const authored = text?.trim()
+  const label = authored && authored !== url ? authored : face.label
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={url}
+      className={cn(chipClass({ link: true }), "no-underline hover:no-underline [&_*]:no-underline")}
+    >
+      <ChipBody {...face} label={label} />
+    </a>
   )
 }

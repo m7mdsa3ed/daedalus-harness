@@ -53,7 +53,64 @@ export interface CardContext {
   onToggleSelect?: (id: string, additive: boolean) => void
 }
 
-/** The kanban card: draggable, and a button that opens the task. */
+const CARD =
+  "group w-full cursor-pointer rounded-xl border bg-card text-left text-sm text-card-foreground shadow-xs transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+
+/** The card's face, with no dnd-kit inside: the sortable card and the drag
+    overlay both draw it (dnd-kit: overlay children must not be draggables). */
+function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
+  const progress = checklistProgress(task)
+  const parent = ctx.parentOf(task)
+  const children = ctx.childCount(task)
+  return (
+    <div className="space-y-2 p-3">
+      {parent && (
+        <p className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+          <CornerDownRight className="size-3 shrink-0" />
+          <TypeIcon type={parent.type} className="size-3" />
+          <span className="truncate">{parent.title}</span>
+        </p>
+      )}
+      <p className={cn("flex items-start gap-2 font-medium leading-snug", task.completedAt != null && "text-muted-foreground line-through decoration-muted-foreground/50")}>
+        <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", PRIORITY_DOT[task.priority])} title={`Priority: ${PRIORITY_LABEL[task.priority]}`} />
+        <span className="line-clamp-3">{task.title}</span>
+      </p>
+      {task.description && (
+        <p className="line-clamp-2 pl-4 text-xs leading-snug text-muted-foreground">{stripMarkdown(task.description)}</p>
+      )}
+      {task.labels.length > 0 && (
+        <div className="flex flex-wrap gap-1 pl-4">
+          {task.labels.slice(0, MAX_LABELS).map((label) => (
+            <LabelChip key={label} label={label} />
+          ))}
+          {task.labels.length > MAX_LABELS && (
+            <span className="text-[10px] text-muted-foreground">+{task.labels.length - MAX_LABELS}</span>
+          )}
+        </div>
+      )}
+      <div className="flex items-center gap-2 pl-4 text-xs text-muted-foreground">
+        <TypeIcon type={task.type} />
+        <KeyBadge task={task} boardKey={ctx.boardKey} />
+        {children > 0 && (
+          <span className="inline-flex items-center gap-0.5 text-[10px]" title={`${children} subtasks`}>
+            <ListTree className="size-3" />
+            {children}
+          </span>
+        )}
+        {progress.total > 0 && <ProgressBar done={progress.done} total={progress.total} />}
+        <span className="ml-auto flex items-center gap-1.5">
+          <DueChip task={task} />
+          <EstimateBadge estimate={task.estimate} />
+          <AssigneeAvatar name={task.assignee} size="xs" />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** The kanban card: sortable, and a button that opens the task. While it is
+    dragged it stays in its column as a faded placeholder — the card under the
+    pointer is the DragOverlay's copy (TaskCardOverlay). */
 export function TaskCard({
   task,
   ctx,
@@ -64,9 +121,6 @@ export function TaskCard({
   onClick: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
-  const progress = checklistProgress(task)
-  const parent = ctx.parentOf(task)
-  const children = ctx.childCount(task)
   const selected = ctx.selected.has(task.id)
 
   return (
@@ -91,54 +145,22 @@ export function TaskCard({
         }
       }}
       className={cn(
-        "group w-full cursor-pointer rounded-xl border bg-card text-left text-sm text-card-foreground shadow-xs transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        isDragging && "z-10 opacity-60 shadow-lg",
+        CARD,
+        isDragging && "opacity-40",
         selected && "border-primary/50 bg-primary/5",
         task.archived && "opacity-60",
       )}
     >
-      <div className="space-y-2 p-3">
-        {parent && (
-          <p className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
-            <CornerDownRight className="size-3 shrink-0" />
-            <TypeIcon type={parent.type} className="size-3" />
-            <span className="truncate">{parent.title}</span>
-          </p>
-        )}
-        <p className={cn("flex items-start gap-2 font-medium leading-snug", task.completedAt != null && "text-muted-foreground line-through decoration-muted-foreground/50")}>
-          <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", PRIORITY_DOT[task.priority])} title={`Priority: ${PRIORITY_LABEL[task.priority]}`} />
-          <span className="line-clamp-3">{task.title}</span>
-        </p>
-        {task.description && (
-          <p className="line-clamp-2 pl-4 text-xs leading-snug text-muted-foreground">{stripMarkdown(task.description)}</p>
-        )}
-        {task.labels.length > 0 && (
-          <div className="flex flex-wrap gap-1 pl-4">
-            {task.labels.slice(0, MAX_LABELS).map((label) => (
-              <LabelChip key={label} label={label} />
-            ))}
-            {task.labels.length > MAX_LABELS && (
-              <span className="text-[10px] text-muted-foreground">+{task.labels.length - MAX_LABELS}</span>
-            )}
-          </div>
-        )}
-        <div className="flex items-center gap-2 pl-4 text-xs text-muted-foreground">
-          <TypeIcon type={task.type} />
-          <KeyBadge task={task} boardKey={ctx.boardKey} />
-          {children > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-[10px]" title={`${children} subtasks`}>
-              <ListTree className="size-3" />
-              {children}
-            </span>
-          )}
-          {progress.total > 0 && <ProgressBar done={progress.done} total={progress.total} />}
-          <span className="ml-auto flex items-center gap-1.5">
-            <DueChip task={task} />
-            <EstimateBadge estimate={task.estimate} />
-            <AssigneeAvatar name={task.assignee} size="xs" />
-          </span>
-        </div>
-      </div>
+      <TaskCardBody task={task} ctx={ctx} />
+    </div>
+  )
+}
+
+/** What follows the pointer during a drag: the same face, lifted. */
+export function TaskCardOverlay({ task, ctx }: { task: Task; ctx: CardContext }) {
+  return (
+    <div className={cn(CARD, "cursor-grabbing border-primary/30 shadow-lg ring-1 ring-primary/20")}>
+      <TaskCardBody task={task} ctx={ctx} />
     </div>
   )
 }

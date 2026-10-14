@@ -453,20 +453,26 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## Rules
 
-- **Rules are the standing layer of instructions, and they ride the persona's
-  doors.** A block written once — one global (`app_settings`, Settings › Rules)
-  plus one per project (`projects.rules`, edited with the project) — that every
-  thread spawns with, instead of being retyped into each persona.
-  `spawnRules` composes general to specific (`server/src/rules.ts`) and
-  `resolvePersonaSpawn` folds the result into the spawn instructions **beneath**
-  the persona text, so each runtime carries it through the door it already
-  opens — `_meta.systemPrompt.append`, `{personaPrompt}`, `{personaFile}` — and
-  no door learns rules exist. A thread with rules and no persona spawns with
-  just the rules. **Spawn-time like a persona**: live threads pick a change up
-  on their next respawn, which `session/load` makes cheap. Backup carries the
-  table as a `settings` record and imports it **upsert per key, never a
-  delete** — a bundle written before the table existed defaults to `{}` and
-  must not wipe rules written since.
+- **Rules are the standing layer of instructions, and they ride the spawn-instruction
+  doors.** Rows in the `rules` table — global (`project_id` null, Settings › Rules) and
+  per project — that every thread spawns with. The spawn reads both layers, global first
+  (`sessions.ts`), and `resolvePersonaSpawn` joins them with the spawn trailers into one
+  text, so each runtime carries it through the door its row names — AIR's
+  `_meta.jetbrains.air.customInstructions` (`"air-meta"`: claude-code since seed 28, the
+  daedalus agent since seed 29), `_meta.systemPrompt.append` (`"acp-meta"`, still
+  honoured), `{personaPrompt}`, `{personaFile}` — and no door learns rules exist.
+  **Spawn-time**: live threads pick a change up on their next respawn, which
+  `session/resume`/`session/load` make cheap — both carry the `_meta` again. The bridge
+  checks the runtime advertised `customInstructions` at `initialize` and logs when an
+  `"air-meta"` row's runtime did not. Backup carries the table **upsert per key, never a
+  delete**.
+- **The AIR key is not a door for codex, though codex-acp reads it.** It passes
+  `customInstructions` to `thread/start` alone — `session/resume`, `session/load` and fork
+  carry none — so a rules change would reach a new Codex thread and never a revived one,
+  while `developer_instructions` in `CODEX_CONFIG` is re-read on every spawn. claude-agent-acp
+  reads it in `createSession`, which serves new, load and resume alike, and appends it to the
+  `claude_code` preset exactly as `systemPrompt.append` did; it needs ≥ 0.89, and an older
+  adapter ignores the key (rules silently lost), which is why the minimum moved.
 
 ## The virtual Default profile
 

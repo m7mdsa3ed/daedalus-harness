@@ -1,4 +1,5 @@
 import type * as acp from "../acp.js";
+import type { AgentEnv } from "../env.js";
 import type { Session } from "../session.js";
 import type { Emitter } from "../updates.js";
 
@@ -8,8 +9,14 @@ export interface ToolRuntime {
   session: Session;
   emit: Emitter;
   clientCaps: acp.ClientCapabilities | null;
-  /** Runs a nested subagent loop and returns its final report (task tool). */
-  runSubagent(name: string, prompt: string, toolCallId?: string): Promise<string>;
+  /** Read for what the spawn fixed and a live setting cannot: the roles the
+      `task` tool advertises (and resolves a `role` against). */
+  env: AgentEnv;
+  /** Runs a nested subagent loop and returns its final report (task tool).
+      `modelId`, when given, is the model the child runs on (the `task` tool's
+      `role`/`model` resolved to one); absent, it is the session model. `role`
+      is the role's id when one named it — saved and announced, never resolved. */
+  runSubagent(name: string, prompt: string, toolCallId?: string, modelId?: string, role?: string): Promise<string>;
   /** Lists this session's persisted subagents. */
   listSubagents(): Array<{ id: string; name: string; task: string; status: string }>;
   /** Sends a follow-up to a subagent, resuming its saved conversation if needed. */

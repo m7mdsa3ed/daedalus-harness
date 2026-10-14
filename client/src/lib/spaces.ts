@@ -17,11 +17,16 @@ import * as React from "react"
 /** `{ [serverId]: spaceId }` */
 type Store = Record<string, string>
 
+import { IS_POPOUT, POPOUT_WINDOW_ID } from "./popout"
+
 const KEY = "daedalus.space"
+
+const storageKey = () =>
+  IS_POPOUT ? `${KEY}:window:${POPOUT_WINDOW_ID ?? "unscoped"}` : KEY
 
 function read(): Store {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(storageKey())
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     return parsed && typeof parsed === "object" ? (parsed as Store) : {}
@@ -31,7 +36,7 @@ function read(): Store {
 }
 
 function write(store: Store): void {
-  localStorage.setItem(KEY, JSON.stringify(store))
+  localStorage.setItem(storageKey(), JSON.stringify(store))
 }
 
 const listeners = new Set<() => void>()

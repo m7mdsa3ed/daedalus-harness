@@ -73,10 +73,12 @@ question. Knowing the layers is most of knowing where to put an instruction.
    read-only *policy* over a tool set with no shell in it — "use Bash ONLY for
    ls, git status, cat" — and the model that followed it called a tool that was
    never built and got a `NoSuchToolError` for its trouble.
-5. **Persona** — the whole contents of `DAEDALUS_AGENT_PERSONA_FILE`. This is
-   the intended door for your own instructions, and it comes *after* the
-   project's own files: the repo's rules are the ground, the persona is the
-   choice made for this thread on top of them.
+5. **Persona** — the client's instructions: AIR's
+   `_meta.jetbrains.air.customInstructions` on `session/new`/`load`/`resume`
+   (the harness's rules and trailers), else the contents of
+   `DAEDALUS_AGENT_PERSONA_FILE`. This is the intended door for your own
+   instructions, and it comes *after* the project's own files: the repo's rules
+   are the ground, this is the choice made for this thread on top of them.
 6. **Project instructions** — every `AGENTS.md`, `CLAUDE.md` and
    `CLAUDE.local.md` found from the cwd up to the repo root, plus
    `~/.claude/CLAUDE.md`. See below.
@@ -138,24 +140,17 @@ The layer header always names the model id. A session whose model is empty
 (a spawn that has not been told one yet) is told nothing, and the layer is
 included for subagents as well as root turns — same engine, same calibration.
 
-## Lever 1 — a persona (the main one)
+## Lever 1 — rules (the main one)
 
-In the harness, **Settings › Personas** is a library of prompt appends, and each
-thread names one from its config menu (or the `⌘K` palette). The server writes
-the chosen persona to `data/persona-prompts/<sessionId>.md` and passes the path
-in `DAEDALUS_AGENT_PERSONA_FILE`; the agent reads it at session start and drops
-it into the persona layer. Changing a thread's persona respawns the agent, which is why it
-lands on the existing conversation rather than a fresh one.
+In the harness, **Settings › Rules** (global and per project) is this lever.
+The server joins the rules with the thread's trailers and sends them as AIR's
+`customInstructions` in the `_meta` of every `session/new`, `session/load` and
+`session/resume` — the same key claude-agent-acp reads — and the agent
+advertises `customInstructions` at `initialize` to say it will. A rules change
+lands on the thread's next respawn, against the existing conversation.
 
-A persona carries three things, and this agent uses two of them:
-
-| Field | Effect here |
-| --- | --- |
-| **Prompt** | appended to the system prompt — the whole of the persona layer |
-| **Effort** | applied when the persona is picked, then it is yours to change |
-| **Thinking budget** | **ignored** — it is Claude Code's extended-thinking axis, and this agent has no equivalent; use Effort |
-
-Standalone, the same lever is the env var pointed at any markdown file:
+Standalone (or from any ACP client that does not send the key), the same lever
+is the env var pointed at any markdown file — the request's key outranks it:
 
 ```bash
 DAEDALUS_AGENT_PERSONA_FILE=~/.config/daedalus/house-style.md

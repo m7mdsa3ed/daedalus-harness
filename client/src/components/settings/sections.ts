@@ -29,7 +29,6 @@ import {
   FolderIcon,
   Gauge,
   AudioLines,
-  Clapperboard,
   Keyboard,
   KeyRound,
   Palette,
@@ -42,6 +41,7 @@ import {
   Sparkles,
   SquareSlash,
   ScrollText,
+  Tag,
   type LucideIcon,
 } from "lucide-react"
 
@@ -182,6 +182,15 @@ export const SETTINGS_SECTIONS = [
       "Standing instructions every thread starts with — one global block, plus a per-project block edited with the project. The server folds them into each spawn through the door the runtime already opens for instructions, so nothing is pasted in front of your messages.",
   },
   {
+    id: "model-roles",
+    page: lazyPage(() => import("./model-roles"), "ModelRolesPage"),
+    label: "Model roles",
+    icon: Tag,
+    title: "Model roles",
+    description:
+      "The vocabulary a profile's models tag themselves with — a subagent is spawned on a role (\"small\", \"advisor\") rather than on a hardcoded model. Assign roles to models in the profile editor; a role's model is the first model carrying it.",
+  },
+  {
     id: "prompts",
     page: lazyPage(() => import("./prompts"), "PromptsPage"),
     /* No import route: no agent has a saved prompt to give. */
@@ -253,14 +262,6 @@ export const SETTINGS_SECTIONS = [
       "The default search/fetch backend the harness's own web-search MCP server answers against. Profiles can override it.",
   },
   {
-    id: "video",
-    page: lazyPage(() => import("./video"), "VideoProvidersPage"),
-    label: "Video & speech",
-    icon: Clapperboard,
-    title: "Video & speech",
-    description: "Batch text-to-speech and rendering providers used by Video panels inside threads. Provider keys stay on this server.",
-  },
-  {
     id: "voice",
     page: lazyPage(() => import("./voice"), "VoicePage"),
     label: "Voice",
@@ -278,7 +279,7 @@ export type SectionMeta = (typeof SETTINGS_SECTIONS)[number]
    section — it has no sidebar row, and the palette does not list it beside
    the sections — but it has a header like one, so it carries the same shape. */
 export const SETTINGS_OVERVIEW: PageMeta & { label: string; icon: LucideIcon } = {
-  label: "Settings",
+  label: "All settings",
   icon: Settings2,
   title: "Settings",
   description:
@@ -331,12 +332,20 @@ const FULL_WIDTH_SETTINGS: readonly RegExp[] = [
 export const isFullWidthSettings = (pathname: string): boolean =>
   FULL_WIDTH_SETTINGS.some((pattern) => pattern.test(pathname))
 
+/** The full width *without* going bare: the file library is a tree, a listing
+    and a details pane side by side, but it has no Back button of its own, so
+    it keeps the section picker a phone reaches the other sections by. */
+export const isWideSettings = (pathname: string): boolean =>
+  isFullWidthSettings(pathname) || /^\/settings\/files\/?$/.test(pathname)
+
 export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "ai", "web-search", "voice", "video"] },
-  { label: "Workspace", sections: ["projects", "files", "knowledge", "mcp", "skills", "commands", "rules", "prompts", "model-prompts"] },
-  { label: "Agents", sections: ["profiles", "agents", "usage"] },
+  { label: "Personal", sections: ["general", "appearance", "keyboard", "notifications"] },
+  { label: "Workspace", sections: ["projects", "files", "knowledge", "rules"] },
+  { label: "Tools", sections: ["mcp", "skills", "commands", "prompts"] },
+  { label: "AI & models", sections: ["profiles", "agents", "model-roles", "model-prompts", "ai"] },
+  { label: "Services", sections: ["usage", "web-search", "voice"] },
   { label: "Server", sections: ["backup"] },
 ] as const

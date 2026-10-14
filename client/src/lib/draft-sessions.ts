@@ -20,12 +20,16 @@
    looking like a thread, so every field is checked and a row that fails is
    dropped rather than trusted. */
 import type { SessionMeta } from "./settings"
+import { IS_POPOUT, POPOUT_WINDOW_ID } from "./popout"
 
 const PREFIX = "daedalus.draftSessions.v1"
 /** Enough for any real set of open tabs; the oldest fall off the end. */
 const MAX = 20
 
-const key = (serverId: string): string => `${PREFIX}:${serverId}`
+const key = (serverId: string): string => {
+  const windowScope = IS_POPOUT ? `:window:${POPOUT_WINDOW_ID ?? "unscoped"}` : ""
+  return `${PREFIX}:${serverId}${windowScope}`
+}
 
 function write(serverId: string, rows: SessionMeta[]): void {
   try {
@@ -52,6 +56,20 @@ function configChoices(value: unknown): Record<string, string | boolean> | undef
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/** A stored helper-model map, validated row by row: an entry missing either
+    half is dropped, and an empty list reads as `undefined` (none). */
+function helperModels(value: unknown): { role: string; model: string }[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: { role: string; model: string }[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue
+    const row = entry as Record<string, unknown>
+    if (typeof row.role !== "string" || typeof row.model !== "string") continue
+    out.push({ role: row.role, model: row.model })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 /** One stored row → a draft, or null if it is not one. */
 function parseRow(value: unknown): SessionMeta | null {
   if (!value || typeof value !== "object") return null
@@ -64,6 +82,7 @@ function parseRow(value: unknown): SessionMeta | null {
   const createdAt = typeof row.createdAt === "number" && Number.isFinite(row.createdAt) ? row.createdAt : null
   if (!id || !profileId || !projectId || !agentId || createdAt === null) return null
   const choices = configChoices(row.configChoices)
+  const helpers = helperModels(row.helperModels)
   const mcpServerIds = stringList(row.mcpServerIds)
   const skillIds = stringList(row.skillIds)
   const commandIds = stringList(row.commandIds)
@@ -88,6 +107,7 @@ function parseRow(value: unknown): SessionMeta | null {
     ...(str(row.taskId) ? { taskId: str(row.taskId) } : {}),
     ...(str(row.modeId) ? { modeId: str(row.modeId) } : {}),
     ...(choices ? { configChoices: choices } : {}),
+    ...(helpers ? { helperModels: helpers } : {}),
     ...(mcpServerIds ? { mcpServerIds } : {}),
     ...(skillIds ? { skillIds } : {}),
     ...(commandIds ? { commandIds } : {}),

@@ -45,9 +45,9 @@ registerPwa()
 // has to stay above it reads how tall it is from here. Installed before render
 // because the variable is read on the first paint of a focused composer.
 startKeyboardInset()
-// The same measurement problem for the safe-area insets: the shell pads itself
-// in CSS, but a portaled flyout is placed by floating-ui in numbers, so the
-// menus read the status-bar / notch / home-indicator clearance from here.
+// The same measurement problem for the safe-area insets: a surface that places
+// itself in numbers (the aside window) reads the status-bar / notch /
+// home-indicator clearance from here. Base UI's are boxed in CSS instead.
 startSafeAreaInset()
 // The other half of the same trade: the browser's own scroll-into-view on focus
 // is driven by the visual viewport shrinking, which `overlays-content` stops,

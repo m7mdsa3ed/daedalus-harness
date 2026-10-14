@@ -95,3 +95,29 @@ const commands = new EventTarget()
 export function runShortcut(id: ShortcutId): void {
   commands.dispatchEvent(new Event(id))
 }
+
+/** A menu a named shortcut opens. The chord toggles it, and the close hands the
+    caret back to wherever it was when the key was pressed — the composer, most
+    often — rather than to a trigger the reader never touched. Pass the result
+    to the menu's popup as `finalFocus`; a menu opened by pointer keeps Base
+    UI's default. */
+export function useMenuShortcut(
+  id: ShortcutId,
+  toggle: () => void,
+  enabled: boolean
+): () => HTMLElement | true {
+  const from = React.useRef<HTMLElement | null>(null)
+  useShortcut(
+    id,
+    () => {
+      from.current = document.activeElement as HTMLElement | null
+      toggle()
+    },
+    { enabled }
+  )
+  return React.useCallback(() => {
+    const el = from.current
+    from.current = null
+    return el?.isConnected && el !== document.body ? el : true
+  }, [])
+}

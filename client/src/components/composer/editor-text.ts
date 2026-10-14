@@ -19,13 +19,17 @@ type Doc = Editor["state"]["doc"]
 type PMNode = ReturnType<Doc["child"]>
 
 const QUOTE_LINE = /^>(?: (.*))?$/
-/* A paste token, or a finished mention: `@` at a word boundary, a path-looking
-   run (a `/`, `.` or `~` in it — `@channel` in prose stays text), then a space
+/* A paste token, a finished mention, or a link. A mention is `@` at a word
+   boundary, a path-looking run (a `/`, `.` or `~` in it — `@channel` in prose
+   stays text) or a task key (`@DAE-12`, see `file-mentions.tsx`), then a space
    or the line's end. A token still ending in `/` is a directory being drilled
-   into by the completer, and one ending in punctuation is a sentence's. */
+   into by the completer, and one ending in punctuation is a sentence's. A link
+   is an http(s) run; trailing sentence punctuation is trimmed below. */
 const INLINE =
-  /\[pasted text #(\d+)\]|(?<=^|[\s(])@([^\s@]*[/.~][^\s@]*)(?=\s|$)/g
+  /\[pasted text #(\d+)\]|(?<=^|[\s(])@([^\s@]*[/.~][^\s@]*|[A-Z][A-Z0-9]{1,5}-\d+)(?=\s|$)|https?:\/\/[^\s<>()]+/g
 const NOT_A_MENTION_END = /[/.,;:!?)\]}'"]$/
+/* A trailing `.`/`,`/`)` is almost always the sentence's, not the URL's. */
+const NOT_A_LINK_END = /[.,;:!?)\]}'"]+$/
 
 export function quoteLines(text: string): string {
   return text
@@ -39,18 +43,26 @@ function inline(line: string, pastes: ReadonlySet<number>): JSONContent[] {
   let last = 0
   for (const match of line.matchAll(INLINE)) {
     let chip: JSONContent
+    let end = match.index + match[0].length
     if (match[1] !== undefined) {
       const n = Number(match[1])
       // A token with no parked body is just text someone typed.
       if (!pastes.has(n)) continue
       chip = { type: "pasteToken", attrs: { n } }
-    } else {
+    } else if (match[2] !== undefined) {
       if (NOT_A_MENTION_END.test(match[2])) continue
       chip = { type: "mention", attrs: { path: match[2] } }
+    } else {
+      /* The URL proper, with its sentence's punctuation left outside the chip —
+         the trailing run stays text, matched last. */
+      const url = match[0].replace(NOT_A_LINK_END, "")
+      if (!url) continue
+      chip = { type: "link", attrs: { url } }
+      end = match.index + url.length
     }
     if (match.index > last) content.push({ type: "text", text: line.slice(last, match.index) })
     content.push(chip)
-    last = match.index + match[0].length
+    last = end
   }
   if (last < line.length) content.push({ type: "text", text: line.slice(last) })
   return content
@@ -89,6 +101,8 @@ function inlineText(node: PMNode): string {
       return pasteToken(node.attrs.n as number)
     case "mention":
       return `@${node.attrs.path as string}`
+    case "link":
+      return node.attrs.url as string
     case "quote":
       return `${quoteLines(node.attrs.text as string)}\n\n`
     default:

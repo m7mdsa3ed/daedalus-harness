@@ -10,6 +10,10 @@
      of the request called agent overhead (`lib/token-breakdown.ts`). Both sum to
      the request's real total and both are estimates, so each carries a `~`.
 
+   Both are read per step — one model request — never per turn: a turn is the
+   tag on a step's row. Only Billed's total sums turns, because a runtime that
+   bills per step at all is the exception (`stepBill`).
+
    Nothing else in the app prints an estimate: the composer's popovers and the
    transcript's footers show only what was reported. */
 import * as React from "react"
@@ -21,14 +25,16 @@ import {
   billedParts,
   promptParts,
   requestDetail,
+  spendTime,
   stepBill,
+  subagentSpend,
   sumPromptParts,
   tokensByTurn,
   type DetailItem,
   type PromptKey,
   type PromptParts,
+  type SubagentSpend,
   type TurnStep,
-  type TurnTokens,
 } from "@/lib/token-breakdown"
 import { formatDuration, formatTokens, promptTokens, sumUsage, windowEstimated } from "@/lib/tokens"
 import type { ThreadState } from "@/lib/store"
@@ -52,15 +58,6 @@ function Block({ title, hint, children }: { title: string; hint?: React.ReactNod
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[10px] text-muted-foreground">{label}</dt>
-      <dd className="text-[11px] font-medium tabular-nums">{value}</dd>
-    </div>
-  )
-}
-
 function Tag({ children }: { children: React.ReactNode }) {
   return <span className="rounded-full bg-muted px-1.5 py-px text-[9px] font-medium text-muted-foreground">{children}</span>
 }
@@ -79,11 +76,11 @@ function StackBar({
   className?: string
 }) {
   return (
-    <div role="img" aria-label={label} className={cn("flex h-2 w-full gap-px overflow-hidden rounded-full bg-muted", className)}>
+    <span role="img" aria-label={label} className={cn("flex h-2 w-full gap-px overflow-hidden rounded-full bg-muted", className)}>
       {parts.map((part, i) =>
-        part.tokens > 0 ? <div key={i} className={part.swatch} style={{ width: `${(part.tokens / total) * 100}%` }} /> : null
+        part.tokens > 0 ? <span key={i} className={cn("block", part.swatch)} style={{ width: `${(part.tokens / total) * 100}%` }} /> : null
       )}
-    </div>
+    </span>
   )
 }
 
@@ -98,6 +95,8 @@ function ShareBar({ swatch, value, total }: { swatch: string; value: number; tot
 
 interface Row {
   label: string
+  /** A muted note after the name — a child's time, say. */
+  hint?: string
   swatch: string
   value: number
 }
@@ -113,7 +112,10 @@ function Rows({ rows, total }: { rows: Row[]; total: number }) {
           <React.Fragment key={row.label}>
             <span className={cn("mt-[3px] size-2 rounded-sm", row.swatch)} />
             <span className="min-w-0">
-              <span className="block truncate">{row.label}</span>
+              <span className="block truncate">
+                {row.label}
+                {row.hint && <span className="text-muted-foreground"> · {row.hint}</span>}
+              </span>
               <ShareBar swatch={row.swatch} value={row.value} total={total} />
             </span>
             <span className="text-right">
@@ -265,6 +267,7 @@ function PromptRows({
 
 interface Request {
   number: number
+  source: "agent" | "gateway" | "transcript"
   /** Position in the thread's flat list of requests. */
   index: number
   step: TurnStep
@@ -292,7 +295,7 @@ function RequestChart({
         <span>{formatTokens(max)}</span>
         <span className="flex-1 border-t border-dashed border-border" />
       </span>
-      <div className="flex h-20 items-end gap-px" role="group" aria-label="Prompt size by request">
+      <div className="flex h-20 items-end gap-px" role="group" aria-label="Prompt size by step">
         {shown.map((r) => {
           const used = r.step.update.used
           return (
@@ -300,8 +303,8 @@ function RequestChart({
               key={r.number}
               type="button"
               aria-pressed={r.number === picked}
-              aria-label={`Request ${r.number}: ${formatTokens(used)} tokens`}
-              title={`Request ${r.number} · ${formatTokens(used)}`}
+              aria-label={`Step ${r.number}: ${formatTokens(used)} tokens`}
+              title={`Step ${r.number} · ${formatTokens(used)}`}
               onClick={() => onPick(r.number)}
               className={cn(
                 "flex min-w-0 flex-1 flex-col-reverse overflow-hidden rounded-[2px] bg-muted outline-offset-1 transition-opacity focus-visible:outline-2 focus-visible:outline-ring",
@@ -328,9 +331,10 @@ const windowTone = (percent: number): Tone => (percent >= 85 ? "bad" : percent >
 
 export function TokensPanel({ thread }: { thread: ThreadState }) {
   const { turns, entries } = React.useMemo(
-    () => tokensByTurn(thread.items, thread.stepUsage, thread.turnUsage),
-    [thread.items, thread.stepUsage, thread.turnUsage]
+    () => tokensByTurn(thread.items, thread.stepUsage, thread.turnUsage, thread.stepAt),
+    [thread.items, thread.stepUsage, thread.turnUsage, thread.stepAt]
   )
+  const spend = React.useMemo(() => subagentSpend(thread.items), [thread.items])
   const [pickedNumber, setPicked] = React.useState<number | null>(null)
 
   const steps = React.useMemo(() => turns.flatMap((turn) => turn.steps), [turns])
@@ -357,7 +361,6 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
   const all = sumPromptParts(steps)
   const billedTurns = turns.filter((t) => t.usage).length
   const maxUsed = Math.max(1, ...steps.map((s) => s.update.used))
-  const maxTurn = Math.max(1, ...turns.map((t) => t.usage?.totalTokens ?? 0))
   /* Latest unless one was picked; a picked request that has since scrolled out
      of the list (a compaction rebuilt the thread) falls back to the latest. */
   const selected = requests.find((r) => r.number === pickedNumber) ?? requests.at(-1)
@@ -375,7 +378,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
   return (
     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
       {billed && billedRows && (
-        <Block title="Billed" hint={`${billedTurns} turns · ${steps.length} requests`}>
+        <Block title="Billed" hint={`${steps.length} steps · ${billedTurns} turns`}>
           <p className="text-2xl font-semibold leading-none tabular-nums">{formatTokens(billed.totalTokens)}</p>
           <p className="mt-1 text-[10px] text-muted-foreground">tokens in total · {formatTokens(prompt)} sent, {formatTokens(billed.outputTokens)} generated</p>
 
@@ -398,8 +401,8 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
                 hint={`${formatTokens(billed.cachedReadTokens ?? 0)} read from cache`}
               />
             )}
-            {billedTurns > 0 && <Tile label="Average per turn" value={formatTokens(Math.round(billed.totalTokens / billedTurns))} hint={`${(steps.length / billedTurns).toFixed(1)} requests a turn`} />}
-            {peak.number > 0 && <Tile label="Largest prompt" value={formatTokens(peak.used)} hint={`request ${peak.number}`} />}
+            {steps.length > 0 && <Tile label="Average per step" value={formatTokens(Math.round(billed.totalTokens / steps.length))} hint={`${(steps.length / Math.max(1, billedTurns)).toFixed(1)} steps a turn`} />}
+            {peak.number > 0 && <Tile label="Largest prompt" value={formatTokens(peak.used)} hint={`step ${peak.number}`} />}
             {context?.cost && <Tile label="Reported cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />}
             {(billedRows.reasoning > 0 || billed.outputTokens > 0) && (
               <Tile
@@ -420,12 +423,14 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
         </Block>
       )}
 
-      <Block title="Prompt" hint={selected ? (selected.inferred ? <Tag>inferred</Tag> : <Tag>measured</Tag>) : undefined}>
+      {spend.length > 0 && <SubagentsBlock spend={spend} />}
+
+      <Block title="Prompt" hint={selected ? <Tag>{selected.source === "agent" ? "agent breakdown" : selected.source === "gateway" ? "gateway estimate" : "transcript estimate"}</Tag> : undefined}>
         {selected && all ? (
           <>
             <RequestChart requests={requests} picked={selected.number} onPick={setPicked} />
             <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 text-[11px]">
-              <span className="font-medium">Request {selected.number}</span>
+              <span className="font-medium">Step {selected.number}</span>
               <span className="tabular-nums text-muted-foreground">
                 {formatTokens(selected.step.update.used)} in the prompt
                 {delta !== null && delta !== 0 && (
@@ -445,12 +450,12 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
             )}
             <StackBar
               className="mt-2 h-2.5"
-              label={`Request ${selected.number} prompt by part`}
+              label={`Step ${selected.number} prompt by part`}
               total={selectedTotal}
               parts={PROMPT_PARTS.map((part) => ({ swatch: part.swatch, tokens: selected.parts[part.key] }))}
             />
             <PromptRows
-              head={[`Request ${selected.number}`, "All requests"]}
+              head={[`Step ${selected.number}`, "All steps"]}
               totals={[selectedTotal, all.total]}
               parts={selected.parts}
               all={all.parts}
@@ -463,137 +468,175 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
               <div className="mt-1 space-y-1">
                 {all.inferred < all.requests && (
                   <p>
-                    Measured requests: the system prompt and tool schemas are tokenized here; your messages, replies and tool
+                    Measured steps: the system prompt and tool schemas are tokenized here; your messages, replies and tool
                     results share what the provider billed beyond them, in proportion.
                   </p>
                 )}
-                {all.inferred > 0 && (
+                {requests.some((request) => request.source === "gateway") && (
                   <p>
-                    Inferred requests: this agent doesn't report what its prompt held, so your messages, replies and tool
-                    results are estimated from the transcript (about 4 characters a token) and agent overhead — its system
-                    prompt and tool schemas, unsplit — is what is left of the request's total. After a compaction the
-                    transcript is longer than the prompt, so those run high.
+                    Gateway estimates tokenize the request body and use the provider's prompt total. System text, tool schemas,
+                    and message roles are estimated separately; framing and agent-internal prompt content remain overhead.
+                    Tokenizer differences can shift these estimates.
+                  </p>
+                )}
+                {requests.some((request) => request.source === "transcript") && (
+                  <p>
+                    Transcript-only estimates use about 4 characters per token; what is left of the provider total is agent
+                    overhead. After compaction the transcript can be longer than the prompt, so those estimates can run high.
                   </p>
                 )}
                 <p>
-                  Every part sums to the request's total; "All requests" counts what each request re-sent.
-                  {all.parts.history > 0 && " Older requests were recorded without the history split and show it as one row."}
+                  Every part sums to the step's total; "All steps" counts what each step re-sent.
+                  {all.parts.history > 0 && " Older steps were recorded without the history split and show it as one row."}
                 </p>
               </div>
             </details>
           </>
         ) : (
           <p className="text-[11px] leading-4 text-muted-foreground">
-            This agent doesn't report a prompt size per request, so only the billed figures above can be shown.
+            This agent doesn't report a prompt size per step, so only the billed figures above can be shown.
           </p>
         )}
       </Block>
 
-      <Block title="By turn" hint={`${turns.length} ${turns.length === 1 ? "turn" : "turns"}`}>
-        <div className="space-y-1.5 text-[11px]">
-          {turns.map((turn, index) => (
-            <TurnRow
-              key={turn.id}
-              turn={turn}
-              index={index}
-              open={index === turns.length - 1}
-              max={maxUsed}
-              maxTurn={maxTurn}
-              duration={turn.turnId ? thread.turnDuration[turn.turnId] : undefined}
-            />
-          ))}
-        </div>
+      <Block title="By step" hint={`${steps.length} ${steps.length === 1 ? "step" : "steps"} · ${turns.length} ${turns.length === 1 ? "turn" : "turns"}`}>
+        <StepList steps={steps} picked={selected?.number} onPick={setPicked} max={maxUsed} />
       </Block>
     </div>
   )
 }
 
-function TurnRow({
-  turn,
-  index,
-  open,
-  max,
-  maxTurn,
-  duration,
-}: {
-  turn: TurnTokens
-  index: number
-  open: boolean
-  max: number
-  maxTurn: number
-  duration?: number
-}) {
-  const usage = turn.usage
-  const billed = usage ? billedParts(usage) : null
-  const sums = sumPromptParts(turn.steps)
-  const turnPrompt = usage ? promptTokens(usage) : 0
-  const cache = usage && turnPrompt > 0 ? Math.round(((usage.cachedReadTokens ?? 0) / turnPrompt) * 100) : null
+/** Children's own bills — subagents, workflow steps, background runs. Kept out
+    of Billed: some runtimes already count a child in the parent's turn, others
+    run it as a session of its own, so adding the two would double some. */
+const CHILD_SWATCHES = ["bg-violet-500", "bg-sky-500", "bg-teal-500", "bg-amber-500", "bg-rose-500", "bg-lime-500"]
+
+function SubagentsBlock({ spend }: { spend: SubagentSpend[] }) {
+  const total = spend.reduce((n, child) => n + child.tokens, 0)
+  const rows = spend.map((child, i) => ({
+    label: child.workflow ? `${child.name} · workflow` : child.name,
+    hint: spendTime(child),
+    swatch: CHILD_SWATCHES[i % CHILD_SWATCHES.length],
+    value: child.tokens,
+  }))
   return (
-    <details open={open} className="group/turn rounded-md bg-muted/35 px-2 py-1.5">
-      <summary className="cursor-pointer list-none">
-        <span className="flex items-baseline gap-2">
-          <span className="shrink-0 font-medium tabular-nums">{index + 1}</span>
-          <span className="min-w-0 flex-1 truncate text-muted-foreground" title={turn.prompt}>
-            {turn.prompt || "(no text)"}
-          </span>
-          <span className="shrink-0 font-medium tabular-nums">{usage ? formatTokens(usage.totalTokens) : "…"}</span>
-        </span>
-        {billed && usage && (
-          <span className="mt-1.5 block">
-            <StackBar
-              className="h-1.5"
-              label={`Turn ${index + 1} billed tokens by kind`}
-              total={maxTurn}
-              parts={BILLED_PARTS.map((part) => ({ swatch: part.swatch, tokens: billed[part.key] }))}
-            />
-          </span>
-        )}
-        <span className="mt-1 flex flex-wrap gap-x-2.5 text-[9px] tabular-nums text-muted-foreground">
-          <span>{turn.steps.length} {turn.steps.length === 1 ? "request" : "requests"}</span>
-          {duration ? <span>{formatDuration(duration)}</span> : null}
-          {cache !== null && <span>{cache}% cached</span>}
-        </span>
-      </summary>
-      <dl className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1">
-        {billed &&
-          BILLED_PARTS.map((part) =>
-            billed[part.key] > 0 ? <Stat key={part.key} label={part.label} value={formatTokens(billed[part.key])} /> : null
-          )}
-        {sums &&
-          PROMPT_PARTS.map((part) =>
-            sums.parts[part.key] > 0 ? <Stat key={part.key} label={part.label} value={about(sums.parts[part.key])} /> : null
-          )}
-      </dl>
-      {turn.steps.length > 0 && (
-        <ol className="mt-1.5 space-y-1 border-t border-border/40 pt-1.5">
-          {turn.steps.map((step, i) => {
-            const one = promptParts(step)
-            const bill = stepBill(step.update)
-            const used = step.update.used
-            return (
-              <li key={i} className="grid grid-cols-[1.25rem_1fr_auto] items-center gap-x-2">
-                <span className="text-[10px] text-muted-foreground tabular-nums">{i + 1}</span>
-                <div style={{ width: `${Math.max(4, (used / max) * 100)}%` }}>
-                  <StackBar
-                    label={`Request ${i + 1} prompt by part`}
-                    total={used}
-                    parts={
-                      one
-                        ? PROMPT_PARTS.map((part) => ({ swatch: part.swatch, tokens: one.parts[part.key] }))
-                        : [{ swatch: "bg-zinc-400", tokens: used }]
-                    }
-                  />
-                </div>
-                <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {formatTokens(used)}
-                  {bill && ` · ${formatTokens(bill.outputTokens)} out`}
-                  {bill?.thoughtTokens ? ` · ${formatTokens(bill.thoughtTokens)} think` : ""}
-                </span>
-              </li>
-            )
-          })}
-        </ol>
+    <Block title="Subagents" hint={`${spend.length} ${spend.length === 1 ? "child" : "children"}`}>
+      <p className="text-2xl font-semibold leading-none tabular-nums">{formatTokens(total)}</p>
+      <p className="mt-1 text-[10px] text-muted-foreground">tokens billed by subagents and workflow steps</p>
+      <StackBar className="mt-3 h-2.5" label="Subagent tokens by child" total={total} parts={rows.map((r) => ({ swatch: r.swatch, tokens: r.value }))} />
+      <Rows total={total} rows={rows} />
+      <p className="mt-3 text-[10px] leading-4 text-muted-foreground">
+        Shown apart from Billed: depending on the agent, a child's tokens may already be counted in the turn that launched it.
+      </p>
+    </Block>
+  )
+}
+
+/** Steps drawn before "Show N earlier" — newest last, like the chart. */
+const STEP_LIST_MAX = 30
+
+/** Every model request in the thread, flat: a turn is only the tag on a row. */
+function StepList({
+  steps,
+  picked,
+  onPick,
+  max,
+}: {
+  steps: TurnStep[]
+  picked?: number
+  onPick: (number: number) => void
+  max: number
+}) {
+  const [all, setAll] = React.useState(false)
+  const start = all ? 0 : Math.max(0, steps.length - STEP_LIST_MAX)
+  return (
+    <ol className="space-y-1">
+      {start > 0 && (
+        <li>
+          <button
+            type="button"
+            className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => setAll(true)}
+          >
+            Show {start} earlier
+          </button>
+        </li>
       )}
-    </details>
+      {steps.slice(start).map((step, j) => {
+        const i = start + j
+        return <StepRow key={i} step={step} number={i + 1} previous={steps[i - 1]} picked={picked === i + 1} onPick={onPick} max={max} />
+      })}
+    </ol>
+  )
+}
+
+/** One request: what it produced, how big its prompt was and what that was
+    made of, and — where the runtime bills per step — what it generated. Picking
+    it is picking it in the chart above. */
+function StepRow({
+  step,
+  number,
+  previous,
+  picked,
+  onPick,
+  max,
+}: {
+  step: TurnStep
+  number: number
+  previous?: TurnStep
+  picked: boolean
+  onPick: (number: number) => void
+  max: number
+}) {
+  const one = promptParts(step)
+  const bill = stepBill(step.update)
+  const used = step.update.used
+  const delta = previous ? used - previous.update.used : 0
+  const prompt = bill ? promptTokens(bill) : 0
+  const cache = bill && prompt > 0 ? Math.round(((bill.cachedReadTokens ?? 0) / prompt) * 100) : null
+  return (
+    <li>
+      <button
+        type="button"
+        aria-pressed={picked}
+        onClick={() => onPick(number)}
+        className={cn(
+          "block w-full rounded-md px-2 py-1.5 text-start text-[11px] transition-colors hover:bg-muted/60",
+          picked ? "bg-muted ring-1 ring-foreground/20" : "bg-muted/35"
+        )}
+      >
+        <span className="flex items-baseline gap-2">
+          <span className="shrink-0 font-medium tabular-nums">{number}</span>
+          <span className="min-w-0 flex-1 truncate" title={step.label}>{step.label}</span>
+          <span className="shrink-0 font-medium tabular-nums">{formatTokens(used)}</span>
+        </span>
+        <span className="mt-1.5 block" style={{ width: `${Math.max(4, (used / max) * 100)}%` }}>
+          <StackBar
+            className="h-1.5"
+            label={`Step ${number} prompt by part`}
+            total={used}
+            parts={
+              one ? PROMPT_PARTS.map((part) => ({ swatch: part.swatch, tokens: one.parts[part.key] })) : [{ swatch: "bg-zinc-400", tokens: used }]
+            }
+          />
+        </span>
+        <span className="mt-1 flex flex-wrap gap-x-2.5 text-[9px] tabular-nums text-muted-foreground">
+          <span>turn {step.turn}</span>
+          {step.durationMs !== undefined && (
+            <span title="Time since the step before it, tool calls included">{formatDuration(step.durationMs)}</span>
+          )}
+          {delta !== 0 && (
+            <span className={delta > 0 ? TONE_TEXT.warn : TONE_TEXT.ok}>
+              {delta > 0 ? "+" : "−"}
+              {formatTokens(Math.abs(delta))}
+            </span>
+          )}
+          {bill && <span>{formatTokens(bill.outputTokens)} out</span>}
+          {bill?.thoughtTokens ? <span>{formatTokens(bill.thoughtTokens)} think</span> : null}
+          {cache !== null && <span>{cache}% cached</span>}
+          {one?.inferred && <span>estimated</span>}
+        </span>
+      </button>
+    </li>
   )
 }

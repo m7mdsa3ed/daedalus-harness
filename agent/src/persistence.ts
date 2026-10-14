@@ -74,6 +74,11 @@ export interface SubagentEntry {
   name: string;
   task: string;
   status: SubagentStatus;
+  /** The model the child was spawned on, and the role that named it, so a
+      follow-up runs where the child started. Absent on records written before
+      either existed — those follow the session model, as they always did. */
+  model?: string;
+  role?: string;
   messages: ModelMessage[];
 }
 interface SubagentRecord {
@@ -82,6 +87,8 @@ interface SubagentRecord {
   name: string;
   task: string;
   status: SubagentStatus;
+  model?: string;
+  role?: string;
 }
 interface SubagentMessagesRecord {
   t: "subagent_messages";
@@ -309,6 +316,8 @@ export class SessionStore {
           name: record.name,
           task: record.task,
           status: record.status,
+          ...(record.model ? { model: record.model } : {}),
+          ...(record.role ? { role: record.role } : {}),
           messages: [],
         });
       } else if (record.t === "subagent_messages") {

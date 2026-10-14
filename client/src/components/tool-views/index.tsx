@@ -31,7 +31,7 @@ import {
   TodosDetail,
   ToolSearchDetail,
 } from "@/components/tool-views/structured"
-import { SubagentDetail } from "@/components/tool-views/subagent"
+import { AgentMessageDetail, SubagentDetail } from "@/components/tool-views/subagent"
 import { FetchDetail, WebFetchDetail, WebSearchDetail } from "@/components/tool-views/web"
 import { CodeBlock, DetailSection, JsonView } from "@/components/tool-parts"
 import { extractBackgroundTask, safeJson, toolOutputText, toolViewOf, type ToolView } from "@/lib/tools"
@@ -73,6 +73,7 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
   mcp: { Detail: McpDetail, opensByDefault: false },
   harness: { Detail: HarnessDetail, opensByDefault: false },
   subagent: { Detail: SubagentDetail, opensByDefault: false },
+  message: { Detail: AgentMessageDetail, opensByDefault: false },
   websearch: { Detail: WebSearchDetail, opensByDefault: false },
   webfetch: { Detail: WebFetchDetail, opensByDefault: false },
   questions: { Detail: QuestionsDetail, opensByDefault: true },

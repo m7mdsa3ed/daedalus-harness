@@ -17,19 +17,25 @@ export type InspectorTab = "changes" | "plan" | "agents" | "details" | "tokens"
 
 const TABS: readonly InspectorTab[] = ["changes", "plan", "agents", "details", "tokens"]
 
+/** How the Agents reading is laid out: one of a workflow run's layouts over
+    every agent in the thread. A stored "runs" (removed) falls back to List. */
+export type AgentsView = "browse" | "board" | "list" | "timeline" | "flowchart"
+const AGENTS_VIEWS: readonly AgentsView[] = ["browse", "board", "list", "timeline", "flowchart"]
+
 export interface InspectorPrefs {
   /** Docked beside the transcript where the panel is wide enough. */
   open: boolean
   /** In px, clamped against the panel on every draw. */
   width: number
   tab: InspectorTab
+  agentsView: AgentsView
 }
 
 export const INSPECTOR_MIN = 256
 export const INSPECTOR_DEFAULT = 320
 export const INSPECTOR_MAX = 640
 
-const DEFAULTS: InspectorPrefs = { open: true, width: INSPECTOR_DEFAULT, tab: "changes" }
+const DEFAULTS: InspectorPrefs = { open: true, width: INSPECTOR_DEFAULT, tab: "changes", agentsView: "list" }
 
 export const inspectorPrefs = createLocalStore<InspectorPrefs>(
   "daedalus.inspector.v1",
@@ -43,6 +49,9 @@ export const inspectorPrefs = createLocalStore<InspectorPrefs>(
           ? Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, stored.width))
           : DEFAULTS.width,
       tab: TABS.includes(stored.tab as InspectorTab) ? (stored.tab as InspectorTab) : DEFAULTS.tab,
+      agentsView: AGENTS_VIEWS.includes(stored.agentsView as AgentsView)
+        ? (stored.agentsView as AgentsView)
+        : DEFAULTS.agentsView,
     }
   },
   DEFAULTS

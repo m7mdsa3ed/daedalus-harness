@@ -6,7 +6,12 @@
    localStorage rather than the store: the draft is a property of this browser,
    not of the session everyone connected to the harness shares. */
 
+import { IS_POPOUT, POPOUT_WINDOW_ID } from "./popout"
+
 const PREFIX = "ui.draft."
+const STORAGE_PREFIX = IS_POPOUT ? `${PREFIX}window.${POPOUT_WINDOW_ID ?? "unscoped"}.` : PREFIX
+const otherWindowKey = (key: string) =>
+  key.startsWith(`${PREFIX}window.`) && (!IS_POPOUT || !key.startsWith(STORAGE_PREFIX))
 const SAVE_DEBOUNCE_MS = 300
 
 /* The composer calls `saveDraft` on every keystroke and a localStorage write
@@ -20,8 +25,8 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function write(sessionId: string, text: string): void {
   try {
-    if (text) localStorage.setItem(PREFIX + sessionId, text)
-    else localStorage.removeItem(PREFIX + sessionId)
+    if (text) localStorage.setItem(STORAGE_PREFIX + sessionId, text)
+    else localStorage.removeItem(STORAGE_PREFIX + sessionId)
   } catch {
     // A full or blocked storage costs the draft, never the message.
   }
@@ -49,7 +54,7 @@ export function loadDraft(sessionId: string): string {
   const buffered = pending.get(sessionId)
   if (buffered !== undefined) return buffered
   try {
-    return localStorage.getItem(PREFIX + sessionId) ?? ""
+    return localStorage.getItem(STORAGE_PREFIX + sessionId) ?? ""
   } catch {
     return ""
   }
@@ -152,7 +157,8 @@ export function pruneDrafts(sessionIds: Iterable<string>): void {
   }
   try {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(PREFIX) && !live.has(key.slice(PREFIX.length))) {
+      if (otherWindowKey(key) || !key.startsWith(STORAGE_PREFIX)) continue
+      if (!live.has(key.slice(STORAGE_PREFIX.length))) {
         localStorage.removeItem(key)
       }
     }

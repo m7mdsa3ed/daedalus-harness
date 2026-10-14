@@ -12,10 +12,9 @@ import { pruneDrafts } from "../drafts"
 import { prunePastes } from "../pastes"
 import { pruneDraftAttachments } from "../draft-attachments"
 import { loadDraftSessions, pruneDraftSessions } from "../draft-sessions"
-import { loadLayout } from "../workspace/layout"
-import { IS_POPOUT } from "../popout"
+import { loadLayout, savedThreadIds } from "../workspace/layout"
 import { panelId } from "../workspace/panels"
-import { api, profileSupports, type ServerSettings, type SessionMeta } from "../settings"
+import { api, profileSupports, type ServerSettings, type SessionMeta, type SessionPage } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
 import { partitionSessionOptions } from "../session-options"
 import { scheduledKey } from "../queries/keys"
@@ -34,6 +33,19 @@ import {
 
 export const postJson = <T,>(settings: ServerSettings, path: string, body: unknown): Promise<T> =>
   api<T>(settings, path, { method: "POST", body: JSON.stringify(body) })
+
+/** Threads per page of the sidebar's list (`GET /api/sessions/page`). Big
+    enough that the fold-shut folders and the flat tiers are all covered by the
+    first read, small enough that a server holding thousands never answers with
+    them all. */
+const PAGE_SIZE = 40
+
+/** One row per id, first reading in place. A page folds the window, the trash
+    and the pins into one list, and the same thread can be in two of them. */
+function dedupeById(rows: SessionMeta[]): SessionMeta[] {
+  const seen = new Set<string>()
+  return rows.filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)))
+}
 
 /** What `useActions` reads out of React, handed to every group as one object. */
 export interface CoreDeps {
@@ -219,6 +231,10 @@ export function createCore(deps: CoreDeps) {
            differ from what it came up on: a remembered option the agent no
            longer offers must not stop the message that created the thread. */
         configChoices,
+        /* The role→model helper map picked on the draft (docs/model-roles.md).
+           A spawn input like `model`/`effort`: the server writes it on the row
+           and ships it to the agent's env, never a post-handshake replay. */
+        helperModels: meta.helperModels ?? [],
         /* The thread's own tool picks, on top of the project's and the
            profile's — the server links what still exists and spawns with
            the union. */
@@ -307,31 +323,80 @@ export function createCore(deps: CoreDeps) {
      installs them once and this only re-aims them; the last connection bound
      is the live one, which is the rule the module-level bound callbacks
      followed before. */
+  /**
+   * Read one page of the thread list and fold it into the store.
+   *
+   * `reset` replaces the window (a boot or a refresh); otherwise the page
+   * extends it (a scroll to the bottom). Either way the rows the sidebar draws
+   * are the page itself plus the two sets a recent window can never carry — the
+   * trash and every pinned thread — and the rows are handed back for the
+   * callers that read a thread out of a refresh (`createSession`, the fork).
+   */
+  const fetchSessionPage = async (offset: number, limit: number, reset: boolean): Promise<SessionMeta[]> => {
+    const page = await api<SessionPage>(settings, `/api/sessions/page?limit=${limit}&offset=${offset}`)
+    const rows = dedupeById([...page.sessions, ...page.trashed, ...page.pinned])
+    dispatch({
+      type: "session-page",
+      sessions: rows,
+      ids: page.sessions.map((session) => session.id),
+      total: page.total,
+      reset,
+    })
+    return rows
+  }
+
+  /** The next page of the sidebar's list, if the server holds one. Called when
+      the reader scrolls to the bottom of the sidebar — this is the "on demand"
+      half; nothing above ever pulls the whole list into the store. */
+  const loadMoreSessions = async (): Promise<void> => {
+    const { ids, total } = getState().sessionWindow
+    if (ids.length >= total) return
+    await fetchSessionPage(ids.length, PAGE_SIZE, false)
+  }
+
+  /**
+   * Load specific threads by id, whatever their age — a restored tab, the
+   * thread a URL names, an open panel. The window is the sidebar's; a thread it
+   * does not hold is not an error, it just has to be asked for by name.
+   */
+  const ensureSessionsLoaded = async (ids: readonly string[]): Promise<void> => {
+    const have = new Set(getState().sessions.map((session) => session.id))
+    const missing = [...new Set(ids)].filter((id) => id && !have.has(id))
+    if (missing.length === 0) return
+    const rows = await api<SessionMeta[]>(
+      settings,
+      `/api/sessions?ids=${missing.map(encodeURIComponent).join(",")}`
+    )
+    if (rows.length > 0) dispatch({ type: "session-extra", sessions: rows })
+  }
+
   const refreshSessions = async () => {
-    const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
+    /* Refresh exactly what is loaded: the window, re-read from the top. Asking
+       for the whole list here is the thing the paged route exists to avoid — a
+       refresh is not a reason to pull every thread the server holds. The rows
+       the window never held (open tabs, pins) are kept by the reducer's reset
+       and re-counted below. */
+    const state = getState()
+    const loaded = Math.max(PAGE_SIZE, state.sessionWindow.ids.length)
+    const sessions = await fetchSessionPage(0, loaded, true)
     // The server's list is the authority on what still exists, so this is the
     // one place that can tell a stale draft from a live one — except for
     // threads the server has never been told about. A draft thread is exactly
     // that, and pruning against the server alone would delete the half-written
     // message that has not been sent yet.
+    const windowIds = new Set(state.sessionWindow.ids)
     const ids = [
       ...sessions.map((session) => session.id),
-      ...getState().sessions.filter((s) => s.draft).map((s) => s.id),
+      // Rows the window never held — a draft, or a thread kept for a reason of
+      // its own — are still threads this device may hold a socket for.
+      ...state.sessions.filter((s) => s.draft || !windowIds.has(s.id)).map((s) => s.id),
     ]
-    /* A popout holds none of the main window's drafts in its store, so its
-       `ids` would prune their half-written messages (lib/popout.ts). */
-    if (!IS_POPOUT) {
-      pruneDrafts(ids)
-      prunePastes(ids)
-      pruneDraftAttachments(ids)
-    }
-    /* And the draft rows themselves: an id the server reports is a thread that
-       has been sent (here or on another device), so its row stops being this
-       device's to bring back. Drafts still unknown to the server stay. */
-    pruneDraftSessions(
-      settings.id,
-      sessions.map((session) => session.id)
-    )
+    /* Composer sidecars and draft-session rows are scoped by window, so this
+       refresh prunes only data owned by this workspace. */
+    pruneDrafts(ids)
+    prunePastes(ids)
+    pruneDraftAttachments(ids)
+    pruneDraftSessions(settings.id, ids)
     /* A connection leaks the same way the device-local stores do — a cursor,
        a backoff timer or a live socket for a thread the server no longer
        reports is never coming back on its own. Same authority, same sweep,
@@ -340,7 +405,6 @@ export function createCore(deps: CoreDeps) {
        its socket is not torn down here; the deleted branch of a reconnect
        owns that.) */
     threads.sweep(new Set(ids))
-    dispatch({ type: "sessions", sessions })
     /* Handed back, and this is not a convenience. `getState()` reads a ref the
        store writes in a *layout effect* (see `StoreProvider`), so it does not
        reflect the dispatch above until React has committed — and the caller's
@@ -378,6 +442,9 @@ export function createCore(deps: CoreDeps) {
     requireLive,
     createSession,
     cancelWait,
+    fetchSessionPage,
+    loadMoreSessions,
+    ensureSessionsLoaded,
     refreshSessions,
     reconnectThread,
   }
@@ -391,24 +458,34 @@ export type ActionsCore = ReturnType<typeof createCore>
     kept beside `createSession`/`refreshSessions` because each is a thin skin
     over one of them. */
 export function sessionActions(core: ActionsCore) {
-  const { settings, dispatch, getState, queryClient, catalog, createSession, refreshSessions } = core
+  const {
+    settings,
+    dispatch,
+    getState,
+    queryClient,
+    catalog,
+    createSession,
+    fetchSessionPage,
+    ensureSessionsLoaded,
+    refreshSessions,
+  } = core
 
   return {
     refreshSessions,
+    loadMoreSessions: core.loadMoreSessions,
+    ensureSessionsLoaded: core.ensureSessionsLoaded,
 
     /**
-     * The sessions list, and only that: every catalog the boot used to read
-     * alongside it is the query cache's now, fetched by the components that
-     * draw it. Kept as an action because the session list is the reducer's
-     * and because `Connected` needs one promise to gate the shell on.
+     * The first page of the sessions list, and the tabs it has to cover: every
+     * catalog the boot used to read alongside it is the query cache's now,
+     * fetched by the components that draw it. Kept as an action because the
+     * session list is the reducer's and because `Connected` needs one promise
+     * to gate the shell on.
      */
     async bootstrap() {
-      const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
-      dispatch({ type: "bootstrap", sessions })
-      // A popout draws one sent thread; the drafts are the main window's (lib/popout.ts).
-      if (IS_POPOUT) return { sessions }
+      const sessions = await fetchSessionPage(0, PAGE_SIZE, true)
       /* ── Unsent threads come back with their tabs ──
-         A draft has no server row, so the list above cannot carry it — and
+         A draft has no server row, so the page above cannot carry it — and
          without it, boot's `prunePanels` closes every draft tab the saved dock
          layout restored, and the debounced layout save makes that permanent.
          The row is re-minted only for a draft the layout still names: a draft
@@ -429,6 +506,14 @@ export function sessionActions(core: ActionsCore) {
          only place that can see both answers at once, and an id the server
          reports has stopped being a draft at all. */
       pruneDraftSessions(settings.id, kept)
+      /* ── The tabs the window has to cover ──
+         The list is a page now, so a thread an older tab names may sit past it
+         — and the dock's prune closes any chat panel whose session the store
+         does not hold. Every thread a saved layout (any space, plus what was
+         filed to one) still names is loaded, whatever its age, so the restore
+         keeps every tab it had. A draft is not on the server; it came back
+         through the loop above, and the id lookup simply answers nothing. */
+      await ensureSessionsLoaded(savedThreadIds(settings.id))
       return { sessions }
     },
 

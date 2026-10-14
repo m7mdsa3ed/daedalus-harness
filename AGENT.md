@@ -461,6 +461,18 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--harness-composer-width`, so the whole unit breathes on every click in and out of the
   textarea, which is motion the reader did not ask for at the exact moment they are aiming
   at something.
+- **The composer gets out of the way when the reader leaves the tail, and never by itself.**
+  `ThreadView` hands `Composer` the scroller's own pin (`useFollowStream.pinned`) as `collapsed`,
+  so the one fact that shows the scroll-to-end button is also what slides the box down — a
+  transform and an opacity and `inert`, never `hidden`, because **the height it reserves stays**
+  (`--composer-dock-h`) and collapsing must not re-flow a transcript somebody is reading.
+  Coming back is a gesture: reaching the bottom re-pins, and the scroll-to-end button is the same
+  door — **and a fill re-opens it** (`revealed`), because a suggested follow-up, a queued row's
+  Edit or an "Ask about this" has to be seen. A composer that collapsed *itself* — on a narrow
+  panel or a short window — was tried and removed: it took the box away from someone who was
+  typing, on no gesture at all, and left a "Show composer" button where the box had been. A
+  thread with nothing to scroll cannot be unpinned, so a new thread is never the one that leaves;
+  so is the landing console, which has no scroller to ask.
 - **The shelf has a surface of its own** (`--shelf`, `bg-shelf`), derived from `--composer`
   and **darker than it in both modes — which is two declarations, not one**: darker is toward
   the foreground in a light palette and toward the *background* in a dark one, where
@@ -541,9 +553,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Every surface a caret can land in clears the soft keyboard.** The page does not resize
   when one opens (`overlays-content`), so a fixed surface at the bottom is a surface
   *behind* the keys. Ride it with a named recipe from `lib/keyboard-inset.ts` —
-  `KEYBOARD_LIFT`, `KEYBOARD_CENTER`, `KEYBOARD_RISE`, `cn`'d last — never a fresh calc. A
-  Base UI positioner is **padded, not moved** (`useKeyboardCollisionPadding`), and only
-  where the visual viewport did not already shrink, or a flyout rises by two keyboards. A
+  `KEYBOARD_LIFT`, `KEYBOARD_CENTER`, `KEYBOARD_RISE`, `cn`'d last — never a fresh calc.
+  **Edge-to-edge is cleared at the portal, never in a `ui/` component** (shadcn's, which a
+  reinstall reverts): every Base UI surface lands in `[data-base-ui-portal]`, and
+  index.css makes that wrapper the **float box** — the viewport less the status bar, a
+  landscape notch, and the home indicator *or* the keyboard. A flyout's wrapper *clips*,
+  which is what floating-ui collides against and sizes `--available-height` to (no
+  `collisionPadding` anywhere); a dialog's is its containing block, floored above the
+  indicator but not the keyboard, which the dialog rides itself; sheets, drawers and toasts
+  are edge surfaces that pad themselves and are not boxed. Anything sized by hand reads
+  `--float-h`/`--float-w`/`--float-bottom`, never `100dvh`/`100vw`. A
   field on an ordinary form is `lib/keyboard-caret.ts`'s, because the browser's own
   scroll-into-view is the thing `overlays-content` turned off.
 - **The phone has no bottom navigation bar**: the header's sidebar trigger opens the mobile

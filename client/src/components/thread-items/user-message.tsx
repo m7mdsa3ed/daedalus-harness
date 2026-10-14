@@ -6,13 +6,19 @@
    draws it too, through the `thread-items` barrel. */
 import * as React from "react"
 import { Prose } from "@/components/tool-parts"
-import { UserPastes, collapsePastes } from "@/components/thread-items/user-chips"
+import { UserPastes, UserTasks, collapsePastes } from "@/components/thread-items/user-chips"
+import { splitTaskContext } from "@/lib/task-mentions"
 
 export function UserMessageText({ text }: { text: string }) {
-  const collapsed = React.useMemo(() => collapsePastes(text), [text])
+  const { collapsed, tasks } = React.useMemo(() => {
+    const split = splitTaskContext(text)
+    return { collapsed: collapsePastes(split.text), tasks: split.tasks }
+  }, [text])
   return (
-    <UserPastes pastes={collapsed.pastes}>
-      <Prose text={collapsed.text} mentions />
-    </UserPastes>
+    <UserTasks tasks={tasks}>
+      <UserPastes pastes={collapsed.pastes}>
+        <Prose text={collapsed.text} mentions />
+      </UserPastes>
+    </UserTasks>
   )
 }

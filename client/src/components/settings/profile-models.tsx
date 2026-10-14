@@ -51,6 +51,8 @@ export interface ModelRow {
   devRef: string
   iconUrl: string
   group: string
+  /** Model-role ids this model serves (`ModelRole.id`). */
+  roles: string[]
 }
 
 let modelUid = 0
@@ -67,6 +69,7 @@ export const blankModelRow = (): ModelRow => ({
   devRef: "",
   iconUrl: "",
   group: "",
+  roles: [],
 })
 
 export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
@@ -84,6 +87,7 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   devRef: candidate.devRef ?? "",
   iconUrl: candidate.iconUrl ?? "",
   group: candidate.group ?? "",
+  roles: candidate.roles ?? [],
 })
 
 export const toModelRows = (models: {
@@ -97,6 +101,7 @@ export const toModelRows = (models: {
   devRef?: string
   iconUrl?: string
   group?: string
+  roles?: string[]
 }[]): ModelRow[] =>
   models.map((m) => ({
     uid: `model-${++modelUid}`,
@@ -111,6 +116,7 @@ export const toModelRows = (models: {
     devRef: m.devRef ?? "",
     iconUrl: m.iconUrl ?? "",
     group: m.group ?? "",
+    roles: m.roles ?? [],
   }))
 
 export function rowsToModels(rows: ModelRow[]) {
@@ -125,6 +131,7 @@ export function rowsToModels(rows: ModelRow[]) {
     devRef?: string
     iconUrl?: string
     group?: string
+    roles?: string[]
   }[] = []
   for (const row of rows) {
     const id = row.id.trim()
@@ -156,6 +163,7 @@ export function rowsToModels(rows: ModelRow[]) {
       ...(row.devRef.trim() ? { devRef: row.devRef.trim() } : {}),
       ...(row.iconUrl.trim() ? { iconUrl: row.iconUrl.trim() } : {}),
       ...(row.group.trim() ? { group: row.group.trim() } : {}),
+      ...(row.roles.length ? { roles: row.roles } : {}),
     })
   }
   return models

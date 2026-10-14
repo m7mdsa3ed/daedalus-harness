@@ -62,7 +62,7 @@ const seeded = await createProfile({
   models: [{ id: "smart-1", label: "Smart 1", reasoningEfforts: ["low"] }],
   defaultModel: "smart-1",
   smallModel: "",
-  usage: { kind: "anthropic", baseUrl: "", apiKey: "sk-usage" },
+  usage: { kind: "zai", baseUrl: "", apiKey: "sk-usage" },
   suppressModelMetadataWarning: false,
   hidden: false,
   disabled: false,

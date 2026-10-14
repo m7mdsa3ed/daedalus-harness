@@ -111,6 +111,11 @@ export interface ThreadState {
       step's own popover draws the window and the cost beside it, and what is
       dropped here cannot be recovered downstream. */
   stepUsage: Record<string, acp.UsageUpdate>
+  /** When each step's reading arrived, keyed like `stepUsage` — the journal's
+      stamp on replay, this device's clock live, the same pair a user row is
+      stamped with. A step's duration is the gap to the boundary before it,
+      derived in `tokensByTurn`. */
+  stepAt: Record<string, number>
   /** The item the last `usage_update` was filed against — the cursor
       `markStepUsage` reads to tell one model request from the next. */
   usageMark: string | null
@@ -169,6 +174,17 @@ export interface ThreadState {
 
 export interface State {
   sessions: SessionMeta[]
+  /**
+   * The sidebar's paging bookkeeping (`GET /api/sessions/page`).
+   *
+   * `sessions` above is the whole loaded list — the window the sidebar has
+   * paged in, plus the rows it must keep whatever their age (trashed, pinned,
+   * and the tabs this device has open) — but only `ids` are *window* rows, and
+   * `ids.length` is the `offset` the next page asks from. `total` is how many
+   * live threads the server holds, so "load more" knows when there is nothing
+   * left to fetch.
+   */
+  sessionWindow: { ids: string[]; total: number }
   // Which thread is open and which screen is showing live in the URL — see lib/router.
   threads: Record<string, ThreadState>
 }
@@ -198,6 +214,7 @@ export const emptyThread: ThreadState = {
   context: null,
   tps: null,
   stepUsage: {},
+  stepAt: {},
   usageMark: null,
   ttftMs: null,
   turnChanges: {},
@@ -223,10 +240,7 @@ export const emptyThread: ThreadState = {
  * recent statement of intent and outranks everything, a staged change is next
  * (it is going to be true at the boundary), and the row is what is true now.
  */
-export function configView<T extends SessionMeta>(
-  meta: T,
-  thread: ThreadState
-): T & { configPending: boolean; configStaged: boolean } {
+export function configView<T extends SessionMeta>(meta: T, thread: ThreadState): T {
   const staged = thread.stagedConfig
   const pending = thread.pendingConfig
   /* Spread, but skipping the keys whose value is `undefined`: a patch says what
@@ -238,8 +252,6 @@ export function configView<T extends SessionMeta>(
     ...meta,
     ...overlay(staged),
     ...overlay(pending),
-    configPending: pending !== null,
-    configStaged: pending === null && staged !== null,
   }
 }
 

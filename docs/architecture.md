@@ -145,15 +145,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   Cached in memory for five minutes, never in the database (the next boot may be on a host
   where the binary moved); an edit or reset of the row evicts, and `?refresh=1` re-measures
   for the case the cache cannot see — an `npm install -g` that just ran.
-- Seed 16 adds `subagentFeed` to the `opencode` row (`"opencode-http"`): a declarative field
-  like `liveConfig`, so it is set by the backfill beside the user's env rather than inside
-  it, and it does **not** evict the probe cache — nothing the agent advertises changed. At
-  spawn (`SessionManager.start`) an agent that declares it is handed a loopback port from a
-  pre-bound `PortPool` (`server/src/net.ts`, which is also where `freePort` now lives for
-  the dev server) and a fresh 24-byte password; `spawnAgent` appends
-  `--port`/`--hostname` to the resolved args and `OPENCODE_SERVER_PASSWORD` to the env, so
-  the registry row's own `args` are never edited and the probe, which passes no sidecar,
-  spawns the plain process. The feed is closed on the process's `close`.
+- Seed 16 added `subagentFeed` to the `opencode` row — a server-side sidecar for OpenCode
+  1.x's children. **Seed 30 retired it** with OpenCode 2, whose `acp` rejects the sidecar's
+  `--port`/`--hostname` and sends its children itself. The `subagent_feed` column stays
+  declared (a column push does not know about is one it drops) and nothing reads it. Seed 30
+  also moves the row's template (`OPENCODE_CONFIG`) to a `daedalus` provider declaring the
+  thread's model, filled from harness placeholders so a profile with no endpoint prunes it
+  away and OpenCode keeps its own login — replaced only on an exact match of seed 21's.
 - **Seed 20 is the release that finished the job those fields started.** Everything the
   harness believed about a *particular* runtime and could not read off its row moved onto
   one, because every one of them was a place a fork, a rename or a fifth runtime silently
