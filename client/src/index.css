@@ -2336,16 +2336,6 @@ html {
   --dock-tab-duration: 240ms;
 }
 
-/* ── Focus mode (`lib/focus-mode.ts`) ──
-   The narrow strip's hide (below), at every width, for the outer dock only: the thread's own
-   dock (`.dock-nested`) is about the thread in front and keeps its tabs. The
-   strip's +/list go too — they are the way to every other tab. Hidden, never
-   closed: the panels stay mounted and connected. */
-html [data-focus-mode] .dv-tab.dv-inactive-tab:not(.dock-nested *),
-html [data-focus-mode] .dv-right-actions-container:not(.dock-nested *) {
-  display: none;
-}
-
 /* ── Narrow: the strip is one tab, the rest are in the list ──
    A phone's strip draws the tab you are on and nothing else; every other tab
    lives in the tab list at the strip's end (`tab-actions.tsx`, the switcher
