@@ -11,10 +11,14 @@ export interface SidebarLayout {
   /** Shown or collapsed — the state the toggle flips, remembered so a reload
       comes back the way it was left. */
   open: boolean
+  /** `sidebar` is a flush rail beside the content; `inset` floats the content as
+      a rounded card on the shell's ground. Settings › Appearance. */
+  variant: "sidebar" | "inset"
 }
 
 export const SIDEBAR_LAYOUT_DEFAULTS: SidebarLayout = {
   open: true,
+  variant: "sidebar",
 }
 
 const STORAGE_KEY = "ui.sidebarLayout"
@@ -26,6 +30,7 @@ function pick(raw: unknown): Partial<SidebarLayout> {
   const source = raw as Record<string, unknown>
   const out: Partial<SidebarLayout> = {}
   if (typeof source.open === "boolean") out.open = source.open
+  if (source.variant === "sidebar" || source.variant === "inset") out.variant = source.variant
   return out
 }
 

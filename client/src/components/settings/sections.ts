@@ -79,7 +79,7 @@ export const SETTINGS_SECTIONS = [
     label: "Appearance",
     icon: Palette,
     title: "Appearance",
-    description: "How the harness looks. Your custom themes are saved on the server and followed across devices; the light/dark mode, font size, spacing and Windows window material are device settings.",
+    description: "How the harness looks. Your custom themes are saved on the server and followed across devices; the light/dark mode, sidebar layout, font size, spacing and Windows window material are device settings.",
   },
   {
     id: "notifications",

@@ -135,6 +135,13 @@ export function AppShell({
   const location = useLocation()
   const navigate = useNavigate()
   const sidebar = useSidebarWidth()
+  /* The sidebar layout is the device's (Settings › Appearance): the component
+     takes the variant, and the stylesheet keys the card, the gutters and the
+     ground off the same fact on <html>. index.html writes it before first paint. */
+  const layout = useSidebarLayout()
+  React.useEffect(() => {
+    document.documentElement.dataset.sidebarLayout = layout.variant
+  }, [layout.variant])
   const palette = useCommandPalette()
   // Whatever this is bound to on this device — the tooltip has to say the
   // key that actually works, not the one the release shipped.
@@ -521,7 +528,7 @@ export function AppShell({
           outer gutters. `offcanvas`, not `icon`: a 3rem column of glyphs is
           still a column, and the toggle that brings it back lives in the app
           header, which is on every route. */}
-      <Sidebar collapsible="offcanvas">
+      <Sidebar collapsible="offcanvas" variant={layout.variant} className={layout.variant === "inset" ? "p-0" : undefined}>
         {/* The brand row is the app header's own row: the same top offset (the
             status-bar inset, then the frame gap the column keeps above its
             header) and the same height (`--app-header-row-h`), so the brand

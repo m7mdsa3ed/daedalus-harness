@@ -2792,6 +2792,67 @@ html .dock-tab [data-tab-action="pin"] {
   }
 }
 
+/* ── The inset layout (Settings › Appearance) ──
+   The default is a flush rail with the content filling the rest. "Inset" is the
+   other arrangement: the shell stands on the app's ground (`--app-ground`), the
+   rail is transparent over it, and each dock group's content — and the right
+   panel — is a rounded card with a shadow and the frame's air on every side.
+
+   Everything here is keyed on `html[data-sidebar-layout="inset"]`, written by
+   the shell (and by index.html before first paint) from the device's choice, so
+   the two layouts never mix. The component half is `Sidebar variant="inset"`
+   (`p-2` on the container, which app-shell zeroes with `p-0`). Cards are a
+   desktop arrangement: below `md` the content is flush either way. */
+html[data-sidebar-layout="inset"] {
+  --app-frame-gap: 0.5rem;
+}
+html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]),
+html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]) body::before {
+  background-color: var(--app-ground);
+}
+html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"] {
+  background-color: transparent;
+}
+/* The phone's sheet cannot be transparent over the ground the way the rail is,
+   so it paints the tint instead. */
+html[data-sidebar-layout="inset"] [data-sidebar="sidebar"][data-mobile="true"] {
+  background-color: var(--app-ground);
+}
+html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
+  background-color: transparent;
+}
+@media (width >= 48rem) {
+  html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"])
+    [data-sidebar="sidebar"]:not([data-mobile="true"]) {
+    background-color: transparent;
+  }
+  html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
+    margin: var(--app-frame-gap) 0 0;
+  }
+  html[data-sidebar-layout="inset"] .dv-groupview > .dv-content-container {
+    @apply shadow-sm;
+    border-radius: var(--radius-xl);
+    /* The same air under the strip as the column has over the header row, and
+       the frame's gutter on every side so all four corners read. */
+    margin: var(--app-frame-gap);
+  }
+  html[data-sidebar-layout="inset"] .dv-horizontal > .dv-view-container > .dv-view:not(:first-child) .dv-content-container {
+    border-left: 0;
+    margin-left: 4px;
+  }
+  html[data-sidebar-layout="inset"] .dv-render-overlay {
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+  }
+  html[data-sidebar-layout="inset"] [data-slot="right-panel"] {
+    @apply shadow-sm;
+    margin: var(--app-frame-gap) var(--app-frame-gap) var(--app-frame-gap) 0;
+    border-width: 0;
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+  }
+}
+
 /* ── Per-thread view options ──
    Compact density and code-wrap are presentation only, so they live here as
    attribute-scoped overrides on the transcript column rather than as props

@@ -1,9 +1,10 @@
 import * as React from "react"
-import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
+import { Monitor, Moon, PanelLeft, PanelLeftDashed, RotateCcw, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { ThemeGallery } from "@/components/theme-builder/gallery"
 import { getWindowMaterial, setWindowMaterial, type WindowMaterial } from "@/lib/desktop"
+import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
 import { toast } from "@/lib/toast"
 import {
   FONT_SIZE_DEFAULT,
@@ -19,6 +20,11 @@ import {
 import { cn } from "@/lib/utils"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
+
+const LAYOUTS = [
+  { value: "sidebar", label: "Flush", hint: "A rail beside the content", icon: PanelLeft },
+  { value: "inset", label: "Inset", hint: "The content floats as a card", icon: PanelLeftDashed },
+] as const
 
 const MODES = [
   { value: "light", label: "Light", icon: Sun },
@@ -161,6 +167,7 @@ export function AppearancePage() {
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useFontSize()
   const [scale, setScale] = useScale()
+  const { variant } = useSidebarLayout()
 
   return (
     <>
@@ -182,6 +189,28 @@ export function AppearancePage() {
             >
               <Icon className="size-4.5" />
               {label}
+            </button>
+          ))}
+        </div>
+      </Group>
+      <Group label="Sidebar layout">
+        <div className="grid grid-cols-2 gap-2 p-2">
+          {LAYOUTS.map(({ value, label, hint, icon: Icon }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setSidebarLayout("variant", value)}
+              aria-pressed={variant === value}
+              className={cn(
+                "flex flex-col items-center gap-1.5 rounded-lg border border-transparent px-3 py-4 text-xs font-medium transition-colors",
+                variant === value
+                  ? "border-border bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent/50"
+              )}
+            >
+              <Icon className="size-4.5" />
+              {label}
+              <span className="text-[11px] font-normal text-muted-foreground">{hint}</span>
             </button>
           ))}
         </div>

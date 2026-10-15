@@ -467,8 +467,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `[data-header-left]` and `[data-header-right]`), the right panel pads by `--app-header-h`, and a
   section inside the panel zeroes `--dock-content-overlap` because its rail already clears the
   header. The sidebar's brand row is the same height (`--app-header-row-h`).
-- **Only the plain `sidebar` variant exists** (no `inset`, no `floating`): a flush rail with no border
-  and the column beside it filling the rest.
+- **The sidebar has two layouts, and the reader picks** (Settings › Appearance › Sidebar layout,
+  `lib/sidebar-layout.ts` `variant`, device-local). **Flush** (default, `Sidebar variant="sidebar"`):
+  a rail with no border and the content filling the rest, on `--sidebar`. **Inset**
+  (`variant="inset"`, `p-0` on the container): the shell stands on `--app-ground`, the rail is
+  transparent over it, and each dock group's content and the right panel are rounded shadowed cards
+  with `--app-frame-gap` of air. Every inset rule in `index.css` is keyed on
+  `html[data-sidebar-layout="inset"]`, written by the shell and by `index.html` before first paint, so
+  the two never mix; cards are desktop-only (`md`+).
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **The sidebar has two contents and the *route* picks.** Settings sections are its content while

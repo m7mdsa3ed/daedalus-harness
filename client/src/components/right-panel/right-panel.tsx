@@ -158,6 +158,7 @@ export function RightPanelColumn({ actions }: { actions: Actions }) {
   return (
     <aside
       aria-label="Panel"
+      data-slot="right-panel"
       style={{ width }}
       className="relative flex min-h-0 shrink-0 flex-col border-l border-border bg-background pt-[var(--app-header-h)]"
     >
