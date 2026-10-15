@@ -419,7 +419,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **In the flush layout the header is an overlay on the dock and the panel**, with a progressive
   blur: a top group's strip is `position: absolute` over its content (panels pad by the measured
   `--dock-content-overlap`), joins the header's row (`data-header-band`, `--dock-band-left`/`-right`
-  measured against `[data-header-left]` and `[data-header-right]`), and the right panel pads by
+  measured against `[data-header-left]`), and the right panel pads by
   `--app-header-h`. **In the inset layout the strip is in the row on the ground and the card starts
   below it**, with no blur at `md`+ (the blur is phone-only there). A section inside the panel zeroes
   `--dock-content-overlap` because its rail already clears the header. The sidebar's brand row is the

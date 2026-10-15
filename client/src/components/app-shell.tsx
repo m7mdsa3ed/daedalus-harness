@@ -32,7 +32,6 @@ import { NotificationIconButton } from "@/components/notifications/bell"
 import { pageRoutes, usePageHeading } from "@/components/routes"
 import { RightPanelColumn, RightPanelSheet } from "@/components/right-panel/right-panel"
 import { ScopeProvider, useRouteScope } from "@/components/right-panel/scope-dock"
-import { TopBarActions } from "@/components/shell/top-bar"
 import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
 import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
@@ -741,7 +740,6 @@ export function AppShell({
               </button>
             )}
           </div>
-          <TopBarActions />
         </header>
         {/* The main area is the dock, on every route. The card is each group's
             content container (`index.css`), under its tabs. The dock outlives
