@@ -763,7 +763,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   hover controls. "Duplicate tab" is the menu's way to a second outlet on the same place.
 - **The composer's MCP picker is a popover of switches, not a menu** (`composer/mcp-picker.tsx`):
   header with "N of M" and the staged note, a filter past five servers, Library and Built-in
-  groups of rows (mark, name, transport, tool count from the shared catalog, switch), and
+  groups of rows (mark, name, a status dot — connected / needs authorization / error / not checked, from the stored catalog and never a fresh connect — transport or the failure, tool count, switch), and
   Clear / Manage in the footer. Profile-linked rows are locked.
 - **Opening a panel never splits the dock** — every kind arrives the way a new thread does, a
   tab beside what you are looking at, and `OpenPanelOptions.direction` is read as "do not

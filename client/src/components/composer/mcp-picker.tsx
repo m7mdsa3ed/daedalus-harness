@@ -1,5 +1,5 @@
 import * as React from "react"
-import { KeyRoundIcon, SearchIcon, ServerIcon, SettingsIcon } from "lucide-react"
+import { SearchIcon, ServerIcon, SettingsIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { McpIcon } from "@/components/entity-icon"
@@ -16,24 +16,34 @@ import { settingsPath } from "@/lib/router"
 import { mcpSubtitle, type McpServerDef, type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 
-/** How many tools a server offers, from the listing the harness already holds.
-    Mounted only while the popover is open, so a closed picker reads nothing; a
-    built-in has no listing and a failed one says nothing rather than "0". */
-function ToolCount({ server }: { server: McpServerDef }) {
-  const { data } = useMcpCatalog(server.id, server.type !== "builtin")
-  if (!data?.ok || data.tools.length === 0) return null
-  return (
-    <span
-      title={`${data.tools.length} tool${data.tools.length === 1 ? "" : "s"}`}
-      className="shrink-0 rounded-pill bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground tabular-nums"
-    >
-      {formatCount(data.tools.length)}
-    </span>
-  )
+type Status = { tone: "ok" | "warn" | "error" | "idle"; label: string; detail?: string }
+
+const DOT: Record<Status["tone"], string> = {
+  ok: "bg-emerald-500",
+  warn: "bg-amber-500",
+  error: "bg-destructive",
+  idle: "bg-muted-foreground/40",
 }
 
-/** One server: its mark, name and transport on the left, its tool count and a
-    switch on the right. The row is a label, so the whole width is the target. */
+/** What the harness knows of a server, from its stored listing (read without
+    connecting) and its auth state: connected, needs authorization, failed, or
+    not checked yet. A built-in has no connection to speak of and is always
+    available. Mounted only while the popover is open. */
+function useServerStatus(server: McpServerDef, needsAuth: boolean): { status: Status; tools: number } {
+  const { data, isLoading } = useMcpCatalog(server.id, server.type !== "builtin")
+  const tools = data?.ok ? data.tools.length : 0
+  if (server.type === "builtin") return { status: { tone: "ok", label: "Built in" }, tools }
+  if (needsAuth) return { status: { tone: "warn", label: "Needs authorization", detail: "Settings › MCP servers" }, tools }
+  if (isLoading) return { status: { tone: "idle", label: "Checking…" }, tools }
+  if (data?.ok) return { status: { tone: "ok", label: "Connected" }, tools }
+  if (data?.deferred) return { status: { tone: "idle", label: "Not checked yet" }, tools }
+  if (data?.error) return { status: { tone: "error", label: "Error", detail: data.error }, tools }
+  return { status: { tone: "idle", label: "Unknown" }, tools }
+}
+
+/** One server: its mark, name, status dot and transport on the left, its tool
+    count and a switch on the right. The row is a label, so the whole width is
+    the target. */
 function McpRow({
   server,
   on,
@@ -47,6 +57,15 @@ function McpRow({
   needsAuth: boolean
   onChange: (on: boolean) => void
 }) {
+  const { status, tools } = useServerStatus(server, needsAuth)
+  /* The second line is the thing to act on when there is one — a failure or a
+     missing authorization — and the transport otherwise. */
+  const second =
+    status.tone === "error" || status.tone === "warn"
+      ? `${status.label}${status.detail ? ` — ${status.detail}` : ""}`
+      : locked
+        ? "from profile"
+        : mcpSubtitle(server)
   return (
     <label
       className={cn(
@@ -60,15 +79,33 @@ function McpRow({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4 font-medium">
           <span className="truncate">{server.name}</span>
-          {/* An OAuth server nobody has connected is not advertised at spawn,
-              so it is marked here and not listed as though the thread had it. */}
-          {needsAuth && <KeyRoundIcon className="size-3 shrink-0 text-destructive" aria-label="needs authorization" />}
+          {/* An OAuth server nobody has connected is not advertised at spawn, so
+              it is marked here rather than listed as though the thread had it. */}
+          <span
+            role="img"
+            aria-label={status.label}
+            title={status.detail ? `${status.label} — ${status.detail}` : status.label}
+            className={cn("size-1.5 shrink-0 rounded-full", DOT[status.tone])}
+          />
         </span>
-        <span className="truncate font-mono text-[10px] leading-3 text-muted-foreground">
-          {needsAuth ? "needs authorization — Settings › MCP servers" : locked ? "from profile" : mcpSubtitle(server)}
+        <span
+          className={cn(
+            "truncate font-mono text-[10px] leading-3",
+            status.tone === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+          title={second}
+        >
+          {second}
         </span>
       </span>
-      <ToolCount server={server} />
+      {tools > 0 && (
+        <span
+          title={`${tools} tool${tools === 1 ? "" : "s"}`}
+          className="shrink-0 rounded-pill bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground tabular-nums"
+        >
+          {formatCount(tools)}
+        </span>
+      )}
       <Switch size="sm" checked={on} disabled={locked} onCheckedChange={onChange} aria-label={server.name} />
     </label>
   )
