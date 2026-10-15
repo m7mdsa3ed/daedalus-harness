@@ -3,7 +3,6 @@ import { KeyRoundIcon, SearchIcon, ServerIcon, SettingsIcon } from "lucide-react
 import { useNavigate } from "react-router"
 
 import { McpIcon } from "@/components/entity-icon"
-import { AvatarGroup, AvatarGroupCount } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
@@ -16,31 +15,6 @@ import { useMcpCatalog } from "@/lib/queries/catalog"
 import { settingsPath } from "@/lib/router"
 import { mcpSubtitle, type McpServerDef, type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-
-/** The servers' own logos as an avatar group: up to three, overlapped and
-    ringed against the composer's ground, and a `+N` chip for the rest. Each
-    logo falls back to its transport mark, so a server with none is still a
-    distinct glyph. One drawing for the footer reading and the scope row. */
-export function McpAvatars({ servers }: { servers: McpServerDef[] }) {
-  return (
-    <AvatarGroup className="-space-x-1.5">
-      {servers.slice(0, 3).map((server) => (
-        <span
-          key={server.id}
-          title={server.name}
-          className="grid size-4 shrink-0 place-items-center overflow-hidden rounded-full bg-primary/15 text-primary ring-1 ring-primary/30"
-        >
-          <McpIcon server={server} className="size-3.5" />
-        </span>
-      ))}
-      {servers.length > 3 && (
-        <AvatarGroupCount className="size-4 text-[9px] font-medium tabular-nums ring-1 ring-composer">
-          +{formatCount(servers.length - 3)}
-        </AvatarGroupCount>
-      )}
-    </AvatarGroup>
-  )
-}
 
 /** How many tools a server offers, from the listing the harness already holds.
     Mounted only while the popover is open, so a closed picker reads nothing; a

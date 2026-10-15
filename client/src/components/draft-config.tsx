@@ -57,7 +57,7 @@ import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows";
 import { useIsMobile } from "@/hooks/use-device";
 import { useMenuShortcut } from "@/hooks/use-hotkey";
 import type { ShortcutId } from "@/lib/shortcuts";
-import { McpPicker } from "@/components/composer/mcp-avatars";
+import { McpPicker } from "@/components/composer/mcp-picker";
 import { ThreadToolsSections } from "@/components/thread-tools/menu";
 import { cn } from "@/lib/utils";
 import type { Actions } from "@/lib/actions";

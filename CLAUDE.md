@@ -808,7 +808,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A chat tab's second row carries the project, the model and the thread's age** (`relativeAge`
   in `lib/settings.ts`, re-rendered by the minute); the title mask fades both rows under the
   hover controls. "Duplicate tab" is the menu's way to a second outlet on the same place.
-- **The composer's MCP picker is a popover of switches, not a menu** (`composer/mcp-avatars.tsx`):
+- **The composer's MCP picker is a popover of switches, not a menu** (`composer/mcp-picker.tsx`):
   header with "N of M" and the staged note, a filter past five servers, Library and Built-in
   groups of rows (mark, name, transport, tool count from the shared catalog, switch), and
   Clear / Manage in the footer. Profile-linked rows are locked.

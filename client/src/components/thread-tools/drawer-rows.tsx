@@ -3,7 +3,7 @@
    Reads the same links `ThreadToolsSections` does (`useThreadToolLinks`), so
    what a switch writes is what a menu toggle writes — a draft's pick, or a
    started thread's change staged for the next send. MCP servers are the
-   composer chip's (`composer/mcp-avatars.tsx`), not a drawer page. */
+   composer chip's (`composer/mcp-picker.tsx`), not a drawer page. */
 import { KeyRoundIcon, BlocksIcon, SlashSquareIcon } from "lucide-react"
 import type { ReactNode } from "react"
 

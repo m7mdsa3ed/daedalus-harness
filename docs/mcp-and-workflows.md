@@ -642,7 +642,7 @@ beside Import in Settings › MCP.
   (`ThreadToolsMenu` in `components/thread-tools/menu.tsx`, where the profile's show checked and
   locked, so the thread's picks are exactly the additions). **MCP servers are the exception
   to where**: they are picked on the composer's own chip beside the model pill (`McpPicker`,
-  `components/composer/mcp-avatars.tsx`) — its face is the servers' logos, its menu the
+  `components/composer/mcp-picker.tsx`) — its face is the servers' logos, its menu the
   library as a checklist — on a draft and a started thread alike (staged for the next send),
   through the same `useThreadToolLinks`; the model menu's Tools group keeps skills and
   commands only. **That control outlives the

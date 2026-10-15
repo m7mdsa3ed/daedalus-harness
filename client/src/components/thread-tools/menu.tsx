@@ -1,7 +1,7 @@
 /**
  * What a thread carries and what it could: skills and slash commands out of
  * the library, as a group of submenus in the thread's settings dropdown. MCP
- * servers are picked on the composer's own chip (`composer/mcp-avatars.tsx`),
+ * servers are picked on the composer's own chip (`composer/mcp-picker.tsx`),
  * which reads the same hook. This owns everything that is about *the thread* — which links are
  * its own, what a toggle writes, and whether the runtime will read them at all.
  *

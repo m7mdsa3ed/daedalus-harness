@@ -79,7 +79,7 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { McpPicker } from "@/components/composer/mcp-avatars"
+import { McpPicker } from "@/components/composer/mcp-picker"
 import {
   AgentsIndicator,
   ChangesIndicator,
