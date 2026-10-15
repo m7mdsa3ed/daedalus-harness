@@ -1082,7 +1082,7 @@ export function ThreadView({
           {/* The primitive's own scroll-to-end runs on click; re-pinning here as
               well is what makes the button mean "and keep up from now on"
               instead of "put me at the bottom once". */}
-          {!centred && <ScrollToEnd onClick={follow.follow} />}
+          {!centred && <ScrollToEnd pinned={follow.pinned} onClick={follow.follow} />}
           {/* The turn rail: one tick per turn, riding the transcript's left
               edge as an absolute overlay, centred in the view — a sibling of
               the viewport, so it does not scroll with the content. Under the
