@@ -44,6 +44,11 @@ const PageRoutesContext = React.createContext<PageRoutes>({
 
 export const PageRoutesProvider = PageRoutesContext.Provider
 
+/** What a route is called, for a tab's second row — without importing the route table. */
+export function usePageHeadingFor(): (path: string) => PageHeading | null {
+  return React.useContext(PageRoutesContext).headingFor
+}
+
 export function PagePanel(props: IDockviewPanelProps<{ path: string }>) {
   const { routes, headingFor } = React.useContext(PageRoutesContext)
   const path = props.params.path

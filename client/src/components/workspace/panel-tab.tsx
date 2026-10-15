@@ -66,6 +66,8 @@ import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspac
 import { useIsMobile } from "@/hooks/use-device"
 import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
+import { pageKey } from "@/lib/workspace/panels"
+import { usePageHeadingFor } from "@/components/workspace/page-panel"
 import { useAgents, useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
 import { useSessionMeta } from "@/lib/store"
@@ -272,6 +274,21 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
         : undefined
   const project = projects.find((candidate) => candidate.id === projectId)
   const agent = meta ? agents.find((candidate) => candidate.id === meta.agentId) : undefined
+  /* The tab's second row: the facts a title cannot carry. A thread names its
+     project and the model it runs on (its agent is the mark); a page names the
+     section it is in; a shell its directory and a preview its address. Short on
+     purpose — the hover card has the rest. */
+  const headingFor = usePageHeadingFor()
+  const subtitle =
+    descriptor?.kind === "chat"
+      ? [meta?.draft ? "Draft" : undefined, project?.name, meta?.model].filter(Boolean).join(" · ")
+      : descriptor?.kind === "page"
+        ? (headingFor(descriptor.path)?.crumb ?? (pageKey(descriptor.path) === "home" ? "Quick actions" : ""))
+        : descriptor?.kind === "terminal"
+          ? (descriptor.cwd ?? project?.cwd ?? "")
+          : descriptor?.kind === "web"
+            ? (descriptor.file ?? descriptor.url ?? "")
+            : ""
   const hoverDetails = [
     title,
     status?.label,
@@ -332,7 +349,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                sliders beside it (`HEADER_CHIP`, the same token), because all
                three stand on the one line; on a docked strip it is the row minus
                the 2px of air the cell keeps above and below it. */
-            "dock-tab relative mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-xs",
+            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-xs",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -348,15 +365,22 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               `flex-1 min-w-0` on both this box and the text gives the text a
               real column to truncate in — the grid-of-one this used to be was
               the same idea spelled with `grid-template-columns`. */}
-          <span data-tab-title className="flex min-w-0 flex-1 items-center gap-1.5">
-            <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>
-              {title}
+          <span data-tab-title className="flex min-w-0 flex-1 flex-col justify-center">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>
+                {title}
+              </span>
+              {/* What the panel is doing, for a panel you cannot see. Decorative
+                  here: the reading is folded into the tab's accessible name above,
+                  and a live region per tab inside `role="tab"` is both invalid and
+                  a strip that talks over itself. */}
+              <PanelStatusDot status={status} aria-hidden role={undefined} />
             </span>
-            {/* What the panel is doing, for a panel you cannot see. Decorative
-                here: the reading is folded into the tab's accessible name above,
-                and a live region per tab inside `role="tab"` is both invalid and
-                a strip that talks over itself. */}
-            <PanelStatusDot status={status} aria-hidden role={undefined} />
+            {subtitle && (
+              <span className="truncate text-[10px] leading-3 font-normal text-muted-foreground/80">
+                {subtitle}
+              </span>
+            )}
           </span>
           {/* **Floating, and laid out in no row at all** (`index.css`): two
               absolutely positioned controls against the chip's trailing inset,

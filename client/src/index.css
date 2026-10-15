@@ -332,6 +332,8 @@
      the air above and below it. */
   --dock-control-h: 1.25rem;
   --dock-chip-h: min(2rem, calc(var(--app-header-row-h) - 0.5rem));
+  /* A dock tab is two rows (title, then what it holds): the whole row less the air above and below. */
+  --dock-tab-h: calc(var(--app-header-row-h) - 0.25rem);
   /* The material the header's round controls wear: the foreground washed 16%
      into the page. */
   --dock-mobile-tab-ground: color-mix(in oklch, var(--foreground) 16%, var(--background));
@@ -2804,13 +2806,6 @@ html .dock-tab [data-tab-action="pin"] {
    desktop arrangement: below `md` the content is flush either way. */
 html[data-sidebar-layout="inset"] {
   --app-frame-gap: 0.5rem;
-  /* The header row is shorter here — the strip sits on the ground above a card,
-     and a 44px band of chrome over a floating card is too much. The flush layout
-     keeps the taller row it overlays content with. Windows and Linux desktop
-     take the title bar's height instead (a more specific rule above), because
-     the caption buttons are that tall. */
-  --app-header-row-h: 2rem;
-  --dock-chip-h: min(1.75rem, calc(var(--app-header-row-h) - 0.25rem));
 }
 html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]),
 html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]) body::before {

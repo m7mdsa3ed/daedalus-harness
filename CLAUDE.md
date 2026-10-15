@@ -758,7 +758,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   strip an overlay on its content under a progressive blur (panels pad by the measured
   `--dock-content-overlap`). **Inset** (`variant="inset"`, `p-0` on the container): the shell stands on
   `--app-ground`, the rail is transparent over it, the strip is in the row on the ground with the
-  card below it (no blur at `md`+), a shorter header row, and each group's content a rounded shadowed
+  card below it (no blur at `md`+), and each group's content a rounded shadowed
   card with `--app-frame-gap` of air. Every inset rule in `index.css` is keyed on
   `html[data-sidebar-layout="inset"]`, written by the shell and by `index.html` before first paint, so
   the two never mix; cards are desktop-only. What separates two groups is a hairline (flush) or the
