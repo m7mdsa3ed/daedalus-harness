@@ -2346,13 +2346,7 @@ html [data-focus-mode] .dv-right-actions-container:not(.dock-nested *) {
   display: none;
 }
 
-/* ── The strip is one tab, the rest are in the list ──
-   At every width, for the outer dock (a thread's own dock, `.dock-nested`, keeps
-   its tabs): the strip draws the tab you are on and nothing else, as a phone's
-   always did. The rest of this block is the phone's sizing alone — the tab
-   growing to fill the strip — because a desktop strip keeps its empty run, which
-   is the window's drag handle.
-
+/* ── Narrow: the strip is one tab, the rest are in the list ──
    A phone's strip draws the tab you are on and nothing else; every other tab
    lives in the tab list at the strip's end (`tab-actions.tsx`, the switcher
    from two tabs up). Four titles sharing a 360px strip are four tabs truncated
@@ -2370,11 +2364,6 @@ html [data-focus-mode] .dv-right-actions-container:not(.dock-nested *) {
 
    Keyed on dockview's own `dv-active-tab`/`dv-inactive-tab`, the class it
    already toggles on the element that owns the width. */
-
-html .dv-tab.dv-inactive-tab:not(.dock-nested *),
-html .dv-tab-group-chip:not(.dock-nested *) {
-  display: none;
-}
 
 @media (width < 48rem) {
   /* A horizontal swipe on the strip walks the group's tabs (`useTabSwipe`,
@@ -2789,50 +2778,6 @@ html .dock-tab [data-tab-action="pin"] {
   html .dock-tab:has([data-tab-action="pin"]) {
     --tab-fade-w: calc(var(--dock-control-h) + 1.25rem);
   }
-}
-
-/* ── The phone's strip, at every width ──
-   Everything the phone's strip does above, for the outer dock on a desktop too
-   (a thread's own dock, `.dock-nested`, keeps its tabs and its title-bar look):
-   the tab you are on takes the strip, the tabs wear the mobile material, the ✕
-   is dropped (the ⋮ carries Close), and the other tabs are behind the counter
-   button (`tab-actions.tsx`). The void keeps a short run after the buttons —
-   on a desktop that run is the window's drag handle. */
-html {
-  --dock-mobile-tab-ground: color-mix(in oklch, var(--foreground) 16%, var(--background));
-}
-html .dv-tab.dv-active-tab:not(.dock-nested *) {
-  width: auto;
-  max-width: none;
-  flex-grow: 1;
-}
-html .dv-tabs-container:not(.dock-nested *) {
-  flex-grow: 1;
-  min-width: 0;
-}
-html .dv-void-container:not(.dock-nested *) {
-  flex-grow: 0;
-  min-width: 2rem;
-}
-html .dv-groupview:not(.dock-nested *) > .dv-tabs-and-actions-container {
-  --dock-control-h: var(--dock-chip-h);
-}
-html .dock-tab:not([data-active]):not(.dock-nested *) {
-  background-color: color-mix(in oklch, var(--foreground) 10%, var(--background));
-}
-html .dock-tab[data-active]:not(.dock-nested *) {
-  background-color: var(--dock-mobile-tab-ground);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent),
-    0 1px 3px 0 rgb(0 0 0 / 0.1),
-    0 1px 2px -1px rgb(0 0 0 / 0.1);
-}
-html .dock-tab:not(.dock-nested *) [data-tab-action="close"] {
-  display: none;
-}
-html .dock-tab:not(.dock-nested *),
-html .dock-tab:has([data-tab-action="pin"]):not(.dock-nested *) {
-  --tab-fade-w: calc(var(--dock-control-h) + 1.25rem);
 }
 
 /* ── The thread dock on a phone ──
