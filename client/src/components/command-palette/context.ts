@@ -66,7 +66,7 @@ export const PAGE_LABEL: Record<PageId, string> = {
   "thread-search": "Search this thread",
   projects: "Projects",
   project: "Project",
-  start: "New thread",
+  start: "New tab",
   theme: "Theme",
   model: "Model",
   effort: "Effort",

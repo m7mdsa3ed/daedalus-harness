@@ -70,7 +70,7 @@ import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
 import { loadActiveSpace } from "@/lib/spaces"
 import { IS_POPOUT } from "@/lib/popout"
-import { consumeNewTab, useActiveChat } from "@/lib/workspace/open-threads"
+import { setNewTabHandler, useActiveChat } from "@/lib/workspace/open-threads"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -192,24 +192,25 @@ export function AppShell({
   const openSettings = (next?: SettingsSectionId) =>
     void navigate(next ? settingsPath(next) : settingsRootPath())
 
-  /* "New thread" always creates a new thread: a draft is minted, routed to and
-     opened as a tab of its own, every time, whoever asked — ⌘N, the sidebar
-     row, the strip's +, the palette, a project's own +, the app shortcut. An
-     empty draft is invisible to every list (`isListed`) until it is sent, so
-     minting one per press costs nothing but the tab you asked for, and the row
-     is persisted (`lib/draft-sessions`) so a reload brings the tab back.
+  /* "New tab" opens a tab of its own, always — on the New tab page, whose quick
+     actions start a thread, a task, a project's page, anything — and is what ⌘N,
+     the sidebar row, the strip's + and the palette do. A tab is an isolated
+     outlet, so whatever it then opens stays in it.
 
-     `text` is what changes the shape of this: ⌘K's ask row and the console's
-     composer hand over a first message, in which case the draft is minted,
-     routed to AND sent in one gesture — `actions.send` is what turns a draft
-     into a real session, and it does not need the composer to be mounted to do
-     it, so the thread is already spawning while the transcript is still
-     opening. A failure lands in that thread as a Retry row like any send. */
+     Starting a *thread* straight away is the other shape: `text` is ⌘K's ask
+     row, `projectId` a project's own +. Those mint a draft and open it in a tab
+     of its own. An empty draft is invisible to every list (`isListed`) until it
+     is sent, so minting one per press costs nothing but the tab you asked for,
+     and the row is persisted (`lib/draft-sessions`) so a reload brings the tab
+     back. `actions.send` is what turns a draft into a session, and it does not
+     need the composer mounted, so the thread is already spawning while its
+     transcript is opening; a failure lands in that thread as a Retry row. */
   const startThread = (opts: { text?: string; projectId?: string } = {}) => {
+    if (!opts.text?.trim() && !opts.projectId) return dock.openTab()
     if (!ready) return openSettings("projects")
     const id = openDraftThread({ projectId: opts.projectId })
     if (!id) return openSettings("projects")
-    void navigate(threadPath(id))
+    dock.openTab(threadPath(id))
     const text = opts.text?.trim()
     if (text) void actions.send(id, text).catch(() => {})
   }
@@ -227,7 +228,7 @@ export function AppShell({
   const pagePath = sessionId ? null : location.pathname + location.search
   React.useEffect(() => {
     if (!pagePath) return
-    dock.openPage(pagePath, { newTab: consumeNewTab() })
+    dock.navigateActive(pagePath)
   }, [pagePath, location.key, dock])
 
   /* ── Which thread the tab follows ──
@@ -268,26 +269,11 @@ export function AppShell({
       return
     }
     if (routedState !== "absent") {
-      /* Always a tab of its own. Opening a thread used to *replace* the chat
-         you were reading — the sidebar as navigation — and a new tab was the
-         opt-in a ⌘-click or a menu row asked for. It is the other way round
-         now: a thread you opened is a thread you meant to keep, and the one
-         thing that closed a transcript you were mid-way through was clicking
-         the next one. An already-open thread is still focused, not duplicated
-         (`openPanel` answers on the panel id), so this only ever adds a tab
-         for a thread that had none. */
-      /* The console is spent by the thread it started. Asked before the open,
-         because opening a chat is what makes it the active panel — after that
-         the console is never what is in front of anyone. A routed *draft* is
-         the signature: the console mints one and navigates to it before the
-         send, so this can only ever spend a console you were just typing in,
-         never a page tab you are merely reading. */
-      if (routedState === "draft") dock.consumeConsole()
-      /* A tab is an outlet: a thread you go to takes the place of the tab in
-         front, and an already-open one is focused. A thread that is still a
-         draft is a *new* thread, so it gets a tab of its own — as does a
-         modified click. */
-      dock.openChat(sessionId, { newTab: routedState === "draft" || consumeNewTab() })
+      /* A tab is an isolated outlet: the thread you go to takes the place of the
+         tab in front (and nothing happens if it is already showing it). A new
+         thread is a new *tab* — that is `startThread` and the + — so by the time
+         its route arrives it is the tab in front already. */
+      dock.navigateActive(threadPath(sessionId))
       /* Panels a page without a dock asked to open beside this thread. After
          the chat, so they split against it. */
       for (const entry of consumeQueuedPanels()) dock.openPanel(entry.panel, entry.options)
@@ -388,8 +374,7 @@ export function AppShell({
          page — gets its tab once the layout is restored, and `newTab` keeps a
          thread from replacing whatever was in front of you. */
       const route = routeRef.current
-      if (route.sessionId) dock.openChat(route.sessionId, { newTab: true })
-      else dock.openPage(route.path)
+      dock.navigateActive(route.sessionId ? threadPath(route.sessionId) : route.path)
       window.desktop?.signalWorkspaceReady?.()
     },
     [dock]
@@ -777,7 +762,7 @@ export function AppShell({
               /* The strip's + is the app's "new tab": a new thread, in a tab of
                  its own. The landing console is where the dock lands when the
                  last tab closes, not what + opens. */
-              onNewTab={() => startRef.current.startThread()}
+              onNewTab={() => dock.openTab()}
               onOpenPanel={openWorkspacePanel}
             />
           </PageRoutesProvider>

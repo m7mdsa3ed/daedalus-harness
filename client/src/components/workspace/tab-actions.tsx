@@ -331,7 +331,7 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
                 />
               }
             />
-            <TooltipContent side="bottom">New thread or panel</TooltipContent>
+            <TooltipContent side="bottom">New tab</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="end" className={MENU_WIDTH}>
             {/* Flat: the + already asked "open what?", so answering with one

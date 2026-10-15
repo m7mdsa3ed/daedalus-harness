@@ -431,18 +431,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   conversation's. **A pin is not one of them**: it is a fact about the thread
   (`sessions.pinned_at`, `PATCH /api/sessions/:id {pinned}`), so it follows the thread to
   every device, and its timestamp is the order the pinned group is drawn in.
-- **"New thread" always creates a thread**: every door — ⌘N, the sidebar row, the strip's `+`,
-  the palette, a project's own `+`, the app shortcut — mints a draft through the one
-  `actions.startThreadIn` and opens it as a tab of its own, so pressing it twice is two
-  threads. The landing console is where the dock lands when the last tab closes, not a stop on
-  the way to starting something; only the project page's queued terminal/IDE still opens a
-  draft behind its own gesture. **No list draws a draft** — `isListed`, not `isTopLevel`, is
-  what the sidebar, Recents, the project page, the palette and the schedule form filter by.
-  **A draft's tab survives a reload** (`lib/draft-sessions.ts`): the row is persisted per
-  server and re-minted on boot only for the tabs the saved layout still names, so a closed tab
-  stays closed and a sent thread comes from the server. **It takes the caret itself** — a
-  draft's composer is focused when it is the routed thread or when the caller says so
-  (`autoFocus`, which is the console's, whose route is `/`); never on touch.
+- **"New thread" is a quick action; "New tab" is the gesture.** ⌘N, the sidebar row, the strip's +
+  and the palette open a New tab (see the tab rule above). A thread itself is begun from the New tab
+  page, ⌘K's ask row or a project's + — every one mints a draft through the one
+  `actions.startThreadIn`. **No list draws a draft** — `isListed`, not `isTopLevel`, is what the
+  sidebar, Recents, the project page, the palette and the schedule form filter by. **A draft's tab
+  survives a reload** (`lib/draft-sessions.ts`): the row is persisted per server and re-minted on
+  boot only for the tabs the saved layout still names, so a closed tab stays closed and a sent
+  thread comes from the server. **It takes the caret itself** — a draft's composer is focused when
+  it is the routed thread or when the caller says so (`autoFocus`, which the New tab page's is);
+  never on touch.
 - **Every route is a tab, and the dock is the main area on every route.** A thread is a
   `chat` panel; everything else — settings, a project's page, the inbox, schedules, routines,
   the board route, a trace, the landing console — is a `page` panel whose descriptor is its
@@ -463,12 +461,21 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   asked *before* the chat opens because opening it is what makes it the active panel, and only
   for a routed draft — the console mints one and navigates to it before sending, so it can
   never spend a page tab you are merely reading). Closing the last tab lands on it.
-- **A tab is an outlet, like a browser's.** Navigating — a sidebar row, ⌘K, a link — repoints the tab in
-  front: the active thread or page tab *becomes* the destination, in the same place in the strip
-  (`openPage` / `openPanel` in `dock.tsx`). It opens a tab of its own for a new thread (a routed draft),
-  the strip's +, a ⌘/Ctrl- or middle-click (`openNextInNewTab`, spent by the route effect via
-  `consumeNewTab`), and when the tab in front is pinned or neither a thread nor a page. A place already
-  open (a thread, a settings tab, a project page) is focused, never duplicated.
+- **A tab is an isolated outlet, like a browser's, and "New tab" is the front door.** It shows whatever it
+  is navigated to and can show anything — **including what another tab is already showing**: the same
+  thread, settings section or project page may stand in as many tabs as you open, so a tab is never
+  found by what it holds and its id is unique (`tabId` on a chat descriptor, a counter on a page's).
+  Two doors in `dock.tsx`: **`navigateActive(path)`** is what the address bar does (a sidebar row, ⌘K,
+  a link, a notification) — the tab in front *becomes* that place, in the same spot, and does nothing
+  when it is already there (which is what makes switching tabs idempotent: the dock writes the
+  focused tab's path to the URL and the URL writes it back); a pinned tab, or none, gets a new tab
+  instead. **`openTab(path)`** is a new tab, always — ⌘N, the sidebar's "New tab" row, the strip's +,
+  the palette — and opens on the **New tab page** (`/`, `landing/landing-page.tsx`): the composer to
+  start a thread in that tab, and quick actions (New thread, Tasks, Routines, Scheduled, Inbox,
+  Settings, the first projects) that each navigate *that* tab. A thread started from a project's +
+  or ⌘K's ask row mints a draft and opens it in a tab of its own (`startThread`, `openInNewTab`).
+  Several mounted views of one thread share its connection: exactly one holder opens it
+  (`useThreadConnection`).
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **The sidebar has two contents and the *active panel* picks, never a route match of its

@@ -56,6 +56,7 @@ import { useSidebarView, ViewMenu } from "./view"
 import { useThreadStatuses } from "@/lib/thread/statuses"
 import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
+import { openInNewTab } from "@/lib/workspace/open-threads"
 import { usePins } from "@/lib/pins"
 import { useActiveSpace, useProjects } from "@/lib/queries/catalog"
 import { useActiveChat, useOpenThreads } from "@/lib/workspace/open-threads"
@@ -81,6 +82,8 @@ export function useStartThreadIn(actions: Actions) {
     (project: Project) => {
       if (isMobile) setOpenMobile(false)
       const id = actions.startThreadIn({ projectId: project.id })
+      /* A thread started from a project is a tab of its own. */
+      if (id && openInNewTab(threadPath(id))) return
       void navigate(id ? threadPath(id) : settingsPath("projects"))
     },
     [navigate, isMobile, setOpenMobile, actions]

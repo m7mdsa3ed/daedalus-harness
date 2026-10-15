@@ -38,7 +38,7 @@ import {
   type TabGroupRow,
   type WorkspaceDock,
 } from "@/components/workspace/dock-context"
-import { navigateTo, threadPath } from "@/lib/router"
+import { navigateTo, routedThreadId, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
 import { useStoreHandle } from "@/lib/store"
 import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
@@ -55,7 +55,7 @@ import {
 } from "@/lib/workspace/layout"
 import { loadActiveSpace } from "@/lib/spaces"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
-import { setActiveChat, setChatFocusHandler, setOpenThreads } from "@/lib/workspace/open-threads"
+import { setActiveChat, setChatFocusHandler, setNewTabHandler, setOpenThreads } from "@/lib/workspace/open-threads"
 import { PANEL_SPECS, panelId, pageKey, parsePanel, type PanelDescriptor } from "@/lib/workspace/panels"
 
 const SAVE_DEBOUNCE_MS = 300
@@ -190,57 +190,94 @@ export function useWorkspaceDock(): DockController {
     return (panel && descriptorOf(panel)) ?? undefined
   }, [])
 
-  /* ── A tab is an outlet ──
-     Going to a page navigates the tab you are in, the way a browser does: the
-     active thread or page tab *becomes* that page, in the same place in the
-     strip. It opens a tab of its own only when asked to (`newTab`, the strip's +
-     and a modified click) or when it cannot replace what is in front (a pinned
-     tab, or nothing open).
+  /* ── A tab is an isolated outlet ──
+     Like a browser's: it shows whatever you navigate it to, and it can show
+     anything — including what another tab is already showing, which is the
+     whole point of the word *isolated*. A tab is never found by what it holds:
+     the same thread, the same settings section, the same project page can each
+     stand in as many tabs as you open, and the ids are unique to say so.
 
-     One exception, which is also a browser's: a tab already standing for this
-     place (`pageKey` — the settings tab whose section moves, a project's own
-     page) is the one that is shown, pointed at the new path, rather than a
-     second copy. A pin is how a page is *kept*: a pinned tab is never replaced,
-     and the next page opens its own. The id says nothing about the path — it is
-     unique and nothing more. */
-  const openPage = React.useCallback((path: string, options?: { newTab?: boolean }) => {
-    const api = apiRef.current
-    if (!api) return
-    const key = pageKey(path)
-    const pages = api.panels.filter((candidate) => candidate.api.component === "page")
-    const placeOf = (candidate: IDockviewPanel): string | null => {
-      const descriptor = descriptorOf(candidate)
-      return descriptor?.kind === "page" ? pageKey(descriptor.path) : null
-    }
-    const standing = pages.find((candidate) => placeOf(candidate) === key)
-    if (standing) {
-      const descriptor = descriptorOf(standing)
-      if (descriptor?.kind !== "page" || descriptor.path !== path)
-        standing.api.updateParameters({ kind: "page", path })
-      standing.api.setActive()
-      return
-    }
-    const active = api.activeGroup?.activePanel
-    const group = active?.group ?? api.activeGroup ?? undefined
-    let id = `page:${key}`
-    for (let n = 2; api.getPanel(id); n += 1) id = `page:${key}:${n}`
-    const replace =
-      !options?.newTab && !!active && isNavigable(active) && !isPanelPinned(active.id)
-    api.addPanel({
-      id,
-      component: "page",
-      title: PANEL_SPECS.page.defaultTitle,
-      params: { kind: "page", path },
-      position: group
-        ? {
-            referenceGroup: group.id,
-            direction: "within" as const,
-            index: replace && active ? group.panels.indexOf(active) + 1 : undefined,
-          }
-        : undefined,
-    })
-    if (replace && active) silently(() => api.removePanel(active))
-  }, [silently])
+     Two doors. **`navigateActive(path)`** is what the address bar does (a sidebar
+     row, ⌘K, a link, a notification): the tab in front *becomes* that place, in
+     the same spot in the strip — and does nothing when it is already there,
+     which is also what makes switching tabs idempotent (the dock writes the
+     focused tab's path to the URL, and the URL writes it back). A pinned tab, or
+     no tab at all, gets a new one instead. **`openTab(path)`** is a new tab,
+     always — the strip's +, "New tab" — which opens on the New tab page
+     (`/`) unless it is told where. */
+  const addTab = React.useCallback(
+    (descriptor: PanelDescriptor, replace?: IDockviewPanel) => {
+      const api = apiRef.current
+      if (!api) return
+      let desc = descriptor
+      let id = panelId(desc)
+      if (desc.kind === "chat") {
+        while (api.getPanel(id)) {
+          desc = { ...desc, tabId: crypto.randomUUID().slice(0, 6) }
+          id = panelId(desc)
+        }
+      } else if (desc.kind === "page") {
+        const key = pageKey(desc.path)
+        id = `page:${key}`
+        for (let n = 2; api.getPanel(id); n += 1) id = `page:${key}:${n}`
+      }
+      const anchor = replace ?? api.activeGroup?.activePanel
+      const group = anchor?.group ?? api.activeGroup ?? undefined
+      api.addPanel({
+        id,
+        component: desc.kind,
+        title: PANEL_SPECS[desc.kind].defaultTitle,
+        params: desc as unknown as Record<string, unknown>,
+        position: group
+          ? {
+              referenceGroup: group.id,
+              direction: "within" as const,
+              index: anchor && group.panels.includes(anchor) ? group.panels.indexOf(anchor) + 1 : undefined,
+            }
+          : undefined,
+      })
+      if (replace) silently(() => api.removePanel(replace))
+    },
+    [silently]
+  )
+
+  const navigateActive = React.useCallback(
+    (path: string) => {
+      const api = apiRef.current
+      if (!api) return
+      const [pathname, query] = path.split("?")
+      const sessionId = routedThreadId(pathname, query ? `?${query}` : "")
+      const target: PanelDescriptor = sessionId ? { kind: "chat", sessionId } : { kind: "page", path }
+      const active = api.activeGroup?.activePanel
+      if (active && isNavigable(active) && !isPanelPinned(active.id)) {
+        const here = descriptorOf(active)
+        if (target.kind === "chat" && here?.kind === "chat" && here.sessionId === target.sessionId) return
+        if (target.kind === "page" && here?.kind === "page") {
+          // A page repoints itself; only a different surface is a different panel.
+          if (here.path !== path) active.api.updateParameters({ kind: "page", path })
+          return
+        }
+        addTab(target, active)
+        return
+      }
+      addTab(target)
+    },
+    [addTab]
+  )
+
+  const openTab = React.useCallback(
+    (path = "/") => {
+      const [pathname, query] = path.split("?")
+      const sessionId = routedThreadId(pathname, query ? `?${query}` : "")
+      addTab(sessionId ? { kind: "chat", sessionId } : { kind: "page", path })
+    },
+    [addTab]
+  )
+
+  const openPage = React.useCallback(
+    (path: string, options?: { newTab?: boolean }) => (options?.newTab ? openTab(path) : navigateActive(path)),
+    [navigateActive, openTab]
+  )
 
   const consumeConsole = React.useCallback(() => {
     const api = apiRef.current
@@ -271,6 +308,10 @@ export function useWorkspaceDock(): DockController {
       /* One door for a page, whoever knocks — ⌘⇧T reopening one included. */
       if (panel.kind === "page") return openPage(panel.path)
 
+      /* Tabs are isolated: opening a thread that is already open is a second tab
+         of it, not a refocus of the first. */
+      if (panel.kind === "chat" && api.getPanel(panelId(panel)))
+        panel = { ...panel, tabId: crypto.randomUUID().slice(0, 6) }
       const id = panelId(panel)
       const existing = api.getPanel(id)
       if (existing) {
@@ -974,6 +1015,7 @@ export function useWorkspaceDock(): DockController {
       }
       publishDockState()
       setChatFocusHandler(focusOpenChat)
+      setNewTabHandler(openTab)
 
       const flushSave = () => {
         if (saveTimerRef.current === undefined) return
@@ -1015,10 +1057,11 @@ export function useWorkspaceDock(): DockController {
         stopSplits()
         disposables.forEach((disposable) => disposable.dispose())
         setChatFocusHandler(null)
+        setNewTabHandler(null)
         setActiveChat(null)
       }
     },
-    [silently]
+    [silently, openTab]
   )
 
   /* Digits count the tabs in the strip you are looking at. Bound through
@@ -1059,6 +1102,8 @@ export function useWorkspaceDock(): DockController {
       openPanel,
       openChat,
       openPage,
+      navigateActive,
+      openTab,
       consumeConsole,
       closePanel,
       closeOthers,
@@ -1103,6 +1148,8 @@ export function useWorkspaceDock(): DockController {
       openPanel,
       openChat,
       openPage,
+      navigateActive,
+      openTab,
       consumeConsole,
       closePanel,
       closeOthers,

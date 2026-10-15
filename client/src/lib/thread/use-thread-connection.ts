@@ -52,13 +52,32 @@ function openKeyOf(state: State, sessionId: string): string {
  * Failures are deliberately swallowed here: `openFromStore` records them in the
  * thread itself, which is the surface the caller is already showing.
  */
+/* Tabs are isolated and may show the same thread more than once. They share the
+   one connection (it is the registry's, keyed by the session), so exactly one
+   mounted holder asks it to open: two asks landing inside each other is two
+   peers on one session. The first holder to mount leads; the others read the
+   same thread state and do not open. If the leader goes, the next one leads from
+   the next change of the key. */
+const holders = new Map<string, symbol[]>()
+
 export function useThreadConnection(sessionId: string): void {
   const key = useStoreSelect((state) => openKeyOf(state, sessionId))
+  const token = React.useRef<symbol>(Symbol("holder"))
+  React.useEffect(() => {
+    const mine = token.current
+    holders.set(sessionId, [...(holders.get(sessionId) ?? []), mine])
+    return () => {
+      const rest = (holders.get(sessionId) ?? []).filter((entry) => entry !== mine)
+      if (rest.length > 0) holders.set(sessionId, rest)
+      else holders.delete(sessionId)
+    }
+  }, [sessionId])
   React.useEffect(() => {
     // Nothing to connect to: the list has not landed yet, or this is a draft
     // whose first message has still to bring it into existence. Either way the
     // key changes when that stops being true, and this runs again.
     if (key === "absent" || key === "draft") return
+    if (holders.get(sessionId)?.[0] !== token.current) return
     const registry = currentRegistry()
     if (!registry) return
     void registry.for(sessionId).openFromStore()

@@ -257,12 +257,20 @@ export function RootPage() {
 
   /* ── Create ── */
   items.push({
+    id: "create:tab",
+    group: "Create",
+    title: "New tab",
+    keywords: "blank page quick actions open",
+    icon: <Plus />,
+    chord: binds.newThread.chords[0],
+    onSelect: () => palette.run(() => palette.newThread()),
+  })
+  items.push({
     id: "create:thread",
     group: "Create",
     title: "New thread",
     keywords: "session chat start",
-    icon: <Plus />,
-    chord: binds.newThread.chords[0],
+    icon: <MessageSquarePlusIcon />,
     // What ↵ here is about to pick, in the order it is decided: the project
     // (the cwd), then the pair that runs in it.
     meta: startTarget
@@ -277,7 +285,7 @@ export function RootPage() {
           },
         ]
       : undefined,
-    onSelect: () => palette.run(() => palette.newThread()),
+    onSelect: () => palette.run(() => palette.newThread({ projectId: startTarget?.project.id })),
   })
   if (projects.length > 1) {
     items.push({

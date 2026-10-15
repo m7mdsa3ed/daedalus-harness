@@ -321,7 +321,7 @@ export const KEYS = {
 
 export const SHORTCUTS: ShortcutDef[] = [
   { id: "palette", scope: "Global", label: "Command palette", chords: [KEYS.palette], rebindable: true },
-  { id: "newThread", scope: "Global", label: "New thread", chords: [KEYS.newThread], rebindable: true },
+  { id: "newThread", scope: "Global", label: "New tab", chords: [KEYS.newThread], rebindable: true },
   { id: "sidebar", scope: "Global", label: "Toggle the sidebar", chords: [KEYS.sidebar], rebindable: true },
   {
     id: "tabJump",

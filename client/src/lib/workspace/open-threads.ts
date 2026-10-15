@@ -67,24 +67,19 @@ export function useActiveChat(): string | null {
   return React.useSyncExternalStore(subscribe, activeChatId, activeChatId)
 }
 
-/* ── "Open this one in a new tab" ──
-   A tab is an outlet: going somewhere navigates the tab in front. A modified
-   click (⌘/Ctrl, or the middle button) on a sidebar row is the one gesture that
-   asks for a tab of its own, and it cannot ride the URL — so it is said here,
-   once, and spent by the next route effect that opens something. */
-let newTabNext = false
+/* ── A new tab, from outside the dock ──
+   The sidebar and the pages are not inside the dock's tree, but a "+" next to a
+   project starts a thread in a tab of its own. The dock registers the door.
+   Without a dock (a popout, before ready) the path is just navigated to. */
+let newTabHandler: ((path?: string) => void) | null = null
 
-export function openNextInNewTab(): void {
-  newTabNext = true
+export function setNewTabHandler(handler: ((path?: string) => void) | null): void {
+  newTabHandler = handler
 }
 
-export function consumeNewTab(): boolean {
-  const asked = newTabNext
-  newTabNext = false
-  return asked
-}
-
-/** Whether a click asks for a tab of its own. */
-export function asksForNewTab(event: { metaKey: boolean; ctrlKey: boolean; button?: number }): boolean {
-  return event.metaKey || event.ctrlKey || event.button === 1
+/** Open a tab of its own on a route (the New tab page when none is given). */
+export function openInNewTab(path?: string): boolean {
+  if (!newTabHandler) return false
+  newTabHandler(path)
+  return true
 }

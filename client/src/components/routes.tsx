@@ -136,7 +136,7 @@ export function usePageHeading(): (path: string) => PageHeading | null {
       return { crumb: "Projects", title: projects.find((p) => p.id === seg)?.name ?? "Project" }
     if (first === "t" && pathname.endsWith("/trace"))
       return { crumb: "Thread", title: sessions.find((s) => s.id === seg)?.title ?? "Trajectory" }
-    if (!first) return { title: "New thread" }
+    if (!first) return { title: "New tab" }
     return null
   }
 }

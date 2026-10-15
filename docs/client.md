@@ -1215,10 +1215,11 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
 
 ## The dock
 
-**Two things changed the model after it was written; read the rest with them in mind.** A tab is
-an outlet: navigating repoints the tab in front and a new tab opens only for a new thread, the strip's
-+, a ⌘/Ctrl- or middle-click, or when the tab in front is pinned or not a thread/page (see the
-"A tab is an outlet" rule in `CLAUDE.md`). And the sidebar has two layouts, Flush and Inset, picked in
+**Things changed the model after it was written; read the rest with them in mind.** A tab is an
+isolated outlet: navigating repoints the tab in front (`navigateActive`), "New tab" always opens a
+fresh one on the New tab page (`openTab`), and the same route may stand in several tabs — so the
+"focus the tab that already has it" behaviour described below no longer exists (see the tab rule in
+`CLAUDE.md`). And the sidebar has two layouts, Flush and Inset, picked in
 Settings › Appearance and keyed on `html[data-sidebar-layout]`; in Flush a top group's strip is an
 overlay under a progressive blur, in Inset it sits in the row above the card. Focus mode no longer
 exists. **Splits are even**: a new group takes an equal share of its row or column

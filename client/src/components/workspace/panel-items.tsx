@@ -118,7 +118,7 @@ export function WorkspacePanelItems({
     <DropdownMenuGroup>
       <PanelRow
         icon={PlusIcon}
-        label="New thread"
+        label="New tab"
         hint="A fresh conversation in this workspace"
         shortcut="newThread"
         onClick={onNewTab}

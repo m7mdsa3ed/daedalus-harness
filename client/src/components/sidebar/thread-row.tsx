@@ -45,7 +45,7 @@ export type ThreadStatus = ThreadActivity
 /** The callbacks a row calls, grouped so the list hands over one stable object
     instead of eight props. Memoized by the list; a row reads it by identity. */
 export interface ThreadRowHandlers {
-  onOpen: (session: SessionMeta, event?: React.MouseEvent) => void
+  onOpen: (session: SessionMeta) => void
   onRename: (session: SessionMeta) => void
   onDelete: (session: SessionMeta) => void
   onRestore: (session: SessionMeta) => void
@@ -156,10 +156,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           data-thread-id={session.id}
           size="sm"
           isActive={active}
-          onClick={(event) => onOpen(session, event)}
-          onAuxClick={(event) => {
-            if (event.button === 1) onOpen(session, event)
-          }}
+          onClick={() => onOpen(session)}
           /* A finger resting on the row must not raise the browser's own
              callout or native context menu — the one context menu is Base
              UI's, opened on long press. */

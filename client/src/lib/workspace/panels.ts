@@ -28,7 +28,10 @@ export type WebDiffSide = "head" | "staged" | "worktree" | { rev: string }
 export interface WebDiff { path: string; left: WebDiffSide; right: WebDiffSide; repo?: string }
 
 export type PanelDescriptor =
-  | { kind: "chat"; sessionId: string }
+  /* `tabId` is what makes a second tab of the same thread possible: tabs are
+     isolated, so one thread may stand in several of them, and each needs an id
+     of its own. Absent for the first (and for every layout stored before). */
+  | { kind: "chat"; sessionId: string; tabId?: string }
   /* `closeOnExit` is a helper command's terminal: it was opened by a button
      that meant "run this", not "give me a shell", so a clean exit is the end of
      the errand and the panel goes with it. A non-zero exit keeps the panel —
@@ -96,7 +99,7 @@ export function isPanelKind(value: unknown): value is PanelKind {
 export function panelId(panel: PanelDescriptor): string {
   switch (panel.kind) {
     case "chat":
-      return `thread:${panel.sessionId}`
+      return panel.tabId ? `thread:${panel.sessionId}:${panel.tabId}` : `thread:${panel.sessionId}`
     case "terminal":
       return `terminal:${panel.projectId}:${panel.terminalId}`
     case "web":
@@ -157,7 +160,8 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
   switch (component) {
     case "chat": {
       const sessionId = str(p.sessionId)
-      return sessionId ? { kind: "chat", sessionId } : null
+      const tabId = str(p.tabId)
+      return sessionId ? { kind: "chat", sessionId, ...(tabId ? { tabId } : {}) } : null
     }
     case "terminal": {
       const terminalId = str(p.terminalId)

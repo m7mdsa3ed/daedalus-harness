@@ -21,6 +21,14 @@
    without its shelf, its scope row or any of its pickers. */
 import * as React from "react"
 import { useNavigate, useSearchParams } from "react-router"
+import {
+  BellIcon,
+  CalendarClockIcon,
+  MessageSquarePlusIcon,
+  RepeatIcon,
+  SettingsIcon,
+  SquareKanbanIcon,
+} from "lucide-react"
 
 import { Composer } from "@/components/composer/composer"
 import { useAttachmentDelivery } from "@/components/composer-attachments"
@@ -30,7 +38,16 @@ import { ThreadWelcome } from "@/components/thread-view/welcome"
 import type { Actions } from "@/lib/actions"
 import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
-import { threadPath } from "@/lib/router"
+import { requestComposerFocus } from "@/lib/composer-focus"
+import { ProjectIcon } from "@/components/entity-icon"
+import {
+  boardPath,
+  projectPath,
+  routinesPath,
+  schedulesPath,
+  settingsRootPath,
+  threadPath,
+} from "@/lib/router"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { cn } from "@/lib/utils"
@@ -173,7 +190,54 @@ function LandingComposer({ actions }: { actions: Actions }) {
           />
         ) : null}
       </div>
-      <span aria-hidden />
+      <QuickActions
+        projects={projects}
+        onThread={() => sessionId && requestComposerFocus(sessionId)}
+      />
+    </div>
+  )
+}
+
+/* ── The New tab page's quick actions ──
+   A tab is an isolated outlet that can open anything, and this is the page a
+   fresh one opens on. Each action navigates *this* tab, so whatever it opens stays
+   in it — the same route can be open in as many tabs as you like. */
+function QuickActions({
+  projects,
+  onThread,
+}: {
+  projects: ReturnType<typeof useProjects>
+  onThread: () => void
+}) {
+  const navigate = useNavigate()
+  const go = (path: string) => () => void navigate(path)
+  const chip =
+    "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/60 bg-card/50 px-3 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+  return (
+    <div className="flex flex-wrap content-start items-start justify-center gap-2 px-4 pt-6">
+      <button type="button" className={chip} onClick={onThread}>
+        <MessageSquarePlusIcon className="size-4" /> New thread
+      </button>
+      <button type="button" className={chip} onClick={go(boardPath())}>
+        <SquareKanbanIcon className="size-4" /> Tasks
+      </button>
+      <button type="button" className={chip} onClick={go(routinesPath())}>
+        <RepeatIcon className="size-4" /> Routines
+      </button>
+      <button type="button" className={chip} onClick={go(schedulesPath())}>
+        <CalendarClockIcon className="size-4" /> Scheduled
+      </button>
+      <button type="button" className={chip} onClick={go("/notifications")}>
+        <BellIcon className="size-4" /> Inbox
+      </button>
+      <button type="button" className={chip} onClick={go(settingsRootPath())}>
+        <SettingsIcon className="size-4" /> Settings
+      </button>
+      {projects.slice(0, 4).map((project) => (
+        <button key={project.id} type="button" className={chip} onClick={go(projectPath(project.id))}>
+          <ProjectIcon project={project} className="size-4" /> {project.name}
+        </button>
+      ))}
     </div>
   )
 }

@@ -62,8 +62,12 @@ export type CloseGuard = () => boolean | Promise<boolean>
 export interface WorkspaceDock {
   openPanel: (panel: PanelDescriptor, options?: OpenPanelOptions) => void
   openChat: (sessionId: string, options?: OpenPanelOptions) => void
-  /** Show a route in the app's browsing tab — see `openPage` for the rule. */
+  /** Navigate the tab in front to a route — what the address bar does. */
   openPage: (path: string, options?: { newTab?: boolean }) => void
+  /** Navigate the tab in front, or open one if it cannot be (a pin, none). */
+  navigateActive: (path: string) => void
+  /** A new tab, always — the strip's +. On the New tab page unless told where. */
+  openTab: (path?: string) => void
   /** Spend the landing console's tab: the thread started from it takes its
       place rather than standing beside a "New thread" tab that has nothing
       left to do. A no-op unless the console is the active, unpinned tab. */
