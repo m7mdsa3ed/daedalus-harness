@@ -764,7 +764,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   card below it (no blur at `md`+), and each group's content a rounded shadowed
   card with `--app-frame-gap` of air. Every inset rule in `index.css` is keyed on
   `html[data-sidebar-layout="inset"]`, written by the shell and by `index.html` before first paint, so
-  the two never mix; cards are desktop-only. What separates two groups is a hairline (flush) or the
+  the two never mix; the arrangement is the same on a phone (strip in the row, card below, no blur). What separates two groups is a hairline (flush) or the
   gutter between their cards (inset); `--dv-separator-border` is transparent, because dockview's line
   runs the full view height, through the band.
 - **A tab strip carries what is about its own group** — the **+**, the layout presets

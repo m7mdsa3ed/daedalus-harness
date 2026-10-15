@@ -681,7 +681,7 @@ export function AppShell({
             position="top"
             height="calc(100% + 1rem)"
             blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
-            className={cn("absolute inset-x-0 top-0 -z-10", layout.variant === "inset" && "md:hidden")}
+            className={cn("absolute inset-x-0 top-0 -z-10", layout.variant === "inset" && "hidden")}
           />
           {/* The two device-level controls. No title and no crumb — every
               route is a tab, and the tab says the name; a thread keeps only

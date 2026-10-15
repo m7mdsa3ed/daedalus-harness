@@ -2827,8 +2827,8 @@ html .dock-tab [data-tab-action="pin"] {
    Everything here is keyed on `html[data-sidebar-layout="inset"]`, written by
    the shell (and by index.html before first paint) from the device's choice, so
    the two layouts never mix. The component half is `Sidebar variant="inset"`
-   (`p-2` on the container, which app-shell zeroes with `p-0`). Cards are a
-   desktop arrangement: below `md` the content is flush either way. */
+   (`p-2` on the container, which app-shell zeroes with `p-0`). The arrangement is the same at
+   every width, the phone's included. */
 html[data-sidebar-layout="inset"] {
   --app-frame-gap: 0.5rem;
 }
@@ -2852,33 +2852,35 @@ html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
     [data-sidebar="sidebar"]:not([data-mobile="true"]) {
     background-color: transparent;
   }
-  html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
-    margin: var(--app-frame-gap) 0 0;
-  }
-  /* A top group's strip is in the row, on the ground, with the card starting
-     *below* it — not an overlay on the card, which is the flush layout's. The
-     panels then pad by what is left (`--dock-content-overlap`, measured: zero),
-     and the header carries no blur at `md`+ (app-shell). */
-  html[data-sidebar-layout="inset"] .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
-    position: relative;
-    inset-inline: auto;
-    top: auto;
-  }
-  html[data-sidebar-layout="inset"] .dv-groupview > .dv-content-container {
-    @apply shadow-sm;
-    border-radius: var(--radius-xl);
-    /* The same air under the strip as the column has over the header row, and
-       the frame's gutter on every side so all four corners read. */
-    margin: var(--app-frame-gap);
-  }
-  html[data-sidebar-layout="inset"] .dv-horizontal > .dv-view-container > .dv-view:not(:first-child) .dv-content-container {
-    border-left: 0;
-    margin-left: 4px;
-  }
-  html[data-sidebar-layout="inset"] .dv-render-overlay {
-    border-radius: var(--radius-xl);
-    overflow: hidden;
-  }
+}
+/* The rest is the same arrangement at every width, the phone's included: a top
+   group's strip is in the row, on the ground, with the card starting *below* it
+   — not an overlay on the card, which is the flush layout's (and why the header
+   carries no blur in inset, app-shell). The panels then pad by what is left
+   (`--dock-content-overlap`, measured: zero). A thread's own dock is one surface
+   inside the card and keeps none of it. */
+html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
+  margin: var(--app-frame-gap) 0 0;
+}
+html[data-sidebar-layout="inset"] .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
+  position: relative;
+  inset-inline: auto;
+  top: auto;
+}
+html[data-sidebar-layout="inset"] .dv-groupview:not(.dock-nested *) > .dv-content-container {
+  @apply shadow-sm;
+  border-radius: var(--radius-xl);
+  /* The same air under the strip as the column has over the header row, and
+     the frame's gutter on every side so all four corners read. */
+  margin: var(--app-frame-gap);
+}
+html[data-sidebar-layout="inset"] .dv-horizontal > .dv-view-container > .dv-view:not(:first-child) .dv-content-container:not(.dock-nested *) {
+  border-left: 0;
+  margin-left: 4px;
+}
+html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
+  border-radius: var(--radius-xl);
+  overflow: hidden;
 }
 
 /* ── Per-thread view options ──
