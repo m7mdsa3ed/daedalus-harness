@@ -42,7 +42,6 @@ import {
   Moon,
   Palette as PaletteIcon,
   PanelBottom,
-  PanelRightIcon,
   PanelLeft,
   PanelsTopLeft,
   Pin,
@@ -72,9 +71,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-device"
 import { LAYOUT_PRESETS } from "@/components/workspace/panel-items"
 import { openTerminal } from "@/lib/workspace/open-terminal"
-import { SECTION_META } from "@/components/right-panel/right-panel"
-import { useRouteScope } from "@/components/right-panel/scope-dock"
-import { openSection, rightSheet, sectionsFor, toggleRightPanel } from "@/lib/right-panel"
+import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
@@ -125,7 +122,6 @@ const NOT_A_COMMAND = "Recent threads"
 
 export function RootPage() {
   const palette = usePalette()
-  const route = useRouteScope()
   const sessions = useStoreSelect((store) => store.sessions)
   const projects = useProjects()
   const profiles = useProfiles()
@@ -494,44 +490,42 @@ export function RootPage() {
      With no thread routed there is no project, and these open in $HOME. */
   {
     items.push({
-      id: "panel:toggle",
-      group: "Panel",
-      title: "Show or hide the panel",
-      keywords: "right side column inspector tools",
-      icon: <PanelRightIcon />,
-      chord: binds.rightPanel.chords[0],
-      onSelect: () => palette.run(() => (isMobile ? rightSheet.set(true) : toggleRightPanel())),
+      id: "dock:web",
+      group: "Workspace",
+      title: "Preview",
+      keywords: "browser dev server localhost web",
+      icon: <MonitorIcon />,
+      onSelect: () => {
+        const previewUrl = projects.find((candidate) => candidate.id === meta?.projectId)?.previewUrl ?? ""
+        const inThread = threadDock(meta?.id)
+        if (inThread) return palette.run(() => inThread.open("web", true))
+        palette.run(() =>
+          palette.dock.openPanel(
+            {
+              kind: "web",
+              trust: "project",
+              ...(meta ? { projectId: meta.projectId } : {}),
+              viewId: "default",
+              ...(previewUrl ? { url: previewUrl } : {}),
+            },
+            { direction: "right" }
+          )
+        )
+      },
     })
-    for (const section of sectionsFor(route.scope)) {
-      const { title, icon: Icon } = SECTION_META[section]
-      if (section === "terminal") continue
-      items.push({
-        id: `panel:${section}`,
-        group: "Panel",
-        title: section === "preview" ? "Preview" : `Show ${title}`,
-        keywords:
-          section === "preview"
-            ? "browser dev server localhost web"
-            : `${title} inspector reading panel side`,
-        icon: <Icon />,
-        onSelect: () => palette.run(() => openSection(route.scope, section)),
-      })
-    }
     items.push({
-      id: "panel:terminal",
-      group: "Panel",
+      id: "dock:terminal",
+      group: "Workspace",
       title: "New terminal",
       keywords: "shell console command line",
       icon: <SquareTerminalIcon />,
       chord: binds.terminal.chords[0],
       onSelect: () =>
         palette.run(() => {
-          /* A thread in front gets the shell in its worktree. */
-          void openTerminal(
-            route.scope,
-            meta?.projectId ?? route.projectId ?? HOME_PROJECT_ID,
-            meta ? { cwd: meta.worktree?.path, sessionId: meta.id } : {}
-          )
+          /* A thread in front gets the shell in its own dock, in its worktree. */
+          const inThread = threadDock(meta?.id)
+          if (inThread) inThread.open("terminal")
+          else void openTerminal(palette.dock, meta?.projectId ?? HOME_PROJECT_ID)
         }),
     })
   }

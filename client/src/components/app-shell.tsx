@@ -30,8 +30,6 @@ import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { NotificationIconButton } from "@/components/notifications/bell"
 import { pageRoutes, usePageHeading } from "@/components/routes"
-import { RightPanelColumn, RightPanelSheet } from "@/components/right-panel/right-panel"
-import { ScopeProvider, useRouteScope } from "@/components/right-panel/scope-dock"
 import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
 import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
@@ -49,7 +47,6 @@ import { useWorkspaceDock } from "@/components/workspace/dock"
 import { WorkspaceDock } from "@/components/workspace/dock-surface"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
-import { useIsMobile } from "@/hooks/use-device"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
 import { HEADER_BADGE, HEADER_CHIP, STRIP_GROUND } from "@/lib/header-chrome"
@@ -69,7 +66,7 @@ import { formatChord } from "@/lib/shortcuts"
 import { useStoreHandle, useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { openTerminal } from "@/lib/workspace/open-terminal"
-import { openSection, rightSheet, toggleRightPanel, useRightPanel } from "@/lib/right-panel"
+import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
 import { loadActiveSpace } from "@/lib/spaces"
 import { IS_POPOUT } from "@/lib/popout"
@@ -152,14 +149,6 @@ export function AppShell({
   const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
   const activeChat = useActiveChat()
-  const route = useRouteScope()
-  const isMobileShell = useIsMobile()
-  const rightView = useRightPanel(route.scope)
-  /* Read by the dock's openers, which are bound once. */
-  const scopeNow = React.useRef(route)
-  scopeNow.current = route
-  const rightNow = React.useRef(rightView)
-  rightNow.current = rightView
   const headingFor = usePageHeading()
 
   const inSettings = location.pathname.startsWith("/settings")
@@ -435,19 +424,12 @@ export function AppShell({
   const openWorkspacePanel = React.useCallback(
     (kind: PanelKind, reuse?: boolean, target?: OpenerTarget) => {
       const into = target?.into
-      /* Terminals and the preview live in the right panel of whatever is in
-         front — a thread's worktree, a project, or $HOME. */
-      if (kind === "terminal" || kind === "web") {
-        const here = scopeNow.current
-        if (kind === "web") return openSection(here.scope, "preview")
-        const existing = rightNow.current.terminals.length > 0
-        if (existing && reuse) return openSection(here.scope, "terminal")
-        const meta = sessions.find((session) => session.id === here.sessionId)
-        void openTerminal(
-          here.scope,
-          meta?.projectId ?? here.projectId ?? HOME_PROJECT_ID,
-          meta ? { cwd: meta.worktree?.path, sessionId: meta.id } : {}
-        )
+      /* A thread in front owns its terminal and preview: they open in
+         its own dock (`thread-dock.tsx`), rooted in its worktree. The outer
+         kinds below are what is left for a page in front — a $HOME shell. */
+      const inThread = threadDock(routeRef.current.sessionId)
+      if (inThread && (kind === "terminal" || kind === "web")) {
+        inThread.open(kind, reuse)
         return
       }
       /* Only ever the *second* panel's suffix. The first of a kind keeps the
@@ -466,19 +448,61 @@ export function AppShell({
         else dock.openPanel({ kind: "tasks", ...second(existing) }, { direction: "right", into })
         return
       }
+      /* Which project the new panel acts on is the panel *in front of you*,
+         and only then the route: focusing a terminal or an IDE navigates
+         nowhere, so the route still names the chat you were last reading and
+         a + pressed over project A's terminal used to open project B's. Chats
+         and pages write the route themselves, which is what the fallback
+         answers for. */
+      /* A caller that knows the project says so — a tab's own menu is about
+         *that* tab, which need not be the one in front. */
+      const focused = dock.activeDescriptor()
+      const focusedProject =
+        focused && "projectId" in focused ? (focused.projectId as string | undefined) : undefined
+      const projectId =
+        target?.projectId ??
+        (focusedProject === HOME_PROJECT_ID
+          ? HOME_PROJECT_ID
+          : projects.find((candidate) => candidate.id === focusedProject)?.id) ??
+        routeRef.current.projectId ??
+        HOME_PROJECT_ID
+      if (kind === "terminal") {
+        /* A terminal is already one panel per shell — the only thing reuse
+           changes here is whether a second shell is started at all. */
+        const existing = dock
+          .listPanels()
+          .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
+        if (existing && reuse) dock.openPanel(existing.panel)
+        else void openTerminal(dock, projectId, into)
+      } else if (kind === "web") {
+        /* The stored preview URL rides on the descriptor, so a project panel
+           opens on its dev server instead of an empty address bar — and an
+           existing panel is re-pointed to it the same way. */
+        const previewUrl = projects.find((candidate) => candidate.id === projectId)?.previewUrl ?? ""
+        const existing = dock
+          .listPanels()
+          .find((entry) => entry.panel.kind === "web" && entry.panel.viewId === "default")
+        dock.openPanel(
+          {
+            kind: "web",
+            trust: "project",
+            ...(projectId !== HOME_PROJECT_ID ? { projectId } : {}),
+            viewId: "default",
+            ...second(existing),
+            ...(previewUrl ? { url: previewUrl } : {}),
+          },
+          { direction: "right", into }
+        )
+      }
     },
-    [dock, sessions]
+    [dock, projects]
   )
 
   /* Mirrors the palette's "New thread" entry — the palette advertises the
      shortcut, so something has to answer for it. The chords are named in
      lib/shortcuts, which is also what the help sheet prints. */
   useShortcut("newThread", () => startRef.current.startThread())
-  useShortcut("terminal", () => {
-    if (rightView.open && rightView.section === "terminal") return toggleRightPanel()
-    openWorkspacePanel("terminal", true)
-  })
-  useShortcut("rightPanel", () => (isMobileShell ? rightSheet.set(true) : toggleRightPanel()))
+  useShortcut("terminal", () => openWorkspacePanel("terminal", true))
   /* changeModel / changeProject / chooseMcp are the composer's: they open its
      own menus (`Composer`, `ConfigPopover`), which list everything — a draft's
      agent and profile, effort, mode, MCPs — where the palette's pages list only
@@ -519,7 +543,6 @@ export function AppShell({
           the dock fires onDidActivePanelChange while restoring its saved
           layout, and navigateTo must already have the router's navigate by
           then — the location.assign fallback would be a full reload. */}
-      <ScopeProvider>
       <NavigationBridge />
       <CloseSidebarOnNavigate />
       {/* A flush rail: shadcn's stock `sidebar` variant, a panel with a 1px
@@ -746,7 +769,6 @@ export function AppShell({
             the route: background tabs keep their ACP connections and scroll
             positions while another tab is focused. */}
         <div className="flex min-h-0 flex-1">
-          <div className="relative min-w-0 flex-1">
           <PageRoutesProvider value={{ routes, headingFor }}>
             <WorkspaceDock
               actions={actions}
@@ -759,8 +781,6 @@ export function AppShell({
               onOpenPanel={openWorkspacePanel}
             />
           </PageRoutesProvider>
-          </div>
-          <RightPanelColumn actions={actions} />
         </div>
       </SidebarInset>
       <CommandPalette
@@ -775,7 +795,6 @@ export function AppShell({
         onViewOptions={() => setViewSettings(true)}
         initialPage={palette.initialPage}
       />
-      <RightPanelSheet actions={actions} />
       <ShortcutsHelp open={shortcuts.open} onOpenChange={shortcuts.setOpen} />
       {/* Owned here rather than by the palette, which unmounts as soon as a
           command runs. The project page mounts its own, scoped to itself. */}
@@ -784,7 +803,6 @@ export function AppShell({
           button so it is not unmounted with a header some routes draw
           differently. */}
       <SessionSettingsDialog open={viewSettings} onOpenChange={setViewSettings} />
-      </ScopeProvider>
     </PersistedSidebarProvider>
   )
 }

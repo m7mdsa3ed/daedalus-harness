@@ -72,7 +72,6 @@ import { useSessionMeta } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
-import { HOME_SCOPE, threadScope } from "@/lib/right-panel"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { PANEL_SPECS, isPanelKind, parsePanel } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
@@ -519,11 +518,7 @@ function useTabMenuItems({
   pinned: boolean
 }): MenuItemSpec[] {
   const navigate = useNavigate()
-  /* A helper opens its shell in the right panel of the tab's own thread or
-     project (`lib/right-panel`), not in the dock. */
-  const runHelper = useRunHelper(
-    descriptor?.kind === "chat" ? threadScope(descriptor.sessionId) : HOME_SCOPE
-  )
+  const runHelper = useRunHelper(dock)
   /* Floating and popping out are wide-window gestures: on a phone a float covers
      the whole dock and a popout is a second browser window, neither of which is
      the "panel beside a panel" these rows exist for. */

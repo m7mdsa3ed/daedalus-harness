@@ -208,7 +208,6 @@ export type ShortcutId =
   | "resizePane"
   | "reopenPanel"
   | "terminal"
-  | "rightPanel"
   | "changeModel"
   | "changeProject"
   | "chooseMcp"
@@ -303,8 +302,6 @@ export const KEYS = {
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
-  /** Show or hide the right panel. ⌥ because ⌘/Ctrl+B is the sidebar's. */
-  rightPanel: "mod+alt+b",
   /** The three that open a chooser rather than doing a thing. Alt+letter, the
       same well the tab strip's keys came out of: every ⌘/Ctrl letter with a
       mnemonic worth having is either Chromium's (⌘M, ⌘P, ⌘L) or already
@@ -406,18 +403,10 @@ export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "terminal",
     scope: "Global",
-    label: "Toggle the terminal",
+    label: "Open a terminal",
     chords: [KEYS.terminal],
     rebindable: true,
-    note: "A shell on the Daedalus server, in the current thread's worktree, in the right panel. Opens one if there is none.",
-  },
-  {
-    id: "rightPanel",
-    scope: "Global",
-    label: "Toggle the panel",
-    chords: [KEYS.rightPanel],
-    rebindable: true,
-    note: "The column beside the thread: source control, plan, agents, details, shell and preview.",
+    note: "A shell on the Daedalus server, in the current thread's project directory.",
   },
   {
     id: "reopenPanel",

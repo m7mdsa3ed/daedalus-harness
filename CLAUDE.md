@@ -423,7 +423,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   null) and the flag is `sessions.aside_quote` — the sidebar badges it, and the parent marks
   the passage with the CSS Custom Highlight API (`aside-highlights.ts`, one shared `aside`
   highlight, matched ignoring whitespace), never by rewriting its rows. A click on the mark
-  reopens it; "Open as tab" (sent or still a draft) is the same thread as a tab.
+  reopens it; "Open as tab" (sent or still a draft) is the same thread in the dock.
 - **⌘K's root page never asks the server**; searching is a destination owning its own query,
   debounce and abort. Rows are data, not JSX, and cmdk's own filter is off.
 - Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/view-options.ts`,
@@ -434,58 +434,55 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **"New thread" always creates a thread**: every door — ⌘N, the sidebar row, the strip's `+`,
   the palette, a project's own `+`, the app shortcut — mints a draft through the one
   `actions.startThreadIn` and opens it as a tab of its own, so pressing it twice is two
-  threads. The landing console (`/`) is where you land when the last tab closes, not a stop on
-  the way to starting something. **No list draws a draft** — `isListed`, not `isTopLevel`, is
+  threads. The landing console is where the dock lands when the last tab closes, not a stop on
+  the way to starting something; only the project page's queued terminal/IDE still opens a
+  draft behind its own gesture. **No list draws a draft** — `isListed`, not `isTopLevel`, is
   what the sidebar, Recents, the project page, the palette and the schedule form filter by.
   **A draft's tab survives a reload** (`lib/draft-sessions.ts`): the row is persisted per
   server and re-minted on boot only for the tabs the saved layout still names, so a closed tab
   stays closed and a sent thread comes from the server. **It takes the caret itself** — a
   draft's composer is focused when it is the routed thread or when the caller says so
   (`autoFocus`, which is the console's, whose route is `/`); never on touch.
-- **Chat-first shell: a dockview workspace in the centre, one right panel beside it, and a tab is an
-  outlet.** The sidebar rail, the centre (`workspace/dock-surface.tsx`, controller `dock.tsx`) and
-  the right panel (`right-panel/`). The dock holds **threads and pages** — nothing else — as tabs you
-  can drag, split, group, float, pop out and save as layouts, as before. **A tab is navigational,
-  like a browser's:** going to a page or a thread navigates the tab in front — the active thread or
-  page tab *becomes* it, in place — and opens a tab of its own only for a new thread (a draft is a
-  new thread), the strip's +, a ⌘/Ctrl- or middle-click on a sidebar row (`openNextInNewTab`, spent by
-  the route effect), or when the tab in front is pinned or not a thread/page. A place already open
-  (a thread, a settings tab, a project's page) is focused, never duplicated. Terminals and the
-  preview are **not** dock panels: they are the right panel's (`ThreadBody` renders the transcript in
-  a thread tab with its scope, inspector door and `jumpRefFor(sessionId)`).
-- **The right panel is scoped, and its scope is read off the address bar.** `lib/right-panel.ts`
-  holds the device's `open`/`width` and, per scope (`t:<thread>`, `p:<project>`, `home`), the
-  section in front, the shells and the preview. A thread offers changes, plan, agents, details,
-  tokens, trajectory, terminal and preview; a project page or the landing page only the last two.
-  Sections that have been opened stay mounted (hidden) and the last three scopes keep theirs. On a
-  phone the same body is a full-screen sheet whose open flag is **never persisted**
-  (`rightSheet`). Everything that used to knock on `useDock()` — the terminal, the preview, file
-  links, Source Control — still does, against `ScopeBoundary`'s shim (`right-panel/scope-dock.tsx`),
-  which routes a terminal or preview into the store and a chat, page or the board to the router.
-- **In the flush layout the header is an overlay on the dock and the panel**, with a progressive
-  blur: a top group's strip is `position: absolute` over its content (panels pad by the measured
-  `--dock-content-overlap`), joins the header's row (`data-header-band`, `--dock-band-left`/`-right`
-  measured against `[data-header-left]`), and the right panel pads by
-  `--app-header-h`. **In the inset layout the strip is in the row on the ground and the card starts
-  below it**, with no blur at `md`+ (the blur is phone-only there). A section inside the panel zeroes
-  `--dock-content-overlap` because its rail already clears the header. The sidebar's brand row is the
-  same height (`--app-header-row-h`).
-- **The sidebar has two layouts, and the reader picks** (Settings › Appearance › Sidebar layout,
-  `lib/sidebar-layout.ts` `variant`, device-local). **Flush** (default, `Sidebar variant="sidebar"`):
-  a rail with no border and the content filling the rest, on `--sidebar`. **Inset**
-  (`variant="inset"`, `p-0` on the container): the shell stands on `--app-ground`, the rail is
-  transparent over it, and each dock group's content and the right panel are rounded shadowed cards
-  with `--app-frame-gap` of air. Every inset rule in `index.css` is keyed on
-  `html[data-sidebar-layout="inset"]`, written by the shell and by `index.html` before first paint, so
-  the two never mix; cards are desktop-only (`md`+).
+- **Every route is a tab, and the dock is the main area on every route.** A thread is a
+  `chat` panel; everything else — settings, a project's page, the inbox, schedules, routines,
+  the board route, a trace, the landing console — is a `page` panel whose descriptor is its
+  path, rendered through the app's one route table against *that* path
+  (`workspace/page-panel.tsx`, `<Routes location>`). **The URL points the tab, and focusing a
+  tab writes the URL** — the same pair chats had, with `location.key` in the deps so a sidebar
+  row for a tab just closed opens it again. **A page is a place you visit, not a thing you
+  keep, so the dock holds one browsing tab** (`openPage`): a tab already standing for the
+  place (`pageKey` — every settings section is one tab whose path moves, a project's page and
+  a trace are places of their own) is pointed at the new path, else the *unpinned* page tab is
+  repointed, else one opens beside what you are looking at. **A pin is how a page is kept** —
+  a pinned page tab is never repointed to another place. A tab per place was the first
+  version, and reading settings, then the schedules, then a project left three tabs beside a
+  chat none of them were about. Inside a page tab `--app-header-h` is the measured overlap,
+  so no route pads for a header that is not over it; the title is written forward only,
+  never "Page". The tab wears the mark its sidebar row wears (`PageIcon`).
+- **The console is spent by the thread it starts** (`consumeConsole`, on the chat route effect,
+  asked *before* the chat opens because opening it is what makes it the active panel, and only
+  for a routed draft — the console mints one and navigates to it before sending, so it can
+  never spend a page tab you are merely reading). Closing the last tab lands on it.
+- **A tab is an outlet, like a browser's.** Navigating — a sidebar row, ⌘K, a link — repoints the tab in
+  front: the active thread or page tab *becomes* the destination, in the same place in the strip
+  (`openPage` / `openPanel` in `dock.tsx`). It opens a tab of its own for a new thread (a routed draft),
+  the strip's +, a ⌘/Ctrl- or middle-click (`openNextInNewTab`, spent by the route effect via
+  `consumeNewTab`), and when the tab in front is pinned or neither a thread nor a page. A place already
+  open (a thread, a settings tab, a project page) is focused, never duplicated.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
-- **The sidebar has two contents and the *route* picks.** Settings sections are its content while
-  the address bar is on a settings page (`sidebar/settings-nav.tsx`); threads otherwise. With no
-  dock, the route is the only "panel in front", so there is no second source to disagree with it.
-  Settings carries **no second sidebar of its own**; the in-page `SectionPicker` survives for the
-  one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you tapped
-  Settings — and that gate is `isMobile` (the device), never the panel's width.
+- **The sidebar has two contents and the *active panel* picks, never a route match of its
+  own.** Settings sections are its content while the panel in front of you is a settings page
+  (`sidebar/settings-nav.tsx`); threads otherwise. This was tried and reverted once, when the
+  sidebar read `/settings` directly and a settings tab open beside a chat rewrote the sidebar
+  of the chat you were reading. What makes it correct is that **the dock writes the focused
+  panel's path to the URL** (`onDidActivePanelChange`), so the route *is* the active panel's
+  descriptor — focusing the chat gives the threads back on the same gesture, and focusing a
+  terminal navigates nowhere, which is why the sidebar does not change under one. Settings
+  therefore carries **no second sidebar of its own**; the in-page `SectionPicker` survives for
+  the one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you
+  tapped Settings — and that gate is `isMobile` (the device), never the panel's width, because
+  a narrow settings panel on a desktop still has the sidebar beside it.
 - **A settings group is a card, and a box inside one is `INSET`** (`settings/primitives.tsx`):
   a caption in small caps above a bordered, filled, `shadow-sm` box whose rows are divided by
   hairlines. The inset is the **card's**, not the row's — pages put raw elements into a `Group`
@@ -618,13 +615,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   scroll-into-view is the thing `overlays-content` turned off.
 - **The phone has no bottom navigation bar**: the header's sidebar trigger opens the mobile
   thread drawer, and every bottom-anchored surface pads by `--safe-bottom` for the home
-  indicator. → `docs/client.md` "The phone".
+  indicator. **A sideways swipe on the strip, never the transcript, is `cycleTab`**
+  (`useTabSwipe` in `dock-surface.tsx`). → `docs/client.md` "The phone".
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.** Layout
   uses the `@panel-*` container queries; touch targets and centred surfaces stay on media
   queries.
 - **A key that is bound is a key that is listed and a key that can be moved.** Nothing reads
   `KEYS` to bind — use `useShortcut(id, handler)`; chords print through
   `components/shortcut.tsx` and nowhere else.
+- **The tab strip's keys all act on the group you are looking at** — digits jump, Alt+↓/↑ walk
+  it wrapping, Alt+W closes the tab in front through the guarded door its ✕ uses
+  (`setTabIndex`/`cycleTab`/`closeActiveTab`, which the palette's rows call too); ⌘Tab is the
+  browser's own, so it rides `RESERVED` to the desktop shell like ⌘1…9 and ⌘⇧T, and **⌘W is
+  never the close chord** because Electron gives it to close-window.
 - **The desktop shell names a shortcut, never an action** (`lib/desktop.ts`): the native
   menu, the tray and the quick-entry hotkey send a `ShortcutId` and the renderer runs
   `runShortcut(id)` — the chord's own handler. **A thread popout is one transcript and no
@@ -651,6 +654,25 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   a toast: these sit *inside* the thing that failed, where a toast about a copy competes with
   the failure being read and on a dialog lands behind it. A failed **tool call** gets its copy
   from `CodeBlock`, the one place all four `SmartBlock tone="error"` call sites land.
+- **One dockview instance; tabs are grouped by dockview's own tab groups.** A tab group is a
+  coloured, labelled, collapsible chip over a run of tabs **in one strip** — never across two.
+  The chip's menu is dockview's (rename, colour, collapse) except **Close group, which is
+  ours** (`closeTabGroup`), because dockview's removes panels past the close guard and the
+  reopen stack. Colours are `TAB_GROUP_COLORS` (`--primary`, `--chart-*`), never dockview's
+  fixed hues, and the chip is a tint with the foreground on it, not white on a colour. A dock
+  inside a tab (`group` panels) was the first version: every question had to be asked of two
+  instances, a drag between them was never accepted, and half the tab menu did nothing on a
+  grouped tab. **A layout that still holds one is unpacked on load** (`unpackGroupPanels` in
+  `layout.ts`, checked by `layout.check.mjs`): each group tab becomes its tabs, in place, as
+  one tab group. **The bottom panel is dockview's edge group**, reached only by a tab's "Move
+  to the bottom panel" (`revealEdgeGroupWithData`, which removes it with its last panel) —
+  nothing *opens* there. Pinning, layout undo, keyboard docking, wrap/searchable overflow and
+  the drop compass are dockview **enterprise** modules, inert in this build: ours stay ours.
+- **The outer dock holds five panel kinds: chat, terminal, web, tasks, page** (a thread's own
+  terminal, preview and board live in its thread dock). **There is no IDE** — no editor panel,
+  no file explorer, no code-server; the preview is the project's window. **Monaco is the
+  diff and nothing else** — the official `monaco-editor`, so there is no
+  workbench and no "initialize once per page" rule.
 - **Source control starts from `GET …/git/repos`, never from "the project's git"**, and every
   read and write names its `repo`. **Status paths are repository-relative** —
   `projectPath(repo, path)` is the one join back to the file routes. **A comparison names both
@@ -674,6 +696,110 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the library beside it that only exports `start` (`editor.worker.start.js`): pointed at the
   latter the worker boots, answers nothing, and every worker-backed feature dies quietly —
   the visible one being the diff, which drew both files whole with nothing marked changed.
+- **A tab is one slab, rounded on all four sides** (`.dock-tab`, `index.css`), and
+  **every tab has a ground** — three weights of one material: the tab you are on, the one you
+  are pointing at, the rest. A surface that only appears on click reads as the selection
+  rather than as the shape a tab has. (A browser's shape — top-rounded, flared into the panel
+  — was tried and removed: the flare only reads against a filled toolbar, and everything under
+  these tabs is transparent by design.) Three weights of one material, and **no colour on any
+  of them**: resting is a 4% wash of the foreground, hover the same wash at 8%, and the active
+  tab the card's own ground and its `shadow-sm`. Hover sits *between* the two weights rather
+  than on top of the active one — pointing must not look like selecting — and the resting wash
+  is what makes a row of six tabs something to aim at rather than six pieces of text; it is
+  deliberately under the 7% that is a full step of the page's ramp (`--app-ground-step`).
+  If a tab should ever be marked the way an active tab in a *browser* is marked, it is the
+  ground that says it, because **no tab wears a colour**: the reading is `PanelStatusDot`'s,
+  which is a *state* and stays a dot. Corners are `--radius` less the cell's 2px inset, so the
+  tab's corner sits just inside the card's `--radius-xl` instead of colliding with it. It
+  carries the **panel's own mark** (`PanelIcon` — a chat's is its agent's), its title and its
+  **reading** (`PanelStatusDot`) as one box, and the ⋮ and close **floating over that box's end**
+  — **not** the thread's context reading, which the composer's footer says once. **The controls
+  are an overlay and reserve no room**: absolutely positioned against the chip's trailing inset,
+  so a title owns the whole of the tab's width and the strip pays no gutter for a pair of things
+  that exist only while you point at one tab. What they cover when they appear, the title has
+  already stopped saying — it fades under them (`--tab-fade-w`, a registered length declared on
+  the **chip**, which is what knows whether it is hovered, focused or holding the ⋮'s menu open;
+  the transition rides the title's mask alone, because a registered property every element
+  inherits would invalidate style for the whole app), and the fade is the width of what is
+  actually there, the pin included. **The pin is a `[data-tab-action]` too**, which is what lets
+  it be the one control drawn before you point. The ⋮ and the right-click menu render one `items`
+  array, so they cannot drift. Sizing is a browser's — one width whether it is alone or one of nine, so
+  **no `singleTabMode`** — but wider than a browser's, because a thread is named after what it
+  is doing, and the emptiness beside a lone tab is the void container's to drag the window by.
+  **That width is a `width`, never a `flex-basis`**: reordering is dockview's own
+  (`theme.tabAnimation: "smooth"` — the dragged tab collapses, the strip slides apart around
+  the gap, everything FLIPs home on drop) and it collapses the tab with `width: 0`, which a
+  basis outranks. `dndTabIndicator: "line"` is the other half — the default is a half-width
+  fill over every tab, which is a row of slabs the size of half a tab, not an insertion point.
+- **Dockview owns the tab's ARIA and the strip's keyboard; the tab owns its face.** The Tabs
+  pattern — `role="tablist"`/`tab`/`tabpanel`, `aria-selected`, `aria-controls`, a roving
+  tabindex, arrows/Home/End/Enter — is dockview-core's and is already correct, on one
+  condition: **nothing rendered inside `role="tab"` may be focusable**, or the arrow keys go
+  dead (dockview matches `event.target` against the tab element) and the strip stops being one
+  tab stop. So the ⋮ and the close are `tabIndex={-1}`, `Delete` closes and `Shift`+`F10`
+  opens the menu on the tab itself, and the tab draws a focus ring. What dockview cannot know
+  is what the panel is doing, so `useTabLabel` folds the reading and the pin into its
+  `aria-label`. **Dockview's own overflow list is off** — `TabActions` draws the better one.
+  A narrow strip **keeps the tab and nothing else** (`index.css`): every other one is in
+  `TabActions`' list, so nothing is collapsed, swapped or picked by viewport — one tab is laid
+  out where four marks used to be, and hiding one is `display`.
+- **Every strip is the app header's own row** (`--dv-tabs-and-actions-container-height`): a
+  strip in the band and a strip docked under it are the same bar, and a shorter one below
+  reads as a lesser thing rather than as another group of the same kind. **The sidebar has two layouts, and the reader picks** (Settings › Appearance › Sidebar
+  layout, `lib/sidebar-layout.ts` `variant`, device-local). **Flush** (default,
+  `Sidebar variant="sidebar"`): a rail with no border, the content filling the rest, a top group's
+  strip an overlay on its content under a progressive blur (panels pad by the measured
+  `--dock-content-overlap`). **Inset** (`variant="inset"`, `p-0` on the container): the shell stands on
+  `--app-ground`, the rail is transparent over it, the strip is in the row on the ground with the
+  card below it (no blur at `md`+), a shorter header row, and each group's content a rounded shadowed
+  card with `--app-frame-gap` of air. Every inset rule in `index.css` is keyed on
+  `html[data-sidebar-layout="inset"]`, written by the shell and by `index.html` before first paint, so
+  the two never mix; cards are desktop-only. What separates two groups is a hairline (flush) or the
+  gutter between their cards (inset); `--dv-separator-border` is transparent, because dockview's line
+  runs the full view height, through the band.
+- **A tab strip carries what is about its own group** — the **+**, the layout presets
+  (`LAYOUT_PRESETS`, applied to the strip's own instance, never on a phone) and the tab list, **against
+  the last tab and not at the strip's end** (`.dv-void-container { order: 1 }`, which moves
+  the one flex item that has to move and leaves dockview's tree alone). The + is the browser's
+  affordance and opens into *this* group, which is what makes a per-group copy unambiguous; its rows are `WorkspacePanelItems`, the same array the header menu rendered,
+  passed `flat` because the button already asked the submenu's question. **The openers come
+  down through `useDockOpeners`**, never re-derived in the strip: which project a panel
+  belongs to is `app-shell`'s answer, and every surface calls the one `openWorkspacePanel`.
+  The bell and the palette trigger stay in the sidebar header, which does not split and is on
+  every route.
+- **On a narrow screen only the tab you are on is drawn** — every other tab is in the strip's
+  list (`TabActions`, the switcher from two tabs up), because a row of marks is a second thing
+  to read beside the list that already names every tab. It is entirely `index.css`, keyed on
+  dockview's `dv-active-tab`/`dv-inactive-tab`: **a hide and not a collapse** (`display: none`,
+  the class it already toggles), so there is no width or opacity to interpolate and a tab
+  switch is one frame — the instant a browser gives a tab switch. Nothing is picked by
+  viewport either: the mark is the panel's own (`PanelIcon`) on every strip, and `initialsOf`
+  is the assignee avatar's again. What is *not* hidden keeps the wide strip's one-column title
+  container, whose `transition` was for a collapse that no longer happens; dockview's own
+  reorder is the strip's only motion (`--dock-tab-duration`).
+- **The app header's controls are the tab's material *and its height*** (`.header-chip` beside
+  `.panel-tab-chip` in `index.css`; `HEADER_CHIP` carries `size-8`, the tab's `h-8`): the
+  sidebar toggle's cluster and that group's tabs are one row whenever a group joins the band, so
+  a pill of `--background` at 24px next to a rounded rectangle of `--composer` at 32px is two
+  bars pretending to be one. **There is no ⋯ menu**, and **the header holds one control** —
+  the sidebar toggle. Opening a thread or a panel is the strip's +; how transcripts are drawn,
+  which notifications have arrived, and what the app can search are rows in the sidebar, which
+  is where a place you go is named. The header is the band the *tabs* join, so what stands in it
+  is the tab's own material and height and nothing that is about the app rather than this group.
+- **Opening a panel never splits the dock** — every kind arrives the way a new thread does, a
+  tab beside what you are looking at, and `OpenPanelOptions.direction` is read as "do not
+  replace what is in front of me" and nothing more. It used to split when the window was wide
+  and no group of that kind existed yet, so the same click cut the dock in half the first time
+  and opened a tab the second, rearranging a layout the reader had built. **Splitting is asked
+  for by name**: `splitActive` (the chord, the palette row), which says which panel it moves.
+- **A panel kind is a surface, and a surface that reads the URL cannot be one** — the board
+  panel keeps "which board, which task" in its descriptor (`lib/tasks-location.ts`), never in
+  the route. **What a panel is doing is data the panel publishes and the tab draws**
+  (`lib/workspace/panel-status.ts`), never a glyph in its title. **A pinned tab is one every
+  bulk close steps over** — its own Close still names it. **A preset rearranges what is open;
+  a saved layout carries its contents**, which is why it is asked for by name. **A float is
+  restored whole or not at all and a popout is never reopened**: its panels come home to the
+  grid before the layout is counted.
 - **The terminal panel's chrome is the product**: scrollback search, copy/paste, clear, type
   size and the key row. **Ctrl+C copies with a selection, interrupts without one**; **clear is
   the view, never the server's scrollback**; **an exited shell gets a new one, never a
@@ -689,6 +815,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   target on purpose, because a keyboard of 44px keys covers the terminal it drives. **How a
   terminal is drawn is the device's** (`lib/workspace/terminal-prefs.ts`), and `keyRow: "auto"`
   asks the pointer, never the width.
+- **How much of a panel the app header covers is measured, never assumed.** The dock sets
+  `--dock-header-overlap` on each group for its tab strip; **a panel measures its own**
+  `--dock-content-overlap` (`lib/workspace/panel-overlap.ts`), because `defaultRenderer="always"`
+  renders panel content outside the group element, where nothing the dock sets can reach it.
+  The old constant reserved the header's height in every group, including the ones nowhere near
+  it — twice, in the strip's margin and the panel's own padding.
 - **A turn's changes are measured by git, never read off the transcript** — tree snapshots at
   `turn_started`/`turn_ended` through a scratch index; **the real index is never touched**.
   **What git measures is a window, not an author**, so the *reading* is gated on the transcript
@@ -706,6 +838,29 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   are, and the file list a chip could never hold is what its popover is for. `ThreadView` picks
   the turn (the last value of `withTurnChanges`) — the composer holds no opinion about which.
   **Reviewing a turn is the Source Control panel's Review half** (the turn timeline, below); its Git half is `thread-view/source-control.tsx` (on the `workspace/scm/` pieces: commit box, branch picker, commit graph and detail) — grouped working set with line counts, stage, commit/amend/undo, branch, fetch/pull/push, stashes, history that opens a commit to its files and diffs.
+- **A chat tab on a wide screen is a thread dock** (`workspace/thread-dock.tsx`): a nested
+  dockview holding the transcript and the panels about *that* thread — Source Control, Plan, Agents,
+  Details (`ThreadSection`, the inspector's readings one panel each), Terminal, Preview —
+  **never the board**, which is the server's and not a thread's, so it always opens in the outer dock.
+  **It opens as the transcript alone, and the transcript wears no strip** (`syncStrips`: a
+  group holding only it has its header hidden); **every other panel comes from the + floating
+  over it, and lands at its kind's own place** (`SLOT`: readings a column at the right edge,
+  preview beside the transcript, a shell under it — later ones join that group).
+  **It is one surface, not a dock of cards**: panes are flush and meet at a hairline, and the
+  other panes' strips are title bars — bare tabs, an underline in front (`.dock-nested`).
+  Each thread keeps its arrangement on this device (`lib/workspace/thread-docks.ts`).
+  **A closed world**: nothing crosses between it and the outer dock (dockview refuses a
+  foreign drop by default), which is what the removed group panel lacked. **A hidden chat tab
+  is `display: none`** (`ChatPanel`), because the inner dock's `always` overlays escape the
+  outer's `visibility` and drew over every other tab. Its panels get a `DockContext` of the
+  thread dock's own, so a terminal's restart, close guard and a preview's helper land inside.
+  **A thread's shell starts in `threadCwd` and dies with the thread** (`sessionId` on the
+  terminal, `killSessionTerminals` on trash and purge). With a thread in front, every opener —
+  the outer +, ⌃`, the palette — routes terminal and preview into its dock
+  (`threadDock`); the outer kinds remain for a page in front. **On a phone
+  it is the same dock, stacked**: every panel is a tab in the transcript's group, nothing
+  splits or drags, and a wide layout folds on the way in (`stack`). "Open in inspector"
+  opens the reading's panel (`InspectorContext`).
 - **A review is drafts on this device, sent as ONE ordinary message through `actions.send`**
   (`lib/review-comments.ts`): it queues behind a running turn and never steers, and the drafts
   are cleared only once the send resolves. **Hunk actions reuse the existing doors** — stage

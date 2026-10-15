@@ -951,6 +951,13 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
 - **There is no bottom navigation bar.** The header's sidebar trigger opens the thread
   drawer on a phone, and is shown on every device. Bottom-anchored shell surfaces use
   `--safe-bottom` for the home-indicator inset; no navigation element claims that space.
+- **A sideways swipe on the tab strip walks the group's tabs** (`useTabSwipe`,
+  `dock-surface.tsx`) — left is next, right previous, wrapping, through the same
+  `cycleTab` the chords call. Only the strip: on the transcript a sideways drag is a text
+  selection or a code block's horizontal scroll. Native touch pointer events on the
+  document (dockview makes and unmakes strips, and a nested group has its own), a 10px
+  axis lock that lets a mostly-vertical touch go for good, a 56px commit, and
+  `touch-action: pan-y` on the narrow strip so the browser hands over the horizontal half.
 - **"Needs you" is the inbox's top** (`components/notifications/needs-you.tsx`), read from
   `GET /api/pending` — every question a live agent is blocked on, across threads, straight
   off each bridge's `pending` map. A permission is answered on the card (Allow/Deny picked
@@ -1048,6 +1055,46 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
   the **capture phase** because while it is open every chord belongs to it — ⌘K
   must be written down, not open the palette — with Escape and Tab left alone so
   a recorder opened by accident is not a trap.
+
+- **The tab strip's keys all pick from the group you are looking at**
+  (`dock.tsx`), which is the strip in front of you; while the dock is one group
+  that is also "every open tab", and once it is not, following the visible strip
+  beats a global order you cannot see. Digits jump (`tabJump`, and the range is
+  that binding's — the reader's first chord is what the recorder writes and the
+  rest of ⌘1…9 answer to the same key), ⌘/Ctrl+Tab or ⌥/Alt+↓ walk the strip
+  wrapping, and Alt+W closes the tab in front through the same guarded door its
+  ✕ uses (`setTabIndex`/`cycleTab`/`closeActiveTab`, which the palette's rows
+  also call). **Every chord here is one `matchesChord` can spell**, which rules
+  out the plain Ctrl+Tab people reach for: `matchesChord` folds Control into
+  `mod` by design (⌘ on Apple, Ctrl elsewhere), so the chord is `mod+tab` — the
+  browser's own switch-tabs, which Chromium keeps, so it fires in the desktop
+  shell and `RESERVED` says so on the row instead of leaving the dead web
+  binding to be found by pressing it. Alt is the pair that works in a browser
+  tab too, which is why it is the second. **⌘/Ctrl+W is not the close chord
+  either** — Electron gives it to close-window, so it would quit the app rather
+  than close a tab, the same reason `splitRight` is not ⌘W.
+
+- **A split is split, walked and resized from the keyboard through the same table**
+  (`dock.tsx`): ⌘/Ctrl+\ and ⌘/Ctrl+⇧\ split right and down, ⌘/Ctrl+⇧M fills the
+  panel, ⌥/Alt+←/→ walk the grid's panes wrapping (`activateNext`, grid groups
+  only — a float is not a column), and ⌥/Alt+⇧+arrows push the divider the way
+  the arrow points (`resizeActive`): a pane with a neighbour that way grows
+  toward it, one at the edge gives way. **Resizing is `group.api.setSize`, never
+  the gridview**: dockview's sashes take the mouse only, but a group's size
+  event reaches its parent splitview, and a branch forwards a child's
+  `orthogonalSize` as its own size — so along the parent's axis it moves the
+  group's own edge and across it the branch the group sits in, and a 2×2 moves
+  both ways without touching the tree. In a row of three the far end absorbs
+  first (splitview's `relayout`), not the neighbour a drag would move. **Both
+  decline the key when there is nothing to act on** (`return false` from the
+  `useShortcut` handler): ⌥←/→ is the browser's Back/Forward and ⌥⇧← selects by
+  word in a composer on a Mac, and claiming them with no split would take both
+  for nothing. The resize family is one row (`resizePane`, Fixed — the arrow is
+  the key's meaning, as the digit is in `tabJump`); the walk is two rebindable
+  rows. It is not ⌘/Ctrl+⇧+arrow, which selects by word in the composer, where
+  the caret nearly always is. `splitDown` and `fillPanel` sat in the table and
+  the tab menu with no handler for a while: **a row in `SHORTCUTS` is not a
+  binding until a `useShortcut` names it.**
 
 ## The desktop shell
 
@@ -1166,53 +1213,547 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   that turn ends instead. See `docs/profiles-and-config.md`. The rule generalises: a dialog
   in front of a reversible action is a tax on every use of it to insure against one.
 
-## The shell, the dock and the right panel
+## The dock
 
-The app is chat-first: the sidebar rail, a **dockview workspace** of threads and pages in the centre,
-and **one right panel** for the tools about what is in front of you.
+**Two things changed the model after it was written; read the rest with them in mind.** A tab is
+an outlet: navigating repoints the tab in front and a new tab opens only for a new thread, the strip's
++, a ⌘/Ctrl- or middle-click, or when the tab in front is pinned or not a thread/page (see the
+"A tab is an outlet" rule in `CLAUDE.md`). And the sidebar has two layouts, Flush and Inset, picked in
+Settings › Appearance and keyed on `html[data-sidebar-layout]`; in Flush a top group's strip is an
+overlay under a progressive blur, in Inset it sits in the row above the card. Focus mode no longer
+exists.
 
-**The frame** (`components/app-shell.tsx`): the sidebar rail (plain shadcn `sidebar` variant), then one
-column with an overlay header — the sidebar toggle, the space switcher and view settings — over a progressive blur
-(flush layout). The header carries no buttons for the right panel: it is opened by ⌘⌥B / ⌘J, the
-palette's Panel rows, a reading's "Open in inspector" on the composer, and the **+ over a thread's
-transcript** (`workspace/thread-body.tsx`), which lists the readings, a new terminal, the preview and the
-trajectory. The dock (`workspace/`) fills the
-rest, with `RightPanelColumn` beside it.
+- **How much of a panel the floating app header covers is measured, never assumed.** The
+  header is an overlay across the top of the column, so the tab strip and every panel's content
+  have to clear it — and both did that with the constant `--app-header-h`, which is right for
+  the group at the top and wrong for every other one. A terminal docked *below* a thread
+  reserved three rems twice over, once in the strip's margin and once in its own padding, for a
+  header nowhere near it. `workspace/dock-header.ts` measures the header's bottom against each
+  group's box and publishes `--dock-header-overlap` on the group element, which is what the tab
+  strip clears. **What a panel's own content pads by is measured by the panel**
+  (`--dock-content-overlap`, `lib/workspace/panel-overlap.ts`), and that split is not tidiness:
+  the dock renders with `defaultRenderer="always"`, which attaches panel content to one overlay
+  container at the dockview root rather than nesting it in the group — so a variable set on a
+  group element reaches its strip and nothing else, and the panels quietly kept falling back to
+  the constant. The dock's part is the *nudge*: a group can move without changing size (a sash
+  settling, a maximize, a panel dragged between groups), which an element watching only its own
+  size never hears about. A popped-out panel measures zero — `ownerDocument` is what tells the
+  two windows apart — a zero-height box keeps its last answer rather than reading a hidden tab
+  as fully covered, and the constant survives only as the fallback: one frame before the first
+  measurement, and the surfaces that are not in a dock at all.
+- **Tabs are grouped by dockview's own tab groups, in one instance.** A tab group is a chip
+  over a run of tabs in one strip (`api.createTabGroup`/`addPanelToTabGroup`, serialized in
+  each group's `tabGroups`, so the layout save carries it with nothing of ours). The tab's
+  menu has "Add to tab group ▸" (a new one, or any of *this strip's* — a tab group never spans
+  two strips), "Remove from tab group", and "Open with this tab ▸". Its first rows join the
+  new panel to this tab's tab group, right after it (made for the two of them if there is none,
+  and only once the panel exists); its second rows — "Terminal below", "Preview/Tasks to the
+  right" — are a **split** beside this tab's strip, because a tab group never shows two tabs at
+  once and seeing both is the point. The destination travels with the call
+  (`OpenPanelOptions.into`, through `openWorkspacePanel`'s `target` and `openTerminal`, across the
+  terminal's POST) and so does the tab's own project — it used to be a 2s module-level aim any
+  open could spend, and the project was whatever tab was in front. The timed aim
+  (`targetNext`) survives only for the strip's "+ ▸ New thread", whose tab arrives a
+  navigation later, and only a chat open spends it.
+  The rows come from `useTabNeighbours`, re-read on dockview's layout change, which is where
+  tab-group changes are folded in. The chip's menu (`getTabGroupChipContextMenuItems`,
+  `dock-surface.tsx`) is dockview's rename, colour picker and collapse plus two of ours:
+  Ungroup (`dissolveTabGroup`, the tabs stay) and Close group (`closeTabGroup`, through the
+  guarded door, pins stepped over — dockview's own `close` would remove the panels past both).
+  The palette is `TAB_GROUP_COLORS` in `dock-context.ts` — `--primary` and `--chart-1…5` — so a
+  chip follows the theme; dockview paints it white-on-colour, which the light chart greys
+  cannot carry, so `index.css` draws it as a 22% tint with the foreground and the full colour
+  as a dot. Chips are hidden below `md`, where the strip draws one tab.
+  **This replaced a dock inside a tab** (a `group` panel holding a second `DockviewReact`).
+  Everything about it was a second instance: two places to look for a panel, a close-and-open
+  to cross between them, a drag between strips dockview never accepted (a foreign panel needs
+  `onUnhandledDragOver` to `accept()`, and nothing did), and tab-menu rows that asked the outer
+  instance for a grouped tab and got nothing. A saved layout that still holds one is unpacked
+  by `pruneLayout` (`unpackGroupPanels`): the group tab's place in the strip becomes the tabs it
+  held, as one tab group, the first of them in front if the group was. `layout.check.mjs`
+  (`../server/node_modules/.bin/tsx src/lib/workspace/layout.check.mjs`) holds that and the
+  pruning of tab groups and the bottom panel.
+- **The bottom panel is dockview's edge group, and a tab is only ever *sent* there.** "Move to
+  the bottom panel" is `revealEdgeGroupWithData("bottom", …)` — dockview's create-or-fill, whose
+  group is flagged to go away with its last panel — then expanded with its strip on top, where
+  every other strip is. "Move to the main area" is the way back and is never withheld, phone
+  included; the palette's "Show or hide the bottom panel" collapses it to its tabs. It is not a
+  split and nothing opens into it, so "opening never splits" still holds. `pruneLayout` prunes
+  the serialized `edgeGroups` like a leaf and drops one left empty. A phone's fold
+  (`stackAll`) pulls its panels back into the grid with the floats. Auto-hide, dock-to-edge by
+  dragging and the peek are enterprise modules and inert here.
+- **The outer dock holds five panel kinds: chat, terminal, web (the *Browser* panel), tasks
+  and page.** There is no IDE: the editor, file explorer, file search, the source-control panel
+  and the server's code-server were removed — a thread's Preview is the project's window, and
+  its Changes panel is where a turn is reviewed. The page panel
+  (`components/workspace/page-panel.tsx`, descriptor `{kind:"page", path}`) is every route
+  that is not a thread, rendered through the app's own route table against the panel's path
+  (`<Routes location>`), so the dock is the main area on every route and a settings page
+  can stand in a tab beside a chat. **It is the app's browsing tab** (`openPage` in
+  `workspace/dock.tsx`): opening a page repoints the tab already standing for that place
+  (`pageKey` in `lib/workspace/panels.ts` — one settings tab whose path moves between
+  sections, one per project page, one per trace), else the unpinned page tab, else opens a
+  new one — so pages do not pile up the way a tab per place did, and pinning is what keeps
+  one. Its id is unique and says nothing about its path. The URL points the tab and focusing
+  a tab writes the URL; `location.key` is in the route effect's deps so a sidebar row for a
+  tab you just closed opens it again. Pages still read `useLocation` from the address bar,
+  which is the panel's own path whenever it is the active tab. The landing console is a page
+  tab too, and it is what the dock lands on when the last tab closes — **every "New thread"
+  gesture mints a thread instead** (`actions.startThreadIn`, so ⌘N twice is two threads). The
+  one console that is spent is the one a thread was started from: `consumeConsole` runs on the
+  chat route effect, *before* the chat opens (opening it is what makes it active) and only for
+  a routed draft, which is what the console mints before it sends. The tab's mark is its
+  sidebar row's (`PageIcon` in `panel-kinds.tsx`); its title is written forward only, so a
+  restored tab never flashes "Page".
+- **The Browser panel's toolbar carries its own tools.** A project's Preview is the one
+  page this app can read, so two buttons are the page's: **Pick element** turns one click
+  into a selector for the composer — the way to tell an agent *which* element without
+  describing it, handed over through `lib/composer-insert.ts` by `Send to agent` — and
+  **Console** opens a drawer of the page's own log, with a dot when it holds warnings or
+  errors. Both ride the desktop shell's `<webview>` guest (`electron/main.cjs` relays the
+  console per guest and runs the picker with `executeJavaScript`); a browser's sandboxed
+  iframe has no console to read and no DOM to inspect, so neither is drawn there.
+- **A hidden chat tab is `display: none` while its thread dock stays mounted.** Dockview's
+  `always` renderer hides an inactive panel with `visibility`, which the inner dock's own
+  overlays escape; `display: none` cannot be escaped, and keeping the dock mounted is what
+  lets a Preview's page and a shell come back to what they were instead of reloading.
+- **A panel kind is a surface, and a surface that reads the URL cannot be one.** The tasks
+  panel is the case that proved it: the board workspace answered "which board, which task"
+  from `useParams`/`useSearchParams`/`useNavigate`, so a panel switching board would have
+  navigated the page it is drawn on — taking the dock and every other panel with it. The
+  three questions are now one interface (`lib/tasks-location.ts`) with two answers: the
+  route's, at `/board/:boardId?task=`, still the place a board is linked from, and the
+  panel's, which keeps them **in its own descriptor** and so survives a reload the way every
+  other panel does. There is **one** tasks panel (`panelId` is the bare `"tasks"`): another
+  board is this panel moved, exactly as another file is the IDE moved, and boards belong to
+  the server rather than to a project — which is why it is the one kind that opens with no
+  project and the one the prune cannot call stale.
+- **Opening a thread opens a tab.** The dock's `replace` — a same-kind open with no
+  direction and no `newTab` takes the place of the panel it opened from — used to include
+  chats, which made the sidebar read as navigation: click the next thread and the one you
+  were reading closed. It is the other way round now (`{ newTab: true }` at both doors: the
+  route effect and `handleDockReady`). A thread you opened is a thread you meant to keep, and
+  `openPanel` keys on `panelId`, so an already-open thread is focused rather than duplicated
+  — the flag only decides what happens to a thread that has no panel yet. **Both** doors have
+  to say it: `handleDockReady` can run *after* the route effects (a cold load, or a theme
+  change remounting DockviewReact), and an open without the flag had the brand-new thread eat
+  whatever chat was in front of you. This retired `lib/session-tabs.ts` (the one-shot "open the
+  next one in a tab" flag), the ⌘-click on a sidebar row and the row menu's "Open in new tab",
+  all three of which now name the plain click — which is also why the row's "New thread in new
+  tab" submenu is gone: plain "New thread" opens the tab.
+- **A draft's tab comes back after a reload.** The row is client-only, so the server's list
+  cannot carry it, and `prunePanels` — whose authority *is* that list — closed every unsent
+  thread's tab on the next boot and let the debounced layout save make the loss permanent.
+  `lib/draft-sessions.ts` persists the rows per server (mint,
+  retune, rename and forget all write through it, `refreshSessions` prunes the ids the server
+  learns), and `bootstrap` re-mints them *before* the prune's gate opens — but only the ones
+  the saved layout still names a tab for, so a tab you closed stays closed. The half-written
+  message was never the problem: `lib/drafts.ts` already kept that per session id, and the
+  same id comes back.
+- **A tab's title is only ever written forward.** `ChatPanel` sets it from `sessions`, and
+  **skips the write when the store has no row yet** — dockview serializes titles, so a
+  restored layout already knows every tab's name, and writing the `PANEL_SPECS` placeholder
+  unconditionally renamed all of them to "Thread" for the width of bootstrap. A session list
+  that loaded slowly showed it as a flash; one that failed left it there for good.
+- **What a panel is doing is data, published by the panel and drawn by the tab**
+  (`lib/workspace/panel-status.ts`, `components/workspace/panel-status-dot.tsx`). It used to
+  be a glyph the chat panel prefixed onto its own title, which made the reading part of the
+  *title*: no other kind could have one, it could not be coloured, and a screen reader read
+  it as a stray character. (**The project a chat runs in is not on its tab** — it is the
+  composer's scope band, where it is a name rather than a 14px mark that drops its label
+  below `sm`.) A dock keeps every panel mounted, so the strip is the only place a
+  panel nobody is looking at can speak — a turn waiting on you, a shell that exited, a dev
+  server that failed, unsaved files in the IDE. Four tones, and the whole sentence in the
+  label, because a strip has room for one dot and a pointer and a screen reader both read the
+  title. Live, per mount, and never serialized.
+- **A tab fills the row it is in, and the row's ground is the hierarchy.** A tab is a real
+  object — the piece of the card under it that reaches up into the strip — and it was drawn as
+  a 28px slab *floating* in a 32px row, with 2px of air on all four sides and nothing to be a
+  slab of. That meant something in the header's band, where the row and the chip were the same
+  height, and nothing anywhere else, and the selection was carried by one 4% tint: at 4% of the
+  foreground the unselected tab was already a full step of the ramp (`--app-ground-step`,
+  lib/theme-ramp.ts), so the active tab's `--background` read as a shade of the same grey
+  rather than as a different material. The chip is now `h-[var(--dock-chip-h)]` and the *cell*
+  is what keeps the air (`py-0.5`, `m-0.5`), so the selected tab rises the full height of the
+  row and the rest are the ground with a title written on them. **Three weights of one
+  material, and no colour on any of them**: resting is a 4% wash of the foreground toward the
+  ground — the smallest step there is, short of the 7% that is a full step of the page's own
+  ramp — hover is the same wash at 8%, and the selected tab is the card's own ground and its
+  `shadow-sm`. Hover sitting *between* the two weights rather than on top of the active tab is
+  what stops pointing from looking like selecting, and the resting wash is what makes a row of
+  six tabs something to aim at rather than six pieces of text: on a bare band the only thing
+  marking one cell off the next is where the title happens to stop. A tab's own leading padding
+  (`pl-2.5`) is unconditional, so nothing shifts as a tab becomes active, and the slab's corners
+  are `--radius` less the cell's 2px inset — concentric with the card's `--radius-xl` rather
+  than a small arc against a large one. **One height
+  token for everything standing in a strip** (`--dock-chip-h`/`--dock-control-h` on `:root`,
+  because the app header's own `HEADER_CHIP` controls stand in the same row whenever a group
+  joins the band and a token scoped to the dockview element is one they cannot see): it was
+  `h-7` on the chip, `size-6` on the strip's own + and list, `size-5` on the chip's ⋮ and ✕ —
+  three numbers in three files, which is how a 24px target ended up running a strip. A tab's
+  cap is 256px rather than 304px (five tabs were 1520px of tab in a 1184px strip, so every one
+  of them was already squeezed), and the strip's first tab starts on the same 8px line as the
+  card under it.
+- **Dockview owns the tab's ARIA; `panel-tab.tsx` owns its face.** dockview-core 8.2 already
+  builds the WAI-ARIA Tabs pattern around our renderer: `role="tablist"` + `aria-orientation`
+  on the strip, `role="tab"` + `aria-selected` + `aria-controls` per tab, `role="tabpanel"` on
+  the content, a **roving tabindex** (one tab stop for the whole strip) and the keyboard the
+  pattern asks for — ArrowLeft/Right, Home, End, Enter/Space with manual activation. All of it
+  rests on one condition, and the tab this replaced broke it: **nothing rendered inside
+  `role="tab"` may be focusable.** Dockview routes its keys with
+  `tabs.findIndex(tab => tab.element === event.target)`, so focus on a nested `<button>`
+  answers -1 and every arrow key goes dead — and two extra tab stops per tab is not a single
+  tab stop. So the ⋮ and the close are `tabIndex={-1}` and the keyboard reaches them the way
+  VS Code and Chrome do: on the tab itself, `Delete`/`Backspace` closes and `Shift`+`F10` (or
+  the Menu key) opens the actions, with both controls drawn while the tab has focus so the
+  keys are discoverable by the one reader who cannot find them by pointing — and their slot is
+  `pointer-events: none` until the state that reveals it arms it, because an invisible button
+  is still a target. The tab also gets
+  a **visible focus ring** — a roving tabindex you cannot see is arrow keys into the dark.
+  **The two controls float.** They were the tab's last flex item, which held a gutter open on
+  every tab in the strip for a pair of things that exist only while one of them is pointed at;
+  they are absolutely positioned against the chip's trailing inset now, so a title owns the whole
+  of the tab's width. The title and its `PanelStatusDot` are **one box** under the fade — the dot
+  inside it is why the ✕ no longer lands on the dot on hover — and what the controls cover when
+  they appear, the title stops saying: `--tab-fade-w` masks its end for the width of what is
+  actually there, declared on the chip (hover, focused, or holding the ⋮'s menu open) and
+  `@property`-registered so it interpolates, with the transition on the mask alone. The **pin is
+  a `[data-tab-action]` too**, so it is the one control drawn before you point and the fade can
+  size itself to it; the close no longer takes the active tab's exemption, since a floated
+  control has nothing to be covered by. The mask's transition joins the strip's other two in the
+  `prefers-reduced-motion` block, so the fade is a step for the readers who asked for one.
+  What dockview cannot know is what the panel is *doing*: its `aria-label` is the plain title,
+  so `useTabLabel` rewrites it with the reading and the pin state folded in.
+  **Dockview's own overflow dropdown is off** (`disableTabsOverflowList`): it draws one at the
+  same end of the same strip as `TabActions`, and ours lists every tab rather than only the
+  hidden ones, says what each is doing and closes one without bringing it back first. It also
+  carries the group's **Close all** at its foot — the same guarded bulk close (`closeGroup`,
+  pins excepted) the tab's ⋮ offers, so a reader tidying a strip is not made to open one tab's
+  menu to close the rest of them — and the phone's tab grid carries the same action, since the
+  folded strip shows one tab and the grid is where the others are.
+- **A narrow strip is the tab you are on, and the list holds the rest.** A phone's strip used
+  to draw every tab as its mark and collapse the ones you were not on to `2.5rem` — the tab's
+  `max-width` cap and a grid column taken to `0fr`. That is gone: a row of glyphs is a second
+  thing to read beside a list that already names every tab, and a tab you cannot read by name
+  is a tab you switch to by trial. `index.css` draws the active tab and `display: none`s the
+  others — **a hide, not a collapse**, so there is no width or opacity to interpolate and no
+  direction for a node leaving to take: a tab switch is one frame, which is the instant a
+  browser gives one. Nothing swaps on the viewport either, so the mark no longer trades a
+  chat's `PanelIcon` for the **initials of its title** (`initialsOf` is the assignee avatar's
+  again, nothing more) and `panel-tab.tsx` holds no viewport branch. What is *not* hidden is
+  unchanged: the wide strip keeps its one-column title container, which is a resize
+  (`transition` there was for a collapse that no longer happens), and dockview's reorder is the
+  strip's only motion (`--dock-tab-duration`). The tab list (`TabActions`) is the switcher from
+  **two** tabs on a phone rather than three: its strip draws one, and the list is the only
+  place the other is.
+- **A pinned tab is one the tidy-up goes around.** `lib/workspace/panel-pins.ts` is the set
+  (device-local, keyed by server, like every other reader's-property store); the dock adds
+  the ordering. Pinning means three things together: the tab sits at the front of its group,
+  it carries the pin that unpins it instead of a close button, and **every bulk close steps
+  over it** — `closeOthers`, `closeToTheRight`, `closeGroup`. Its own Close still names it, so
+  nothing becomes unclosable. Dockview 8 ships a pinned-tabs module and this build does not
+  have it (`api.setPinned` is inert without it), which is beside the point: "renders first"
+  was never the half that mattered.
+- **A preset rearranges; a saved layout opens and closes.** `applyPreset` moves what is open
+  and nothing else — that rule has not changed. A **named layout** (`lib/workspace/layout.ts`)
+  is the whole dock, contents and arrangement, kept under a name and given back by it, which
+  is why it is asked for rather than offered as a tidy-up. Saving under a name that exists
+  replaces that layout: "Review" saved twice is one arrangement refined, not two rows to tell
+  apart. Restored through the same `pruneLayout` as the live one, so a saved layout naming a
+  thread the server has forgotten comes back without it rather than not at all.
+- **A panel can leave the dock, and the way back is what the layout stores.** Floating groups
+  are enabled and bounded within the viewport (a float dragged off-screen is a panel with no
+  way home). A **popout** is a real browser window (`addPopoutGroup`, into
+  `public/popout.html` — an empty room, no script, no second app; the service worker's
+  navigation fallback denies it by name or it would be answered with the whole shell). It is
+  a user gesture only, and a blocked popup is *said* rather than swallowed. **On a phone
+  neither is offered** — a float covers the dock it came from and a popout is a second browser
+  window, so the tab's ⋮ leaves both rows out. On the way back
+  in, a float is restored whole or not at all and a popout is **never** reopened —
+  `window.open` without a gesture is a popup — so `dockPopouts` brings its panels home to the
+  group they were torn from *before* anything is counted, because a panel in `panels` that no
+  leaf names is one the dock holds and cannot show.
+- **Monaco is the text surface and the diff, and nothing else.** The official `monaco-editor`
+  package — not `@codingame/monaco-vscode-api`, which is what this replaced. That library
+  gave the real VS Code workbench in the page, and with it the whole of VS Code's service
+  architecture: forty-odd override packages pinned in lockstep, an in-page extension host, a
+  file system provider, an SCM provider, a content-scheme registry, a CSS-as-string Vite
+  plugin so its stylesheets did not restyle the app, and one hard rule — services are global
+  and `initialize` may be called once per page — from which everything else followed. The
+  panel had to be a singleton element parked in a detached holder, switching project was
+  `reinitializeWorkspace`, and every feature was a service override rather than a component.
+  What that bought was an explorer and an SCM view drawn in VS Code's design language rather
+  than this app's, for about 15 MB. Monaco alone is the part nobody should rewrite; a file
+  tree and a list of changed files are two afternoons and they then look like the rest of the
+  app.
+- **The explorer, the search and the source control are the harness's own.**
+  `file-explorer.tsx` caches listings **per directory** (`Map<dirPath, entries>` plus a set of
+  expanded paths, so a watch event invalidates exactly the directory that changed and every
+  other branch keeps its expansion and its scroll), and the server is the authority on what
+  exists — create, rename and delete re-read the directory rather than inserting a row
+  optimistically. `file-search.tsx` asks **two questions from one box**, and they are two routes
+  because they are two questions: the name half is the route the composer's `@` menu already
+  reads (one idea of "roughly this name"), and the content half is `/files/grep`
+  (`searchContents` in `workspace-fs.ts`). The content half **reads bytes and cannot leave the
+  project** — which is exactly why it is a different route from the `@` search, whose query
+  names a scope on the whole machine and only ever lists names. It matches a case-insensitive
+  substring and returns the whole line, and it is deliberately not a shell out to `rg` or
+  `git grep`: a project need not be a repository and neither binary is something the harness may
+  assume. Ignores are the explorer's own, so a search never finds something the tree would not
+  show. `scm-view.tsx` groups `git status` the
+  way git thinks — merge, index, working tree, untracked — and every button is a `gitWrite`
+  against the project's existing routes; a row's mark is read back from the next status,
+  never inferred from what was clicked.
+- **A project is not one repository, and the source-control view starts from the list.**
+  `GET /api/projects/:id/git/repos` walks four levels below the project for `.git`
+  directories (breadth-first, capped, never descending into a checkout) and lists the
+  project's own first — which may be a worktree rooted *above* the project, scoped. The view
+  draws a **section per repository**, each with its own status, staging and commit box,
+  because an index and a HEAD belong to one repository and a commit box spanning two would
+  be a button with no single thing to do; with exactly one repository the section chrome
+  disappears. Every read and write carries `repo` (project-relative, `""` for the project),
+  and the paths inside a status are **relative to that repository** — `projectPath` in
+  `git-api.ts` is the one join back to a path the file routes take, so opening a row from a
+  nested repository does not read a file that is not there. Past eight repositories a section
+  reads its status when first expanded rather than on mount, since each is a git process. The
+  list is re-walked only when a `.git` appears in the watch stream, not on every write.
+- **The history is drawn as a graph, and the walk is pure.** `lib/workspace/git-graph.ts` is the
+  half worth testing: an open lane waits for a hash, a commit claims the first lane expecting it
+  or opens one, hands that lane to its first parent and appends the rest — which is the whole of
+  what makes a merge fan out. The drawing (`scm/commit-graph.tsx`) only turns a `GraphRow` into
+  SVG. The log route carries `parents` and `refs` because the picture is unreadable without
+  them: lanes are derived from parent hashes, and a branch tip is the only thing that says
+  *which* line is which. Lane colours are `stroke-*`/`fill-*` utilities, never `--chart-*` —
+  those are deliberately greyscale in this app's neutral palette, so six lanes would be one
+  indistinguishable smear. Row height is one constant shared by the SVG and the list, so a dot
+  cannot land beside the wrong commit. List or graph is `idePrefs.historyLayout`, device-local
+  like the file layouts; the graph is the default because a log read beside a running agent is
+  usually "which line did that land on".
+- **A commit message is drafted through a profile, and the diff never leaves the server.**
+  `POST …/git/draft-message` takes a profile and a repo, gathers the diff itself
+  (`git.commitMessagePrompt`) and asks `enhancePrompt` with `kind: "commit"` — one model call,
+  not a turn, so nothing is journaled and the key stays server-side, the same bargain the
+  composer's enhancer makes. The diff is gathered here rather than sent up because it is
+  routinely hundreds of kilobytes and re-implementing `git diff` in the client to ask a question
+  about git's own output is the wrong shape. Two things it gets right that a naive version does
+  not: **untracked files are in no diff at all**, so they are read in as `--no-index` new-file
+  hunks (that command exits 1 whenever there is a difference, which `run` now accepts as an
+  answer), and staged work wins when there is any, since that is what a commit would actually
+  contain. The button is drawn only where a profile can actually do it — a disabled wand nobody
+  can enable is worse than none.
+- **The working set is grouped rows, not a tree** (`thread-view/source-control.tsx`): each row
+  is the file's name, its folder dimmed beside it, and its `+/−` lines (`git diff --numstat`,
+  read with the status), under a group header that carries the group's own lines and bulk
+  verbs. The tree layout (`git-tree.ts`, the windowed `ScmView`) went with the IDE's view.
+- **Touch is the device's; width is the panel's.** Row heights and icon buttons follow
+  `useCoarsePointer` (44px on a finger, 24–28px with a mouse), and row actions are always
+  visible on a finger because there is no hover to reveal them. Below 560px of *panel* width
+  the side view and the editor take turns — a 224px explorer beside a 130px editor is two
+  things you cannot use — and picking a file or a diff is what closes the side view. The turn-
+  changes tab does the same with its file list and its diff under `@panel-md`.
+- **Workers are wired, and by import rather than by path.** Since 0.56 the four *language*
+  workers declare themselves as `new Worker(new URL(…, import.meta.url))` inside the package,
+  which is exactly the shape Vite compiles into a worker chunk — and for a while that read as
+  "workers need no wiring". The editor worker is the exception that made it false:
+  `editorWorkerService` names its module with a bare `new URL(…, import.meta.url)` and hands
+  the *string* to a blob bootstrap that imports it. Vite reads a bare `new URL` as an asset
+  reference, and `editorWebWorkerMain.js` is 544 bytes — under `assetsInlineLimit` — so the
+  built app inlined it as a `data:` URL and the worker died on its first import: *Failed to
+  resolve module specifier "../../../base/common/worker/webWorkerBootstrap.js". Invalid
+  relative url or base scheme isn't hierarchical.* A `data:` URL has no base to resolve a
+  relative specifier against. Raising the inline limit does not fix it either — the file would
+  then be copied flat into `assets/` and those same relative imports would 404.
+  So `lib/ide/monaco.ts` defines `MonacoEnvironment.getWorker`, and two things about it are
+  load-bearing. It is `getWorker` and **never** `getWorkerUrl`: each worker is named by a
+  `?worker` import (through the package's export map — `monaco-editor/editor/…`, not
+  `monaco-editor/esm/vs/…`, which the map would double), so the bundler resolves and bundles
+  it and a path that stopped being true is a build error rather than a blank editor. And it
+  must answer for **every** label, not just `editorWorkerService`: the language workers' own
+  factory (`internal/common/workers.js`) consults `MonacoEnvironment.getWorker` first and
+  returns whatever it gets without falling back to the package's own `createWorker`. The new
+  chunk is `editor.worker.start-*.js`, added to the service worker's `globIgnores` beside the
+  language workers — the IDE stays out of the precache.
+- **The terminal panel is chrome around a canvas, and the chrome is the product.** xterm
+  draws the buffer; everything a person needs *around* it is this panel's: search over the
+  scrollback (`@xterm/addon-search`, ⌘F / Ctrl+Shift+F — never bare Ctrl+F, which is
+  forward-a-character in readline and in vi), copy and paste, clear, the type size, and the
+  helper key row. Two buttons live in the strip (find, and reconnect/restart when the shell
+  is not running); the rest are behind ⋯, because this panel is frequently 300px wide beside
+  a transcript and a toolbar that wraps is a toolbar that eats the terminal.
+- **Ctrl+C copies when there is a selection and interrupts when there is not**, which is the
+  one place a terminal is allowed to reinterpret a key the PTY would otherwise get — no shell
+  reads that keystroke as anything else while text is selected. ⌘ takes both outright.
+  **Clear is a view, never the record**: `terminal.clear()` drops what is on screen and the
+  server's scrollback is untouched, so a reconnect brings the build log back.
+- **A shell that exited cannot be reconnected to.** The PTY is gone, so `exited` offers a
+  *new* shell in the same project — a new terminal, a new panel — while this one keeps its
+  scrollback until it is closed. Reconnect stays for a dropped socket, which is the other
+  failure and a different fix.
+- **The bell and the OSC title are what a terminal nobody is watching says.** A bell raises
+  the tab's `attention` status until the reader types into the panel or clicks it; the title
+  the shell sets becomes the tab's, so a strip of five terminals says which one is building.
+- **xterm paints its own surface, so every colour it is given has to be a hex.** The palettes
+  here are `oklch` and `getPropertyValue("--foreground")` hands that back verbatim; xterm's
+  parser knows `#rgb`, `#rrggbb` and `rgb()` and silently drops anything else for its own
+  default — which is what "the terminal has no light mode" looked like. Tokens go through
+  `colorToHex` (`lib/theme.tsx`, a 1px canvas), and the **background is resolved to the colour
+  the panel is actually painted in**: `background: "transparent"` only means transparent with
+  `allowTransparency`, which must be set before `open()` and costs performance — without it
+  xterm forces the alpha to 1 and `transparent` becomes opaque *black*. The walk up for that
+  colour reads the alpha as a number, because `rgb(0, 0, 0)` and `rgba(0, 0, 0, 0)` end in the
+  same three characters and one of them is a real theme. The palette is re-read on the mode
+  **and** on `colorTheme`, a frame late, since the provider writes the class and the
+  `data-color-theme` attribute in its own effect.
+- **A keycap's label is its content.** It was briefly a prop nothing rendered — a row of blank
+  keys, which is not a keyboard. Every icon-only control in this panel carries a `title` as
+  well as an `aria-label`: a strip of unlabelled 24px glyphs is unreadable to a pointer and to
+  a screen reader for different reasons, and both are cheap to answer.
+- **The helper key row follows the soft keyboard, and that is not a nicety.**
+  `interactive-widget=overlays-content` means the keyboard is drawn *over* the page rather
+  than resizing it (`lib/keyboard-inset.ts`), so a row anchored to the bottom of the panel sat
+  behind the keyboard — present, correct and invisible on the one device it exists for. The
+  panel pads its column by `--keyboard-inset`, which lifts the row and shortens the canvas by
+  the same amount, and the canvas's ResizeObserver tells the PTY the new size.
+- **The key row is compact, wraps, and stops at two rows.** It wraps rather than scrolling
+  sideways, because a single scrolling line put half the keyboard — the reader's own half,
+  appended after sixteen built-ins — off the right-hand edge, which is a keyboard you have to
+  swipe to type on. Two rows is the ceiling (`max-h-15`: two `h-7` caps and the gap, in the
+  spacing scale, so it follows the density setting); past that the block scrolls, and the ⌃
+  button opens it to full height. Caps are 28px and labelled with the conventional symbol
+  where there is one (↑, ⏎, ^C) with the whole name on `aria-label` and `title` — **under the
+  44px touch target the rest of the app keeps, deliberately**: these are keys, pressed in
+  sequence in sight of what they type into, and a keyboard of 44px keys covers the terminal it
+  exists to drive. Order is reach: modifiers, Tab/Esc, the reader's own keys, then the rest.
+- **Custom keys are edited, reordered and removed in place** (`lib/workspace/terminal-keys.ts`
+  keeps the id through an edit, so a key being corrected is the same key). Order is the point
+  of a keyboard — the key pressed most has to be nearest the thumb.
+- **How a terminal is drawn is the device's, not the panel's or the project's**
+  (`lib/workspace/terminal-prefs.ts`): type size, whether the key row shows, whether it is
+  wrapped open. `keyRow: "auto"` asks the *pointer* — a finger has no Ctrl key — and both
+  overrides exist because that guess is wrong in both directions: a tablet with a keyboard
+  case, and a desktop reader who defined an escape sequence they cannot otherwise type.
+- **What is open inside the IDE is the IDE's state, never the dock's.** The old editor
+  descriptor carried a path and a comparison, which is why a file at a second line was a
+  second panel and why `reveal.ts` existed to work around it. Now the descriptor is the
+  project alone and the tabs are a module store (`lib/ide/editors.ts`): they survive the panel
+  being closed and reopened, a reveal is a one-shot field on the tab, and a dirty tab is
+  known to the tab bar and to the close confirmation without either asking the editor.
+  **The tabs themselves survive a *reload*** (`daedalus.ide.tabs.v1`, per server and then per
+  project, every tab re-validated on the way in — `parseBody` drops a shape this build does not
+  mean), as does unsaved text, through `lib/workspace/buffers.ts`, which matters because this
+  app reloads itself on purpose when a service-worker update is taken. A reveal and a dirty
+  flag are never stored: both are rebuilt by the editor re-reading the buffer.
+- **`lib/ide/open.ts` and `lib/ide/editors.ts` name nothing from Monaco, and that is
+  load-bearing.** They are imported by the transcript, which every reader loads; a static
+  import of the editor there would put Monaco in the app's entry chunk. A request is plain
+  data written into the store, so there is no queue and no performer — a request made before
+  the panel exists is simply a tab already open when it appears. Monaco arrives through
+  `lib/ide/monaco.ts`'s dynamic import, and its chunks are excluded from the service worker's
+  precache **by name** (`injectManifest.globIgnores` in `vite.config.ts`: `editor.api-*`,
+  `vs-*`, `*.worker-*`, the codicon font). By name rather than by size, because the size rule
+  alone lets the small pieces in and then *warns* about `ts.worker` — and vite-plugin-pwa
+  treats that warning as a failed build. Offline, the IDE is the one surface that does not
+  open.
+- **Reviewing a turn is the Source Control panel's Review half**, not source control narrowed
+  to a filter: the old `ScmView` + `lib/ide/scm-filter.ts` pair could only show what was still
+  uncommitted, and both are gone (see "Why not source control any more" below).
+  **Whether the "N files changed" chip is drawn at all is the transcript's one contribution to a measurement that is
+  otherwise entirely git's.** The snapshots bracket a *window*, and everything landing in that
+  window is attributed to whichever turn was open — a second thread on the same cwd, the
+  user's own editor, a dev server writing something that is not gitignored. The recorded row
+  keeps all of it (it is what a rewind reads), but the chip asks
+  `turnCouldTouchFiles` first: did the turn run one tool whose ACP `kind` is not `read`,
+  `search`, `fetch`, `think` or `switch_mode` (`couldTouchFiles` in `lib/tools/naming.ts`)? A
+  turn that only searched the web cannot have written a file, and used to be handed the
+  neighbouring thread's seventy. The predicate is a **read-only allowlist**, not a writer
+  list: `execute` counts because a shell can `sed`, `other` counts because it is the protocol
+  declining to say (Claude Code files every MCP tool there), and a verb nobody has seen counts
+  — a chip drawn over someone else's diff is a smaller lie than one that hides real work.
+  Subagent rows count too: they carry a `parentId`, but a child's Edit is the parent turn's
+  change. Nothing here spells a vendor tool name — a new runtime's writer is free as long as
+  it declares a kind.
+  The scope's own reads — `GET /api/sessions/:id/changes/files|file`, the turn's two trees
+  compared directly — are what the inspector's Changes timeline reads (below); `patch` is
+  still served and called by nothing.
+- **The editor wears the app's palette, and the conversion is the browser's.** Monaco's theme
+  format takes a hex string per key; the app's palette is `oklch()` and `color-mix()`. So each
+  token is resolved by painting it into a 1×1 canvas and reading the pixel back — the one
+  thing that understands every CSS colour syntax there is — with a sentinel test around it,
+  because `fillStyle` silently keeps its previous value for a colour it cannot parse. The
+  syntax hues are `--code-*` in `index.css`, the same values the transcript's fenced code
+  uses, so a file and a diff of that file read as the same language. Both themes are rebuilt
+  on every theme change (`syncMonacoTheme`), which is what makes a *custom palette* move the
+  editor and not just light↔dark.
+- **Nothing of the IDE is left on the server**: the code-server spawn, its `/ide/<key>/`
+  proxy and `reverse-proxy.ts` were removed with the client's editor. The output and agents panels remain gone for
+  the reasons they went: both were second copies of something already drawn where the work
+  is.
 
-**The dock** holds two panel kinds in use, `chat` and `page` (`lib/workspace/panels.ts`; `tasks`
-remains declared). Tabs are dockview's: drag, split, tab groups, float, popout, pin, bottom panel,
-saved layouts, `⌘⇧T` reopen. Terminals and the preview are **not** panels of it.
-
-**A tab is an outlet** (`dock.tsx`, `openPage` / `openPanel`). Navigating — a sidebar row, ⌘K, a link —
-repoints the tab in front: the active thread or page *becomes* the destination, at the same place in
-the strip. It opens a tab of its own for a new thread (a routed draft), the strip's +, a ⌘/Ctrl- or
-middle-click (`openNextInNewTab` / `consumeNewTab` in `lib/workspace/open-threads.ts`, spent by the
-route effect), and when the tab in front is pinned or neither a thread nor a page. A place that is
-already open (a thread, a settings tab, a project page) is focused, not duplicated. The route effects
-in `app-shell.tsx` are the only thing that turns a URL into a tab, and the dock writes the focused
-panel's path back to the URL.
-
-**A thread tab** is `workspace/chat-panel.tsx` → `workspace/thread-body.tsx`: the transcript with its
-scope (`ScopeBoundary`), the inspector door ("Open in inspector" → the right panel) and the ref the
-readings scroll it through (`lib/thread-jump.ts`). The thread's tools are the right panel's.
-
-**The right panel** (`components/right-panel/`, `lib/right-panel.ts`): a rail of sections and the one in
-front. Open/width are the device's; section, shells and preview are the scope's (`t:<id>`, `p:<id>`,
-`home`), and the scope is read off the address bar. A scope offers `changes plan agents details tokens
-trajectory terminal preview` (a thread) or `terminal preview` (anything else). A section is mounted the
-first time it is in front and kept hidden; the last three scopes stay mounted. A closed panel mounts
-nothing — a PTY is the server's and replays its scrollback on reattach. On a phone it is a full-screen
-sheet whose open flag is **never persisted** (`rightSheet`).
-
-**The terminal and the preview** are the panels the dock used to host, taking a `PanelHandle` (id,
-`setTitle`, `updateParameters`) instead of dockview's api. They open things through `useDock()`;
-`ScopeBoundary` (`right-panel/scope-dock.tsx`) provides that context bound to a scope and answers the
-doors they use — `openPanel`, `closePanel`, `registerCloseGuard`, `isPanelOpen` — against the store, with
-a chat, page or the board going to the router. Any other `WorkspaceDock` method warns. A thread's shell
-starts in its worktree and dies with the thread; a helper's shell is `closeOnExit`.
-
-**Chords** (`lib/shortcuts.ts`): ⌘J toggles the terminal section (creating a shell if there is none),
-⌘⌥B the panel; the tab, split, pane and reopen chords are the dock's.
+- **A project has a page of its own (`/projects/<id>`), and it is assembled from two
+  halves on purpose.** Until it did, a project was a row in settings (a form), a folder in
+  the sidebar (a list) and a name in a thread's header — three surfaces that each say a
+  *part* of what a workspace is and none that answers "what is this project, and what has
+  happened in it". `components/project-page.tsx` is that answer: the header (mark, name,
+  the cwd as a copy button, description, Edit / New thread), four tiles, a 30-day activity
+  strip, the project's threads, and the rails beside them (what it is worked on with, what
+  is scheduled against it, what it has accumulated). **The header carries a "Run" dropdown**:
+  the user's custom **helper commands** (`project_helpers`, `lib/workspace/project-helpers.ts`),
+  repeated as one-tap chips in the page's Quick actions strip and edited in Settings ›
+  Projects. Beyond a name and a shell line a helper carries **where and how it runs** — a
+  project-relative `cwd`, extra `env` (typed `KEY=value` per line, stored as JSON), a
+  `description`, and `confirm`. **A helper's `cwd` is resolved inside the project or not at
+  all** (`containedPath`): an absolute path, a `..` that climbs out and a symlink pointing
+  away all fall back to the project's own cwd. It is clamped at the *spawn* rather than only
+  at the form, and it *clamps* rather than throwing the way `resolveInProject` does, because
+  the path comes off a stored row — which can arrive from an imported bundle — and not off a
+  request.
+- **A helper runs in a terminal panel, and that is the whole feature**
+  (`openHelperTerminal`, `lib/workspace/use-run-helper.ts`,
+  `POST /api/projects/:id/helpers/:helperId/terminal`). It used to be a one-shot `spawn`
+  whose captured output was posted back into a dialog, which meant every helper that *asked*
+  something — pick an environment, a password, `[y/N]` — hung against a stdin that was never
+  coming and then died at the two-minute timeout with the question as its last line. A PTY is
+  the thing that can be answered and the terminal panel is where the harness already knows
+  how to draw one, so a helper is now a terminal that starts with its command typed in — and
+  inherits the scrollback, the search, the key row and the detach/reattach for free. **There
+  is no run dialog and no run timeout**: the terminal's own detach grace and idle sweep bound
+  it, and a countdown that kills a program *while it waits for the user's answer* is a bug,
+  not a setting. **The command, the directory and the environment are read from the row on
+  the server**, never sent up — a helper the browser could define on the way out is an
+  arbitrary-exec route wearing a helper's name. **A `confirm` helper asks before the terminal
+  exists**, through the app's own confirm dialog, because a PTY starts the instant it is
+  created and there is no later moment to ask in; the mark that says so is drawn on both the
+  menu row and the chip. **The project page has no dock**, so its helpers *queue* the panel
+  (`pending-panels.ts`) and then navigate to a thread, the same trade `openRules` makes.
+  A terminal's `title` is the name it was created under (a helper's) or null for a plain
+  shell, which the panel keeps titling after its project. The **live** half is the store's —
+  `state.sessions` already carries every thread with its process state, so the thread list,
+  the running/waiting dots and the scheduled rows need no request and are right the moment a
+  turn starts; the status reading is the sidebar's exactly (`turnActive` ?? `promptActive`,
+  a pending permission or elicitation outranking both). The **settled** half exists only in
+  SQLite and arrives as one `GET /api/projects/:id/stats` (`server/src/project-stats.ts`,
+  `lib/workspace/project-stats.ts`) — one route, so the page paints once, refetched on mount
+  and by Refresh and **never on a timer**: nothing in it is worth a poll, and the half that
+  moves is the half that already moves on its own. Two rules in the numbers. **Turns, not
+  events**: an event is a streaming chunk and a long turn is thousands of them, so
+  `session_events.kind = "turn_started"` — journaled exactly once per turn — is the only
+  countable that means anything to a person, and the activity strip is grouped by
+  `date(at, 'unixepoch', 'localtime')` in SQLite (a UTC bucket cuts every evening in half
+  for half the world) and re-expanded client-side into a fixed run of days, because a bar
+  chart missing its empty days reads as busy. And **a tile skeletons rather than zeroes**
+  while the fetch is out: a 0 that becomes 400 is a statement the page made and took back.
+  `cwdExists` is the one health answer it can give — a project whose directory has moved
+  spawns nothing, and that failure otherwise surfaces as an ENOENT inside a thread. The
+  Its Threads card carries the one **bulk action** in the app: Select turns the
+  rows into checkboxes and deletes the picked ones through `actions.deleteThreads`
+  (sequential DELETEs, one `refreshSessions` at the end) — reversible, into
+  Trash, exactly like the per-row delete. Selection is a mode rather than a
+  permanent checkbox column, because the ordinary reading of the list is one
+  click per row into a thread; and "Select all" means the rows **shown**, never
+  the ones behind a "Show all" nobody pressed. The
+  page is reached from the folder's hover control in the sidebar, the project name in a
+  thread's header, the palette's Projects group and the settings row — settings keeps the
+  *form*, this is the workspace as a thing with a history.
 
 ## Routines and schedules pages
 
@@ -1269,6 +1810,28 @@ goes to it.
 
 ## The thread inspector and the agents dashboard
 
+- **Wide, the readings are panels of the thread dock; the column below is the phone's sheet.**
+  A chat tab on a wide screen is `workspace/thread-dock.tsx`, a nested dockview: the
+  transcript (`ThreadView docked`, which draws no inspector of its own, and wears no strip —
+  `syncStrips` hides the header of a group holding only it) and, from the + floating over it
+  only, Changes/Plan/Agents/Details/Tokens (`ThreadSection`), Terminal, Preview and Tasks — each at
+  its kind's own place (`SLOT`: readings a column at the right edge, preview and board beside
+  the transcript, a shell below it; later ones join that group as tabs). The panes are flush,
+  meeting at hairlines, and their strips are title bars with an underlined tab
+  (`.dock-nested`), so a pane never reads as another thread. A hidden chat tab is
+  `display: none` (`ChatPanel`): the inner dock's `always` overlays escape the outer's
+  `visibility`, and every thread drew over the others. It opens as the transcript alone; the arrangement is kept per thread on the device
+  (`lib/workspace/thread-docks.ts`, capped at 100). **Why nested again, when the group panel was
+  removed** (see the tab-groups section): that group was general-purpose, so the outer dock had
+  to see into it. A thread dock is closed — dockview refuses a drop from another instance unless
+  `onUnhandledDragOver` accepts it, and nothing does — so no outer code asks about an inner
+  panel. Its tab is its own (`ThreadTab`, the `.dock-tab` material, no outer menu), and it hands
+  its panels a `DockContext` whose `openPanel`/`closePanel`/`registerCloseGuard` act on the inner
+  instance, so `TerminalPanel` and `WebPanel` needed no change. The Agents panel jumps the
+  transcript through `ThreadJumpContext`, which the transcript publishes (`PublishJump`) because
+  the scroller's hook answers only inside `ThreadView`. A thread's shell is created with the
+  thread's worktree as `cwd` and its `sessionId`, carried on the descriptor so a restart stays
+  the thread's, and the server kills it when the thread is trashed or purged.
 - **On a phone, the inspector is a column of the chat panel, never a dock split**
   (`components/thread-view/thread-inspector.tsx`, rendered by `ThreadView` inside its own
   grid). Opening a panel never splits the dock, and a column that belongs to one thread has

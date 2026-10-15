@@ -20,7 +20,7 @@
    toolbar holds the two that are pressed mid-task; the rest live behind ⋯,
    because this panel is frequently 300px wide beside a transcript. */
 import * as React from "react"
-import type { PanelProps } from "@/lib/workspace/panel-handle"
+import type { IDockviewPanelProps } from "dockview-react"
 import { FitAddon } from "@xterm/addon-fit"
 import { SearchAddon } from "@xterm/addon-search"
 import { WebLinksAddon } from "@xterm/addon-web-links"
@@ -195,7 +195,7 @@ function isTransparent(color: string): boolean {
 export function TerminalPanel({
   api,
   params,
-}: PanelProps<{
+}: IDockviewPanelProps<{
   projectId: string
   terminalId: string
   closeOnExit?: boolean

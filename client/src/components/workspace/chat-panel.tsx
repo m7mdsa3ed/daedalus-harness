@@ -4,7 +4,7 @@ import type { IDockviewPanelProps } from "dockview-react"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { useDock } from "@/components/workspace/dock-context"
-import { ThreadBody } from "@/components/workspace/thread-body"
+import { ThreadDock } from "@/components/workspace/thread-dock"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
@@ -387,7 +387,7 @@ export function ChatPanel({
           <ThreadLinksProvider value={links}>
             {/* The tab is a dock of the thread's own panels (`thread-dock.tsx`) —
                 on a phone too, where it stacks them as tabs. */}
-            <ThreadBody key={meta.id} sessionId={meta.id} projectId={meta.projectId} actions={actions} />
+            <ThreadDock key={meta.id} sessionId={meta.id} actions={actions} />
           </ThreadLinksProvider>
         </ErrorBoundary>
       </div>
