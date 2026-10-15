@@ -1086,12 +1086,13 @@ export function ThreadView({
               reader has left the tail, which is also when the box has folded to
               its pill, so this is the one spot it ever needs to be and it never
               travels. The pill is 2.25rem at the composer's right edge; this is
-              the next thing on that row, `z-30` above the composer's `z-20`. */}
+              the next thing on that row, `z-30` above the composer's `z-20`, and the
+              pill's own material (size, ground, ring, glass) so the two read as a pair. */}
           <MessageScrollerButton
             onClick={follow.follow}
             className={cn(
               !centred &&
-                "z-30 data-[direction=end]:bottom-[calc(max(0.75rem,var(--safe-bottom))+0.125rem)] inset-s-auto data-[direction=end]:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] translate-x-0",
+                "z-30 size-9 rounded-pill border-0 bg-composer/90 text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] hover:bg-composer/90 hover:text-foreground data-[direction=end]:bottom-[max(0.75rem,var(--safe-bottom))] inset-s-auto data-[direction=end]:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] translate-x-0",
             )}
           />
           {/* The turn rail: one tick per turn, riding the transcript's left
