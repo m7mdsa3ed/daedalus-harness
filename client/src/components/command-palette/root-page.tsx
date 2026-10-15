@@ -68,7 +68,8 @@ import { SECTION_META } from "@/components/right-panel/right-panel"
 import { useRouteScope } from "@/components/right-panel/scope-dock"
 import { openSection, rightSheet, sectionsFor, toggleRightPanel } from "@/lib/right-panel"
 import { openTerminal } from "@/lib/workspace/open-terminal"
-import { adjacentThread, useActiveChat } from "@/lib/workspace/open-threads"
+import { adjacentTab, tabKeyFor } from "@/lib/workspace/tabs"
+import { useLocation } from "react-router"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
@@ -120,7 +121,7 @@ const NOT_A_COMMAND = "Recent threads"
 export function RootPage() {
   const palette = usePalette()
   const route = useRouteScope()
-  const activeChat = useActiveChat()
+  const location = useLocation()
   const sessions = useStoreSelect((store) => store.sessions)
   const projects = useProjects()
   const profiles = useProfiles()
@@ -538,29 +539,29 @@ export function RootPage() {
   })
   items.push(
     {
-      id: "thread:next",
+      id: "tab:next",
       group: "Workspace",
-      title: "Next thread",
-      keywords: "switch cycle recent walk",
+      title: "Next tab",
+      keywords: "switch cycle walk",
       icon: <ChevronRight />,
       chord: binds.nextTab.chords[0],
       onSelect: () =>
         palette.run(() => {
-          const next = adjacentThread(-1, activeChat, (id) => sessions.some((s) => s.id === id && !s.deletedAt))
-          if (next) void navigate(threadPath(next))
+          const next = adjacentTab(1, tabKeyFor(location.pathname, location.search))
+          if (next) void navigate(next.path)
         }),
     },
     {
-      id: "thread:prev",
+      id: "tab:prev",
       group: "Workspace",
-      title: "Previous thread",
-      keywords: "switch cycle recent walk back",
+      title: "Previous tab",
+      keywords: "switch cycle walk back",
       icon: <ChevronLeft />,
       chord: binds.prevTab.chords[0],
       onSelect: () =>
         palette.run(() => {
-          const next = adjacentThread(1, activeChat, (id) => sessions.some((s) => s.id === id && !s.deletedAt))
-          if (next) void navigate(threadPath(next))
+          const next = adjacentTab(-1, tabKeyFor(location.pathname, location.search))
+          if (next) void navigate(next.path)
         }),
     }
   )

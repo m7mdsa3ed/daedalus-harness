@@ -12,7 +12,7 @@ import { pruneDrafts } from "../drafts"
 import { prunePastes } from "../pastes"
 import { pruneDraftAttachments } from "../draft-attachments"
 import { loadDraftSessions, pruneDraftSessions } from "../draft-sessions"
-import { recentThreadIds } from "../workspace/open-threads"
+import { openThreadIds } from "../workspace/open-threads"
 import { currentThreadId } from "../router"
 import { api, profileSupports, type ServerSettings, type SessionMeta, type SessionPage } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
@@ -486,11 +486,11 @@ export function sessionActions(core: ActionsCore) {
       const sessions = await fetchSessionPage(0, PAGE_SIZE, true)
       /* ── Unsent threads come back with the route ──
          A draft has no server row, so the page above cannot carry it. The row
-         is re-minted only for a draft the address bar names or you have visited
-         lately: a draft you walked away from long ago is dropped, and one the
+         is re-minted only for a draft the address bar names or one with a tab open:
+         a draft whose tab was closed is dropped, and one the
          server now reports is an ordinary thread and comes from the list. */
       const known = new Set(sessions.map((session) => session.id))
-      const restored = new Set<string>(recentThreadIds())
+      const restored = new Set<string>(openThreadIds())
       const routed = currentThreadId()
       if (routed) restored.add(routed)
       const kept = new Set<string>()
@@ -508,7 +508,7 @@ export function sessionActions(core: ActionsCore) {
       pruneDraftSessions(settings.id, kept)
       /* ── The threads the window has to cover ──
          The list is a page now, so a thread you were in may sit past it. Every
-         thread you have visited lately, and the one the address bar names, is
+         thread with a tab open, and the one the address bar names, is
          loaded whatever its age. A draft is not on the server; it came back
          through the loop above, and the id lookup simply answers nothing. */
       await ensureSessionsLoaded([...restored])

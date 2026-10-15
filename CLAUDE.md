@@ -423,7 +423,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   null) and the flag is `sessions.aside_quote` — the sidebar badges it, and the parent marks
   the passage with the CSS Custom Highlight API (`aside-highlights.ts`, one shared `aside`
   highlight, matched ignoring whitespace), never by rewriting its rows. A click on the mark
-  reopens it; "Open as tab" (sent or still a draft) is the same thread in the dock.
+  reopens it; "Open as tab" (sent or still a draft) is the same thread as a tab.
 - **⌘K's root page never asks the server**; searching is a destination owning its own query,
   debounce and abort. Rows are data, not JSX, and cmdk's own filter is off.
 - Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/view-options.ts`,
@@ -434,21 +434,25 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **"New thread" always creates a thread**: every door — ⌘N, the sidebar row, the strip's `+`,
   the palette, a project's own `+`, the app shortcut — mints a draft through the one
   `actions.startThreadIn` and opens it as a tab of its own, so pressing it twice is two
-  threads. The landing console is where the dock lands when the last tab closes, not a stop on
-  the way to starting something; only the project page's queued terminal/IDE still opens a
-  draft behind its own gesture. **No list draws a draft** — `isListed`, not `isTopLevel`, is
+  threads. The landing console (`/`) is where you land when the last tab closes, not a stop on
+  the way to starting something. **No list draws a draft** — `isListed`, not `isTopLevel`, is
   what the sidebar, Recents, the project page, the palette and the schedule form filter by.
   **A draft's tab survives a reload** (`lib/draft-sessions.ts`): the row is persisted per
   server and re-minted on boot only for the tabs the saved layout still names, so a closed tab
   stays closed and a sent thread comes from the server. **It takes the caret itself** — a
   draft's composer is focused when it is the routed thread or when the caller says so
   (`autoFocus`, which is the console's, whose route is `/`); never on touch.
-- **Chat-first shell: the route is the only state about what is open.** The sidebar rail, the
-  centre pane (`shell/outlet.tsx`) and one right panel (`right-panel/`). A thread is `/t/:id`
-  rendered by `ThreadRoute` (which holds the connection while mounted); every other page renders
-  from the same route table in the same pane. There are **no tabs, splits, floats, popouts or layout
-  presets** — switching threads is navigation (the sidebar, ⌘K, Alt+↓/↑ over the visited MRU in
-  `lib/workspace/open-threads`). A thread in another window is the desktop's `openThreadWindow`.
+- **Chat-first shell: the route is the only state about what is open, and tabs are a layer over
+  it.** The sidebar rail, the centre pane (`shell/outlet.tsx`) and one right panel
+  (`right-panel/`). A desktop shows the threads and pages you are in as **tabs** in the header
+  row (`shell/tab-strip.tsx`, `lib/workspace/tabs.ts`): **a tab is a route, not a layout** — the
+  address bar says which is in front, a thread is a tab of its own (opening one adds it, never
+  replaces), a page is a place whose tab's path moves (one for settings, one per project, the
+  board, the inbox), and `/` is no tab. Closing the one in front moves to its neighbour, the last
+  one to `/`. Open thread tabs stay mounted and hidden (`ThreadPane`, last six; one on a phone,
+  which has no strip) so a half-written message and a scroll position survive. There are **no
+  splits, floats, popouts or layout presets**. Device-local, per server; a popout keeps its tabs in
+  memory only.
 - **The right panel is scoped, and its scope is read off the address bar.** `lib/right-panel.ts`
   holds the device's `open`/`width` and, per scope (`t:<thread>`, `p:<project>`, `home`), the
   section in front, the shells and the preview. A thread offers changes, plan, agents, details,
@@ -466,18 +470,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   edge and the column beside it filling the rest.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
-- **The sidebar has two contents and the *active panel* picks, never a route match of its
-  own.** Settings sections are its content while the panel in front of you is a settings page
-  (`sidebar/settings-nav.tsx`); threads otherwise. This was tried and reverted once, when the
-  sidebar read `/settings` directly and a settings tab open beside a chat rewrote the sidebar
-  of the chat you were reading. What makes it correct is that **the dock writes the focused
-  panel's path to the URL** (`onDidActivePanelChange`), so the route *is* the active panel's
-  descriptor — focusing the chat gives the threads back on the same gesture, and focusing a
-  terminal navigates nowhere, which is why the sidebar does not change under one. Settings
-  therefore carries **no second sidebar of its own**; the in-page `SectionPicker` survives for
-  the one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you
-  tapped Settings — and that gate is `isMobile` (the device), never the panel's width, because
-  a narrow settings panel on a desktop still has the sidebar beside it.
+- **The sidebar has two contents and the *route* picks.** Settings sections are its content while
+  the address bar is on a settings page (`sidebar/settings-nav.tsx`); threads otherwise. With no
+  dock, the route is the only "panel in front", so there is no second source to disagree with it.
+  Settings carries **no second sidebar of its own**; the in-page `SectionPicker` survives for the
+  one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you tapped
+  Settings — and that gate is `isMobile` (the device), never the panel's width.
 - **A settings group is a card, and a box inside one is `INSET`** (`settings/primitives.tsx`):
   a caption in small caps above a bordered, filled, `shadow-sm` box whose rows are divided by
   hairlines. The inset is the **card's**, not the row's — pages put raw elements into a `Group`
@@ -610,8 +608,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   scroll-into-view is the thing `overlays-content` turned off.
 - **The phone has no bottom navigation bar**: the header's sidebar trigger opens the mobile
   thread drawer, and every bottom-anchored surface pads by `--safe-bottom` for the home
-  indicator. **A sideways swipe on the strip, never the transcript, is `cycleTab`**
-  (`useTabSwipe` in `dock-surface.tsx`). → `docs/client.md` "The phone".
+  indicator. → `docs/client.md` "The phone".
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.** Layout
   uses the `@panel-*` container queries; touch targets and centred surfaces stay on media
   queries.

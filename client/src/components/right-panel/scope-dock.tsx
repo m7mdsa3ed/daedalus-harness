@@ -32,7 +32,8 @@ import {
   type RightSection,
   type Scope,
 } from "@/lib/right-panel"
-import { InspectorContext, ThreadJumpContext, type ThreadJumpTarget } from "@/lib/inspector"
+import { InspectorContext, ThreadJumpContext } from "@/lib/inspector"
+import { jumpRefFor } from "@/lib/thread-jump"
 import { boardPath, routedThreadId, threadPath } from "@/lib/router"
 
 export { routedThreadId }
@@ -200,7 +201,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   const { scope, sessionId, projectId } = useRouteScope()
   const meta = useSessionMeta(sessionId ?? "")
 
-  const jumpRef = React.useRef<((id?: string, turn?: ThreadJumpTarget) => void) | null>(null)
+  const jumpRef = React.useMemo(() => jumpRefFor(sessionId ?? ""), [sessionId])
   const scopeRef = React.useRef(scope)
   scopeRef.current = scope
   const openReading = React.useCallback((tab: RightSection) => openSection(scopeRef.current, tab), [])

@@ -1168,8 +1168,8 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
 
 ## The shell and the right panel
 
-The app is chat-first. There is no dock, no tabs and no layout to persist: **the address bar is the
-only state about what is open.**
+The app is chat-first. There is no dock and no layout to persist: **the address bar is the only
+state about what is open**, and the desktop's tabs are a list layered over it.
 
 **The frame** (`components/app-shell.tsx`): the sidebar rail (plain shadcn `sidebar` variant), then
 one column holding the centre pane and the right panel under an overlay header. The header carries
@@ -1184,10 +1184,19 @@ a legacy `?session=`, switch to the thread's space, mint a draft for an id nobod
 the visit. The wrapper is keyed by place, not URL, so a search param does not replay the entrance.
 `ThreadView` is always `docked` (no inspector of its own): its readings are the panel's.
 
-**Which threads are "open"** is `lib/workspace/open-threads.ts`: `useActiveChat` is the route, and
-`useOpenThreads` is a device-local MRU of visited threads (cap 12) that keeps their sidebar rows
-loaded and orders Alt+↓/↑ (`adjacentThread`). Drafts survive a reload if the URL names them or they
-are in the MRU (`core.ts` bootstrap).
+**Tabs** (`shell/tab-strip.tsx`, `lib/workspace/tabs.ts`): a desktop keeps the threads and pages you
+are in as tabs in the header row. A tab is a route — `{key, path, sessionId?}` — and which one is in
+front is read off the address bar (`tabKeyFor`). `syncTab` (run by the outlet on every location
+change) adds a thread tab or repoints a page tab; a thread is `t:<id>`, a page `p:<pageKey>`
+(every settings section is one tab, a project's page and a trace are places of their own), and
+`/` has none. `closeTab` answers the path to show next (right neighbour, else left, else `/`).
+Reorder is drag and drop; middle click and Alt+W close; ⌘/Ctrl+1…9 jump; Alt+↓/↑ walk. The store is
+device-local per server (`daedalus.tabs.v1:<serverId>`) and in memory in a popout; `pruneTabs`
+drops tabs whose thread is gone, only against a session list that arrived. `useOpenThreads` is the
+thread tabs in order (the sidebar keeps their rows loaded; bootstrap re-mints drafts for them);
+`useActiveChat` is the route. The outlet keeps the last six open threads mounted (`ThreadPane`:
+its own connection, scope, inspector door and `jumpRefFor(sessionId)`), hiding all but the one in
+front; a phone keeps one. Status is the title's colour, as in the sidebar.
 
 **The right panel** (`components/right-panel/`, `lib/right-panel.ts`): a rail of sections and the one
 in front. Open/width are the device's; section, shells and preview are the scope's (`t:<id>`,
@@ -1211,8 +1220,9 @@ scope and answers the four doors they use — `openPanel`, `closePanel`, `regist
 thread when none is registered.
 
 **Chords** (`lib/shortcuts.ts`): ⌘J toggles the terminal section (creating a shell if there is none),
-⌘⌥B the panel, Alt+↓/↑ (and ⌘/Ctrl+Tab on desktop) walk the visited threads, ⌘B the sidebar.
-Tab, split, pane, reopen and ⌘1…9 chords no longer exist; a stored binding for one drops silently.
+⌘⌥B the panel, Alt+↓/↑ (and ⌘/Ctrl+Tab on desktop) walk the tabs, Alt+W closes one, ⌘/Ctrl+1…9
+jump, ⌘B the sidebar.
+Split, pane and reopen chords no longer exist; a stored binding for one drops silently.
 
 ## Routines and schedules pages
 

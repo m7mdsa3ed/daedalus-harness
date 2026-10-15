@@ -196,8 +196,10 @@ export type ShortcutId =
   | "newThread"
   | "sidebar"
   | "help"
+  | "tabJump"
   | "nextTab"
   | "prevTab"
+  | "closeTab"
   | "terminal"
   | "rightPanel"
   | "changeModel"
@@ -253,12 +255,15 @@ export const KEYS = {
   steer: ["mod+enter", "mod+shift+enter"],
   historyPrev: "up",
   historyNext: "down",
-  /** Walk the threads you have been in, most recent first. ⌘/Ctrl+Tab is the
+  /** Walk the open tabs. ⌘/Ctrl+Tab is the
       browser's own pair, so it fires in the desktop shell and not on the web
       (`RESERVED` says so on the settings row); Alt+↓/↑ are unclaimed by every
       browser and by the OS, and work everywhere. */
   nextTab: ["mod+tab", "alt+down"],
   prevTab: ["mod+shift+tab", "alt+up"],
+  /** Close this tab. Not ⌘/Ctrl+W: Electron gives that to close-window, so it
+      would quit the app rather than close a tab. Alt+W is free in both browsers. */
+  closeTab: ["alt+w"],
   /** Skip the question, reject the permission, stop the turn — in that order. */
   escape: "esc",
   /** Show or hide the right panel. ⌥ because ⌘/Ctrl+B is the sidebar's. */
@@ -290,19 +295,35 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: "newThread", scope: "Global", label: "New thread", chords: [KEYS.newThread], rebindable: true },
   { id: "sidebar", scope: "Global", label: "Toggle the sidebar", chords: [KEYS.sidebar], rebindable: true },
   {
+    id: "tabJump",
+    scope: "Global",
+    label: "Jump to a tab",
+    chords: ["mod+1"],
+    display: [SYMBOLS.mod + "1…9"],
+    note: "Counts the open tabs, left to right. Chromium keeps ⌘/Ctrl+digit for its own tabs, so it fires in the desktop app rather than in a browser tab.",
+  },
+  {
     id: "nextTab",
     scope: "Global",
-    label: "Next thread",
+    label: "Next tab",
     chords: [...KEYS.nextTab],
     rebindable: true,
-    note: "Walks the threads you have been in, wrapping at the ends. Alt+↓ works everywhere; ⌘/Ctrl+Tab is Chromium's own, so it fires in the desktop app rather than in a browser tab.",
+    note: "Walks the open tabs, wrapping at the ends. Alt+↓ works everywhere; ⌘/Ctrl+Tab is Chromium's own, so it fires in the desktop app rather than in a browser tab.",
   },
   {
     id: "prevTab",
     scope: "Global",
-    label: "Previous thread",
+    label: "Previous tab",
     chords: [...KEYS.prevTab],
     rebindable: true,
+  },
+  {
+    id: "closeTab",
+    scope: "Global",
+    label: "Close the tab you are looking at",
+    chords: [...KEYS.closeTab],
+    rebindable: true,
+    note: "The thread keeps running; closing a tab only puts it away.",
   },
   {
     id: "terminal",

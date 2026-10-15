@@ -33,6 +33,7 @@ import { pageRoutes, usePageHeading } from "@/components/routes"
 import { RightPanelColumn, RightPanelSheet } from "@/components/right-panel/right-panel"
 import { ScopeProvider, routedThreadId as routedThread, useRouteScope } from "@/components/right-panel/scope-dock"
 import { ShellOutlet } from "@/components/shell/outlet"
+import { TabStrip } from "@/components/shell/tab-strip"
 import { TopBarActions, TopBarTitle } from "@/components/shell/top-bar"
 import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
 import { SessionSettingsDialog } from "@/components/session-settings"
@@ -46,7 +47,7 @@ import {
   SidebarNav,
   ThreadSidebar,
 } from "@/components/thread-sidebar"
-import { useShortcut } from "@/hooks/use-hotkey"
+import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
 import { useIsMobile } from "@/hooks/use-device"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
@@ -70,7 +71,8 @@ import { IS_POPOUT } from "@/lib/popout"
 import { setFocusMode, useFocusMode } from "@/lib/focus-mode"
 import { openTerminal } from "@/lib/workspace/open-terminal"
 import { openSection, rightSheet, scopeSession, toggleRightPanel, useRightPanel } from "@/lib/right-panel"
-import { adjacentThread, useActiveChat } from "@/lib/workspace/open-threads"
+import { useActiveChat } from "@/lib/workspace/open-threads"
+import { adjacentTab, closeTab, pruneTabs, tabAt, tabKeyFor } from "@/lib/workspace/tabs"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -256,15 +258,36 @@ export function AppShell({
     )
   })
   useShortcut("rightPanel", () => (isMobileShell ? rightSheet.set(true) : toggleRightPanel()))
-  /* The threads you have been in: the tab walk's successor. */
-  const walkThreads = (delta: number) => {
-    const next = adjacentThread(delta, activeChat, (id) =>
-      sessions.some((session) => session.id === id && !session.deletedAt)
-    )
-    if (next) void navigate(threadPath(next))
+  /* The open tabs: the walk, the digits, and the close. */
+  const activeTabKey = tabKeyFor(location.pathname, location.search)
+  const walkTabs = (delta: number) => {
+    const next = adjacentTab(delta, activeTabKey)
+    if (next) void navigate(next.path)
   }
-  useShortcut("nextTab", () => walkThreads(-1))
-  useShortcut("prevTab", () => walkThreads(1))
+  useShortcut("nextTab", () => walkTabs(1))
+  useShortcut("prevTab", () => walkTabs(-1))
+  useShortcut("closeTab", () => {
+    if (!activeTabKey) return false
+    const next = closeTab(activeTabKey, activeTabKey)
+    if (next) void navigate(next)
+  })
+  /* Digits count the tabs, left to right. Bound through `use-hotkey` so a dialog
+     or the slash menu can out-rank it. */
+  useHotkey("mod+1 mod+2 mod+3 mod+4 mod+5 mod+6 mod+7 mod+8 mod+9", (event) => {
+    const tab = tabAt(Number(event.key) - 1)
+    if (!tab) return
+    event.preventDefault()
+    void navigate(tab.path)
+  })
+
+  /* Drop thread tabs whose thread is gone — but never against a session list
+     that never arrived (an empty one would close every tab), and never the
+     thread in the address bar (the route mints a draft for an unknown id). */
+  React.useEffect(() => {
+    if (loading || sessions.length === 0) return
+    const live = new Set(sessions.map((session) => session.id))
+    pruneTabs((id) => live.has(id), sessionId)
+  }, [loading, sessions, sessionId])
   /* changeModel / changeProject / chooseMcp are the composer's: they open its
      own menus (`Composer`, `ConfigPopover`), which list everything — a draft's
      agent and profile, effort, mode, MCPs — where the palette's pages list only
@@ -529,7 +552,14 @@ export function AppShell({
               </button>
             )}
           </div>
-          <TopBarTitle heading={headingFor(location.pathname + location.search)} />
+          {isMobileShell || focused ? (
+            <TopBarTitle heading={headingFor(location.pathname + location.search)} />
+          ) : (
+            <TabStrip
+              headingFor={headingFor}
+              onNewThread={() => startRef.current.startThread()}
+            />
+          )}
           {!focused && <TopBarActions />}
         </header>
         {/* The centre pane and the right panel. The centre renders the route
