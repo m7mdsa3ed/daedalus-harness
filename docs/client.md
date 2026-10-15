@@ -1221,7 +1221,10 @@ an outlet: navigating repoints the tab in front and a new tab opens only for a n
 "A tab is an outlet" rule in `CLAUDE.md`). And the sidebar has two layouts, Flush and Inset, picked in
 Settings › Appearance and keyed on `html[data-sidebar-layout]`; in Flush a top group's strip is an
 overlay under a progressive blur, in Inset it sits in the row above the card. Focus mode no longer
-exists.
+exists. **Splits are even**: a new group takes an equal share of its row or column
+(`workspace/dock-sizes.ts`, from `onDidAddGroup`, skipped while a layout is being restored), and a
+double-click on a divider evens out the views it separates — in the main dock and in a thread's own dock
+(whose new panes keep the width their kind opens at).
 
 - **How much of a panel the floating app header covers is measured, never assumed.** The
   header is an overlay across the top of the column, so the tab strip and every panel's content

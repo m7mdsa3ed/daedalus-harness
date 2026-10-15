@@ -19,6 +19,7 @@
    components, unchanged: this dock hands them a `DockContext` of its own, so a
    terminal's restart, its close guard and a preview's helper run all land in
    here instead of the outer dock. */
+import { watchSashReset } from "@/components/workspace/dock-sizes"
 import * as React from "react"
 import {
   DockviewReact,
@@ -333,6 +334,10 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       api.getPanel("transcript")?.api.setActive()
       syncStrips(api)
 
+      /* A divider resets on a double-click. A new pane is *not* evened out here:
+         each kind opens at the width it was given (`place`), a readings column
+         narrower than a preview. */
+      const stopReset = watchSashReset(api)
       let timer: ReturnType<typeof setTimeout> | undefined
       const strips = () => syncStrips(api)
       const disposables = [
@@ -349,6 +354,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       return () => {
         clearTimeout(timer)
         saveThreadLayout(sessionId, api.toJSON())
+        stopReset()
         disposables.forEach((disposable) => disposable.dispose())
         if (apiRef.current === api) apiRef.current = null
       }

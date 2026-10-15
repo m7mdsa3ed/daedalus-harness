@@ -25,6 +25,7 @@
    The controller is this file (`useWorkspaceDock`); the surface it drives is
    `dock-surface.tsx`, the shape and contexts every panel reads are
    `dock-context.ts`, and the header measurement is `dock-header.ts`. */
+import { watchSplits } from "@/components/workspace/dock-sizes"
 import * as React from "react"
 import type { DockviewApi, DockviewGroupPanel, IDockviewPanel, SerializedDockview } from "dockview-react"
 
@@ -999,6 +1000,10 @@ export function useWorkspaceDock(): DockController {
         }),
       ]
 
+      /* A split is an even split, and a double-click on a divider evens its row
+         out again (`dock-sizes.ts`). Not while a layout is being restored. */
+      const stopSplits = watchSplits(api, () => silentRef.current > 0)
+
       /* The debounce is a window a reload can land in: a tab closed and the
          page reloaded inside 300ms came back. Written on the way out instead. */
       window.addEventListener("pagehide", flushSave)
@@ -1007,6 +1012,7 @@ export function useWorkspaceDock(): DockController {
         clearTimeout(saveTimerRef.current)
         saveTimerRef.current = undefined
         window.removeEventListener("pagehide", flushSave)
+        stopSplits()
         disposables.forEach((disposable) => disposable.dispose())
         setChatFocusHandler(null)
         setActiveChat(null)
