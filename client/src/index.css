@@ -2904,12 +2904,17 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
   html[data-sidebar-layout="inset"] [data-app-header] {
     padding-inline: 0.25rem;
   }
+  /* No air above the strip's row (the status-bar inset stays) and a hairline
+     of it between the row and the card. */
+  html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
+    margin-top: 0;
+  }
   html[data-sidebar-layout="inset"] .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
     padding-left: calc(var(--dock-band-left, 0px) + 4px);
     padding-right: max(var(--dock-band-right, 0px), 4px);
   }
   html[data-sidebar-layout="inset"] .dv-groupview:not(.dock-nested *) > .dv-content-container {
-    margin: var(--app-frame-gap) 0 0;
+    margin: 2px 0 0;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   }
   html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
