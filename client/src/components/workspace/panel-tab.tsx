@@ -60,6 +60,7 @@ import {
   renderMenuItems,
   type MenuItemSpec,
 } from "@/components/item-context-menu"
+import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspace/dock-context"
@@ -353,7 +354,6 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
-          <TabMark descriptor={descriptor} />
           {/* The title is the whole of what the tab lays out — the two controls
               are floating (`index.css`), so nothing reserves a gutter for a pair
               of things that only exist while you point at one tab. The title and
@@ -376,11 +376,21 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                   a strip that talks over itself. */}
               <PanelStatusDot status={status} aria-hidden role={undefined} />
             </span>
-            {subtitle && (
-              <span className="truncate text-[10px] leading-3 font-normal text-muted-foreground/80">
-                {subtitle}
+            {/* The tab's marks live on its second row, beside what the row says:
+                a thread's agent and its project, anything else its own glyph. */}
+            <span className="flex min-w-0 items-center gap-1 text-[10px] leading-3 font-normal text-muted-foreground/80">
+              <span data-tab-mark aria-hidden className="flex shrink-0 items-center gap-0.5">
+                {descriptor?.kind === "chat" ? (
+                  <>
+                    <AgentIcon agentId={meta?.agentId} className="size-3.5" />
+                    {project && <ProjectIcon project={project} className="size-3.5" />}
+                  </>
+                ) : (
+                  <PanelIcon panel={descriptor} className="size-3.5" />
+                )}
               </span>
-            )}
+              {subtitle && <span className="truncate">{subtitle}</span>}
+            </span>
           </span>
           {/* **Floating, and laid out in no row at all** (`index.css`): two
               absolutely positioned controls against the chip's trailing inset,
@@ -442,31 +452,6 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
         </div>
       </div>
     </ItemContextMenu>
-  )
-}
-
-/**
- * The mark a tab wears: the panel's own (`PanelIcon`) — a chat pairs its agent
- * and project so the runtime and workspace are both identifiable.
- *
- * Beside a title the mark is a glyph, and a ground around it would be a button
- * that is not one, so the tile it sits in draws no ground. That is also the
- * whole of what a narrow strip used to change here: it swapped a chat's icon
- * for the initials of its title, because down there the mark *was* the tab. The
- * strip now draws one tab and the list names the rest (`index.css`,
- * `tab-actions.tsx`), so nothing picks a mark by viewport and there is no
- * swap to make.
- */
-function TabMark({ descriptor }: { descriptor: Descriptor }) {
-  const paired = descriptor?.kind === "chat"
-  return (
-    <span
-      data-tab-mark
-      aria-hidden
-      className={cn("grid shrink-0 place-items-center", paired ? "size-7" : "size-4")}
-    >
-      <PanelIcon panel={descriptor} className={paired ? "size-3" : "size-3.5"} />
-    </span>
   )
 }
 
