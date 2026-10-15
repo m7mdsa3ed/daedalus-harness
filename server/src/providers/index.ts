@@ -11,7 +11,7 @@ import type { FreeProvider } from "./types.js";
 import { opencodeFree } from "./opencode-free.js";
 
 export type { FreeProvider };
-export { opencodeFree, sessionForThread, freshSession, sessionCounter, isResponsesModel, responsesSseBlockToChat, responsesJsonToChat, OPENCODE_FREE_UA } from "./opencode-free.js";
+export { opencodeFree, sessionForThread, freshSession, sessionCounter, isResponsesModel, responsesSseBlockToChat, responsesJsonToChat, responsesSseToJson, chatSseToJson, OPENCODE_FREE_UA } from "./opencode-free.js";
 
 const PROVIDERS: FreeProvider[] = [opencodeFree];
 

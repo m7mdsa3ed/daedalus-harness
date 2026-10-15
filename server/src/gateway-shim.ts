@@ -588,6 +588,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   };
   let upstreamRest = parsed.rest;
   let wireModel = "";
+  let wireWantStream = true;
   let wireRenames: Map<string, string> | undefined;
 
   const headers = new Headers();
@@ -638,6 +639,10 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
           parsed.rest,
         );
         if (typeof parsedBody.model === "string") wireModel = parsedBody.model;
+        // Upstream is always forced to stream; when the child asked for one
+        // JSON object (stream omitted or false — the OpenAI default) the
+        // reply is aggregated back in wrapResponse.
+        wireWantStream = (parsedBody as Json).stream === true;
         edited = freeProvider.transformBody(parsedBody, providerCtx) || edited;
         wireRenames = freeProvider.renamesFor(parsedBody);
       }
@@ -699,10 +704,11 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   }
 
   /* A provider whose upstream dialect differs from the child's (opencode-free
-     serving a responses-native model to a chat-completions caller) translates
-     the reply back, so everything below sees the dialect that was asked for. */
-  if (freeProvider && wireModel && freeProvider.upstreamDialect(wireModel) !== "chat") {
-    upstream = await freeProvider.wrapResponse(upstream, wireModel, wireRenames);
+     serving a responses-native model to a chat-completions caller), or whose
+     upstream was forced to stream for a child that asked for JSON,
+     translates the reply back, so everything below sees what was asked for. */
+  if (freeProvider && wireModel && (freeProvider.upstreamDialect(wireModel) !== "chat" || !wireWantStream)) {
+    upstream = await freeProvider.wrapResponse(upstream, wireModel, wireRenames, { wantStream: wireWantStream });
   }
 
   const out = new Headers();

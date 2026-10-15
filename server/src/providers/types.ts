@@ -42,7 +42,7 @@ export interface FreeProvider {
    */
   upstreamDialect(model: string): "chat" | "responses";
   /** Translate an upstream reply back into the dialect the child asked for. */
-  wrapResponse(upstream: Response, model: string, renames?: Map<string, string>): Promise<Response>;
+  wrapResponse(upstream: Response, model: string, renames?: Map<string, string>, opts?: { wantStream?: boolean }): Promise<Response>;
   /** Sent→original tool renames recorded for a translated request body. */
   renamesFor(body: Record<string, unknown>): Map<string, string>;
 }

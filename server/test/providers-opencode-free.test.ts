@@ -166,6 +166,67 @@ await test("responses path aliases gated legacy names and renames history", asyn
   assert.equal(out.choices[0].message.tool_calls[0].function.name, "bash");
 });
 
+await test("non-stream child gets one chat JSON, not SSE", async () => {
+  const { responsesSseToJson, chatSseToJson } = await import("../src/providers/opencode-free.js");
+  const respSse = [
+    'data: {"type":"response.created","response":{"id":"resp_9","model":"m","created_at":50}}',
+    "",
+    'data: {"type":"response.output_text.delta","delta":"Hi there"}',
+    "",
+    'data: {"type":"response.completed","response":{"id":"resp_9","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}',
+    "",
+    "data: [DONE]",
+    "",
+  ].join("\n");
+  const agg = responsesSseToJson(respSse) as {
+    object: string; choices: { message: { role: string; content: string }; finish_reason: string }[]; usage: { prompt_tokens: number; completion_tokens: number };
+  };
+  assert.equal(agg.object, "chat.completion");
+  assert.equal(agg.choices[0].message.content, "Hi there");
+  assert.equal(agg.choices[0].finish_reason, "stop");
+  assert.deepEqual([agg.usage.prompt_tokens, agg.usage.completion_tokens], [7, 3]);
+
+  const chatSse = [
+    'data: {"id":"c1","object":"chat.completion.chunk","created":50,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+    "",
+    'data: {"id":"c1","object":"chat.completion.chunk","created":50,"model":"m","choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}',
+    "",
+    'data: {"id":"c1","object":"chat.completion.chunk","created":50,"model":"m","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}',
+    "",
+    'data: {"id":"c1","object":"chat.completion.chunk","created":50,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}',
+    "",
+    "data: [DONE]",
+    "",
+  ].join("\n");
+  const agg2 = chatSseToJson(chatSse, "m") as { object: string; choices: { message: { content: string }; finish_reason: string }[] };
+  assert.equal(agg2.object, "chat.completion");
+  assert.equal(agg2.choices[0].message.content, "Hello");
+  assert.equal(agg2.choices[0].finish_reason, "stop");
+});
+
+await test("wrapResponse aggregates SSE to JSON when the child did not ask to stream", async () => {
+  const sse = [
+    'data: {"type":"response.created","response":{"id":"resp_9","model":"muse-spark-1.3-contributor-free","created_at":50}}',
+    "",
+    'data: {"type":"response.output_text.delta","delta":"Hi"}',
+    "",
+    'data: {"type":"response.completed","response":{"id":"resp_9","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}',
+    "",
+    "data: [DONE]",
+    "",
+  ].join("\n");
+  const upstream = new Response(sse, { headers: { "content-type": "text/event-stream" } });
+  const out = await opencodeFree.wrapResponse(upstream, "muse-spark-1.3-contributor-free", new Map(), { wantStream: false });
+  assert.equal(out.headers.get("content-type"), "application/json");
+  const json = (await out.json()) as { object: string; choices: { message: { content: string } }[] };
+  assert.equal(json.object, "chat.completion");
+  assert.equal(json.choices[0].message.content, "Hi");
+
+  const upstream2 = new Response(sse, { headers: { "content-type": "text/event-stream" } });
+  const out2 = await opencodeFree.wrapResponse(upstream2, "muse-spark-1.3-contributor-free", new Map(), { wantStream: true });
+  assert.match(out2.headers.get("content-type") ?? "", /text\/event-stream/);
+});
+
 await test("responses SSE blocks become chat chunks ending in DONE", async () => {
   const { responsesSseBlockToChat } = await import("../src/providers/opencode-free.js");
   const state = { id: "x", model: "", created: 0, roleSent: false, callIndex: -1, pendingCalls: new Map(), hasToolCalls: false, usage: null, renames: new Map() };

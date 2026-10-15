@@ -467,7 +467,7 @@ export function responsesSseBlockToChat(block: string, state: SseState): string[
       if (r.usage && typeof r.usage === "object") state.usage = r.usage as Record<string, unknown>;
       ensureRole();
       const chunk: Record<string, unknown> = { id: state.id, object: "chat.completion.chunk", created: state.created, model: state.model, choices: [{ index: 0, delta: {}, finish_reason: state.hasToolCalls ? "tool_calls" : "stop" }] };
-      if (state.usage) chunk.usage = state.usage;
+      if (state.usage) chunk.usage = toChatUsage(state.usage);
       out.push(`data: ${JSON.stringify(chunk)}`);
       out.push("data: [DONE]");
       break;
@@ -505,7 +505,143 @@ export function responsesSseToChat(renames?: Map<string, string>): TransformStre
   });
 }
 
-/** Non-streaming responses JSON → chat completion JSON. */
+/** Responses usage (input/output_tokens) → chat usage (prompt/completion_tokens). */
+function toChatUsage(usage: Record<string, unknown>): Record<string, number> {
+  const prompt = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0) || 0;
+  const completion = Number(usage.output_tokens ?? usage.completion_tokens ?? 0) || 0;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: Number(usage.total_tokens ?? prompt + completion) || 0,
+  };
+}
+
+/** Split SSE text into parsed `data:` payloads (skips comments and [DONE]). */
+function ssePayloads(text: string): unknown[] {
+  const out: unknown[] = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    for (const line of block.split(/\r?\n/)) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice("data:".length).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        out.push(JSON.parse(data));
+      } catch {
+        // ignore partial lines
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Aggregate a chat-completions SSE stream into one chat completion object —
+ * for children that asked for JSON while upstream was forced to stream.
+ */
+export function chatSseToJson(sseText: string, model: string): unknown {
+  let id = `chatcmpl-${Date.now()}`;
+  let created = Math.floor(Date.now() / 1000);
+  let content = "";
+  let reasoning = "";
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  let finish: string | null = null;
+  let usage: Record<string, number> | null = null;
+  for (const payload of ssePayloads(sseText)) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const p = payload as Record<string, unknown>;
+    if (typeof p.id === "string" && p.id) id = p.id;
+    if (typeof p.created === "number") created = p.created;
+    if (p.usage && typeof p.usage === "object") usage = p.usage as Record<string, number>;
+    const choice = (Array.isArray(p.choices) ? p.choices[0] : null) as {
+      delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
+      message?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] };
+      finish_reason?: string;
+    } | null;
+    if (!choice) continue;
+    const delta = choice.delta ?? choice.message;
+    if (delta) {
+      if (typeof delta.content === "string") content += delta.content;
+      const r = delta.reasoning_content ?? delta.reasoning;
+      if (typeof r === "string") reasoning += r;
+      for (const call of delta.tool_calls ?? []) {
+        const index = typeof call.index === "number" ? call.index : calls.size;
+        const existing = calls.get(index) ?? { id: "", name: "", arguments: "" };
+        if (call.id) existing.id = call.id;
+        if (call.function?.name) existing.name = call.function.name;
+        if (typeof call.function?.arguments === "string") existing.arguments += call.function.arguments;
+        calls.set(index, existing);
+      }
+    }
+    if (typeof choice.finish_reason === "string" && choice.finish_reason) finish = choice.finish_reason;
+  }
+  const message: Record<string, unknown> = { role: "assistant", content: content || null };
+  const toolCalls = [...calls.values()].filter((c) => c.id || c.name);
+  if (toolCalls.length) {
+    message.tool_calls = toolCalls.map((c, i) => ({ id: c.id || `call_${i}`, type: "function", function: { name: c.name, arguments: c.arguments || "{}" } }));
+  }
+  return {
+    id, object: "chat.completion", created, model,
+    choices: [{ index: 0, message, finish_reason: finish ?? (toolCalls.length ? "tool_calls" : "stop") }],
+    ...(usage ? { usage } : {}),
+  };
+}
+
+/**
+ * Aggregate a responses SSE stream into one chat completion object: fold the
+ * events into a synthetic completed-response shape, then reuse the JSON
+ * translator (which also restores aliased tool names).
+ */
+export function responsesSseToJson(sseText: string, renames?: Map<string, string>): unknown {
+  let id = `resp_${Date.now()}`;
+  let model = "";
+  let created = Math.floor(Date.now() / 1000);
+  let text = "";
+  const calls: Record<string, unknown>[] = [];
+  let current: Record<string, unknown> | null = null;
+  let usage: Record<string, unknown> = {};
+  for (const payload of ssePayloads(sseText)) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const p = payload as Record<string, unknown>;
+    switch (p.type) {
+      case "response.created": {
+        const r = (p.response ?? {}) as Record<string, unknown>;
+        if (typeof r.id === "string" && r.id) id = r.id;
+        if (typeof r.model === "string") model = r.model;
+        if (typeof r.created_at === "number") created = r.created_at;
+        break;
+      }
+      case "response.output_item.added": {
+        const item = (p.item ?? {}) as Record<string, unknown>;
+        if (item.type === "function_call") {
+          current = { type: "function_call", call_id: item.call_id ?? item.id ?? "", name: item.name ?? "", arguments: "" };
+          calls.push(current);
+        }
+        break;
+      }
+      case "response.output_text.delta":
+        if (typeof p.delta === "string") text += p.delta;
+        break;
+      case "response.function_call_arguments.delta":
+        if (current && typeof p.delta === "string") current.arguments = String(current.arguments ?? "") + p.delta;
+        break;
+      case "response.completed":
+      case "response.incomplete":
+      case "response.failed": {
+        const r = (p.response ?? {}) as Record<string, unknown>;
+        if (typeof r.id === "string" && r.id) id = r.id;
+        if (typeof r.model === "string") model = r.model;
+        if (r.usage && typeof r.usage === "object") usage = r.usage as Record<string, unknown>;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  const output: unknown[] = [];
+  if (text) output.push({ type: "message", content: [{ type: "output_text", text }] });
+  output.push(...calls);
+  return responsesJsonToChat({ id, object: "response", model, created_at: created, output, usage }, renames);
+}
 export function responsesJsonToChat(payload: unknown, renames?: Map<string, string>): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
   const p = payload as Record<string, unknown>;
@@ -572,21 +708,41 @@ export const opencodeFree: FreeProvider = {
     return isResponsesModel(model) ? "responses" : "chat";
   },
 
-  async wrapResponse(upstream: Response, model: string, renames?: Map<string, string>): Promise<Response> {
-    if (this.upstreamDialect(model) !== "responses" || !upstream.body) return upstream;
+  async wrapResponse(upstream: Response, model: string, renames?: Map<string, string>, opts?: { wantStream?: boolean }): Promise<Response> {
+    if (!upstream.body) return upstream;
+    const dialect = this.upstreamDialect(model);
+    const wantStream = opts?.wantStream !== false;
     const contentType = upstream.headers.get("content-type") ?? "";
-    const out = new Headers();
-    upstream.headers.forEach((value, name) => {
-      const key = name.toLowerCase();
-      if (key === "content-encoding" || key === "content-length") return;
-      out.append(name, value);
-    });
-    if (/text\/event-stream/i.test(contentType)) {
+    const isSse = /text\/event-stream/i.test(contentType);
+    const isJson = /application\/json/i.test(contentType);
+    const cleanHeaders = (): Headers => {
+      const out = new Headers();
+      upstream.headers.forEach((value, name) => {
+        const key = name.toLowerCase();
+        if (key === "content-encoding" || key === "content-length") return;
+        out.append(name, value);
+      });
+      return out;
+    };
+    // The child asked for one JSON object but upstream was forced to stream:
+    // aggregate the stream before answering (this is the "JSON parsing
+    // failed ... [DONE]" failure: an SSE body handed to a JSON parser).
+    if (!wantStream && isSse) {
+      const text = await upstream.text();
+      const body = dialect === "responses" ? responsesSseToJson(text, renames) : chatSseToJson(text, model);
+      const out = cleanHeaders();
+      out.set("content-type", "application/json");
+      return new Response(JSON.stringify(body), { status: upstream.status, headers: out });
+    }
+    if (dialect !== "responses") return upstream;
+    if (isSse) {
+      const out = cleanHeaders();
       out.set("content-type", "text/event-stream");
       return new Response(upstream.body.pipeThrough(responsesSseToChat(renames)), { status: upstream.status, headers: out });
     }
-    if (/application\/json/i.test(contentType)) {
+    if (isJson) {
       try {
+        const out = cleanHeaders();
         return new Response(JSON.stringify(responsesJsonToChat(await upstream.json(), renames)), { status: upstream.status, headers: out });
       } catch {
         return upstream;
