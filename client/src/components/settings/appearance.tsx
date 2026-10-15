@@ -18,6 +18,7 @@ import {
   useTheme,
 } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { ViewSettings } from "@/components/session-settings"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
@@ -241,6 +242,9 @@ export function AppearancePage() {
           fallback={SCALE_DEFAULT}
           unit="%"
         />
+      </Group>
+      <Group label="Transcript" hint="How threads are drawn on this device. Display only — nothing here changes what the agent sees.">
+        <ViewSettings />
       </Group>
     </>
   )

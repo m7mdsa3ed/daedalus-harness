@@ -1034,6 +1034,15 @@ export function useWorkspaceDock(): DockController {
           publishActiveChat(panel)
           followActive(panel)
         }),
+        /* Focus moving to another group — a click in its content, a split pane
+           taken — is a change of the tab in front even though no tab changed
+           in its own strip, and the sidebar (settings or threads) follows the
+           route the focused tab writes. */
+        api.onDidActiveGroupChange(() => {
+          const panel = api.activeGroup?.activePanel
+          publishActiveChat(panel)
+          followActive(panel)
+        }),
         /* A layout change is raised after the panels list has settled, and it
            covers tab-group changes too (dockview folds them into it). */
         api.onDidLayoutChange(() => {

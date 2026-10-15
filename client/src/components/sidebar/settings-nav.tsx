@@ -38,8 +38,8 @@ import {
   sectionOf,
   type SettingsSectionId,
 } from "@/components/settings/sections"
-import { settingsPath, settingsRootPath, threadPath } from "@/lib/router"
-import { useOpenThreads } from "@/lib/workspace/open-threads"
+import { settingsPath, settingsRootPath } from "@/lib/router"
+import { focusOpenChat, useOpenThreads } from "@/lib/workspace/open-threads"
 import { cn } from "@/lib/utils"
 import { GROUP, GROUP_LABEL, MENU, ROW, TIER } from "./scale"
 
@@ -98,7 +98,15 @@ export function SettingsNav() {
                 size="sm"
                 className={cn(ROW, "text-muted-foreground")}
                 tooltip="Back to threads"
-                onClick={() => go(lastThread ? threadPath(lastThread) : "/")}
+                onClick={() => {
+                  /* The tab that already holds the thread comes to the front
+                     (and with it the threads list); with none open this tab
+                     goes back to the New tab page. Navigating instead would
+                     turn this settings tab into a second copy of the thread. */
+                  if (isMobile) setOpenMobile(false)
+                  if (lastThread && focusOpenChat(lastThread)) return
+                  void navigate("/")
+                }}
               >
                 <ArrowLeft />
                 <span>Back to threads</span>

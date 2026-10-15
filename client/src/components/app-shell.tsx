@@ -10,7 +10,7 @@
    page titles are `components/routes.tsx`, the only importer of the pages. */
 import { uuid } from "@/lib/uuid"
 import * as React from "react"
-import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon, XIcon } from "lucide-react"
+import { GitBranch, SearchIcon, Settings, XIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
 import { Button } from "@/components/ui/button"
@@ -32,11 +32,10 @@ import { ImportThreadsDialog } from "@/components/import-threads"
 import { NotificationIconButton } from "@/components/notifications/bell"
 import { pageRoutes, usePageHeading } from "@/components/routes"
 import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
-import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { useSidebarWidth } from "@/components/sidebar/resizer"
 import { ServerIconButton } from "@/components/sidebar/server-menu"
-import { SpaceIconButton, SpaceSwitcher } from "@/components/sidebar/space-menu"
+import { SpaceIconButton } from "@/components/sidebar/space-menu"
 import {
   FOOTER_ICON,
   SettingsNav,
@@ -147,7 +146,6 @@ export function AppShell({
   const [importing, setImporting] = React.useState(false)
   /* The header's own dialog — device-global, so it belongs to the shell rather
      than to any route or dock group under it. */
-  const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
   const activeChat = useActiveChat()
   const headingFor = usePageHeading()
@@ -497,7 +495,7 @@ export function AppShell({
     if (!sessionId) return false
     palette.openAt("thread-search")
   }, { enabled: !!sessionId })
-  useShortcut("viewOptions", () => setViewSettings(true))
+  useShortcut("viewOptions", () => void navigate(settingsPath("appearance")))
   // The desktop shell's tray, native menu and quick-entry hotkey (lib/desktop.ts).
   useDesktopBridge()
 
@@ -694,31 +692,6 @@ export function AppShell({
               as two spacings on one line. */}
           <div data-header-left className="flex min-w-0 items-center gap-1">
               <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
-              {/* Which space the app is showing — the one control in this row that
-                  says where you are, beside the one that opens the list of where
-                  you can go. */}
-              {/* Height of the chip, width of its label: HEADER_CHIP is a square,
-                  which clipped the name down to the glyph. */}
-              <SpaceSwitcher
-                className={cn(
-                  "h-[var(--dock-chip-h)] shrink-0 px-2.5 max-md:size-[var(--dock-chip-h)] max-md:justify-center max-md:gap-0 max-md:px-0",
-                  STRIP_GROUND
-                )}
-              />
-              {/* How transcripts are drawn, on this device — beside the one other
-                  control that is also this device's and not this route's.
-                  Sliders, not a cog: a cog in this app means the *server's*
-                  settings route. */}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="View settings"
-                title="How transcripts are drawn, on this device"
-                className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
-                onClick={() => setViewSettings(true)}
-              >
-                <SlidersHorizontalIcon className="size-3.5" />
-              </Button>
             {/* A branch says where it came from, once, beside the tab that
                 names it — the one thing provenance is for. Clicking goes to the
                 parent thread as it is now, not to the turn it was cut at. */}
@@ -778,7 +751,7 @@ export function AppShell({
         onNewProject={() => void navigate(settingsFormPath("projects"))}
         onImportThreads={() => setImporting(true)}
         onShortcuts={() => shortcuts.setOpen(true)}
-        onViewOptions={() => setViewSettings(true)}
+        onViewOptions={() => void navigate(settingsPath("appearance"))}
         initialPage={palette.initialPage}
       />
       <ShortcutsHelp open={shortcuts.open} onOpenChange={shortcuts.setOpen} />
@@ -788,7 +761,6 @@ export function AppShell({
       {/* Opened by the sliders in the header. Here rather than beside that
           button so it is not unmounted with a header some routes draw
           differently. */}
-      <SessionSettingsDialog open={viewSettings} onOpenChange={setViewSettings} />
     </PersistedSidebarProvider>
   )
 }

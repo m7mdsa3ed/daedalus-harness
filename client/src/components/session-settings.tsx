@@ -3,12 +3,11 @@
    reads, never what is in it and never anything the agent is told. That is why
    they live here and not in SessionConfigPopover, which respawns the agent
    process to change model/effort/mode. They are global to this device — one
-   reading setup for every thread — and persisted, so the dialog takes no
-   session — so the button sits in the **app header** (app-shell.tsx), beside
-   the panel menu, and not in a thread's composer row. Being global is the
-   argument: the dock can mount several chat panels at once, and each of them
-   drew its own copy of one device-wide dialog, while the header has exactly one
-   of it however the dock is split.
+   reading setup for every thread — and persisted, so it takes no
+   session — and lives in **Settings › Appearance** and not in a thread's
+   composer row or the header. Being global is the argument: the dock can mount
+   several chat panels at once, and a device-wide control drawn in each of them
+   was one control drawn many times.
 
    The list is declarative and **grouped**: add an entry to a group's `options`
    and the row appears; non-switch controls can live in the same group's picker.
@@ -55,14 +54,6 @@ import {
   Wrench,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogDescription,
-  ResponsiveDialogFooter,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
 import { StreamSpeedPicker } from "@/components/stream-speed-picker"
 import { STREAM_SPEEDS } from "@/lib/stream-pace"
 import { Switch } from "@/components/ui/switch"
@@ -462,20 +453,12 @@ function OptionRow({
 }
 
 /**
- * How every thread is drawn on this device.
+ * How every thread is drawn on this device — Settings › Appearance › Transcript.
  *
- * The dialog only — what opens it is a row in the app header's one menu
- * (components/thread-menu). It used to carry its own eye button beside that
- * menu; three icon buttons in a 12px-tall header, two of which opened menus,
- * was a row you had to learn rather than read.
+ * It was a dialog opened from the app header; it is a section of the page now,
+ * and ⌥V and the palette's row go to that page.
  */
-export function SessionSettingsDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}) {
+export function ViewSettings() {
   const options = useViewOptions()
   const [search, setSearch] = React.useState("")
   const normalizedSearch = search.trim().toLowerCase()
@@ -544,15 +527,7 @@ export function SessionSettingsDialog({
   )
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-xl">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>View settings</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>
-            Shape the transcript around how you like to read. These preferences stay on this device and never affect the agent.
-          </ResponsiveDialogDescription>
-        </ResponsiveDialogHeader>
-        <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
@@ -685,23 +660,21 @@ export function SessionSettingsDialog({
               </div>
             </section>
           ))}
+          <div className="flex items-center justify-between gap-3 px-1">
+            <p className="text-[11px] text-muted-foreground">
+              {changedKeys.size === 0
+                ? "Every option is at its default."
+                : `${changedKeys.size} option${changedKeys.size === 1 ? "" : "s"} changed from the defaults.`}
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={changedKeys.size === 0}
+              onClick={() => resetViewOptions()}
+            >
+              <RotateCcw /> Reset
+            </Button>
+          </div>
         </div>
-        <ResponsiveDialogFooter className="items-center sm:justify-between">
-          <p className="text-[11px] text-muted-foreground">
-            {changedKeys.size === 0
-              ? "Every option is at its default."
-              : `${changedKeys.size} option${changedKeys.size === 1 ? "" : "s"} changed from the defaults.`}
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={changedKeys.size === 0}
-            onClick={() => resetViewOptions()}
-          >
-            <RotateCcw /> Reset
-          </Button>
-        </ResponsiveDialogFooter>
-    </ResponsiveDialogContent>
-    </ResponsiveDialog>
   )
 }
