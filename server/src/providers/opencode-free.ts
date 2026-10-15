@@ -22,10 +22,12 @@
  *   - `stream: true` upstream always; the route layer aggregates for
  *     non-streaming callers
  *
- * Daedalus-only v1: the agent speaks OpenAI chat completions, so the wrapper
- * targets `/chat/completions` for every model. Responses-native models
- * (muse-spark-*) are in the catalog but served over chat — a chat→responses
- * translator is follow-up work if upstream stops answering them there.
+ * Responses-native models (muse-spark-*) live behind `/responses` and speak
+ * the Responses dialect, which Daedalus (chat completions only) cannot. For
+ * those the wrapper translates chat→responses on the way out and responses
+ * SSE/JSON→chat on the way back (`chatToResponsesBody`,
+ * `responsesSseToChat`, `responsesJsonToChat`). Everything else goes to
+ * `/chat/completions` untouched.
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { FreeProvider, ProviderContext } from "./types.js";
@@ -73,6 +75,15 @@ export const FINGERPRINT_TOOLS = [
   },
 ] as const;
 
+/**
+ * Lowercase names the Responses gate still enforces exact definitions for. A
+ * caller tool reusing one with a different definition 403s there (live: toy
+ * `bash`/`glob` → 403, neutral `frobnicate` → 200), so those travel as
+ * `<name>_client` on the responses path. Case variants (`Read`/`Bash`) pass
+ * through untouched — upstream accepts them alongside the fingerprint.
+ */
+export const GATED_TOOL_NAMES = ["bash", "glob", "grep", "read", "shell"];
+
 function descendingTimeHex(time: bigint | number, counter: bigint | number): string {
   return ((~(BigInt(time) * 0x1000n + BigInt(counter)) & PREFIX_MASK).toString(16)).padStart(12, "0");
 }
@@ -109,6 +120,19 @@ export function sessionCounter(id: string): number | null {
   return Number(~BigInt(`0x${id.slice(4, 16)}`) & 0xfffn);
 }
 
+/** Models served by `/responses`; every other model stays on `/chat/completions`. */
+const RESPONSES_MODELS = new Set(["muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free"]);
+
+function baseModelId(model: string): string {
+  return String(model || "").replace(/\([^()]+\)\s*$/, "").trim();
+}
+
+/** True for responses-native models (muse-spark-*). Exported for tests. */
+export function isResponsesModel(model: string): boolean {
+  const base = baseModelId(model);
+  return RESPONSES_MODELS.has(base) || base.startsWith("muse-spark-");
+}
+
 type ChatTool = { type: string; function: { name: string; description?: string; parameters?: unknown } };
 
 function toolName(tool: unknown): string {
@@ -129,35 +153,53 @@ function isExactDefinition(tool: unknown, want: (typeof FINGERPRINT_TOOLS)[numbe
  * Caller tools pass through verbatim, except one that already uses a
  * fingerprint name with a different definition: it travels as `<name>_client`
  * so the exact definitions can be appended without a duplicate name.
+ *
+ * @param flat true for Responses tools ({name}), false for chat tools ({function:{name}})
+ * @returns map of sent name -> caller name, for retargeting tool_choice
  */
-function applyFingerprint(body: Record<string, unknown>): void {
+function applyFingerprint(body: Record<string, unknown>, flat: boolean): Map<string, string> {
   const raw = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
   const taken = new Set(raw.map(toolName));
   const seen = new Set<string>();
+  const map = new Map<string, string>();
+  // Flat (responses) path: upstream also enforces exact definitions for the
+  // legacy lowercase names, so those are concealed too. Chat path: only the
+  // fingerprint pair (verified passing with the rest untouched).
+  const gated = flat ? GATED_TOOL_NAMES : FINGERPRINT_TOOLS.map((f) => f.name);
   const out: unknown[] = [];
   for (const tool of raw) {
     const name = toolName(tool);
     const want = FINGERPRINT_TOOLS.find((f) => f.name === name);
-    if (!want) {
+    if (!gated.includes(name)) {
       out.push(tool);
       continue;
     }
     if (seen.has(name)) continue;
     seen.add(name);
-    if (isExactDefinition(tool, want)) {
+    if (want && isExactDefinition(tool, want)) {
       out.push(tool);
       continue;
     }
     let alias = `${name}_client`;
     for (let i = 2; taken.has(alias); i++) alias = `${name}_client${i}`;
     taken.add(alias);
+    map.set(alias, name);
     const t = tool as { function?: Record<string, unknown> };
-    out.push(t.function && typeof t.function === "object" ? { ...t, function: { ...t.function, name: alias } } : { ...(t as object), name: alias });
+    if (flat) {
+      const { function: _fn, ...rest } = t as Record<string, unknown>;
+      out.push({ ...rest, name: alias });
+    } else {
+      out.push(t.function && typeof t.function === "object" ? { ...t, function: { ...t.function, name: alias } } : { ...(t as object), name: alias });
+    }
   }
   const appended: string[] = [];
   for (const want of FINGERPRINT_TOOLS) {
     if (out.some((t) => toolName(t) === want.name)) continue;
-    out.push({ type: "function", function: { name: want.name, description: want.description, parameters: want.parameters } });
+    out.push(
+      flat
+        ? { type: "function", name: want.name, description: want.description, parameters: want.parameters, strict: false }
+        : { type: "function", function: { name: want.name, description: want.description, parameters: want.parameters } },
+    );
     appended.push(want.name);
   }
   body.tools = out;
@@ -165,25 +207,396 @@ function applyFingerprint(body: Record<string, unknown>): void {
   // appended tools, so the system prompt marks them as placeholders instead.
   // Upstream does not gate on prompt text. Wording matters: "not available"
   // made the model refuse the caller's own tools too.
-  if (appended.length && Array.isArray(body.messages)) {
+  if (appended.length) {
     const list = appended.map((n) => `\`${n}\``).join(" or ");
     const note = `Do not call the ${list} tools; they are placeholders that do nothing. Use the other tools you have been given instead.`;
-    const messages = body.messages as { role?: unknown; content?: unknown }[];
-    const first = messages[0];
-    if (first?.role === "system" && typeof first.content === "string") {
-      messages[0] = { ...first, content: `${first.content}\n\n${note}` };
-    } else {
-      body.messages = [{ role: "system", content: note }, ...messages];
+    if (flat) {
+      body.instructions = typeof body.instructions === "string" && body.instructions.trim() ? `${body.instructions}\n\n${note}` : note;
+    } else if (Array.isArray(body.messages)) {
+      const messages = body.messages as { role?: unknown; content?: unknown }[];
+      const first = messages[0];
+      if (first?.role === "system" && typeof first.content === "string") {
+        messages[0] = { ...first, content: `${first.content}\n\n${note}` };
+      } else {
+        body.messages = [{ role: "system", content: note }, ...messages];
+      }
     }
+  }
+  return map;
+}
+
+/* ── chat completions ↔ responses translation (spark models) ── */
+
+function chatText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object") {
+        const p = part as Record<string, unknown>;
+        if (typeof p.text === "string") return p.text;
+        if (p.type === "text" && typeof (p as { text?: unknown }).text === "string") return String((p as { text?: unknown }).text);
+      }
+      return "";
+    })
+    .join("");
+}
+
+function toFlatTools(chatTools: unknown[]): { name: string; description?: string; parameters?: unknown }[] {
+  return chatTools.flatMap((tool) => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return [];
+    const t = tool as { name?: unknown; description?: unknown; parameters?: unknown; function?: { name?: unknown; description?: unknown; parameters?: unknown } };
+    const fn = t.function && typeof t.function === "object" ? t.function : null;
+    const name = (typeof t.name === "string" && t.name.trim()) || (fn && typeof fn.name === "string" ? fn.name.trim() : "");
+    if (!name) return [];
+    const description = (fn?.description ?? t.description) as string | undefined;
+    const parameters = (fn?.parameters ?? t.parameters ?? { type: "object", properties: {} }) as unknown;
+    return [{ name, description, parameters }];
+  });
+}
+
+/**
+ * Chat completions body → Responses body, in place. System messages become
+ * `instructions`; assistant tool_calls and tool results become the
+ * function_call / function_call_output items the next turn needs. Caller
+ * tools reusing a gated name travel as `<name>_client` (with history renamed
+ * to match); the sent→original map is kept request-local for the reply path.
+ */
+const bodyRenames = new WeakMap<Record<string, unknown>, Map<string, string>>();
+
+/** Sent→original tool renames recorded for a translated request body. */
+export function renamesForBody(body: Record<string, unknown>): Map<string, string> {
+  return bodyRenames.get(body) ?? new Map();
+}
+
+function chatToResponsesBody(body: Record<string, unknown>): void {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const flatCaller = toFlatTools(Array.isArray(body.tools) ? (body.tools as unknown[]) : []).map((t) => ({
+    type: "function",
+    name: t.name,
+    ...(t.description ? { description: t.description } : {}),
+    parameters: t.parameters,
+    strict: false,
+  }));
+  const probe: Record<string, unknown> = { tools: flatCaller };
+  const map = applyFingerprint(probe, true);
+  const byOriginal = new Map([...map].map(([alias, original]) => [original, alias]));
+  const wireName = (name: string): string => byOriginal.get(name) ?? name;
+  const instructions: string[] = [];
+  const input: unknown[] = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) continue;
+    const m = msg as { role?: unknown; content?: unknown; tool_calls?: unknown; tool_call_id?: unknown; name?: unknown };
+    if (m.role === "system") {
+      const text = chatText(m.content).trim();
+      if (text) instructions.push(text);
+      continue;
+    }
+    if (m.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: typeof m.tool_call_id === "string" ? m.tool_call_id : "",
+        output: chatText(m.content),
+      });
+      continue;
+    }
+    if (m.role === "assistant") {
+      const text = chatText(m.content).trim();
+      if (text) input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text }] });
+      if (Array.isArray(m.tool_calls)) {
+        for (const call of m.tool_calls) {
+          const c = call as { id?: unknown; function?: { name?: unknown; arguments?: unknown } };
+          const rawName = c.function && typeof c.function === "object" && typeof c.function.name === "string" ? c.function.name : "";
+          input.push({
+            type: "function_call",
+            call_id: typeof c.id === "string" ? c.id : "",
+            name: wireName(rawName),
+            arguments: c.function && typeof c.function === "object" && typeof c.function.arguments === "string" ? c.function.arguments : "{}",
+          });
+        }
+      }
+      continue;
+    }
+    // user and everything else: text parts only, images passed through.
+    const parts: unknown[] = [];
+    if (Array.isArray(m.content)) {
+      for (const part of m.content) {
+        if (typeof part === "string") {
+          if (part.trim()) parts.push({ type: "input_text", text: part });
+        } else if (part && typeof part === "object") {
+          const p = part as Record<string, unknown>;
+          if ((p.type === "text" || p.type === "input_text") && typeof p.text === "string" && p.text.trim()) {
+            parts.push({ type: "input_text", text: p.text });
+          } else if (p.type === "image_url" && p.image_url && typeof p.image_url === "object") {
+            parts.push({ type: "input_image", image_url: (p.image_url as { url?: string }).url ?? "" });
+          }
+        }
+      }
+    } else {
+      const text = chatText(m.content).trim();
+      if (text) parts.push({ type: "input_text", text });
+    }
+    if (parts.length) input.push({ type: "message", role: "user", content: parts });
+  }
+  if (!input.length) input.push({ type: "message", role: "user", content: [{ type: "input_text", text: "..." }] });
+
+  const responses: Record<string, unknown> = {
+    model: body.model,
+    input,
+    stream: true,
+    store: false,
+  };
+  if (instructions.length) responses.instructions = instructions.join("\n\n");
+  if (typeof probe.instructions === "string" && probe.instructions) {
+    responses.instructions = responses.instructions ? `${responses.instructions}\n\n${probe.instructions}` : probe.instructions;
+  }
+  responses.tools = probe.tools;
+  const choice = body.tool_choice;
+  if (choice === "none") {
+    // dropped: upstream 403s on "none"
+  } else if (typeof choice === "string") {
+    responses.tool_choice = choice === "required" ? "required" : "auto";
+  } else if (choice && typeof choice === "object" && !Array.isArray(choice)) {
+    const c = choice as { name?: unknown; function?: { name?: unknown } };
+    const name = typeof c.name === "string" ? c.name : c.function && typeof c.function.name === "string" ? c.function.name : "";
+    if (name) responses.tool_choice = { type: "function", name: wireName(name) };
+  } else {
+    responses.tool_choice = "auto";
+  }
+  if (body.max_output_tokens !== undefined) responses.max_output_tokens = body.max_output_tokens;
+  else if (body.max_completion_tokens !== undefined) responses.max_output_tokens = body.max_completion_tokens;
+  else if (body.max_tokens !== undefined) responses.max_output_tokens = body.max_tokens;
+  for (const key of ["temperature", "top_p", "parallel_tool_calls"]) {
+    if (body[key] !== undefined) responses[key] = body[key];
+  }
+  for (const key of Object.keys(body)) delete body[key];
+  Object.assign(body, responses);
+  if (map.size) bodyRenames.set(body, map);
+  if (!body.tool_choice) body.tool_choice = "auto";
+}
+
+/* ── responses SSE/events → chat completion chunks ── */
+
+interface SseState {
+  id: string;
+  model: string;
+  created: number;
+  roleSent: boolean;
+  callIndex: number;
+  pendingCalls: Map<string, number>;
+  hasToolCalls: boolean;
+  usage: Record<string, unknown> | null;
+  /** sent name → caller name, for calls to aliased tools. */
+  renames: Map<string, string>;
+}
+
+function newSseState(renames?: Map<string, string>): SseState {
+  return { id: `chatcmpl-${Date.now()}`, model: "", created: Math.floor(Date.now() / 1000), roleSent: false, callIndex: -1, pendingCalls: new Map(), hasToolCalls: false, usage: null, renames: renames ?? new Map() };
+}
+
+function chatChunk(state: SseState, delta: unknown, finish: string | null): string {
+  return `data: ${JSON.stringify({ id: state.id, object: "chat.completion.chunk", created: state.created, model: state.model, choices: [{ index: 0, delta, finish_reason: finish }] })}`;
+}
+
+/**
+ * One responses SSE block → zero or more chat chunk lines (without trailing
+ * blank line). Non-JSON blocks (comments, `[DONE]`) pass through untouched.
+ */
+export function responsesSseBlockToChat(block: string, state: SseState): string[] {
+  const lines = block.split(/\r?\n/);
+  const dataLines = lines.filter((l) => l.startsWith("data:"));
+  if (!dataLines.length) return [block];
+  let payload: unknown;
+  try {
+    payload = JSON.parse(dataLines.map((l) => l.slice("data:".length).trim()).join("\n"));
+  } catch {
+    return [block];
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [block];
+  const p = payload as Record<string, unknown>;
+  const out: string[] = [];
+  const ensureRole = () => {
+    if (!state.roleSent) {
+      state.roleSent = true;
+      out.push(chatChunk(state, { role: "assistant", content: "" }, null));
+    }
+  };
+  switch (p.type) {
+    case "response.created": {
+      const r = (p.response ?? {}) as Record<string, unknown>;
+      if (typeof r.id === "string" && r.id) state.id = r.id;
+      if (typeof r.model === "string") state.model = r.model;
+      if (typeof r.created_at === "number") state.created = r.created_at;
+      break;
+    }
+    case "response.output_item.added": {
+      const item = (p.item ?? {}) as Record<string, unknown>;
+      if (item.type === "function_call" && typeof item.name === "string") {
+        state.callIndex += 1;
+        state.hasToolCalls = true;
+        const key = typeof item.call_id === "string" ? item.call_id : (typeof item.id === "string" ? item.id : `call_${state.callIndex}`);
+        state.pendingCalls.set(key, state.callIndex);
+        ensureRole();
+        out.push(
+          chatChunk(state, { tool_calls: [{ index: state.callIndex, id: key, type: "function", function: { name: state.renames.get(item.name) ?? item.name, arguments: "" } }] }, null),
+        );
+      }
+      break;
+    }
+    case "response.output_text.delta": {
+      if (typeof p.delta === "string" && p.delta) {
+        ensureRole();
+        out.push(chatChunk(state, { content: p.delta }, null));
+      }
+      break;
+    }
+    case "response.function_call_arguments.delta": {
+      if (typeof p.delta === "string" && p.delta) {
+        ensureRole();
+        const seq = typeof p.sequence_number === "number" ? p.sequence_number : null;
+        const index = seq !== null && [...state.pendingCalls.values()].includes(seq) ? seq : state.callIndex;
+        out.push(chatChunk(state, { tool_calls: [{ index: Math.max(0, index), function: { arguments: p.delta } }] }, null));
+      }
+      break;
+    }
+    case "response.completed":
+    case "response.incomplete":
+    case "response.failed": {
+      const r = (p.response ?? {}) as Record<string, unknown>;
+      if (r.usage && typeof r.usage === "object") state.usage = r.usage as Record<string, unknown>;
+      ensureRole();
+      const chunk: Record<string, unknown> = { id: state.id, object: "chat.completion.chunk", created: state.created, model: state.model, choices: [{ index: 0, delta: {}, finish_reason: state.hasToolCalls ? "tool_calls" : "stop" }] };
+      if (state.usage) chunk.usage = state.usage;
+      out.push(`data: ${JSON.stringify(chunk)}`);
+      out.push("data: [DONE]");
+      break;
+    }
+    default:
+      break;
+  }
+  return out;
+}
+
+/** Byte transform: responses SSE → chat completion SSE. Splits on blank lines so chunk boundaries never mis-parse. */
+export function responsesSseToChat(renames?: Map<string, string>): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const state = newSseState(renames);
+  let buffer = "";
+  const convert = (block: string): string => {
+    const lines = responsesSseBlockToChat(block, state);
+    return lines.length ? lines.join("\n") + "\n\n" : "";
+  };
+  return new TransformStream({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      for (;;) {
+        const m = /\r?\n\r?\n/.exec(buffer);
+        if (!m) break;
+        controller.enqueue(encoder.encode(convert(buffer.slice(0, m.index))));
+        buffer = buffer.slice(m.index + m[0].length);
+      }
+    },
+    flush(controller) {
+      buffer += decoder.decode();
+      if (buffer.trim()) controller.enqueue(encoder.encode(convert(buffer)));
+    },
+  });
+}
+
+/** Non-streaming responses JSON → chat completion JSON. */
+export function responsesJsonToChat(payload: unknown, renames?: Map<string, string>): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const p = payload as Record<string, unknown>;
+  if (!Array.isArray(p.output) && p.object !== "response") return payload;
+  const content: string[] = [];
+  const toolCalls: { id: string; type: string; function: { name: string; arguments: string } }[] = [];
+  for (const item of (p.output ?? []) as Record<string, unknown>[]) {
+    if (!item || typeof item !== "object") continue;
+    if (item.type === "message" && Array.isArray(item.content)) {
+      for (const part of item.content as Record<string, unknown>[]) {
+        if ((part.type === "output_text" || part.type === "text") && typeof part.text === "string") content.push(part.text);
+      }
+    } else if (item.type === "function_call" && typeof item.name === "string") {
+      toolCalls.push({
+        id: typeof item.call_id === "string" ? item.call_id : `call_${toolCalls.length}`,
+        type: "function",
+        function: { name: renames?.get(item.name) ?? item.name, arguments: typeof item.arguments === "string" ? item.arguments : "{}" },
+      });
+    }
+  }
+  const message: Record<string, unknown> = { role: "assistant", content: content.join("") || null };
+  if (toolCalls.length) message.tool_calls = toolCalls;
+  const usage = (p.usage ?? {}) as Record<string, unknown>;
+  return {
+    id: typeof p.id === "string" ? p.id : `chatcmpl-${Date.now()}`,
+    object: "chat.completion",
+    created: typeof p.created_at === "number" ? p.created_at : Math.floor(Date.now() / 1000),
+    model: typeof p.model === "string" ? p.model : "",
+    choices: [{ index: 0, message, finish_reason: toolCalls.length ? "tool_calls" : "stop" }],
+    usage: {
+      prompt_tokens: Number(usage.input_tokens ?? usage.prompt_tokens ?? 0) || 0,
+      completion_tokens: Number(usage.output_tokens ?? usage.completion_tokens ?? 0) || 0,
+      total_tokens: Number(usage.total_tokens ?? 0) || 0,
+    },
+  };
+}
+function retargetChatToolChoice(body: Record<string, unknown>, map: Map<string, string>): void {
+  if (!map.size) return;
+  const choice = body.tool_choice as { name?: unknown; function?: { name?: unknown } } | null;
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) return;
+  const byOriginal = new Map([...map].map(([alias, original]) => [original, alias]));
+  if (typeof choice.name === "string") {
+    const alias = byOriginal.get(choice.name.trim());
+    if (alias) body.tool_choice = { ...choice, name: alias };
+    return;
+  }
+  const fn = choice.function;
+  if (fn && typeof fn === "object" && typeof fn.name === "string") {
+    const alias = byOriginal.get(fn.name.trim());
+    if (alias) body.tool_choice = { ...choice, function: { ...fn, name: alias } };
   }
 }
 
 export const opencodeFree: FreeProvider = {
   id: "opencode-free",
 
-  upstreamPath(_model: string, _askedPath: string): string {
-    // Daedalus speaks chat completions only; that is the dialect we forward.
-    return "/chat/completions";
+  upstreamPath(model: string, _askedPath: string): string {
+    // Daedalus speaks chat completions; responses-native models need the
+    // Responses endpoint plus translation (transformBody does the body half).
+    return isResponsesModel(model) ? "/responses" : "/chat/completions";
+  },
+
+  upstreamDialect(model: string): "chat" | "responses" {
+    return isResponsesModel(model) ? "responses" : "chat";
+  },
+
+  async wrapResponse(upstream: Response, model: string, renames?: Map<string, string>): Promise<Response> {
+    if (this.upstreamDialect(model) !== "responses" || !upstream.body) return upstream;
+    const contentType = upstream.headers.get("content-type") ?? "";
+    const out = new Headers();
+    upstream.headers.forEach((value, name) => {
+      const key = name.toLowerCase();
+      if (key === "content-encoding" || key === "content-length") return;
+      out.append(name, value);
+    });
+    if (/text\/event-stream/i.test(contentType)) {
+      out.set("content-type", "text/event-stream");
+      return new Response(upstream.body.pipeThrough(responsesSseToChat(renames)), { status: upstream.status, headers: out });
+    }
+    if (/application\/json/i.test(contentType)) {
+      try {
+        return new Response(JSON.stringify(responsesJsonToChat(await upstream.json(), renames)), { status: upstream.status, headers: out });
+      } catch {
+        return upstream;
+      }
+    }
+    return upstream;
+  },
+
+  renamesFor(body: Record<string, unknown>): Map<string, string> {
+    return renamesForBody(body);
   },
 
   headers(ctx: ProviderContext): Record<string, string> {
@@ -209,8 +622,14 @@ export const opencodeFree: FreeProvider = {
     // Free tier rejects non-streaming requests: always stream upstream and let
     // the route layer aggregate for non-stream callers.
     body.stream = true;
+    if (isResponsesModel(typeof body.model === "string" ? body.model : "")) {
+      if (body.tool_choice === "none") delete body.tool_choice;
+      chatToResponsesBody(body);
+      return true;
+    }
     if (body.tool_choice === "none") delete body.tool_choice;
-    applyFingerprint(body);
+    const map = applyFingerprint(body, false);
+    retargetChatToolChoice(body, map);
     return true;
   },
 };

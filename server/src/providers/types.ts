@@ -36,4 +36,13 @@ export interface FreeProvider {
    * Must force whatever the provider requires (e.g. `stream: true`).
    */
   transformBody(body: Record<string, unknown>, ctx: ProviderContext): boolean;
+  /**
+   * Which dialect upstream speaks for this model. When it differs from what
+   * the child asked for, the shim runs the reply through `wrapResponse`.
+   */
+  upstreamDialect(model: string): "chat" | "responses";
+  /** Translate an upstream reply back into the dialect the child asked for. */
+  wrapResponse(upstream: Response, model: string, renames?: Map<string, string>): Promise<Response>;
+  /** Sent→original tool renames recorded for a translated request body. */
+  renamesFor(body: Record<string, unknown>): Map<string, string>;
 }

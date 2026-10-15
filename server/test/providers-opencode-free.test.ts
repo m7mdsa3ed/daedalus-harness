@@ -104,9 +104,105 @@ await test("detection keys off the opencode inference base URL", () => {
   assert.equal(detectProvider(""), undefined);
 });
 
-await test("upstream path is chat completions (the dialect daedalus speaks)", () => {
+await test("upstream path routes spark to responses, rest to chat", () => {
+  assert.equal(opencodeFree.upstreamPath("muse-spark-1.3-contributor-free", "/chat/completions"), "/responses");
+  assert.equal(opencodeFree.upstreamPath("muse-spark-1.3-contributor-free(high)", "/chat/completions"), "/responses");
   assert.equal(opencodeFree.upstreamPath("mimo-v2.6-flash-free", "/chat/completions"), "/chat/completions");
-  assert.equal(opencodeFree.upstreamPath("muse-spark-1.3-contributor-free", "/chat/completions"), "/chat/completions");
+  assert.equal(opencodeFree.upstreamDialect("muse-spark-1.3-contributor-free"), "responses");
+  assert.equal(opencodeFree.upstreamDialect("mimo-v2.6-flash-free"), "chat");
+});
+
+await test("spark transform produces a responses body with flat tools", () => {
+  const body: Record<string, unknown> = {
+    model: "muse-spark-1.3-contributor-free",
+    messages: [
+      { role: "system", content: "Be brief." },
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "", tool_calls: [{ id: "call_1", function: { name: "bash", arguments: "{\"command\":\"ls\"}" } }] },
+      { role: "tool", tool_call_id: "call_1", content: "file.txt" },
+      { role: "user", content: "thanks" },
+    ],
+    tools: [{ type: "function", function: { name: "shell", description: "mine", parameters: { type: "object" } } }],
+    max_tokens: 512,
+  };
+  opencodeFree.transformBody(body, { threadId: "t1", agentId: "daedalus", profileId: "p1" });
+  assert.equal(body.stream, true);
+  assert.equal(body.store, false);
+  assert.equal(body.tool_choice, "auto");
+  assert.equal(body.max_output_tokens, 512);
+  assert.match(String(body.instructions), /Be brief\./);
+  assert.match(String(body.instructions), /placeholders/);
+  const types = (body.input as { type: string }[]).map((i) => i.type);
+  assert.deepEqual(types, ["message", "function_call", "function_call_output", "message"]);
+  const names = (body.tools as { name: string }[]).map((t) => t.name);
+  assert.deepEqual(names, ["shell_client", "read", "shell"]);
+  assert.ok(!(body.messages || body.max_tokens));
+});
+
+await test("responses path aliases gated legacy names and renames history", async () => {
+  const { renamesForBody } = await import("../src/providers/opencode-free.js");
+  const body: Record<string, unknown> = {
+    model: "muse-spark-1.3-contributor-free",
+    messages: [
+      { role: "user", content: "list files" },
+      { role: "assistant", content: "", tool_calls: [{ id: "call_1", function: { name: "bash", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "call_1", content: "ok" },
+    ],
+    tools: [{ type: "function", function: { name: "bash", description: "mine", parameters: { type: "object" } } }],
+  };
+  opencodeFree.transformBody(body, { threadId: "t1", agentId: "daedalus", profileId: "p1" });
+  const names = (body.tools as { name: string }[]).map((t) => t.name);
+  assert.deepEqual(names, ["bash_client", "read", "shell"]);
+  const calls = (body.input as { type: string; name?: string }[]).filter((i) => i.type === "function_call");
+  assert.deepEqual(calls.map((c) => c.name), ["bash_client"]);
+  const renames = renamesForBody(body);
+  assert.equal(renames.get("bash_client"), "bash");
+  const { responsesJsonToChat } = await import("../src/providers/opencode-free.js");
+  const out = responsesJsonToChat({
+    id: "resp_1", object: "response", model: "m", created_at: 1,
+    output: [{ type: "function_call", call_id: "c2", name: "bash_client", arguments: "{}" }],
+    usage: {},
+  }, renames) as { choices: { message: { tool_calls: { function: { name: string } }[] } }[] };
+  assert.equal(out.choices[0].message.tool_calls[0].function.name, "bash");
+});
+
+await test("responses SSE blocks become chat chunks ending in DONE", async () => {
+  const { responsesSseBlockToChat } = await import("../src/providers/opencode-free.js");
+  const state = { id: "x", model: "", created: 0, roleSent: false, callIndex: -1, pendingCalls: new Map(), hasToolCalls: false, usage: null, renames: new Map() };
+  const blocks = [
+    'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"muse-spark-1.3-contributor-free","created_at":100}}',
+    'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"Hi"}',
+    'event: response.output_item.added\ndata: {"type":"response.output_item.added","item":{"type":"function_call","call_id":"call_9","name":"bash"}}',
+    'event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","delta":"{\\"command\\""}',
+    'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}',
+  ];
+  const lines = blocks.flatMap((b) => responsesSseBlockToChat(b, state as never));
+  const chunks = lines.filter((l) => l.startsWith("data:") && !l.includes("[DONE]")).map((l) => JSON.parse(l.slice(5).trim()));
+  assert.equal(chunks[0].choices[0].delta.role, "assistant");
+  assert.equal(chunks[1].choices[0].delta.content, "Hi");
+  assert.equal(chunks[2].choices[0].delta.tool_calls[0].function.name, "bash");
+  assert.equal(chunks[3].choices[0].delta.tool_calls[0].function.arguments, '{"command"');
+  const last = chunks[chunks.length - 1];
+  assert.equal(last.choices[0].finish_reason, "tool_calls");
+  assert.equal(lines[lines.length - 1], "data: [DONE]");
+});
+
+await test("responses JSON becomes a chat completion", async () => {
+  const { responsesJsonToChat } = await import("../src/providers/opencode-free.js");
+  const out = responsesJsonToChat({
+    id: "resp_1",
+    object: "response",
+    model: "muse-spark-1.3-contributor-free",
+    created_at: 100,
+    output: [
+      { type: "message", content: [{ type: "output_text", text: "Hi" }] },
+      { type: "function_call", call_id: "call_9", name: "bash", arguments: "{}" },
+    ],
+    usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+  }) as { choices: { message: { content: string; tool_calls: { function: { name: string } }[] }; finish_reason: string }[] };
+  assert.equal(out.choices[0].message.content, "Hi");
+  assert.equal(out.choices[0].message.tool_calls[0].function.name, "bash");
+  assert.equal(out.choices[0].finish_reason, "tool_calls");
 });
 
 if (failures.length) {

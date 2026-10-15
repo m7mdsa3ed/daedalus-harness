@@ -587,6 +587,8 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     profileId: thread?.profileId ?? parsed.id,
   };
   let upstreamRest = parsed.rest;
+  let wireModel = "";
+  let wireRenames: Map<string, string> | undefined;
 
   const headers = new Headers();
   req.headers.forEach((value, name) => {
@@ -635,7 +637,9 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
           typeof parsedBody.model === "string" ? parsedBody.model : "",
           parsed.rest,
         );
+        if (typeof parsedBody.model === "string") wireModel = parsedBody.model;
         edited = freeProvider.transformBody(parsedBody, providerCtx) || edited;
+        wireRenames = freeProvider.renamesFor(parsedBody);
       }
       const flat = isResponses ? flattenNamespaces(parsedBody) : null;
       if (flat) {
@@ -692,6 +696,13 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     );
   } finally {
     clearTimeout(connectTimer);
+  }
+
+  /* A provider whose upstream dialect differs from the child's (opencode-free
+     serving a responses-native model to a chat-completions caller) translates
+     the reply back, so everything below sees the dialect that was asked for. */
+  if (freeProvider && wireModel && freeProvider.upstreamDialect(wireModel) !== "chat") {
+    upstream = await freeProvider.wrapResponse(upstream, wireModel, wireRenames);
   }
 
   const out = new Headers();

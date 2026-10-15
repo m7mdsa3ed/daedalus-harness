@@ -27,10 +27,14 @@ this fingerprint answers `403 FreeTierError`.
 
 Profile: `pnpm seed:opencode-free` creates/refreshes "Opencode Free"
 (`agents: {daedalus}`, empty key, catalog from `/zen/v1/models` filtered to
-`-free`). Daedalus-only v1: the agent speaks chat completions, so all models
-are served over `/chat/completions` — a chat→responses translator for
-responses-native models (muse-spark-*) is follow-up work if upstream stops
-answering them on chat.
+`-free`). Daedalus speaks chat completions only, so responses-native models
+(muse-spark-*) are translated both ways in the wrapper: chat→responses on the
+way out (system→`instructions`, tool calls/results→`function_call[_output]`
+items, flat tools + `strict:false`), responses SSE/JSON→chat chunks on the way
+back. Caller tools reusing a gated lowercase name (`bash`/`glob`/`grep`/
+`read`/`shell` — the Responses gate rejects inexact definitions for those)
+travel as `<name>_client` with history renamed to match, and the reply path
+restores the original names; case variants (`Read`/`Bash`) pass through.
 
 ## Adding the next one (antigravity, claude-code oauth, codex oauth)
 
