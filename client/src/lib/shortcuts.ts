@@ -200,6 +200,13 @@ export type ShortcutId =
   | "nextTab"
   | "prevTab"
   | "closeTab"
+  | "splitRight"
+  | "splitDown"
+  | "fillPanel"
+  | "nextPane"
+  | "prevPane"
+  | "resizePane"
+  | "reopenPanel"
   | "terminal"
   | "rightPanel"
   | "changeModel"
@@ -255,24 +262,49 @@ export const KEYS = {
   steer: ["mod+enter", "mod+shift+enter"],
   historyPrev: "up",
   historyNext: "down",
-  /** Walk the open tabs. ⌘/Ctrl+Tab is the
-      browser's own pair, so it fires in the desktop shell and not on the web
-      (`RESERVED` says so on the settings row); Alt+↓/↑ are unclaimed by every
-      browser and by the OS, and work everywhere. */
+  /** The tab strip, on the browser's own pair *and* on a pair that works in a
+      browser tab. `mod+tab` is ⌘/Ctrl+Tab, which is the chord people reach for
+      — and Chromium keeps it, so it fires in the desktop shell (where the page
+      is the whole window) and not on the web, which is the same bargain
+      `tabJump`'s ⌘1…9 and `reopenPanel`'s ⌘⇧T already make; `RESERVED` says
+      so on the settings row rather than leaving it to be found by pressing.
+      Ctrl+Tab cannot be spelled aside from that — `matchesChord` folds Control
+      into `mod` by design — so the way to a chord that works everywhere is
+      Alt: ⌥/Alt+↓ and ↑ are unclaimed by every browser and by the OS, and are
+      the pair the tab's own menu prints beside "Next tab" / "Previous tab". */
   nextTab: ["mod+tab", "alt+down"],
   prevTab: ["mod+shift+tab", "alt+up"],
   /** Close this tab. Not ⌘/Ctrl+W: Electron gives that to close-window, so it
-      would quit the app rather than close a tab. Alt+W is free in both browsers. */
+      would quit the app rather than close a tab — the reason `splitRight` is
+      not ⌘W either. Alt+W is free in both browsers. */
   closeTab: ["alt+w"],
   /** Skip the question, reject the permission, stop the turn — in that order. */
   escape: "esc",
-  /** Show or hide the right panel. ⌥ because ⌘/Ctrl+B is the sidebar's. */
-  rightPanel: "mod+alt+b",
+  /** Workspace. Not `mod+w`: Electron gives that to close-window, and a chord
+      that closes the app when the dock is empty is not a panel shortcut. */
+  splitRight: "mod+\\",
+  /** The other axis of the pair, with the other mnemonic to match: the backslash
+      next to ⌘ is "put it beside", and ⇧ adds the "down" that `↓` already
+      spells for the tab strip. */
+  splitDown: "mod+shift+\\",
+  reopenPanel: "mod+shift+t",
+  /** Make the panel in front fill the dock. Not `mod+shift+f` — that is Search
+      across files — and not ⌘↩, which the composer owns. */
+  fillPanel: "mod+shift+m",
+  /** The columns of a split. Alt+←/→ is the sideways sibling of the tab walk's
+      Alt+↓/↑ (a strip is a list, a split is a row), and Alt+Shift+arrows moves
+      the divider the way the arrow points. Neither is ⌘/Ctrl+Shift+arrow: that
+      selects by word in the composer, which has the caret nearly always. */
+  nextPane: "alt+right",
+  prevPane: "alt+left",
+  resizePane: ["alt+shift+left", "alt+shift+right", "alt+shift+up", "alt+shift+down"],
   /** VS Code's panel chord, not its ⌃` terminal one: `matchesChord` folds Ctrl
       into `mod` by design (⌘ on Apple, Ctrl elsewhere), so a standalone `ctrl`
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
+  /** Show or hide the right panel. ⌥ because ⌘/Ctrl+B is the sidebar's. */
+  rightPanel: "mod+alt+b",
   /** The three that open a chooser rather than doing a thing. Alt+letter, the
       same well the tab strip's keys came out of: every ⌘/Ctrl letter with a
       mnemonic worth having is either Chromium's (⌘M, ⌘P, ⌘L) or already
@@ -297,10 +329,10 @@ export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "tabJump",
     scope: "Global",
-    label: "Jump to a tab",
+    label: "Jump to a tab in this group",
     chords: ["mod+1"],
     display: [SYMBOLS.mod + "1…9"],
-    note: "Counts the open tabs, left to right. Chromium keeps ⌘/Ctrl+digit for its own tabs, so it fires in the desktop app rather than in a browser tab.",
+    note: "Counts the tabs in the group you are looking at, which is every open thread until the workspace is split.",
   },
   {
     id: "nextTab",
@@ -308,7 +340,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Next tab",
     chords: [...KEYS.nextTab],
     rebindable: true,
-    note: "Walks the open tabs, wrapping at the ends. Alt+↓ works everywhere; ⌘/Ctrl+Tab is Chromium's own, so it fires in the desktop app rather than in a browser tab.",
+    note: "Walks around the group you are looking at, wrapping at the ends. Alt+↓ works everywhere; ⌘/Ctrl+Tab is Chromium's own, so it fires in the desktop app rather than in a browser tab.",
   },
   {
     id: "prevTab",
@@ -323,7 +355,53 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Close the tab you are looking at",
     chords: [...KEYS.closeTab],
     rebindable: true,
-    note: "The thread keeps running; closing a tab only puts it away.",
+    note: "A tab that refuses to close — a terminal whose shell is still busy — is left open.",
+  },
+  {
+    id: "splitRight",
+    scope: "Global",
+    label: "Split the panel to the right",
+    chords: [KEYS.splitRight],
+    rebindable: true,
+    note: "Makes a second column and puts *this* panel in it. A tab landing in the empty column fills it; the tab you left goes back when you fill it.",
+  },
+  {
+    id: "splitDown",
+    scope: "Global",
+    label: "Split the panel downward",
+    chords: [KEYS.splitDown],
+    rebindable: true,
+  },
+  {
+    id: "fillPanel",
+    scope: "Global",
+    label: "Fill the panel with this tab",
+    chords: [KEYS.fillPanel],
+    rebindable: true,
+    note: "Takes back the split: the column in front of you fills the dock, and switching to another column empties it again.",
+  },
+  {
+    id: "nextPane",
+    scope: "Global",
+    label: "Next pane of a split",
+    chords: [KEYS.nextPane],
+    rebindable: true,
+    note: "Moves to the next column or row, wrapping at the end. The browser has Back and Forward on these keys; the app takes them unless Override is off.",
+  },
+  {
+    id: "prevPane",
+    scope: "Global",
+    label: "Previous pane of a split",
+    chords: [KEYS.prevPane],
+    rebindable: true,
+  },
+  {
+    id: "resizePane",
+    scope: "Global",
+    label: "Resize the pane you are in",
+    chords: [...KEYS.resizePane],
+    display: [`${SYMBOLS.alt}+${SYMBOLS.shift}+←↑↓→`],
+    note: "Moves the divider the way the arrow points: the pane grows toward a neighbour, and shrinks away from the edge. Hold the keys to keep going.",
   },
   {
     id: "terminal",
@@ -331,7 +409,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Toggle the terminal",
     chords: [KEYS.terminal],
     rebindable: true,
-    note: "A shell on the Daedalus server, in the current thread's worktree. Opens one if there is none.",
+    note: "A shell on the Daedalus server, in the current thread's worktree, in the right panel. Opens one if there is none.",
   },
   {
     id: "rightPanel",
@@ -340,6 +418,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.rightPanel],
     rebindable: true,
     note: "The column beside the thread: source control, plan, agents, details, shell and preview.",
+  },
+  {
+    id: "reopenPanel",
+    scope: "Global",
+    label: "Reopen the last closed panel",
+    chords: [KEYS.reopenPanel],
+    rebindable: true,
+    note: "Walks back through the last ten, the way a browser reopens tabs.",
   },
   { id: "help", scope: "Global", label: "Keyboard shortcuts", chords: [...KEYS.help], rebindable: true },
   {

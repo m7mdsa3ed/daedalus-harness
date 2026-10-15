@@ -1,17 +1,17 @@
 /* ── The shell ──
-   The layout every route is read in, chat-first: the sidebar rail on the left,
-   the centre pane (`shell/outlet.tsx` — a thread, or any page, rendered
-   straight from the route table), and one collapsible right panel for the tools
-   about what is in front of you (`right-panel/`). There are no tabs: the address
-   bar is the only state about "what is open". What lives here is what has to be
-   *above* all of that — the one draft-minting front door every "new thread"
-   gesture takes, the device-level dialogs, and the chords.
+   The layout every route is read in: the sidebar column, the app header and
+   the dock, which is the main area on every route (a thread is a chat panel,
+   every other page is a `page` panel rendering `pageRoutes` against its own
+   path). What lives here is what has to be *above* all of that — the route
+   effects that turn a URL into a tab, the one draft-minting front door every
+   "new thread" gesture takes, the device-level dialogs, and the chords.
 
    The sidebar's own pieces are `components/sidebar/`; the route tree and the
    page titles are `components/routes.tsx`, the only importer of the pages. */
 import * as React from "react"
 import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon, XIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
+import type { DockviewApi } from "dockview-react"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
 import { ProgressiveBlur } from "@/components/ui/progressive-blur"
@@ -31,10 +31,8 @@ import { ImportThreadsDialog } from "@/components/import-threads"
 import { NotificationIconButton } from "@/components/notifications/bell"
 import { pageRoutes, usePageHeading } from "@/components/routes"
 import { RightPanelColumn, RightPanelSheet } from "@/components/right-panel/right-panel"
-import { ScopeProvider, routedThreadId as routedThread, useRouteScope } from "@/components/right-panel/scope-dock"
-import { ShellOutlet } from "@/components/shell/outlet"
-import { TabStrip } from "@/components/shell/tab-strip"
-import { TopBarActions, TopBarTitle } from "@/components/shell/top-bar"
+import { ScopeProvider, useRouteScope } from "@/components/right-panel/scope-dock"
+import { TopBarActions } from "@/components/shell/top-bar"
 import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
 import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
@@ -47,7 +45,11 @@ import {
   SidebarNav,
   ThreadSidebar,
 } from "@/components/thread-sidebar"
-import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
+import type { OpenerTarget } from "@/components/workspace/dock-context"
+import { useWorkspaceDock } from "@/components/workspace/dock"
+import { WorkspaceDock } from "@/components/workspace/dock-surface"
+import { PageRoutesProvider } from "@/components/workspace/page-panel"
+import { useShortcut } from "@/hooks/use-hotkey"
 import { useIsMobile } from "@/hooks/use-device"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
@@ -67,12 +69,13 @@ import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
 import { formatChord } from "@/lib/shortcuts"
 import { useStoreHandle, useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { IS_POPOUT } from "@/lib/popout"
 import { openTerminal } from "@/lib/workspace/open-terminal"
-import { openSection, rightSheet, scopeSession, toggleRightPanel, useRightPanel } from "@/lib/right-panel"
-import { useActiveChat } from "@/lib/workspace/open-threads"
-import { adjacentTab, closeTab, pruneTabs, tabAt, tabKeyFor } from "@/lib/workspace/tabs"
-import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
+import { openSection, rightSheet, toggleRightPanel, useRightPanel } from "@/lib/right-panel"
+import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
+import { loadActiveSpace } from "@/lib/spaces"
+import { IS_POPOUT } from "@/lib/popout"
+import { consumeNewTab, useActiveChat } from "@/lib/workspace/open-threads"
+import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
     its open/collapsed state — there it is a column, not an overlay. Here
@@ -88,10 +91,20 @@ function CloseSidebarOnNavigate() {
   return null
 }
 
+/** The thread the address bar names — only on a thread route. `currentThreadId`
+    also reads a legacy `?session=` deep link, which a schedule form carries on
+    its own path, so the read is gated on the two places a thread can be. A
+    trace (`/t/<id>/trace`) docks no chat and names none. */
+function routedThreadId(pathname: string, search: string): string | null {
+  if (pathname !== "/" && !pathname.startsWith("/t/")) return null
+  return currentThreadId(pathname, search)
+}
+
 export function AppShell({
   settings,
   actions,
   loading: bootLoading,
+  failed,
   onAddServer,
 }: {
   settings: ServerSettings
@@ -131,15 +144,21 @@ export function AppShell({
   /* The header's own dialog — device-global, so it belongs to the shell rather
      than to any route or dock group under it. */
   const [viewSettings, setViewSettings] = React.useState(false)
+  const dock = useWorkspaceDock()
   const activeChat = useActiveChat()
   const route = useRouteScope()
   const isMobileShell = useIsMobile()
   const rightView = useRightPanel(route.scope)
+  /* Read by the dock's openers, which are bound once. */
+  const scopeNow = React.useRef(route)
+  scopeNow.current = route
+  const rightNow = React.useRef(rightView)
+  rightNow.current = rightView
   const headingFor = usePageHeading()
 
   const inSettings = location.pathname.startsWith("/settings")
   const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
-  const sessionId = routedThread(location.pathname, location.search)
+  const sessionId = routedThreadId(location.pathname, location.search)
   const active = sessions.find((s) => s.id === sessionId)
   /* Where the thread in front of us was branched from, if anywhere — drawn as
      a chip, followed only by a click. The list holds the trash too, so a
@@ -203,23 +222,183 @@ export function AppShell({
   const startRef = React.useRef({ startThread, openDraftThread })
   startRef.current = { startThread, openDraftThread }
 
-  /* A legacy `?session=<id>` deep link (a schedule form carries one on its own
-     path) is a thread route in a different spelling. */
+  /* ── The URL is the source of truth for the focused tab ──
+     Each mounted chat owns its own ACP connection, so background tabs keep
+     streaming while hidden. Every route that is not a thread is shown in a
+     page tab (`workspace/page-panel.tsx`, `openPage` in the dock): the URL
+     points the browsing tab at the place it names, or opens one. `location.key`
+     is a dependency on purpose — a sidebar row clicked for a page whose tab was
+     just closed is the same path again, and has to open it again. */
+  const pagePath = sessionId ? null : location.pathname + location.search
   React.useEffect(() => {
-    if (location.pathname !== "/") return
-    const legacy = new URLSearchParams(location.search).get("session")
-    if (legacy) void navigate(threadPath(legacy), { replace: true })
-  }, [location.pathname, location.search, navigate])
+    if (!pagePath) return
+    dock.openPage(pagePath, { newTab: consumeNewTab() })
+  }, [pagePath, location.key, dock])
 
-  /* The desktop shell reveals the window once the workspace has mounted. Said
-     once the boot gate lifts, and once only, or the 4s reveal timeout fires on a
-     blank frame. */
-  const signalled = React.useRef(false)
+  /* ── Which thread the tab follows ──
+     The routed thread's *state*, never its row. `sessions` is rewritten by
+     every message this device sends — `session-title` and `turn-active` each
+     map the array, whether or not anything in it moved — so an effect keyed on
+     it re-ran on every send and re-focused the routed tab. That is invisible
+     while the address bar agrees with the panel in front, and a yank when it
+     does not: focusing a terminal or an IDE writes no route on purpose
+     ("focusing a terminal must not navigate away from the thread it belongs
+     to"), so the URL can still name a thread that is not the one in front, and
+     the send then pulled the dock back to it mid-sentence. Only a change that
+     alters whether the tab is opened at all is a dependency: absent (mint a
+     draft), draft (spend the console), known (open or focus it). `location.key`
+     stays, for the sidebar row clicked for a tab that was just closed — the
+     same path again, and it has to open it again. */
+  const routed = sessions.find((session) => session.id === sessionId)
+  const routedState = !routed ? "absent" : routed.draft ? "draft" : "known"
+  /* draft → known is the agent spawning, not a navigation: keyed on it, the
+     effect re-opened (focused) the thread seconds after the reader had moved
+     to another tab. Only absent ↔ present re-runs it; `routedState` is still
+     read fresh inside, since any run happens on a render that holds it. */
+  const routedKnown = routedState !== "absent"
+  /* Flips once, when the spaces list first answers — a dependency so a cold
+     load at another space's thread is re-asked then, and never a switch's own
+     id, or the switch below would bounce off the URL it is about to replace. */
+  const spacesKnown = activeSpaceId !== null
   React.useEffect(() => {
-    if (loading || signalled.current) return
-    signalled.current = true
-    window.desktop?.signalWorkspaceReady?.()
-  }, [loading])
+    if (!sessionId) return
+    if (location.search) void navigate(threadPath(sessionId), { replace: true }) // legacy ?session=
+    /* A thread from another space (search, a notification, a pasted link)
+       takes you to its space rather than landing in this one's dock; the
+       switch effect opens it once that space's tabs are in. */
+    const owner = projects.find((project) => project.id === routed?.projectId)?.spaceId
+    if (owner && activeSpaceId && owner !== activeSpaceId) {
+      keepRef.current = sessionId
+      setActiveSpace(owner)
+      return
+    }
+    if (routedState !== "absent") {
+      /* Always a tab of its own. Opening a thread used to *replace* the chat
+         you were reading — the sidebar as navigation — and a new tab was the
+         opt-in a ⌘-click or a menu row asked for. It is the other way round
+         now: a thread you opened is a thread you meant to keep, and the one
+         thing that closed a transcript you were mid-way through was clicking
+         the next one. An already-open thread is still focused, not duplicated
+         (`openPanel` answers on the panel id), so this only ever adds a tab
+         for a thread that had none. */
+      /* The console is spent by the thread it started. Asked before the open,
+         because opening a chat is what makes it the active panel — after that
+         the console is never what is in front of anyone. A routed *draft* is
+         the signature: the console mints one and navigates to it before the
+         send, so this can only ever spend a console you were just typing in,
+         never a page tab you are merely reading. */
+      if (routedState === "draft") dock.consumeConsole()
+      /* A tab is an outlet: a thread you go to takes the place of the tab in
+         front, and an already-open one is focused. A thread that is still a
+         draft is a *new* thread, so it gets a tab of its own — as does a
+         modified click. */
+      dock.openChat(sessionId, { newTab: routedState === "draft" || consumeNewTab() })
+      /* Panels a page without a dock asked to open beside this thread. After
+         the chat, so they split against it. */
+      for (const entry of consumeQueuedPanels()) dock.openPanel(entry.panel, entry.options)
+      return
+    }
+    /* A route for a thread nobody knows about: an unsent draft after a reload
+       (they only ever lived in the tab that made them) or one since purged.
+       Either way an empty thread on that id beats a dead end — and if it is
+       sent, the id in the URL bar is the id the server gets. Gated on `ready`
+       so this cannot fire before bootstrap has filled sessions in. */
+    if (ready) startRef.current.openDraftThread({ id: sessionId })
+    // `navigate` and `location.search` are read, not depended on: the legacy
+    // redirect above clears the search, and re-running on that would only
+    // open the same tab a second time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, routedKnown, ready, spacesKnown, dock, location.key])
+
+  /* Drop tabs whose thread or project is gone — but never against a session
+     list that never arrived. `loading` alone is not that test: a failed
+     bootstrap still resolves (`finally` sets it), and pruning every restored
+     chat against an empty list closes the whole workspace, which the debounced
+     layout save then writes to disk. */
+  /* ── A tab belongs to its project's space ──
+     A thread is its project's, and a project is its space's, so the tabs of
+     the space in front of you are exactly those — anything else in the dock is
+     a tab that landed in the wrong space (or was filed there when spaces
+     arrived) and is *filed under its own space*, not closed — a project moved
+     to another space takes its tabs with it, and they open when that space is
+     next in front (`switchSpace`). A thread or project with no space is everyone's,
+     as in the sidebar. `spaceRef` is the space the *dock* holds: moved only by
+     the switch effect, never by the click, so a prune between the click and
+     the swap cannot close the outgoing space's tabs before they are filed. */
+  const spaceRef = React.useRef<string | null>(null)
+  /* A thread routed from another space, opened once its space is in front. */
+  const keepRef = React.useRef<string | null>(null)
+  const pruneDock = React.useCallback(() => {
+    const live = storeHandle.getState().sessions
+    if (live.length === 0) return
+    const space = spaceRef.current
+    /* The space a tab's project is filed under when it is not this one — the
+       dock files the tab there rather than closing it (`prunePanels`). */
+    const elsewhere = (projectId?: string) => {
+      const owner = projects.find((project) => project.id === projectId)?.spaceId
+      return space && owner && owner !== space ? owner : null
+    }
+    dock.prunePanels(
+      {
+        sessions: live.map((session) => session.id),
+        projects: [HOME_PROJECT_ID, ...projects.map((project) => project.id)],
+      },
+      (panel) =>
+        panel.kind === "chat"
+          ? elsewhere(live.find((session) => session.id === panel.sessionId)?.projectId)
+          : panel.kind === "terminal" || panel.kind === "web"
+            ? elsewhere(panel.projectId)
+            : null
+    )
+  }, [projects, dock, storeHandle])
+
+  React.useEffect(() => {
+    if (loading || failed) return
+    /* The session list is read off the store rather than off this render's
+       snapshot. `sessions` is a `useSyncExternalStore` value, and the store
+       publishes its ref in a layout effect — so a commit that flips `loading`
+       (the boot promise resolving) can render before that ref caught up, and
+       this effect then runs holding an empty list while the store already holds
+       every row. Pruning on that empty list closed the very tabs the restore had
+       just put back, and the debounced layout save wrote the loss to disk — the
+       same failure the `failed` gate above exists to prevent, arriving by a
+       different door. The store is authoritative at the moment the effect runs,
+       so it is what the prune is given; the guard below is the backstop for a
+       genuinely empty one. */
+    pruneDock()
+  }, [loading, failed, sessions, pruneDock])
+
+  /* ── Switching spaces swaps the dock ──
+     Each space keeps its own tabs (the layout store is keyed by space), so a
+     switch files the tabs you were looking at under the space you were in and
+     brings in the next space's. */
+  React.useEffect(() => {
+    if (loading || failed) return
+    const previous = spaceRef.current
+    spaceRef.current = activeSpaceId
+    if (previous === activeSpaceId) return
+    dock.switchSpace(previous, activeSpaceId)
+    pruneDock()
+    const keep = keepRef.current
+    keepRef.current = null
+    if (keep) dock.openChat(keep, { newTab: true })
+  }, [activeSpaceId, loading, failed, dock, pruneDock])
+
+  const handleDockReady = React.useCallback(
+    (api: DockviewApi) => {
+      dock.onReady(api)
+      /* Same bargain as the route effects above, said here too because they
+         can run before the dock has an api (a cold load, a theme change
+         remounting DockviewReact): whatever the route names — a thread, or a
+         page — gets its tab once the layout is restored, and `newTab` keeps a
+         thread from replacing whatever was in front of you. */
+      const route = routeRef.current
+      if (route.sessionId) dock.openChat(route.sessionId, { newTab: true })
+      else dock.openPage(route.path)
+      window.desktop?.signalWorkspaceReady?.()
+    },
+    [dock]
+  )
 
   /* The manifest's "New thread" app shortcut (see client/vite.config.ts) can
      only name a fixed URL, and a thread id is minted per thread — so it lands
@@ -237,51 +416,63 @@ export function AppShell({
     startRef.current.startThread()
   }, [ready, location.search])
 
+  /* One opener for every workspace panel, so the tab strip's + menu, the
+     chords below and the palette cannot drift apart.
+
+     **A + opens a new one; a chord shows you the one you have.** Pressing the
+     button that means "open a terminal" a second time and being handed the
+     terminal already open is the dock refusing the thing the strip's + is for
+     — and with groups there is a second place to put it. So the default mints
+     a fresh instance (`viewId`, or a whole new terminal), and `reuse` is what
+     the chords and the thread's own links pass: those mean "show me the IDE
+     for this project", which is a different question. */
+  const openWorkspacePanel = React.useCallback(
+    (kind: PanelKind, reuse?: boolean, target?: OpenerTarget) => {
+      const into = target?.into
+      /* Terminals and the preview live in the right panel of whatever is in
+         front — a thread's worktree, a project, or $HOME. */
+      if (kind === "terminal" || kind === "web") {
+        const here = scopeNow.current
+        if (kind === "web") return openSection(here.scope, "preview")
+        const existing = rightNow.current.terminals.length > 0
+        if (existing && reuse) return openSection(here.scope, "terminal")
+        const meta = sessions.find((session) => session.id === here.sessionId)
+        void openTerminal(
+          here.scope,
+          meta?.projectId ?? here.projectId ?? HOME_PROJECT_ID,
+          meta ? { cwd: meta.worktree?.path, sessionId: meta.id } : {}
+        )
+        return
+      }
+      /* Only ever the *second* panel's suffix. The first of a kind keeps the
+         plain panel id every stored layout and
+         every reusing caller already names, so nothing has to migrate and a
+         chord still lands on the one the + opened. */
+      const second = (existing: unknown) =>
+        !reuse && existing ? { viewId: crypto.randomUUID().slice(0, 8) } : {}
+      /* Boards are the server's, not a project's, so this one opens with no
+         project at all — the only kind that does. Reopened with the board it
+         was left on, not reset to "no board": the descriptor is where a tasks
+         panel keeps its place. */
+      if (kind === "tasks") {
+        const existing = dock.listPanels().find((entry) => entry.panel.kind === "tasks")
+        if (existing && reuse) dock.openPanel(existing.panel, { direction: "right" })
+        else dock.openPanel({ kind: "tasks", ...second(existing) }, { direction: "right", into })
+        return
+      }
+    },
+    [dock, sessions]
+  )
+
   /* Mirrors the palette's "New thread" entry — the palette advertises the
      shortcut, so something has to answer for it. The chords are named in
      lib/shortcuts, which is also what the help sheet prints. */
   useShortcut("newThread", () => startRef.current.startThread())
   useShortcut("terminal", () => {
     if (rightView.open && rightView.section === "terminal") return toggleRightPanel()
-    if (rightView.terminals.length > 0) return openSection(route.scope, "terminal")
-    const meta = sessions.find((session) => session.id === route.sessionId)
-    void openTerminal(
-      route.scope,
-      meta?.projectId ?? route.projectId ?? HOME_PROJECT_ID,
-      meta ? { cwd: meta.worktree?.path, sessionId: meta.id } : {}
-    )
+    openWorkspacePanel("terminal", true)
   })
   useShortcut("rightPanel", () => (isMobileShell ? rightSheet.set(true) : toggleRightPanel()))
-  /* The open tabs: the walk, the digits, and the close. */
-  const activeTabKey = tabKeyFor(location.pathname, location.search)
-  const walkTabs = (delta: number) => {
-    const next = adjacentTab(delta, activeTabKey)
-    if (next) void navigate(next.path)
-  }
-  useShortcut("nextTab", () => walkTabs(1))
-  useShortcut("prevTab", () => walkTabs(-1))
-  useShortcut("closeTab", () => {
-    if (!activeTabKey) return false
-    const next = closeTab(activeTabKey, activeTabKey)
-    if (next) void navigate(next)
-  })
-  /* Digits count the tabs, left to right. Bound through `use-hotkey` so a dialog
-     or the slash menu can out-rank it. */
-  useHotkey("mod+1 mod+2 mod+3 mod+4 mod+5 mod+6 mod+7 mod+8 mod+9", (event) => {
-    const tab = tabAt(Number(event.key) - 1)
-    if (!tab) return
-    event.preventDefault()
-    void navigate(tab.path)
-  })
-
-  /* Drop thread tabs whose thread is gone — but never against a session list
-     that never arrived (an empty one would close every tab), and never the
-     thread in the address bar (the route mints a draft for an unknown id). */
-  React.useEffect(() => {
-    if (loading || sessions.length === 0) return
-    const live = new Set(sessions.map((session) => session.id))
-    pruneTabs((id) => live.has(id), sessionId)
-  }, [loading, sessions, sessionId])
   /* changeModel / changeProject / chooseMcp are the composer's: they open its
      own menus (`Composer`, `ConfigPopover`), which list everything — a draft's
      agent and profile, effort, mode, MCPs — where the palette's pages list only
@@ -319,9 +510,9 @@ export function AppShell({
       } as React.CSSProperties}
     >
       {/* First in the tree so its effect runs before any sibling subtree's:
-          `navigateTo` must already have the router's navigate by the time
-          anything outside React (a notification click, a push deep link) asks
-          for it — the location.assign fallback would be a full reload. */}
+          the dock fires onDidActivePanelChange while restoring its saved
+          layout, and navigateTo must already have the router's navigate by
+          then — the location.assign fallback would be a full reload. */}
       <ScopeProvider>
       <NavigationBridge />
       <CloseSidebarOnNavigate />
@@ -332,9 +523,11 @@ export function AppShell({
           header, which is on every route. */}
       <Sidebar collapsible="offcanvas">
         {/* The brand row is the app header's own row: the same top offset (the
-            status-bar inset) and the same height (`--app-header-row-h`), so the
-            brand and Search stand on one line with the header's controls across
-            the seam. */}
+            status-bar inset, then the frame gap the column keeps above its
+            header) and the same height (`--app-header-row-h`), so the brand
+            and Search stand on one line with the tab strip's chips across the
+            seam (the frame gap is zero in the flush layout, so the offset is the
+            status-bar inset alone). */}
         <SidebarHeader className="gap-2 px-2 pt-[var(--app-inset-top)] pb-0 md:pt-[calc(var(--app-inset-top)+var(--app-frame-gap))]">
           <div data-drag-region className="flex h-[var(--app-header-row-h)] items-center gap-2">
             <button
@@ -426,68 +619,91 @@ export function AppShell({
         </SidebarFooter>
         {sidebar.resizer}
       </Sidebar>
-      {/* The column the app is read in, beside the rail: the centre pane and
-          the right panel under one header row.
+      {/* The column the app is read in: a plain `<main>` beside the rail. The
+          header row and the dock's strips stand on the rail's own tone (one
+          band across the top of the window) and each group's content fills
+          what is below its strip on `--background`.
 
           `min-h-0` has to be here: the provider is pinned to `100dvh`, and it
           is what lets the scrolling column inside shrink to it. */}
       <SidebarInset className="flex min-h-0 flex-col overflow-hidden">
-        {/* An overlay spanning the whole top, INSIDE `SidebarInset`: the centre
-            pane and the right panel both scroll up under it, softened by the
-            progressive blur, and both pad by `--app-header-h` to start below it.
+        {/* An overlay spanning the whole top, INSIDE `SidebarInset` — it is the
+            card's bar, not the window's. The dock's top groups join this row
+            (`data-header-band`; `syncHeaderOverlap` in workspace/dock-header.ts measures
+            how much of a panel it covers, which a constant answered wrongly
+            for every group not at the top), and a strip cannot join a row
+            above the box it is in. Standing it outside the sidebar wrapper as
+            a full-width strip was tried and reverted: four surfaces
+            re-pointed for one bar.
 
             `pointer-events-none`, with each occupant turning it back on: its
-            own box is nothing but the blur. Left live it swallows every press
-            that lands between the controls, and every attempt to select the
-            first line of a transcript scrolled under it.
+            own box is nothing but the ground its chips stand on plus the
+            blur. Left live it swallows every press that lands between them —
+            every tab of a group standing in this row, and every attempt to
+            select the first line of a transcript scrolled under it.
 
             Below `md` the header is the same container as the transcript and
-            the composer: `px-4`, the 16px gutter they keep. `px-1` above `md`,
-            where the chips stand on the edge of the column. */}
+            the composer: `px-4`, the 16px gutter they keep, so the bar's box
+            starts where the content below it does. (It was 9px — the glyph's
+            own edge on the 16px line rather than the chip's — which lined up a
+            control with the text but made the bar a wider container than
+            everything under it.)
+            `px-1` above `md`, where the chips stand on the card's own edge. The
+            tab strip in the band pads by this box's content edge
+            (`--dock-band-left`, workspace/dock-header.ts), so it follows. */}
         <header
           data-app-header
           data-drag-region
           className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[var(--app-inset-top)] md:px-1"
         >
-          {/* The transcript scrolls up under this bar, so it carries a progressive
-              blur that takes those lines out of focus before they reach the
-              controls. Caveat: a backdrop filter turns off the window's
-              vibrancy/acrylic across the band. */}
+          {/* The strip is an overlay at every width (`index.css`) and the
+              transcript scrolls up under the tabs and this bar, so the bar
+              carries a progressive blur that takes those lines out of focus
+              before they reach the chips. Caveat: a backdrop filter turns off
+              the window's vibrancy/acrylic across the band. */}
           <ProgressiveBlur
             position="top"
             height="calc(100% + 1rem)"
             blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
             className="absolute inset-x-0 top-0 -z-10"
           />
-          {/* The device-level controls on the left, where you are in the middle,
-              and the right panel's doors at the end. */}
+          {/* The two device-level controls. No title and no crumb — every
+              route is a tab, and the tab says the name; a thread keeps only
+              its fork badge here. Wrapped and named so the dock can measure
+              what a strip in this row has to reserve (`--dock-band-left`).
+              Nothing on the right: the bell and the palette stand in the
+              sidebar header. */}
+          {/* One 4px gutter at every width, the same one the tab strip keeps
+              between its tabs and its +/list buttons (`tab-actions.tsx`): this
+              cluster stands in that row, and 8px here against 4px there read
+              as two spacings on one line. */}
           <div data-header-left className="flex min-w-0 items-center gap-1">
-            <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
-            {/* Which space the app is showing — the one control in this row that
-                says where you are, beside the one that opens the list of where
-                you can go. */}
-            {/* Height of the chip, width of its label: HEADER_CHIP is a square,
-                which clipped the name down to the glyph. */}
-            <SpaceSwitcher
-              className={cn(
-                "h-[var(--dock-chip-h)] shrink-0 px-2.5 max-md:size-[var(--dock-chip-h)] max-md:justify-center max-md:gap-0 max-md:px-0",
-                STRIP_GROUND
-              )}
-            />
-            {/* How transcripts are drawn, on this device — beside the one other
-                control that is also this device's and not this route's.
-                Sliders, not a cog: a cog in this app means the *server's*
-                settings route. */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="View settings"
-              title="How transcripts are drawn, on this device"
-              className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
-              onClick={() => setViewSettings(true)}
-            >
-              <SlidersHorizontalIcon className="size-3.5" />
-            </Button>
+              <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
+              {/* Which space the app is showing — the one control in this row that
+                  says where you are, beside the one that opens the list of where
+                  you can go. */}
+              {/* Height of the chip, width of its label: HEADER_CHIP is a square,
+                  which clipped the name down to the glyph. */}
+              <SpaceSwitcher
+                className={cn(
+                  "h-[var(--dock-chip-h)] shrink-0 px-2.5 max-md:size-[var(--dock-chip-h)] max-md:justify-center max-md:gap-0 max-md:px-0",
+                  STRIP_GROUND
+                )}
+              />
+              {/* How transcripts are drawn, on this device — beside the one other
+                  control that is also this device's and not this route's.
+                  Sliders, not a cog: a cog in this app means the *server's*
+                  settings route. */}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="View settings"
+                title="How transcripts are drawn, on this device"
+                className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
+                onClick={() => setViewSettings(true)}
+              >
+                <SlidersHorizontalIcon className="size-3.5" />
+              </Button>
             {/* A branch says where it came from, once, beside the tab that
                 names it — the one thing provenance is for. Clicking goes to the
                 parent thread as it is now, not to the turn it was cut at. */}
@@ -518,27 +734,27 @@ export function AppShell({
               </button>
             )}
           </div>
-          {isMobileShell ? (
-            <TopBarTitle heading={headingFor(location.pathname + location.search)} />
-          ) : (
-            <TabStrip
-              headingFor={headingFor}
-              onNewThread={() => startRef.current.startThread()}
-            />
-          )}
           <TopBarActions />
         </header>
-        {/* The centre pane and the right panel. The centre renders the route
-            table directly — a thread, or any page — and the panel is the one
-            column of tools about it. */}
+        {/* The main area is the dock, on every route. The card is each group's
+            content container (`index.css`), under its tabs. The dock outlives
+            the route: background tabs keep their ACP connections and scroll
+            positions while another tab is focused. */}
         <div className="flex min-h-0 flex-1">
-          <ShellOutlet
-            routes={routes}
-            headingFor={headingFor}
-            actions={actions}
-            ready={ready}
-            openDraft={(opts) => startRef.current.openDraftThread(opts)}
-          />
+          <div className="relative min-w-0 flex-1">
+          <PageRoutesProvider value={{ routes, headingFor }}>
+            <WorkspaceDock
+              actions={actions}
+              dock={dock}
+              onReady={handleDockReady}
+              /* The strip's + is the app's "new tab": a new thread, in a tab of
+                 its own. The landing console is where the dock lands when the
+                 last tab closes, not what + opens. */
+              onNewTab={() => startRef.current.startThread()}
+              onOpenPanel={openWorkspacePanel}
+            />
+          </PageRoutesProvider>
+          </div>
           <RightPanelColumn actions={actions} />
         </div>
       </SidebarInset>
@@ -546,6 +762,7 @@ export function AppShell({
         open={palette.open}
         onOpenChange={palette.setOpen}
         actions={actions}
+        dock={dock}
         onNewThread={startThread}
         onNewProject={() => void navigate(settingsFormPath("projects"))}
         onImportThreads={() => setImporting(true)}

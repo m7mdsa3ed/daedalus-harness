@@ -59,6 +59,7 @@ import { cn } from "@/lib/utils"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
 import type { Actions } from "@/lib/actions"
+import type { WorkspaceDock } from "@/components/workspace/dock-context"
 import {
   PAGE_LABEL,
   PAGE_PLACEHOLDER,
@@ -118,6 +119,7 @@ export function CommandPalette({
   open,
   onOpenChange,
   actions,
+  dock,
   onNewThread,
   onNewProject,
   onImportThreads,
@@ -128,6 +130,7 @@ export function CommandPalette({
   open: boolean
   onOpenChange: (open: boolean) => void
   actions: Actions
+  dock: WorkspaceDock
   /** Mints a draft thread and routes to it. With `text`, it also sends that
       first message — see `startThread` in app-shell. */
   onNewThread: (opts?: { text?: string; projectId?: string }) => void
@@ -194,6 +197,7 @@ export function CommandPalette({
       descend,
       back,
       actions,
+      dock,
       newThread: onNewThread,
       newProject: onNewProject,
       importThreads: onImportThreads,
@@ -209,6 +213,7 @@ export function CommandPalette({
       descend,
       back,
       actions,
+      dock,
       onNewThread,
       onNewProject,
       onImportThreads,

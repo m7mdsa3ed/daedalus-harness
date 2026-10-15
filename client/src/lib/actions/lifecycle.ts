@@ -7,7 +7,6 @@ import { uuid } from "../uuid"
 import { api } from "../settings"
 import { forgetDraft, patchDraft } from "../draft-sessions"
 import { forgetRightPanel, threadScope } from "../right-panel"
-import { closeTab } from "../workspace/tabs"
 import { postJson, type ActionsCore } from "./core"
 
 export function lifecycleActions(core: ActionsCore) {
@@ -85,7 +84,6 @@ export function lifecycleActions(core: ActionsCore) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
         forgetRightPanel(threadScope(sessionId))
-        closeTab(`t:${sessionId}`, null)
         return
       }
       threads.destroy(sessionId)
@@ -112,7 +110,6 @@ export function lifecycleActions(core: ActionsCore) {
             dispatch({ type: "drop-draft-session", id })
             forgetDraft(settings.id, id)
             forgetRightPanel(threadScope(id))
-            closeTab(`t:${id}`, null)
             continue
           }
           threads.destroy(id)
@@ -135,7 +132,6 @@ export function lifecycleActions(core: ActionsCore) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
         forgetRightPanel(threadScope(sessionId))
-        closeTab(`t:${sessionId}`, null)
         return
       }
       threads.destroy(sessionId)

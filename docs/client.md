@@ -1166,63 +1166,51 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   that turn ends instead. See `docs/profiles-and-config.md`. The rule generalises: a dialog
   in front of a reversible action is a tax on every use of it to insure against one.
 
-## The shell and the right panel
+## The shell, the dock and the right panel
 
-The app is chat-first. There is no dock and no layout to persist: **the address bar is the only
-state about what is open**, and the desktop's tabs are a list layered over it.
+The app is chat-first: the sidebar rail, a **dockview workspace** of threads and pages in the centre,
+and **one right panel** for the tools about what is in front of you.
 
-**The frame** (`components/app-shell.tsx`): the sidebar rail (plain shadcn `sidebar` variant), then
-one column holding the centre pane and the right panel under an overlay header. The header carries
-the sidebar toggle, the space switcher, where you are (`shell/top-bar.tsx`) and the panel's doors
-(terminal, preview, panel toggle), over a progressive blur the content scrolls under. Both the
-centre pane and the panel pad by `--app-header-h` to start below it.
+**The frame** (`components/app-shell.tsx`): the sidebar rail (plain shadcn `sidebar` variant), then one
+column with an overlay header — the sidebar toggle, the space switcher, view settings and, at the end,
+the panel's doors (`shell/top-bar.tsx`: terminal, preview, panel toggle; marked `data-header-right` so
+the dock's top-right strip reserves room) — over a progressive blur. The dock (`workspace/`) fills the
+rest, with `RightPanelColumn` beside it.
 
-**The centre pane** (`shell/outlet.tsx`) renders the route table (`routes.tsx`) against the real
-location. A thread is `/t/:sessionId` → `shell/thread-route.tsx`, which holds the connection
-(`useThreadConnection`) while mounted and does what the shell used to do for a thread tab: redirect
-a legacy `?session=`, switch to the thread's space, mint a draft for an id nobody knows, and record
-the visit. The wrapper is keyed by place, not URL, so a search param does not replay the entrance.
-`ThreadView` is always `docked` (no inspector of its own): its readings are the panel's.
+**The dock** holds two panel kinds in use, `chat` and `page` (`lib/workspace/panels.ts`; `tasks`
+remains declared). Tabs are dockview's: drag, split, tab groups, float, popout, pin, bottom panel,
+saved layouts, `⌘⇧T` reopen. Terminals and the preview are **not** panels of it.
 
-**Tabs** (`shell/tab-strip.tsx`, `lib/workspace/tabs.ts`): a desktop keeps the threads and pages you
-are in as tabs in the header row. A tab is a route — `{key, path, sessionId?}` — and which one is in
-front is read off the address bar (`tabKeyFor`). `syncTab` (run by the outlet on every location
-change) adds a thread tab or repoints a page tab; a thread is `t:<id>`, a page `p:<pageKey>`
-(every settings section is one tab, a project's page and a trace are places of their own), and
-`/` has none. `closeTab` answers the path to show next (right neighbour, else left, else `/`).
-Reorder is drag and drop; middle click and Alt+W close; ⌘/Ctrl+1…9 jump; Alt+↓/↑ walk. The store is
-device-local per server (`daedalus.tabs.v1:<serverId>`) and in memory in a popout; `pruneTabs`
-drops tabs whose thread is gone, only against a session list that arrived. `useOpenThreads` is the
-thread tabs in order (the sidebar keeps their rows loaded; bootstrap re-mints drafts for them);
-`useActiveChat` is the route. The outlet keeps the last six open threads mounted (`ThreadPane`:
-its own connection, scope, inspector door and `jumpRefFor(sessionId)`), hiding all but the one in
-front; a phone keeps one. Status is the title's colour, as in the sidebar.
+**A tab is an outlet** (`dock.tsx`, `openPage` / `openPanel`). Navigating — a sidebar row, ⌘K, a link —
+repoints the tab in front: the active thread or page *becomes* the destination, at the same place in
+the strip. It opens a tab of its own for a new thread (a routed draft), the strip's +, a ⌘/Ctrl- or
+middle-click (`openNextInNewTab` / `consumeNewTab` in `lib/workspace/open-threads.ts`, spent by the
+route effect), and when the tab in front is pinned or neither a thread nor a page. A place that is
+already open (a thread, a settings tab, a project page) is focused, not duplicated. The route effects
+in `app-shell.tsx` are the only thing that turns a URL into a tab, and the dock writes the focused
+panel's path back to the URL.
 
-**The right panel** (`components/right-panel/`, `lib/right-panel.ts`): a rail of sections and the one
-in front. Open/width are the device's; section, shells and preview are the scope's (`t:<id>`,
-`p:<id>`, `home`). A scope offers `changes plan agents details tokens trajectory terminal preview`
-(a thread) or `terminal preview` (anything else). `ScopePane` mounts a section the first time it is
-in front and keeps it hidden; `useMountedScopes` keeps the last three scopes. A closed panel mounts
-nothing — a PTY is the server's and replays its scrollback on reattach. On a phone it is a
-full-screen `Sheet`, and **the sheet's open flag is not stored** (`rightSheet`), so a reload never
-lands on an overlay.
+**A thread tab** is `workspace/chat-panel.tsx` → `workspace/thread-body.tsx`: the transcript with its
+scope (`ScopeBoundary`), the inspector door ("Open in inspector" → the right panel) and the ref the
+readings scroll it through (`lib/thread-jump.ts`). The thread's tools are the right panel's.
 
-**The terminal and the preview** are the panels the dock used to host, unchanged apart from taking a
-`PanelHandle` (id, `setTitle`, `updateParameters`) instead of dockview's api. They open things
-through `useDock()`; `ScopeBoundary` (`right-panel/scope-dock.tsx`) provides that context bound to a
-scope and answers the four doors they use — `openPanel`, `closePanel`, `registerCloseGuard`,
-`isPanelOpen` — against the store, with a chat, page or the board going to the router. Any other
-`WorkspaceDock` method is a bug and warns. A thread's shell starts in its worktree
-(`cwd`, `sessionId`) and dies with the thread; a helper's shell is `closeOnExit`.
+**The right panel** (`components/right-panel/`, `lib/right-panel.ts`): a rail of sections and the one in
+front. Open/width are the device's; section, shells and preview are the scope's (`t:<id>`, `p:<id>`,
+`home`), and the scope is read off the address bar. A scope offers `changes plan agents details tokens
+trajectory terminal preview` (a thread) or `terminal preview` (anything else). A section is mounted the
+first time it is in front and kept hidden; the last three scopes stay mounted. A closed panel mounts
+nothing — a PTY is the server's and replays its scrollback on reattach. On a phone it is a full-screen
+sheet whose open flag is **never persisted** (`rightSheet`).
 
-**Jumps**: a reading in the panel scrolls the transcript through `ThreadJumpContext` (published by
-`ThreadView`'s `PublishJump`); the palette's in-thread search uses the same ref and navigates to the
-thread when none is registered.
+**The terminal and the preview** are the panels the dock used to host, taking a `PanelHandle` (id,
+`setTitle`, `updateParameters`) instead of dockview's api. They open things through `useDock()`;
+`ScopeBoundary` (`right-panel/scope-dock.tsx`) provides that context bound to a scope and answers the
+doors they use — `openPanel`, `closePanel`, `registerCloseGuard`, `isPanelOpen` — against the store, with
+a chat, page or the board going to the router. Any other `WorkspaceDock` method warns. A thread's shell
+starts in its worktree and dies with the thread; a helper's shell is `closeOnExit`.
 
 **Chords** (`lib/shortcuts.ts`): ⌘J toggles the terminal section (creating a shell if there is none),
-⌘⌥B the panel, Alt+↓/↑ (and ⌘/Ctrl+Tab on desktop) walk the tabs, Alt+W closes one, ⌘/Ctrl+1…9
-jump, ⌘B the sidebar.
-Split, pane and reopen chords no longer exist; a stored binding for one drops silently.
+⌘⌥B the panel; the tab, split, pane and reopen chords are the dock's.
 
 ## Routines and schedules pages
 

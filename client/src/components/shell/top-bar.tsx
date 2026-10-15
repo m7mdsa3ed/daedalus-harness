@@ -84,7 +84,7 @@ export function TopBarActions() {
   const chip = cn(HEADER_CHIP, "pointer-events-auto shrink-0 [-webkit-app-region:no-drag]")
   const showing = (section: "terminal" | "preview") => view.open && view.section === section
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-1">
+    <div data-header-right className="ml-auto flex shrink-0 items-center gap-1">
       <Button
         variant="ghost"
         size="icon-sm"

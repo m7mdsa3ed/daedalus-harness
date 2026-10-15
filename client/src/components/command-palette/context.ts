@@ -4,6 +4,7 @@
 import * as React from "react"
 
 import type { Actions } from "@/lib/actions"
+import type { WorkspaceDock } from "@/components/workspace/dock-context"
 
 /** Each page is a screen of the palette. `root` is the command list; the rest
     are entered from it and exited with Backspace, Escape or the chip in the
@@ -41,6 +42,7 @@ export interface Palette {
   descend: (page: PageId, opts?: { query?: string; askText?: string }) => void
   back: () => void
   actions: Actions
+  dock: WorkspaceDock
   newThread: (opts?: { text?: string; projectId?: string }) => void
   newProject: () => void
   importThreads: () => void

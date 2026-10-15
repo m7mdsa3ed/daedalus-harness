@@ -442,17 +442,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   stays closed and a sent thread comes from the server. **It takes the caret itself** — a
   draft's composer is focused when it is the routed thread or when the caller says so
   (`autoFocus`, which is the console's, whose route is `/`); never on touch.
-- **Chat-first shell: the route is the only state about what is open, and tabs are a layer over
-  it.** The sidebar rail, the centre pane (`shell/outlet.tsx`) and one right panel
-  (`right-panel/`). A desktop shows the threads and pages you are in as **tabs** in the header
-  row (`shell/tab-strip.tsx`, `lib/workspace/tabs.ts`): **a tab is a route, not a layout** — the
-  address bar says which is in front, a thread is a tab of its own (opening one adds it, never
-  replaces), a page is a place whose tab's path moves (one for settings, one per project, the
-  board, the inbox), and `/` is no tab. Closing the one in front moves to its neighbour, the last
-  one to `/`. Open thread tabs stay mounted and hidden (`ThreadPane`, last six; one on a phone,
-  which has no strip) so a half-written message and a scroll position survive. There are **no
-  splits, floats, popouts or layout presets**. Device-local, per server; a popout keeps its tabs in
-  memory only.
+- **Chat-first shell: a dockview workspace in the centre, one right panel beside it, and a tab is an
+  outlet.** The sidebar rail, the centre (`workspace/dock-surface.tsx`, controller `dock.tsx`) and
+  the right panel (`right-panel/`). The dock holds **threads and pages** — nothing else — as tabs you
+  can drag, split, group, float, pop out and save as layouts, as before. **A tab is navigational,
+  like a browser's:** going to a page or a thread navigates the tab in front — the active thread or
+  page tab *becomes* it, in place — and opens a tab of its own only for a new thread (a draft is a
+  new thread), the strip's +, a ⌘/Ctrl- or middle-click on a sidebar row (`openNextInNewTab`, spent by
+  the route effect), or when the tab in front is pinned or not a thread/page. A place already open
+  (a thread, a settings tab, a project's page) is focused, never duplicated. Terminals and the
+  preview are **not** dock panels: they are the right panel's (`ThreadBody` renders the transcript in
+  a thread tab with its scope, inspector door and `jumpRefFor(sessionId)`).
 - **The right panel is scoped, and its scope is read off the address bar.** `lib/right-panel.ts`
   holds the device's `open`/`width` and, per scope (`t:<thread>`, `p:<project>`, `home`), the
   section in front, the shells and the preview. A thread offers changes, plan, agents, details,
@@ -462,10 +462,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`rightSheet`). Everything that used to knock on `useDock()` — the terminal, the preview, file
   links, Source Control — still does, against `ScopeBoundary`'s shim (`right-panel/scope-dock.tsx`),
   which routes a terminal or preview into the store and a chat, page or the board to the router.
-- **The header is an overlay on the centre pane and the panel**, with a progressive blur: both pad by
-  `--app-header-h` to start below it, and a section inside the panel zeroes
-  `--dock-content-overlap` because the panel's rail already clears the header. The sidebar's brand
-  row is the same height (`--app-header-row-h`), so the two share a line across the seam.
+- **The header is an overlay on the dock and the panel**, with a progressive blur: a top group's strip
+  joins the header's row (`data-header-band`, `--dock-band-left`/`-right` measured against
+  `[data-header-left]` and `[data-header-right]`), the right panel pads by `--app-header-h`, and a
+  section inside the panel zeroes `--dock-content-overlap` because its rail already clears the
+  header. The sidebar's brand row is the same height (`--app-header-row-h`).
 - **Only the plain `sidebar` variant exists** (no `inset`, no `floating`): a flush rail with no border
   and the column beside it filling the rest.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never

@@ -7,6 +7,7 @@ import { uuid } from "./uuid"
 import { clearPersistedCache } from "./queries/persist"
 import { clearDraftSessions } from "./draft-sessions"
 import { clearActiveSpace } from "./spaces"
+import { clearLayout } from "./workspace/layout"
 import { clearRightPanelState } from "./right-panel"
 
 export interface ServerSettings {
@@ -127,6 +128,7 @@ export function removeServer(id: string): void {
   const store = read()
   const servers = store.servers.filter((s) => s.id !== id)
   write({ servers, activeId: store.activeId === id ? (servers[0]?.id ?? null) : store.activeId })
+  clearLayout(id)
   clearRightPanelState()
   // The space this device was looking at: an id that names a row on a server
   // nothing can reach again.

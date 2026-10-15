@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  The empty room a popped-out panel is moved into.
+
+  Dockview opens this page (`popoutUrl`, see components/workspace/dock.tsx) and
+  then reparents the panel's live DOM into it, so nothing here loads the app:
+  no script, no module, no second React root. It is deliberately in `public/`
+  and not an entry point — Vite copies it verbatim, and it must stay a page
+  with nothing in it that could try to become a second instance of Daedalus.
+
+  Styles are cloned from the opener by Dockview, which is why there is no
+  stylesheet link either; the theme class is copied with them. All this file
+  owns is a body that fills the window and does not scroll, so the panel inside
+  it is laid out against the window the way it was against its group.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Daedalus</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background-color: var(--background, #fff);
+        color: var(--foreground, #000);
+      }
+    </style>
+  </head>
+  <body></body>
+</html>

@@ -18,6 +18,7 @@ import {
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { Shortcut } from "@/components/shortcut"
 import { useChord } from "@/lib/keybindings"
+import { asksForNewTab, openNextInNewTab } from "@/lib/workspace/open-threads"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { boardPath, routinesPath, schedulesPath } from "@/lib/router"
 import { useRoutines, useScheduled } from "@/lib/queries/routines"
@@ -121,7 +122,15 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
                   size="sm"
                   tooltip={item.tooltip}
                   isActive={item.isActive}
-                  onClick={item.onClick}
+                  onClick={(event) => {
+                    if (asksForNewTab(event)) openNextInNewTab()
+                    item.onClick(event)
+                  }}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return
+                    openNextInNewTab()
+                    item.onClick(event)
+                  }}
                   className={ROW}
                 >
                   {item.icon}
