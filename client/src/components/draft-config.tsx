@@ -52,8 +52,6 @@ import {
   ReadingFace,
 } from "@/components/composer/indicator";
 import { SHELF_PAD } from "@/components/composer-strip";
-import { ConfigDrawer, type DrawerRows } from "@/components/config-drawer";
-import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows";
 import { useIsMobile } from "@/hooks/use-device";
 import { useMenuShortcut } from "@/hooks/use-hotkey";
 import type { ShortcutId } from "@/lib/shortcuts";
@@ -663,11 +661,6 @@ export function DraftConfigPopover({
           onSelect: (value) => configure({ effort: value }),
         }
       : null;
-  // On a phone the whole menu is a sheet (`ConfigDrawer`).
-  const isMobile = useIsMobile();
-  const local = React.useState(false);
-  const [drawerOpen, setDrawerOpen] = shell ? [shell.drawerOpen, shell.setDrawerOpen] : local;
-  const toolRows = useToolDrawerRows(meta, actions, remember);
   /* One object for the row and the sheet it opens, so the two cannot disagree
      about what is listed. */
   const modelPick: ChoicePick | null = overridden
@@ -716,104 +709,10 @@ export function DraftConfigPopover({
         }
       : null;
 
-  /* The same settings as the dropdown below, as the phone's sheet reads them. */
-  const drawerRows: DrawerRows = [
-    { type: "label", text: "Start this thread with" },
-    {
-      type: "pick",
-      pick: {
-        label: "Agent",
-        value: agent?.id ?? "",
-        choices: agents.map((a) => ({
-          value: a.id,
-          name: a.name,
-          icon: <AgentIcon agentId={a.id} className="size-4" />,
-          note: missingAgents.has(a.id) ? "Not installed" : undefined,
-        })),
-        onSelect: chooseAgent,
-      },
-    },
-    { type: "pick", pick: profilePick },
-    modelPick && { type: "pick", pick: modelPick },
-    effortPick && { type: "pick", pick: effortPick },
-    profile &&
-      agent?.subagentModelsVia === "acp-env" &&
-      modelRoles.length > 0 &&
-      (modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE).length ?? 0) > 0 && {
-        type: "page",
-        label: "Helper models",
-        icon: <BotIcon className="size-4 text-muted-foreground" />,
-        value: (meta.helperModels ?? []).length ? `${meta.helperModels!.length} assigned` : "Not set",
-        content: (
-          <HelperModelsSub
-            drawer
-            rows={meta.helperModels ?? []}
-            roles={modelRoles}
-            models={modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE) ?? []}
-            onChange={(helperModels) => configure({ helperModels })}
-          />
-        ),
-      },
-    ...toolRows,
-    { type: "label", text: "Session settings" },
-    {
-      type: "switch",
-      label: "Suggest follow-ups",
-      checked: meta.suggestFollowups !== false,
-      onChange: (checked) => configure({ suggestFollowups: checked }),
-    },
-    {
-      type: "switch",
-      label: "Draw answers as UI",
-      checked: meta.uiBlocks !== false,
-      onChange: (checked) => configure({ uiBlocks: checked }),
-    },
-    (modes || agentOptions.rest.length > 0) && { type: "label", text: "Agent options" },
-    modes && {
-      type: "pick",
-      pick: {
-        label: "Mode",
-        value: meta.modeId || modes.currentModeId,
-        choices: withModeIcons(modes.availableModes.map((mode) => ({ value: mode.id, name: mode.name }))),
-        onSelect: (modeId) => configure({ modeId }),
-      },
-    },
-    ...agentOptions.rest.map(
-      (option): NonNullable<DrawerRows[number]> =>
-        option.type === "select"
-          ? {
-              type: "pick",
-              pick: {
-                label: option.name,
-                value: option.currentValue,
-                choices: selectChoices(option),
-                onSelect: (value) => choose(option.id, value),
-              },
-            }
-          : {
-              type: "switch",
-              label: option.name,
-              checked: option.currentValue,
-              onChange: (checked) => choose(option.id, checked),
-            },
-    ),
-    (modes || agentOptions.rest.length > 0) && {
-      type: "action",
-      label: probeStatus === "asking" ? "Refreshing…" : "Refresh options",
-      muted: true,
-      onClick: () => void actions.learnAgentOptions(meta.profileId, meta.agentId, meta.projectId, true),
-    },
-  ];
-
   return (
-    <>
     <DropdownMenu
-      open={isMobile ? false : shell?.open}
-      onOpenChange={(open) => {
-        // A phone opens the sheet instead; the menu itself never shows.
-        if (isMobile && open) setDrawerOpen(true);
-        if (!isMobile) shell?.setOpen(open);
-      }}
+      open={shell?.open}
+      onOpenChange={(open) => shell?.setOpen(open)}
     >
       <DropdownMenuTrigger
         render={
@@ -1042,9 +941,5 @@ export function DraftConfigPopover({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-    {isMobile && (
-      <ConfigDrawer open={drawerOpen} onOpenChange={setDrawerOpen} title="Start this thread with" rows={drawerRows} />
-    )}
-    </>
   );
 }

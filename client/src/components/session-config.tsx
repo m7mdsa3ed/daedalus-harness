@@ -17,8 +17,6 @@ import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/o
 import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
 import { DraftConfigPopover } from "@/components/draft-config"
 import { ThreadToolsSections } from "@/components/thread-tools/menu"
-import { useToolDrawerRows } from "@/components/thread-tools/drawer-rows"
-import { ConfigDrawer, type DrawerRow, type DrawerRows } from "@/components/config-drawer"
 import { useIsMobile } from "@/hooks/use-device"
 import { useMenuShortcut } from "@/hooks/use-hotkey"
 import { useAddModel, useNewProfile } from "@/lib/catalog-add"
@@ -139,11 +137,6 @@ export function SessionConfigPopover({
   const addModel = useAddModel()
   /* The role vocabulary the helper-model rows pick from (docs/model-roles.md). */
   const modelRoles = useModelRoles()
-  // On a phone the whole menu is a sheet (`ConfigDrawer`).
-  const isMobile = useIsMobile()
-  const local = React.useState(false)
-  const [drawerOpen, setDrawerOpen] = shell ? [shell.drawerOpen, shell.setDrawerOpen] : local
-  const toolRows = useToolDrawerRows(row ?? ({} as SessionMeta), actions)
   if (!meta || !row || !profile) return null
 
   /* The agent's own selectors, under what is staged for the next turn — so a
@@ -293,90 +286,14 @@ export function SessionConfigPopover({
         }
       : null
 
-  /* The same settings as the dropdown below, as the phone's sheet reads them.
-     A staged change is not one of them: the transcript owns that reading, and
-     the picks below already draw the staged values (`configView`). */
-  const drawerRows: DrawerRows = [
-    { type: "label", text: "Session" },
-    { type: "pick", pick: profilePick },
-    modelPick && { type: "pick", pick: modelPick },
-    effortPick && { type: "pick", pick: effortPick },
-    agent?.subagentModelsVia === "acp-env" &&
-      modelRoles.length > 0 &&
-      (modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE).length ?? 0) > 0 && {
-        type: "page",
-        label: "Helper models",
-        icon: <BotIcon className="size-4 text-muted-foreground" />,
-        value: (meta.helperModels ?? []).length ? `${meta.helperModels!.length} assigned` : "Not set",
-        content: (
-          <HelperModelsSub
-            drawer
-            rows={meta.helperModels ?? []}
-            roles={modelRoles}
-            models={modelPick?.choices.filter((choice) => choice.value !== DEFAULT_CHOICE) ?? []}
-            onChange={(helperModels) => actions.changeHelperModels(row, helperModels)}
-          />
-        ),
-      },
-    ...toolRows,
-    { type: "label", text: "Session settings" },
-    {
-      type: "switch",
-      label: "Suggest follow-ups",
-      checked: meta.suggestFollowups === true,
-      onChange: (checked) => actions.changeThreadSuggestions(row, checked),
-    },
-    {
-      type: "switch",
-      label: "Draw answers as UI",
-      checked: meta.uiBlocks !== false,
-      onChange: (checked) => actions.changeThreadUiBlocks(row, checked),
-    },
-    (modes || options.rest.length > 0) && { type: "label", text: "Agent options" },
-    modes && {
-      type: "pick",
-      pick: {
-        label: "Mode",
-        value: modes.currentModeId,
-        choices: withModeIcons(modes.availableModes.map((mode) => ({ value: mode.id, name: mode.name }))),
-        onSelect: (modeId) =>
-          void actions.setMode(sessionId, modeId).catch((err) => reportError(err, "Couldn't switch mode")),
-      },
-    },
-    ...options.rest.map((option): DrawerRow =>
-      option.type === "select"
-        ? {
-            type: "pick",
-            pick: {
-              label: option.name,
-              value: option.currentValue,
-              choices: selectChoices(option),
-              onSelect: (value) => set(option, value),
-            },
-          }
-        : {
-            type: "switch",
-            label: option.name,
-            checked: option.currentValue,
-            onChange: (checked) => set(option, checked),
-          }
-    ),
-  ]
-
   return (
-    <>
     <DropdownMenu
       /* The picks are buffered and sent as one request, and closing the menu is
          what says the user is done picking — model then effort is one restart
          instead of two, the second queued behind the first. See
          `actions.changeThreadConfig`. */
-      open={isMobile ? false : shell?.open}
+      open={shell?.open}
       onOpenChange={(open) => {
-        // A phone opens the sheet instead; the menu itself never shows.
-        if (isMobile) {
-          if (open) setDrawerOpen(true)
-          return
-        }
         shell?.setOpen(open)
         if (!open) void actions.flushThreadConfig(sessionId)
       }}
@@ -544,18 +461,6 @@ export function SessionConfigPopover({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-    {isMobile && (
-      <ConfigDrawer
-        open={drawerOpen}
-        onOpenChange={(open) => {
-          setDrawerOpen(open)
-          if (!open) void actions.flushThreadConfig(sessionId)
-        }}
-        title="Thread settings"
-        rows={drawerRows}
-      />
-    )}
-    </>
   )
 }
 
@@ -563,8 +468,6 @@ export function SessionConfigPopover({
 export type PopoverShell = {
   open: boolean
   setOpen: (open: boolean) => void
-  drawerOpen: boolean
-  setDrawerOpen: (open: boolean) => void
   /** Where a close sends the caret — see `useMenuShortcut`. */
   finalFocus?: () => HTMLElement | true
 }
@@ -591,11 +494,9 @@ export function ConfigPopover({
   keys?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
-  const [drawerOpen, setDrawerOpen] = React.useState(false)
-  const isMobile = useIsMobile()
-  const finalFocus = useMenuShortcut("changeModel", () => (isMobile ? setDrawerOpen(true) : setOpen(!open)), keys)
+  const finalFocus = useMenuShortcut("changeModel", () => setOpen(!open), keys)
   const profiles = useProfiles()
-  const shell = { open, setOpen, drawerOpen, setDrawerOpen, finalFocus }
+  const shell = { open, setOpen, finalFocus }
   const ready = !meta.draft && profiles.some((p) => p.id === meta.profileId)
   return ready ? (
     <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} shell={shell} />

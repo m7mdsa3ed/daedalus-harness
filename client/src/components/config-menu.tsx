@@ -152,9 +152,7 @@ export function MenuAddItem({ add }: { add: MenuAdd }) {
   )
 }
 
-/** What a row picks from — shared by the submenu (`MenuRow`) and the drawer
-    (`ChoiceList`, a page of the mobile `ConfigDrawer`), so a picker keeps its
-    props. */
+/** What a row picks from — the submenu's (`MenuRow`), so a picker keeps its props. */
 export interface ChoicePick {
   label: string
   value: string
@@ -162,86 +160,6 @@ export interface ChoicePick {
   onSelect: (value: string) => void
   /** When the catalog this row draws can be added to from here. */
   add?: MenuAdd
-}
-
-/**
- * A picker's choices as a plain list: a search box that is always there, the
- * groups with their headings, the current pick ticked, and the "Add…" row at
- * the foot. It is a page of the mobile settings drawer (`ConfigDrawer`), where a
- * nested flyout is the one thing a thumb cannot hit reliably.
- */
-export function ChoiceList({
-  value,
-  choices,
-  onSelect,
-  add,
-  label,
-}: ChoicePick) {
-  const [query, setQuery] = React.useState("")
-  const shown = menuFilter(choices, query)
-  const sections = groupChoices(shown)
-  return (
-    <div className="flex flex-col">
-      <div className="relative pb-2">
-        <SearchIcon className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={`Search ${label.toLowerCase()}…`}
-          aria-label={`Search ${label.toLowerCase()}`}
-          className="w-full rounded-lg bg-muted/50 py-2 pr-3 pl-9 text-sm outline-none placeholder:text-muted-foreground"
-        />
-      </div>
-      <div className="pb-2">
-        {sections.map((section, index) => (
-          <React.Fragment key={`section-${index}`}>
-            {section.group && (
-              <div className="px-2 pt-3 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
-                {section.group}
-              </div>
-            )}
-            {section.choices.map((choice) => (
-              <button
-                key={choice.value}
-                type="button"
-                onClick={() => choice.value !== value && onSelect(choice.value)}
-                className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-              >
-                {choice.icon}
-                <span className="min-w-0 flex-1 truncate">{choice.name}</span>
-                {(choice.note || choice.recommended) && (
-                  <span
-                    className={cn(
-                      "shrink-0 text-[11px]",
-                      choice.note ? "text-destructive" : "text-muted-foreground"
-                    )}
-                  >
-                    {choice.note ?? "Recommended"}
-                  </span>
-                )}
-                <CheckIcon
-                  className={cn("size-4 shrink-0", choice.value === value ? "opacity-100" : "opacity-0")}
-                />
-              </button>
-            ))}
-          </React.Fragment>
-        ))}
-        {shown.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">No match</p>}
-      </div>
-      {add && (
-        <div className="border-t pt-2">
-          <button
-            type="button"
-            onClick={add.onSelect}
-            className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted"
-          >
-            <PlusIcon className="size-4 text-muted-foreground" />
-            {add.label}
-          </button>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export function MenuRow({
@@ -424,7 +342,6 @@ export function HelperModelsSub({
   roles,
   models,
   onChange,
-  drawer = false,
 }: {
   rows: HelperModelRow[]
   /** The whole `model_roles` vocabulary, in its own order. */
@@ -432,8 +349,6 @@ export function HelperModelsSub({
   /** The Model row's choices, minus its own "default" row. */
   models: Choice[]
   onChange: (next: HelperModelRow[]) => void
-  /** Draw a full-width editor page inside the mobile config drawer. */
-  drawer?: boolean
 }) {
   if (roles.length === 0 || models.length === 0) return null
   const modelChoices: Choice[] = [{ value: SESSION_MODEL_CHOICE, name: "Session model" }, ...models]
@@ -442,81 +357,6 @@ export function HelperModelsSub({
   const replace = (index: number, patch: Partial<HelperModelRow>) =>
     onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   const remove = (index: number) => onChange(rows.filter((_, i) => i !== index))
-
-  if (drawer) {
-    return (
-      <div className="flex flex-col gap-3">
-        <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-          Choose the model each helper role uses. Session model follows the main model above.
-        </p>
-        {rows.length === 0 && (
-          <div className="rounded-xl bg-muted/50 px-3 py-4 text-sm text-muted-foreground">
-            No helper roles assigned yet. Add one to choose a model for that kind of task.
-          </div>
-        )}
-        {rows.map((row, index) => {
-          const role = roles.find((candidate) => candidate.id === row.role)
-          const model = models.find((candidate) => candidate.value === row.model)
-          return (
-            <section key={`${row.role}-${index}`} className="rounded-xl border bg-card p-3">
-              <div className="mb-3 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="truncate text-sm font-medium">{role?.label ?? row.role}</h3>
-                  {role?.description && (
-                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{role.description}</p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => remove(index)}
-                  aria-label={`Remove ${role?.label ?? row.role} helper model`}
-                  className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <Trash2Icon className="size-4" />
-                </button>
-              </div>
-              <Select
-                value={row.model || SESSION_MODEL_CHOICE}
-                onValueChange={(model) =>
-                  model !== null && replace(index, { model: model === SESSION_MODEL_CHOICE ? "" : model })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue>{model?.name ?? (row.model || "Session model")}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SESSION_MODEL_CHOICE}>Session model</SelectItem>
-                  {models.map((choice) => (
-                    <SelectItem key={choice.value} value={choice.value}>
-                      <span className="flex items-center gap-2">
-                        {choice.icon}
-                        {choice.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                {row.model ? "Fixed to this model for helper tasks." : "Uses the thread's selected model."}
-              </p>
-            </section>
-          )
-        })}
-        {addRole ? (
-          <button
-            type="button"
-            onClick={() => onChange([...rows, { role: addRole.id, model: "" }])}
-            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 text-sm font-medium text-muted-foreground hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
-          >
-            <PlusIcon className="size-4" />
-            Add {addRole.label}
-          </button>
-        ) : (
-          <p className="px-1 text-xs text-muted-foreground">Every helper role has a model assignment.</p>
-        )}
-      </div>
-    )
-  }
 
   return (
     <DropdownMenuSub>
