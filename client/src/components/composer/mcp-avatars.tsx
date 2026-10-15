@@ -153,21 +153,13 @@ export function McpPicker({
     { label: "Built-in", items: matching.filter((server) => server.type === "builtin") },
   ].filter((group) => group.items.length > 0)
 
-  const label =
-    selected.length === 0 ? "MCP" : selected.length === 1 ? selected[0].name : `${selected.length} MCPs`
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <Button
             variant="ghost"
-            className={cn(
-              PILL,
-              "relative shrink-0 border transition-colors",
-              selected.length > 0
-                ? "border-primary/25 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary data-popup-open:bg-primary/15"
-                : "border-transparent",
-            )}
+            className={cn(PILL, "relative shrink-0", selected.length > 0 && "text-foreground")}
             aria-label={`MCP servers: ${selected.length ? selected.map((s) => s.name).join(", ") : "none"}`}
             title={[
               selected.length ? selected.map((server) => server.name).join(", ") : "Pick MCP servers",
@@ -176,15 +168,13 @@ export function McpPicker({
               .filter(Boolean)
               .join(" — ")}
           >
-            {selected.length > 0 ? <McpAvatars servers={selected} /> : <ServerIcon className="size-3.5" />}
-            <span
-              className={cn(
-                "hidden max-w-28 truncate @panel-sm:inline",
-                selected.length > 0 && "text-foreground/90",
-              )}
-            >
-              {label}
-            </span>
+            <ServerIcon className="size-3.5" />
+            {/* The count is the whole reading: a badge, no frame around the chip. */}
+            {selected.length > 0 && (
+              <span className="min-w-4 rounded-pill bg-primary px-1 text-center text-[10px] leading-4 font-medium text-primary-foreground tabular-nums">
+                {formatCount(selected.length)}
+              </span>
+            )}
             {pending && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />}
           </Button>
         }
