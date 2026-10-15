@@ -1174,7 +1174,9 @@ and **one right panel** for the tools about what is in front of you.
 **The frame** (`components/app-shell.tsx`): the sidebar rail (plain shadcn `sidebar` variant), then one
 column with an overlay header — the sidebar toggle, the space switcher and view settings — over a progressive blur
 (flush layout). The header carries no buttons for the right panel: it is opened by ⌘⌥B / ⌘J, the
-palette's Panel rows, and a reading's "Open in inspector" on the composer. The dock (`workspace/`) fills the
+palette's Panel rows, a reading's "Open in inspector" on the composer, and the **+ over a thread's
+transcript** (`workspace/thread-body.tsx`), which lists the readings, a new terminal, the preview and the
+trajectory. The dock (`workspace/`) fills the
 rest, with `RightPanelColumn` beside it.
 
 **The dock** holds two panel kinds in use, `chat` and `page` (`lib/workspace/panels.ts`; `tasks`
