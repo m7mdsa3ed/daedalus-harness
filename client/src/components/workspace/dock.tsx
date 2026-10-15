@@ -25,6 +25,7 @@
    The controller is this file (`useWorkspaceDock`); the surface it drives is
    `dock-surface.tsx`, the shape and contexts every panel reads are
    `dock-context.ts`, and the header measurement is `dock-header.ts`. */
+import { uuid } from "@/lib/uuid"
 import { watchSplits } from "@/components/workspace/dock-sizes"
 import * as React from "react"
 import type { DockviewApi, DockviewGroupPanel, IDockviewPanel, SerializedDockview } from "dockview-react"
@@ -213,7 +214,7 @@ export function useWorkspaceDock(): DockController {
       let id = panelId(desc)
       if (desc.kind === "chat") {
         while (api.getPanel(id)) {
-          desc = { ...desc, tabId: crypto.randomUUID().slice(0, 6) }
+          desc = { ...desc, tabId: uuid().slice(0, 6) }
           id = panelId(desc)
         }
       } else if (desc.kind === "page") {
@@ -311,7 +312,7 @@ export function useWorkspaceDock(): DockController {
       /* Tabs are isolated: opening a thread that is already open is a second tab
          of it, not a refocus of the first. */
       if (panel.kind === "chat" && api.getPanel(panelId(panel)))
-        panel = { ...panel, tabId: crypto.randomUUID().slice(0, 6) }
+        panel = { ...panel, tabId: uuid().slice(0, 6) }
       const id = panelId(panel)
       const existing = api.getPanel(id)
       if (existing) {
@@ -654,7 +655,7 @@ export function useWorkspaceDock(): DockController {
         const meta = store.getState().sessions.find((session) => session.id === sessionId)
         if (meta && !meta.draft) {
           if (window.desktop?.openThreadWindow) return window.desktop.openThreadWindow(sessionId)
-          const url = `${threadPath(sessionId)}?popout=1&windowId=${crypto.randomUUID()}`
+          const url = `${threadPath(sessionId)}?popout=1&windowId=${uuid()}`
           return !!window.open(url, "_blank", "popup,width=1100,height=820")
         }
       }

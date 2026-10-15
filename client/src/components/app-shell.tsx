@@ -8,6 +8,7 @@
 
    The sidebar's own pieces are `components/sidebar/`; the route tree and the
    page titles are `components/routes.tsx`, the only importer of the pages. */
+import { uuid } from "@/lib/uuid"
 import * as React from "react"
 import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon, XIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
@@ -422,7 +423,7 @@ export function AppShell({
          every reusing caller already names, so nothing has to migrate and a
          chord still lands on the one the + opened. */
       const second = (existing: unknown) =>
-        !reuse && existing ? { viewId: crypto.randomUUID().slice(0, 8) } : {}
+        !reuse && existing ? { viewId: uuid().slice(0, 8) } : {}
       /* Boards are the server's, not a project's, so this one opens with no
          project at all — the only kind that does. Reopened with the board it
          was left on, not reset to "no board": the descriptor is where a tasks
