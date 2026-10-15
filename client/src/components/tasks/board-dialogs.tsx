@@ -1,4 +1,5 @@
 import * as React from "react"
+import { uuid } from "@/lib/uuid"
 import { ChevronDown, ChevronUp, GripVertical, Plus, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -399,7 +400,7 @@ export function BoardDialog({
                     </li>
                   ))}
                   <li className="px-1 py-1">
-                    <Button type="button" size="xs" variant="outline" onClick={() => setFields((fs) => [...fs, { id: crypto.randomUUID(), name: "", type: "text" }])}>
+                    <Button type="button" size="xs" variant="outline" onClick={() => setFields((fs) => [...fs, { id: uuid(), name: "", type: "text" }])}>
                       <Plus className="size-3" /> Add field
                     </Button>
                   </li>

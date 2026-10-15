@@ -789,10 +789,26 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   sidebar toggle's cluster and that group's tabs are one row whenever a group joins the band, so
   a pill of `--background` at 24px next to a rounded rectangle of `--composer` at 32px is two
   bars pretending to be one. **There is no ⋯ menu**, and **the header holds one control** —
-  the sidebar toggle. Opening a thread or a panel is the strip's +; how transcripts are drawn,
-  which notifications have arrived, and what the app can search are rows in the sidebar, which
-  is where a place you go is named. The header is the band the *tabs* join, so what stands in it
+  the sidebar toggle. Opening a thread or a panel is the strip's +; what the app can search and
+  which notifications have arrived are rows in the sidebar, which is where a place you go is
+  named, and **how transcripts are drawn is Settings › Appearance › Transcript**
+  (`ViewSettings`, ⌥V goes there). The space switch is the sidebar footer's icon, not a header chip. The header is the band the *tabs* join, so what stands in it
   is the tab's own material and height and nothing that is about the app rather than this group.
+- **Under Electron the header band clears the OS's own controls, measured.** Windows/Linux pad
+  the band's right by the caption overlay (`env(titlebar-area-width)` + 12px, 148px fallback);
+  macOS pads its left by 80px for the traffic lights whenever the sidebar is collapsed or a
+  sheet (`index.css`). The strip pads by the header's content box, so it follows both.
+  **The window material is the reader's** (Settings › Appearance › Desktop window,
+  `window-translucent.json`, read by preload synchronously): off means no vibrancy/acrylic/mica,
+  an opaque window colour and no `data-desktop-vibrancy`, so the page paints its own grounds.
+  A creation-time option — a change needs a restart.
+- **A chat tab's second row carries the project, the model and the thread's age** (`relativeAge`
+  in `lib/settings.ts`, re-rendered by the minute); the title mask fades both rows under the
+  hover controls. "Duplicate tab" is the menu's way to a second outlet on the same place.
+- **The composer's MCP picker is a popover of switches, not a menu** (`composer/mcp-avatars.tsx`):
+  header with "N of M" and the staged note, a filter past five servers, Library and Built-in
+  groups of rows (mark, name, transport, tool count from the shared catalog, switch), and
+  Clear / Manage in the footer. Profile-linked rows are locked.
 - **Opening a panel never splits the dock** — every kind arrives the way a new thread does, a
   tab beside what you are looking at, and `OpenPanelOptions.direction` is read as "do not
   replace what is in front of me" and nothing more. It used to split when the window was wide

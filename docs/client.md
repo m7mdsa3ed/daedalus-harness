@@ -1134,6 +1134,15 @@ tray), `preload.cjs` (`window.desktop`, typed in `lib/theme.tsx`). The renderer'
   `ready-to-show`, with a four-second fallback and load-failure reveal; each reveal nudges the
   bounds by one pixel and restores them to invalidate stale initial layout. The app-level close
   control closes only the `BrowserWindow` that owns the caller.
+- **Clearance and material are the reader's and the OS's, not constants.** The header band pads
+  its right by the caption overlay's measured width (`env(titlebar-area-width)` + 12px, 148px
+  fallback) on Windows/Linux, and its left by 80px on macOS while the sidebar is collapsed or a
+  sheet, so the traffic lights never sit on the toggle or the first tab. The strip pads by the
+  header's content box and follows. **The native material can be turned off** (Settings ›
+  Appearance › Desktop window, main's `window-translucent.json`, answered to preload
+  synchronously so `data-desktop-vibrancy` is set before first paint): no vibrancy/acrylic/mica,
+  an opaque window colour, and the page paints its own grounds. It is a window-creation option,
+  so a change needs a restart; Windows keeps its Acrylic/Mica choice beside it.
 - **Auto-update is not wired**: `electron-updater` is not a dependency. Adding it is the
   dependency, a `publish` block in `build`, and `autoUpdater.checkForUpdatesAndNotify()`
   after `whenReady`.

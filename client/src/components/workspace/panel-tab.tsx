@@ -733,6 +733,15 @@ function useTabMenuItems({
         ] satisfies MenuItemSpec[])
       : []),
     { type: "separator" },
+    /* A tab is an isolated outlet, so the same place may stand in two of them. */
+    {
+      label: "Duplicate tab",
+      disabled: descriptor?.kind !== "chat" && descriptor?.kind !== "page",
+      onClick: () => {
+        if (descriptor?.kind === "chat") dock.openTab(threadPath(descriptor.sessionId))
+        else if (descriptor?.kind === "page") dock.openTab(descriptor.path)
+      },
+    },
     {
       label: "Copy link",
       disabled: descriptor?.kind !== "chat",
