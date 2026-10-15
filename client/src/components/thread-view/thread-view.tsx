@@ -7,6 +7,7 @@
    connection wait) and `welcome.tsx` (the empty state the landing console
    shares). `thread-view.tsx` above is the barrel that keeps `ThreadView` and
    `ThreadWelcome` at the path every caller already spells. */
+import { ScrollToEnd } from "@/components/thread-view/scroll-to-end"
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { ChevronUp } from "lucide-react"
@@ -15,7 +16,6 @@ import { ComposerQueue } from "@/components/composer-queue"
 import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
 import {
   MessageScroller,
-  MessageScrollerButton,
   MessageScrollerContent,
   MessageScrollerItem,
   MessageScrollerProvider,
@@ -1082,19 +1082,7 @@ export function ThreadView({
           {/* The primitive's own scroll-to-end runs on click; re-pinning here as
               well is what makes the button mean "and keep up from now on"
               instead of "put me at the bottom once". */}
-          {/* Beside the composer's pill, always: the button only shows once the
-              reader has left the tail, which is also when the box has folded to
-              its pill, so this is the one spot it ever needs to be and it never
-              travels. The pill is 2.25rem at the composer's right edge; this is
-              the next thing on that row, `z-30` above the composer's `z-20`, and the
-              pill's own material (size, ground, ring, glass) so the two read as a pair. */}
-          <MessageScrollerButton
-            onClick={follow.follow}
-            className={cn(
-              !centred &&
-                "z-30 size-9 rounded-pill border-0 bg-composer/90 text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] hover:bg-composer/90 hover:text-foreground data-[direction=end]:bottom-[max(0.75rem,var(--safe-bottom))] inset-s-auto data-[direction=end]:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] translate-x-0",
-            )}
-          />
+          {!centred && <ScrollToEnd onClick={follow.follow} />}
           {/* The turn rail: one tick per turn, riding the transcript's left
               edge as an absolute overlay, centred in the view — a sibling of
               the viewport, so it does not scroll with the content. Under the
