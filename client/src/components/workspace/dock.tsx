@@ -26,7 +26,7 @@
    `dock-surface.tsx`, the shape and contexts every panel reads are
    `dock-context.ts`, and the header measurement is `dock-header.ts`. */
 import { uuid } from "@/lib/uuid"
-import { watchSplits } from "@/components/workspace/dock-sizes"
+import { equalizeAround, watchSplits } from "@/components/workspace/dock-sizes"
 import * as React from "react"
 import type { DockviewApi, DockviewGroupPanel, IDockviewPanel, SerializedDockview } from "dockview-react"
 
@@ -533,6 +533,48 @@ export function useWorkspaceDock(): DockController {
     const delta = toward ? step : -step
     if (horizontal) group.api.setSize({ width: group.api.width + delta })
     else group.api.setSize({ height: group.api.height + delta })
+  }, [])
+
+  /* ── Moving the tab in front ──
+     `moveTo` into the same strip re-opens the panel at the index it is given
+     once it has been taken out, so `index` is where it ends up. A pin keeps its
+     place at the front: a tab never crosses the line between the two kinds. */
+  const moveTab = React.useCallback(
+    (delta: -1 | 1) => {
+      const panel = apiRef.current?.activePanel
+      const group = panel?.group
+      if (!panel || !group) return false
+      const next = group.panels.indexOf(panel) + delta
+      const over = group.panels[next]
+      if (!over || isPanelPinned(panel.id) !== isPanelPinned(over.id)) return false
+      panel.api.moveTo({ group, index: next })
+      return true
+    },
+    []
+  )
+
+  const sendTab = React.useCallback((direction: "left" | "right" | "up" | "down") => {
+    const api = apiRef.current
+    const group = api?.activeGroup
+    const panel = group?.activePanel
+    if (!api || !group || !panel || isNarrow() || !isGrid(group) || api.hasMaximizedGroup()) return false
+    const toward = api.adjacentGroupInDirection(group, direction)
+    const target = toward && api.groups.find((candidate) => candidate.id === toward.id)
+    if (target) {
+      panel.api.moveTo({ group: target })
+      return true
+    }
+    // Nothing that way: split one off, unless this is the strip's only tab.
+    if (group.panels.length < 2) return false
+    const side = { left: "left", right: "right", up: "above", down: "below" } as const
+    panel.api.moveTo({ group: api.addGroup({ referenceGroup: group, direction: side[direction] }) })
+    return true
+  }, [])
+
+  const equalizePanes = React.useCallback(() => {
+    const api = apiRef.current
+    const group = api?.activeGroup
+    if (api && group) equalizeAround(api, group)
   }, [])
 
   /* Focus walks the grid's panes, wrapping — a float is not a column. Declined
@@ -1094,6 +1136,9 @@ export function useWorkspaceDock(): DockController {
   useShortcut("nextPane", () => walkPanes(true))
   useShortcut("prevPane", () => walkPanes(false))
   useShortcut("resizePane", (event) => resizeActive(event.key), { allowRepeat: true })
+  useShortcut("moveTab", (event) => moveTab(event.key === "PageUp" ? -1 : 1), { allowRepeat: true })
+  useShortcut("sendTab", (event) => sendTab(event.key.replace("Arrow", "").toLowerCase() as "left" | "right" | "up" | "down"))
+  useShortcut("equalizePanes", () => equalizePanes())
   useShortcut("reopenPanel", () => reopenClosed())
 
   React.useEffect(
@@ -1122,6 +1167,9 @@ export function useWorkspaceDock(): DockController {
       splitActive,
       targetNext,
       toggleMaximize,
+      moveTab,
+      sendTab,
+      equalizePanes,
       stackAll,
       resetLayout,
       reopenClosed,
@@ -1168,6 +1216,9 @@ export function useWorkspaceDock(): DockController {
       splitActive,
       targetNext,
       toggleMaximize,
+      moveTab,
+      sendTab,
+      equalizePanes,
       stackAll,
       resetLayout,
       reopenClosed,

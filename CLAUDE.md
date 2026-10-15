@@ -634,7 +634,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   it wrapping, Alt+W closes the tab in front through the guarded door its ✕ uses
   (`setTabIndex`/`cycleTab`/`closeActiveTab`, which the palette's rows call too); ⌘Tab is the
   browser's own, so it rides `RESERVED` to the desktop shell like ⌘1…9 and ⌘⇧T, and **⌘W is
-  never the close chord** because Electron gives it to close-window.
+  never the close chord** because Electron gives it to close-window. **The panes have a family too**: ⌥←/→ walks them, ⌥⇧+arrows resizes the divider, ⌘⌥+arrows
+  *sends the tab in front* to the pane that way (or splits one off; a lone tab stays put), ⌘⇧PgUp/PgDn
+  reorders it within its strip (a pin never crosses the unpinned), ⌘⌥0 evens the row and column
+  (`moveTab`/`sendTab`/`equalizePanes` on the dock; the palette and the tab's menu call the same).
 - **The desktop shell names a shortcut, never an action** (`lib/desktop.ts`): the native
   menu, the tray and the quick-entry hotkey send a `ShortcutId` and the renderer runs
   `runShortcut(id)` — the chord's own handler. **A thread popout is one transcript and no

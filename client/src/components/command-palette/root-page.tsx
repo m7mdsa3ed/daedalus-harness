@@ -27,6 +27,10 @@ import {
   PictureInPicture2,
   Save,
   SquareKanbanIcon,
+  ArrowDownToLine,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  ArrowUpToLine,
   Copy,
   Cpu,
   DownloadIcon,
@@ -582,6 +586,21 @@ export function RootPage() {
             onSelect: () => palette.run(() => palette.dock.splitActive("below")),
           },
         ]),
+    ...(isMobile
+      ? []
+      : [
+          { id: "dock:move-left", title: "Move tab left", keywords: "reorder tab strip", icon: <ArrowLeftToLine />, chord: binds.moveTab.chords[0], run: () => palette.dock.moveTab(-1) },
+          { id: "dock:move-right", title: "Move tab right", keywords: "reorder tab strip", icon: <ArrowRightToLine />, chord: binds.moveTab.chords[1], run: () => palette.dock.moveTab(1) },
+          { id: "dock:send-left", title: "Send tab to the pane on the left", keywords: "move split side", icon: <ArrowLeftToLine />, chord: binds.sendTab.chords[0], run: () => palette.dock.sendTab("left") },
+          { id: "dock:send-right", title: "Send tab to the pane on the right", keywords: "move split side", icon: <ArrowRightToLine />, chord: binds.sendTab.chords[1], run: () => palette.dock.sendTab("right") },
+          { id: "dock:send-up", title: "Send tab to the pane above", keywords: "move split", icon: <ArrowUpToLine />, chord: binds.sendTab.chords[2], run: () => palette.dock.sendTab("up") },
+          { id: "dock:send-down", title: "Send tab to the pane below", keywords: "move split", icon: <ArrowDownToLine />, chord: binds.sendTab.chords[3], run: () => palette.dock.sendTab("down") },
+          { id: "dock:equalize", title: "Make the panes even", keywords: "resize equal split divider", icon: <Square />, chord: binds.equalizePanes.chords[0], run: () => palette.dock.equalizePanes() },
+        ].map(({ run, ...row }) => ({
+          ...row,
+          group: "Workspace",
+          onSelect: () => palette.run(() => void run()),
+        }))),
     {
       id: "dock:maximize",
       group: "Workspace",

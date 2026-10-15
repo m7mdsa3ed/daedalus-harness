@@ -84,6 +84,13 @@ export interface WorkspaceDock {
       way a panel's `into` is. Spent by the next chat open, within 2s. */
   targetNext: (group: string) => void
   toggleMaximize: (id?: string) => void
+  /** Reorder the tab in front within its strip. False when it cannot move. */
+  moveTab: (delta: -1 | 1) => boolean
+  /** Send the tab in front to the pane that way, or split one off. False when
+      there is nowhere to send it. */
+  sendTab: (direction: "left" | "right" | "up" | "down") => boolean
+  /** Equal shares for the row and column of the pane in front. */
+  equalizePanes: () => void
   /** Every panel into one strip — the phone's rule and Reset layout. */
   stackAll: () => void
   resetLayout: () => void

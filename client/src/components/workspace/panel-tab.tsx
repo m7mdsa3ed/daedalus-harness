@@ -592,6 +592,28 @@ function useTabMenuItems({
             onClick: () => dock.toggleMaximize(api.id),
           },
         ] satisfies MenuItemSpec[])),
+    ...(isMobile
+      ? []
+      : ([
+          { type: "separator" },
+          {
+            label: "Move left",
+            disabled: !hasOthers,
+            onClick: () => {
+              api.setActive()
+              dock.moveTab(-1)
+            },
+          },
+          {
+            label: "Move right",
+            disabled: !hasOthers,
+            onClick: () => {
+              api.setActive()
+              dock.moveTab(1)
+            },
+          },
+          { label: "Even out the panes", shortcut: "equalizePanes", disabled: !hasOtherGroups, onClick: () => dock.equalizePanes() },
+        ] satisfies MenuItemSpec[])),
     /* The strip's two walking keys are not about *this* tab, but the menu is
        where a reader who has not found the sheet asks what the tabs answer to —
        and the row prints whatever chord they are bound to, so it cannot go

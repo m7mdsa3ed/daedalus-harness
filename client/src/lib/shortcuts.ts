@@ -206,6 +206,9 @@ export type ShortcutId =
   | "nextPane"
   | "prevPane"
   | "resizePane"
+  | "moveTab"
+  | "sendTab"
+  | "equalizePanes"
   | "reopenPanel"
   | "terminal"
   | "changeModel"
@@ -297,6 +300,16 @@ export const KEYS = {
   nextPane: "alt+right",
   prevPane: "alt+left",
   resizePane: ["alt+shift+left", "alt+shift+right", "alt+shift+up", "alt+shift+down"],
+  /** Reorder the tab in front within its strip: a browser's own pair (Ctrl+Shift+
+      PageUp/PageDown), which Chromium keeps on the web and the desktop shell lets
+      through. */
+  moveTab: ["mod+shift+pageup", "mod+shift+pagedown"],
+  /** Send the tab in front to the pane that way, or into a new one beside it
+      when there is none. ⌘/Ctrl+Alt+arrows: the Alt+arrows walk panes, Alt+Shift
+      resizes, and adding the modifier that means "this tab, not the view" keeps
+      the family together. */
+  sendTab: ["mod+alt+left", "mod+alt+right", "mod+alt+up", "mod+alt+down"],
+  equalizePanes: "mod+alt+0",
   /** VS Code's panel chord, not its ⌃` terminal one: `matchesChord` folds Ctrl
       into `mod` by design (⌘ on Apple, Ctrl elsewhere), so a standalone `ctrl`
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
@@ -399,6 +412,30 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [...KEYS.resizePane],
     display: [`${SYMBOLS.alt}+${SYMBOLS.shift}+←↑↓→`],
     note: "Moves the divider the way the arrow points: the pane grows toward a neighbour, and shrinks away from the edge. Hold the keys to keep going.",
+  },
+  {
+    id: "moveTab",
+    scope: "Global",
+    label: "Move the tab left or right",
+    chords: [...KEYS.moveTab],
+    display: [`${SYMBOLS.mod}+${SYMBOLS.shift}+PgUp / PgDn`],
+    note: "Reorders the tab in front within its strip. A pinned tab stays in front of the unpinned ones.",
+  },
+  {
+    id: "sendTab",
+    scope: "Global",
+    label: "Send the tab to the pane beside it",
+    chords: [...KEYS.sendTab],
+    display: [`${SYMBOLS.mod}+${SYMBOLS.alt}+←↑↓→`],
+    note: "Moves the tab in front into the neighbouring pane that way, or splits a new one off when there is none (a pane's only tab stays put).",
+  },
+  {
+    id: "equalizePanes",
+    scope: "Global",
+    label: "Make the panes even",
+    chords: [KEYS.equalizePanes],
+    rebindable: true,
+    note: "Gives the row and the column you are in equal shares; the same as double-clicking a divider.",
   },
   {
     id: "terminal",
