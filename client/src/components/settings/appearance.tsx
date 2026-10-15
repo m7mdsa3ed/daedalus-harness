@@ -3,7 +3,8 @@ import { Monitor, Moon, PanelLeft, PanelLeftDashed, RotateCcw, Sun } from "lucid
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { ThemeGallery } from "@/components/theme-builder/gallery"
-import { getWindowMaterial, setWindowMaterial, type WindowMaterial } from "@/lib/desktop"
+import { Switch } from "@/components/ui/switch"
+import { getWindowMaterial, getWindowTranslucent, setWindowMaterial, setWindowTranslucent, type WindowMaterial } from "@/lib/desktop"
 import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
 import { toast } from "@/lib/toast"
 import {
@@ -38,11 +39,28 @@ const MATERIALS: { value: WindowMaterial; label: string }[] = [
   { value: "mica", label: "Mica" },
 ]
 
-function WindowMaterialGroup() {
+function DesktopWindowGroup() {
+  const isWindows = window.desktop?.platform === "win32"
+  const [translucent, setTranslucent] = React.useState<boolean | null>(null)
   const [material, setMaterial] = React.useState<WindowMaterial | null>(null)
   const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => {
+    void getWindowTranslucent().then(setTranslucent, () => setTranslucent(true))
+  }, [])
+
+  const toggle = async (next: boolean) => {
+    const error = await setWindowTranslucent(next)
+    if (error) {
+      toast.error("Couldn't save window transparency", { description: error })
+      return
+    }
+    setTranslucent(next)
+    toast("Window transparency saved", { description: "Restart Daedalus to apply the change." })
+  }
+
+  React.useEffect(() => {
+    if (!isWindows) return
     let active = true
     void getWindowMaterial().then(
       (value) => active && setMaterial(value),
@@ -80,10 +98,21 @@ function WindowMaterialGroup() {
   }
 
   return (
-    <Group label="Windows desktop material">
+    <Group label="Desktop window">
       <Row
+        title="Transparent sidebar and tab strip"
+        subtitle="Let the desktop show through the sidebar and tab strip. Turn off for a solid window. Restart Daedalus for changes to take effect."
+      >
+        <Switch
+          checked={translucent ?? true}
+          disabled={translucent === null}
+          onCheckedChange={(next) => void toggle(next)}
+          aria-label="Transparent sidebar and tab strip"
+        />
+      </Row>
+      {isWindows && <Row
         title="Window blur"
-        subtitle="Choose the native Windows backdrop. Restart Daedalus for changes to take effect; Mica may appear nearly solid on some Windows builds."
+        subtitle="Choose the native Windows backdrop. Mica may appear nearly solid on some Windows builds."
       >
         <div className="flex gap-1 rounded-lg border bg-muted/30 p-1" role="group" aria-label="Window blur material">
           {MATERIALS.map(({ value, label }) => (
@@ -91,7 +120,7 @@ function WindowMaterialGroup() {
               key={value}
               type="button"
               aria-pressed={material === value}
-              disabled={saving || material === null}
+              disabled={saving || material === null || translucent === false}
               onClick={() => void choose(value)}
               className={cn(
                 "min-h-9 rounded-md px-3 text-xs font-medium transition-colors disabled:opacity-50",
@@ -102,7 +131,7 @@ function WindowMaterialGroup() {
             </button>
           ))}
         </div>
-      </Row>
+      </Row>}
     </Group>
   )
 }
@@ -219,7 +248,7 @@ export function AppearancePage() {
       <Group label="Color theme">
         <ThemeGallery />
       </Group>
-      {window.desktop?.platform === "win32" && <WindowMaterialGroup />}
+      {(window.desktop?.platform === "win32" || window.desktop?.platform === "darwin") && <DesktopWindowGroup />}
       <Group label="Density">
         <SliderRow
           title="Font size"

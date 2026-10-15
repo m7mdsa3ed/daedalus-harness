@@ -1219,7 +1219,28 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    row is a drag region too but never sits under the overlay, so it is left
    out — padding it pushed New thread and Search off the row's end. */
 html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-region]:not([data-sidebar="header"] *) {
-  padding-right: 148px;
+  /* The overlay's measured width (Electron publishes `env(titlebar-area-*)` for
+     a `titleBarOverlay`) plus 12px of air, so the last tab and the + stop short
+     of the buttons instead of touching them; 148px is the fallback for a build
+     that does not publish it. */
+  padding-right: max(
+    1rem,
+    calc(100vw - env(titlebar-area-width, calc(100vw - 136px)) - env(titlebar-area-x, 0px) + 12px)
+  );
+}
+/* macOS: the traffic lights stand over the sidebar's corner, and when the
+   sidebar is collapsed (or is a sheet, below md) that corner is the header's —
+   its toggle and the first tab would sit under them. The strip pads by this
+   box's content edge, so it follows. */
+html[data-desktop="true"][data-desktop-platform="darwin"]
+  [data-slot="sidebar-wrapper"]:has([data-slot="sidebar"][data-state="collapsed"])
+  [data-app-header] {
+  padding-left: 80px;
+}
+@media (max-width: 767px) {
+  html[data-desktop="true"][data-desktop-platform="darwin"] [data-app-header] {
+    padding-left: 80px;
+  }
 }
 /* The PWA's overlay mode, same corner but the browser tells us exactly how
    wide the caption buttons are — twice, and the two are not equally good.
@@ -1675,6 +1696,10 @@ html[data-window-controls-overlay="true"] {
     grid-template-rows 260ms var(--stream-ease),
     opacity 260ms var(--stream-ease);
 }
+.harness-status-body[data-open="false"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
 /* 2px of padding undone by margin, so the clip does not eat a focus ring. */
 .harness-status-body > * {
   min-height: 0;
@@ -2128,13 +2153,9 @@ html .dv-void-container {
 }
 
 html .dv-right-actions-container {
-  align-items: center;
-  display: flex;
-  height: 100%;
-  /* Never squeezed: the tabs are the flexible thing in this row, and a + that
-     shrank to nothing at eight tabs is the one control that has to be reachable
-     at eight tabs. */
-  flex-shrink: 0;
+  /* Its children are flex items of the strip itself, so the layout button can
+     sit after the void (`order`) while the + stays against the last tab. */
+  display: contents;
 }
 
 /* ── Content is flush ──

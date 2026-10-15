@@ -4,7 +4,8 @@ const { contextBridge, ipcRenderer } = require("electron")
 // window; elsewhere the app must stay opaque or the sidebar shows a grey void.
 // There is no longer a choice to make about it: the material being there is the
 // whole condition, so the attribute is the platform's answer and nothing else.
-const vibrancy = process.platform === "darwin" || process.platform === "win32"
+// The reader can turn the material off (main.cjs `window-translucent.json`), so main answers.
+const vibrancy = ipcRenderer.sendSync("get-window-translucent-sync") === true
 
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
@@ -39,6 +40,9 @@ contextBridge.exposeInMainWorld("desktop", {
   /** Read or persist the Windows backdrop material used on the next launch. */
   getWindowMaterial: () => ipcRenderer.invoke("get-window-material"),
   setWindowMaterial: (material) => ipcRenderer.invoke("set-window-material", material),
+  /** Whether the window has a native material behind it (next launch). */
+  getWindowTranslucent: () => ipcRenderer.invoke("get-window-translucent"),
+  setWindowTranslucent: (value) => ipcRenderer.invoke("set-window-translucent", value),
   /** Open one thread in a window of its own (`?popout=1`). */
   openThreadWindow: (sessionId) => ipcRenderer.invoke("open-thread-window", sessionId),
   /** Close only the BrowserWindow that owns this renderer. */

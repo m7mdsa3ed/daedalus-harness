@@ -77,6 +77,35 @@ function loadWindowMaterial() {
   return activeWindowMaterial
 }
 
+/* Whether the window has a native material behind it at all (macOS vibrancy,
+   Windows acrylic/mica). Like the material it is a window-creation option, so it
+   is a file read at launch and a change needs a restart. On by default. */
+const windowTranslucentFile = () => path.join(app.getPath("userData"), "window-translucent.json")
+let activeTranslucent
+function loadTranslucent() {
+  if (activeTranslucent !== undefined) return activeTranslucent
+  try {
+    activeTranslucent = JSON.parse(fs.readFileSync(windowTranslucentFile(), "utf8")) !== false
+  } catch {
+    activeTranslucent = true
+  }
+  return activeTranslucent
+}
+// Sync, because preload marks <html> before first paint and cannot await.
+ipcMain.on("get-window-translucent-sync", (event) => {
+  event.returnValue = loadTranslucent() && (process.platform === "darwin" || process.platform === "win32")
+})
+ipcMain.handle("get-window-translucent", () => loadTranslucent())
+ipcMain.handle("set-window-translucent", (_event, value) => {
+  try {
+    fs.writeFileSync(windowTranslucentFile(), JSON.stringify(value !== false))
+    activeTranslucent = value !== false
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: `Could not save window transparency: ${error?.message ?? error}` }
+  }
+})
+
 /* ── Notifications ──
    The renderer does NOT use the web Notification API here, and the permission
    handlers below are not the whole story: Chromium's web notifications inside
@@ -633,20 +662,25 @@ ipcMain.handle("preview-console-read", (event, guestId) => {
 /* The window's own material — see the long note in createWindow. Shared with a
    thread popout, because preload marks every window translucent on these
    platforms and a popout without the material would draw a grey void. */
-const material = () => ({
-  vibrancy: process.platform === "darwin" ? "sidebar" : undefined,
-  visualEffectState: process.platform === "darwin" ? "active" : undefined,
-  backgroundMaterial: process.platform === "win32" ? loadWindowMaterial() : undefined,
-  roundedCorners: true,
-  backgroundColor:
-    process.platform === "darwin"
-      ? undefined
-      : process.platform === "win32"
-        ? WINDOW_TINT
-        : nativeTheme.shouldUseDarkColors
-          ? "#0a0a0a"
-          : "#ffffff",
-})
+const material = () => {
+  /* Off by the reader (Settings › Appearance › Desktop window): no native
+     material, so an opaque window colour, and preload leaves the page opaque. */
+  const translucent = loadTranslucent()
+  const solid = nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff"
+  return {
+    vibrancy: translucent && process.platform === "darwin" ? "sidebar" : undefined,
+    visualEffectState: translucent && process.platform === "darwin" ? "active" : undefined,
+    backgroundMaterial: translucent && process.platform === "win32" ? loadWindowMaterial() : undefined,
+    roundedCorners: true,
+    backgroundColor: !translucent
+      ? solid
+      : process.platform === "darwin"
+        ? undefined
+        : process.platform === "win32"
+          ? WINDOW_TINT
+          : solid,
+  }
+}
 
 /** Clipboard keys, the context menu and the external-link rules — every window's. */
 function guardWindow(w) {

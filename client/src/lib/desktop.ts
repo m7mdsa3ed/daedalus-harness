@@ -53,6 +53,15 @@ export async function setWindowMaterial(material: WindowMaterial): Promise<strin
   return result && !result.ok ? result.error : ""
 }
 
+export async function getWindowTranslucent(): Promise<boolean> {
+  return (await desktop?.getWindowTranslucent?.()) ?? true
+}
+
+export async function setWindowTranslucent(value: boolean): Promise<string> {
+  const result = await desktop?.setWindowTranslucent?.(value)
+  return result && !result.ok ? result.error : ""
+}
+
 export function useQuickEntry(): {
   accelerator: string
   error: string

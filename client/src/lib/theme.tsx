@@ -296,6 +296,8 @@ declare global {
       /** Windows backdrop material; changes take effect after restarting the app. */
       getWindowMaterial?: () => Promise<"acrylic" | "mica">
       setWindowMaterial?: (material: "acrylic" | "mica") => Promise<{ ok: true } | { ok: false; error: string }>
+      getWindowTranslucent?: () => Promise<boolean>
+      setWindowTranslucent?: (value: boolean) => Promise<{ ok: true } | { ok: false; error: string }>
       /** A thread in a window of its own, drawn with no shell (`lib/popout.ts`). */
       openThreadWindow?: (sessionId: string) => Promise<boolean>
       /** Close only the current Electron window. */
