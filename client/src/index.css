@@ -2428,6 +2428,21 @@ html {
     min-width: 0;
   }
 
+  /* Full width regardless of the title: the scrollable wrapper dockview puts
+     around the tabs takes the strip's leftover by basis (not by content, which
+     is what left "New tab" the width of its two words), and the tab in front
+     takes all of that. */
+  html .dv-tabs-and-actions-container:not(.dock-nested *) > .dv-scrollable {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  html .dv-tabs-container:not(.dock-nested *) {
+    width: 100%;
+  }
+  html .dv-tab.dv-active-tab:not(.dock-nested *) {
+    flex: 1 1 100%;
+  }
+
   html .dv-void-container {
     flex-grow: 0;
   }
