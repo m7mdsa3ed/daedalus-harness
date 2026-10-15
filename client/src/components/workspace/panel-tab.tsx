@@ -348,7 +348,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                sliders beside it (`HEADER_CHIP`, the same token), because all
                three stand on the one line; on a docked strip it is the row minus
                the 2px of air the cell keeps above and below it. */
-            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-xs",
+            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-1.5 pl-2.5 text-[13px] leading-4",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >

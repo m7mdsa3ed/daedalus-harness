@@ -389,7 +389,7 @@
      transcript too, and a 48px band of chrome buys 16px of hit area on one
      control. The strip's own gutters carry that instead (search
      `--dock-band-left`). */
-  --app-header-row-h: 2.75rem;
+  --app-header-row-h: 2.5rem;
   --app-header-h: calc(var(--app-inset-top) + var(--app-header-row-h));
   /* The air above the header row and again between it and the card — one
      number, so the row has the same on both sides. Zero where the window's
@@ -1051,7 +1051,7 @@
    instead of the 148px Electron assumes. */
 
 html[data-desktop="true"] {
-  --desktop-titlebar-height: 44px;
+  --desktop-titlebar-height: 40px;
 }
 /* Windows and Linux: the caption buttons are a 36px overlay at the top edge
    (`titleBarOverlay.height`, electron/main.cjs), so the header row is that
@@ -2311,8 +2311,8 @@ html .dv-tab {
      grow-to-a-ceiling, shrink-to-a-floor behaviour, one that dockview can
      animate. */
   flex: 1 1 auto;
-  width: 18rem;
-  max-width: 18rem;
+  width: 13rem;
+  max-width: 13rem;
   min-width: 6.5rem;
   /* Dockview times its own reorder off this (it defaults to 200ms, and sets
      70ms on every `.dv-drop-target` — which a tab is, so the collapse and the
