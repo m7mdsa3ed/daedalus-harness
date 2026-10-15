@@ -2332,8 +2332,8 @@ html .dv-tab {
      grow-to-a-ceiling, shrink-to-a-floor behaviour, one that dockview can
      animate. */
   flex: 1 1 auto;
-  width: 13rem;
-  max-width: 13rem;
+  width: 18rem;
+  max-width: 18rem;
   min-width: 6.5rem;
   /* Dockview times its own reorder off this (it defaults to 200ms, and sets
      70ms on every `.dv-drop-target` — which a tab is, so the collapse and the
