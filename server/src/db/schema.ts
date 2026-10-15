@@ -401,6 +401,9 @@ export const profiles = pgTable("profiles", {
       filters on it. */
   hidden: boolean("hidden").notNull().default(false),
   disabled: boolean("disabled").notNull().default(false),
+  /** Which voice backend a call on a thread of this profile uses (`voice.ts`),
+      beating the global default and losing to the project's. Null = no say. */
+  voiceProvider: text("voice_provider"),
   /* The web-search and knowledge opt-ins used to be columns here. They are
      library rows now (`mcp_servers.type = "builtin"`), linked like any other
      server — see BUILTIN_MCP in library.ts. */
@@ -501,6 +504,9 @@ export const projects = pgTable("projects", {
       `suggestFollowups: defaults.suggestFollowups ?? true` reads as. */
   defaultSuggestFollowups: boolean("default_suggest_followups").notNull().default(true),
   defaultUiBlocks: boolean("default_ui_blocks").notNull().default(true),
+  /** Which voice backend a call on a thread in this project uses (`voice.ts`);
+      the first scope asked. Null = no say, the profile's then the default. */
+  defaultVoiceProvider: text("default_voice_provider"),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the

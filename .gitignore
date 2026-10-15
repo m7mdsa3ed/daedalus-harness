@@ -7,3 +7,5 @@
 # and committing it means a diff on every thread that opens this repo.
 .claude/.daedalus-models.json
 .claude/settings.local.json
+
+node_modules/

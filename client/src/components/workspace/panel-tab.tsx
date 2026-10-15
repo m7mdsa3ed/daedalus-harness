@@ -41,7 +41,15 @@
 import * as React from "react"
 import type { IDockviewPanelHeaderProps } from "dockview-react"
 import { useNavigate } from "react-router"
-import { MoreVerticalIcon, PinOffIcon, XIcon } from "lucide-react"
+import {
+  MoreVerticalIcon,
+  PanelBottomIcon,
+  PanelLeftIcon,
+  PanelRightIcon,
+  PanelTopIcon,
+  PinOffIcon,
+  XIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -546,90 +554,97 @@ function useTabMenuItems({
   const { onOpenPanel } = useDockOpeners()
 
   return [
+    ...([
+          /* Four directions as an icon row, like Windows 11's context menu.
+             A lone tab has nothing to leave behind — the move would make a
+             new group and empty this one. */
+          {
+            type: "icons",
+            items: (
+              [
+                ["left", "Split left", PanelLeftIcon],
+                ["right", "Split right", PanelRightIcon],
+                ["above", "Split up", PanelTopIcon],
+                ["below", "Split down", PanelBottomIcon],
+              ] as const
+            ).map(([direction, label, Icon]) => ({
+              icon: <Icon className="size-4" />,
+              label,
+              disabled: !hasOthers || isMobile,
+              onClick: () => dock.splitActive(direction, api.id),
+            })),
+          },
+          { type: "separator" },
+        ] satisfies MenuItemSpec[]),
     /* Close comes first and names *this* tab, so a pinned panel still has a way
        out — the bulk closes below are the ones pinning is a defence against.
        Every tab closes, the last one included: an empty dock goes to the
        landing console (`dock-surface.tsx`). */
     { label: "Close", shortcut: "closeTab", onClick: () => void dock.closePanel(api.id) },
-    { label: "Close others", disabled: !hasOthers, onClick: () => void dock.closeOthers(api.id) },
     {
-      label: "Close to the right",
-      disabled: !hasRightward,
-      onClick: () => void dock.closeToTheRight(api.id),
+      type: "sub",
+      label: "Close more",
+      items: [
+        { label: "Close others", disabled: !hasOthers, onClick: () => void dock.closeOthers(api.id) },
+        {
+          label: "Close to the right",
+          disabled: !hasRightward,
+          onClick: () => void dock.closeToTheRight(api.id),
+        },
+        { label: "Close all", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
+      ],
     },
-    { label: "Close all", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
-    /* ── Side by side ──
+    /* ── Arranging ──
        The dock's own rows, on a tab rather than in a menu behind the app's
-       chrome, because a tab is the thing the reader is pointing at. On a phone a
-       split is a column the fold-back takes away in the next microtask, so the
-       rows are not offered — the same answer the palette gives. */
-    ...(isMobile
-      ? []
-      : ([
-          { type: "separator" },
+       chrome. On a phone a split is a column the fold-back takes away in the
+       next microtask, so the rows are not offered — the same answer the
+       palette gives. */
+    { type: "separator" },
+    ...([
           {
-            label: "Split right",
-            shortcut: "splitRight",
-            /* A lone tab has nothing to leave behind — the move would make a
-               new group and empty this one. */
-            disabled: !hasOthers,
-            onClick: () => dock.splitActive("right", api.id),
+            type: "sub",
+            label: "Arrange",
+            items: [
+              /* One row, and it says which way it will go: filling a pair takes
+                 the fill away, so "Fill the dock" on an already-filled group
+                 would name the state it is about to leave. The chord toggles,
+                 because a key cannot know which of the two is true. */
+              {
+                label: maximized ? "Restore the columns" : "Fill the dock",
+                shortcut: "fillPanel",
+                disabled: !hasOtherGroups || isMobile,
+                onClick: () => dock.toggleMaximize(api.id),
+              },
+              {
+                label: "Move left",
+                disabled: !hasOthers || isMobile,
+                onClick: () => {
+                  api.setActive()
+                  dock.moveTab(-1)
+                },
+              },
+              {
+                label: "Move right",
+                disabled: !hasOthers || isMobile,
+                onClick: () => {
+                  api.setActive()
+                  dock.moveTab(1)
+                },
+              },
+              { label: "Even out the panes", shortcut: "equalizePanes", disabled: !hasOtherGroups || isMobile, onClick: () => dock.equalizePanes() },
+            ],
           },
-          {
-            label: "Split down",
-            shortcut: "splitDown",
-            disabled: !hasOthers,
-            onClick: () => dock.splitActive("below", api.id),
-          },
-          /* One row, and it says which way it will go: filling a pair takes the
-             fill away, so "Fill the dock" on an already-filled group would name
-             the state it is about to leave. The chord toggles, because a key
-             cannot know which of the two is true from where it fires. */
-          {
-            label: maximized ? "Restore the columns" : "Fill the dock",
-            shortcut: "fillPanel",
-            disabled: !hasOtherGroups,
-            onClick: () => dock.toggleMaximize(api.id),
-          },
-        ] satisfies MenuItemSpec[])),
-    ...(isMobile
-      ? []
-      : ([
-          { type: "separator" },
-          {
-            label: "Move left",
-            disabled: !hasOthers,
-            onClick: () => {
-              api.setActive()
-              dock.moveTab(-1)
-            },
-          },
-          {
-            label: "Move right",
-            disabled: !hasOthers,
-            onClick: () => {
-              api.setActive()
-              dock.moveTab(1)
-            },
-          },
-          { label: "Even out the panes", shortcut: "equalizePanes", disabled: !hasOtherGroups, onClick: () => dock.equalizePanes() },
-        ] satisfies MenuItemSpec[])),
+        ] satisfies MenuItemSpec[]),
     /* The strip's two walking keys are not about *this* tab, but the menu is
        where a reader who has not found the sheet asks what the tabs answer to —
-       and the row prints whatever chord they are bound to, so it cannot go
-       stale the way a written-down one would. */
-    { type: "separator" },
+       and the row prints whatever chord they are bound to. */
     {
-      label: "Next tab",
-      shortcut: "nextTab",
-      disabled: !hasOthers,
-      onClick: () => stepTabInGroup(api, 1),
-    },
-    {
-      label: "Previous tab",
-      shortcut: "prevTab",
-      disabled: !hasOthers,
-      onClick: () => stepTabInGroup(api, -1),
+      type: "sub",
+      label: "Switch tab",
+      items: [
+        { label: "Next tab", shortcut: "nextTab", disabled: !hasOthers, onClick: () => stepTabInGroup(api, 1) },
+        { label: "Previous tab", shortcut: "prevTab", disabled: !hasOthers, onClick: () => stepTabInGroup(api, -1) },
+      ],
     },
     { type: "separator" },
     { label: pinned ? "Unpin" : "Pin", onClick: () => dock.togglePin(api.id) },
@@ -640,7 +655,7 @@ function useTabMenuItems({
        a tab group never spans two strips. */
     {
       type: "sub",
-      label: "Add to tab group",
+      label: "Tab group",
       items: [
         { label: "New tab group", onClick: () => dock.addToTabGroup(api.id, null) },
         ...(tabGroups.groups.length > 0
@@ -656,11 +671,14 @@ function useTabMenuItems({
               ),
             ] satisfies MenuItemSpec[])
           : []),
+        ...(tabGroups.current
+          ? ([
+              { type: "separator" },
+              { label: "Remove from tab group", onClick: () => dock.removeFromTabGroup(api.id) },
+            ] satisfies MenuItemSpec[])
+          : []),
       ],
     },
-    ...(tabGroups.current
-      ? ([{ label: "Remove from tab group", onClick: () => dock.removeFromTabGroup(api.id) }] satisfies MenuItemSpec[])
-      : []),
     /* ── Open something *with* this tab ──
        Two ways, and the difference is whether you see both. "Terminal" joins
        this tab's tab group, right after it — one strip, one visible at a time.
@@ -706,27 +724,28 @@ function useTabMenuItems({
        collapses to its tabs — somewhere a terminal can sit under every column
        at once. Sent there by name only; nothing opens there. The way back is
        never withheld, phone included, because a narrow window folds it. */
-    ...(inBottom
-      ? ([{ label: "Move to the main area", onClick: () => dock.moveToMain(api.id) }] satisfies MenuItemSpec[])
-      : isMobile
-        ? []
-        : ([{ label: "Move to the bottom panel", onClick: () => dock.moveToBottom(api.id) }] satisfies MenuItemSpec[])),
-    ...(isMobile
-      ? []
-      : ([
-          { label: "Move to a floating window", onClick: () => dock.toggleFloat(api.id) },
-          {
-            label: "Open in a new window",
-            onClick: () => {
-              void dock.popoutPanel(api.id).then((opened) => {
-                /* A blocked popup is silent otherwise — the click appears to do
-                   nothing at all, which reads as a broken menu item rather than
-                   as a browser setting the user can change. */
-                if (!opened) toast.error("The browser blocked the new window")
-              })
-            },
+    {
+      type: "sub",
+      label: "Move to",
+      items: [
+        inBottom
+          ? { label: "The main area", onClick: () => dock.moveToMain(api.id) }
+          : { label: "The bottom panel", disabled: isMobile, onClick: () => dock.moveToBottom(api.id) },
+        { label: "A floating window", disabled: isMobile, onClick: () => dock.toggleFloat(api.id) },
+        {
+          label: "A new window",
+          disabled: isMobile,
+          onClick: () => {
+            void dock.popoutPanel(api.id).then((opened) => {
+              /* A blocked popup is silent otherwise — the click appears to do
+                 nothing at all, which reads as a broken menu item rather than
+                 as a browser setting the user can change. */
+              if (!opened) toast.error("The browser blocked the new window")
+            })
           },
-        ] satisfies MenuItemSpec[])),
+        },
+      ],
+    },
     /* The project's saved shell lines, on the tab of a thread that belongs to
        it: a helper acts on one project, and which project that is, is a fact
        about this tab. A helper runs in a terminal panel, so the dock is already

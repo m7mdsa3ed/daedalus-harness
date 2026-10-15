@@ -36,6 +36,13 @@ export type MenuItemSpec =
       disabled?: boolean
     } & Omit<MenuRowProps, "trailing">)
   | { type: "separator" }
+  /** A row of icon-only actions across the top of a menu, as Windows 11's
+      context menu does for cut/copy/paste. Each is a real menu item (it closes
+      the menu, takes the arrows) with its name as `title`/`aria-label`. */
+  | {
+      type: "icons"
+      items: { icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean }[]
+    }
 
 /** The flat reading of a spec list: submenus opened out in place, their rows
     kept in order. For a surface that draws the items itself and has no
@@ -50,6 +57,8 @@ type MenuParts = {
     disabled?: boolean
     onClick?: React.MouseEventHandler
     className?: string
+    title?: string
+    "aria-label"?: string
     children?: React.ReactNode
   }>
   Separator: React.ComponentType
@@ -72,6 +81,21 @@ export function renderMenuItems(items: MenuItemSpec[], parts: MenuParts) {
   return items.map((item, index) =>
     item.type === "separator" ? (
       <Separator key={index} />
+    ) : item.type === "icons" ? (
+      <div key={index} className="flex items-center gap-0.5 px-1 py-0.5">
+        {item.items.map((entry) => (
+          <Item
+            key={entry.label}
+            title={entry.label}
+            aria-label={entry.label}
+            disabled={entry.disabled}
+            onClick={entry.onClick}
+            className="size-8 flex-none justify-center p-0"
+          >
+            {entry.icon}
+          </Item>
+        ))}
+      </div>
     ) : item.type === "sub" ? (
       Sub && SubTrigger && SubContent ? (
         <Sub key={index}>

@@ -487,7 +487,7 @@ export function useWorkspaceDock(): DockController {
   const closeGroup = React.useCallback((id: string) => closeEach(groupPanels(id)), [closeEach, groupPanels])
 
   const splitActive = React.useCallback(
-    (direction: "right" | "below", id?: string) => {
+    (direction: "right" | "below" | "left" | "above", id?: string) => {
       const api = apiRef.current
       /* One strip below `md`, by construction (the fold in `dock-surface.tsx`),
          so a split asked for on a phone is one the fold takes away. */

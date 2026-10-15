@@ -30,7 +30,7 @@ import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ToolItem } from "@/lib/store"
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext } from "@/components/workspace/dock-context"
-import { useProjects } from "@/lib/queries/catalog"
+import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useProjectScripts } from "@/lib/queries"
 import { keepDefinedCommands } from "@/lib/suggestions"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
@@ -73,8 +73,8 @@ import {
   type InspectorTab,
 } from "@/lib/inspector"
 import { useServer } from "@/lib/server-context"
-import { defaultVoice, useVoiceProviders } from "@/lib/queries/voice"
-import { useVoiceCallActive } from "@/lib/voice-call"
+import { useVoiceProviders, voiceFor } from "@/lib/queries/voice"
+import { useVoiceCallActive, useVoiceCallLifetime } from "@/lib/voice-call"
 
 /* The provider packages ride this chunk: a thread with no call never loads them. */
 const VoiceCall = React.lazy(() => import("./voice-call"))
@@ -347,7 +347,13 @@ export function ThreadView({
      reading is ambient, and a thread with no project has nothing to read. */
   const server = useServer()
   const voiceActive = useVoiceCallActive(sessionId)
-  const voiceProvider = defaultVoice(useVoiceProviders().data)
+  /* The card builds its realtime model from this row, and the token the
+     server mints is for the same one (`?provider=` wins over the session's own
+     resolution), so project, then profile, then default is decided once, here. */
+  const voiceMeta = useSessionMeta(sessionId)
+  const voiceProjectPick = useProjects().find((p) => p.id === voiceMeta?.projectId)?.defaults?.voiceProvider
+  const voiceProfilePick = useProfiles().find((p) => p.id === voiceMeta?.profileId)?.voiceProvider
+  const voiceProvider = voiceFor(useVoiceProviders().data, voiceProjectPick, voiceProfilePick)
   React.useEffect(() => {
     const controller = new AbortController()
     sessionChanges(server, sessionId, controller.signal)
@@ -430,6 +436,7 @@ export function ThreadView({
   const [rewindBusy, setRewindBusy] = React.useState(false)
   const agents = useAgents()
   const meta = useSessionMeta(sessionId)
+  useVoiceCallLifetime(sessionId, !!meta?.deletedAt)
   /* A mention or file link opens in the project's Preview — inside this
      thread's dock when it has one (its `openPanel` keeps a preview there), the
      outer dock's otherwise. Null in a popout, which has no dock. */
@@ -1049,6 +1056,7 @@ export function ThreadView({
                         actions={actions}
                         settings={server}
                         provider={voiceProvider}
+                        draft={meta?.draft === true}
                       />
                     </React.Suspense>
                   </div>
@@ -1169,6 +1177,7 @@ export function ThreadView({
           meta={meta}
           delivery={delivery}
           changes={latestChanges}
+          voiceCall
           /* Scroll, and the box gets out of the way: `follow.pinned` is false
              once a gesture has taken the reader away from the tail — the same
              state the scroll-to-end button draws — and reaching the bottom

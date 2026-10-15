@@ -190,6 +190,7 @@ export function Composer({
   placeholder,
   autoFocus,
   collapsed = false,
+  voiceCall = false,
   ref,
 }: {
   sessionId: string
@@ -220,6 +221,9 @@ export function Composer({
       The reserved height stays (`--composer-dock-h`): collapsing must not
       re-flow the transcript under somebody who is reading it. */
   collapsed?: boolean
+  /** Offer the voice call. Only a thread view draws the call (at its foot), so
+      the landing console, which has no transcript to put it in, does not. */
+  voiceCall?: boolean
   ref?: React.Ref<ComposerHandle>
 }) {
   const navigate = useNavigate()
@@ -289,8 +293,8 @@ export function Composer({
      thread is opening — which is what stops a second Enter on a draft from
      POSTing the same session id twice. */
   const draft = meta?.draft === true
-  /* Voice mode, beside dictation: offered once a backend is set up, and not on
-     a draft — a draft has no row for the call's lines to land on. */
+  /* Voice mode, beside dictation: offered once a backend is set up. A draft may
+     start one — the call buffers its lines until the first send makes the row. */
   const voiceBackend = defaultVoice(useVoiceProviders().data)
   const inCall = useVoiceCallActive(sessionId)
   /* The thread's MCP servers, read by the harness's own client: their prompts
@@ -767,7 +771,7 @@ export function Composer({
 
   /* Away only while the scroll says so and nothing has just been put in the box
      — see `revealed` above. */
-  const away = collapsed && !revealed
+  const away = (collapsed && !revealed) || inCall
 
   return (
     /* Collapsed: the reader has left the tail, so the shelf rides down out of
@@ -787,14 +791,17 @@ export function Composer({
     >
       {/* Away, the card morphs into this pill (its clip-path below shrinks onto
           exactly this box), and a click is the reader asking for the box back:
-          the same `revealed` a fill sets, handed back to the scroll at the tail. */}
+          the same `revealed` a fill sets, handed back to the scroll at the tail.
+          In a call the box is away for good and the pill is the way out of it:
+          it ends the call, which gives the box back. */}
       <button
         type="button"
         tabIndex={away ? 0 : -1}
         aria-hidden={!away || undefined}
-        aria-label="Message the agent"
-        title={text.trim() || "Message the agent"}
+        aria-label={inCall ? "End voice call" : "Message the agent"}
+        title={inCall ? "End voice call" : text.trim() || "Message the agent"}
         onClick={() => {
+          if (inCall) return endVoiceCall(sessionId)
           setRevealed(true)
           requestAnimationFrame(() => composerRef.current?.focus())
         }}
@@ -804,7 +811,11 @@ export function Composer({
           away ? "pointer-events-auto opacity-100 delay-100" : "pointer-events-none opacity-0"
         )}
       >
-        <MessageSquareText className="size-4 shrink-0" />
+        {inCall ? (
+          <AudioLines className="size-4 shrink-0 animate-pulse text-primary" />
+        ) : (
+          <MessageSquareText className="size-4 shrink-0" />
+        )}
       </button>
       <ComposerStrip
         aria-hidden={away || undefined}
@@ -1115,7 +1126,7 @@ export function Composer({
               <Mic />
             </Button>
           )}
-          {voiceBackend && !draft && (
+          {voiceBackend && voiceCall && (
             <Button
               variant="ghost"
               size={iconSize}

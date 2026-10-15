@@ -78,7 +78,7 @@ export interface WorkspaceDock {
   closeGroup: (id: string) => Promise<void>
   /** Move a panel (`id`, or the one in front of you) into a new column or row
       beside its own. */
-  splitActive: (direction: "right" | "below", id?: string) => void
+  splitActive: (direction: "right" | "below" | "left" | "above", id?: string) => void
   /** Aim the next *thread* opened at a strip — the strip's "+ ▸ New thread",
       whose tab arrives a navigation later, so it cannot be passed along the
       way a panel's `into` is. Spent by the next chat open, within 2s. */

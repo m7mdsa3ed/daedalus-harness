@@ -49,6 +49,9 @@ import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
 import { HelperForm } from "@/components/helper-form"
+import { VoiceBackendField } from "./voice"
+import { saveProjectDefaults } from "@/lib/project-defaults"
+import { useQueryClient } from "@tanstack/react-query"
 
 export function ProjectsPage() {
   const { settings } = useSettingsPage()
@@ -232,7 +235,9 @@ export function ProjectForm({
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
     previewUrl: project?.previewUrl ?? "",
+    voiceProvider: project?.defaults?.voiceProvider ?? "",
   }))
+  const qc = useQueryClient()
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
@@ -347,6 +352,17 @@ export function ProjectForm({
             />
           </div>
         </Field>
+        {/* Written through the defaults door at once, like the composer's picks;
+            a project being created has no row to write to yet. */}
+        {project && (
+          <VoiceBackendField
+            value={form.voiceProvider}
+            onChange={(voiceProvider) => {
+              set({ voiceProvider })
+              saveProjectDefaults(settings, qc, project.id, { voiceProvider })
+            }}
+          />
+        )}
       </FormSection>
       <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
       </PageForm>

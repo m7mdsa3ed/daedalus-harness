@@ -35,6 +35,16 @@ export const useVoiceProviders = () => useApiQuery<VoiceProvider[]>(voiceKey(use
 export const defaultVoice = (rows: readonly VoiceProvider[] | undefined): VoiceProvider | undefined =>
   rows?.find((r) => r.isDefault) ?? rows?.[0]
 
+/** The row a call uses for a scope: the first of `scoped` (project's, then
+    profile's) that names a configured backend, else the default. The server
+    resolves the same order from `?sessionId=` (`voiceSetup`); this is for
+    drawing which backend the card will get. */
+export const voiceFor = (
+  rows: readonly VoiceProvider[] | undefined,
+  ...scoped: (string | null | undefined)[]
+): VoiceProvider | undefined =>
+  scoped.map((id) => rows?.find((r) => r.provider === id)).find(Boolean) ?? defaultVoice(rows)
+
 export const useSaveVoiceProvider = () =>
   useApiMutation<VoiceProviderInput, VoiceProvider>(
     [voiceKey(useServer())],

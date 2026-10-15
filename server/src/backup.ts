@@ -178,6 +178,7 @@ const ProfileRow = z.object({
   /** Optional like `hidden` so an old bundle's `disabled: true` restores as
       exactly that — disabled — rather than being dropped by a rename. */
   disabled: z.boolean().optional(),
+  voiceProvider: optStr,
   // Older bundles may still carry profile links; accepted and ignored.
   mcpServerIds: z.array(str).default([]).optional(),
   skillIds: z.array(str).default([]).optional(),
@@ -291,6 +292,8 @@ const ProjectDefaultsRow = z.object({
   commandIds: z.array(str).default([]),
   suggestFollowups: z.boolean().default(true),
   uiBlocks: z.boolean().default(true),
+  /** A provider this install lacks is harmless: voiceSetup falls through. */
+  voiceProvider: str.default(""),
 });
 
 /** A space — a named scope above projects (spaces.ts). Carried so a bundle's
@@ -1093,6 +1096,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         disabled: columns.disabled ?? false,
         smallModel: columns.smallModel ?? "",
         logoUrl: columns.logoUrl ?? "",
+        voiceProvider: columns.voiceProvider ?? null,
         usage: columns.usage ?? null,
       };
     });

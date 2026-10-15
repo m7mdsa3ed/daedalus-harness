@@ -51,12 +51,13 @@ export function voiceRoutes(app: Hono, deps: { sessions: SessionManager }): void
      no Authorization header, so the bearer rides `?token=` like a socket's.
      Its body (`{ sessionConfig }`) is ignored on purpose: the session is the
      server's, bound into the token. `?provider=` picks a backend; without it,
-     the default. A provider that refuses is a 502 with its own words. */
+     `?sessionId=` resolves project, then profile, then the default. A provider that refuses is a 502 with its own words. */
   app.post("/api/voice/setup", async (c) => {
     const provider = c.req.query("provider") || undefined;
     if (provider !== undefined && !isProvider(provider)) return c.json({ error: "unknown provider" }, 404);
     try {
-      return c.json(await voiceSetup(provider));
+      const session = sessions.get(c.req.query("sessionId") ?? "");
+      return c.json(await voiceSetup(provider, session && { projectId: session.projectId, profileId: session.profileId }));
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
     }

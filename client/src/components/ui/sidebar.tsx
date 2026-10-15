@@ -225,10 +225,25 @@ function Sidebar({
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
         )}
       />
+      {/* Hover threshold: while collapsed, a thin invisible strip on the edge.
+          Pointing at it slides the (already fixed, off-screen) container in as
+          a floating overlay — the gap above stays w-0, so nothing is pushed. */}
+      {state === "collapsed" && collapsible === "offcanvas" && (
+        <div
+          data-slot="sidebar-hot-zone"
+          aria-hidden
+          className="peer/hot fixed inset-y-0 z-30 hidden w-2 data-[side=left]:left-0 data-[side=right]:right-0 md:block"
+          data-side={side}
+        />
+      )}
       <div
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
+          "group-data-[collapsible=offcanvas]:peer-hover/hot:z-30 group-data-[collapsible=offcanvas]:hover:z-30 group-data-[collapsible=offcanvas]:has-[[data-popup-open]]:z-30",
+          "group-data-[collapsible=offcanvas]:data-[side=left]:peer-hover/hot:left-0! group-data-[collapsible=offcanvas]:data-[side=left]:hover:left-0! group-data-[collapsible=offcanvas]:data-[side=left]:has-[[data-popup-open]]:left-0!",
+          "group-data-[collapsible=offcanvas]:data-[side=right]:peer-hover/hot:right-0! group-data-[collapsible=offcanvas]:data-[side=right]:hover:right-0! group-data-[collapsible=offcanvas]:data-[side=right]:has-[[data-popup-open]]:right-0!",
+          "group-data-[collapsible=offcanvas]:peer-hover/hot:shadow-2xl group-data-[collapsible=offcanvas]:hover:shadow-2xl group-data-[collapsible=offcanvas]:has-[[data-popup-open]]:shadow-2xl",
           "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
           variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"

@@ -74,7 +74,7 @@ export function useProfiles(): Profile[] {
     must not have to mean "keep the stored key". One route, either field. */
 export function useSetProfileFlags() {
   const settings = useServer()
-  return useApiMutation<{ id: string; hidden?: boolean; disabled?: boolean; smallModel?: string }, Profile>(
+  return useApiMutation<{ id: string; hidden?: boolean; disabled?: boolean; smallModel?: string; voiceProvider?: string }, Profile>(
     [profilesKey(settings), agentsKey(settings)],
     (s, { id, ...flags }) =>
       api<Profile>(s, `/api/profiles/${encodeURIComponent(id)}`, {

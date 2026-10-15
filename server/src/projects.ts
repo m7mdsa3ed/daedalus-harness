@@ -79,6 +79,8 @@ export interface ProjectDefaults {
   commandIds: string[];
   suggestFollowups: boolean;
   uiBlocks: boolean;
+  /** "" = no say: the thread's profile, then the global default, picks. */
+  voiceProvider: string;
 }
 
 /** An empty set of defaults — a project nobody has worked in yet. Every field
@@ -95,6 +97,7 @@ export const emptyDefaults = (): ProjectDefaults => ({
   commandIds: [],
   suggestFollowups: true,
   uiBlocks: true,
+  voiceProvider: "",
 });
 
 /**
@@ -116,6 +119,7 @@ export const ProjectDefaultsPatchSchema = z.object({
   commandIds: z.array(z.string()).optional(),
   suggestFollowups: z.boolean().optional(),
   uiBlocks: z.boolean().optional(),
+  voiceProvider: z.string().optional(),
 });
 
 export type ProjectDefaultsPatch = z.infer<typeof ProjectDefaultsPatchSchema>;
@@ -137,6 +141,7 @@ export function projectDefaultsColumns(patch: ProjectDefaultsPatch) {
   if (patch.commandIds !== undefined) out.defaultCommandIds = patch.commandIds;
   if (patch.suggestFollowups !== undefined) out.defaultSuggestFollowups = patch.suggestFollowups;
   if (patch.uiBlocks !== undefined) out.defaultUiBlocks = patch.uiBlocks;
+  if (patch.voiceProvider !== undefined) out.defaultVoiceProvider = patch.voiceProvider || null;
   return out;
 }
 
@@ -155,6 +160,7 @@ export const projectDefaultsOf = (row: typeof projectsTable.$inferSelect): Proje
   commandIds: row.defaultCommandIds ?? [],
   suggestFollowups: row.defaultSuggestFollowups ?? true,
   uiBlocks: row.defaultUiBlocks ?? true,
+  voiceProvider: row.defaultVoiceProvider ?? "",
 });
 
 /** A project row with the start-default columns taken off it.
@@ -178,6 +184,7 @@ export function withoutDefaults(row: typeof projectsTable.$inferSelect) {
     defaultCommandIds: _commands,
     defaultSuggestFollowups: _sf,
     defaultUiBlocks: _ui,
+    defaultVoiceProvider: _vp,
     ...rest
   } = row;
   return rest;

@@ -106,6 +106,8 @@ export type Profile = Omit<ProfileInput, "smallModel" | "suppressModelMetadataWa
       the booleans. */
   hidden?: boolean;
   disabled?: boolean;
+  /** Voice backend for calls on this profile's threads; null/absent = no say. */
+  voiceProvider?: string | null;
   id: string;
   /** Not stored: synthesized for an agent so it can always be run as it ships.
       See `defaultProfileFor`. Nothing may edit or delete one. */
@@ -198,6 +200,7 @@ function toProfile(row: Record<string, unknown>): Profile {
     agents: (row.agents as Record<string, ProfileAgentLink> | null | undefined) ?? {},
     smallModel: (row.smallModel as string | null | undefined) ?? "",
     logoUrl: (row.logoUrl as string | null | undefined) ?? "",
+    voiceProvider: (row.voiceProvider as string | null | undefined) ?? null,
     usage: (row.usage as ProfileUsage | null | undefined) ?? null,
     suppressModelMetadataWarning: row.suppressModelMetadataWarning === true,
     hidden: row.hidden === true,
@@ -358,10 +361,11 @@ export async function exportProfile(id: string, includeSecrets: boolean): Promis
  */
 export async function setProfileFlags(
   id: string,
-  flags: { hidden?: boolean; disabled?: boolean; smallModel?: string },
+  flags: { hidden?: boolean; disabled?: boolean; smallModel?: string; voiceProvider?: string },
 ): Promise<Profile | undefined> {
   if (isVirtualProfile(id)) return undefined;
-  const patch: { hidden?: boolean; disabled?: boolean; smallModel?: string } = {};
+  const patch: { hidden?: boolean; disabled?: boolean; smallModel?: string; voiceProvider?: string | null } = {};
+  if (flags.voiceProvider !== undefined) patch.voiceProvider = flags.voiceProvider || null;
   if (flags.hidden !== undefined) patch.hidden = flags.hidden;
   if (flags.disabled !== undefined) patch.disabled = flags.disabled;
   if (flags.smallModel !== undefined) patch.smallModel = flags.smallModel.trim();

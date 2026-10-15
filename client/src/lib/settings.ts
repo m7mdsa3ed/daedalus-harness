@@ -663,6 +663,8 @@ export interface Profile {
       Default, which can never be either). */
   hidden?: boolean
   disabled?: boolean
+  /** Voice backend for calls on this profile's threads; null/absent = no say. */
+  voiceProvider?: string | null
 }
 
 /** A coding plan a new profile can start from (`server/src/profile-presets.ts`):
@@ -809,6 +811,9 @@ export interface ProjectDefaults {
   commandIds: string[]
   suggestFollowups: boolean
   uiBlocks: boolean
+  /** Voice backend for calls on a thread here; "" or absent = the profile's,
+      then the global default. */
+  voiceProvider?: string
 }
 
 /** One of a project's helper commands: a shell line run on the project's

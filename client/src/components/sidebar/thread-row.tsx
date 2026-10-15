@@ -96,7 +96,7 @@ export const ThreadRow = React.memo(function ThreadRow({
             onPin,
             onRemoveWorktree,
           }).map((item) =>
-            busy && item.type !== "sub" && item.type !== "separator" && item.destructive
+            busy && item.type !== "sub" && item.type !== "separator" && item.type !== "icons" && item.destructive
               ? { ...item, disabled: true, hint: "Stop the turn first" }
               : item
           ),

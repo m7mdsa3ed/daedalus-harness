@@ -70,6 +70,9 @@ export function extractSearchText(kind: string, payload: unknown): string | null
       if (!content || typeof content !== "object" || content.type !== "text") return null;
       return asText(content.text);
     }
+    // A voice line is prose said in the thread (the call's words, not the agent's).
+    case "_daedalus/voice":
+      return asText(update.text);
     // The title only ("Search the web for …"), never rawInput/rawOutput.
     case "tool_call":
       return asText(update.title);

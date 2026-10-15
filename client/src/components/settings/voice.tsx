@@ -8,30 +8,170 @@ import {
 } from "@/lib/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { ErrorNote } from "@/components/error-note"
 import { PageForm, PageHeader, Group, Field, FormActions, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /* What each provider is called here and what its fields start as. The model
-   and voice are typed, never picked from a list: both providers rename them
-   every few months, and a list here would be the first thing to go stale. */
-const PROVIDERS: { id: VoiceProviderId; label: string; model: string; voice: string; keyHint: string }[] = [
-  { id: "openai", label: "OpenAI Realtime", model: "gpt-realtime", voice: "alloy", keyHint: "An OpenAI API key (sk-…)." },
+   and voice are suggestions, never a closed list: both providers rename them
+   every few months, so a field offers what is known (searchable, with a short
+   note on each) and still takes anything typed — the list going stale costs a
+   missing suggestion, never a voice you cannot use. */
+type Suggestion = [value: string, note: string]
+
+const OPENAI_VOICES: Suggestion[] = [
+  ["marin", "Clear, professional"],
+  ["cedar", "Natural, conversational"],
+  ["alloy", "Neutral, balanced"],
+  ["ash", "Clear"],
+  ["ballad", "Warm, expressive"],
+  ["coral", "Friendly"],
+  ["echo", "Warm, engaging"],
+  ["sage", "Calm"],
+  ["shimmer", "Bright, energetic"],
+  ["verse", "Versatile"],
+]
+
+const GEMINI_VOICES: Suggestion[] = [
+  ["Zephyr", "Bright"], ["Puck", "Upbeat"], ["Charon", "Informative"], ["Kore", "Firm"],
+  ["Fenrir", "Excitable"], ["Leda", "Youthful"], ["Orus", "Firm"], ["Aoede", "Breezy"],
+  ["Callirrhoe", "Easy-going"], ["Autonoe", "Bright"], ["Enceladus", "Breathy"], ["Iapetus", "Clear"],
+  ["Umbriel", "Easy-going"], ["Algieba", "Smooth"], ["Despina", "Smooth"], ["Erinome", "Clear"],
+  ["Algenib", "Gravelly"], ["Rasalgethi", "Informative"], ["Laomedeia", "Upbeat"], ["Achernar", "Soft"],
+  ["Alnilam", "Firm"], ["Schedar", "Even"], ["Gacrux", "Mature"], ["Pulcherrima", "Forward"],
+  ["Achird", "Friendly"], ["Zubenelgenubi", "Casual"], ["Vindemiatrix", "Gentle"], ["Sadachbia", "Lively"],
+  ["Sadaltager", "Knowledgeable"], ["Sulafat", "Warm"],
+]
+
+const PROVIDERS: {
+  id: VoiceProviderId
+  label: string
+  model: string
+  voice: string
+  keyHint: string
+  models: Suggestion[]
+  voices: Suggestion[]
+}[] = [
+  {
+    id: "openai",
+    label: "OpenAI Realtime",
+    model: "gpt-realtime",
+    voice: "alloy",
+    keyHint: "An OpenAI API key (sk-…).",
+    models: [
+      ["gpt-realtime", "Current realtime model"],
+      ["gpt-realtime-mini", "Cheaper, faster"],
+      ["gpt-4o-realtime-preview", "Earlier preview"],
+    ],
+    voices: OPENAI_VOICES,
+  },
   {
     id: "google",
     label: "Gemini Live",
     model: "gemini-3.1-flash-live-preview",
     voice: "Kore",
     keyHint: "A Gemini API key from Google AI Studio.",
+    models: [
+      ["gemini-3.1-flash-live-preview", "Live, preview"],
+      ["gemini-2.5-flash-native-audio-preview-09-2025", "Native audio, preview"],
+      ["gemini-live-2.5-flash-preview", "Live 2.5 preview"],
+    ],
+    voices: GEMINI_VOICES,
   },
 ]
+
+/* One control, both ways in: the dropdown lists what is known and filters as
+   you type, and the field itself stays editable, so a name that matches nothing
+   is simply the value (the group picker's bargain, in profile-models.tsx). */
+function SuggestInput({
+  value,
+  onChange,
+  options,
+  placeholder,
+  required,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: Suggestion[]
+  placeholder?: string
+  required?: boolean
+}) {
+  return (
+    <Combobox
+      items={options.map(([v]) => v)}
+      value={value || null}
+      inputValue={value}
+      onInputValueChange={(next) => onChange(typeof next === "string" ? next : "")}
+      onValueChange={(next: string | null) => {
+        if (next !== null) onChange(next)
+      }}
+    >
+      <ComboboxInput placeholder={placeholder} className="w-full font-mono text-xs" required={required} />
+      <ComboboxContent>
+        <ComboboxList>
+          {options.map(([v, note]) => (
+            <ComboboxItem key={v} value={v}>
+              <span className="font-mono text-xs">{v}</span>
+              <span className="ms-auto ps-3 text-[11px] text-muted-foreground">{note}</span>
+            </ComboboxItem>
+          ))}
+        </ComboboxList>
+        <ComboboxEmpty>No match — what you typed is used as it is.</ComboboxEmpty>
+      </ComboboxContent>
+    </Combobox>
+  )
+}
 
 interface Draft {
   apiKey: string
   model: string
   voice: string
   isDefault: boolean
+}
+
+/* The per-scope pick on a project's and a profile's pages. "Default" is "no
+   say": the next scope out, then Settings › Voice's default, decides. Only
+   configured backends are offered; a stored one this install lacks still
+   reads as itself rather than as a blank. */
+export function VoiceBackendField({
+  value,
+  onChange,
+  hint,
+}: {
+  value: string | null | undefined
+  onChange: (provider: string) => void
+  hint?: string
+}) {
+  const { data: rows } = useVoiceProviders()
+  const label = (id: string) => PROVIDERS.find((p) => p.id === id)?.label ?? id
+  const ids = [...(rows ?? []).map((r) => r.provider as string), ...(value && !rows?.some((r) => r.provider === value) ? [value] : [])]
+  return (
+    <Field label="Voice backend" hint={hint ?? "Which realtime model a voice call on these threads uses."}>
+      <Select value={value || "default"} onValueChange={(v) => onChange(!v || v === "default" ? "" : v)}>
+        <SelectTrigger className="h-9 w-full @panel-sm:w-56">
+          <SelectValue>{value ? label(value) : "Default"}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">Default</SelectItem>
+          {ids.map((id) => (
+            <SelectItem key={id} value={id}>
+              {label(id)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
+  )
 }
 
 export function VoicePage() {
@@ -118,21 +258,21 @@ export function VoicePage() {
                       onChange={(e) => set(p.id, { apiKey: e.target.value })}
                     />
                   </Field>
-                  <Field label="Model" hint="A realtime model the provider serves.">
-                    <Input
+                  <Field label="Model" hint="Pick one or type any realtime model the provider serves.">
+                    <SuggestInput
                       value={draft.model}
-                      onChange={(e) => set(p.id, { model: e.target.value })}
+                      onChange={(model) => set(p.id, { model })}
+                      options={p.models}
                       placeholder={p.model}
-                      className="font-mono text-xs"
                       required
                     />
                   </Field>
-                  <Field label="Voice" hint="Empty uses the provider's default.">
-                    <Input
+                  <Field label="Voice" hint="Search the voices or type a name. Empty uses the provider's default.">
+                    <SuggestInput
                       value={draft.voice}
-                      onChange={(e) => set(p.id, { voice: e.target.value })}
+                      onChange={(voice) => set(p.id, { voice })}
+                      options={p.voices}
                       placeholder={p.voice}
-                      className="font-mono text-xs"
                     />
                   </Field>
                 </div>

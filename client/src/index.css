@@ -2855,17 +2855,10 @@ html .dock-tab [data-tab-action="pin"] {
 html[data-sidebar-layout="inset"] {
   --app-frame-gap: 0.5rem;
 }
-html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]),
-html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]) body::before {
-  background-color: var(--app-ground);
-}
+/* The ground is the flush layout's: `--sidebar` (html and body::before, above),
+   so the rail reads the same in both. */
 html[data-sidebar-layout="inset"]:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"] {
   background-color: transparent;
-}
-/* The phone's sheet cannot be transparent over the ground the way the rail is,
-   so it paints the tint instead. */
-html[data-sidebar-layout="inset"] [data-sidebar="sidebar"][data-mobile="true"] {
-  background-color: var(--app-ground);
 }
 html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
   background-color: transparent;
@@ -3152,7 +3145,9 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
 }
 
 @media (pointer: fine) {
-  * {
+  /* Unlayered, so it outranks every utility: without the :not, `no-scrollbar`
+     and `scrollbar-none` lose to this on a mouse device. */
+  *:not(.no-scrollbar, .scrollbar-none) {
     scrollbar-width: thin;
     scrollbar-color: rgb(var(--overlay) / 0.08) transparent;
   }
@@ -3306,4 +3301,16 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
   [data-slide] {
     animation: none;
   }
+}
+
+/* Voice call card: the wave's bars (components/thread-view/voice-call.tsx). */
+@keyframes voice-wave {
+  0%, 100% { transform: scaleY(0.2); }
+  50% { transform: scaleY(1); }
+}
+.voice-bar {
+  animation: voice-wave var(--d, 1s) ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-bar { animation: none !important; }
 }

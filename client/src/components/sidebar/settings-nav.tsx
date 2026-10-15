@@ -117,7 +117,7 @@ export function SettingsNav() {
         </SidebarGroupContent>
       </SidebarGroup>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain group-data-[collapsible=icon]:overflow-hidden">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain group-data-[collapsible=icon]:overflow-hidden">
         {SETTINGS_NAV_GROUPS.map((group) => (
           <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
             <SidebarGroupLabel className={GROUP_LABEL}>

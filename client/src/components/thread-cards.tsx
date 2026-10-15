@@ -693,9 +693,10 @@ AutonomyStep.displayName = "AutonomyStep"
 
 /**
  * A line of the voice conversation, where it was said. Not a step: nothing was
- * invoked and nothing expands, so it is a line of speech with the mark saying
- * whose voice — the mic for the person, the waveform for the voice model,
- * whose lines sit back a tone because the agent's own answer is the row above.
+ * invoked and nothing expands. It wears a `--primary` tint so it cannot be read
+ * as a message typed to or answered by the agent: the person's lines sit to the
+ * end in the stronger tint, the voice model's to the start in the lighter one —
+ * the voice model is not the agent, whose own answer is the plain row beside it.
  */
 export const VoiceStep = React.memo(function VoiceStep({
   item,
@@ -704,21 +705,25 @@ export const VoiceStep = React.memo(function VoiceStep({
   item: VoiceItem
   showTimestamp?: boolean
 }) {
-  const Icon = item.role === "user" ? MicIcon : AudioLinesIcon
+  const user = item.role === "user"
+  const Icon = user ? MicIcon : AudioLinesIcon
   return (
-    <div className="flex items-start gap-2 py-1 text-sm leading-6">
-      <Icon aria-hidden className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
-      <p
-        dir="auto"
+    <div className={cn("flex py-0.5", user && "justify-end")}>
+      <div
         className={cn(
-          "min-w-0 flex-1 text-pretty whitespace-pre-wrap",
-          item.role === "assistant" && "text-muted-foreground",
+          "max-w-[85%] min-w-0 rounded-xl border px-3 py-1.5 text-sm leading-6",
+          user ? "border-primary/25 bg-primary/10" : "border-primary/15 bg-primary/5",
         )}
       >
-        <span className="sr-only">{item.role === "user" ? "You said: " : "Voice: "}</span>
-        {item.text}
-      </p>
-      <StepMeta parts={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]} />
+        <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-primary uppercase">
+          <Icon aria-hidden className="size-3" />
+          <span>{user ? "You · voice" : "Voice"}</span>
+          <StepMeta parts={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]} />
+        </div>
+        <p dir="auto" className="text-pretty whitespace-pre-wrap">
+          {item.text}
+        </p>
+      </div>
     </div>
   )
 })

@@ -3,6 +3,7 @@ import { Copy, ExternalLink, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 }
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
+import { VoiceBackendField } from "./voice"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -617,6 +618,8 @@ export function ProfileForm({
     hidden: profile?.hidden ?? false,
     disabled: profile?.disabled ?? false,
   }))
+  const setFlags = useSetProfileFlags()
+  const [voiceProvider, setVoiceProvider] = React.useState(profile?.voiceProvider ?? "")
   /* Which agents this profile serves, and each one's optional base-URL
      override. A new profile starts on the first registered agent, so the form
      never saves a profile no thread could start on. */
@@ -867,6 +870,20 @@ export function ProfileForm({
           windows while `claude -p /usage` reports an Anthropic account it never
           touched. Set here, this reader wins — and it is one account, so every
           agent on the profile shares one reading. */}
+      {/* Written at once through the flags door, like the list's switches; a
+          profile being created has no row to write to yet. */}
+      {profile && (
+        <FormSection label="Voice">
+          <VoiceBackendField
+            value={voiceProvider}
+            onChange={(v) => {
+              setVoiceProvider(v)
+              setFlags.mutate({ id: profile.id, voiceProvider: v }, { onError: (err) => reportError(err, "Couldn't set the voice backend") })
+            }}
+            hint="Which realtime model a voice call on threads using this profile uses. A project's own pick beats it."
+          />
+        </FormSection>
+      )}
       <FormSection label="Plan usage">
         <Field
           label="Usage provider"

@@ -108,6 +108,8 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     disabled: z.boolean().optional(),
     /** The helper model, from the composer's model picker — "" is "the session model". */
     smallModel: z.string().optional(),
+    /** Voice backend for calls on this profile's threads — "" is "the default". */
+    voiceProvider: z.string().optional(),
   });
   /* One model appended to a profile's catalog, for the composer's "Add
      model…". Its own route for the same reason the flags PATCH is one: the
