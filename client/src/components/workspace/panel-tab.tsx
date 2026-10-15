@@ -381,7 +381,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                   here: the reading is folded into the tab's accessible name above,
                   and a live region per tab inside `role="tab"` is both invalid and
                   a strip that talks over itself. */}
-              <PanelStatusDot status={status} aria-hidden role={undefined} />
+              <PanelStatusDot status={status} aria-hidden role={undefined} title={undefined} />
             </span>
             {(subtitle || age) && (
               <span className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3 font-normal text-muted-foreground/80">

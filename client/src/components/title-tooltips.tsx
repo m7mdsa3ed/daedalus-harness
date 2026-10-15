@@ -57,6 +57,15 @@ export function TitleTooltips() {
     }
 
     const over = (e: PointerEvent) => (e.pointerType === "mouse" ? arm(e.target) : hide())
+    /* Only what concerns the tip dismisses it. A stationary pointer fires no new
+       `pointerover`, so a tip dropped by an unrelated event — a streaming
+       transcript scrolling, focus moving in the composer — was never drawn
+       again until the pointer left and came back: "hover works some of the time". */
+    const hideIfAbout = (e: Event) => {
+      const target = e.target
+      if (!current || !(target instanceof Node)) return hide()
+      if (target.contains(current) || current.contains(target)) hide()
+    }
     const focus = (e: FocusEvent) => {
       const t = e.target
       if (t instanceof Element && t.matches(":focus-visible")) arm(t)
@@ -64,19 +73,19 @@ export function TitleTooltips() {
     // An SVG `<title>` child is not the attribute and is left alone.
     document.addEventListener("pointerover", over, true)
     document.addEventListener("focusin", focus, true)
-    document.addEventListener("focusout", hide, true)
+    document.addEventListener("focusout", hideIfAbout, true)
     document.addEventListener("pointerdown", hide, true)
     document.addEventListener("keydown", hide, true)
-    document.addEventListener("scroll", hide, true)
+    document.addEventListener("scroll", hideIfAbout, true)
     document.documentElement.addEventListener("pointerleave", hide)
     return () => {
       window.clearTimeout(timer)
       document.removeEventListener("pointerover", over, true)
       document.removeEventListener("focusin", focus, true)
-      document.removeEventListener("focusout", hide, true)
+      document.removeEventListener("focusout", hideIfAbout, true)
       document.removeEventListener("pointerdown", hide, true)
       document.removeEventListener("keydown", hide, true)
-      document.removeEventListener("scroll", hide, true)
+      document.removeEventListener("scroll", hideIfAbout, true)
       document.documentElement.removeEventListener("pointerleave", hide)
     }
   }, [])
