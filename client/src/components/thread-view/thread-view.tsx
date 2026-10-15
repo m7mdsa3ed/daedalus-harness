@@ -1094,7 +1094,11 @@ export function ThreadView({
                 /* Follows the composer: with the box collapsed to its pill
                    (`data-composer-away`) the button drops to the pill's row
                    instead of hovering over the empty reserve. */
-                "z-30 transition-[translate,scale,opacity,bottom] data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)] group-has-[[data-composer-away]]/thread:data-[direction=end]:bottom-[max(0.75rem,var(--safe-bottom))]",
+                "z-30 transition-[translate,scale,opacity,bottom] data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)] group-has-[[data-composer-away]]/thread:data-[direction=end]:bottom-[calc(max(0.75rem,var(--safe-bottom))+0.125rem)] " +
+                /* ...and sits beside the pill, on its left, instead of centred: the
+                   pill is 2.25rem at the composer's right edge, this is the next
+                   thing the hand reaches for. */
+                "group-has-[[data-composer-away]]/thread:data-[direction=end]:inset-s-auto group-has-[[data-composer-away]]/thread:data-[direction=end]:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] group-has-[[data-composer-away]]/thread:data-[direction=end]:translate-x-0",
             )}
           />
           {/* The turn rail: one tick per turn, riding the transcript's left
