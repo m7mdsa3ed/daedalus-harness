@@ -2391,6 +2391,14 @@ html {
     touch-action: none;
   }
 
+  /* One tab: the one you are on. Every other is in the strip's list
+     (`tab-actions.tsx`); hidden with `display`, so nothing is laid out and a
+     switch is one frame. The thread dock's own strips keep theirs
+     (`.dock-nested`, which re-shows them with more specificity). */
+  html .dv-tab.dv-inactive-tab {
+    display: none;
+  }
+
   /* ── and the one that is left takes the strip ──
      The wide strip's 18rem cap is a *browser's* sizing: one width whether a tab
      is alone or one of nine, so the row reads the same as it fills up. Below
