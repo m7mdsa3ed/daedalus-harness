@@ -1082,23 +1082,16 @@ export function ThreadView({
           {/* The primitive's own scroll-to-end runs on click; re-pinning here as
               well is what makes the button mean "and keep up from now on"
               instead of "put me at the bottom once". */}
-          {/* Lifted above the docked composer while the thread is live, so the
-              button never parks behind the glass. The lift repeats the base's
-              `data-[direction=end]:` variant — an unprefixed `bottom-*` would
-              survive the merge but lose to it on specificity. `z-30` keeps it
-              painting above the composer's `z-20`. */}
+          {/* Beside the composer's pill, always: the button only shows once the
+              reader has left the tail, which is also when the box has folded to
+              its pill, so this is the one spot it ever needs to be and it never
+              travels. The pill is 2.25rem at the composer's right edge; this is
+              the next thing on that row, `z-30` above the composer's `z-20`. */}
           <MessageScrollerButton
             onClick={follow.follow}
             className={cn(
               !centred &&
-                /* Follows the composer: with the box collapsed to its pill
-                   (`data-composer-away`) the button drops to the pill's row
-                   instead of hovering over the empty reserve. */
-                "z-30 transition-[translate,scale,opacity,bottom] data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)] group-has-[[data-composer-away]]/thread:data-[direction=end]:bottom-[calc(max(0.75rem,var(--safe-bottom))+0.125rem)] " +
-                /* ...and sits beside the pill, on its left, instead of centred: the
-                   pill is 2.25rem at the composer's right edge, this is the next
-                   thing the hand reaches for. */
-                "group-has-[[data-composer-away]]/thread:data-[direction=end]:inset-s-auto group-has-[[data-composer-away]]/thread:data-[direction=end]:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] group-has-[[data-composer-away]]/thread:data-[direction=end]:translate-x-0",
+                "z-30 data-[direction=end]:bottom-[calc(max(0.75rem,var(--safe-bottom))+0.125rem)] inset-s-auto data-[direction=end]:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] translate-x-0",
             )}
           />
           {/* The turn rail: one tick per turn, riding the transcript's left
