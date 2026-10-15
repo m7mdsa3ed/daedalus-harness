@@ -649,11 +649,6 @@
     @apply relative z-10;
   }
 
-  /* The rail is a flush panel with a 1px edge. Over a translucent desktop
-     (vibrancy) the border would read as a see-through seam, so it goes there. */
-  html[data-desktop-vibrancy="true"] [data-slot="sidebar"] [data-slot="sidebar-container"] {
-    @apply border-0!;
-  }
 
   /* ── Overlay backdrop ── */
   [data-slot="sheet-overlay"],

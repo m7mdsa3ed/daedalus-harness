@@ -420,8 +420,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--app-header-h` to start below it, and a section inside the panel zeroes
   `--dock-content-overlap` because the panel's rail already clears the header. The sidebar's brand
   row is the same height (`--app-header-row-h`), so the two share a line across the seam.
-- **Only the plain `sidebar` variant exists** (no `inset`, no `floating`): a flush rail with a 1px
-  edge and the column beside it filling the rest.
+- **Only the plain `sidebar` variant exists** (no `inset`, no `floating`): a flush rail with no border
+  and the column beside it filling the rest.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **The sidebar has two contents and the *route* picks.** Settings sections are its content while
