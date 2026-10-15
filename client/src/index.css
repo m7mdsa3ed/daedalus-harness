@@ -2883,6 +2883,32 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
   overflow: hidden;
 }
 
+/* ── The inset layout on a phone: compact, edge to edge ──
+   The card keeps only the air above it (the strip's row) and runs to the
+   screen's sides and bottom, so no 8px frame eats a narrow width: its top
+   corners round, its sides and foot do not. The header and the strip drop their
+   16px/20px gutters to the same 4px the strip keeps between its own parts, and
+   the strip (which pads by the header's content box) follows. */
+@media (width < 48rem) {
+  html[data-sidebar-layout="inset"] {
+    --app-frame-gap: 0.25rem;
+  }
+  html[data-sidebar-layout="inset"] [data-app-header] {
+    padding-inline: 0.25rem;
+  }
+  html[data-sidebar-layout="inset"] .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
+    padding-left: calc(var(--dock-band-left, 0px) + 4px);
+    padding-right: max(var(--dock-band-right, 0px), 4px);
+  }
+  html[data-sidebar-layout="inset"] .dv-groupview:not(.dock-nested *) > .dv-content-container {
+    margin: var(--app-frame-gap) 0 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  }
+  html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  }
+}
+
 /* ── Per-thread view options ──
    Compact density and code-wrap are presentation only, so they live here as
    attribute-scoped overrides on the transcript column rather than as props

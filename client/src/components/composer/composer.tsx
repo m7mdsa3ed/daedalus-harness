@@ -779,6 +779,7 @@ export function Composer({
        reader's own gesture: the pill, reaching the bottom (which re-pins the
        scroller, `useFollowStream`), or the scroll-to-end button. */
     <div
+      data-composer-away={away || undefined}
       className={cn(
         "relative px-4 pt-1 pb-[max(0.75rem,var(--safe-bottom))]",
         away ? "pointer-events-none" : "pointer-events-auto"

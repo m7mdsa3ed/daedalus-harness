@@ -734,7 +734,7 @@ export function ThreadView({
       ref={rootRef}
       data-empty={centred || undefined}
       className={cn(
-        "relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+        "group/thread relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]",
         inspectorDocked && "grid-cols-[minmax(0,1fr)_auto]"
       )}
     >
@@ -1091,7 +1091,10 @@ export function ThreadView({
             onClick={follow.follow}
             className={cn(
               !centred &&
-                "z-30 data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)]",
+                /* Follows the composer: with the box collapsed to its pill
+                   (`data-composer-away`) the button drops to the pill's row
+                   instead of hovering over the empty reserve. */
+                "z-30 transition-[translate,scale,opacity,bottom] data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)] group-has-[[data-composer-away]]/thread:data-[direction=end]:bottom-[max(0.75rem,var(--safe-bottom))]",
             )}
           />
           {/* The turn rail: one tick per turn, riding the transcript's left
