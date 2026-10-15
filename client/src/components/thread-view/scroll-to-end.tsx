@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button"
  * while the box is folded away (`data-composer-away`, read through the thread's
  * group), and centred above the card once the reader has brought it back (a click on
  * the pill, a fill) and is still not at the end. Hidden, it is `invisible`: out
- * of the tab order and the accessibility tree, not just transparent.
+ * of the tab order and the accessibility tree. No fade or slide: scrolling up and
+ * down across the edge flips the pin, and an animated button read as flicker.
  */
 export function ScrollToEnd({ pinned, onClick }: { pinned: boolean; onClick: () => void }) {
   return (
@@ -24,7 +25,7 @@ export function ScrollToEnd({ pinned, onClick }: { pinned: boolean; onClick: () 
       aria-label="Scroll to end"
       title="Scroll to end"
       data-pinned={pinned || undefined}
-      className="absolute bottom-[calc(var(--composer-dock-h,14rem)+0.75rem)] start-1/2 -translate-x-1/2 z-30 size-9 rounded-pill border-0 bg-composer/90 p-0 text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] transition-[opacity,scale,visibility,bottom,inset] duration-200 hover:bg-composer/90 hover:text-foreground group-has-[[data-composer-away]]/thread:bottom-[max(0.75rem,var(--safe-bottom))] group-has-[[data-composer-away]]/thread:start-auto group-has-[[data-composer-away]]/thread:translate-x-0 group-has-[[data-composer-away]]/thread:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] data-pinned:invisible data-pinned:scale-95 data-pinned:opacity-0"
+      className="absolute bottom-[calc(var(--composer-dock-h,14rem)+0.75rem)] start-1/2 -translate-x-1/2 z-30 size-9 rounded-pill border-0 bg-composer/90 p-0 text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] hover:bg-composer/90 hover:text-foreground group-has-[[data-composer-away]]/thread:bottom-[max(0.75rem,var(--safe-bottom))] group-has-[[data-composer-away]]/thread:start-auto group-has-[[data-composer-away]]/thread:translate-x-0 group-has-[[data-composer-away]]/thread:end-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))+2.75rem)] data-pinned:invisible"
     >
       <ArrowDownIcon />
     </Button>
