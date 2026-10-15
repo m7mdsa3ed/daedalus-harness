@@ -2443,7 +2443,11 @@ html {
     flex: 1 1 100%;
   }
 
-  html .dv-void-container {
+  /* Two classes, because dockview's own `.dv-tabs-and-actions-container
+     .dv-void-container { flex-grow: 1 }` is two classes and outranked the
+     single one this used to be: the void kept sharing the strip's leftover with
+     the tab, so the tab never got more than its title. */
+  html .dv-tabs-and-actions-container > .dv-void-container {
     flex-grow: 0;
   }
 
