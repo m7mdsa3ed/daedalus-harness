@@ -2829,6 +2829,15 @@ html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
   html[data-sidebar-layout="inset"] [data-slot="sidebar-inset"] {
     margin: var(--app-frame-gap) 0 0;
   }
+  /* A top group's strip is in the row, on the ground, with the card starting
+     *below* it — not an overlay on the card, which is the flush layout's. The
+     panels then pad by what is left (`--dock-content-overlap`, measured: zero),
+     and the header carries no blur at `md`+ (app-shell). */
+  html[data-sidebar-layout="inset"] .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
+    position: relative;
+    inset-inline: auto;
+    top: auto;
+  }
   html[data-sidebar-layout="inset"] .dv-groupview > .dv-content-container {
     @apply shadow-sm;
     border-radius: var(--radius-xl);

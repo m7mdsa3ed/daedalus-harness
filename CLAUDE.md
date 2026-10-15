@@ -462,11 +462,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`rightSheet`). Everything that used to knock on `useDock()` — the terminal, the preview, file
   links, Source Control — still does, against `ScopeBoundary`'s shim (`right-panel/scope-dock.tsx`),
   which routes a terminal or preview into the store and a chat, page or the board to the router.
-- **The header is an overlay on the dock and the panel**, with a progressive blur: a top group's strip
-  joins the header's row (`data-header-band`, `--dock-band-left`/`-right` measured against
-  `[data-header-left]` and `[data-header-right]`), the right panel pads by `--app-header-h`, and a
-  section inside the panel zeroes `--dock-content-overlap` because its rail already clears the
-  header. The sidebar's brand row is the same height (`--app-header-row-h`).
+- **In the flush layout the header is an overlay on the dock and the panel**, with a progressive
+  blur: a top group's strip is `position: absolute` over its content (panels pad by the measured
+  `--dock-content-overlap`), joins the header's row (`data-header-band`, `--dock-band-left`/`-right`
+  measured against `[data-header-left]` and `[data-header-right]`), and the right panel pads by
+  `--app-header-h`. **In the inset layout the strip is in the row on the ground and the card starts
+  below it**, with no blur at `md`+ (the blur is phone-only there). A section inside the panel zeroes
+  `--dock-content-overlap` because its rail already clears the header. The sidebar's brand row is the
+  same height (`--app-header-row-h`).
 - **The sidebar has two layouts, and the reader picks** (Settings › Appearance › Sidebar layout,
   `lib/sidebar-layout.ts` `variant`, device-local). **Flush** (default, `Sidebar variant="sidebar"`):
   a rail with no border and the content filling the rest, on `--sidebar`. **Inset**
