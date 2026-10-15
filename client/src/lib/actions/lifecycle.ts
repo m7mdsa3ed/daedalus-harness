@@ -6,6 +6,8 @@
 import { uuid } from "../uuid"
 import { api } from "../settings"
 import { forgetDraft, patchDraft } from "../draft-sessions"
+import { forgetRightPanel, threadScope } from "../right-panel"
+import { forgetVisit } from "../workspace/open-threads"
 import { postJson, type ActionsCore } from "./core"
 
 export function lifecycleActions(core: ActionsCore) {
@@ -82,6 +84,8 @@ export function lifecycleActions(core: ActionsCore) {
       if (!session || session.draft) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
+        forgetRightPanel(threadScope(sessionId))
+        forgetVisit(sessionId)
         return
       }
       threads.destroy(sessionId)
@@ -107,6 +111,8 @@ export function lifecycleActions(core: ActionsCore) {
           if (drafts.has(id)) {
             dispatch({ type: "drop-draft-session", id })
             forgetDraft(settings.id, id)
+            forgetRightPanel(threadScope(id))
+            forgetVisit(id)
             continue
           }
           threads.destroy(id)
@@ -128,6 +134,8 @@ export function lifecycleActions(core: ActionsCore) {
       if (getState().sessions.find((s) => s.id === sessionId)?.draft) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
+        forgetRightPanel(threadScope(sessionId))
+        forgetVisit(sessionId)
         return
       }
       threads.destroy(sessionId)

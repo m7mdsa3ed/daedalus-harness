@@ -23,7 +23,7 @@
    app that framed it, read its localStorage, or touch the bearer token. That
    costs the preview nothing — it is a page being looked at, not an extension. */
 import * as React from "react"
-import type { IDockviewPanelProps } from "dockview-react"
+import type { PanelProps } from "@/lib/workspace/panel-handle"
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -50,12 +50,12 @@ import { api as request, type HelperCommand } from "@/lib/settings"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
-import { useDock } from "@/components/workspace/dock-context"
+import { useScope } from "@/components/right-panel/scope-dock"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { FilePreview } from "@/components/workspace/file-preview"
 import type { WebDiff } from "@/lib/workspace/panels"
 import { DiffTab } from "@/components/workspace/diff-tab"
-import { useThreadDockHandle, useThreadDockSession } from "@/components/workspace/thread-dock"
+import { useThreadDockHandle, useThreadDockSession } from "@/components/right-panel/scope-dock"
 import { hostBrowser } from "@/lib/browser-host"
 import {
   elementPrompt,
@@ -234,15 +234,15 @@ const PROBE_MS = 4000
 const STARTING_PROBE_MS = 1500
 
 /** The project Preview panel, with an optional address bar for external pages. */
-export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
+export function WebPanel({ api, params }: PanelProps<WebPanelParams>) {
   const { trust, projectId, url: initialUrl } = params
   /* The catalog lives in the query cache now, so a streamed token never
      reaches this panel; only a projects refresh (rare, and its own clock)
      re-renders it. */
   const project = useProjects().find((candidate) => candidate.id === projectId)
   const settings = useServer()
-  const dock = useDock()
-  const runHelper = useRunHelper(dock)
+  const { scope } = useScope()
+  const runHelper = useRunHelper(scope)
   const previewUrl = trust === "project" ? (project?.previewUrl ?? "") : ""
   const previewHelper = trust === "project"
     ? project?.helpers?.find((helper) => helper.preview)

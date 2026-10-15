@@ -1,7 +1,7 @@
 /* Running one of a project's helper commands, from wherever the button is.
 
-   Two callers, one behaviour: the thread header's Run menu (which has a dock
-   in front of it) and the project page's menu and chips (which does not).
+   Two callers, one behaviour: the thread header's Run menu and the project
+   page's menu and chips.
    Both ask the same question first when the helper says to, and both end in
    the same place — a terminal panel on the helper's own command — so the
    decision lives here rather than twice.
@@ -14,18 +14,16 @@ import * as React from "react"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { openHelperTerminal } from "@/lib/workspace/open-terminal"
-import type { useDock } from "@/components/workspace/dock-context"
+import type { Scope } from "@/lib/right-panel"
 import type { HelperCommand } from "@/lib/settings"
 
 export type RunHelper = (helper: HelperCommand, projectId: string) => Promise<boolean>
 
 /**
- * @param dock the dock to open the terminal in, or null on a route that has
- *   none — the panel is queued for the next thread instead, and the caller
- *   navigates. Resolves true when the terminal started, so a caller that is
- *   about to navigate does not navigate to nothing.
+ * @param scope the right panel the terminal opens in: a thread's, or a project
+ *   page's. Resolves true when the terminal started.
  */
-export function useRunHelper(dock: ReturnType<typeof useDock> | null): RunHelper {
+export function useRunHelper(scope: Scope): RunHelper {
   const confirm = useConfirm()
   return React.useCallback(
     async (helper, projectId) => {
@@ -42,8 +40,8 @@ export function useRunHelper(dock: ReturnType<typeof useDock> | null): RunHelper
         }))
       )
         return false
-      return openHelperTerminal(projectId, helper, dock)
+      return openHelperTerminal(scope, projectId, helper)
     },
-    [confirm, dock]
+    [confirm, scope]
   )
 }

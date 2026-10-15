@@ -29,7 +29,7 @@ import { activityAt, isListed } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
 import { currentThreadId, threadPath } from "@/lib/router"
 import { requestComposerFocus } from "@/lib/composer-focus"
-import { threadDock } from "@/lib/workspace/thread-docks"
+import { useThreadJump } from "@/components/right-panel/scope-dock"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { useLocation } from "react-router"
 import { usePalette } from "./context"
@@ -46,6 +46,7 @@ const RECENT_LIMIT = 8
 
 export function SearchPage({ threadScoped = false }: { threadScoped?: boolean }) {
   const palette = usePalette()
+  const jumpRef = useThreadJump()
   const settings = useServer()
   const sessions = useStoreSelect((store) => store.sessions)
   const projects = useProjects()
@@ -139,12 +140,12 @@ export function SearchPage({ threadScoped = false }: { threadScoped?: boolean })
     messageItem(hit, () => {
       if (threadScoped && sessionId && hit.sessionId === sessionId && hit.turnId && hit.turnSeq !== null) {
         palette.run(() => {
-          const dock = threadDock(sessionId)
-          if (!dock) {
+          const jump = jumpRef?.current
+          if (!jump) {
             void navigate(threadPath(sessionId))
             return
           }
-          dock.jump(undefined, { turnId: hit.turnId!, seq: hit.turnSeq! })
+          jump(undefined, { turnId: hit.turnId!, seq: hit.turnSeq! })
         })
       } else {
         open(hit.sessionId)

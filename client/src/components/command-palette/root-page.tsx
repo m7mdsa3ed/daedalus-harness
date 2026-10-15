@@ -23,9 +23,6 @@ import {
   AppWindowIcon,
   ChevronLeft,
   ChevronRight,
-  LayoutGrid,
-  PictureInPicture2,
-  Save,
   SquareKanbanIcon,
   Copy,
   Cpu,
@@ -41,9 +38,8 @@ import {
   MonitorIcon,
   Moon,
   Palette as PaletteIcon,
-  PanelBottom,
   PanelLeft,
-  PanelsTopLeft,
+  PanelRightIcon,
   Pin,
   PinOff,
   Plus,
@@ -56,7 +52,6 @@ import {
   SlidersHorizontal,
   Square,
   SquareKanban,
-  SquareStack,
   SquareTerminalIcon,
   Sun,
   Trash2,
@@ -69,9 +64,11 @@ import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
 import { useSidebar } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-device"
-import { LAYOUT_PRESETS } from "@/components/workspace/panel-items"
+import { SECTION_META } from "@/components/right-panel/right-panel"
+import { useRouteScope } from "@/components/right-panel/scope-dock"
+import { openSection, rightSheet, sectionsFor, toggleRightPanel } from "@/lib/right-panel"
 import { openTerminal } from "@/lib/workspace/open-terminal"
-import { threadDock } from "@/lib/workspace/thread-docks"
+import { adjacentThread, useActiveChat } from "@/lib/workspace/open-threads"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
@@ -122,6 +119,8 @@ const NOT_A_COMMAND = "Recent threads"
 
 export function RootPage() {
   const palette = usePalette()
+  const route = useRouteScope()
+  const activeChat = useActiveChat()
   const sessions = useStoreSelect((store) => store.sessions)
   const projects = useProjects()
   const profiles = useProfiles()
@@ -133,9 +132,6 @@ export function RootPage() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const prompt = usePrompt()
-  /* Read once per open, like the server list: a layout is saved by a command
-     that closes the palette, so nothing can change this list while it is up. */
-  const savedLayouts = React.useMemo(() => palette.dock.savedLayouts(), [palette.dock])
   const pins = usePins()
   const recents = usePaletteRecents()
   const { theme, setTheme } = useTheme()
@@ -483,242 +479,99 @@ export function RootPage() {
     })
   }
 
-  /* ── Workspace ──
-     Dragging a tab does all of this too, but a gesture is not discoverable and
-     cannot be typed — and the two presets are the only way to get an
-     arrangement back once it has been dragged into a shape nobody wanted.
-     With no thread routed there is no project, and these open in $HOME. */
+  /* ── Panel ──
+     The right panel's sections, and the shells and preview it holds. With no
+     thread routed the panel is the page's (a project's, or $HOME), and only the
+     shell and the preview are offered. */
   {
     items.push({
-      id: "dock:web",
-      group: "Workspace",
-      title: "Preview",
-      keywords: "browser dev server localhost web",
-      icon: <MonitorIcon />,
-      onSelect: () => {
-        const previewUrl = projects.find((candidate) => candidate.id === meta?.projectId)?.previewUrl ?? ""
-        const inThread = threadDock(meta?.id)
-        if (inThread) return palette.run(() => inThread.open("web", true))
-        palette.run(() =>
-          palette.dock.openPanel(
-            {
-              kind: "web",
-              trust: "project",
-              ...(meta ? { projectId: meta.projectId } : {}),
-              viewId: "default",
-              ...(previewUrl ? { url: previewUrl } : {}),
-            },
-            { direction: "right" }
-          )
-        )
-      },
+      id: "panel:toggle",
+      group: "Panel",
+      title: "Show or hide the panel",
+      keywords: "right side column inspector tools",
+      icon: <PanelRightIcon />,
+      chord: binds.rightPanel.chords[0],
+      onSelect: () => palette.run(() => (isMobile ? rightSheet.set(true) : toggleRightPanel())),
     })
+    for (const section of sectionsFor(route.scope)) {
+      const { title, icon: Icon } = SECTION_META[section]
+      if (section === "terminal") continue
+      items.push({
+        id: `panel:${section}`,
+        group: "Panel",
+        title: section === "preview" ? "Preview" : `Show ${title}`,
+        keywords:
+          section === "preview"
+            ? "browser dev server localhost web"
+            : `${title} inspector reading panel side`,
+        icon: <Icon />,
+        onSelect: () => palette.run(() => openSection(route.scope, section)),
+      })
+    }
     items.push({
-      id: "dock:terminal",
-      group: "Workspace",
+      id: "panel:terminal",
+      group: "Panel",
       title: "New terminal",
       keywords: "shell console command line",
       icon: <SquareTerminalIcon />,
       chord: binds.terminal.chords[0],
       onSelect: () =>
         palette.run(() => {
-          /* A thread in front gets the shell in its own dock, in its worktree. */
-          const inThread = threadDock(meta?.id)
-          if (inThread) inThread.open("terminal")
-          else void openTerminal(palette.dock, meta?.projectId ?? HOME_PROJECT_ID)
+          /* A thread in front gets the shell in its worktree. */
+          void openTerminal(
+            route.scope,
+            meta?.projectId ?? route.projectId ?? HOME_PROJECT_ID,
+            meta ? { cwd: meta.worktree?.path, sessionId: meta.id } : {}
+          )
         }),
     })
   }
-  /* Outside the `meta` block above: a board is the server's, not a project's,
-     so this row is offered whether or not a thread is routed. */
+  /* A board is the server's, not a project's, so this row is offered whether or
+     not a thread is routed. */
   items.push({
-    id: "dock:tasks",
+    id: "panel:board",
     group: "Workspace",
-    title: "Open the board in a panel",
+    title: "Open the board",
     keywords: "tasks kanban board backlog sprint",
     icon: <SquareKanbanIcon />,
-    subtitle: "The task board, beside the thread",
-    onSelect: () =>
-      palette.run(() => {
-        /* The board it was left on — see the same rule in app-shell. */
-        const existing = palette.dock.listPanels().find((entry) => entry.panel.kind === "tasks")
-        palette.dock.openPanel(existing?.panel ?? { kind: "tasks" }, { direction: "right" })
-      }),
+    onSelect: () => palette.run(() => void navigate(boardPath())),
   })
   items.push(
-    /* Splitting is a wide-window gesture. Below `md` the dock is one stack of
-       tabs by construction (`dock.tsx` folds every group into the active one,
-       and folds back any group that appears), so a split row would make a group
-       and take it away again in the next microtask — a flicker, not an
-       arrangement. The rows are the only place it is *offered*; the chord is
-       refused at the source for the same reason. */
-    ...(isMobile
-      ? []
-      : [
-          {
-            id: "dock:split-right",
-            group: "Workspace",
-            title: "Split right",
-            keywords: "panel side by side",
-            icon: <PanelsTopLeft />,
-            chord: binds.splitRight.chords[0],
-            onSelect: () => palette.run(() => palette.dock.splitActive("right")),
-          },
-          {
-            id: "dock:split-down",
-            group: "Workspace",
-            title: "Split down",
-            keywords: "panel below",
-            icon: <PanelBottom />,
-            chord: binds.splitDown.chords[0],
-            onSelect: () => palette.run(() => palette.dock.splitActive("below")),
-          },
-        ]),
     {
-      id: "dock:maximize",
+      id: "thread:next",
       group: "Workspace",
-      title: "Fill the dock with this panel",
-      keywords: "maximize restore fullscreen zoom side by side",
-      icon: <Square />,
-      chord: binds.fillPanel.chords[0],
-      onSelect: () => palette.run(() => palette.dock.toggleMaximize()),
-    },
-    {
-      id: "dock:stack",
-      group: "Workspace",
-      title: "Stack all tabs",
-      keywords: "one group merge",
-      icon: <SquareStack />,
-      onSelect: () => palette.run(() => palette.dock.stackAll()),
-    },
-    {
-      id: "dock:bottom",
-      group: "Workspace",
-      title: "Show or hide the bottom panel",
-      keywords: "edge panel terminal collapse expand toggle",
-      icon: <PanelBottom />,
+      title: "Next thread",
+      keywords: "switch cycle recent walk",
+      icon: <ChevronRight />,
+      chord: binds.nextTab.chords[0],
       onSelect: () =>
         palette.run(() => {
-          if (!palette.dock.toggleBottom()) toast.info("Nothing is in the bottom panel — move a tab there from its menu")
-        }),
-    },
-    ...LAYOUT_PRESETS.map(({ id, label, Icon }) => ({
-      id: `dock:layout-${id}`,
-      group: "Workspace",
-      title: `Layout: ${label}`,
-      keywords: "preset split arrangement columns rows grid maximized",
-      icon: <Icon />,
-      onSelect: () => palette.run(() => palette.dock.applyPreset(id)),
-    }))
-  )
-  if (palette.dock.hasClosedPanels()) {
-    items.push({
-      id: "dock:reopen",
-      group: "Workspace",
-      title: "Reopen closed panel",
-      keywords: "tab undo close",
-      icon: <RotateCcw />,
-      chord: binds.reopenPanel.chords[0],
-      onSelect: () => palette.run(() => palette.dock.reopenClosed()),
-    })
-  }
-  items.push({
-    id: "dock:reset",
-    group: "Workspace",
-    title: "Reset layout",
-    keywords: "workspace arrangement default",
-    icon: <RotateCw />,
-    onSelect: () => palette.run(() => palette.dock.resetLayout()),
-  })
-
-  /* ── Windows ──
-     A panel out of the dock: floating over it, or in a window of its own. Both
-     act on the panel you are looking at, which is what makes them commands
-     rather than only tab-menu items. */
-  items.push(
-    {
-      id: "dock:popout",
-      group: "Workspace",
-      title: "Open panel in a new window",
-      keywords: "popout window monitor detach",
-      icon: <AppWindowIcon />,
-      subtitle: "The active panel, in a window of its own",
-      onSelect: () =>
-        palette.run(() => {
-          void palette.dock.popoutPanel().then((opened) => {
-            if (!opened) toast.error("The browser blocked the new window")
-          })
+          const next = adjacentThread(-1, activeChat, (id) => sessions.some((s) => s.id === id && !s.deletedAt))
+          if (next) void navigate(threadPath(next))
         }),
     },
     {
-      id: "dock:float",
+      id: "thread:prev",
       group: "Workspace",
-      title: "Float panel / dock it back",
-      keywords: "floating overlay detach dock",
-      icon: <PictureInPicture2 />,
-      onSelect: () => palette.run(() => palette.dock.toggleFloat()),
+      title: "Previous thread",
+      keywords: "switch cycle recent walk back",
+      icon: <ChevronLeft />,
+      chord: binds.prevTab.chords[0],
+      onSelect: () =>
+        palette.run(() => {
+          const next = adjacentThread(1, activeChat, (id) => sessions.some((s) => s.id === id && !s.deletedAt))
+          if (next) void navigate(threadPath(next))
+        }),
     }
   )
-
-  /* The strip's walking keys, offered as commands for the same reason the
-     split's are: a chord is only discoverable once it is written down somewhere
-     a reader goes looking, and the tab menu says what to press while the
-     palette says what happens. Both act on the panel you are looking at, which
-     is exactly what the chord does. */
-  items.push({
-    id: "dock:tab-next",
-    group: "Workspace",
-    title: "Next tab",
-    keywords: "switch cycle tab strip",
-    icon: <ChevronRight />,
-    chord: binds.nextTab.chords[0],
-    onSelect: () => palette.run(() => palette.dock.cycleTab(1)),
-  })
-  items.push({
-    id: "dock:tab-prev",
-    group: "Workspace",
-    title: "Previous tab",
-    keywords: "switch cycle tab strip back",
-    icon: <ChevronLeft />,
-    chord: binds.prevTab.chords[0],
-    onSelect: () => palette.run(() => palette.dock.cycleTab(-1)),
-  })
-
-  /* ── Saved layouts ──
-     A preset above is an arrangement of what is open; these carry their
-     contents. Saving asks for a name, and a name that is already taken replaces
-     that layout rather than making a second row with the same label. */
-  items.push({
-    id: "dock:layout-save",
-    group: "Workspace",
-    title: "Save this layout…",
-    keywords: "workspace arrangement store name snapshot",
-    icon: <Save />,
-    onSelect: () => {
-      /* Not through `palette.run`: the prompt is the next thing on screen, and
-         the palette has to be out of the way before it opens. */
-      palette.close()
-      void prompt({
-        title: "Save this layout",
-        description: "The panels that are open now, and where they sit.",
-        placeholder: "Review",
-        confirmLabel: "Save",
-        maxLength: 60,
-      }).then((name) => {
-        if (!name) return
-        if (palette.dock.saveLayoutAs(name)) toast.success(`Saved “${name}”`)
-      })
-    },
-  })
-  for (const layout of savedLayouts) {
+  if (meta && window.desktop?.openThreadWindow) {
     items.push({
-      id: `dock:layout-${layout.id}`,
+      id: "thread:window",
       group: "Workspace",
-      title: `Layout: ${layout.name}`,
-      keywords: "saved workspace arrangement restore",
-      icon: <LayoutGrid />,
-      subtitle: "Opens and closes panels to match",
-      onSelect: () => palette.run(() => palette.dock.applySavedLayout(layout.id)),
+      title: "Open this thread in a new window",
+      keywords: "popout window monitor detach",
+      icon: <AppWindowIcon />,
+      onSelect: () => palette.run(() => void window.desktop?.openThreadWindow?.(meta.id)),
     })
   }
 

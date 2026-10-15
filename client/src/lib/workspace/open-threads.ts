@@ -1,68 +1,70 @@
-/* ── The threads with a tab open ──
-   The dock is the authority on which panels are open, but it renders in a
-   subtree the sidebar is not inside (both are siblings under the app shell), so
-   the sidebar cannot reach it through context. It reads this store instead,
-   which the dock publishes into on every panel add, remove and move — the same
-   module-store bargain `panel-status.ts` and `panel-pins.ts` make, and for the
-   same reason: a surface outside the dock's tree has to hear what the dock
-   knows.
+/* ── Which thread is in front, and which you have been in ──
+   There are no tabs, so "the thread in front of you" is the route: the address
+   bar names it, and `useActiveChat` reads it. "Open threads" is what the dock
+   used to publish — the chats with a tab — and is now the threads you have
+   *visited*, most recent last, so the sidebar can keep their rows loaded and
+   the quick switcher can walk them.
 
-   What is held is the *session ids of open chat panels, in the order they were
-   opened*, and nothing else. Other kinds are panels, not threads, and are not
-   listed. It is derived state, not storage: a reload rebuilds it from the
-   restored layout through the same `onDidAddPanel` path, so there is no second
-   copy of the dock to fall out of step with the first. */
-import * as React from "react"
+   Device-local and small: a thread you have not opened for a dozen others is
+   just a row in the list. Written by `ThreadRoute` on arrival. */
+import { useLocation } from "react-router"
 
-const EMPTY: readonly string[] = Object.freeze([])
-let open: readonly string[] = EMPTY
-let activeChat: string | null = null
-let focusChat: ((id: string) => boolean) | null = null
-const listeners = new Set<() => void>()
+import { createLocalStore } from "@/lib/local-store"
+import { routedThreadId } from "@/lib/router"
 
-/** Replace the list. A no-op when it says the same thing — the dock calls this
-    on every layout change, and a sash drag fires one per pointer frame. */
-export function setOpenThreads(ids: readonly string[]): void {
-  if (open.length === ids.length && open.every((id, index) => id === ids[index])) return
-  open = Object.freeze([...ids])
-  for (const listener of [...listeners]) listener()
+const KEEP = 12
+
+const recent = createLocalStore<string[]>(
+  "daedalus.recent-threads.v1",
+  (raw) =>
+    Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string").slice(-KEEP) : [],
+  []
+)
+
+/** Note that a thread was opened. Returns nothing: it is an effect's body. */
+export function recordVisit(sessionId: string): void {
+  if (!sessionId) return
+  const current = recent.get()
+  if (current.at(-1) === sessionId) return
+  recent.set([...current.filter((id) => id !== sessionId), sessionId].slice(-KEEP))
 }
 
-export function openThreadIds(): readonly string[] {
-  return open
+export function recentThreadIds(): readonly string[] {
+  return recent.get()
 }
 
-/** Publish the chat tab in front, or null when another panel is active. */
-export function setActiveChat(id: string | null): void {
-  if (activeChat === id) return
-  activeChat = id
-  for (const listener of [...listeners]) listener()
+export function forgetVisit(sessionId: string): void {
+  const current = recent.get()
+  if (current.includes(sessionId)) recent.set(current.filter((id) => id !== sessionId))
 }
 
-export function activeChatId(): string | null {
-  return activeChat
+export function clearRecentThreads(): void {
+  recent.set([])
 }
 
-/** Let sidebar rows focus an existing tab without depending on route changes. */
-export function setChatFocusHandler(handler: ((id: string) => boolean) | null): void {
-  focusChat = handler
-}
-
-export function focusOpenChat(id: string): boolean {
-  return focusChat?.(id) ?? false
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-/** The open threads, in tab order, for the sidebar's "Opened" tier. */
+/** The threads you have been in, oldest first. Keeps their rows loaded in the
+    sidebar and orders the quick switcher. */
 export function useOpenThreads(): readonly string[] {
-  return React.useSyncExternalStore(subscribe, openThreadIds, openThreadIds)
+  return recent.use()
 }
 
-/** The active chat id; null means a non-chat panel is in front. */
+/** The thread the address bar names; null on any other page. */
 export function useActiveChat(): string | null {
-  return React.useSyncExternalStore(subscribe, activeChatId, activeChatId)
+  const location = useLocation()
+  return routedThreadId(location.pathname, location.search)
+}
+
+/** The thread `delta` steps along the ones you have been in — the walk behind
+    Alt+↓/↑ and the palette's Next/Previous thread. Negative goes to an older
+    one, as the sidebar reads (newest at the top, ↓ is older). `isLive` drops
+    threads that no longer exist or are in the trash. */
+export function adjacentThread(
+  delta: number,
+  current: string | null,
+  isLive: (id: string) => boolean
+): string | null {
+  const ids = recent.get().filter(isLive)
+  if (ids.length === 0) return null
+  const at = ids.indexOf(current ?? "")
+  return ids[(Math.max(at, 0) + delta + ids.length) % ids.length] ?? null
 }

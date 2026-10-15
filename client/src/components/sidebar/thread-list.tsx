@@ -5,7 +5,7 @@ import { useNavigate } from "react-router"
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { useThreadRowActions } from "@/components/thread-menu"
 import { threadPath } from "@/lib/router"
-import { focusOpenChat, useActiveChat } from "@/lib/workspace/open-threads"
+import { useActiveChat } from "@/lib/workspace/open-threads"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -70,7 +70,6 @@ export const ThreadList = React.memo(function ThreadList({
 
   const open = React.useCallback((session: SessionMeta) => {
     if (isMobile) setOpenMobile(false)
-    if (focusOpenChat(session.id)) return
     void navigate(threadPath(session.id))
   }, [isMobile, setOpenMobile, navigate])
 

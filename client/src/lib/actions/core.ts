@@ -12,8 +12,8 @@ import { pruneDrafts } from "../drafts"
 import { prunePastes } from "../pastes"
 import { pruneDraftAttachments } from "../draft-attachments"
 import { loadDraftSessions, pruneDraftSessions } from "../draft-sessions"
-import { loadLayout, savedThreadIds } from "../workspace/layout"
-import { panelId } from "../workspace/panels"
+import { recentThreadIds } from "../workspace/open-threads"
+import { currentThreadId } from "../router"
 import { api, profileSupports, type ServerSettings, type SessionMeta, type SessionPage } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
 import { partitionSessionOptions } from "../session-options"
@@ -484,19 +484,19 @@ export function sessionActions(core: ActionsCore) {
      */
     async bootstrap() {
       const sessions = await fetchSessionPage(0, PAGE_SIZE, true)
-      /* ── Unsent threads come back with their tabs ──
-         A draft has no server row, so the page above cannot carry it — and
-         without it, boot's `prunePanels` closes every draft tab the saved dock
-         layout restored, and the debounced layout save makes that permanent.
-         The row is re-minted only for a draft the layout still names: a draft
-         whose tab was closed stays closed, and one the server now reports is
-         an ordinary thread and comes from the list. */
+      /* ── Unsent threads come back with the route ──
+         A draft has no server row, so the page above cannot carry it. The row
+         is re-minted only for a draft the address bar names or you have visited
+         lately: a draft you walked away from long ago is dropped, and one the
+         server now reports is an ordinary thread and comes from the list. */
       const known = new Set(sessions.map((session) => session.id))
-      const restored = new Set(Object.keys(loadLayout(settings.id)?.panels ?? {}))
+      const restored = new Set<string>(recentThreadIds())
+      const routed = currentThreadId()
+      if (routed) restored.add(routed)
       const kept = new Set<string>()
       for (const draft of loadDraftSessions(settings.id)) {
         if (known.has(draft.id)) continue
-        if (!restored.has(panelId({ kind: "chat", sessionId: draft.id }))) continue
+        if (!restored.has(draft.id)) continue
         dispatch({ type: "draft-session", session: draft })
         kept.add(draft.id)
       }
@@ -506,14 +506,12 @@ export function sessionActions(core: ActionsCore) {
          only place that can see both answers at once, and an id the server
          reports has stopped being a draft at all. */
       pruneDraftSessions(settings.id, kept)
-      /* ── The tabs the window has to cover ──
-         The list is a page now, so a thread an older tab names may sit past it
-         — and the dock's prune closes any chat panel whose session the store
-         does not hold. Every thread a saved layout (any space, plus what was
-         filed to one) still names is loaded, whatever its age, so the restore
-         keeps every tab it had. A draft is not on the server; it came back
+      /* ── The threads the window has to cover ──
+         The list is a page now, so a thread you were in may sit past it. Every
+         thread you have visited lately, and the one the address bar names, is
+         loaded whatever its age. A draft is not on the server; it came back
          through the loop above, and the id lookup simply answers nothing. */
-      await ensureSessionsLoaded(savedThreadIds(settings.id))
+      await ensureSessionsLoaded([...restored])
       return { sessions }
     },
 

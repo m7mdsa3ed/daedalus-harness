@@ -84,6 +84,16 @@ export function currentThreadId(
   return new URLSearchParams(search).get("session")
 }
 
+/** The thread the address bar *shows* — only on a thread route (or the legacy
+    `?session=` on `/`), and not on its trace. `currentThreadId` alone would
+    also answer for any page carrying a `?session=` of its own (a schedule form
+    does), so the read is gated on the two places a thread can be. */
+export function routedThreadId(pathname: string, search: string): string | null {
+  if (pathname !== "/" && !pathname.startsWith("/t/")) return null
+  if (matchPath("/t/:sessionId/trace", pathname)) return null
+  return currentThreadId(pathname, search)
+}
+
 /** The thread a trace view (`/t/<id>/trace`) is reading, if any. Kept apart
     from `currentThreadId` for the reason stated there. */
 export function currentTraceId(pathname: string = location.pathname): string | null {

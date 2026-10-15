@@ -80,6 +80,7 @@ import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectRepos, useProjectStats } from "@/lib/queries/surfaces"
+import { projectScope } from "@/lib/right-panel"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { useScheduled } from "@/lib/queries/routines"
 
@@ -114,24 +115,12 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const { stats, error, loading, refresh } = useProjectStats(project.id)
   const [importing, setImporting] = React.useState(false)
 
-  /* Somewhere for a queued *panel* to land. A helper's terminal and the rules
-     editor are panels, panels live in the dock, and the dock only exists on a
-     thread route — so with no thread in this project yet, this opens an empty
-     one. It is the same door the + takes (`actions.startThreadIn`); the draft
-     is invisible to every list (`isListed`) until it is sent. */
-  const openWorkspaceThread = () => {
-    const id = actions.startThreadIn({ projectId: project.id })
-    void navigate(id ? threadPath(id) : settingsPath("projects"))
-  }
-
-  /* No dock on this route, so the helper's terminal is queued for the thread
-     we then go to — the same trade `openRules` below makes for the editor. */
-  const startHelper = useRunHelper(null)
+  /* A helper's terminal opens in this project's own right panel, beside the
+     page: the project is a scope of its own (`lib/right-panel`), so there is no
+     thread to land in first. */
+  const startHelper = useRunHelper(projectScope(project.id))
   const runHelper = async (helper: HelperCommand) => {
-    if (!(await startHelper(helper, project.id))) return
-    const latest = threads[0]
-    if (latest) void navigate(threadPath(latest.id))
-    else openWorkspaceThread()
+    await startHelper(helper, project.id)
   }
 
   /* The live half. Steps and unsent drafts are excluded exactly as they are
