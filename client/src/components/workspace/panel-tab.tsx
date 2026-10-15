@@ -60,8 +60,6 @@ import {
   renderMenuItems,
   type MenuItemSpec,
 } from "@/components/item-context-menu"
-import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
-import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspace/dock-context"
 import { useIsMobile } from "@/hooks/use-device"
@@ -376,21 +374,11 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                   a strip that talks over itself. */}
               <PanelStatusDot status={status} aria-hidden role={undefined} />
             </span>
-            {/* The tab's marks live on its second row, beside what the row says:
-                a thread's agent and its project, anything else its own glyph. */}
-            <span className="flex min-w-0 items-center gap-1 text-[10px] leading-3 font-normal text-muted-foreground/80">
-              <span data-tab-mark aria-hidden className="flex shrink-0 items-center gap-0.5">
-                {descriptor?.kind === "chat" ? (
-                  <>
-                    <AgentIcon agentId={meta?.agentId} className="size-3.5" />
-                    {project && <ProjectIcon project={project} className="size-3.5" />}
-                  </>
-                ) : (
-                  <PanelIcon panel={descriptor} className="size-3.5" />
-                )}
+            {subtitle && (
+              <span className="truncate text-[10px] leading-3 font-normal text-muted-foreground/80">
+                {subtitle}
               </span>
-              {subtitle && <span className="truncate">{subtitle}</span>}
-            </span>
+            )}
           </span>
           {/* **Floating, and laid out in no row at all** (`index.css`): two
               absolutely positioned controls against the chip's trailing inset,
