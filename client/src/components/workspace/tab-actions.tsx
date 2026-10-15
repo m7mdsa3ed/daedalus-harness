@@ -41,10 +41,11 @@ import { STRIP_GROUND } from "@/lib/header-chrome"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
+import type { PresetId } from "@/components/workspace/dock-context"
 import { LAYOUT_PRESETS, WorkspacePanelItems } from "@/components/workspace/panel-items"
 import { useDock, useDockOpeners } from "@/components/workspace/dock-context"
 import { useOpenThreads } from "@/lib/workspace/open-threads"
-import { activityAt, isListed } from "@/lib/settings"
+import { activityAt, isListed, relativeAge } from "@/lib/settings"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
@@ -71,14 +72,6 @@ const STRIP_CONTROL = cn(
      named once (`lib/header-chrome.ts`). */
   STRIP_GROUND
 )
-
-function relativeAge(at: number): string {
-  const m = Math.max(0, Math.round((Date.now() - at) / 60000))
-  if (m < 1) return "now"
-  if (m < 60) return `${m}m`
-  if (m < 1440) return `${Math.round(m / 60)}h`
-  return `${Math.round(m / 1440)}d`
-}
 
 function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
   const kind = panel.api.component
@@ -298,6 +291,36 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
   )
 }
 
+/** The layout menu: it arranges the whole dock, so it stands once in the app
+    header beside the sidebar toggle rather than in every strip. */
+export function LayoutMenu({ onPick, className }: { onPick: (preset: PresetId) => void; className?: string }) {
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DropdownMenuTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label="Arrange this dock" className={className}>
+                  <LayoutGrid className="size-3.5" />
+                </Button>
+              }
+            />
+          }
+        />
+        <TooltipContent side="bottom">Layout</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="start" className={MENU_WIDTH}>
+        {LAYOUT_PRESETS.map(({ id, label, Icon }) => (
+          <DropdownMenuItem key={id} onClick={() => onPick(id)} className={MENU_ROW}>
+            <MenuRow icon={<Icon />} label={label} />
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
   const dock = useDock()
   const { onNewTab, onOpenPanel } = useDockOpeners()
@@ -348,40 +371,6 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
               onOpen={(kind) => onOpenPanel?.(kind, false, { into: { group: group.id } })}
               canOpenPanels={!!onOpenPanel}
             />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-      {!isMobile && (
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      aria-label="Arrange this dock"
-                      className={STRIP_CONTROL}
-                    >
-                      <LayoutGrid className="size-3.5" />
-                    </Button>
-                  }
-                />
-              }
-            />
-            <TooltipContent side="bottom">Layout</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end" className={MENU_WIDTH}>
-            {LAYOUT_PRESETS.map(({ id, label, Icon }) => (
-              <DropdownMenuItem
-                key={id}
-                onClick={() => dock.applyPreset(id)}
-                className={MENU_ROW}
-              >
-                <MenuRow icon={<Icon />} label={label} />
-              </DropdownMenuItem>
-            ))}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

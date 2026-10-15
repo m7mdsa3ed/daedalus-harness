@@ -1,8 +1,8 @@
 /* ── The one thing the foot of a transcript says about the thread itself ──
    `statusFor` is the ladder; this draws every rung of it. One container, one
    `PhaseLine` that is never remounted (so a change of kind is the sentence
-   swapping, not a cut), and a body under it that mounts afresh per *family* of
-   kind and opens with a grid-rows transition (`harness-status-body`, index.css).
+   swapping, not a cut), and a body under it that is mounted once and opens and
+   closes with a grid-rows transition (`harness-status-body`, index.css).
    Approvals, the held-on-failure card and the queue stay their own rows. */
 import * as React from "react"
 import { useNavigate } from "react-router"
@@ -156,9 +156,117 @@ export function ThreadStatus({
   const text = status.kind === "working" || status.kind === "waiting" ? `${status.headline.replace(/[.…]+$/, "")}…` : status.headline
   const hasBody =
     opening || !!retry || !!(detail || status.more || status.install || bar || visible.length || showCopy)
-  /* One body per family: the opening steps share one, so stepping through them
-     moves the text and the badge and does not re-open the box each time. */
-  const family = opening ? "opening" : status.kind
+
+  /* One body for the life of the line, never remounted: a change of kind used to
+     cut the old body away and re-open a new one from nothing. It stays, its
+     parts fade in as they appear, and it closes on the last content it held
+     (a closing box with nothing in it is just a cut). */
+  const last = React.useRef<React.ReactNode>(null)
+  if (hasBody) {
+    last.current = (
+      <div className="min-w-0 space-y-1 pl-6 pt-1 text-xs">
+          {status.step && (
+            <span className="harness-part-in inline-block rounded-pill bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
+              Step {status.step.n} of {status.step.of}
+            </span>
+          )}
+          {retry && (
+            <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
+              {retry.of && (
+                <span className="flex gap-1" aria-hidden>
+                  {Array.from({ length: retry.of }, (_, i) => (
+                    <span
+                      key={i}
+                      className={cn(
+                        "size-1.5 rounded-full",
+                        i < retry.attempt ? "bg-warning" : "bg-muted-foreground/25",
+                        i === retry.attempt - 1 && !!retrySeconds && "animate-pulse"
+                      )}
+                    />
+                  ))}
+                </span>
+              )}
+              <span>
+                Retry {retry.attempt}
+                {retry.of ? ` of ${retry.of}` : ""}
+                {retrySeconds ? ` · next try in ${retrySeconds}s` : ""}
+              </span>
+            </div>
+          )}
+          {bar && (
+            <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2 pt-0.5">
+              <Progress value={bar.done} max={bar.total} className="flex-1 [&_[data-slot=progress-track]]:h-1" />
+              <span className="text-muted-foreground tabular-nums">
+                {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
+              </span>
+            </div>
+          )}
+          {/* Always said, never taken over by the slow line: the detail is the
+              only thing that says nothing was lost. */}
+          {(detail || (opening && slow && status.slow)) && (
+            <div key={detail} className="harness-part-in [--part-i:1] max-w-prose leading-relaxed whitespace-pre-line text-muted-foreground">
+              {detail}
+              {opening && slow && status.slow && <span className="mt-1 block">{status.slow}</span>}
+            </div>
+          )}
+          {status.install && (
+            <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
+              {status.install}
+            </code>
+          )}
+          {status.more && (
+            <Disclosure open={open} onToggle={() => setOpen((v) => !v)}>
+              {open ? "Hide details" : "Show details"}
+            </Disclosure>
+          )}
+          {open && status.more && (
+            <pre className="max-h-56 overflow-auto rounded-sm border border-destructive/20 bg-background/50 p-2 font-mono text-[11px] whitespace-pre-wrap text-foreground">
+              {status.more}
+            </pre>
+          )}
+          {(visible.length > 0 || showCopy) && (
+            <div className="harness-part-in [--part-i:3] flex flex-wrap items-center gap-1.5 pt-0.5">
+              {visible.map((a) => (
+                <ActionPill
+                  key={a.kind}
+                  variant={a.kind === "dismiss" ? "ghost" : "outline"}
+                  className={a.kind === "dismiss" ? "text-muted-foreground" : undefined}
+                  disabled={busy && (a.kind === "revive" || a.kind === "reconnect" || a.kind === "restore")}
+                  onClick={() => run(a.kind)}
+                >
+                  {a.kind === "continue" && <PlayIcon className="size-3" />}
+                  {a.kind === "retry" && <RotateCwIcon className="size-3" />}
+                  {a.kind === "retryAsPaths" && <PaperclipIcon className="size-3" />}
+                  {a.kind === "settings" && <SettingsIcon className="size-3" />}
+                  {(a.kind === "revive" || a.kind === "reconnect" || a.kind === "restore") && (
+                    <RotateCwIcon className={cn("size-3", busy && "animate-spin")} />
+                  )}
+                  {busy && a.busyLabel ? a.busyLabel : a.label}
+                </ActionPill>
+              ))}
+              {/* Every drawn error carries a Copy, whether or not there is a detail. */}
+              {showCopy && (
+                <CopyButton
+                  text={copyText}
+                  size="icon-xs"
+                  className="text-muted-foreground/80 hover:text-foreground"
+                />
+              )}
+            </div>
+          )}
+          {/* The way out of a wait that has stopped looking like one. Cancel
+              gives up the wait, never the words: the message goes back in the box. */}
+          {cancellable && waited >= CLOCK_MS && (
+            <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-0.5 text-muted-foreground">
+              <span className="tabular-nums">Waiting {formatElapsed(waited)}</span>
+              <Button variant="outline" size="xs" onClick={() => run("cancel")}>
+                Cancel
+              </Button>
+            </div>
+          )}
+      </div>
+    )
+  }
 
   return (
     <div className="harness-status py-1" data-tone={status.tone}>
@@ -186,109 +294,9 @@ export function ThreadStatus({
           ))}
         </ul>
       )}
-      {hasBody && (
-        <div key={family} className="harness-status-body">
-          <div className="min-w-0 space-y-1 pl-6 pt-1 text-xs">
-            {status.step && (
-              <span className="harness-part-in inline-block rounded-pill bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
-                Step {status.step.n} of {status.step.of}
-              </span>
-            )}
-            {retry && (
-              <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
-                {retry.of && (
-                  <span className="flex gap-1" aria-hidden>
-                    {Array.from({ length: retry.of }, (_, i) => (
-                      <span
-                        key={i}
-                        className={cn(
-                          "size-1.5 rounded-full",
-                          i < retry.attempt ? "bg-warning" : "bg-muted-foreground/25",
-                          i === retry.attempt - 1 && !!retrySeconds && "animate-pulse"
-                        )}
-                      />
-                    ))}
-                  </span>
-                )}
-                <span>
-                  Retry {retry.attempt}
-                  {retry.of ? ` of ${retry.of}` : ""}
-                  {retrySeconds ? ` · next try in ${retrySeconds}s` : ""}
-                </span>
-              </div>
-            )}
-            {bar && (
-              <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2 pt-0.5">
-                <Progress value={bar.done} max={bar.total} className="flex-1 [&_[data-slot=progress-track]]:h-1" />
-                <span className="text-muted-foreground tabular-nums">
-                  {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
-                </span>
-              </div>
-            )}
-            {/* Always said, never taken over by the slow line: the detail is the
-                only thing that says nothing was lost. */}
-            {(detail || (opening && slow && status.slow)) && (
-              <div className="harness-part-in [--part-i:1] max-w-prose leading-relaxed whitespace-pre-line text-muted-foreground">
-                {detail}
-                {opening && slow && status.slow && <span className="mt-1 block">{status.slow}</span>}
-              </div>
-            )}
-            {status.install && (
-              <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
-                {status.install}
-              </code>
-            )}
-            {status.more && (
-              <Disclosure open={open} onToggle={() => setOpen((v) => !v)}>
-                {open ? "Hide details" : "Show details"}
-              </Disclosure>
-            )}
-            {open && status.more && (
-              <pre className="max-h-56 overflow-auto rounded-sm border border-destructive/20 bg-background/50 p-2 font-mono text-[11px] whitespace-pre-wrap text-foreground">
-                {status.more}
-              </pre>
-            )}
-            {(visible.length > 0 || showCopy) && (
-              <div className="harness-part-in [--part-i:3] flex flex-wrap items-center gap-1.5 pt-0.5">
-                {visible.map((a) => (
-                  <ActionPill
-                    key={a.kind}
-                    variant={a.kind === "dismiss" ? "ghost" : "outline"}
-                    className={a.kind === "dismiss" ? "text-muted-foreground" : undefined}
-                    disabled={busy && (a.kind === "revive" || a.kind === "reconnect" || a.kind === "restore")}
-                    onClick={() => run(a.kind)}
-                  >
-                    {a.kind === "continue" && <PlayIcon className="size-3" />}
-                    {a.kind === "retry" && <RotateCwIcon className="size-3" />}
-                    {a.kind === "retryAsPaths" && <PaperclipIcon className="size-3" />}
-                    {a.kind === "settings" && <SettingsIcon className="size-3" />}
-                    {(a.kind === "revive" || a.kind === "reconnect" || a.kind === "restore") && (
-                      <RotateCwIcon className={cn("size-3", busy && "animate-spin")} />
-                    )}
-                    {busy && a.busyLabel ? a.busyLabel : a.label}
-                  </ActionPill>
-                ))}
-                {/* Every drawn error carries a Copy, whether or not there is a detail. */}
-                {showCopy && (
-                  <CopyButton
-                    text={copyText}
-                    size="icon-xs"
-                    className="text-muted-foreground/80 hover:text-foreground"
-                  />
-                )}
-              </div>
-            )}
-            {/* The way out of a wait that has stopped looking like one. Cancel
-                gives up the wait, never the words: the message goes back in the box. */}
-            {cancellable && waited >= CLOCK_MS && (
-              <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-0.5 text-muted-foreground">
-                <span className="tabular-nums">Waiting {formatElapsed(waited)}</span>
-                <Button variant="outline" size="xs" onClick={() => run("cancel")}>
-                  Cancel
-                </Button>
-              </div>
-            )}
-          </div>
+      {last.current && (
+        <div className="harness-status-body" data-open={hasBody} inert={!hasBody}>
+          {last.current}
         </div>
       )}
     </div>

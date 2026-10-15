@@ -791,18 +791,19 @@ export function Composer({
         type="button"
         tabIndex={away ? 0 : -1}
         aria-hidden={!away || undefined}
+        aria-label="Message the agent"
+        title={text.trim() || "Message the agent"}
         onClick={() => {
           setRevealed(true)
           requestAnimationFrame(() => composerRef.current?.focus())
         }}
         className={cn(
-          "absolute bottom-[max(0.75rem,var(--safe-bottom))] left-1/2 z-20 flex h-9 w-40 -translate-x-1/2 items-center justify-center gap-1.5 rounded-pill bg-composer/90 px-3 text-xs text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] hover:text-foreground",
+          "absolute bottom-[max(0.75rem,var(--safe-bottom))] right-[max(1rem,calc((100%_-_var(--harness-composer-width))/2))] z-20 flex size-9 items-center justify-center rounded-pill bg-composer/90 text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] hover:text-foreground",
           "transition-opacity duration-300 ease-out motion-reduce:transition-none",
           away ? "pointer-events-auto opacity-100 delay-100" : "pointer-events-none opacity-0"
         )}
       >
-        <MessageSquareText className="size-3.5 shrink-0" />
-        <span className="truncate">{text.trim() || "Message the agent"}</span>
+        <MessageSquareText className="size-4 shrink-0" />
       </button>
       <ComposerStrip
         aria-hidden={away || undefined}
@@ -906,15 +907,15 @@ export function Composer({
         inert={away || undefined}
         className={cn(
           "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl p-2 shadow-glass ring-1 ring-foreground/10 focus-within:ring-2 focus-within:ring-ring/40",
-          /* The morph: clipped down to the pill's box (10rem × 2.25rem, bottom
-             centre) while away. Open is a negative inset, not `none`, so the
+          /* The morph: clipped down to the pill's box (2.25rem square, bottom
+             right) while away. Open is a negative inset, not `none`, so the
              two shapes interpolate and the 4rem shadow is not clipped off. A
              clip moves no layout, so `--composer-dock-h` holds. The pill
              corner uses the theme's pill radius, so square themes stay square. */
           "transition-[clip-path,ring-color] duration-300 ease-out motion-reduce:transition-none",
           "[&>*]:transition-opacity [&>*]:duration-200",
           away
-            ? "[clip-path:inset(calc(100%_-_2.25rem)_calc(50%_-_5rem)_0_round_var(--app-radius-pill))] [&>*]:opacity-0"
+            ? "[clip-path:inset(calc(100%_-_2.25rem)_0_0_calc(100%_-_2.25rem)_round_var(--app-radius-pill))] [&>*]:opacity-0"
             : "[clip-path:inset(-5rem)]",
           /* Theme glass: the card token at card-level blur/saturation, the
              same recipe `Card` wears — never a hardcoded blur or shadow. */

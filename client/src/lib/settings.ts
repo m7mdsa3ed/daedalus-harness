@@ -1060,6 +1060,15 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     happened in yet. */
 export const activityAt = (s: SessionMeta): number => s.lastActivityAt || s.createdAt
 
+/** "now", "5m", "3h", "2d" — a row's age, short enough for a tab's second line. */
+export function relativeAge(at: number): string {
+  const m = Math.max(0, Math.round((Date.now() - at) / 60000))
+  if (m < 1) return "now"
+  if (m < 60) return `${m}m`
+  if (m < 1440) return `${Math.round(m / 60)}h`
+  return `${Math.round(m / 1440)}d`
+}
+
 /** A scheduled prompt: the server sends `text` to `sessionId`'s agent at
     `nextAt`, and again every `everyMs` until cancelled. The server owns
     delivery — a browser tab closing must not stop a scheduled turn. */

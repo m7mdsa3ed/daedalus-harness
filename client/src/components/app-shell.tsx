@@ -44,7 +44,9 @@ import {
 } from "@/components/thread-sidebar"
 import type { OpenerTarget } from "@/components/workspace/dock-context"
 import { useWorkspaceDock } from "@/components/workspace/dock"
+import { useIsMobile } from "@/hooks/use-device"
 import { WorkspaceDock } from "@/components/workspace/dock-surface"
+import { LayoutMenu } from "@/components/workspace/tab-actions"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
@@ -147,6 +149,7 @@ export function AppShell({
   /* The header's own dialog — device-global, so it belongs to the shell rather
      than to any route or dock group under it. */
   const dock = useWorkspaceDock()
+  const isMobile = useIsMobile()
   const activeChat = useActiveChat()
   const headingFor = usePageHeading()
 
@@ -692,6 +695,14 @@ export function AppShell({
               as two spacings on one line. */}
           <div data-header-left className="flex min-w-0 items-center gap-1">
               <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
+              {/* The dock's arrangement, once, beside the toggle: it is about the
+                  whole dock, not one strip. Not on a phone, which has no splits. */}
+              {!isMobile && (
+                <LayoutMenu
+                  onPick={dock.applyPreset}
+                  className={cn(HEADER_CHIP, "pointer-events-auto shrink-0 [-webkit-app-region:no-drag]")}
+                />
+              )}
             {/* A branch says where it came from, once, beside the tab that
                 names it — the one thing provenance is for. Clicking goes to the
                 parent thread as it is now, not to the turn it was cut at. */}

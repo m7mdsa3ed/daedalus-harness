@@ -5,7 +5,7 @@
    cluster — this one lives in the transcript, where the turn is. */
 import { Logo } from "@/components/ui/logo"
 import { runningAgents } from "@/components/composer/agents-indicator"
-import { toolHeading } from "@/lib/tools"
+import { toolHeading, toolKindOf } from "@/lib/tools"
 import { type ThreadState } from "@/lib/store"
 import { describeError } from "@/lib/errors"
 import { holdOf } from "@/lib/thread/hold"
@@ -47,6 +47,18 @@ export function shownRetry(thread: ThreadState): NonNullable<ThreadState["retry"
   return thread.retry && thread.retry.attempt >= 2 ? thread.retry : null
 }
 
+const TOOL_PHASE: Partial<Record<ReturnType<typeof toolKindOf>, string>> = {
+  read: "Reading through the code",
+  search: "Searching the project",
+  edit: "Making changes",
+  delete: "Removing files",
+  move: "Moving files around",
+  execute: "Running a command",
+  fetch: "Looking something up online",
+  think: "Thinking it through",
+  switch_mode: "Switching modes",
+}
+
 export function workingMessage(thread: ThreadState): string {
   /* Before everything else: a held turn is not doing any of it. Read off the
      hold rather than the transcript, whose newest item is whatever the turn
@@ -80,7 +92,12 @@ export function workingMessage(thread: ThreadState): string {
     switch (item.kind) {
       case "tool": {
         if (item.status !== "in_progress" && item.status !== "pending") continue
-        // The step's own heading, so "Read store.tsx" here matches the row above.
+        /* The phase, not the step: the step's own heading ("Read store.tsx") is
+           already the row above this line, and saying it twice made the line a
+           label that never changed meaning. ACP `kind` only; an `other` call
+           has no phase to name, so it keeps its heading. */
+        const phase = TOOL_PHASE[toolKindOf(item)]
+        if (phase) return phase
         const heading = toolHeading(item)
         if (heading.file) return `${heading.title} ${heading.file}`
         if (heading.detail && !heading.prose) return `${heading.title} ${heading.detail}`
@@ -92,14 +109,14 @@ export function workingMessage(thread: ThreadState): string {
       case "plan":
         return "Working through the plan"
       case "thought":
-        return "Thinking"
+        return "Thinking it through"
       case "agent":
-        return "Writing"
+        return "Writing a reply"
       case "user":
         /* The turn is open and the agent has not said a word yet — which is a
            real stage of a turn (the model is reading the prompt), and naming it
            is what stops the line reading as "Working" from send to finish. */
-        return "Starting the turn"
+        return "Reading your message"
       case "error":
         /* A retry the agent is reporting: the line says it while nothing newer
            has arrived — and only then. A step that lands after it, or settles
@@ -112,7 +129,7 @@ export function workingMessage(thread: ThreadState): string {
         continue
     }
   }
-  return "Working"
+  return "Working on it"
 }
 
 /**

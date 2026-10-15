@@ -2153,9 +2153,13 @@ html .dv-void-container {
 }
 
 html .dv-right-actions-container {
-  /* Its children are flex items of the strip itself, so the layout button can
-     sit after the void (`order`) while the + stays against the last tab. */
-  display: contents;
+  align-items: center;
+  display: flex;
+  height: 100%;
+  /* Never squeezed: the tabs are the flexible thing in this row, and a + that
+     shrank to nothing at eight tabs is the one control that has to be reachable
+     at eight tabs. */
+  flex-shrink: 0;
 }
 
 /* ── Content is flush ──

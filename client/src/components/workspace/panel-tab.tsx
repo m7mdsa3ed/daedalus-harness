@@ -67,6 +67,7 @@ import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
 import { pageKey } from "@/lib/workspace/panels"
 import { usePageHeadingFor } from "@/components/workspace/page-panel"
+import { activityAt, relativeAge } from "@/lib/settings"
 import { useAgents, useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
 import { useSessionMeta } from "@/lib/store"
@@ -288,6 +289,14 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           : descriptor?.kind === "web"
             ? (descriptor.file ?? descriptor.url ?? "")
             : ""
+  /* When the thread last did anything. The age only moves by the minute, so one
+     re-render a minute keeps it honest and a tab nobody looks at costs nothing. */
+  const [, tick] = React.useReducer((n: number) => n + 1, 0)
+  React.useEffect(() => {
+    const id = window.setInterval(tick, 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+  const age = descriptor?.kind === "chat" && meta && !meta.draft ? relativeAge(activityAt(meta)) : ""
   const hoverDetails = [
     title,
     status?.label,
@@ -374,9 +383,10 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                   a strip that talks over itself. */}
               <PanelStatusDot status={status} aria-hidden role={undefined} />
             </span>
-            {subtitle && (
-              <span className="truncate text-[10px] leading-3 font-normal text-muted-foreground/80">
-                {subtitle}
+            {(subtitle || age) && (
+              <span className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3 font-normal text-muted-foreground/80">
+                <span className="min-w-0 flex-1 truncate">{subtitle}</span>
+                {age && <span className="shrink-0 tabular-nums">{age}</span>}
               </span>
             )}
           </span>

@@ -614,8 +614,11 @@ export const CompactionStep = React.memo(function CompactionStep({
   const running = item.status === "in_progress"
   const failed = item.status === "failed"
   const cancelled = item.status === "cancelled"
+  /* While it runs the working line at the foot already says "Compacting the
+     context", so the row says nothing of its own until there is a summary
+     streaming in to hold — otherwise the same sentence is on screen twice. */
   const label = running
-    ? "Compacting context…"
+    ? "Context summary"
     : failed
       ? "Compaction failed"
       : cancelled
@@ -638,6 +641,7 @@ export const CompactionStep = React.memo(function CompactionStep({
       </div>
     ) : undefined
 
+  if (running && !detail) return null
   return (
     <StepRow
       icon={FoldVerticalIcon}
