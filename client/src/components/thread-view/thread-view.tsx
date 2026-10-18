@@ -27,6 +27,7 @@ import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/li
 import { holdOf } from "@/lib/thread/hold"
 import { isOpening } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
+import { openInNewTab } from "@/lib/workspace/open-threads"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ToolItem } from "@/lib/store"
 import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext } from "@/components/workspace/dock-context"
@@ -49,7 +50,7 @@ import { PendingSettings } from "@/components/thread-view/pending-settings"
 import { useThreadStatus } from "@/lib/thread/status"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
-import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
+import { buildRows, rowTailId, type Row } from "@/lib/transcript-rows"
 import { PromptSuggestions } from "@/components/prompt-suggestions"
 import { Composer, type ComposerHandle } from "@/components/composer/composer"
 import { ThreadRail } from "@/components/thread-rail"
@@ -73,11 +74,8 @@ import {
   type InspectorTab,
 } from "@/lib/inspector"
 import { useServer } from "@/lib/server-context"
-import { useVoiceProviders, voiceFor } from "@/lib/queries/voice"
-import { useVoiceCallActive, useVoiceCallLifetime } from "@/lib/voice-call"
+import { useVoiceCallLifetime } from "@/lib/voice-call"
 
-/* The provider packages ride this chunk: a thread with no call never loads them. */
-const VoiceCall = React.lazy(() => import("./voice-call"))
 import { sessionChanges } from "@/lib/workspace/git-api"
 import { useEarlierAnchor } from "@/components/thread-view/earlier-anchor"
 import { useThreadKeys } from "@/components/thread-view/thread-keys"
@@ -99,6 +97,7 @@ const INSPECTOR_TRANSCRIPT_MIN = 480
     level down (a subagent, tool group, workflow, or batch). */
 function rowContains(row: Row, id: string): boolean {
   if (row.id === id) return true
+  if (row.kind === "work-fold") return row.rows.some((child) => rowContains(child, id))
   if (row.kind === "subagent-group")
     return row.launch?.id === id || row.children.some((child) => rowContains(child, id))
   if (row.kind === "tool-group")
@@ -245,83 +244,72 @@ export function ThreadView({
      after what, the agent decided on it. It still updates in place, since the
      reducer replaces the item it already holds.
 
-     One exception, and it is the reader's own: `answersOnly` keeps the
-     conversation and drops the work (see lib/transcript-rows.isAnswerItem).
-     Filtered here, at the top of the derivation, so nesting, grouping, the
-     rail and every row memo below are unchanged — and identity-stable, since
-     `filter` preserves the item objects the reducer hands back. The full list
-     is still what the turn footers are computed from: what a turn cited and
-     what it cost are read off the steps this option hides. */
+     `answersOnly` is not one of these filters: it folds the work rather than
+     dropping it (`foldWork`, the last pass in `buildRows`), so every item is
+     still here and a turn's footer still has the steps to read from. What is
+     filtered is only what is never drawn at all. Identity-stable, since
+     `filter` preserves the item objects the reducer hands back. */
   const visible = React.useMemo(
     () =>
       thread.items.filter(
         (item) =>
-          (!options.answersOnly || isAnswerItem(item)) &&
           !(item.kind === "error" && item.transient) &&
           (options.showShellCommands || item.kind !== "shell") &&
           (options.showConfigNotices || item.kind !== "notice" || item.config !== true)
       ),
-    [thread.items, options.answersOnly, options.showShellCommands, options.showConfigNotices]
+    [thread.items, options.showShellCommands, options.showConfigNotices]
   )
   /* Nesting folds a subagent's work under its step; grouping folds a *run*
-     of steps into one row. Both are computed here, not in the reducer: they
-     are ways of looking at the transcript, not changes to it, and toggling
-     the option must not touch a single item. See lib/transcript-rows. */
+     of steps into one row; `answersOnly` folds the work between the answers
+     into one expandable line. All are computed here, not in the reducer: they
+     are ways of looking at the transcript, not changes to it, and toggling the
+     option must not touch a single item. See lib/transcript-rows. */
   const rows = React.useMemo(
-    () => buildRows(visible, options.groupTools, thread.turnActive, options.groupShellCommands, !options.expandEdits),
-    [options.expandEdits, options.groupTools, options.groupShellCommands, visible, thread.turnActive]
+    () =>
+      buildRows(
+        visible,
+        options.groupTools,
+        thread.turnActive,
+        options.groupShellCommands,
+        !options.expandEdits,
+        options.answersOnly
+      ),
+    [
+      options.answersOnly,
+      options.expandEdits,
+      options.groupTools,
+      options.groupShellCommands,
+      visible,
+      thread.turnActive,
+    ]
   )
   /* Where a Sources strip goes: after the item that ends each finished turn.
      Keyed by that item's id so the lookup below is one map hit per row, and
      a grouped run — whose last step may be the item — is checked by its tail. */
   const sourcesAfter = React.useMemo(
     () =>
-      withTurnSources(thread.items, thread.turnActive, options.answersOnly, options.showConfigNotices),
-    [thread.items, thread.turnActive, options.answersOnly, options.showConfigNotices]
+      withTurnSources(thread.items, thread.turnActive, options.showConfigNotices),
+    [thread.items, thread.turnActive, options.showConfigNotices]
   )
   const sourcesFor = (row: Row): TurnSources | undefined => sourcesAfter.get(rowTailId(row))
   /* What the turn cost, in the same slot the sources sit in — the two are the
      turn's footer, and a reader looking for either looks in one place. */
   const usageAfter = React.useMemo(
     () =>
-      withTurnUsage(
-        thread.items,
-        thread.turnActive,
-        thread.turnUsage,
-        options.answersOnly,
-        options.showConfigNotices
-      ),
-    [thread.items, thread.turnActive, thread.turnUsage, options.answersOnly, options.showConfigNotices]
+      withTurnUsage(thread.items, thread.turnActive, thread.turnUsage, options.showConfigNotices),
+    [thread.items, thread.turnActive, thread.turnUsage, options.showConfigNotices]
   )
   const usageFor = (row: Row): acp.Usage | undefined => usageAfter.get(rowTailId(row))
   const durationAfter = React.useMemo(
     () =>
-      withTurnDuration(
-        thread.items,
-        thread.turnActive,
-        thread.turnDuration,
-        options.answersOnly,
-        options.showConfigNotices
-      ),
-    [
-      thread.items,
-      thread.turnActive,
-      thread.turnDuration,
-      options.answersOnly,
-      options.showConfigNotices,
-    ]
+      withTurnDuration(thread.items, thread.turnActive, thread.turnDuration, options.showConfigNotices),
+    [thread.items, thread.turnActive, thread.turnDuration, options.showConfigNotices]
   )
   const durationFor = (row: Row): number | undefined => durationAfter.get(rowTailId(row))
   const toolDurationAfter = React.useMemo(
     () =>
-      withTurnToolDuration(
-        thread.items,
-        thread.turnActive,
-        thread.turnToolDuration,
-        options.answersOnly,
-        options.showConfigNotices
-      ),
-    [thread.items, thread.turnActive, thread.turnToolDuration, options.answersOnly, options.showConfigNotices]
+      withTurnToolDuration(thread.items, thread.turnActive, thread.turnToolDuration, options.showConfigNotices),
+    [thread.items, thread.turnActive, thread.turnToolDuration, options.showConfigNotices]
   )
   const toolDurationFor = (row: Row): number | undefined => toolDurationAfter.get(rowTailId(row))
   /* What each finished turn wrote, gated on the transcript (`withTurnChanges`
@@ -335,25 +323,16 @@ export function ThreadView({
         lazyThread.items,
         lazyThread.turnActive,
         lazyThread.turnChanges,
-        options.answersOnly,
         options.showConfigNotices
       ),
     // Read only by the composer and the inspector, so it follows their value.
-    [lazyThread.items, lazyThread.turnActive, lazyThread.turnChanges, options.answersOnly, options.showConfigNotices]
+    [lazyThread.items, lazyThread.turnActive, lazyThread.turnChanges, options.showConfigNotices]
   )
   const latestChanges = React.useMemo(() => [...changesAfter.values()].at(-1), [changesAfter])
   /* The per-turn rows are the server's and live-only on the socket, so a
      transcript opened cold seeds them once here. Failure is silence: the
      reading is ambient, and a thread with no project has nothing to read. */
   const server = useServer()
-  const voiceActive = useVoiceCallActive(sessionId)
-  /* The card builds its realtime model from this row, and the token the
-     server mints is for the same one (`?provider=` wins over the session's own
-     resolution), so project, then profile, then default is decided once, here. */
-  const voiceMeta = useSessionMeta(sessionId)
-  const voiceProjectPick = useProjects().find((p) => p.id === voiceMeta?.projectId)?.defaults?.voiceProvider
-  const voiceProfilePick = useProfiles().find((p) => p.id === voiceMeta?.profileId)?.voiceProvider
-  const voiceProvider = voiceFor(useVoiceProviders().data, voiceProjectPick, voiceProfilePick)
   React.useEffect(() => {
     const controller = new AbortController()
     sessionChanges(server, sessionId, controller.signal)
@@ -391,12 +370,10 @@ export function ThreadView({
     }
     return byId
   }, [thread.turns, thread.items])
-  /* The thread's true tail, not the filtered one: it is what "is this row the
-     one still being written" is asked against, and under `answersOnly` the
-     newest item is usually a step that is not on screen — measured against the
-     filtered list, the previous answer would wear the streaming caret for the
-     whole of a tool run. No row matches a hidden tail, which is the right
-     answer: the working line above the composer is what says a turn is live. */
+  /* The thread's true tail, read off `thread.items` rather than the rows: it is
+     what "is this row the one still being written" is asked against. Every item
+     is drawn — under `answersOnly` the newest is the tail of the fold that holds
+     it — and `rowTailId` recurses through a fold, so exactly one row answers. */
   const last = thread.items[thread.items.length - 1]
   /* A turn the agent's process ended under is resumable the same way: its row
      is the last thing that happened, and sending "Continue." revives the agent
@@ -624,7 +601,7 @@ export function ThreadView({
   const closeAside = React.useCallback(() => setAside(null), [])
   /* ⌘/Ctrl on either door opens the aside as a tab, like any thread. */
   const openAside = React.useCallback((at: AsideAt, asTab: boolean) => {
-    if (asTab) navigateTo(threadPath(at.id))
+    if (asTab) openInNewTab(threadPath(at.id)) || navigateTo(threadPath(at.id))
     else setAside(at)
   }, [])
   useAsideHighlights(rootRef, sessionId, openAside)
@@ -807,7 +784,6 @@ export function ThreadView({
             <StepTokensProvider value={stepTokens}>
             <MessageScrollerContent
               ref={follow.contentRef}
-              data-answers={options.answersOnly ? "only" : undefined}
               data-density={options.compactDensity ? "compact" : undefined}
               data-wrap={options.codeWrap ? "on" : undefined}
               data-motion={options.calmMotion ? "calm" : undefined}
@@ -879,17 +855,7 @@ export function ThreadView({
                     `contain-intrinsic-size: auto` remembers each row's last
                     real height, and only the on-screen tail grows, so the
                     autoscroll target does not drift. */
-                <MessageScrollerItem
-                  key={row.id}
-                  messageId={row.id}
-                  /* What kind of row this is, for the one thing CSS has to know
-                     about it: under `answersOnly` the steps between two stretches
-                     of prose are gone, and the padding they were separated by is
-                     a gap in the middle of what is now one answer. Collapsed in
-                     index.css against the *adjacency*, which is a fact only the
-                     rendered list has — see the [data-answers="only"] block. */
-                  data-row-kind={row.kind}
-                >
+                <MessageScrollerItem key={row.id} messageId={row.id}>
                   {/* No `first:hidden`: the divider is always its item's first
                       child, so that hid every one. `firstUserIndex` already
                       skips the first turn. */}
@@ -1044,24 +1010,6 @@ export function ThreadView({
 
                   Gated outside the component: a `MessageScrollerItem` that
                   renders nothing still reserves `contain-intrinsic-size`. */}
-              {/* The call is thread state, so it is at the foot with the rest —
-                  above the queue, which stays the conversation's future. */}
-              {voiceActive && voiceProvider && (
-                <MessageScrollerItem messageId="voice-call">
-                  <div className="py-1">
-                    <React.Suspense fallback={null}>
-                      <VoiceCall
-                        sessionId={sessionId}
-                        thread={thread}
-                        actions={actions}
-                        settings={server}
-                        provider={voiceProvider}
-                        draft={meta?.draft === true}
-                      />
-                    </React.Suspense>
-                  </div>
-                </MessageScrollerItem>
-              )}
               {/* The settings change the thread is carrying rides with the
                   queue: both are what the conversation is *about to be* on,
                   and the transcript is where that is read. Above the queue,

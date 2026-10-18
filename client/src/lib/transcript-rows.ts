@@ -120,6 +120,30 @@ export interface ShellRun {
   items: ShellItem[]
 }
 
+/**
+ * The work between two things that were said, collected into one line you can
+ * open (`answersOnly`, view-options).
+ *
+ * Everything else on this list is a way of drawing items that are all the same
+ * kind of thing; this one holds *rows*. That is the whole point: the transcript
+ * keeps every fold it already had — a run, a subagent with its rail, a
+ * workflow's card, a plan — and this only collects them, so opening the line
+ * gives back the whole transcript with nothing re-shaped. It follows that the
+ * fold is the LAST pass in `buildRows`: grouping has already done everything it
+ * can, and the fold only has to take what is left.
+ *
+ * A stretch runs between two things said, and a stretch of ONE folds too —
+ * the difference between this and every other fold here. A lone tool call
+ * between two paragraphs is exactly the row the option exists to take out of
+ * the conversation, so leaving it whole would put the work back.
+ */
+export interface WorkFold {
+  kind: "work-fold"
+  /** `work:<first row's id>`, so it is stable while work keeps arriving. */
+  id: string
+  rows: Row[]
+}
+
 export type Row =
   | ThreadItem
   | ToolRunGroup
@@ -128,6 +152,7 @@ export type Row =
   | WorkflowGroup
   | SubagentBatch
   | ShellRun
+  | WorkFold
 
 /** The id of the item a row stands for — for keys, scroll anchors and the
     "where does the Sources strip go" lookup, which is keyed by item id. A
@@ -136,6 +161,7 @@ export type Row =
     command's, which is the one that just finished. */
 export function rowTailId(row: Row): string {
   if (row.kind === "run" || row.kind === "shell-run") return row.items[row.items.length - 1].id
+  if (row.kind === "work-fold") return rowTailId(row.rows[row.rows.length - 1])
   if (row.kind === "tool-group") return rowTailId(row.children[row.children.length - 1])
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return rowTailId(row.steps[row.steps.length - 1])
@@ -143,21 +169,18 @@ export function rowTailId(row: Row): string {
 }
 
 /**
- * Answers only (view-options): the conversation with the work taken out.
+ * What "Answers only" (view-options) keeps OUT of the fold: the conversation.
  *
  * Kept: the user's messages, the agent's prose, the notices that carry an
  * interrupted turn's Continue button, and errors — a failure hidden reads as
  * an answer that never came, which is the one thing this option must not do.
  * A `!` command is kept too: the user ran it, so it is part of the conversation
- * rather than work the agent did. Dropped: thoughts, tool calls, plans,
- * compactions, subagent sessions.
+ * rather than work the agent did. Folded away (see `foldWork`): thoughts, tool
+ * calls, plans, compactions, subagent sessions.
  *
- * A `parentId` is dropped whatever its kind: a subagent's own prose is the
- * work, not the thread's answer, and its head is gone anyway — leaving it in
- * would put a worker's running commentary in the flow as if the thread had
- * said it. Filtering the ITEMS rather than the rows is the point: nesting and
- * grouping then have nothing to build out of, so nothing downstream — the
- * rail, the memos, the row views — learns a word about this option.
+ * A `parentId` is work whatever its kind: a subagent's own prose is the work,
+ * not the thread's answer, and its head is inside the same fold anyway — the
+ * one place an orphaned child can still reach is a fold's open body.
  */
 export function isAnswerItem(item: ThreadItem): boolean {
   if (item.parentId) return false
@@ -172,24 +195,27 @@ export function isAnswerItem(item: ThreadItem): boolean {
 }
 
 /**
- * The transcript as rows: subagents nested, then (optionally) runs grouped.
+ * The transcript as rows: subagents nested, then (optionally) runs grouped,
+ * and — when "Answers only" is on — the work folded between the answers.
  * Nesting does not depend on the grouping option — a subagent's rail is not
- * a preference, it is where its steps belong. Two kinds fold: runs of tool
- * steps, and runs of the reader's own `!` commands.
+ * a preference, it is where its steps belong. Three kinds fold: runs of tool
+ * steps, runs of the reader's own `!` commands, and (last) the work itself.
  */
 export function buildRows(
   items: ThreadItem[],
   groupTools: boolean,
   turnActive = false,
   groupShells = false,
-  groupEdits = false
+  groupEdits = false,
+  answersOnly = false
 ): Row[] {
   const nested = mergeSubagentBatches(
     mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive, groupEdits))
   )
   const placed = placeNativeWorkflows(nested, items)
   const grouped = groupTools ? groupToolRuns(placed, groupEdits) : placed
-  return groupShells ? groupShellRuns(grouped) : grouped
+  const shelled = groupShells ? groupShellRuns(grouped) : grouped
+  return answersOnly ? foldWork(shelled) : shelled
 }
 
 /* An async-task item is a record, not a row: it is read into a `WorkflowGroup`
@@ -495,6 +521,11 @@ export function activeSubagents(rows: Row[]): SubagentGroup[] {
     if (row.kind === "workflow-group" || row.kind === "subagent-batch") {
       // A run's steps are workers like any other; the run itself is not one.
       out.push(...activeSubagents(row.steps))
+      continue
+    }
+    if (row.kind === "work-fold") {
+      // The fold is a reading; the workers inside it are still the thread's.
+      out.push(...activeSubagents(row.rows))
       continue
     }
     if (row.kind !== "subagent-group") continue
@@ -911,6 +942,64 @@ export function groupShellRuns(rows: Row[]): Row[] {
 
   for (const row of rows) {
     if (row.kind === "shell") run.push(row)
+    else {
+      flush()
+      out.push(row)
+    }
+  }
+  flush()
+  return out
+}
+
+/**
+ * Whether a row is the agent's work — the thing "Answers only" folds away.
+ *
+ * Item rows are judged by `isAnswerItem` (a user message, the agent's prose, a
+ * notice, an error and the reader's own `!` command all stay out); every
+ * composite row is work by construction, a `!` run is the reader's act and
+ * stays out with its commands. A nested `work-fold` cannot reach here — this
+ * is the last pass, on rows nothing has folded.
+ */
+function isWorkRow(row: Row): boolean {
+  switch (row.kind) {
+    case "run":
+    case "tool-group":
+    case "subagent-group":
+    case "workflow-group":
+    case "subagent-batch":
+      return true
+    case "shell-run":
+    case "work-fold":
+      return false
+    default:
+      return !isAnswerItem(row)
+  }
+}
+
+/**
+ * The last pass when "Answers only" is on: the work between two things said,
+ * collected into one `WorkFold` — see the interface for why a run of one folds
+ * too, and why this runs after every other fold.
+ *
+ * Membership is read off the ROW, not the items: a folded run, a subagent with
+ * its rail, a workflow's card and a plan are each one thing the reader can open,
+ * so each is one thing this collects. A row that carries something said ends the
+ * stretch, which is what makes the fold fall *between* the answers rather than
+ * around them. Nested rows never reach here — a subagent's children are already
+ * inside its group, a tool group's inside it.
+ */
+export function foldWork(rows: Row[]): Row[] {
+  const out: Row[] = []
+  let run: Row[] = []
+
+  const flush = () => {
+    if (run.length === 0) return
+    out.push({ kind: "work-fold", id: `work:${run[0].id}`, rows: run })
+    run = []
+  }
+
+  for (const row of rows) {
+    if (isWorkRow(row)) run.push(row)
     else {
       flush()
       out.push(row)

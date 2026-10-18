@@ -7,32 +7,35 @@
    It is a *reading*, and deliberately nothing more. Running an entry is not
    here: a tool call is the agent's, behind its permission gate, and prompting,
    reading or completing from a settings screen was the playground, which is
-   gone. What is left is the contract — a rail of what the server offers beside
-   the fields of the one picked, with the raw schema a fold below.
+   gone. What is left is the contract.
 
-   The sections are one component (`EntryDetail`) rather than four, because the
-   only thing that differs between a tool, a prompt, a resource and a template
-   is the shape of its contract; the tabs and the field list are the same. */
+   ── The layout ──
+   A summary of the server on top, then a TabBar (Tools | Prompts | Resources)
+   over one table of that kind's entries (searchable). A row opens the
+   contract of the entry — its input and, for a tool, its output side by
+   side — in a DetailSheet: right on a wide panel, bottom on a narrow one.
+   Resources and templates share a tab (a template is a resource whose URI is
+   the thing a reader fills in); the table's Kind column tells them apart. */
 import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { ArrowLeftIcon, SearchCheckIcon, SearchIcon } from "lucide-react"
+import { BracesIcon, FileTextIcon, MessageSquareTextIcon, SearchCheckIcon, WrenchIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
-import { Input } from "@/components/ui/input"
 import { Notice } from "@/components/notice"
 import { Empty } from "@/components/empty"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { DataTable, TitleCell } from "@/components/ui/data-table"
+import type { ColumnDef } from "@/lib/table"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { useMcpCatalog, useMcpServers, useProjects } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
 import { settingsPath } from "@/lib/router"
-import { api, mcpSubtitle, type McpCheckEntry, type McpCheckResult } from "@/lib/settings"
+import { api, mcpSubtitle, type McpCheckEntry, type McpCheckResult, type McpServerDef } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { FormPageHeader, Group } from "./primitives"
+import { DetailSheet, FormPageHeader, Group, INSET, Row, TabBar } from "./primitives"
 import { useSettingsPage } from "./layout"
 
 export function McpDetailPage() {
@@ -75,7 +78,7 @@ export function McpDetailPage() {
      offering a Check that cannot connect. */
   if (scoped) {
     return (
-      <div className="mx-auto w-full max-w-7xl">
+      <>
         <FormPageHeader
           title={server.name}
           description={mcpSubtitle(server)}
@@ -86,26 +89,26 @@ export function McpDetailPage() {
           so there is no server here to connect to. Link it to a profile or a thread to give an agent its
           tools, and read what it offers from that thread.
         </Notice>
-      </div>
+      </>
     )
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl">
+    <>
       <FormPageHeader
         title={server.name}
         description={mcpSubtitle(server)}
         onBack={() => void navigate(settingsPath("mcp"))}
       />
       {query.error && (
-        <Notice tone="error" title="Couldn't read what this server offers">
+        <Notice tone="error" className="mb-8" title="Couldn't read what this server offers">
           {query.error.message}
         </Notice>
       )}
-      <Offering result={query.data?.deferred ? null : query.data ?? null}>
+      <Offering server={server} result={query.data?.deferred ? null : query.data ?? null}>
         {server.type === "builtin" && projects.length > 1 && (
           <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>
-            <SelectTrigger size="sm" className="w-56" title="Which project a listing is read against">
+            <SelectTrigger size="sm" className="w-40 min-w-0 @panel-sm:w-56 pointer-coarse:h-11" title="Which project a listing is read against">
               <SelectValue>{projects.find((p) => p.id === project)?.name ?? "Project"}</SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -120,7 +123,7 @@ export function McpDetailPage() {
         <Button
           variant="outline"
           size="sm"
-          className="ml-auto"
+          className="h-11 @panel-sm:h-9"
           disabled={busy || query.isFetching}
           onClick={check}
           title="Connect now and list what this server offers"
@@ -128,52 +131,130 @@ export function McpDetailPage() {
           <SearchCheckIcon className="size-4" /> {busy || query.isFetching ? "Checking…" : "Check"}
         </Button>
       </Offering>
-    </div>
+    </>
   )
 }
 
 /**
  * A connected server's surface: what it called itself and declared, its
- * instructions, and every tool, prompt, resource and template as a row in the
- * rail. `children` are the page's own controls, drawn at the end of the badge
- * row.
+ * instructions, and every tool, prompt, resource and template as a row of the
+ * table. `children` are the page's own controls (the project, Check), drawn at
+ * the end of the summary's heading.
  */
-function Offering({ result, children }: { result: McpCheckResult | null; children?: React.ReactNode }) {
-  const sections: { kind: EntryKind; label: string; entries: McpCheckEntry[] }[] = [
-    { kind: "tool", label: "Tools", entries: result?.tools ?? [] },
-    { kind: "prompt", label: "Prompts", entries: result?.prompts ?? [] },
-    { kind: "resource", label: "Resources", entries: result?.resources ?? [] },
-    { kind: "template", label: "Resource templates", entries: result?.resourceTemplates ?? [] },
-  ]
-  /* The filter narrows the rail and never the entry in front of you — it stays
-     open while the collection is searched, as Postman's does. `chosen` is the
-     *explicit* pick, which is what lets a narrow panel tell "the reader opened
-     this" from "this is just the first row". */
+function Offering({
+  server,
+  result,
+  children,
+}: {
+  server: McpServerDef
+  result: McpCheckResult | null
+  children?: React.ReactNode
+}) {
+  /* Every entry the server offers, in the order the kinds run. A filter narrows
+     what is *listed* and a selection is resolved against the whole set, so an
+     entry you have open never vanishes while the collection is searched. */
+  const rows = React.useMemo<EntryRow[]>(
+    () => [
+      ...(result?.tools ?? []).map((entry) => entryRow("tool", entry)),
+      ...(result?.prompts ?? []).map((entry) => entryRow("prompt", entry)),
+      ...(result?.resources ?? []).map((entry) => entryRow("resource", entry)),
+      ...(result?.resourceTemplates ?? []).map((entry) => entryRow("template", entry)),
+    ],
+    [result]
+  )
   const [query, setQuery] = React.useState("")
+  const [tab, setTab] = React.useState<EntryTab>("tool")
+  /* The *explicit* pick: the entry whose contract is open in the sheet. It is
+     resolved against the whole set, so a search never closes it. */
   const [chosen, setChosen] = React.useState<string | null>(null)
   const needle = query.trim().toLowerCase()
+  const inTab = (row: EntryRow, id: EntryTab) => (id === "resource" ? row.kind === "resource" || row.kind === "template" : row.kind === id)
+  const shown = rows.filter((row) => inTab(row, tab) && (!needle || entryMatches(row.entry, needle)))
+  const current = rows.find((row) => row.key === chosen) ?? null
+  const tabCount = (id: EntryTab) => rows.filter((r) => inTab(r, id)).length
 
-  /* Every entry the server offers, in the order the sections run. The rail
-     lists these; a filter narrows what is *listed* and a selection is resolved
-     against the whole set, so an entry you have open never vanishes. */
-  const rows = sections.flatMap(({ kind, label, entries }) => entries.map((entry) => ({ kind, label, entry })))
-  const shown = needle ? rows.filter((row) => entryMatches(row.entry, needle)) : rows
-  const groups = sections.map(({ kind, label }) => ({ kind, label, shown: shown.filter((row) => row.kind === kind) }))
-  const current = rows.find((row) => rowKey(row) === chosen) ?? rows[0] ?? null
+  const columns = React.useMemo<ColumnDef<EntryRow, unknown>[]>(
+    () => ([
+      {
+        id: "name",
+        header: "Name",
+        meta: { title: true, className: "min-w-48" },
+        cell: ({ row }) => (
+          <TitleCell
+            title={row.original.entry.name}
+            subtitle={row.original.entry.description?.split("\n")[0]}
+          />
+        ),
+      },
+      {
+        id: "kind",
+        header: "Kind",
+        cell: ({ row }) => (
+          <Badge variant="secondary" className="font-normal">
+            {KIND_LABEL[row.original.kind]}
+          </Badge>
+        ),
+      },
+      {
+        id: "takes",
+        header: "Takes",
+        meta: { align: "end" },
+        cell: ({ row }) => <span className="text-xs text-muted-foreground tabular-nums">{takesOf(row.original)}</span>,
+      },
+    ] as ColumnDef<EntryRow, unknown>[]).filter((column) => tab === "resource" || column.id !== "kind"),
+    [tab]
+  )
+
+  const renderRow = React.useCallback(
+    (row: EntryRow) => {
+      const Icon = KIND_ICON[row.kind]
+      return (
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <Icon className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{row.entry.name}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {KIND_LABEL[row.kind]} · {takesOf(row)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    },
+    []
+  )
 
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-card px-3 py-2 shadow-sm @panel-sm:px-4">
-        {result ? (
+      <Group
+        label={result?.serverInfo?.name ?? server.name}
+        hint={result ? (result.ok ? `Listed in ${result.ms}ms.` : undefined) : "Not listed yet."}
+        action={
           <>
-            <span className="text-sm font-medium">{result.serverInfo?.name ?? "Connected"}</span>
-            {result.serverInfo?.version && (
+            {result?.serverInfo?.version && (
               <Badge variant="outline" className="font-normal">
                 {result.serverInfo.version}
               </Badge>
             )}
-            {/* What the server declared it can do — the protocol's own words,
-                so "no prompts" and "prompts it has not listed yet" read apart. */}
+            {children}
+          </>
+        }
+      >
+        <Row title="Endpoint" subtitle={<span className="font-mono text-[11px] break-all">{mcpSubtitle(server)}</span>} />
+        {/* What the server declared it can do — the protocol's own words,
+            so "no prompts" and "prompts it has not listed yet" read apart. */}
+        {result?.ok && (
+          <Row
+            title="Capabilities"
+            subtitle={
+              Object.keys(result.capabilities ?? {}).filter((key) => key !== "experimental").length === 0
+                ? "None declared."
+                : undefined
+            }
+          >
             {Object.keys(result.capabilities ?? {})
               .filter((key) => key !== "experimental")
               .map((key) => (
@@ -181,18 +262,26 @@ function Offering({ result, children }: { result: McpCheckResult | null; childre
                   {key}
                 </Badge>
               ))}
-            {result.ok && (
-              <span className="text-xs text-muted-foreground tabular-nums">listed in {result.ms}ms</span>
-            )}
-          </>
-        ) : (
-          /* `result` is null both while the listing is being read and when the
-             server defers its first connection until Check, so the line says
-             neither — it just says there is nothing to show yet. */
-          <span className="text-sm text-muted-foreground">Not listed yet.</span>
+          </Row>
         )}
-        {children && <div className="ml-auto flex flex-wrap items-center gap-2">{children}</div>}
-      </div>
+        {/* The text a client puts in front of its model — the Daedalus agent
+            does, in its system prompt — so it is worth reading here, above
+            the table rather than in a sheet. Capped and scrolling in
+            itself: a server's instructions can be pages. */}
+        {result?.ok && result.instructions && (
+          <div className="py-3">
+            <p className="mb-1 text-xs font-medium text-muted-foreground">Instructions</p>
+            <p className="max-h-48 overflow-y-auto text-xs/relaxed break-words whitespace-pre-wrap">
+              {result.instructions}
+            </p>
+          </div>
+        )}
+      </Group>
+
+      {/* `result` is null both while the listing is being read and when the
+          server defers its first connection until Check, so the line says
+          neither — it just says there is nothing to show yet. */}
+      {!result && <Empty size="lg">Not listed yet.</Empty>}
 
       {result && !result.ok && (
         /* A stdio child's stderr rides the error, so it is a well to select
@@ -206,135 +295,61 @@ function Offering({ result, children }: { result: McpCheckResult | null; childre
 
       {result?.ok && (
         <>
-          {/* The text a client puts in front of its model — the Daedalus agent
-              does, in its system prompt — so it is worth reading here, above
-              the two panes rather than in one of them. */}
-          {result.instructions && (
-            <Group label="Instructions">
-              <p className="py-3 text-sm whitespace-pre-wrap">{result.instructions}</p>
-            </Group>
-          )}
-          <div className="mt-3 grid items-start gap-3 @panel-lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
-            <Rail
-              groups={groups}
-              total={rows.length}
-              matched={shown.length}
-              query={query}
-              onQuery={setQuery}
-              currentKey={current ? rowKey(current) : null}
-              onPick={setChosen}
-              /* A narrow panel is the rail *or* the entry, never both: the pick
-                 is what swaps them and the entry's Back button is the way
-                 back. */
-              className={chosen ? "hidden @panel-lg:block" : undefined}
+          <TabBar
+            label="What it offers"
+            value={tab}
+            onChange={(id) => setTab(id as EntryTab)}
+            items={ENTRY_TABS.map((t) => ({ id: t.id, label: t.label, icon: t.icon, count: tabCount(t.id) }))}
+          />
+          {rows.length > 0 ? (
+            <DataTable
+              columns={columns}
+              data={shown}
+              getRowId={(row) => row.key}
+              mark={(row) => {
+                const Icon = KIND_ICON[row.kind]
+                return <Icon className="size-4" />
+              }}
+              mobile={{ renderRow }}
+              onRowClick={(row) => setChosen(row.key)}
+              pageSize={100}
+              maxHeight="30rem"
+              viewToggle={false}
+              emptyIcon={<WrenchIcon />}
+              emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "Nothing of this kind."}
+              filtering={{
+                search: { value: query, onChange: setQuery, placeholder: "Filter by name or description…" },
+                totalCount: tabCount(tab),
+              }}
             />
-            <div className={chosen ? "min-w-0" : "hidden min-w-0 @panel-lg:block"}>
-              {current ? (
-                <EntryDetail key={rowKey(current)} kind={current.kind} entry={current.entry} onBack={() => setChosen(null)} />
-              ) : (
-                <Empty size="lg">{NOTHING_TO_RUN}</Empty>
-              )}
-            </div>
-          </div>
+          ) : (
+            <Empty size="lg">{NOTHING_TO_RUN}</Empty>
+          )}
+          <DetailSheet
+            open={!!current}
+            onOpenChange={(open) => !open && setChosen(null)}
+            title={current ? (current.entry.uri ?? current.entry.name) : ""}
+            description={current?.entry.description}
+          >
+            {current && <EntryDetail key={current.key} kind={current.kind} entry={current.entry} />}
+          </DetailSheet>
         </>
       )}
     </>
   )
 }
 
-/** The rail: what the server offers, grouped the way the sections are, under
-    the one filter that narrows it. Postman's collection tree, one level deep —
-    a list of destinations, and the thing you pick stays picked while you search
-    past it. */
-function Rail({
-  groups,
-  total,
-  matched,
-  query,
-  onQuery,
-  currentKey,
-  onPick,
-  className,
-}: {
-  groups: { kind: EntryKind; label: string; shown: { kind: EntryKind; label: string; entry: McpCheckEntry }[] }[]
-  total: number
-  matched: number
-  query: string
-  onQuery: (value: string) => void
-  currentKey: string | null
-  onPick: (key: string) => void
-  className?: string
-}) {
-  return (
-    <nav
-      aria-label="What this server offers"
-      className={cn(
-        "flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm",
-        /* Below `@panel-lg` the rail *is* the page, so it neither sticks nor
-           caps its own height — the frame scrolls it. At `@panel-lg` it holds
-           its place beside the entry and scrolls inside itself. */
-        "@panel-lg:sticky @panel-lg:top-[var(--app-header-h)]",
-        className
-      )}
-    >
-      <div className="border-b p-2">
-        <div className="relative">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="Filter by name or description…"
-            aria-label="Filter what this server offers"
-            className="h-8 pl-7 text-xs"
-          />
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h)-8rem)]">
-        {groups.map(({ kind, label, shown }) =>
-          shown.length === 0 ? null : (
-            <div key={kind} className="mb-1.5 last:mb-0">
-              <p className="px-2 py-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                {label} · {shown.length}
-              </p>
-              {shown.map((row) => {
-                const key = rowKey(row)
-                const active = key === currentKey
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => onPick(key)}
-                    className={cn(
-                      "block w-full rounded-md px-2 py-1.5 text-left",
-                      active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                    )}
-                  >
-                    <span className="block font-mono text-xs break-all">{row.entry.name}</span>
-                    {row.entry.description && (
-                      <span className="mt-0.5 line-clamp-2 block text-[11px] text-muted-foreground">
-                        {row.entry.description}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          )
-        )}
-        {matched === 0 && (
-          <p className="p-2 text-xs text-muted-foreground">
-            {total === 0 ? NOTHING_TO_RUN : `Nothing matches “${query.trim()}”.`}
-          </p>
-        )}
-      </div>
-    </nav>
-  )
-}
-
-/** The page's four sections: the three things a server offers, plus templates,
+/** The page's four kinds: the three things a server offers, plus templates,
     whose URI is the thing a reader fills in. */
 type EntryKind = "tool" | "prompt" | "resource" | "template"
+
+/** The page's tabs: a template rides with the resources it is the pattern of. */
+type EntryTab = "tool" | "prompt" | "resource"
+const ENTRY_TABS: { id: EntryTab; label: string; icon: typeof WrenchIcon }[] = [
+  { id: "tool", label: "Tools", icon: WrenchIcon },
+  { id: "prompt", label: "Prompts", icon: MessageSquareTextIcon },
+  { id: "resource", label: "Resources", icon: FileTextIcon },
+]
 
 /** What one entry is called in the header. The protocol's own words,
     lowercased — a prompt is a prompt in every runtime's vocabulary. */
@@ -345,13 +360,43 @@ const KIND_LABEL: Record<EntryKind, string> = {
   template: "Template",
 }
 
-/** What identifies a row in the rail: its kind *and* its name, because a tool
-    and a prompt may share one ("search" is both, often enough). */
-const rowKey = (row: { kind: EntryKind; entry: McpCheckEntry }) => `${row.kind}:${row.entry.name}`
+const KIND_ICON = {
+  tool: WrenchIcon,
+  prompt: MessageSquareTextIcon,
+  resource: FileTextIcon,
+  template: BracesIcon,
+} as const
 
-/** Said by the rail when the server offers nothing at all, and by the pane
-    beside it while nothing has been picked. */
+/** One entry of the table. Its key is its kind *and* its name, because a tool
+    and a prompt may share one ("search" is both, often enough). */
+interface EntryRow {
+  key: string
+  kind: EntryKind
+  entry: McpCheckEntry
+}
+const entryRow = (kind: EntryKind, entry: McpCheckEntry): EntryRow => ({ key: `${kind}:${entry.name}`, kind, entry })
+
+/** Said by the page when the server offers nothing at all. */
 const NOTHING_TO_RUN = "This server advertises nothing to run."
+
+/** The fields an entry takes — a tool's schema, a prompt's arguments, a
+    template's variables; a resource takes none, its URI is the request. */
+function inputFields(kind: EntryKind, entry: McpCheckEntry): Field[] {
+  return kind === "prompt"
+    ? promptFields(entry)
+    : kind === "template"
+      ? templateFields(entry.uri ?? entry.name)
+      : kind === "resource"
+        ? []
+        : schemaFields(entry.inputSchema)
+}
+
+/** "3 args" / "no args" — and for a resource, what it reads. */
+function takesOf({ kind, entry }: EntryRow): string {
+  if (kind === "resource") return entry.mimeType ?? "reads a URI"
+  const n = inputFields(kind, entry).length
+  return n === 0 ? "no args" : `${n} ${n === 1 ? "arg" : "args"}`
+}
 
 /**
  * One tool, prompt, resource or template, drawn as its contract: a bar naming
@@ -359,98 +404,42 @@ const NOTHING_TO_RUN = "This server advertises nothing to run."
  * typed against. Nothing here runs — this is the reading a person opens the
  * page to make, of what a thread linking this server would be handed.
  */
-function EntryDetail({
-  kind,
-  entry,
-  onBack,
-}: {
-  kind: EntryKind
-  entry: McpCheckEntry
-  /** Back to the rail — drawn only where the panel is too narrow for both. */
-  onBack: () => void
-}) {
-  const inputs =
-    kind === "prompt"
-      ? promptFields(entry)
-      : kind === "template"
-        ? templateFields(entry.uri ?? entry.name)
-        : schemaFields(entry.inputSchema)
+function EntryDetail({ kind, entry }: { kind: EntryKind; entry: McpCheckEntry }) {
+  const inputs = inputFields(kind, entry)
   const outputs = schemaFields(entry.outputSchema)
-  /* The entry's own shape picks its tabs: a resource has no payload to type
-     (its URI *is* the request), so it gets the one tab that says what will be
-     read; only a tool declares an output schema. `kind` is fixed for the life
-     of this component — it is part of the row's key. */
-  const tabs = [
-    { id: "input", label: kind === "resource" ? "Reads" : "Input" },
-    ...(kind === "tool" ? [{ id: "output", label: "Output" }] : []),
-  ]
-  const [tab, setTab] = React.useState(tabs[0].id)
 
+  /* The sheet's title says the thing that will be requested (a resource's
+     URI), so here: the kind, the type, then the contract. */
   return (
-    <article className="overflow-hidden rounded-xl border bg-card shadow-sm">
-      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="-ml-1 @panel-lg:hidden"
-          aria-label="Back to what this server offers"
-          onClick={onBack}
-        >
-          <ArrowLeftIcon />
-        </Button>
+    <>
+      <div className="flex flex-wrap gap-1.5">
         <Badge variant="secondary" className="font-normal">
           {KIND_LABEL[kind]}
         </Badge>
-        {/* A resource *is* its URI and a template is its fillable one, so the
-            bar says the thing that will be requested rather than the label. */}
-        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={entry.uri ?? entry.name}>
-          {entry.uri ?? entry.name}
-        </span>
         {entry.mimeType && (
           <Badge variant="outline" className="font-normal">
             {entry.mimeType}
           </Badge>
         )}
       </div>
-
-      {/* What the entry is for, in the server's own words. */}
-      {entry.description && (
-        <p className="border-b px-3 py-2 text-xs/relaxed text-muted-foreground">{entry.description}</p>
+      <Fields
+        label={kind === "resource" ? "Reads" : "Input"}
+        fields={inputs}
+        schema={entry.inputSchema}
+        empty={kind === "resource" ? (entry.uri ?? entry.name) : "Takes no arguments."}
+      />
+      {kind === "tool" && (
+        <Fields
+          label="Output"
+          fields={outputs}
+          schema={entry.outputSchema}
+          /* No `outputSchema` is not "answers nothing" — it is the default
+             MCP shape, and saying so is the difference between a tool nobody
+             can read and one whose answer simply is not typed. */
+          empty="No output schema — answers content blocks (text, images or embedded resources)."
+        />
       )}
-
-      <Tabs value={tab} onValueChange={(value) => setTab(value as string)}>
-        <TabsList variant="line" className="w-full justify-start border-b px-2">
-          {tabs.map((tabItem) => (
-            <TabsTrigger key={tabItem.id} value={tabItem.id} className="flex-none text-xs">
-              {tabItem.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        <TabsContent value="input" className="p-3">
-          <Fields
-            label={kind === "resource" ? "Reads" : "Input"}
-            fields={inputs}
-            schema={entry.inputSchema}
-            empty={kind === "resource" ? (entry.uri ?? entry.name) : "Takes no arguments."}
-          />
-        </TabsContent>
-
-        {kind === "tool" && (
-          <TabsContent value="output" className="p-3">
-            <Fields
-              label="Output"
-              fields={outputs}
-              schema={entry.outputSchema}
-              /* No `outputSchema` is not "answers nothing" — it is the default
-                 MCP shape, and saying so is the difference between a tool nobody
-                 can read and one whose answer simply is not typed. */
-              empty="No output schema — answers content blocks (text, images or embedded resources)."
-            />
-          </TabsContent>
-        )}
-      </Tabs>
-    </article>
+    </>
   )
 }
 
@@ -481,9 +470,9 @@ function Fields({
       {fields.length === 0 ? (
         <p className="text-xs text-muted-foreground">{empty}</p>
       ) : (
-        <ul className="space-y-1">
+        <ul className={cn("divide-y divide-border/60", INSET)}>
           {fields.map((field) => (
-            <li key={field.name} className="text-xs">
+            <li key={field.name} className="px-3 py-2 text-xs">
               <span className="font-mono">{field.name}</span>
               <span className="ml-1.5 text-muted-foreground">{field.type}</span>
               {field.required && <span className="ml-1 text-destructive" title="required">*</span>}
@@ -495,7 +484,7 @@ function Fields({
         </ul>
       )}
       {schema != null && (
-        <details className="mt-1">
+        <details className="mt-2">
           <summary className="cursor-pointer text-xs text-muted-foreground">Schema</summary>
           <Pane text={JSON.stringify(schema, null, 2)} />
         </details>

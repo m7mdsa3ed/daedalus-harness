@@ -4,10 +4,11 @@
    on — which is what makes the look one edit in this file rather than twenty.
 
    ── The style: cards and surfaces ──
-   Every group is a **card** — a caption in small caps above it, then a filled,
-   bordered, softly-shadowed box whose rows are divided by hairlines. A settings
-   page is a list of lists, and a card is what says where one list stops and the
-   next begins without asking the reader to count blank space.
+   Every group is a **card** - a filled, bordered, softly-shadowed box whose
+   rows are divided by hairlines - under a heading (`SectionHead`) that always
+   sits above it, on every width. See "The kit" below for the four page shapes.
+   A settings page is a list of lists, and a card is what says where one list
+   stops and the next begins without asking the reader to count blank space.
 
    It was flat for a while (a caption on a hairline, rows on hairlines) because
    a stack of cards is a stack of borders in a narrow dock panel. What that got
@@ -28,7 +29,7 @@
    are the **device's**, so rows and controls carry `min-h-11` outright rather
    than asking a width about a finger. */
 import * as React from "react"
-import { ArrowLeft, type LucideIcon } from "lucide-react"
+import { ArrowLeft, Search, type LucideIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
@@ -42,34 +43,57 @@ import { Label } from "@/components/ui/label"
 import type { InlineError } from "@/lib/errors"
 import { KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { cn } from "@/lib/utils"
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useIsMobile } from "@/hooks/use-device"
 import { type PageMeta } from "./sections"
 import { AiFormBuilder } from "./ai-form-builder"
 
 
-/** Page title block: title + description, with room for one action. The
-    action stacks full-width under the title on a narrow panel so it never
-    crowds the text or wraps awkwardly; at `@panel-sm` it sits to the right.
+/** Page title block: the section's mark, title and description, with room for
+    one action. The action stacks full-width under the title on a narrow panel
+    so it never crowds the text; at `@panel-sm` it sits to the right.
 
-    No bottom rule: the first group's caption already draws one a line below,
-    and two hairlines a paragraph apart is a header boxed off from the page it
-    titles. The prose is clamped at 68ch — the descriptions in `sections.ts`
-    are long, and a 90-character line in a wide panel is one an eye loses. */
+    A hairline closes the header off from the groups: a group's label is a
+    plain heading now, not a small-caps caption on a rule, so without one the
+    page's own title and the first group's read as one block of headings. The
+    prose is clamped at 68ch — the descriptions in `sections.ts` are long. */
 export function PageHeader({
   meta,
   action,
+  flush = false,
 }: {
-  meta: PageMeta
+  /** `sectionMeta(...)` carries the section's icon; a page that passes a bare
+      `PageMeta` simply gets no mark. */
+  meta: PageMeta & { icon?: LucideIcon }
   action?: React.ReactNode
+  /** A `TabBar` follows: it draws the rule, so the header does not. */
+  flush?: boolean
 }) {
+  const Icon = meta.icon
   return (
-    <header className="mb-8 flex flex-col gap-4 @panel-sm:flex-row @panel-sm:items-start @panel-sm:justify-between">
-      <div className="min-w-0 flex-1">
-        <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">
-          {meta.title}
-        </h1>
-        <p className="mt-2 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
-          {meta.description}
-        </p>
+    <header
+      className={cn(
+        "flex flex-col gap-4 @panel-sm:flex-row @panel-sm:items-start @panel-sm:justify-between",
+        flush ? "mb-4" : "mb-8 border-b pb-6"
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-4">
+        {Icon && (
+          <span
+            aria-hidden
+            className="hidden size-11 shrink-0 items-center justify-center rounded-xl border bg-card text-primary shadow-sm @panel-sm:flex"
+          >
+            <Icon className="size-5" />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">
+            {meta.title}
+          </h1>
+          <p className="mt-1.5 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
+            {meta.description}
+          </p>
+        </div>
       </div>
       {action && (
         <div className="w-full shrink-0 [&>*]:w-full @panel-sm:ml-auto @panel-sm:w-auto @panel-sm:[&>*]:w-auto">
@@ -80,43 +104,79 @@ export function PageHeader({
   )
 }
 
-/** One section: a caption above a card, then the card's rows divided by
-    hairlines. `hint` is a line under the caption for a group that needs a
-    sentence of its own — the page description cannot say something true of
-    only four of its twelve rows, and it sits *outside* the card because it is
-    about the card rather than a row in it.
-
-    The caption is not sticky. It was, back when a group was a caption on a
-    hairline and there was nothing to tell you which list you were in halfway
-    down it; a card's own edges say that, and a small-caps label unsticking
-    itself from a rounded corner as you scroll is a seam that draws the eye to
-    nothing. */
-export function Group({
+/** The heading every block of a settings page opens with: a title, an optional
+    hint, and an optional action at the end (a "New" button, a Reset). One
+    shape for `Group`, `FormSection`, and any block a page draws that is not
+    a card of rows - so every block on every page starts the same way and the
+    eye learns where to look. The hint sits *outside* the card because it is
+    about the card rather than a row in it. */
+export function SectionHead({
   label,
   hint,
+  action,
+}: {
+  label?: string
+  hint?: React.ReactNode
+  action?: React.ReactNode
+}) {
+  if (!label && !hint && !action) return null
+  return (
+    <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 px-1">
+      <div className="min-w-0 flex-1 basis-56">
+        {label && <h2 className="text-sm font-semibold tracking-tight">{label}</h2>}
+        {hint && (
+          <p className="mt-0.5 max-w-[68ch] text-xs/relaxed text-pretty text-muted-foreground">{hint}</p>
+        )}
+      </div>
+      {action && <div className="flex shrink-0 items-center gap-1.5">{action}</div>}
+    </div>
+  )
+}
+
+/** The page's vertical rhythm, in one place: every block is `Section`, and
+    every `Section` is 32px from the next. */
+export function Section({
+  label,
+  hint,
+  action,
   children,
 }: {
   label?: string
   hint?: React.ReactNode
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
-    <section className="mt-8 first:mt-0">
-      {label && (
-        <h2 className="mb-2 px-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-          {label}
-        </h2>
-      )}
-      {hint && (
-        <p className="mb-2 max-w-[68ch] px-1 text-xs/relaxed text-muted-foreground">{hint}</p>
-      )}
-      {/* `overflow-hidden` so a full-bleed child (a table, a scroller that
-          reaches out with `-mx-3`) is clipped to the card's radius instead of
-          squaring off its corners. */}
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border bg-card px-3 shadow-sm @panel-sm:px-4">
-        {children}
-      </div>
+    <section data-kit-block className="mt-8 first:mt-0">
+      <SectionHead label={label} hint={hint} action={action} />
+      {children}
     </section>
+  )
+}
+
+/** The card of a `Group`/`FormSection`. A container, so a tile grid inside
+    answers to the card's width, and `overflow-hidden` so a full-bleed child
+    (a table, a scroller that reaches out with `-mx-3`) is clipped to the
+    card's radius instead of squaring off its corners. */
+const CARD = "@container min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm"
+
+/** The first of four page shapes (see "The kit" below): a heading over one
+    card whose rows are divided by hairlines. */
+export function Group({
+  label,
+  hint,
+  action,
+  children,
+}: {
+  label?: string
+  hint?: React.ReactNode
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <Section label={label} hint={hint} action={action}>
+      <div className={cn(CARD, "divide-y divide-border/60 px-3 @panel-sm:px-4")}>{children}</div>
+    </Section>
   )
 }
 
@@ -198,19 +258,27 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   )
 }
 
-/** Labeled group of Fields inside a form — `Group`'s caption and card, with
+/** Labeled group of Fields inside a form - `Group`'s heading and card, with
     the fields stacked inside it rather than divided into rows, so a form reads
-    as the same object a list does. */
-export function FormSection({ label, children }: { label: string; children: React.ReactNode }) {
+    as the same object a list does. `id` is the target of a `SectionRail`. */
+export function FormSection({
+  label,
+  hint,
+  action,
+  id,
+  children,
+}: {
+  label: string
+  hint?: React.ReactNode
+  action?: React.ReactNode
+  id?: string
+  children: React.ReactNode
+}) {
   return (
-    <section>
-      <h3 className="mb-2 px-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-        {label}
-      </h3>
-      <div className="space-y-4 rounded-xl border bg-card p-3 shadow-sm @panel-sm:p-4">
-        {children}
-      </div>
-    </section>
+    <div id={id} data-kit-block className="scroll-mt-[calc(var(--app-header-h)+1rem)] mt-8 first:mt-0">
+      <SectionHead label={label} hint={hint} action={action} />
+      <div className={cn(CARD, "space-y-4 p-3 @panel-sm:p-4")}>{children}</div>
+    </div>
   )
 }
 
@@ -218,18 +286,28 @@ export function FormPageHeader({
   title,
   description,
   onBack,
+  flush = false,
 }: {
   title: string
   description?: string
   onBack: () => void
+  /** A `TabBar` / `FormShell` bar follows: it draws the rule, not the header. */
+  flush?: boolean
 }) {
   return (
-    <header className="mb-8">
+    /* A `FormShell` bar right after the header draws the rule itself (`:has`), so
+        no form has to remember `flush` and none can show two rules. */
+    <header
+      className={cn(
+        flush ? "mb-4" : "mb-8 border-b pb-6",
+        "[&:has(+div>nav[aria-label='Form sections'])]:mb-4 [&:has(+div>nav[aria-label='Form sections'])]:border-b-0 [&:has(+div>nav[aria-label='Form sections'])]:pb-0"
+      )}
+    >
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="-ml-2 mb-3 h-8 text-muted-foreground"
+        className="-ml-2 mb-3 h-11 text-muted-foreground @panel-sm:h-8"
         onClick={onBack}
       >
         <ArrowLeft />
@@ -238,12 +316,536 @@ export function FormPageHeader({
       <div className="min-w-0">
         <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">{title}</h1>
         {description && (
-          <p className="mt-2 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
+          <p className="mt-1.5 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
             {description}
           </p>
         )}
       </div>
     </header>
+  )
+}
+
+/* ── The kit: one pattern for each question ──
+   The settings pages used to answer "how do I switch, choose or open" seven
+   different ways (pill tabs, line tabs, an animated tab bar, an iOS segmented
+   track, local radio buttons, a vertical rail with a native select under it, a
+   dropdown on a phone). One question now has one answer, on every page and at
+   every width:
+
+     Go somewhere else        the app sidebar; on a phone, the overview list
+                              and the page's "Settings" back link (no dropdown)
+     Switch this page's view  TabBar - underline tabs under the header
+     Jump within a long form  FormShell - the same TabBar as anchors, scroll-spied
+     Pick a value             Segmented (2-4 short words) | Select (more) |
+                              ChoiceTiles (options you must SEE: mode, layout)
+     Filter a list            the DataTable's toolbar: search + Segmented
+     Open an item             a DataTable row -> DetailSheet (never a side rail)
+     Create / destructive     the header's action / the row's actions
+     Say a state              StatusBadge (ok / warn / bad / info / neutral)
+
+   A page is: PageHeader -> [TabBar] -> [StatStrip] -> blocks (SectionHead over
+   a card, or a DataTable). There are no vertical rails inside a page: the
+   sidebar is the one vertical navigation in the app. Reflow is the *panel's*
+   (`@panel-*`) or the block's own container, never a media query. */
+
+export type Tone = "default" | "ok" | "warn" | "bad"
+const TONE_TEXT: Record<Tone, string> = {
+  default: "text-foreground",
+  ok: "text-emerald-600 dark:text-emerald-400",
+  warn: "text-amber-600 dark:text-amber-400",
+  bad: "text-destructive",
+}
+
+/** Two to four numbers about the page, under its header. 2-up on a phone,
+    one row from `@panel-sm`. Not interactive: a number you can click is a
+    filter, and filters are the `Toolbar`'s. */
+export function StatStrip({
+  stats,
+}: {
+  stats: { label: string; value: React.ReactNode; hint?: string; tone?: Tone }[]
+}) {
+  return (
+    <dl
+      className={cn(
+        "mb-8 grid grid-cols-2 gap-3",
+        stats.length === 3 ? "@panel-sm:grid-cols-3" : stats.length >= 4 ? "@panel-sm:grid-cols-4" : "@panel-sm:grid-cols-2"
+      )}
+    >
+      {stats.map((stat) => (
+        <div key={stat.label} className="min-w-0 rounded-xl border bg-card px-4 py-3 shadow-sm">
+          <dt className="truncate text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{stat.label}</dt>
+          <dd className={cn("mt-1 truncate text-xl font-semibold tabular-nums", TONE_TEXT[stat.tone ?? "default"])}>
+            {stat.value}
+          </dd>
+          {stat.hint && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{stat.hint}</p>}
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+/** Search, a filter and actions for a collection, in one row that wraps.
+    The filter is a `Segmented` - the same control a setting's choice is - so
+    "All / Connected / Error" and "Light / Dark / System" look like what they
+    are: one pick among a few. `search` is controlled by the page (it owns the
+    filtering). */
+export function Toolbar({
+  search,
+  onSearch,
+  placeholder = "Search...",
+  chips,
+  chip,
+  onChip,
+  children,
+}: {
+  search?: string
+  onSearch?: (value: string) => void
+  placeholder?: string
+  chips?: { id: string; label: string; count?: number }[]
+  chip?: string
+  onChip?: (id: string) => void
+  /** Actions at the row's end (Import, Refresh). */
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 @panel-sm:flex-row @panel-sm:items-center">
+      {onSearch && (
+        <div className="relative min-w-0 flex-1 @panel-sm:max-w-sm">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input
+            value={search ?? ""}
+            onChange={(event) => onSearch(event.target.value)}
+            placeholder={placeholder}
+            aria-label={placeholder.replace(/\.{3}|\u2026$/, "")}
+            className="h-11 pl-9 @panel-sm:h-9"
+          />
+        </div>
+      )}
+      {chips && onChip && (
+        <Segmented
+          label="Filter"
+          value={chip ?? ""}
+          onChange={onChip}
+          options={chips.map((entry) => ({ value: entry.id, label: entry.label, count: entry.count }))}
+        />
+      )}
+      {children && <div className="flex shrink-0 items-center gap-1.5 @panel-sm:ml-auto">{children}</div>}
+    </div>
+  )
+}
+
+/** The one grid: 1 column on a phone, as many 18rem-plus columns as fit. */
+export function CardGrid({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={cn("grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18rem),1fr))]", className)}>
+      {children}
+    </div>
+  )
+}
+
+/** The one card of a collection: a mark, a title and subtitle, badges, a
+    preview, an optional body (pickers, meters), and a footer of actions.
+    `onOpen` makes the head the click target (a link into the item); `active`
+    tints it (the server you are on, the agent being read). Actions are in the
+    footer, never over the head, so a card is one target and one row of
+    buttons - not a button inside a button. */
+export function ItemCard({
+  icon,
+  title,
+  subtitle,
+  badges,
+  preview,
+  active,
+  onOpen,
+  actions,
+  handle,
+  children,
+}: {
+  /** A Lucide component or an already-rendered element (a profile's logo). */
+  icon?: LucideIcon | React.ReactElement
+  title: React.ReactNode
+  subtitle?: React.ReactNode
+  badges?: React.ReactNode
+  preview?: React.ReactNode
+  active?: boolean
+  onOpen?: () => void
+  actions?: React.ReactNode
+  /** A drag grip, for a list whose order is the user's. */
+  handle?: React.ReactNode
+  children?: React.ReactNode
+}) {
+  const head = (
+    <>
+      {icon && (
+        <span
+          aria-hidden
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg",
+            active ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground"
+          )}
+        >
+          {React.isValidElement(icon) ? icon : (() => { const Icon = icon as LucideIcon; return <Icon className="size-4" /> })()}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{title}</span>
+        {subtitle && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{subtitle}</span>}
+      </span>
+    </>
+  )
+  return (
+    <article
+      className={cn(
+        "@container flex min-w-0 flex-col rounded-xl border bg-card shadow-sm transition-colors",
+        active && "border-primary/50 bg-primary/[0.03]"
+      )}
+    >
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <div className="flex items-start gap-3">
+          {handle}
+          {onOpen ? (
+            <button
+              type="button"
+              onClick={onOpen}
+              className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {head}
+            </button>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center gap-3">{head}</div>
+          )}
+        </div>
+        {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
+        {preview && <div className="line-clamp-2 text-xs/relaxed text-muted-foreground">{preview}</div>}
+        {children}
+      </div>
+      {actions && (
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-border/60 px-3 py-2">{actions}</div>
+      )}
+    </article>
+  )
+}
+
+/** One keyboard model for every tab-like row: arrows move, Home/End jump. */
+function useRovingKeys(count: number, current: number, go: (index: number) => void) {
+  return (event: React.KeyboardEvent) => {
+    const to =
+      event.key === "ArrowRight" || event.key === "ArrowDown" ? (current + 1) % count
+      : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (current - 1 + count) % count
+      : event.key === "Home" ? 0
+      : event.key === "End" ? count - 1
+      : -1
+    if (to < 0) return
+    event.preventDefault()
+    go(to)
+  }
+}
+
+export interface TabItem {
+  id: string
+  label: string
+  icon?: LucideIcon
+  /** A count or a status dot beside the label. */
+  count?: number
+  dot?: boolean
+}
+
+/** The one in-page switch: underline tabs directly under the page header,
+    sticky below the app header, on every page and at every width. Overflow
+    scrolls sideways under edge fades rather than wrapping or turning into a
+    dropdown - a phone shows the same tabs the desktop does. `nav` mode is
+    for anchors (`FormShell`): same look, `aria-current` instead of
+    `role=tab`, because jumping to a section is not switching a panel.
+    Pair with `PageHeader flush` so the header does not draw a second rule. */
+export function TabBar({
+  items,
+  value,
+  onChange,
+  label = "Sections",
+  nav = false,
+  className,
+}: {
+  items: TabItem[]
+  value: string
+  onChange: (id: string) => void
+  label?: string
+  nav?: boolean
+  className?: string
+}) {
+  const refs = React.useRef<(HTMLButtonElement | null)[]>([])
+  const current = Math.max(0, items.findIndex((item) => item.id === value))
+  const onKeyDown = useRovingKeys(items.length, current, (index) => {
+    onChange(items[index].id)
+    refs.current[index]?.focus()
+  })
+  // The active tab scrolls into view on a narrow bar - it may start off-screen.
+  React.useEffect(() => {
+    refs.current[current]?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [current])
+  const Root = nav ? "nav" : "div"
+  return (
+    <Root
+      {...(nav ? { "aria-label": label } : { role: "tablist", "aria-label": label })}
+      onKeyDown={nav ? undefined : onKeyDown}
+      className={cn(
+        "sticky top-[var(--app-header-h)] z-10 -mx-4 mb-8 flex gap-1 overflow-x-auto border-b bg-background/85 px-4 backdrop-blur [scrollbar-width:none] @panel-sm:-mx-8 @panel-sm:px-8 [&::-webkit-scrollbar]:hidden",
+        "[mask-image:linear-gradient(to_right,transparent,#000_1rem,#000_calc(100%-1rem),transparent)] @panel-sm:[mask-image:none]",
+        className
+      )}
+    >
+      {items.map((item, index) => {
+        const active = item.id === value
+        const Icon = item.icon
+        return (
+          <button
+            key={item.id}
+            ref={(node) => {
+              refs.current[index] = node
+            }}
+            type="button"
+            {...(nav
+              ? { "aria-current": active ? ("true" as const) : undefined }
+              : { role: "tab", "aria-selected": active, tabIndex: active ? 0 : -1 })}
+            onClick={() => onChange(item.id)}
+            className={cn(
+              "relative inline-flex h-11 shrink-0 items-center gap-2 px-3 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset @panel-sm:h-10",
+              active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+              "after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary after:opacity-0 after:transition-opacity",
+              active && "after:opacity-100"
+            )}
+          >
+            {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
+            {item.label}
+            {item.count !== undefined && (
+              <span className="rounded-full bg-muted px-1.5 text-[11px] tabular-nums text-muted-foreground">{item.count}</span>
+            )}
+            {item.dot && <span aria-hidden className="size-1.5 rounded-full bg-destructive" />}
+          </button>
+        )
+      })}
+    </Root>
+  )
+}
+
+/** A form's section bar: `TabBar` as anchors, scroll-spied. The sections are
+    `FormSection id=...`; the bar follows the one in view and a click scrolls
+    to it. One bar for every width - a vertical rail is a second navigation
+    inside a page that already has the sidebar. */
+export function FormShell({
+  sections,
+  children,
+}: {
+  sections: { id: string; label: string }[]
+  children: React.ReactNode
+}) {
+  const [active, setActive] = React.useState(sections[0]?.id ?? "")
+  React.useEffect(() => {
+    if (sections.length < 2) return
+    const seen = new Map<string, boolean>()
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting)
+        const first = sections.find((section) => seen.get(section.id))
+        if (first) setActive(first.id)
+      },
+      { rootMargin: "-20% 0px -65% 0px" }
+    )
+    for (const section of sections) {
+      const node = document.getElementById(section.id)
+      if (node) observer.observe(node)
+    }
+    return () => observer.disconnect()
+  }, [sections])
+  return (
+    <div>
+      {sections.length > 1 && (
+        <TabBar
+          nav
+          label="Form sections"
+          items={sections}
+          value={active}
+          onChange={(id) => {
+            setActive(id)
+            document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+          }}
+        />
+      )}
+      {children}
+    </div>
+  )
+}
+
+/** The one way to pick among a few short words: Light | Dark | System, All |
+    Connected | Error, Export | Import. A pill track with a raised thumb;
+    `radiogroup` with arrow keys. More than ~5 options, or long labels, is a
+    `Select`, not a longer track. Scrolls sideways rather than wrapping. */
+export function Segmented<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  disabled,
+  className,
+}: {
+  label: string
+  value: T
+  onChange: (value: T) => void
+  options: { value: T; label: string; icon?: LucideIcon; count?: number; disabled?: boolean }[]
+  disabled?: boolean
+  className?: string
+}) {
+  const refs = React.useRef<(HTMLButtonElement | null)[]>([])
+  const current = Math.max(0, options.findIndex((option) => option.value === value))
+  const onKeyDown = useRovingKeys(options.length, current, (index) => {
+    onChange(options[index].value)
+    refs.current[index]?.focus()
+  })
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      aria-disabled={disabled || undefined}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "flex min-w-0 max-w-full gap-0.5 overflow-x-auto rounded-lg bg-muted/60 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        disabled && "opacity-50",
+        className
+      )}
+    >
+      {options.map((option, index) => {
+        const selected = option.value === value
+        const Icon = option.icon
+        return (
+          <button
+            key={option.value}
+            ref={(node) => {
+              refs.current[index] = node
+            }}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            disabled={disabled || option.disabled}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "inline-flex h-10 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none @panel-sm:h-8",
+              selected ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {Icon && <Icon className="size-3.5 shrink-0" aria-hidden />}
+            {option.label}
+            {option.count !== undefined && <span className="tabular-nums text-muted-foreground">{option.count}</span>}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Options you have to *see*: a mode, a layout, a tool-step style. Tiles with
+    a mark or a live preview, the picked one on the accent ground. `preview`
+    replaces the icon when the option can draw itself. */
+export function ChoiceTiles<T extends string>({
+  label,
+  value,
+  onChange,
+  choices,
+}: {
+  label: string
+  value: T
+  onChange: (value: T) => void
+  choices: { value: T; label: string; hint?: string; icon?: LucideIcon; preview?: React.ReactNode }[]
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="grid grid-cols-2 gap-2 py-3 @md:grid-cols-3 @xl:grid-cols-4">
+      {choices.map((choice) => {
+        const selected = choice.value === value
+        const Icon = choice.icon
+        return (
+          <button
+            key={choice.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(choice.value)}
+            className={cn(
+              "flex min-h-20 min-w-0 flex-col items-stretch justify-center gap-1.5 rounded-lg border p-2.5 text-center text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              selected ? "border-primary/60 bg-primary/5 text-foreground shadow-sm" : "border-border/60 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            )}
+          >
+            {choice.preview ?? (Icon && <Icon className={cn("mx-auto size-5", selected && "text-primary")} aria-hidden />)}
+            <span className="truncate">{choice.label}</span>
+            {choice.hint && <span className="truncate text-[11px] font-normal text-muted-foreground">{choice.hint}</span>}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** The one place an item opens: a right-hand sheet on a wide panel, a bottom
+    sheet on a narrow one. A DataTable row's detail, an editor beside a list,
+    a picker with more than a menu's worth of fields - never a side rail. The
+    body scrolls, the footer (Save / Discard) stays; `KEYBOARD_*` is the
+    sheet's own, since it is an edge surface. */
+export function DetailSheet({
+  open,
+  onOpenChange,
+  title,
+  description,
+  footer,
+  children,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: React.ReactNode
+  description?: React.ReactNode
+  footer?: React.ReactNode
+  children: React.ReactNode
+}) {
+  const coarseOrNarrow = useIsMobile()
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={coarseOrNarrow ? "bottom" : "right"}
+        className={cn(coarseOrNarrow ? "max-h-[88svh] rounded-t-2xl" : "w-full data-[side=right]:sm:max-w-lg")}
+      >
+        <SheetHeader className="border-b">
+          <SheetTitle>{title}</SheetTitle>
+          {description && <SheetDescription>{description}</SheetDescription>}
+        </SheetHeader>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">{children}</div>
+        {footer && <SheetFooter className="border-t sm:flex-row sm:justify-end">{footer}</SheetFooter>}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+export type StatusTone = "ok" | "warn" | "bad" | "info" | "neutral"
+const STATUS_CLASS: Record<StatusTone, string> = {
+  ok: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  warn: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  bad: "bg-destructive/10 text-destructive",
+  info: "bg-primary/10 text-primary",
+  neutral: "bg-muted text-muted-foreground",
+}
+const STATUS_DOT: Record<StatusTone, string> = {
+  ok: "bg-emerald-500",
+  warn: "bg-amber-500",
+  bad: "bg-destructive",
+  info: "bg-primary",
+  neutral: "bg-muted-foreground/60",
+}
+
+/** A state, said one way everywhere: connected, needs auth, default, missing.
+    A dot, a word, a tone - never a bare colour (the word is the accessible
+    half) and never a one-off `bg-emerald-500` in a page. */
+export function StatusBadge({ tone = "neutral", dot = true, children }: { tone?: StatusTone; dot?: boolean; children: React.ReactNode }) {
+  return (
+    <span className={cn("inline-flex h-5 w-fit shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium whitespace-nowrap", STATUS_CLASS[tone])}>
+      {dot && <span aria-hidden className={cn("size-1.5 rounded-full", STATUS_DOT[tone])} />}
+      {children}
+    </span>
   )
 }
 
@@ -264,7 +866,10 @@ export function PageForm({
   }
 }) {
   return (
-    <form className={cn("space-y-6", className)} {...props}>
+    /* `space-y-6` adds a bottom margin to every child; a kit block already carries
+       its own 32px top margin, so the two stacked to ~56px. The kit's blocks
+       opt out, everything else (a Notice, the footer) keeps the 24px. */
+    <form className={cn("space-y-6 [&>[data-kit-block]]:mb-0", className)} {...props}>
       {aiBuilder && (
         <div className="flex justify-end">
           <AiFormBuilder {...aiBuilder} />

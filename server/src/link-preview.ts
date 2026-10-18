@@ -47,12 +47,11 @@ function pageTitle(html: string): string | undefined {
   return clean || undefined;
 }
 
-/** The URL to a page's image: `og:image`, else its icon — resolved against the
-    page so a relative path is fetchable. */
+/** The URL to a page's icon, resolved against the page so a relative path is
+    fetchable. Never `og:image`: the only reader is the chip's 14px mark, and a
+    social card (wide, mostly one colour) shrinks to an unreadable bar there. */
 function pageImage(html: string, pageUrl: string): string | undefined {
-  const raw =
-    metaContent(html, "og:image") ??
-    /<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']*)["']/i.exec(html)?.[1];
+  const raw = /<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']*)["']/i.exec(html)?.[1];
   if (!raw) return undefined;
   try {
     return new URL(raw, pageUrl).toString();

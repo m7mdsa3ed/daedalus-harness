@@ -29,6 +29,7 @@ import type { AppNotification } from "@/lib/notifications-inbox"
 import { useMarkNotificationsRead, useOpenNotification } from "@/lib/queries/surfaces"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { StatusBadge, type StatusTone } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 
 export const KIND_META: Record<
@@ -38,39 +39,33 @@ export const KIND_META: Record<
     /** Read as a request: something the agent is waiting on. */
     needsYou: boolean
     icon: LucideIcon
-    /** The unread disc: tint + foreground. */
-    tone: string
-    /** The dot on the age, and the accent bar. */
-    dot: string
+    /** The state it is said in (StatusBadge). */
+    tone: StatusTone
   }
 > = {
   permission: {
     label: "Permission needed",
     needsYou: true,
     icon: ShieldAlertIcon,
-    tone: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-    dot: "bg-amber-500",
+    tone: "warn",
   },
   question: {
     label: "Question asked",
     needsYou: true,
     icon: MessageCircleQuestionIcon,
-    tone: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-    dot: "bg-sky-500",
+    tone: "info",
   },
   turn_finished: {
     label: "Turn finished",
     needsYou: false,
     icon: CircleCheckIcon,
-    tone: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-    dot: "bg-emerald-500",
+    tone: "ok",
   },
   turn_failed: {
     label: "Turn failed",
     needsYou: false,
     icon: CircleXIcon,
-    tone: "bg-destructive/15 text-destructive",
-    dot: "bg-destructive",
+    tone: "bad",
   },
 }
 
@@ -101,14 +96,13 @@ export function KindGlyph({
   read: boolean
   className?: string
 }) {
-  const meta = KIND_META[kind]
-  const Icon = meta.icon
+  const Icon = KIND_META[kind].icon
   return (
     <span
       aria-hidden
       className={cn(
         "grid shrink-0 place-items-center rounded-full transition-colors",
-        read ? "bg-muted text-muted-foreground/70" : meta.tone,
+        read ? "bg-muted text-muted-foreground/70" : "bg-primary/10 text-primary",
         className
       )}
     >
@@ -181,7 +175,7 @@ export function NotificationRow({
             title={exactStamp(n.createdAt)}
           >
             {shortAge(n.createdAt)}
-            {!n.read && <span aria-hidden className={cn("size-1.5 rounded-full", meta.dot)} />}
+            {!n.read && <span aria-hidden className="size-1.5 rounded-full bg-primary" />}
           </span>
         </span>
         {body && (
@@ -195,9 +189,8 @@ export function NotificationRow({
           </span>
         )}
         {detailed && n.threadTitle && (
-          <span className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] leading-4 text-muted-foreground/80">
-            <span aria-hidden className={cn("size-1.5 rounded-full", n.read ? "bg-muted-foreground/40" : meta.dot)} />
-            {meta.label}
+          <span className="mt-1.5 flex">
+            <StatusBadge tone={n.read ? "neutral" : meta.tone}>{meta.label}</StatusBadge>
           </span>
         )}
       </button>

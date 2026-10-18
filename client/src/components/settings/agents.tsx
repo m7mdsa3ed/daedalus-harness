@@ -22,18 +22,12 @@
    not a `--version` flag parsed per CLI, so every runtime reads the same. */
 import * as React from "react"
 import { CopyIcon, Cpu, DownloadIcon, EraserIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
+import { DataTable, TitleCell, type DataTableExpand, type DataTableMobile, type TableAction } from "@/components/ui/data-table"
+import type { ColumnDef } from "@/lib/table"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogDescription,
-  ResponsiveDialogFooter,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
 import { AgentIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ErrorNote } from "@/components/error-note"
@@ -43,8 +37,8 @@ import { inlineFromQuery, reportError } from "@/lib/errors"
 import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/settings"
 import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
-import { PageHeader, EmptyCard, Field, lines } from "./primitives"
-import { SettingsList } from "./list"
+import { writeClipboard } from "@/lib/clipboard"
+import { PageHeader, StatStrip, StatusBadge, DetailSheet, Field, lines } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -96,9 +90,15 @@ export function AgentsPage() {
   const { status, loading, error, refresh } = useAgentsStatus()
   const [editing, setEditing] = React.useState<AgentDef | null>(null)
   const [checking, setChecking] = React.useState(false)
+  const [installing, setInstalling] = React.useState<ReadonlySet<string>>(() => new Set())
+  const [query, setQuery] = React.useState("")
   const byAgent = React.useMemo(
     () => new Map((status?.agents ?? []).map((s) => [s.agentId, s])),
     [status],
+  )
+  const usesByAgent = React.useMemo(
+    () => new Map(agents.map((a) => [a.id, profiles.filter((p) => profileSupports(p, a.id)).length])),
+    [agents, profiles],
   )
 
   /* A re-check spawns every agent once; the button says so while it does. */
@@ -125,6 +125,179 @@ export function AgentsPage() {
     }
   }
 
+  /* The install line, run on the server. Installing and updating are one
+     command; a finished run re-checks, which is what replaces the badges. */
+  const install = async (agent: AgentDef, update: boolean) => {
+    if (installing.has(agent.id)) return
+    setInstalling((s) => new Set(s).add(agent.id))
+    try {
+      await api(settings, `/api/agents/${agent.id}/install`, { method: "POST" })
+      toast.success(`${agent.name} ${update ? "updated" : "installed"}`)
+      await recheck()
+    } catch (err) {
+      reportError(err, `Couldn't install ${agent.name}`)
+    } finally {
+      setInstalling((s) => {
+        const next = new Set(s)
+        next.delete(agent.id)
+        return next
+      })
+    }
+  }
+
+  /* The handlers read the latest of the page through one ref, so the table's
+     memoised actions are rebuilt only when a reading changes. */
+  const live = React.useRef({ install, setEditing })
+  React.useLayoutEffect(() => {
+    live.current = { install, setEditing }
+  })
+
+  const searchable = agents.length > 8
+  const needle = query.trim().toLowerCase()
+  const shown = React.useMemo(
+    () =>
+      searchable && needle
+        ? agents.filter((agent) =>
+            `${agent.name} ${agent.id} ${agent.command ?? ""}`.toLowerCase().includes(needle),
+          )
+        : agents,
+    [agents, searchable, needle],
+  )
+
+  const pending = loading || checking
+  const columns = React.useMemo<ColumnDef<AgentDef, unknown>[]>(
+    () => [
+      {
+        id: "agent",
+        header: "Agent",
+        meta: { title: true, className: "min-w-56" },
+        cell: ({ row }) => {
+          const command = commandLine(row.original)
+          return (
+            <TitleCell
+              title={row.original.name}
+              subtitle={
+                <span className="font-mono text-[11px]" title={command}>
+                  {command}
+                </span>
+              }
+            />
+          )
+        },
+      },
+      {
+        id: "version",
+        header: "Version",
+        meta: { className: "hidden @panel-md:table-cell w-32" },
+        cell: ({ row }) => {
+          const s = byAgent.get(row.original.id)
+          return s?.installed && !s.error ? (
+            <span className="font-mono text-xs">{s.agent?.version ? `v${s.agent.version}` : "unknown"}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )
+        },
+      },
+      {
+        id: "profiles",
+        header: "Profiles",
+        meta: { className: "hidden @panel-lg:table-cell w-24" },
+        cell: ({ row }) => (
+          <span className="text-muted-foreground tabular-nums">{usesByAgent.get(row.original.id) ?? 0}</span>
+        ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        meta: { align: "end", className: "w-px whitespace-nowrap" },
+        cell: ({ row }) => (
+          <div className="flex flex-wrap justify-end gap-1">
+            <StatusBadges
+              status={byAgent.get(row.original.id)}
+              pending={pending}
+              busy={installing.has(row.original.id)}
+            />
+          </div>
+        ),
+      },
+    ],
+    [byAgent, usesByAgent, pending, installing],
+  )
+
+  const actions = React.useMemo<TableAction<AgentDef>[]>(
+    () => [
+      {
+        id: "install",
+        label: "Install",
+        icon: <DownloadIcon />,
+        tone: "primary",
+        hidden: (a) => {
+          const s = byAgent.get(a.id)
+          return !s || !s.install || s.installed
+        },
+        onClick: (a) => void live.current.install(a, false),
+      },
+      {
+        id: "update",
+        label: "Update",
+        icon: <DownloadIcon />,
+        tone: "primary",
+        hidden: (a) => {
+          const s = byAgent.get(a.id)
+          return !s || !s.install || !outdated(s)
+        },
+        onClick: (a) => void live.current.install(a, true),
+      },
+      { id: "edit", label: "Edit", icon: <PencilIcon />, onClick: (a) => live.current.setEditing(a) },
+    ],
+    [byAgent],
+  )
+
+  const expand = React.useMemo<DataTableExpand<AgentDef>>(
+    () => ({
+      render: (agent) => (
+        <AgentDetail agent={agent} status={byAgent.get(agent.id)} uses={usesByAgent.get(agent.id) ?? 0} />
+      ),
+    }),
+    [byAgent, usesByAgent],
+  )
+
+  const mobile = React.useMemo<DataTableMobile<AgentDef>>(
+    () => ({
+      renderRow: (agent) => {
+        const status = byAgent.get(agent.id)
+        return (
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
+              <AgentIcon agentId={agent.id} className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="truncate text-sm font-medium">{agent.name}</div>
+              <div className="truncate font-mono text-[11px] text-muted-foreground">{commandLine(agent)}</div>
+              <div className="flex flex-wrap gap-1">
+                <StatusBadges status={status} pending={pending} busy={installing.has(agent.id)} showVersion />
+              </div>
+              {status && (!status.installed || status.error) && (
+                <div className="text-[11px] text-muted-foreground">
+                  <StatusLine status={status} />
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      },
+    }),
+    [byAgent, pending, installing],
+  )
+
+  /* The strip's numbers are the measured ones; until the first answer they are
+     dashes rather than zeroes, which would read as "nothing installed". */
+  const readings = status?.agents ?? []
+  const ready = readings.filter((s) => s.installed && !s.error).length
+  const broken = readings.filter((s) => !s.installed || s.error).length
+  const updates = readings.filter(outdated).length
+  const dash = (n: number) => (status ? String(n) : "—")
+
   return (
     <>
       <PageHeader
@@ -133,21 +306,21 @@ export function AgentsPage() {
           <div className="flex flex-col gap-2 @panel-sm:flex-row">
             <Button
               variant="outline"
-              size="sm"
+              className="h-11 @panel-sm:h-9"
               title="Forget every agent's probed models, modes and options; each is asked again on next use"
               onClick={() => void clearOptions()}
             >
               <EraserIcon className="size-4" />
               Clear cached options
             </Button>
-            <Button variant="outline" size="sm" disabled={checking} onClick={() => void recheck()}>
+            <Button variant="outline" className="h-11 @panel-sm:h-9" disabled={checking} onClick={() => void recheck()}>
               <RefreshCwIcon className={`size-4 ${checking ? "animate-spin" : ""}`} />
               {checking ? "Checking…" : "Check again"}
             </Button>
           </div>
         }
       />
-      <p className="-mt-3 mb-4 text-xs text-muted-foreground">
+      <p className="-mt-5 mb-8 text-xs text-muted-foreground">
         {status ? (
           <>
             Harness speaks ACP protocol v{status.acp.protocolVersion} through SDK{" "}
@@ -159,144 +332,91 @@ export function AgentsPage() {
         ) : null}
       </p>
       <ErrorNote error={inlineFromQuery(error, "Couldn't check the agents")} />
-      <SettingsList
-        rows={agents}
-        rowId={(agent) => agent.id}
-        loading={loading}
-        search={
-          agents.length > 8
-            ? {
-                placeholder: "Search runtimes…",
-                matches: (agent, needle) =>
-                  `${agent.name} ${agent.id} ${agent.command ?? ""}`.toLowerCase().includes(needle),
-              }
-            : undefined
-        }
-        columns={[
-          {
-            id: "agent",
-            header: "Runtime",
-            cell: (agent) => (
-              <div className="flex min-w-0 items-center gap-2.5">
-                <AgentIcon agentId={agent.id} className="size-5 shrink-0" />
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{agent.name}</div>
-                  <div className="truncate font-mono text-[11px] text-muted-foreground">
-                    {agent.id}
-                  </div>
-                </div>
-              </div>
-            ),
-          },
-          {
-            id: "command",
-            header: "Command",
-            secondary: true,
-            cell: (agent) => (
-              <span className="font-mono text-xs break-all text-muted-foreground">
-                {agent.command ? [agent.command, ...(agent.args ?? [])].join(" ") : "—"}
-              </span>
-            ),
-          },
-          {
-            id: "status",
-            header: "Status",
-            align: "end",
-            cell: (agent) => {
-              const st = byAgent.get(agent.id)
-              return (
-                <div className="flex flex-col items-end gap-1">
-                  <div className="flex items-center gap-1.5">
-                    <StatusBadges status={st} pending={loading || checking} />
-                    {st && <InstallButton agent={agent} status={st} onDone={recheck} />}
-                  </div>
-                  {st && (
-                    <span className="text-[11px] text-muted-foreground">
-                      <StatusLine status={st} />
-                    </span>
-                  )}
-                </div>
-              )
-            },
-          },
-          {
-            id: "uses",
-            header: "Profiles",
-            align: "end",
-            secondary: true,
-            cell: (agent) => (
-              <Badge variant="secondary">
-                {profiles.filter((p) => profileSupports(p, agent.id)).length}
-              </Badge>
-            ),
-          },
+      <StatStrip
+        stats={[
+          { label: "Registered", value: String(agents.length) },
+          { label: "Ready", value: dash(ready), tone: "ok" },
+          { label: "Needs attention", value: dash(broken), tone: broken > 0 ? "bad" : "default" },
+          { label: "Updates", value: dash(updates) },
         ]}
-        actions={[
-          {
-            id: "edit",
-            label: "Edit",
-            icon: <PencilIcon />,
-            onClick: (agent) => setEditing(agent),
-          },
-        ]}
-        renderCard={(agent) => {
-          const st = byAgent.get(agent.id)
-          const uses = profiles.filter((p) => profileSupports(p, agent.id)).length
-          return (
-            <>
-              <div className="flex min-w-0 items-center gap-2.5">
-                <AgentIcon agentId={agent.id} className="size-5 shrink-0" />
-                <span className="truncate text-sm font-medium">{agent.name}</span>
-              </div>
-              <div className="mt-1 font-mono text-[11px] break-all text-muted-foreground">
-                {agent.id}
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <StatusBadges status={st} pending={loading || checking} />
-                <Badge variant="secondary">
-                  {uses} profile{uses === 1 ? "" : "s"}
-                </Badge>
-                {st && <InstallButton agent={agent} status={st} onDone={recheck} />}
-              </div>
-              {st && (
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  <StatusLine status={st} />
-                </div>
-              )}
-            </>
-          )
-        }}
-        empty={<EmptyCard icon={Cpu} text="The server has no agents registered." />}
       />
+      {agents.length === 0 && !loading ? (
+        <Empty size="lg" icon={Cpu}>
+          The server has no agents registered.
+        </Empty>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={shown}
+          getRowId={(a) => a.id}
+          isLoading={agents.length === 0 && loading}
+          pageSize={50}
+          mark={(a) => <AgentIcon agentId={a.id} className="size-5" />}
+          actions={actions}
+          expand={expand}
+          mobile={mobile}
+          emptyIcon={<Cpu />}
+          emptyMessage={`Nothing matches “${query.trim()}”.`}
+          filtering={
+            searchable
+              ? {
+                  search: { value: query, onChange: setQuery, placeholder: "Search runtimes…" },
+                  totalCount: agents.length,
+                }
+              : undefined
+          }
+        />
+      )}
       {editing && <AgentDialog agent={editing} onClose={() => setEditing(null)} />}
     </>
   )
 }
 
+const commandLine = (agent: AgentDef) =>
+  agent.command ? [agent.command, ...(agent.args ?? [])].join(" ") : "—"
+
 /* ── One agent's reading, in badges ──
-   Installed: the version the agent reported and the protocol it answered
-   with. Not installed: one red badge, and the sentence below the row says
-   what is missing and how to get it. Present but silent: the handshake's
-   own error, in the badge's title and in the line below. */
-function StatusBadges({ status, pending }: { status: AgentStatus | undefined; pending: boolean }) {
+   Installed: one calm badge, the protocol it answered with and, when npm
+   knows a newer one, what is available. Not installed: one red badge, and
+   the detail says what is missing and how to get it. Present but silent:
+   the handshake's own error, in the badge's title and in the detail. The
+   version is its own column on a wide panel; `showVersion` puts it back in
+   the badges where there is no column (the phone). */
+function StatusBadges({
+  status,
+  pending,
+  busy,
+  showVersion = false,
+}: {
+  status: AgentStatus | undefined
+  pending: boolean
+  busy: boolean
+  showVersion?: boolean
+}) {
+  if (busy) return <StatusBadge tone="info">Running…</StatusBadge>
   if (!status) {
-    return pending ? <Badge variant="outline">Checking…</Badge> : null
+    return pending ? <StatusBadge>Checking…</StatusBadge> : null
   }
-  if (!status.installed) return <Badge variant="destructive">Not installed</Badge>
+  if (!status.installed) return <StatusBadge tone="bad">Not installed</StatusBadge>
   if (status.error) {
     return (
-      <Badge variant="destructive" title={status.error}>
-        Not answering
-      </Badge>
+      <span title={status.error}>
+        <StatusBadge tone="bad">Not answering</StatusBadge>
+      </span>
     )
   }
+  const agentName = status.agent?.name ?? undefined
   return (
     <>
-      <Badge variant="secondary" title={status.agent?.name ?? undefined}>
-        {status.agent?.version ? `v${status.agent.version}` : "version unknown"}
-      </Badge>
-      {outdated(status) && <Badge variant="outline">v{status.latest} available</Badge>}
-      {status.protocolVersion !== null && <Badge variant="outline">ACP v{status.protocolVersion}</Badge>}
+      <span title={agentName}>
+        {showVersion ? (
+          <StatusBadge dot={false}>{status.agent?.version ? `v${status.agent.version}` : "version unknown"}</StatusBadge>
+        ) : (
+          <StatusBadge tone="ok">Installed</StatusBadge>
+        )}
+      </span>
+      {outdated(status) && <StatusBadge tone="info" dot={false}>v{status.latest} available</StatusBadge>}
+      {status.protocolVersion !== null && <StatusBadge dot={false}>ACP v{status.protocolVersion}</StatusBadge>}
     </>
   )
 }
@@ -309,49 +429,38 @@ function StatusBadges({ status, pending }: { status: AgentStatus | undefined; pe
 const outdated = (status: AgentStatus) =>
   status.installed && !!status.latest && !!status.agent?.version && status.latest !== status.agent.version
 
-/* ── Install / update ──
-   The row's own install line, run on the server. It is the same string the
-   page has always offered to copy, and installing and updating are one
-   command, so they are one button. It is only offered where there is a line to
-   run and a reason to run it. A finished run re-checks, which is what replaces
-   the badges. */
-function InstallButton({ agent, status, onDone }: { agent: AgentDef; status: AgentStatus; onDone: () => Promise<void> }) {
-  const { settings } = useSettingsPage()
-  const [busy, setBusy] = React.useState(false)
-  const update = outdated(status)
-  if (!status.install || (status.installed && !update)) return null
-  const run = async () => {
-    setBusy(true)
-    try {
-      await api(settings, `/api/agents/${agent.id}/install`, { method: "POST" })
-      toast.success(`${agent.name} ${update ? "updated" : "installed"}`)
-      await onDone()
-    } catch (err) {
-      reportError(err, `Couldn't install ${agent.name}`)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Button variant="outline" size="sm" className="h-9" disabled={busy} onClick={() => void run()}>
-      <DownloadIcon className={`size-4 ${busy ? "animate-pulse" : ""}`} />
-      {busy ? "Running…" : update ? "Update" : "Install"}
-    </Button>
-  )
-}
-
-/* The line under the command. Nothing for a healthy agent beyond where it
-   was found; for a missing one, the install command with a copy button —
-   the command is the server's to run, not the browser's, so it is offered as
-   text rather than as a button that runs `npm install -g` on somebody's box. */
-function StatusLine({ status }: { status: AgentStatus }) {
-  if (status.installed && !status.error) {
-    return status.path ? <div className="mt-0.5 truncate font-mono opacity-70">{status.path}</div> : null
-  }
+/* The install command with a copy button — the command is the server's to
+   run, not the browser's, so it is offered as text here and run only by the
+   row's Install action. */
+function InstallLine({ install }: { install: string }) {
   const copy = (text: string) => {
     writeClipboard(text)
       .then(() => toast.success("Install command copied"))
       .catch((err) => reportError(err, "Couldn't copy the command"))
+  }
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <code className="rounded bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{install}</code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        className="pointer-coarse:size-11"
+        title="Copy the install command"
+        aria-label="Copy the install command"
+        onClick={() => copy(install)}
+      >
+        <CopyIcon className="size-3.5" />
+      </Button>
+    </div>
+  )
+}
+
+/* What went wrong, if anything: nothing for a healthy agent beyond where it
+   was found; for a missing one, what was not found and the install line. */
+function StatusLine({ status }: { status: AgentStatus }) {
+  if (status.installed && !status.error) {
+    return status.path ? <div className="mt-0.5 truncate font-mono opacity-70">{status.path}</div> : null
   }
   return (
     <div className="mt-1 space-y-1">
@@ -361,20 +470,48 @@ function StatusLine({ status }: { status: AgentStatus }) {
         </div>
       )}
       {status.error && <div className="text-destructive">{status.error}</div>}
-      {!status.installed && status.install && (
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{status.install}</code>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            title="Copy the install command"
-            onClick={() => copy(status.install!)}
-          >
-            <CopyIcon className="size-3.5" />
-          </Button>
-        </div>
-      )}
+      {!status.installed && status.install && <InstallLine install={status.install} />}
+    </div>
+  )
+}
+
+/* The row's opened detail (desktop): who it is, where the binary was found,
+   what was wrong with it, and the line that installs it. */
+function AgentDetail({
+  agent,
+  status,
+  uses,
+}: {
+  agent: AgentDef
+  status: AgentStatus | undefined
+  uses: number
+}) {
+  return (
+    <div className="grid gap-x-8 gap-y-3 py-1 text-xs @panel-md:grid-cols-[auto_minmax(0,1fr)]">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+        <dt className="text-muted-foreground">ID</dt>
+        <dd className="truncate font-mono">{agent.id}</dd>
+        <dt className="text-muted-foreground">Profiles</dt>
+        <dd>{uses}</dd>
+        {status?.installed && status.path && (
+          <>
+            <dt className="text-muted-foreground">Found at</dt>
+            <dd className="truncate font-mono" title={status.path}>
+              {status.path}
+            </dd>
+          </>
+        )}
+      </dl>
+      <div className="min-w-0 space-y-1.5">
+        {status && (!status.installed || status.error) && <StatusLine status={status} />}
+        {status?.install && (status.installed || status.error) && (
+          <div className="space-y-1">
+            <div className="text-muted-foreground">Install command</div>
+            <InstallLine install={status.install} />
+          </div>
+        )}
+        {!status && <span className="text-muted-foreground">No reading yet.</span>}
+      </div>
     </div>
   )
 }
@@ -445,102 +582,99 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
   }
 
   return (
-    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="@panel-sm:max-w-2xl">
-        <form onSubmit={save} className="space-y-4">
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle>Edit {agent.name}</ResponsiveDialogTitle>
-            <ResponsiveDialogDescription>
-              How the server launches <span className="font-mono">{agent.id}</span>. Threads already
-              running keep the process they have; the change applies the next time one spawns.
-            </ResponsiveDialogDescription>
-          </ResponsiveDialogHeader>
-
-          <div className="grid gap-4 @panel-sm:grid-cols-2">
-            <Field label="Name" hint="What the pickers call it.">
-              <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
-            </Field>
-            <Field label="Command" hint="A binary on PATH, or an absolute path.">
-              <Input
-                value={form.command}
-                onChange={(e) => set({ command: e.target.value })}
-                className="font-mono text-xs"
-                required
-              />
-            </Field>
-          </div>
-
-          <Field label="Arguments" hint="One per line. {placeholders} are filled at spawn.">
-            <Textarea
-              value={form.args}
-              onChange={(e) => set({ args: e.target.value })}
-              rows={2}
-              className="font-mono text-xs"
-            />
-          </Field>
-
-          <Field
-            label="Environment"
-            hint="One per line: NAME=value. {apiKey} {baseUrl} {gatewayUrl} {model} {smallModel} {effort} {contextWindow} {maxOutputTokens} {cwd} {personaFile} {personaPrompt} — a key whose placeholders resolve empty is dropped."
-          >
-            <Textarea
-              value={form.env}
-              onChange={(e) => set({ env: e.target.value })}
-              rows={8}
-              className="font-mono text-xs"
-              spellCheck={false}
-            />
-          </Field>
-
-          {/* Descriptive, not protocol — which is why these two are editable
-              at all and the declarative fields beside them are not. An agent
-              somebody added has no seed to inherit either from: without them a
-              row measured as missing showed no way to fix it, and every
-              non-built-in wore the same neutral glyph. */}
-          <div className="grid gap-4 @panel-sm:grid-cols-2">
-            <Field label="Install command" hint="Shown when the binary is not on the server's PATH.">
-              <Input
-                value={form.install}
-                onChange={(e) => set({ install: e.target.value })}
-                className="font-mono text-xs"
-                placeholder="npm install -g …"
-              />
-            </Field>
-            <Field label="Icon" hint="An image URL or data: URI. app = the harness's own mark.">
-              <Input
-                value={form.icon}
-                onChange={(e) => set({ icon: e.target.value })}
-                className="font-mono text-xs"
-                placeholder="https://… or data:image/png;base64,…"
-              />
-            </Field>
-          </div>
-
-          <ErrorNote error={error} />
-
-          <ResponsiveDialogFooter>
-            {agent.builtIn && (
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => void reset()}
-                className="@panel-sm:mr-auto"
-                title="Put this agent back the way it ships"
-              >
-                <RotateCcwIcon className="size-4" /> Reset to default
-              </Button>
-            )}
+    <DetailSheet
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={`Edit ${agent.name}`}
+      description={
+        <>
+          How the server launches <span className="font-mono">{agent.id}</span>. Threads already running keep the
+          process they have; the change applies the next time one spawns.
+        </>
+      }
+      footer={
+        <div className="flex w-full flex-wrap items-center gap-2">
+          {agent.builtIn && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => void reset()}
+              title="Put this agent back the way it ships"
+            >
+              <RotateCcwIcon className="size-4" /> Reset to default
+            </Button>
+          )}
+          <div className="ml-auto flex gap-2">
             <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" form="agent-edit-form" disabled={busy}>
               {busy ? "Saving…" : "Save"}
             </Button>
-          </ResponsiveDialogFooter>
-        </form>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+          </div>
+        </div>
+      }
+    >
+      <form id="agent-edit-form" onSubmit={save} className="space-y-4">
+        <Field label="Name" hint="What the pickers call it.">
+          <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
+        </Field>
+        <Field label="Command" hint="A binary on PATH, or an absolute path.">
+          <Input
+            value={form.command}
+            onChange={(e) => set({ command: e.target.value })}
+            className="font-mono text-xs"
+            required
+          />
+        </Field>
+
+        <Field label="Arguments" hint="One per line. {placeholders} are filled at spawn.">
+          <Textarea
+            value={form.args}
+            onChange={(e) => set({ args: e.target.value })}
+            rows={2}
+            className="font-mono text-xs"
+          />
+        </Field>
+
+        <Field
+          label="Environment"
+          hint="One per line: NAME=value. {apiKey} {baseUrl} {gatewayUrl} {model} {smallModel} {effort} {contextWindow} {maxOutputTokens} {cwd} {personaFile} {personaPrompt} — a key whose placeholders resolve empty is dropped."
+        >
+          <Textarea
+            value={form.env}
+            onChange={(e) => set({ env: e.target.value })}
+            rows={8}
+            className="font-mono text-xs"
+            spellCheck={false}
+          />
+        </Field>
+
+        {/* Descriptive, not protocol — which is why these two are editable
+            at all and the declarative fields beside them are not. An agent
+            somebody added has no seed to inherit either from: without them a
+            row measured as missing showed no way to fix it, and every
+            non-built-in wore the same neutral glyph. */}
+        <Field label="Install command" hint="Shown when the binary is not on the server's PATH.">
+          <Input
+            value={form.install}
+            onChange={(e) => set({ install: e.target.value })}
+            className="font-mono text-xs"
+            placeholder="npm install -g …"
+          />
+        </Field>
+        <Field label="Icon" hint="An image URL or data: URI. app = the harness's own mark.">
+          <Input
+            value={form.icon}
+            onChange={(e) => set({ icon: e.target.value })}
+            className="font-mono text-xs"
+            placeholder="https://… or data:image/png;base64,…"
+          />
+        </Field>
+
+        <ErrorNote error={error} />
+      </form>
+    </DetailSheet>
   )
 }
-import { writeClipboard } from "@/lib/clipboard"

@@ -12,8 +12,6 @@ import {
   FoldVerticalIcon,
   InfoIcon,
   ListTodoIcon,
-  AudioLinesIcon,
-  MicIcon,
   PaperclipIcon,
   PlayIcon,
   RotateCwIcon,
@@ -43,6 +41,8 @@ import {
   Timestamp,
 } from "@/components/tool-parts"
 import { TodoList } from "@/components/tool-views"
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { Message, MessageContent } from "@/components/ui/message"
 import { copyText, formatElapsed, StepMeta, StepRow, yieldToTextSelection } from "@/components/step-row"
 import { useStreamedText } from "@/hooks/use-streamed-text"
 import type { StreamEffect } from "@/lib/stream-words"
@@ -693,10 +693,11 @@ AutonomyStep.displayName = "AutonomyStep"
 
 /**
  * A line of the voice conversation, where it was said. Not a step: nothing was
- * invoked and nothing expands. It wears a `--primary` tint so it cannot be read
- * as a message typed to or answered by the agent: the person's lines sit to the
- * end in the stronger tint, the voice model's to the start in the lighter one —
- * the voice model is not the agent, whose own answer is the plain row beside it.
+ * invoked and nothing expands. It is drawn as the chat draws the same two
+ * speakers — the person's line a tinted bubble to the end, the voice model's a
+ * bubble to the start — so a call reads as the conversation it is. The one
+ * difference is the voice model's ground (`muted`): it is not the agent, whose
+ * own answer is the plain, unboxed row beside it.
  */
 export const VoiceStep = React.memo(function VoiceStep({
   item,
@@ -706,25 +707,21 @@ export const VoiceStep = React.memo(function VoiceStep({
   showTimestamp?: boolean
 }) {
   const user = item.role === "user"
-  const Icon = user ? MicIcon : AudioLinesIcon
   return (
-    <div className={cn("flex py-0.5", user && "justify-end")}>
-      <div
-        className={cn(
-          "max-w-[85%] min-w-0 rounded-xl border px-3 py-1.5 text-sm leading-6",
-          user ? "border-primary/25 bg-primary/10" : "border-primary/15 bg-primary/5",
-        )}
-      >
-        <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-primary uppercase">
-          <Icon aria-hidden className="size-3" />
-          <span>{user ? "You · voice" : "Voice"}</span>
-          <StepMeta parts={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]} />
-        </div>
-        <p dir="auto" className="text-pretty whitespace-pre-wrap">
-          {item.text}
-        </p>
-      </div>
-    </div>
+    <Message align={user ? "end" : undefined} className={cn("flex-col gap-0.5 py-2", user ? "items-end" : "items-start")}>
+      <MessageContent>
+        <Bubble variant={user ? "tinted" : "muted"} align={user ? "end" : undefined}>
+          <BubbleContent
+            dir="auto"
+            title={user ? "Said by voice" : "Voice"}
+            className={cn("rounded-2xl px-4 py-2.5 text-sm", user ? "rounded-br-sm" : "rounded-bl-sm")}
+          >
+            <p className="text-pretty whitespace-pre-wrap">{item.text}</p>
+          </BubbleContent>
+        </Bubble>
+      </MessageContent>
+      {showTimestamp && item.at !== undefined && <Timestamp at={item.at} className={user ? "pr-1" : undefined} />}
+    </Message>
   )
 })
 VoiceStep.displayName = "VoiceStep"

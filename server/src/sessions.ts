@@ -21,7 +21,7 @@ import { noteThreadLinked, noteTurnStarted, taskBrief } from "./task-threads.js"
 import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
-import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
+import { defaultProfileFor, getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
@@ -41,7 +41,7 @@ import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-rin
 import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { AGENTS_SERVER_NAME, BROWSER_SERVER_NAME, HARNESS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
+import { AGENTS_SERVER_NAME, BROWSER_SERVER_NAME, HARNESS_SERVER_NAME, VIDEO_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -435,6 +435,8 @@ export async function mcpServersFor(
   harness: StdioMcpServer | null = null,
   /** The `builtin:browser` row — chrome-devtools-mcp on the thread's preview. */
   browser: StdioMcpServer | null = null,
+  /** The `builtin:video` row — video-mcp, over the thread's harness loopback. */
+  video: StdioMcpServer | null = null,
 ): Promise<{ servers: acp.McpServer[]; skipped: string[] }> {
   const linked = new Set(links.mcpServerIds);
   const servers: acp.McpServer[] = [];
@@ -457,7 +459,9 @@ export async function mcpServersFor(
                 ? workflow
                 : s.builtin === "browser"
                   ? browser
-                  : harness;
+                  : s.builtin === "video"
+                    ? video
+                    : harness;
       if (built) servers.push(built);
     } else if (s.type === "http") {
       /* An OAuth row is handed to the agent as the shim's loopback URL, never
@@ -588,7 +592,57 @@ export function browserServer(session: Pick<Session, "id">, source: BrowserUrlSo
   };
 }
 
-// ponytail: a PATH scan per spawn; cache it if spawns ever get hot
+/** video-mcp's entry, beside the server package. `src/` and `dist/` are both
+    one level under it, so the same climb finds it from tsx and from the build. */
+const VIDEO_MCP_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "video-mcp", "dist", "index.js");
+
+/** The `builtin:video` row: video-mcp as a stdio child. Its upload door is the
+    thread's `/hm` loopback (`HARNESS_URL`), the same one the harness MCP
+    drives; the provider settings (`VIDEO_*`, `ELEVENLABS_*`) are the server
+    process's own env, passed through so the MCP is configured where the server
+    is. Not advertised without ffmpeg or the built entry: a tool that cannot
+    answer is worse than an absent one. */
+export function videoServer(
+  session: Pick<Session, "id">,
+  source: HarnessUrlSource,
+  entry = VIDEO_MCP_ENTRY,
+): StdioMcpServer | null {
+  const missing = videoMissing(entry);
+  if (missing) {
+    if (!videoLogged.has(missing)) {
+      videoLogged.add(missing);
+      console.log(`[mcp] builtin:video is linked but ${missing}`);
+    }
+    return null;
+  }
+  const passthrough = Object.entries(process.env)
+    .filter((e): e is [string, string] => e[1] !== undefined && /^(VIDEO_|ELEVENLABS_)/.test(e[0]))
+    .map(([name, value]) => ({ name, value }));
+  return {
+    name: VIDEO_SERVER_NAME,
+    command: process.execPath,
+    args: [entry],
+    env: [{ name: "HARNESS_URL", value: source.harnessUrlFor(session) }, ...passthrough],
+  };
+}
+
+/** Why `builtin:video` cannot run, or null. The entry is a stat; the PATH scan
+    is the cost, so ffmpeg's answer is kept for 30s (and dropped when PATH
+    changes), which also lets a later `apt install ffmpeg` be noticed without a
+    restart. Each reason is logged once per process (`videoLogged`). */
+export function videoMissing(entry = VIDEO_MCP_ENTRY): string | null {
+  const path = process.env.PATH ?? "";
+  if (ffmpegProbe?.path !== path || Date.now() - ffmpegProbe.at > 30_000) {
+    ffmpegProbe = { path, at: Date.now(), found: !!onPath("ffmpeg") };
+  }
+  if (!ffmpegProbe.found) return "ffmpeg is not on PATH (install ffmpeg)";
+  if (!existsSync(entry)) return `${entry} is missing (pnpm build in video-mcp/)`;
+  return null;
+}
+let ffmpegProbe: { path: string; at: number; found: boolean } | undefined;
+const videoLogged = new Set<string>();
+
+// ponytail: a PATH scan per spawn; browser's check still scans per spawn
 function onPath(name: string): string | null {
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     const candidate = join(dir, name);
@@ -2178,14 +2232,21 @@ export class SessionManager {
     /* The preview a person is watching belongs to a top-level thread's dock;
        a workflow step or a subagent has nobody driving one. */
     const browser = this.workflowRunner && !session.parentSessionId ? browserServer(session, this.workflowRunner) : null;
+    /* Only a thread that links the row is probed (and logged about). */
+    const links = this.effectiveLinks(session, profile);
+    const video =
+      this.workflowRunner && !session.parentSessionId && links.mcpServerIds.includes("builtin:video")
+        ? videoServer(session, this.workflowRunner)
+        : null;
     const { servers: mcpServers, skipped } = await mcpServersFor(
-      this.effectiveLinks(session, profile),
+      links,
       project,
       getConfig(),
       workflow,
       agents,
       harness,
       browser,
+      video,
     );
     if (skipped.length) {
       console.log(
@@ -3928,6 +3989,68 @@ export class SessionManager {
     this.persist(session);
     for (const child of this.childrenOf(id)) this.restore(child.id);
     return true;
+  }
+
+  /**
+   * Move every thread off a profile that is being deleted, onto its agent's
+   * virtual Default — profile, model and effort, all back to the agent's own.
+   *
+   * The confirmed half of profile deletion (`DELETE …?force=1`): the plain
+   * delete names the threads, the user confirms, and this is what the
+   * confirmation runs. Transcripts stay — the journal is untouched and
+   * `acpSessionId` still names the agent's own record — so the next send
+   * revives the thread on Default exactly like any retired thread. A staged
+   * change dies with the profile it was staged for, and helper models (profile
+   * catalog ids) are cleared with the model they belonged to; the agent's own
+   * selectors (`modeId`, `configChoices`) survive, because on a Default
+   * profile those are the agent's and were never the profile's.
+   *
+   * All or nothing across running turns: a thread mid-turn cannot be moved
+   * without killing the turn under it, so one busy thread refuses the whole
+   * reset and names who is busy. Trashed threads are already on their way out
+   * and are left alone.
+   */
+  async resetThreadsFromProfile(
+    profileId: string,
+  ): Promise<{ moved: string[]; busy: { id: string; title: string }[] }> {
+    const targets = [...this.sessions.values()].filter((s) => s.profileId === profileId && s.deletedAt === null);
+    const busy = targets
+      .filter((s) => s.bridge?.promptActive)
+      .map((s) => ({ id: s.id, title: s.title }));
+    if (busy.length > 0) return { moved: [], busy };
+    const former = await getProfile(profileId);
+    const moved: string[] = [];
+    for (const session of targets) {
+      /* A pick waiting for the next spawn names the profile being left — it
+         dies with it rather than landing on Default. */
+      this.clearStaged(session);
+      const profile = defaultProfileFor(session.agentId);
+      if (!session.exited) {
+        this.retire(
+          session,
+          `The “${former?.name ?? "profile"}” profile was deleted, so its agent process was stopped. The conversation is kept — sending a message starts the agent again on its Default profile.`,
+        );
+      }
+      session.profileId = profile.id;
+      session.profile = profile;
+      session.model = "";
+      session.effort = "";
+      session.helperModels = [];
+      await this.persist(session);
+      /* Absolute, to every peer including a device only reading: the menus a
+         device holds still name the deleted profile until this lands. */
+      this.emit(session, {
+        ev: "spawn_config",
+        profileId: session.profileId,
+        model: "",
+        effort: "",
+        suggestFollowups: session.suggestFollowups,
+        uiBlocks: session.uiBlocks,
+        helperModels: [],
+      });
+      moved.push(session.id);
+    }
+    return { moved, busy: [] };
   }
 
   /** Forget the thread for good. Only the agent's own store still has it. */

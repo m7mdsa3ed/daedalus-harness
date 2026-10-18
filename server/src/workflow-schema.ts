@@ -35,6 +35,8 @@ export const HARNESS_SERVER_NAME = "harness";
     at the thread's preview. Its own name, so the tools read as models know
     them (`mcp__chrome-devtools__take_snapshot`). */
 export const BROWSER_SERVER_NAME = "chrome-devtools";
+/** The `builtin:video` row's server (`video-mcp/`): storyboard-driven demo videos. */
+export const VIDEO_SERVER_NAME = "video";
 
 export const STEP_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/i;
 

@@ -65,7 +65,7 @@ export function AiFormBuilder({ title, schema, value, onApply }: FormBuilderProp
 
   return (
     <>
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)} disabled={!profile}>
+      <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={() => setOpen(true)} disabled={!profile}>
         <WandSparkles /> Fill with AI
       </Button>
       <BuilderDialog
@@ -175,7 +175,7 @@ function BuilderDialog({
           <DialogTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" /> Build {title}</DialogTitle>
           <DialogDescription>Describe what you want. The assistant uses this form's schema and current values; review the JSON before applying it. Change the model in Settings, AI helpers.</DialogDescription>
         </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+        <div className="@container flex min-h-0 flex-1 flex-col"><div className="flex min-h-0 flex-1 flex-col gap-4 @2xl:flex-row">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border bg-card">
             <div className="flex items-center gap-2 border-b px-3 py-2">
               <span className="text-xs font-medium">Conversation</span>
@@ -200,20 +200,20 @@ function BuilderDialog({
               {busy ? <Button type="button" variant="outline" onClick={() => void chat.stop()}>Stop</Button> : <Button type="submit" size="icon" aria-label="Send message" disabled={!input.trim()}><Send /></Button>}
             </form>
           </section>
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border bg-card">
+          <section className="@container flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border bg-card">
             <div className="flex items-center justify-between border-b px-3 py-2">
               <div><div className="text-xs font-medium">Live JSON preview</div><div className="text-[11px] text-muted-foreground">Current form contract</div></div>
               {generated && <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] text-primary">Generated</span>}
             </div>
             <ScrollArea className="min-h-0 flex-1 p-3"><pre className="min-h-full whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 font-mono text-xs leading-relaxed">{JSON.stringify(preview, null, 2)}</pre></ScrollArea>
-            <div className="flex flex-col gap-2 border-t p-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-2 border-t p-3 @sm:flex-row @sm:items-center @sm:justify-between">
               <div className="min-w-0 text-xs text-muted-foreground">
                 {schemaErrors.length > 0 ? <span className="text-destructive">{schemaErrors[0]}</span> : "Apply replaces the draft only; saving is still yours."}
               </div>
               <Button type="button" onClick={apply} disabled={!canApply || schemaErrors.length > 0}>Apply values</Button>
             </div>
           </section>
-        </div>
+        </div></div>
       </DialogContent>
     </Dialog>
   )

@@ -1,13 +1,17 @@
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { captureError, type InlineError } from "@/lib/errors"
 import {
   useDeleteVoiceProvider,
   useSaveVoiceProvider,
   useVoiceProviders,
+  type VoiceProvider,
   type VoiceProviderId,
 } from "@/lib/queries"
-import { Button } from "@/components/ui/button"
+import { useMcpServers } from "@/lib/queries/catalog"
+import { AudioLines, Radio, Settings2, Trash2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Combobox,
   ComboboxContent,
@@ -19,8 +23,12 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { ErrorNote } from "@/components/error-note"
-import { PageForm, PageHeader, Group, Field, FormActions, Row } from "./primitives"
+import { cn } from "@/lib/utils"
+import { Notice } from "@/components/notice"
+import { PageHeader, FormPageHeader, FormActions, PageForm, Field, Group, Row, StatStrip, StatusBadge } from "./primitives"
+import { SettingsList, type ListAction, type ListColumn } from "./list"
 import { sectionMeta } from "./sections"
+import { settingsFormPath, settingsPath } from "@/lib/router"
 
 /* What each provider is called here and what its fields start as. The model
    and voice are suggestions, never a closed list: both providers rename them
@@ -90,6 +98,8 @@ const PROVIDERS: {
   },
 ]
 
+const labelOf = (id: string) => PROVIDERS.find((p) => p.id === id)?.label ?? id
+
 /* One control, both ways in: the dropdown lists what is known and filters as
    you type, and the field itself stays editable, so a name that matches nothing
    is simply the value (the group picker's bargain, in profile-models.tsx). */
@@ -99,12 +109,14 @@ function SuggestInput({
   options,
   placeholder,
   required,
+  ariaLabel,
 }: {
   value: string
   onChange: (value: string) => void
   options: Suggestion[]
   placeholder?: string
   required?: boolean
+  ariaLabel?: string
 }) {
   return (
     <Combobox
@@ -116,7 +128,7 @@ function SuggestInput({
         if (next !== null) onChange(next)
       }}
     >
-      <ComboboxInput placeholder={placeholder} className="w-full font-mono text-xs" required={required} />
+      <ComboboxInput placeholder={placeholder} aria-label={ariaLabel} className="w-full font-mono text-xs" required={required} />
       <ComboboxContent>
         <ComboboxList>
           {options.map(([v, note]) => (
@@ -137,6 +149,8 @@ interface Draft {
   model: string
   voice: string
   isDefault: boolean
+  mcpServerIds: string[]
+  instructions: string
 }
 
 /* The per-scope pick on a project's and a profile's pages. "Default" is "no
@@ -153,19 +167,18 @@ export function VoiceBackendField({
   hint?: string
 }) {
   const { data: rows } = useVoiceProviders()
-  const label = (id: string) => PROVIDERS.find((p) => p.id === id)?.label ?? id
   const ids = [...(rows ?? []).map((r) => r.provider as string), ...(value && !rows?.some((r) => r.provider === value) ? [value] : [])]
   return (
     <Field label="Voice backend" hint={hint ?? "Which realtime model a voice call on these threads uses."}>
       <Select value={value || "default"} onValueChange={(v) => onChange(!v || v === "default" ? "" : v)}>
         <SelectTrigger className="h-9 w-full @panel-sm:w-56">
-          <SelectValue>{value ? label(value) : "Default"}</SelectValue>
+          <SelectValue>{value ? labelOf(value) : "Default"}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="default">Default</SelectItem>
           {ids.map((id) => (
             <SelectItem key={id} value={id}>
-              {label(id)}
+              {labelOf(id)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -174,49 +187,194 @@ export function VoiceBackendField({
   )
 }
 
+/* A backend as the Backends table draws it: the preset beside the stored row
+   (absent until a key is saved). */
+interface BackendRow {
+  preset: (typeof PROVIDERS)[number]
+  row: VoiceProvider | undefined
+}
+
+const MARKS = { openai: AudioLines, google: Radio } as const
+
 export function VoicePage() {
   const meta = sectionMeta("voice")
+  const navigate = useNavigate()
   const { data: rows, error: loadError, isLoading } = useVoiceProviders()
-  const save = useSaveVoiceProvider()
   const remove = useDeleteVoiceProvider()
-  const [drafts, setDrafts] = React.useState<Record<VoiceProviderId, Draft> | null>(null)
+  const [removeError, setRemoveError] = React.useState<InlineError | null>(null)
+
+  const removeBackend = React.useCallback(
+    (p: (typeof PROVIDERS)[number]) =>
+      remove.mutate(p.id, { onError: (err) => setRemoveError(captureError(err, `Couldn't remove ${p.label}`)) }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [remove.mutate]
+  )
+
+  /* The editor is a page of its own (`:entryId`, `VoiceFormPage`). */
+  const configure = React.useCallback(
+    (id: VoiceProviderId) => void navigate(settingsFormPath("voice", id)),
+    [navigate]
+  )
+
+  const backends = React.useMemo<BackendRow[]>(
+    () => PROVIDERS.map((preset) => ({ preset, row: rows?.find((r) => r.provider === preset.id) })),
+    [rows]
+  )
+
+  const columns = React.useMemo<ListColumn<BackendRow>[]>(
+    () => [
+      {
+        id: "name",
+        title: true,
+        header: "Backend",
+        cell: ({ preset }) => <span className="font-medium">{preset.label}</span>,
+      },
+      {
+        id: "model",
+        header: "Model",
+        secondary: true,
+        cell: ({ preset, row }) => (
+          <span className="block max-w-56 truncate font-mono text-xs text-muted-foreground">{row?.model ?? preset.model}</span>
+        ),
+      },
+      {
+        id: "voice",
+        header: "Voice",
+        secondary: true,
+        cell: ({ preset, row }) => (
+          <span className="block max-w-32 truncate font-mono text-xs text-muted-foreground">{row?.voice || preset.voice}</span>
+        ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        align: "end",
+        cell: ({ row }) => (
+          <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
+            <StatusBadge tone={row?.hasKey ? "ok" : "warn"}>{row?.hasKey ? "Key stored" : "No key"}</StatusBadge>
+            {row?.isDefault && <StatusBadge tone="info">Default</StatusBadge>}
+          </span>
+        ),
+      },
+    ],
+    []
+  )
+
+  const actions = React.useMemo<ListAction<BackendRow>[]>(
+    () => [
+      { id: "configure", label: "Configure", icon: <Settings2 />, onClick: ({ preset }) => configure(preset.id), position: "left" },
+      {
+        id: "remove",
+        label: "Remove",
+        icon: <Trash2 />,
+        tone: "danger",
+        hidden: ({ row }) => !row,
+        disabled: () => remove.isPending,
+        onClick: ({ preset }) => removeBackend(preset),
+      },
+    ],
+    [configure, removeBackend, remove.isPending]
+  )
+
+  const defaultLabel = rows?.find((r) => r.isDefault)
+  const configured = rows?.filter((r) => r.hasKey).length ?? 0
+
+  return (
+    <div>
+      <PageHeader meta={meta} />
+      {loadError && <ErrorNote error={captureError(loadError, "Couldn't load the voice backends")} />}
+      {!isLoading && rows?.length === 0 && (
+        <Notice tone="neutral" className="mb-8">
+          No voice backend yet — add a key for either provider to turn on voice mode in the composer.
+        </Notice>
+      )}
+      {rows && (
+        <StatStrip
+          stats={[
+            { label: "Voice mode uses", value: defaultLabel ? labelOf(defaultLabel.provider) : "None chosen" },
+            { label: "Backends with a key", value: `${configured} of ${PROVIDERS.length}` },
+          ]}
+        />
+      )}
+      <ErrorNote error={removeError} />
+      {(rows || isLoading) && (
+        <div className="mb-8">
+          <SettingsList
+            columns={columns}
+            rows={backends}
+            loading={isLoading}
+            rowId={({ preset }) => preset.id}
+            actions={actions}
+            mark={({ preset }) => {
+              const Mark = MARKS[preset.id]
+              return <Mark className="size-4 text-muted-foreground" />
+            }}
+            onRowClick={({ preset }) => configure(preset.id)}
+            emptyIcon={AudioLines}
+            emptyText="No voice backends."
+            viewToggle={false}
+          />
+        </div>
+      )}
+      <Group label="How it works">
+        <Row
+          title="Keys stay on the server"
+          subtitle="A voice call is given a short-lived token minted from the key, not the key itself."
+        />
+        <Row
+          title="Instructions and tools bound in"
+          subtitle="The token carries the thread's instructions and tools with it."
+        />
+        <Row
+          title="Billed per token"
+          subtitle="Realtime audio is billed by the provider per token, on what the model hears and says. The agent's own work is billed by its profile, not here."
+        />
+      </Group>
+    </div>
+  )
+}
+
+/* One backend's key, model, voice, MCP servers and instructions, as a page of
+   its own (`/settings/voice/:entryId`) — the same shape a project's or an MCP
+   server's form has. Saving writes this backend only and goes back. */
+export function VoiceFormPage() {
+  const { entryId } = useParams()
+  const p = PROVIDERS.find((x) => x.id === entryId)
+  const { data: rows, isLoading } = useVoiceProviders()
+  if (!p) return <Navigate to={settingsPath("voice")} replace />
+  if (isLoading || !rows) return null
+  return <VoiceForm preset={p} row={rows.find((r) => r.provider === p.id)} />
+}
+
+function VoiceForm({ preset: p, row }: { preset: (typeof PROVIDERS)[number]; row: VoiceProvider | undefined }) {
+  const navigate = useNavigate()
+  const mcpServers = useMcpServers()
+  const save = useSaveVoiceProvider()
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
-
-  /* The form is the rows as they were read; re-read after a save so a key that
-     became "stored" says so and the default moves where the server put it. */
-  const reset = React.useCallback(() => {
-    if (!rows) return
-    const of = (id: VoiceProviderId): Draft => {
-      const row = rows.find((r) => r.provider === id)
-      const preset = PROVIDERS.find((p) => p.id === id)!
-      return { apiKey: "", model: row?.model ?? preset.model, voice: row?.voice ?? preset.voice, isDefault: row?.isDefault ?? false }
-    }
-    setDrafts({ openai: of("openai"), google: of("google") })
-  }, [rows])
-  React.useEffect(reset, [reset])
-
-  const set = (id: VoiceProviderId, patch: Partial<Draft>) =>
-    setDrafts((d) => {
-      if (!d) return d
-      const next = { ...d, [id]: { ...d[id], ...patch } }
-      /* One default: turning one on turns the other off, as the server will. */
-      if (patch.isDefault) for (const other of PROVIDERS) if (other.id !== id) next[other.id] = { ...next[other.id], isDefault: false }
-      return next
+  const [draft, setDraft] = React.useState<Draft>(() => ({
+    apiKey: "",
+    model: row?.model ?? p.model,
+    voice: row?.voice ?? p.voice,
+    isDefault: row?.isDefault ?? false,
+    mcpServerIds: row?.mcpServerIds ?? [],
+    instructions: row?.instructions ?? "",
+  }))
+  const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
+  const toggleMcp = (id: string) =>
+    set({
+      mcpServerIds: draft.mcpServerIds.includes(id)
+        ? draft.mcpServerIds.filter((x) => x !== id)
+        : [...draft.mcpServerIds, id],
     })
+  const back = () => void navigate(settingsPath("voice"))
+  const control = "w-60 max-w-full @panel-sm:w-72"
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!drafts) return
     setSaveError(null)
     try {
-      /* A provider is saved when it already has a key or one was typed; the
-         other is left alone rather than refused for a key nobody gave it. */
-      for (const p of PROVIDERS) {
-        const draft = drafts[p.id]
-        const stored = rows?.some((r) => r.provider === p.id && r.hasKey)
-        if (!stored && !draft.apiKey.trim()) continue
-        await save.mutateAsync({ provider: p.id, ...draft })
-      }
+      await save.mutateAsync({ provider: p.id, ...draft })
+      back()
     } catch (err) {
       setSaveError(captureError(err, "Couldn't save the voice settings"))
     }
@@ -224,86 +382,109 @@ export function VoicePage() {
 
   return (
     <>
-      <PageHeader meta={meta} />
-      {loadError && <ErrorNote error={captureError(loadError, "Couldn't load the voice backends")} />}
-      {!isLoading && rows?.length === 0 && (
-        <p className="mb-2 px-1 text-xs text-pretty text-muted-foreground">
-          No voice backend yet — add a key for either provider to turn on voice mode in the composer.
-        </p>
-      )}
-      {drafts && (
-        <PageForm onSubmit={submit}>
-          {PROVIDERS.map((p) => {
-            const row = rows?.find((r) => r.provider === p.id)
-            const draft = drafts[p.id]
-            return (
-              <Group key={p.id} label={p.label}>
-                <Row
-                  title="Use for voice mode"
-                  subtitle={row ? "The backend the composer's voice button connects to." : "Save a key first."}
-                >
-                  <Switch
-                    checked={draft.isDefault}
-                    disabled={!row && !draft.apiKey}
-                    onCheckedChange={(on) => set(p.id, { isDefault: on })}
-                    aria-label={`Use ${p.label} for voice mode`}
-                  />
-                </Row>
-                <div className="grid gap-4 py-4 @panel-sm:grid-cols-2">
-                  <Field label="API key" hint={row?.hasKey ? "Stored — leave empty to keep it." : p.keyHint}>
-                    <Input
-                      type="password"
-                      autoComplete="off"
-                      value={draft.apiKey}
-                      onChange={(e) => set(p.id, { apiKey: e.target.value })}
+      <FormPageHeader title={p.label} description="Key, model and voice for this backend." onBack={back} />
+      <PageForm onSubmit={submit}>
+        <Group>
+          <Row
+            title="Use for voice mode"
+            subtitle={row ? "The backend the composer's voice button connects to." : "Save a key first."}
+          >
+            {draft.isDefault && <StatusBadge tone="info">Default</StatusBadge>}
+            <Switch
+              checked={draft.isDefault}
+              disabled={!row && !draft.apiKey}
+              onCheckedChange={(on) => set({ isDefault: on })}
+              aria-label={`Use ${p.label} for voice mode`}
+            />
+          </Row>
+          <Row title="API key" subtitle={row?.hasKey ? "Stored — leave empty to keep it." : p.keyHint}>
+            <Input
+              type="password"
+              autoComplete="off"
+              aria-label={`${p.label} API key`}
+              className={cn(control, "h-11 @panel-sm:h-9")}
+              value={draft.apiKey}
+              required={!row?.hasKey}
+              onChange={(e) => set({ apiKey: e.target.value })}
+            />
+          </Row>
+          <Row title="Model" subtitle="Pick one or type any realtime model the provider serves.">
+            <div className={control}>
+              <SuggestInput
+                value={draft.model}
+                onChange={(model) => set({ model })}
+                options={p.models}
+                placeholder={p.model}
+                ariaLabel={`${p.label} model`}
+                required
+              />
+            </div>
+          </Row>
+          <Row title="Voice" subtitle="Search the voices or type a name. Empty uses the provider's default.">
+            <div className={control}>
+              <SuggestInput
+                value={draft.voice}
+                onChange={(voice) => set({ voice })}
+                options={p.voices}
+                placeholder={p.voice}
+                ariaLabel={`${p.label} voice`}
+              />
+            </div>
+          </Row>
+
+          {/* These are this voice backend's own MCPs, separate from any
+              thread's links. Picked here, bound into the voice token. */}
+          <Row title="MCP servers" subtitle="External services this voice call may use directly — web search, knowledge base, a database, a browser.">
+            <div className="space-y-1">
+              {mcpServers.map((s) => {
+                const active = draft.mcpServerIds.includes(s.id)
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleMcp(s.id)}
+                    disabled={save.isPending}
+                    className={cn(
+                      "flex items-center gap-2 w-full text-left px-2 py-1.5 text-xs rounded border transition-colors",
+                      active
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-muted-foreground",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={active}
+                      readOnly
+                      className="w-3 h-3 shrink-0"
+                      aria-label={`Use ${s.name} for ${p.label} voice mode`}
                     />
-                  </Field>
-                  <Field label="Model" hint="Pick one or type any realtime model the provider serves.">
-                    <SuggestInput
-                      value={draft.model}
-                      onChange={(model) => set(p.id, { model })}
-                      options={p.models}
-                      placeholder={p.model}
-                      required
-                    />
-                  </Field>
-                  <Field label="Voice" hint="Search the voices or type a name. Empty uses the provider's default.">
-                    <SuggestInput
-                      value={draft.voice}
-                      onChange={(voice) => set(p.id, { voice })}
-                      options={p.voices}
-                      placeholder={p.voice}
-                    />
-                  </Field>
-                </div>
-                {row && (
-                  <Row title="Remove this backend" subtitle="Deletes the stored key.">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={remove.isPending}
-                      onClick={() =>
-                        remove.mutate(p.id, {
-                          onError: (err) => setSaveError(captureError(err, `Couldn't remove ${p.label}`)),
-                        })
-                      }
-                    >
-                      Remove
-                    </Button>
-                  </Row>
-                )}
-              </Group>
-            )
-          })}
-          <FormActions busy={save.isPending} onCancel={reset} error={saveError} />
-        </PageForm>
-      )}
-      <p className="px-1 text-xs text-pretty text-muted-foreground">
-        Keys stay on the server. A voice call is given a short-lived token minted from the key, with its instructions
-        and tools bound in. Realtime audio is billed per token by the provider; the mic pauses while the agent works,
-        so its silence is not streamed.
-      </p>
+                    <span className="font-mono">{s.name}</span>
+                    {s.type === "builtin" && s.builtin === "web-search" && (
+                      <span className="ms-auto text-[10px] text-muted-foreground">web search + fetch</span>
+                    )}
+                    {s.type === "builtin" && s.builtin === "knowledge" && (
+                      <span className="ms-auto text-[10px] text-muted-foreground">knowledge base</span>
+                    )}
+                  </button>
+                )
+              })}
+              {mcpServers.length === 0 && (
+                <p className="text-xs text-muted-foreground">No MCP servers in the library yet — add one in Settings › MCP.</p>
+              )}
+            </div>
+          </Row>
+
+          <Row title="Instructions" subtitle="Custom voice-mode prompt. Empty uses the built-in voice instructions.">
+            <Textarea
+              value={draft.instructions}
+              onChange={(e) => set({ instructions: e.target.value })}
+              className={cn(control, "h-24 @panel-sm:h-20")}
+              aria-label={`${p.label} voice instructions`}
+            />
+          </Row>
+        </Group>
+        <FormActions busy={save.isPending} onCancel={back} error={saveError} />
+      </PageForm>
     </>
   )
 }

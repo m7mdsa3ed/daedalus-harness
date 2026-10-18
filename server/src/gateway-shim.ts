@@ -80,7 +80,6 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 
 import { getProfile, profileBaseUrl } from "./profiles.js";
-import { detectProvider } from "./providers/index.js";
 import { gatewayPromptTotal, recordGatewayPrompt, tapGatewaySse } from "./gateway-token-breakdown.js";
 
 /** Constant-time string comparison for path-carried credentials — an equality
@@ -575,21 +574,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   const baseUrl = profile ? profileBaseUrl(profile, agentId) : "";
   if (!baseUrl) return notFound("that profile has no base URL");
 
-  /* Free-tier providers (opencode-free first) only serve clients presenting
-     their fingerprint — exact headers, session shape, verbatim tools. The
-     child sends none of that, so the shim applies it here. See
-     `server/src/providers/`: adding a provider is a new file plus one
-     `detectProvider` entry, never a change to this function. */
-  const freeProvider = detectProvider(baseUrl);
-  const providerCtx = {
-    threadId: parsed.kind === "s" ? parsed.id : `probe:${parsed.id}`,
-    agentId,
-    profileId: thread?.profileId ?? parsed.id,
-  };
-  let upstreamRest = parsed.rest;
-  let wireModel = "";
-  let wireWantStream = true;
-  let wireRenames: Map<string, string> | undefined;
+  const upstreamRest = parsed.rest;
 
   const headers = new Headers();
   req.headers.forEach((value, name) => {
@@ -606,11 +591,14 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     if (headers.has("x-api-key")) headers.set("x-api-key", profile.apiKey);
     if (headers.has("authorization")) headers.set("authorization", `Bearer ${profile.apiKey}`);
   }
-  if (freeProvider) {
-    for (const name of freeProvider.dropRequestHeaders()) headers.delete(name);
-    for (const [name, value] of Object.entries(freeProvider.headers(providerCtx))) headers.set(name, value);
+  /* Whatever the profile names travels, and it is applied *after* the auth
+     rewrite so a header the profile spells out wins over the child's own — the
+     point is a provider whose wire the child does not speak. A relay that
+     fingerprints a client and refuses every other one is fixed by naming its
+     header on the row; the shim learns no vendor's name (CLAUDE.md). */
+  for (const header of profile?.headers ?? []) {
+    if (header.name) headers.set(header.name, header.value);
   }
-
   /* Two reasons to read a request body, and both are narrow. The Codex repair
      flattens namespace tools on `/responses` (see the header). The model
      rewrite replaces an id the child was spawned with by the one the thread is
@@ -625,7 +613,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   let renames: Record<string, RenamedTool> = {};
   if (
     req.method === "POST" &&
-    (freeProvider || isResponses || rewriting || /\/messages\/?$|\/chat\/completions\/?$/.test(parsed.rest)) &&
+    (isResponses || rewriting || /\/messages\/?$|\/chat\/completions\/?$/.test(parsed.rest)) &&
     /application\/json/i.test(req.headers.get("content-type") ?? "")
   ) {
     const text = await req.text();
@@ -633,19 +621,6 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     try {
       const parsedBody = JSON.parse(text) as Json;
       let edited = rewriting ? applySessionModel(parsedBody, thread.model, thread.effort) : false;
-      if (freeProvider) {
-        upstreamRest = freeProvider.upstreamPath(
-          typeof parsedBody.model === "string" ? parsedBody.model : "",
-          parsed.rest,
-        );
-        if (typeof parsedBody.model === "string") wireModel = parsedBody.model;
-        // Upstream is always forced to stream; when the child asked for one
-        // JSON object (stream omitted or false — the OpenAI default) the
-        // reply is aggregated back in wrapResponse.
-        wireWantStream = (parsedBody as Json).stream === true;
-        edited = freeProvider.transformBody(parsedBody, providerCtx) || edited;
-        wireRenames = freeProvider.renamesFor(parsedBody);
-      }
       const flat = isResponses ? flattenNamespaces(parsedBody) : null;
       if (flat) {
         namespaces = flat.namespaces;
@@ -701,14 +676,6 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
     );
   } finally {
     clearTimeout(connectTimer);
-  }
-
-  /* A provider whose upstream dialect differs from the child's (opencode-free
-     serving a responses-native model to a chat-completions caller), or whose
-     upstream was forced to stream for a child that asked for JSON,
-     translates the reply back, so everything below sees what was asked for. */
-  if (freeProvider && wireModel && (freeProvider.upstreamDialect(wireModel) !== "chat" || !wireWantStream)) {
-    upstream = await freeProvider.wrapResponse(upstream, wireModel, wireRenames, { wantStream: wireWantStream });
   }
 
   const out = new Headers();

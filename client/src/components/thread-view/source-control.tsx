@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { CopyButton } from "@/components/ui/copy-button"
+import { ActionIcon, actionClass, useActionState } from "@/components/ui/action-state"
 import type { WebDiff } from "@/lib/workspace/panels"
 import { DockContext } from "@/components/workspace/dock-context"
 import { DiffTab, type DiffSide } from "@/components/workspace/diff-tab"
@@ -128,6 +129,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   const [filter, setFilter] = React.useState<FileFilter>("all")
   const [search, setSearch] = React.useState("")
   const [busy, setBusy] = React.useState(false)
+  const act = useActionState<"fetch" | "pull" | "push" | "commit">()
   const [error, setError] = React.useState<string | null>(null)
   const [notice, setNotice] = React.useState<string | null>(null)
   const [tab, setTab] = React.useState<Tab>("changes")
@@ -286,7 +288,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
       const staged = await write({ action: "stage", paths: files.filter((file) => file.staged !== "yes" && !file.conflicted).map((file) => file.path) })
       if (!staged) return false
     }
-    return write({ action: "commit", message, amend })
+    return act.run("commit", () => write({ action: "commit", message, amend }))
   }
 
   /* Soft, so nothing on disk moves — but a commit already on the remote comes
@@ -422,14 +424,14 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
           </BranchPicker>
           <Tracking status={status} />
           <div className="ml-auto flex shrink-0 gap-1">
-            <Button variant="ghost" size="icon-xs" disabled={busy || !status?.repository} onClick={() => void write({ action: "fetch" })} title="Fetch all remotes (updates ahead/behind)" aria-label="Fetch" className={iconButton}>
-              <CloudDownloadIcon className="size-3.5" />
+            <Button variant="ghost" size="icon-xs" disabled={busy || !status?.repository} onClick={() => void act.run("fetch", () => write({ action: "fetch" }))} title="Fetch all remotes (updates ahead/behind)" aria-label="Fetch" className={cn(iconButton, actionClass(act.phase("fetch")))}>
+              <ActionIcon phase={act.phase("fetch")}><CloudDownloadIcon className="size-3.5" /></ActionIcon>
             </Button>
-            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void write({ action: "pull" })} title={status?.upstream ? `Pull from ${status.upstream} (fast-forward only)` : "Pull"} className={coarse ? "min-h-10" : ""}>
-              <ArrowDownToLineIcon className="size-3.5" /><span className="hidden @panel-sm:inline">Pull{status?.behind ? ` ${status.behind}` : ""}</span>
+            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("pull", () => write({ action: "pull" }))} title={status?.upstream ? `Pull from ${status.upstream} (fast-forward only)` : "Pull"} className={cn(coarse && "min-h-10", actionClass(act.phase("pull")))}>
+              <ActionIcon phase={act.phase("pull")}><ArrowDownToLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">Pull{status?.behind ? ` ${status.behind}` : ""}</span>
             </Button>
-            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void write({ action: "push" })} title={status?.upstream ? `Push to ${status.upstream}` : "Publish this branch to origin"} className={coarse ? "min-h-10" : ""}>
-              <ArrowUpFromLineIcon className="size-3.5" /><span className="hidden @panel-sm:inline">{status?.upstream ? `Push${status.ahead ? ` ${status.ahead}` : ""}` : "Publish"}</span>
+            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("push", () => write({ action: "push" }))} title={status?.upstream ? `Push to ${status.upstream}` : "Publish this branch to origin"} className={cn(coarse && "min-h-10", actionClass(act.phase("push")))}>
+              <ActionIcon phase={act.phase("push")}><ArrowUpFromLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">{status?.upstream ? `Push${status.ahead ? ` ${status.ahead}` : ""}` : "Publish"}</span>
             </Button>
           </div>
         </div>
@@ -457,6 +459,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
         named={repos.length > 1}
         branch={branch}
         busy={busy}
+        commitPhase={act.phase("commit")}
         changeCount={counts.total}
         stagedCount={counts.staged}
         unstagedCount={counts.unstaged}

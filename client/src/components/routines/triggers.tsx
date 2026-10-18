@@ -23,10 +23,9 @@ import {
 } from "lucide-react"
 
 import { useConfirm } from "@/components/confirm-dialog"
-import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
-import { Field, lines } from "@/components/settings/primitives"
+import { EmptyCard, Field, FormSection, INSET, lines, Toolbar } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -247,7 +246,7 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
   )
 
   return (
-    <div className="space-y-3">
+    <div>
       <ErrorNote error={error} onRetry={() => void refetch()} />
       {/* Null is "not read yet", which is not the same screen as "none" — see
           the header comment. A failed read leaves it null and the note above
@@ -259,23 +258,27 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
           </div>
         )
       ) : triggers.length === 0 ? (
-        <Empty size="lg">
-          No triggers — this routine only fires when you run it by hand.
-        </Empty>
+        <EmptyCard
+          icon={CalendarClockIcon}
+          text="No triggers — this routine only fires when you run it by hand."
+          action={addMenu}
+        />
       ) : (
-        triggers.map((trigger) => (
-          <TriggerCard
-            key={trigger.id}
-            trigger={trigger}
-            token={minted[trigger.id]}
-            onPatch={(next) => void patch(trigger.id, next)}
-            onRemove={() => void remove(trigger)}
-            onMint={() => void mint(trigger)}
-            onRevoke={() => void revoke(trigger)}
-          />
-        ))
+        <>
+          <Toolbar>{addMenu}</Toolbar>
+          {triggers.map((trigger) => (
+            <TriggerCard
+              key={trigger.id}
+              trigger={trigger}
+              token={minted[trigger.id]}
+              onPatch={(next) => void patch(trigger.id, next)}
+              onRemove={() => void remove(trigger)}
+              onMint={() => void mint(trigger)}
+              onRevoke={() => void revoke(trigger)}
+            />
+          ))}
+        </>
       )}
-      {addMenu}
     </div>
   )
 }
@@ -296,22 +299,19 @@ function TriggerCard({
   onRevoke: () => void
 }) {
   const meta = KIND_META[trigger.kind]
-  const Icon = meta.icon
-
   return (
-    <div className="rounded-xl border p-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap">
-        <Icon className="size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{meta.label}</div>
-          <p className="truncate text-xs text-muted-foreground">
-            {trigger.lastFiredAt
-              ? `Last fired ${new Date(trigger.lastFiredAt).toLocaleString()}`
-              : "Has never fired"}
-            {trigger.nextFireAt && ` · next ${new Date(trigger.nextFireAt).toLocaleString()}`}
-          </p>
-        </div>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+    <FormSection
+      label={meta.label}
+      hint={
+        <>
+          {trigger.lastFiredAt
+            ? `Last fired ${new Date(trigger.lastFiredAt).toLocaleString()}`
+            : "Has never fired"}
+          {trigger.nextFireAt && ` · next ${new Date(trigger.nextFireAt).toLocaleString()}`}
+        </>
+      }
+      action={
+        <>
           <Switch
             checked={trigger.enabled}
             onCheckedChange={(checked) => onPatch({ enabled: checked })}
@@ -327,23 +327,17 @@ function TriggerCard({
             <Trash2Icon />
             <span className="sr-only">Remove this trigger</span>
           </Button>
-        </div>
-      </div>
+        </>
+      }
+    >
+      {trigger.lastError && <Notice tone="error">Last evaluation: {trigger.lastError}</Notice>}
 
-      {trigger.lastError && (
-        <p className="mt-2 rounded-lg bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
-          Last evaluation: {trigger.lastError}
-        </p>
+      {trigger.kind === "schedule" && <ScheduleFields trigger={trigger} onPatch={onPatch} />}
+      {trigger.kind === "api" && (
+        <ApiFields trigger={trigger} token={token} onMint={onMint} onRevoke={onRevoke} />
       )}
-
-      <div className="mt-3">
-        {trigger.kind === "schedule" && <ScheduleFields trigger={trigger} onPatch={onPatch} />}
-        {trigger.kind === "api" && (
-          <ApiFields trigger={trigger} token={token} onMint={onMint} onRevoke={onRevoke} />
-        )}
-        {trigger.kind === "git" && <GitFields trigger={trigger} onPatch={onPatch} />}
-      </div>
-    </div>
+      {trigger.kind === "git" && <GitFields trigger={trigger} onPatch={onPatch} />}
+    </FormSection>
   )
 }
 
@@ -368,7 +362,7 @@ function ScheduleFields({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 @xl:grid-cols-3">
         <Field label="Repeat">
           <Select value={preset} onValueChange={(v) => v && write(v as Preset, hour)}>
             <SelectTrigger className="w-full">
@@ -418,7 +412,7 @@ function ScheduleFields({
       {/* The condition is checked at fire time, never here: a nightly review
           that reports on yesterday and one that says "nothing happened" thirty
           times in a row are the same routine with and without this switch. */}
-      <label className="flex items-start gap-2.5 rounded-lg border bg-muted/30 px-3 py-2.5">
+      <label className={`flex items-start gap-2.5 px-3 py-2.5 ${INSET}`}>
         <Switch
           className="mt-0.5"
           checked={trigger.condition?.gitChangedSince === "lastRun"}
@@ -515,7 +509,7 @@ function GitFields({
   const [paths, setPaths] = React.useState(trigger.paths.join("\n"))
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @lg:grid-cols-2">
         <Field label="Branch" hint="Blank fires on any branch's HEAD moving.">
           <Input
             placeholder="any branch"

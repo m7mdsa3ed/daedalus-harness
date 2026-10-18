@@ -1,15 +1,13 @@
 import * as React from "react"
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core"
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
-import { CSS } from "@dnd-kit/utilities"
+import { arrayMove } from "@dnd-kit/sortable"
 import {
+  ArrowDown,
+  ArrowUp,
   BookOpenIcon,
   FolderIcon,
-  GripVertical,
   GlobeIcon,
   PanelsTopLeft,
   Pencil,
-  PlayIcon,
   Plus,
   RefreshCwIcon,
   SquareTerminal,
@@ -17,9 +15,13 @@ import {
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { captureError, reportError, type InlineError, errorText } from "@/lib/errors"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
+import type { ColumnDef } from "@/lib/table"
 import { Empty } from "@/components/empty"
 import { ProjectIcon } from "@/components/entity-icon"
+import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
@@ -27,6 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type HelperCommand, type Project, type ServerSettings } from "@/lib/settings"
+import type { KnowledgeEntry } from "@/lib/workspace/knowledge-api"
 import {
   useActiveSpace,
   useCreateRule,
@@ -44,7 +47,19 @@ import {
   useReorderProjects,
 } from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
-import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, INSET, LogoUpload } from "./primitives"
+import {
+  Field,
+  FormActions,
+  FormPageHeader,
+  FormSection,
+  FormShell,
+  INSET,
+  LogoUpload,
+  PageForm,
+  PageHeader,
+  SectionHead,
+  StatStrip,
+} from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
@@ -52,6 +67,65 @@ import { HelperForm } from "@/components/helper-form"
 import { VoiceBackendField } from "./voice"
 import { saveProjectDefaults } from "@/lib/project-defaults"
 import { useQueryClient } from "@tanstack/react-query"
+
+/* ── The collection ──
+   One DataTable: a project is a name over its path, then what hangs off it
+   (description, preview, helper count). Order is the user's — the sidebar draws
+   it — so the table keeps a Move up / Move down pair in the row menu in place
+   of the old drag grip (a table's rows are not a sortable list). Both are
+   withheld while a search filters the list: a reorder of a subset has no
+   meaning for the whole. */
+
+const PROJECT_COLUMNS: ColumnDef<Project, unknown>[] = [
+  {
+    id: "project",
+    header: "Project",
+    meta: { title: true, className: "min-w-56" },
+    cell: ({ row }) => (
+      <TitleCell
+        title={row.original.name}
+        subtitle={
+          <span className="font-mono text-[11px]" title={row.original.cwd}>
+            {row.original.cwd}
+          </span>
+        }
+      />
+    ),
+  },
+  {
+    id: "description",
+    header: "Description",
+    meta: { className: "hidden @panel-md:table-cell max-w-64" },
+    cell: ({ row }) => <span className="block truncate text-muted-foreground">{row.original.description}</span>,
+  },
+  {
+    id: "preview",
+    header: "Preview",
+    meta: { className: "hidden @panel-lg:table-cell max-w-56" },
+    cell: ({ row }) =>
+      row.original.previewUrl ? (
+        <span className="inline-flex max-w-full items-center gap-1 text-primary">
+          <GlobeIcon className="size-3 shrink-0" />
+          <span className="truncate font-mono text-xs">{row.original.previewUrl}</span>
+        </span>
+      ) : null,
+  },
+  {
+    id: "helpers",
+    header: "Helpers",
+    meta: { align: "end", className: "w-24" },
+    cell: ({ row }) => {
+      const n = row.original.helpers?.length ?? 0
+      return n > 0 ? (
+        <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <SquareTerminal className="size-3.5" /> {n}
+        </span>
+      ) : (
+        <span className="text-muted-foreground/50">—</span>
+      )
+    },
+  },
+]
 
 export function ProjectsPage() {
   const { settings } = useSettingsPage()
@@ -62,11 +136,11 @@ export function ProjectsPage() {
   const navigate = useNavigate()
   const reorder = useReorderProjects()
 
-  /* The dragged arrangement is drawn immediately and the server is told; the
-     local copy is dropped once the refetched list agrees with it, so the row
-     never jumps back to the old order for a frame while the write is in
-     flight. A failed write leaves the stale arrangement on screen only until
-     the list refreshes — the error is what says it did not take. */
+  /* The new arrangement is drawn immediately and the server is told; the local
+     copy is dropped once the refetched list agrees with it, so the row never
+     jumps back to the old order for a frame while the write is in flight. A
+     failed write leaves the stale arrangement on screen only until the list
+     refreshes — the error is what says it did not take. */
   const [dragged, setDragged] = React.useState<Project[] | null>(null)
   const list = dragged ?? projects
   const ids = projects.map((p) => p.id).join()
@@ -74,15 +148,20 @@ export function ProjectsPage() {
     setDragged((d) => (d && d.map((p) => p.id).join() === ids ? null : d))
   }, [ids])
 
-  /* A grip is its own target, so there is no swipe-versus-drag ambiguity to
-     resolve and one pointer sensor covers mouse and touch alike. */
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  const [query, setQuery] = React.useState("")
+  const needle = query.trim().toLowerCase()
+  const shown = React.useMemo(
+    () =>
+      needle
+        ? list.filter((p) => `${p.name} ${p.cwd} ${p.description ?? ""}`.toLowerCase().includes(needle))
+        : list,
+    [list, needle],
+  )
 
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return
-    const from = list.findIndex((p) => p.id === active.id)
-    const to = list.findIndex((p) => p.id === over.id)
-    if (from < 0 || to < 0) return
+  const move = (project: Project, delta: -1 | 1) => {
+    const from = list.findIndex((p) => p.id === project.id)
+    const to = from + delta
+    if (from < 0 || to < 0 || to >= list.length) return
     const next = arrayMove(list, from, to)
     setDragged(next)
     reorder.mutate(next.map((p) => p.id), {
@@ -109,8 +188,63 @@ export function ProjectsPage() {
     }
   }
 
+  /* The row actions read the latest of all this through one ref, so the
+     table's memoised rows are not rebuilt on every keystroke in the search. */
+  const live = React.useRef({ move, remove, navigate })
+  React.useLayoutEffect(() => {
+    live.current = { move, remove, navigate }
+  })
+  /* Whether a row can move is read off the list, so the actions are rebuilt when
+     the ends or the filter change — never trusted to a ref the rows may not
+     re-read. */
+  const firstId = list[0]?.id
+  const lastId = list.at(-1)?.id
+  const filtered = Boolean(needle)
+
+  const actions = React.useMemo<TableAction<Project>[]>(
+    () => [
+      {
+        id: "open",
+        label: "Open overview",
+        icon: <PanelsTopLeft />,
+        // The overview is the project as a *place* — its threads, its numbers —
+        // where this page is the project as a record.
+        onClick: (p) => void live.current.navigate(projectPath(p.id)),
+        position: "left",
+      },
+      {
+        id: "edit",
+        label: "Edit",
+        icon: <Pencil />,
+        onClick: (p) => void live.current.navigate(settingsFormPath("projects", p.id)),
+      },
+      {
+        id: "up",
+        label: "Move up",
+        icon: <ArrowUp />,
+        onClick: (p) => live.current.move(p, -1),
+        hidden: (p) => filtered || firstId === p.id,
+      },
+      {
+        id: "down",
+        label: "Move down",
+        icon: <ArrowDown />,
+        onClick: (p) => live.current.move(p, 1),
+        hidden: (p) => filtered || lastId === p.id,
+      },
+      {
+        id: "delete",
+        label: "Delete",
+        icon: <Trash2 />,
+        tone: "danger",
+        onClick: (p) => void live.current.remove(p),
+      },
+    ],
+    [filtered, firstId, lastId],
+  )
+
   const newButton = (
-    <Button onClick={() => void navigate(settingsFormPath("projects"))}>
+    <Button className="h-11 @panel-sm:h-9" onClick={() => void navigate(settingsFormPath("projects"))}>
       <Plus className="size-4" /> New project
     </Button>
   )
@@ -119,76 +253,31 @@ export function ProjectsPage() {
     <>
       <PageHeader meta={meta} action={newButton} />
       {projects.length === 0 ? (
-        <EmptyCard
+        <Empty
+          size="lg"
           icon={FolderIcon}
-          text="No projects yet — a thread needs one to know where to run."
           action={newButton}
-        />
+        >
+          No projects yet — a thread needs one to know where to run.
+        </Empty>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={list.map((p) => p.id)} strategy={verticalListSortingStrategy}>
-            <Group label={`${list.length} project${list.length === 1 ? "" : "s"}`}>
-              {list.map((project) => (
-                <SortableProjectRow key={project.id} project={project}>
-                  {/* The overview is the project as a *place* — its threads, its
-                      numbers — where this page is the project as a record. */}
-                  <Button variant="ghost" size="icon-lg" title="Open overview" onClick={() => void navigate(projectPath(project.id))}>
-                    <PanelsTopLeft />
-                  </Button>
-                  <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("projects", project.id))}>
-                    <Pencil />
-                  </Button>
-                  <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(project)}>
-                    <Trash2 />
-                  </Button>
-                </SortableProjectRow>
-              ))}
-            </Group>
-          </SortableContext>
-        </DndContext>
+        <DataTable
+          columns={PROJECT_COLUMNS}
+          data={shown}
+          getRowId={(p) => p.id}
+          pageSize={50}
+          mark={(p) => <ProjectIcon project={p} className="size-5" />}
+          actions={actions}
+          onRowClick={(p) => void navigate(settingsFormPath("projects", p.id))}
+          emptyIcon={<FolderIcon />}
+          emptyMessage={`Nothing matches “${query.trim()}”.`}
+          filtering={{
+            search: { value: query, onChange: setQuery, placeholder: "Search projects..." },
+            totalCount: projects.length,
+          }}
+        />
       )}
     </>
-  )
-}
-
-/** One project as a draggable row. The wrapper is what moves; only the grip
-    starts a drag, so every button in the row still takes a plain click. */
-function SortableProjectRow({ project, children }: { project: Project; children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: project.id,
-  })
-  return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={isDragging ? "relative z-10 bg-background opacity-90 shadow-lg" : undefined}
-    >
-      <Row
-        handle={
-          <button
-            type="button"
-            className="mt-0.5 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground"
-            aria-label={`Reorder ${project.name}`}
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="size-4" />
-          </button>
-        }
-        icon={<ProjectIcon project={project} className="size-4 shrink-0" />}
-        title={project.name}
-        subtitle={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="font-mono">{project.cwd}</span>
-            {project.description && (
-              <span className="basis-full truncate break-normal">{project.description}</span>
-            )}
-          </span>
-        }
-      >
-        {children}
-      </Row>
-    </div>
   )
 }
 
@@ -245,6 +334,10 @@ export function ProjectForm({
      you are in — "make a project while working in Work" means a project in
      Work" — and the picker is what moves an existing one between spaces. */
   const { spaces, id: activeSpaceId } = useActiveSpace()
+  /* The at-a-glance strip reads the same cached queries the sections below
+     draw from, so it costs no request of its own. */
+  const ruleCount = useProjectRules(project?.id ?? null).length
+  const knowledgeCount = useProjectKnowledge(project?.id ?? null).data?.length
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -270,20 +363,16 @@ export function ProjectForm({
     }
   }
 
-  return (
-    <>
-      {!dialog && (
-        <FormPageHeader
-          title={project ? `Edit ${project.name}` : "New project"}
-          description="Configure the workspace, linked capabilities, and project knowledge."
-          onBack={() => onDone(null)}
-        />
-      )}
-      <PageForm onSubmit={save}>
-      <FormSection label="Workspace">
-        <Field label="Name">
-          <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
-        </Field>
+  /* Name and space are short, the path and notes want the whole width, and the
+     rest take the row — the pair answers to the panel (`@panel-sm`), so the
+     dialog (no panel above it) stays one column. A card is not a container and does not clip: the path picker's popup hangs below its field. */
+  const fields = (
+    <div className="grid gap-4 @panel-sm:grid-cols-2">
+        <div className={spaces.length > 0 ? undefined : "@panel-sm:col-span-2"}>
+          <Field label="Name">
+            <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
+          </Field>
+        </div>
         {/* The scope above the project: which space this one is filed under, and
             so which one you find it in. Moved here rather than created on — a
             project is filed once and repointed when the work moves. */}
@@ -293,7 +382,7 @@ export function ProjectForm({
               value={form.spaceId || activeSpaceId || undefined}
               onValueChange={(value) => set({ spaceId: value ?? "" })}
             >
-              <SelectTrigger className="h-9 w-full @panel-sm:w-56">
+              <SelectTrigger className="h-9 w-full pointer-coarse:h-11">
                 <SelectValue>
                   {spaces.find((space) => space.id === (form.spaceId || activeSpaceId))?.name ?? "Pick a space"}
                 </SelectValue>
@@ -308,74 +397,153 @@ export function ProjectForm({
             </Select>
           </Field>
         )}
-        <Field label="Working directory" hint="Path on the server, not on this device.">
-          <PathInput
-            value={form.cwd}
-            onValueChange={(cwd) => set({ cwd })}
-            settings={settings}
-            placeholder="/home/me/project"
-            required
-          />
-        </Field>
-        <Field label="Description" hint="Optional — notes about what this workspace is for.">
-          <Textarea
-            value={form.description}
-            onChange={(e) => set({ description: e.target.value })}
-            rows={2}
-            placeholder="What runs here, and why."
-          />
-        </Field>
-        <Field label="Logo URL" hint="Optional — shown next to this project in the sidebar and pickers. Empty shows the project's initial.">
-          <div className="flex items-center gap-2">
-            {/* Live preview — the same component the sidebar renders. */}
-            <ProjectIcon project={{ name: form.name, logoUrl: form.logoUrl }} className="size-5" />
-            <Input
-              onChange={(e) => set({ logoUrl: e.target.value })}
-              value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
-              placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.svg"}
-              className="min-w-0 flex-1 font-mono text-xs"
+        <div className="@panel-sm:col-span-2">
+          <Field label="Working directory" hint="Path on the server, not on this device.">
+            <PathInput
+              value={form.cwd}
+              onValueChange={(cwd) => set({ cwd })}
+              settings={settings}
+              placeholder="/home/me/project"
+              required
             />
-            <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
-          </div>
-        </Field>
-        <Field
-          label="Preview URL"
-          hint="The project's dev server, as the Browser panel opens it. Reachable from this device: localhost on the server's own machine, a LAN or tunnel address from a phone. The dev server must be running — mark a helper command below and the panel can start it for you."
-        >
-          <div className="flex items-center gap-2">
-            <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
-            <Input
-              value={form.previewUrl}
-              onChange={(e) => set({ previewUrl: e.target.value })}
-              placeholder="http://localhost:5173"
-              className="font-mono text-xs"
+          </Field>
+        </div>
+        <div className="@panel-sm:col-span-2">
+          <Field label="Description" hint="Optional — notes about what this workspace is for.">
+            <Textarea
+              value={form.description}
+              onChange={(e) => set({ description: e.target.value })}
+              rows={2}
+              placeholder="What runs here, and why."
             />
-          </div>
-        </Field>
+          </Field>
+        </div>
+        <div className="@panel-sm:col-span-2">
+          <Field label="Logo URL" hint="Optional — shown next to this project in the sidebar and pickers. Empty shows the project's initial.">
+            <div className="flex items-center gap-2">
+              {/* Live preview — the same component the sidebar renders. */}
+              <ProjectIcon project={{ name: form.name, logoUrl: form.logoUrl }} className="size-5" />
+              <Input
+                onChange={(e) => set({ logoUrl: e.target.value })}
+                value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
+                placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.svg"}
+                className="min-w-0 flex-1 font-mono text-xs"
+              />
+              <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
+            </div>
+          </Field>
+        </div>
+        <div className="@panel-sm:col-span-2">
+          <Field
+            label="Preview URL"
+            hint="The project's dev server, as the Browser panel opens it. Reachable from this device: localhost on the server's own machine, a LAN or tunnel address from a phone. The dev server must be running — mark a helper command below and the panel can start it for you."
+          >
+            <div className="flex items-center gap-2">
+              <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
+              <Input
+                value={form.previewUrl}
+                onChange={(e) => set({ previewUrl: e.target.value })}
+                placeholder="http://localhost:5173"
+                className="min-w-0 flex-1 font-mono text-xs"
+              />
+            </div>
+          </Field>
+        </div>
         {/* Written through the defaults door at once, like the composer's picks;
             a project being created has no row to write to yet. */}
         {project && (
-          <VoiceBackendField
-            value={form.voiceProvider}
-            onChange={(voiceProvider) => {
-              set({ voiceProvider })
-              saveProjectDefaults(settings, qc, project.id, { voiceProvider })
-            }}
+          <div className="@panel-sm:col-span-2">
+            <VoiceBackendField
+              value={form.voiceProvider}
+              onChange={(voiceProvider) => {
+                set({ voiceProvider })
+                saveProjectDefaults(settings, qc, project.id, { voiceProvider })
+              }}
+            />
+          </div>
+        )}
+    </div>
+  )
+  const actions = <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
+
+  /* A dialog has no room for a rail and nothing to jump to: just the one card. */
+  if (dialog) {
+    return (
+      <PageForm onSubmit={save}>
+        <FormSection label="Workspace">{fields}</FormSection>
+        {actions}
+      </PageForm>
+    )
+  }
+
+  /* A page: the kit's form shell — a jump rail beside the sections where the
+     panel is wide, above them where it is not. The save bar belongs to the
+     workspace form alone (the sections below carry forms of their own), so it
+     is the column's, not the page's: the rail is not under it. */
+  return (
+    <>
+      <FormPageHeader
+        title={project ? `Edit ${project.name}` : "New project"}
+        description="Configure the workspace, linked capabilities, and project knowledge."
+        onBack={() => onDone(null)}
+      />
+      <FormShell sections={SECTIONS}>
+        {project && (
+          <StatStrip
+            stats={[
+              { label: "Rules", value: ruleCount },
+              { label: "Helpers", value: project.helpers?.length ?? 0 },
+              { label: "Knowledge", value: knowledgeCount ?? "—" },
+              { label: "Preview", value: project.previewUrl ? "Set" : "None", tone: project.previewUrl ? "ok" : "default" },
+            ]}
           />
         )}
-      </FormSection>
-      <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
-      </PageForm>
-      {!dialog && (
-        <div className="mt-8 border-t pt-6 space-y-8">
-          <RulesSection project={project} />
-          <HelpersSection project={project} />
-          <KnowledgeSection project={project} />
-        </div>
-      )}
+        <PageForm onSubmit={save} className="@panel-lg:[&>footer]:mx-0 @panel-lg:[&>footer]:px-0">
+          <FormSection id="workspace" label="Workspace" hint="Name, where it lives on the server, and how it looks in the sidebar.">
+            {fields}
+          </FormSection>
+          {actions}
+        </PageForm>
+        <RulesSection project={project} />
+        <HelpersSection project={project} />
+        <KnowledgeSection project={project} />
+      </FormShell>
     </>
   )
 }
+
+const SECTIONS = [
+  { id: "workspace", label: "Workspace" },
+  { id: "rules", label: "Rules" },
+  { id: "helpers", label: "Helper commands" },
+  { id: "knowledge", label: "Knowledge base" },
+]
+
+/** A form block whose content is a table: the kit's heading without the card
+    `FormSection` would wrap it in, because the table is already a surface and
+    a frame inside a frame is two identical borders. */
+function Block({
+  id,
+  label,
+  hint,
+  action,
+  children,
+}: {
+  id: string
+  label: string
+  hint: string
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <section id={id} data-kit-block className="mt-8 scroll-mt-[calc(var(--app-header-h)+1rem)]">
+      <SectionHead label={label} hint={hint} action={action} />
+      <div className="min-w-0 space-y-3">{children}</div>
+    </section>
+  )
+}
+
+const Count = ({ n }: { n: number }) => <Badge variant="secondary" className="tabular-nums">{n}</Badge>
 
 /**
  * Standing instructions for threads started in this project, spawned after the
@@ -410,15 +578,17 @@ function RulesSection({ project }: { project: Project | null }) {
   }
 
   return (
-    <FormSection label="Rules">
+    <FormSection
+      id="rules"
+      label="Rules"
+      hint="Standing instructions for every thread started in this project, after the global rules."
+      action={projectId ? <Count n={rules.length} /> : undefined}
+    >
       {!projectId ? (
         <p className="text-xs text-muted-foreground">Save the project first to manage its rules.</p>
       ) : (
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Standing instructions for every thread started in this project, after the global rules.
-          </p>
-          {error && <Notice tone="error">{error.text}</Notice>}
+          <ErrorNote error={error} />
           {rules.length === 0 ? (
             <Empty>No rules for this project yet — add one below.</Empty>
           ) : (
@@ -431,7 +601,7 @@ function RulesSection({ project }: { project: Project | null }) {
                     placeholder="Rule title"
                     className="font-medium"
                   />
-                  <Button type="button" variant="ghost" size="icon-sm" title="Delete rule" onClick={() => remove(rule.id)}>
+                  <Button type="button" variant="ghost" size="icon-sm" className="shrink-0 pointer-coarse:size-11" title="Delete rule" aria-label={`Delete rule ${rule.title}`} onClick={() => remove(rule.id)}>
                     <Trash2 />
                   </Button>
                 </div>
@@ -446,7 +616,7 @@ function RulesSection({ project }: { project: Project | null }) {
             ))
           )}
           <div className="flex justify-end">
-            <Button type="button" size="sm" onClick={add} disabled={createRule.isPending}>
+            <Button type="button" size="sm" className="pointer-coarse:h-11" onClick={add} disabled={createRule.isPending}>
               <Plus /> Add rule
             </Button>
           </div>
@@ -481,67 +651,53 @@ function HelpersSection({ project }: { project: Project | null }) {
     }
   }
 
+  /* Stable columns and actions: the table memoises its rows against them, and
+     `remove` closes over the row being edited. */
+  /* The form sits below the table: Edit brings it into view. */
+  const formRef = React.useRef<HTMLDivElement>(null)
+  const edit = (h: HelperCommand) => {
+    setEditing(h)
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }))
+  }
+  const live = React.useRef({ remove, edit })
+  React.useLayoutEffect(() => {
+    live.current = { remove, edit }
+  })
+  const actions = React.useMemo<TableAction<HelperCommand>[]>(
+    () => [
+      { id: "edit", label: "Edit", icon: <Pencil />, onClick: (h) => live.current.edit(h) },
+      { id: "delete", label: "Delete", icon: <Trash2 />, tone: "danger", onClick: (h) => void live.current.remove(h.id) },
+    ],
+    [],
+  )
+
   return (
-    <FormSection label="Helper commands">
+    <Block
+      id="helpers"
+      label="Helper commands"
+      hint="Commands you can run from the project page’s header dropdown, in the project’s working directory."
+      action={projectId ? <Count n={helpers.length} /> : undefined}
+    >
       {!projectId ? (
         <p className="text-xs text-muted-foreground">Save the project first to manage helper commands.</p>
       ) : (
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Commands you can run from the project page&rsquo;s header dropdown. Run in the project&rsquo;s working directory.
-          </p>
+        <>
           {helpers.length === 0 ? (
             <Empty>No helper commands yet — add one below.</Empty>
           ) : (
-            <ul className={cn("max-h-64 divide-y divide-border/60 overflow-y-auto", INSET)}>
-              {helpers.map((h) => (
-                <li key={h.id} className="flex items-start gap-3 px-3 py-2">
-                  <SquareTerminal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium break-words">{h.name}</div>
-                    {h.description && (
-                      <div className="mt-0.5 text-xs break-words text-muted-foreground">
-                        {h.description}
-                      </div>
-                    )}
-                    <div className="mt-0.5 font-mono text-xs break-all text-muted-foreground">
-                      {h.command}
-                    </div>
-                    {(h.cwd || h.confirm || h.preview) && (
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                        {h.cwd && <span className="font-mono">cwd: {h.cwd}</span>}
-                        {h.preview && (
-                          <span className="inline-flex items-center gap-1 text-primary">
-                            <GlobeIcon className="size-3" /> starts the preview
-                          </span>
-                        )}
-                        {h.confirm && <span>asks first</span>}
-                      </div>
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Edit"
-                    onClick={() => setEditing(h)}
-                  >
-                    <Pencil />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Delete"
-                    onClick={() => void remove(h.id)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <DataTable
+              columns={HELPER_COLUMNS}
+              data={helpers}
+              getRowId={(h) => h.id}
+              pageSize={25}
+              maxHeight={420}
+              mark={() => <SquareTerminal />}
+              actions={actions}
+              emptyIcon={<SquareTerminal />}
+              emptyMessage="No helper commands."
+            />
           )}
-          <div className={cn("space-y-3 p-3", INSET)}>
+          <div ref={formRef} className={cn("space-y-3 p-3", INSET)}>
             <div className="text-xs font-medium">
               {editing ? "Edit helper command" : "New helper command"}
             </div>
@@ -553,11 +709,53 @@ function HelpersSection({ project }: { project: Project | null }) {
               onCancel={editing ? () => setEditing(null) : undefined}
             />
           </div>
-        </div>
+        </>
       )}
-    </FormSection>
+    </Block>
   )
 }
+
+const HELPER_COLUMNS: ColumnDef<HelperCommand, unknown>[] = [
+  {
+    id: "helper",
+    header: "Helper",
+    meta: { title: true, className: "min-w-56" },
+    cell: ({ row }) => (
+      <TitleCell
+        title={row.original.name}
+        subtitle={<span className="font-mono text-[11px]" title={row.original.command}>{row.original.command}</span>}
+      />
+    ),
+  },
+  {
+    id: "notes",
+    header: "Notes",
+    meta: { className: "hidden @panel-md:table-cell max-w-56" },
+    cell: ({ row }) => <span className="block truncate text-muted-foreground">{row.original.description}</span>,
+  },
+  {
+    id: "cwd",
+    header: "Runs in",
+    meta: { className: "hidden @panel-lg:table-cell max-w-40" },
+    cell: ({ row }) =>
+      row.original.cwd ? <span className="block truncate font-mono text-xs text-muted-foreground">{row.original.cwd}</span> : null,
+  },
+  {
+    id: "flags",
+    header: "Behaviour",
+    meta: { align: "end" },
+    cell: ({ row }) => (
+      <span className="inline-flex flex-wrap items-center justify-end gap-1">
+        {row.original.preview && (
+          <Badge variant="secondary" className="gap-1 text-primary">
+            <GlobeIcon className="size-3" /> preview
+          </Badge>
+        )}
+        {row.original.confirm && <Badge variant="secondary">asks first</Badge>}
+      </span>
+    ),
+  },
+]
 
 /**
  * The project's knowledge base, seen and edited by a person.
@@ -618,20 +816,52 @@ function KnowledgeSection({ project }: { project: Project | null }) {
     }
   }
 
+  const [query, setQuery] = React.useState("")
+  const needle = query.trim().toLowerCase()
+  const shown = React.useMemo(
+    () =>
+      needle
+        ? rows.filter((e) => `${e.title} ${e.content} ${e.tags.join(" ")}`.toLowerCase().includes(needle))
+        : rows,
+    [rows, needle],
+  )
+  const live = React.useRef({ remove })
+  React.useLayoutEffect(() => {
+    live.current = { remove }
+  })
+  const actions = React.useMemo<TableAction<KnowledgeEntry>[]>(
+    () => [
+      {
+        id: "delete",
+        label: "Delete",
+        icon: <Trash2 />,
+        tone: "danger",
+        onClick: (e) => void live.current.remove(e.id),
+      },
+    ],
+    [],
+  )
+
   return (
-    <FormSection label="Knowledge base">
+    <Block
+      id="knowledge"
+      label="Knowledge base"
+      hint="What the project has learned — the agent reads and writes the same entries."
+      action={
+        projectId ? (
+          <>
+            <Count n={rows.length} />
+            <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={() => void refetch()} disabled={busy}>
+              <RefreshCwIcon /> Refresh
+            </Button>
+          </>
+        ) : undefined
+      }
+    >
       {!projectId ? (
         <p className="text-xs text-muted-foreground">Save the project first to manage its knowledge base.</p>
       ) : (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Field label="Entries">
-              <span className="text-xs text-muted-foreground">{rows.length} saved</span>
-            </Field>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void refetch()} disabled={busy}>
-              <RefreshCwIcon /> Refresh
-            </Button>
-          </div>
+        <>
           {error && (
             <Notice tone="error">
               {error}{" "}
@@ -643,35 +873,31 @@ function KnowledgeSection({ project }: { project: Project | null }) {
           {rows.length === 0 ? (
             <Empty>No knowledge entries yet — add the first one below.</Empty>
           ) : (
-            <ul className={cn("max-h-64 divide-y divide-border/60 overflow-y-auto", INSET)}>
-              {rows.map((entry) => (
-                <li key={entry.id} className="flex items-start gap-3 px-3 py-2">
-                  <BookOpenIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium break-words">{entry.title}</div>
-                    <div className="mt-0.5 line-clamp-2 text-xs break-words text-muted-foreground">{entry.content}</div>
-                    {entry.tags.length > 0 && (
-                      <div className="mt-1 text-[11px] text-muted-foreground">{entry.tags.join(", ")}</div>
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Delete"
-                    disabled={busy}
-                    onClick={() => void remove(entry.id)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <DataTable
+              columns={KNOWLEDGE_COLUMNS}
+              data={shown}
+              getRowId={(e) => e.id}
+              pageSize={25}
+              maxHeight={420}
+              mark={() => <BookOpenIcon />}
+              actions={actions}
+              emptyIcon={<BookOpenIcon />}
+              emptyMessage={`Nothing matches “${query.trim()}”.`}
+              filtering={{
+                search: { value: query, onChange: setQuery, placeholder: "Search knowledge..." },
+                totalCount: rows.length,
+              }}
+            />
           )}
           <form onSubmit={add} className={cn("space-y-4 p-3", INSET)}>
-            <Field label="Title">
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What this is about" required />
-            </Field>
+            <div className="grid gap-4 @panel-sm:grid-cols-2">
+              <Field label="Title">
+                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What this is about" required />
+              </Field>
+              <Field label="Tags" hint="Comma-separated, optional.">
+                <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="api, auth, deploy" />
+              </Field>
+            </div>
             <Field label="Content">
               <Textarea
                 value={content}
@@ -681,17 +907,31 @@ function KnowledgeSection({ project }: { project: Project | null }) {
                 required
               />
             </Field>
-            <Field label="Tags" hint="Comma-separated, optional.">
-              <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="api, auth, deploy" />
-            </Field>
             <div className="flex justify-end">
-              <Button type="submit" size="sm" disabled={saving || busy}>
+              <Button type="submit" size="sm" className="pointer-coarse:h-11" disabled={saving || busy}>
                 <Plus /> {saving ? "Adding…" : "Add entry"}
               </Button>
             </div>
           </form>
-        </div>
+        </>
       )}
-    </FormSection>
+    </Block>
   )
 }
+
+const KNOWLEDGE_COLUMNS: ColumnDef<KnowledgeEntry, unknown>[] = [
+  {
+    id: "entry",
+    header: "Entry",
+    meta: { title: true, className: "min-w-56" },
+    cell: ({ row }) => <TitleCell title={row.original.title} subtitle={row.original.content} />,
+  },
+  {
+    id: "tags",
+    header: "Tags",
+    meta: { className: "hidden @panel-md:table-cell max-w-48" },
+    cell: ({ row }) => (
+      <span className="block truncate text-xs text-muted-foreground">{row.original.tags.join(", ")}</span>
+    ),
+  },
+]

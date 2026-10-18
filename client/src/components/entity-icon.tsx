@@ -25,6 +25,7 @@ import {
   GlobeIcon,
   TerminalIcon,
   UsersIcon,
+  VideoIcon,
   WorkflowIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -138,6 +139,7 @@ const BUILTIN_MCP_MARKS = {
   agents: UsersIcon,
   harness: WrenchIcon,
   browser: AppWindowIcon,
+  video: VideoIcon,
 } as const
 
 /** A server's own image when supplied, otherwise the one the harness fetched

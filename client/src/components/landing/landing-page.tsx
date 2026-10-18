@@ -49,6 +49,7 @@ import {
   threadPath,
 } from "@/lib/router"
 import { useSessionMeta, useThread } from "@/lib/store"
+import { endVoiceCall } from "@/lib/voice-call"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { cn } from "@/lib/utils"
 import type { SettingsSectionId } from "@/components/settings/sections"
@@ -151,11 +152,36 @@ function LandingComposer({ actions }: { actions: Actions }) {
   const thread = useThread(sessionId)
   const delivery = useAttachmentDelivery(meta, thread)
 
+  /* Voice mode is the composer's own (its bar rides beside the pill). A first
+     message *spoken* reaches `actions.send` without the box's `beforeSend`, so
+     nothing has navigated: the draft simply stops being one. That is a send
+     like any other — mark it, so the cleanup below does not delete the thread
+     it created, and open it, which is where the conversation is drawn. */
+  const created = !!meta && !meta.draft
+  React.useEffect(() => {
+    if (!sessionId || !created || sent.current) return
+    sent.current = true
+    void navigate(threadPath(sessionId))
+  }, [created, sessionId, navigate])
+
+  /* The call goes with this console's draft — except on the way out of a send,
+     where the thread view mounting in that same commit takes it over.
+     `useVoiceCallLifetime` cannot be the one tying them: it counts mounted
+     views of the thread, and the count would reach zero in the frame between
+     this page unmounting and that one mounting, ending a call mid-send. */
+  React.useEffect(() => {
+    const id = sessionId
+    return () => {
+      if (!sent.current) endVoiceCall(id)
+    }
+  }, [sessionId])
+
   return (
     /* The empty thread's own centring, which is most of what this page is: two
-       spacer rows of equal weight with the composer between them. `@container`
-       because the composer and its shelf are written in the `@panel-*` queries
-       the dock declares for them, and this page is not in the dock. */
+       spacer rows of equal weight with the whole console — greeting, box and
+       the quick actions under it — between them. `@container` because the
+       composer and its shelf are written in the `@panel-*` queries the dock
+       declares for them, and this page is not in the dock. */
     <div className="@container grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)] pt-[var(--app-header-h)]">
       <span aria-hidden />
       {/* Nothing on this page scrolls, so the browser has nothing to scroll a
@@ -172,6 +198,9 @@ function LandingComposer({ actions }: { actions: Actions }) {
             thread={thread}
             meta={meta}
             delivery={delivery}
+            /* The console draws the call above the box, so it asks for the
+               button the same way a thread view does. */
+            voiceCall
             /* This page is the box: nothing else on it can be typed into, and
                its draft is not the routed thread, so the composer's own rule
                (focus a routed draft) never fired here. */

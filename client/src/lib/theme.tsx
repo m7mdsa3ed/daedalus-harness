@@ -206,14 +206,17 @@ function applyFontSize(px: number) {
   document.documentElement.style.fontSize = `${px}px`
 }
 
-/** UI density in percent — scales Tailwind's --spacing unit (default 0.25rem),
-    so paddings/gaps/heights tighten or relax without touching text size. */
+/** UI scale in percent — scales Tailwind's --spacing unit (default 0.25rem),
+    so paddings/gaps/heights tighten or relax without touching text size. It is
+    written as `--app-scale`, a multiplier, and `--spacing` is derived from it
+    (index.css) so a theme's own density (`--spacing` in its block) composes
+    with the reader's scale instead of being overwritten by an inline value. */
 export const SCALE_DEFAULT = 100
 export const SCALE_MIN = 70
 export const SCALE_MAX = 200
 
 function applyScale(pct: number) {
-  document.documentElement.style.setProperty("--spacing", `${(0.25 * pct) / 100}rem`)
+  document.documentElement.style.setProperty("--app-scale", String(pct / 100))
 }
 
 /* One store per knob, outside React. The settings sliders and the command

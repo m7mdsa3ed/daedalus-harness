@@ -858,10 +858,9 @@ export async function readFileBytes(
   const absolute = resolveInProject(root, path);
   const stat = await statOfAsync(absolute);
   if (stat.isDirectory()) throw fail(400, "not a file");
-  if (stat.size > MAX_READ_BYTES) throw fail(413, "file is too large to read");
-
   const ext = absolute.toLowerCase().split(".").pop() ?? "";
-  const contentType = IMAGE_TYPES[ext] ?? "application/octet-stream";
+  if (stat.size > (ext in VIDEO_TYPES ? MAX_VIDEO_BYTES : MAX_READ_BYTES)) throw fail(413, "file is too large to read");
+  const contentType = IMAGE_TYPES[ext] ?? VIDEO_TYPES[ext] ?? "application/octet-stream";
   return { bytes: await readFileBufferAsync(absolute), contentType, path: relativePath(root, absolute) };
 }
 
@@ -878,6 +877,17 @@ const IMAGE_TYPES: Record<string, string> = {
   ico: "image/x-icon",
   svg: "image/svg+xml",
 };
+
+/** Video for the Preview panel's player. Its own ceiling: a product-video draft
+    aims under 24 MB (docs/video.md), far past the 2 MB a text read allows. */
+const VIDEO_TYPES: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  ogv: "video/ogg",
+};
+const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
 export async function writeFile(
   projectId: string,

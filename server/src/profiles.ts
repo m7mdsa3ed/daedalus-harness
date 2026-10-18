@@ -79,6 +79,11 @@ export const ProfileInputSchema = z.object({
   /** Seconds the gateway shim waits for this provider's response headers
       (db/schema.ts). Null/absent = the shim's default. */
   upstreamTimeoutSeconds: z.number().int().min(10).max(3600).nullish(),
+  /** Extra headers the gateway shim adds upstream for this profile
+      (gateway-shim.ts, `profiles.headers` in db/schema.ts). Declared here or
+      Zod strips it on save and the headers are gone the moment the form is
+      submitted — the trap `group` fell into. */
+  headers: z.array(z.object({ name: z.string().min(1), value: z.string() })).nullish(),
   /** Kept but not offered when starting a new thread — see `profiles.hidden`
       and `profiles.disabled` in db/schema.ts. Defaulted, so a payload from a
       client that predates the flags shows the profile rather than failing the

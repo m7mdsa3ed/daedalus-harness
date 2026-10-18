@@ -4,6 +4,7 @@
    `ThreadStatus` is the turn's caller. Not a reading in the footer's
    cluster — this one lives in the transcript, where the turn is. */
 import { Logo } from "@/components/ui/logo"
+import { ShimmerWave } from "@/components/ui/shimmer-wave"
 import { runningAgents } from "@/components/composer/agents-indicator"
 import { toolHeading, toolKindOf } from "@/lib/tools"
 import { type ThreadState } from "@/lib/store"
@@ -175,24 +176,18 @@ export function PhaseLine({
     >
       {/* size-4 sits on the step row's 1.5rem line box. */}
       <Logo working={!still && tone === "normal"} className="size-4 shrink-0" />
-      {/* ponytail: one flat text node — the shimmer paints a background clipped to
-          text, and background-image doesn't inherit, so a nested span goes blank.
-          That constraint is also why the swap below is a transition and not an
-          animation: `animation` is one shorthand per element and the shimmer
-          already owns it here, and the fix cannot be to nest a span. See
-          `harness-phase-swap` in index.css.
+      {/* The wave animates each letter, never this span, so the swap below keeps
+          this span's transition to itself (`harness-phase-swap` in index.css — written
+          when the sweep owned `animation` here and a nested span went blank).
           leading-6 matches a step row's line box, so the line keeps the
           transcript's vertical rhythm. */}
       <span
         key={text}
         aria-hidden
-        className={cn(
-          "harness-phase-swap min-w-0 truncate text-xs leading-6",
-          !still && "harness-shimmer",
-        )}
+        className="harness-phase-swap min-w-0 truncate text-xs leading-6"
         title={still ? text : undefined}
       >
-        {text}
+        {still ? text : <ShimmerWave text={text} />}
       </span>
     </div>
   )

@@ -365,6 +365,9 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                sliders beside it (`HEADER_CHIP`, the same token), because all
                three stand on the one line; on a docked strip it is the row minus
                the 2px of air the cell keeps above and below it. */
+            /* Fully round (`--dock-corner` is the pill, `index.css`), the same
+               shape as the sidebar toggle and the strip's own buttons — a
+               control on the strip's line, not a miniature card. */
             "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-1.5 pl-2.5 text-[13px] leading-4",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
@@ -403,7 +406,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               so the title owns the whole of the tab's width. What they cover
               when they appear, the title no longer says — it fades under them
               instead, and to the same width the pin takes when there is one. */}
-          <span data-tab-controls className="absolute inset-y-0 right-1 flex items-center">
+          <span data-tab-controls className="absolute inset-y-0 right-(--frame-p) flex items-center">
             {/* One array, two surfaces: this and the right-click (long-press on
                 a touch screen). A context menu is a gesture you have to already
                 know is there, and on a touch screen it competes with the drag
@@ -466,7 +469,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
    in a 28px chip is a button, and two rounded squares at the end of a rounded
    rectangle is a tab made of three rounded rectangles. */
 const TAB_CONTROL =
-  "size-[var(--dock-control-h)] shrink-0 rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:bg-foreground/15"
+  "size-[var(--dock-control-h)] shrink-0 rounded-inner text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:bg-foreground/15"
 
 /**
  * A tab's close / unpin control.

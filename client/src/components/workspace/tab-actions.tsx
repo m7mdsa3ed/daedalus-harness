@@ -33,17 +33,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogClose, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useStoreSelect } from "@/lib/store"
 import { useIsMobile } from "@/hooks/use-device"
-import { STRIP_GROUND } from "@/lib/header-chrome"
+import { HEADER_CHIP } from "@/lib/header-chrome"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
-import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
+import { PANEL_ICONS, PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import type { PresetId } from "@/components/workspace/dock-context"
 import { LAYOUT_PRESETS, WorkspacePanelItems } from "@/components/workspace/panel-items"
-import { useDock, useDockOpeners } from "@/components/workspace/dock-context"
+import { descriptorOf, useDock, useDockOpeners } from "@/components/workspace/dock-context"
 import { useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, isListed, relativeAge } from "@/lib/settings"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
@@ -60,18 +60,11 @@ const LIST_FROM = 3
 /** Fired by a downward drag on the phone strip (`dock-surface.tsx`). */
 export const TAB_GRID_EVENT = "daedalus:tab-grid"
 
-/* The strip's own two controls: bare glyphs, like the header's (`HEADER_CHIP`
-   beside them) and like the tab's mark, on the one line-height everything in a
-   strip takes (`--dock-chip-h` in `index.css`). They were `size-6` in a 32px
-   bar — a 24px target to hit for the two controls a strip is used through, and
-   the third height in a row that had one. */
-const STRIP_CONTROL = cn(
-  "size-[var(--dock-chip-h)] rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:bg-foreground/15",
-  /* On a phone they wear the header controls' ground for the same reason those
-     do — the strip is an overlay over a moving transcript there. One recipe,
-     named once (`lib/header-chrome.ts`). */
-  STRIP_GROUND
-)
+/* The strip's own two controls are the sidebar toggle, exactly: the same
+   ghost `Button` at `icon-sm`, the same `HEADER_CHIP` (round, `ring-edge` +
+   `shadow-glass`, the composer's ground on a phone), the same foreground glyph
+   at 16px. One recipe, so the toggle, the + and the switcher cannot drift. */
+const STRIP_CONTROL = HEADER_CHIP
 
 function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
   const kind = panel.api.component
@@ -169,83 +162,103 @@ function TabGrid({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             title={`Switch tabs (${panels.length})`}
-            className={cn(STRIP_CONTROL, "grid place-items-center")}
+            aria-label={`Switch tabs, ${panels.length} open`}
+            className={STRIP_CONTROL}
           />
         }
       >
-        <span className="grid size-5 place-items-center rounded-[6px] border-[1.5px] border-current text-[11px] font-semibold leading-none tabular-nums">
-          {panels.length}
-        </span>
+        {/* The count is the glyph: bare, like the toggle's icon, never a tile. */}
+        <span className="text-[13px] leading-none font-semibold tabular-nums">{panels.length}</span>
       </DialogTrigger>
-      <DialogContent className="flex h-[calc(var(--float-h)-1rem)] w-[calc(var(--float-w)-1rem)] max-w-none flex-col gap-0 overflow-hidden p-0">
-        <DialogTitle className="sr-only">{`${panels.length} tabs`}</DialogTitle>
-        <div className="flex h-12 shrink-0 items-center pr-14 pl-4">
-          <span className="text-base font-semibold">
-            Tabs <span className="ml-1 text-sm font-normal text-muted-foreground tabular-nums">{panels.length}</span>
+      <DialogContent
+        showCloseButton={false}
+        className="flex h-[calc(var(--float-h)-1rem)] w-[calc(var(--float-w)-1rem)] max-w-none flex-col gap-0 overflow-hidden p-0"
+      >
+        <header className="flex shrink-0 items-center gap-2 border-b border-border/60 py-2.5 pr-2 pl-4">
+          <DialogTitle className="text-base font-semibold tracking-tight">Tabs</DialogTitle>
+          <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[11px] leading-none font-semibold text-muted-foreground tabular-nums">
+            {panels.length}
           </span>
-          {/* The same tidy-up the desktop list carries, for the strip a phone
-              folds to one tab: the grid is the only place the others are, so it
-              is the only place the group can be closed from. Closing the grid
-              first keeps the panel from standing over a dock that is now empty. */}
-          {panels.length > 1 && (
+          <div className="ml-auto flex items-center gap-0.5">
+            {/* The same tidy-up the desktop list carries, for the strip a phone
+                folds to one tab: the grid is the only place the others are, so it
+                is the only place the group can be closed from. Closing the grid
+                first keeps the panel from standing over a dock that is now empty. */}
+            {panels.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  onCloseAll()
+                }}
+                className="rounded-full px-3 py-1.5 text-[13px] font-medium text-muted-foreground active:bg-foreground/10"
+              >
+                Close all
+              </button>
+            )}
+            <DialogClose
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close tabs"
+                  className="text-muted-foreground"
+                />
+              }
+            >
+              <XIcon className="size-4" />
+            </DialogClose>
+          </div>
+        </header>
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 py-2">
+          {panels.map((panel) => (
+            <TabCard key={panel.id} panel={panel} onPick={() => setOpen(false)} onClose={() => onClose(panel.id)} />
+          ))}
+          {recent.length > 0 && (
+            <>
+              <div className="mt-3 flex h-6 items-center gap-1.5 px-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                <HistoryIcon className="size-3" />
+                Recent
+              </div>
+              {recent.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    onOpenThread(s.id)
+                  }}
+                  className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left active:bg-foreground/5"
+                >
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{s.title || "Untitled thread"}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {relativeAge(activityAt(s))}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+        {onNew && (
+          <footer className="shrink-0 border-t border-border/60 p-2">
             <button
               type="button"
               onClick={() => {
                 setOpen(false)
-                onCloseAll()
+                onNew()
               }}
-              className="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground active:bg-sidebar-accent/60"
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground/5 text-sm font-medium text-foreground active:bg-foreground/10"
             >
-              Close all
+              <PlusIcon className="size-4" />
+              New tab
             </button>
-          )}
-        </div>
-        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-16">
-          {panels.map((panel) => (
-            <TabCard key={panel.id} panel={panel} onPick={() => setOpen(false)} onClose={() => onClose(panel.id)} />
-          ))}
-                {recent.length > 0 && (
-                  <>
-                    <div className="mt-2 flex h-7 items-center gap-1.5 px-2 text-[11px] font-bold tracking-[0.06em] text-foreground/80 uppercase">
-                      <HistoryIcon className="size-3" />
-                      Recent
-                    </div>
-                    {recent.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => {
-                          setOpen(false)
-                          onOpenThread(s.id)
-                        }}
-                        className="flex h-10 items-center gap-2 rounded-lg px-2 text-left active:bg-sidebar-accent/60"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-[13px]">{s.title || "Untitled thread"}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                          {relativeAge(activityAt(s))}
-                        </span>
-                      </button>
-                    ))}
-                  </>
-                )}
-        </div>
-              {onNew && (
-                <button
-                  type="button"
-                  aria-label="New tab"
-                  onClick={() => {
-                    setOpen(false)
-                    onNew()
-                  }}
-                  className="absolute right-4 bottom-4 flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-lg active:scale-95"
-                >
-                  <PlusIcon className="size-4" />
-                  New tab
-                </button>
-              )}
+          </footer>
+        )}
       </DialogContent>
     </Dialog>
   )
@@ -254,12 +267,22 @@ function TabGrid({
 function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: () => void; onClose: () => void }) {
   const kind = panel.api.component
   const Icon = isPanelKind(kind) ? PANEL_ICONS[kind] : null
+  /* The *open* panel's mark, not the kind's: a chat wears its agent and its
+     project, a page the mark its sidebar row wears — the same `PanelIcon` the
+     tab in the strip carries, so a row and the tab it stands for agree. The kind
+     glyph is the fallback for a panel whose params did not parse. */
+  const descriptor = descriptorOf(panel)
   const title = panel.title ?? (isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : "Panel")
   const status = usePanelStatus(panel.id)
   const pinned = usePanelPinned(panel.id)
   const active = panel.api.isActive
   return (
-    <div className={cn("flex h-10 items-center rounded-lg", active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "active:bg-sidebar-accent/60")}>
+    <div
+      className={cn(
+        "flex min-h-12 items-center rounded-xl transition-colors",
+        active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "active:bg-foreground/5"
+      )}
+    >
       <button
         type="button"
         aria-current={active ? "true" : undefined}
@@ -267,22 +290,30 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
           panel.api.setActive()
           onPick()
         }}
-        className="flex h-10 min-w-0 flex-1 items-center gap-2 px-2 text-left"
+        className="flex min-h-12 min-w-0 flex-1 items-center gap-2.5 pr-1 pl-3 text-left"
       >
-        {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" />}
-        <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-[13px]", status?.tone === "running" && "harness-shimmer")}>{title}</span>
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          {descriptor ? <PanelIcon panel={descriptor} className="size-4" /> : Icon && <Icon className="size-4 text-muted-foreground" />}
+        </span>
+        <span className={cn("min-w-0 flex-1 truncate text-[13px]", status?.tone === "running" && "harness-shimmer")}>
+          {title}
         </span>
         <PanelStatusDot status={status} />
       </button>
+      {/* Pinned rows keep the pin instead of a ✕ — the trade the strip's own list
+          makes too. The ✕ stands *beside* the switch button rather than inside
+          it, so closing a tab never switches to it on the way out. */}
       {pinned ? (
-        <PinIcon aria-label="Pinned" className="mx-3 size-3.5 shrink-0 text-muted-foreground" />
+        <PinIcon aria-label="Pinned" className="mr-3 size-3.5 shrink-0 text-muted-foreground" />
       ) : (
         <button
           type="button"
           aria-label={`Close ${title}`}
           onClick={onClose}
-          className="grid size-10 shrink-0 place-items-center text-muted-foreground"
+          className={cn(
+            "mr-1.5 grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground active:bg-foreground/10",
+            active && "text-sidebar-accent-foreground/70"
+          )}
         >
           <XIcon className="size-4" />
         </button>
@@ -343,12 +374,12 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
                 <DropdownMenuTrigger
                   render={
                     <Button
-                      size="icon-xs"
+                      size="icon-sm"
                       variant="ghost"
                       aria-label="Open something in this group"
                       className={STRIP_CONTROL}
                     >
-                      <PlusIcon className="size-3.5" />
+                      <PlusIcon className="size-4" />
                     </Button>
                   }
                 />
@@ -402,12 +433,12 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
               <DropdownMenuTrigger
                 render={
                   <Button
-                    size="icon-xs"
+                    size="icon-sm"
                     variant="ghost"
                     aria-label="All tabs in this group"
                     className={STRIP_CONTROL}
                   >
-                    <ChevronDownIcon className="size-3.5" />
+                    <ChevronDownIcon className="size-4" />
                   </Button>
                 }
               />

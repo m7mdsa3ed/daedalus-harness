@@ -5,6 +5,8 @@ import {
   VOICE_PROVIDERS,
   VoiceInputSchema,
   deleteVoiceProvider,
+  executeVoiceMcpTool,
+  getVoiceMcpTool,
   listVoiceProviders,
   saveVoiceProvider,
   voiceSetup,
@@ -51,13 +53,35 @@ export function voiceRoutes(app: Hono, deps: { sessions: SessionManager }): void
      no Authorization header, so the bearer rides `?token=` like a socket's.
      Its body (`{ sessionConfig }`) is ignored on purpose: the session is the
      server's, bound into the token. `?provider=` picks a backend; without it,
-     `?sessionId=` resolves project, then profile, then the default. A provider that refuses is a 502 with its own words. */
+     `?sessionId=` resolves project, then profile, then the default. MCP
+     servers and instructions come from the voice provider's own stored row —
+     voice settings, not thread links. A provider that refuses is a 502 with
+     its own words. */
   app.post("/api/voice/setup", async (c) => {
     const provider = c.req.query("provider") || undefined;
     if (provider !== undefined && !isProvider(provider)) return c.json({ error: "unknown provider" }, 404);
     try {
       const session = sessions.get(c.req.query("sessionId") ?? "");
-      return c.json(await voiceSetup(provider, session && { projectId: session.projectId, profileId: session.profileId }));
+      return c.json(
+        await voiceSetup(provider, session && { projectId: session.projectId, profileId: session.profileId }),
+      );
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  });
+
+  /* Execute one MCP tool call for a voice call. The browser posts here when the
+     realtime model calls an `mcp__` tool; the answer rides back through
+     `addToolOutput`. */
+  app.post("/api/voice/mcp/call", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const { key, args } = body as { key?: string; args?: unknown };
+    if (!key) return c.json({ error: "key is required" }, 400);
+    const entry = getVoiceMcpTool(key);
+    if (!entry) return c.json({ error: `unknown MCP tool ${key}` }, 404);
+    try {
+      const result = await executeVoiceMcpTool(entry.server, entry.toolName, args ?? {});
+      return c.json({ ok: true, result });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
     }

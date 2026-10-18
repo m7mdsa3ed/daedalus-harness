@@ -117,15 +117,18 @@ import {
   workflowAgentResult,
 } from "@/lib/tools"
 import { buildRows } from "@/lib/transcript-rows"
-import type { Row, SubagentGroup, ToolGroup, ToolRunGroup } from "@/lib/transcript-rows"
+import type { Row, SubagentGroup, ToolGroup, ToolRunGroup, WorkFold } from "@/lib/transcript-rows"
 import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { toolVariantOf, useViewOptionsContext } from "@/lib/view-options"
 import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import type { SubagentCall } from "@/lib/tools"
 import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
+import { ShimmerWave } from "@/components/ui/shimmer-wave"
+import { BranchGutter, gutterWidth } from "@/components/thread-items/branch-gutter"
+import { layoutRun } from "@/lib/tool-graph"
 
 
 export const ToolRun = React.memo(function ToolRun({
@@ -224,6 +227,28 @@ export const ToolRun = React.memo(function ToolRun({
     shown.current = new Set(showing.map((item) => item.id))
   })
 
+  /* The Branch layout draws the run as a commit graph instead of the elbow
+     rail: lanes from the steps' own timing (`lib/tool-graph.ts`). */
+  const branch = view.toolLayout === "branch"
+  const branchVariant = toolVariantOf("branch", view.toolVariant)
+  const graph = React.useMemo(
+    () =>
+      branch
+        ? layoutRun(
+            showing.map((item) =>
+              item.kind === "tool"
+                ? {
+                    start: item.startedAt,
+                    end: item.endedAt ?? (item.status === "in_progress" || item.status === "pending" ? undefined : item.startedAt),
+                  }
+                : {}
+            )
+          )
+        : null,
+    [branch, showing]
+  )
+  const gutter = graph ? gutterWidth(Math.max(0, ...graph.map((row) => row.lane)), branchVariant) : 0
+
   return (
     <StepDirContext.Provider value={dir}>
     <div dir={dir}>
@@ -278,9 +303,9 @@ export const ToolRun = React.memo(function ToolRun({
             className="overflow-hidden"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
-            <div className={RUN_RAIL_CLASS}>
+            <div className={branch ? "ms-[calc(0.75rem-1px)] space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
             {hidden > 0 && (
-              <div className={RAIL_THROUGH}>
+              <div className={branch ? undefined : RAIL_THROUGH} style={branch ? { paddingInlineStart: gutter } : undefined}>
                 <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
               </div>
             )}
@@ -289,13 +314,22 @@ export const ToolRun = React.memo(function ToolRun({
             {showing.map((item, index) => (
               <div
                 key={item.id}
-                style={stagger(entranceIndex.get(item.id) ?? -1)}
+                style={{ ...stagger(entranceIndex.get(item.id) ?? -1), ...(branch ? { paddingInlineStart: gutter } : null) }}
                 className={cn(
                   !already.has(item.id) && "harness-item-in",
-                  RAIL_ELBOW,
-                  index < showing.length - 1 && RAIL_TAIL
+                  branch ? "relative flow-root" : RAIL_ELBOW,
+                  !branch && index < showing.length - 1 && RAIL_TAIL
                 )}
               >
+                {graph && (
+                  <BranchGutter
+                    row={graph[index]}
+                    width={gutter}
+                    variant={branchVariant}
+                    status={item.kind === "tool" ? item.status : "completed"}
+                    last={index === showing.length - 1}
+                  />
+                )}
                 {/* Nested rows retain their own same-view fold; direct items use
                     the ordinary step renderer and preserve a live thought tail. */}
                 {item.kind === "run" ? (
@@ -363,6 +397,8 @@ export const RowView = React.memo(function RowView({
     return <ToolRun items={row.items} nestedRows={row.children} showTimestamps={showTimestamps} tail={streaming} />
   if (row.kind === "shell-run")
     return <ShellRun items={row.items} showTimestamps={showTimestamps} />
+  if (row.kind === "work-fold")
+    return <WorkFoldRow row={row} showTimestamps={showTimestamps} streaming={streaming} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
   if (row.kind === "workflow-group")
     return <WorkflowRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
@@ -384,6 +420,122 @@ export const RowView = React.memo(function RowView({
   )
 })
 RowView.displayName = "RowView"
+
+/** The tools a fold's own level holds — inside its runs and tool groups, but
+    never inside a subagent or a workflow, which say what they did themselves.
+    What the fold's counting line is summed from. */
+function surfaceTools(rows: Row[]): ToolItem[] {
+  const out: ToolItem[] = []
+  for (const row of rows) {
+    if (row.kind === "tool") out.push(row)
+    else if (row.kind === "run")
+      out.push(...row.items.filter((item): item is ToolItem => item.kind === "tool"))
+    else if (row.kind === "tool-group") out.push(...collectTools(row.children))
+  }
+  return out
+}
+
+/**
+ * The work between two things said, folded into one line (`answersOnly`,
+ * view-options). Collapsed by default and only ever opened by hand — this is
+ * the one fold whose entire job is to not be read.
+ *
+ * It draws its rows back through `RowView`, which is what makes opening it
+ * give the transcript back: the same steps, rails, cards and prose, re-shaped
+ * by nothing. That recursion is also why it lives here, in the cluster that
+ * may not come apart.
+ */
+const WorkFoldRow = React.memo(function WorkFoldRow({
+  row,
+  showTimestamps,
+  streaming,
+}: {
+  row: WorkFold
+  showTimestamps?: boolean
+  /** The fold holds the transcript's tail and the turn is still open — its
+      counting line speaks while the work is being written. */
+  streaming?: boolean
+}) {
+  const view = useViewOptionsContext()
+  const systemReducedMotion = useReducedMotion()
+  const reduceMotion = view.calmMotion || systemReducedMotion
+  const [open, setOpen] = React.useState(false)
+  const railRef = React.useRef<HTMLDivElement>(null)
+  const rows = row.rows
+  const tools = surfaceTools(rows)
+  const failed = tools.filter((tool) => tool.status === "failed").length
+  const summary = summarise(tools)
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted/40"
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
+            open && "rotate-90"
+          )}
+        />
+        <RunAvatarStack items={tools} />
+        {/* English UI words, isolated: in an RTL fold "2 files" would otherwise
+            reorder into "files 2". */}
+        <span
+          dir="auto"
+          className={cn(
+            "min-w-0 flex-1 truncate text-xs leading-6 text-left text-muted-foreground",
+            streaming && "harness-shimmer"
+          )}
+        >
+          {summary.length > 0 ? (
+            <RunSummary summary={summary} />
+          ) : (
+            <>
+              <span className="text-foreground/80">{rows.length}</span> {pluralNoun("step", rows.length)}
+            </>
+          )}
+        </span>
+        <StepMeta parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <m.div
+            key="work-fold-clip"
+            ref={railRef}
+            initial={reduceMotion ? false : { height: 0 }}
+            animate={{ height: "auto" }}
+            exit={{ height: 0, transition: reduceMotion ? { duration: 0 } : DISCLOSE_EXIT }}
+            transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+            onAnimationStart={() => {
+              if (railRef.current) railRef.current.style.overflow = "hidden"
+            }}
+            onAnimationComplete={(definition) => {
+              if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
+            }}
+            className="overflow-hidden"
+          >
+            {/* The rail's spacing lives inside the clip, so it collapses with it. */}
+            <div className={RUN_RAIL_CLASS}>
+              {rows.map((inner, index) => (
+                <div key={inner.id} className={cn(RAIL_ELBOW, index < rows.length - 1 && RAIL_TAIL)}>
+                  <RowView
+                    row={inner}
+                    showTimestamps={showTimestamps}
+                    streaming={streaming && index === rows.length - 1}
+                  />
+                </div>
+              ))}
+            </div>
+          </m.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+})
+WorkFoldRow.displayName = "WorkFoldRow"
 
 /**
  * A subagent: the step that launched it, with everything it did underneath.
@@ -757,7 +909,7 @@ function SubagentTranscript({
           className="flex items-center gap-2 px-1.5 py-0.5 text-[11px] leading-6 text-primary"
         >
           <Logo working className="size-3.5 shrink-0" />
-          <span className="harness-shimmer">{rows.length === 0 ? "Starting…" : "Working…"}</span>
+          <ShimmerWave text={rows.length === 0 ? "Starting…" : "Working…"} />
         </div>
       )}
     </div>
@@ -861,7 +1013,10 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           <Message align="end" className="flex-col items-end gap-0.5 py-2">
             <MessageContent>
               <Bubble variant="tinted" align="end">
-                <BubbleContent dir="auto" className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm">
+                <BubbleContent
+                  dir="auto"
+                  className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm [&_.chip]:bg-background/70 [&_.chip]:ring-1 [&_.chip]:ring-foreground/10 [&_.chip:hover]:bg-background"
+                >
                   {/* Above the prose, inside the same tinted bubble: what was
                       attached is part of the message, not a note beside it. */}
                   {item.attachments && item.attachments.length > 0 && (
@@ -1158,6 +1313,7 @@ const ToolStep = React.memo(function ToolStep({
               : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
       }
       toolLayout={view.toolLayout}
+      toolVariant={view.toolVariant}
       target={heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
          typed is still in the body, which is where it is read once the line

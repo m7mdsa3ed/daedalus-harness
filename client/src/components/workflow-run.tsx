@@ -83,6 +83,7 @@ export function collectTools(rows: Row[]): ToolItem[] {
       out.push(...collectTools(row.children))
     } else if (row.kind === "workflow-group" || row.kind === "subagent-batch")
       out.push(...collectTools(row.steps))
+    else if (row.kind === "work-fold") out.push(...collectTools(row.rows))
   }
   return out
 }

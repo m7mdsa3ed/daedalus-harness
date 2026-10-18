@@ -55,11 +55,12 @@ export interface FilePreviewValue {
 export const FilePreviewContext = React.createContext<FilePreviewValue | null>(null)
 
 /** How a file is drawn, by its extension. */
-export type PreviewKind = "image" | "pdf" | "html" | "markdown" | "office" | "csv" | "text"
+export type PreviewKind = "image" | "video" | "pdf" | "html" | "markdown" | "office" | "csv" | "text"
 
 const KINDS: Record<string, PreviewKind> = {
   png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image",
   avif: "image", bmp: "image", ico: "image", svg: "image",
+  mp4: "video", m4v: "video", mov: "video", webm: "video", ogv: "video",
   pdf: "pdf",
   html: "html", htm: "html",
   csv: "csv", tsv: "csv",

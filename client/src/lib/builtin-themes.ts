@@ -1,5 +1,9 @@
-/* The themes that ship in styles/themes.css, in gallery order. Default is the
-   only one, and it is shadcn's stock palette: everything else is user-made. */
+/* The themes that ship with the app, in gallery order. Default is shadcn's stock
+   palette (styles/themes.css); the rest are the product-inspired schemes in
+   lib/color-schemes.ts, whose CSS custom-themes.ts writes at load. Everything
+   else is user-made. */
+
+import { COLOR_SCHEMES } from "./color-schemes"
 
 export interface BuiltinTheme {
   value: string
@@ -10,4 +14,5 @@ export interface BuiltinTheme {
 
 export const BUILTIN_THEMES: readonly BuiltinTheme[] = [
   { value: "default", label: "Default", note: "shadcn's stock palette, soft corners, frosted surfaces." },
+  ...COLOR_SCHEMES.map(({ id, label, note }) => ({ value: id, label, note })),
 ]

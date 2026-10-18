@@ -23,9 +23,9 @@
      Code                — how a diff or a code block is drawn
      Motion              — what moves on its own
 
-   Each section is one card with hairline-separated rows; a row that differs from
-   its default carries a dot, and the footer counts those changes and offers the
-   one way back. */
+   The sections are stacked Groups under one search (no rail, no second tab
+   level); a row that differs from its default carries a dot, and the Reset
+   above counts all of them and is the one way back. */
 import * as React from "react"
 import {
   AlignJustify,
@@ -39,14 +39,12 @@ import {
   Columns2,
   Eye,
   Globe,
-  LayoutList,
+  Gauge,
   ListTree,
   Maximize2,
   MessageSquareText,
-  MousePointer2,
   RotateCcw,
   Rows3,
-  Search,
   SeparatorHorizontal,
   Sparkles,
   Terminal as TerminalIcon,
@@ -54,13 +52,12 @@ import {
   Wrench,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { StreamSpeedPicker } from "@/components/stream-speed-picker"
+import { Empty } from "@/components/empty"
 import { STREAM_SPEEDS } from "@/lib/stream-pace"
 import { Switch } from "@/components/ui/switch"
-import { Input } from "@/components/ui/input"
+import { ChoiceTiles, Group, Row, Segmented, Toolbar } from "@/components/settings/primitives"
 import { cn } from "@/lib/utils"
 import {
-  ANSWERS_ONLY_SUPPRESSES,
   SUBAGENT_PEEKS,
   TOOL_LAYOUTS,
   resetViewOptions,
@@ -69,6 +66,9 @@ import {
   VIEW_DEFAULTS,
   type SubagentPeek,
   type ToolLayout,
+  type ToolVariant,
+  TOOL_VARIANTS,
+  toolVariantOf,
   type ViewOptions,
 } from "@/lib/view-options"
 
@@ -85,10 +85,9 @@ type Option = {
   description: string
 }
 
-type Group = {
+type Category = {
   id: string
   label: string
-  icon: typeof Clock
   hint: string
   options: Option[]
   /** Non-switch controls that belong to this group's question. */
@@ -101,11 +100,10 @@ const SUBAGENT_PEEK_COPY: Record<SubagentPeek, { label: string; description: str
   always: { label: "Always", description: "Every subagent shows its latest steps, finished or not." },
 }
 
-const GROUPS: Group[] = [
+const GROUPS: Category[] = [
   {
     id: "layout",
     label: "Layout",
-    icon: LayoutList,
     hint: "How much of the thread fits on screen.",
     options: [
       {
@@ -138,7 +136,6 @@ const GROUPS: Group[] = [
   {
     id: "conversation",
     label: "Conversation",
-    icon: MessageSquareText,
     hint: "Choose what stays visible around the answers.",
     options: [
       {
@@ -146,7 +143,7 @@ const GROUPS: Group[] = [
         icon: MessageSquareText,
         title: "Answers only",
         description:
-          "Keep the conversation and drop the work: your messages and the agent's replies, without thinking, tool steps, plans or subagents. Errors stay, and nothing is deleted — the steps come back when you turn it off.",
+          "Fold the work into a line you can open: thinking, tool steps, plans and subagents are grouped away, leaving your messages and the agent's replies. Errors stay, and nothing is deleted — open the line and the whole transcript is there.",
       },
       {
         key: "showTokens",
@@ -174,7 +171,6 @@ const GROUPS: Group[] = [
   {
     id: "agent-activity",
     label: "Agent activity",
-    icon: ListTree,
     hint: "Choose how much of the work behind an answer is shown.",
     pickers: ["subagentPeek", "toolLayout"],
     options: [
@@ -224,7 +220,6 @@ const GROUPS: Group[] = [
   {
     id: "shell-activity",
     label: "Shell activity",
-    icon: TerminalIcon,
     hint: "Control the shell commands you run from the composer.",
     options: [
       {
@@ -246,7 +241,6 @@ const GROUPS: Group[] = [
   {
     id: "sources",
     label: "Sources and labels",
-    icon: Globe,
     hint: "Choose whether sources appear and where their markers sit.",
     options: [
       {
@@ -268,7 +262,6 @@ const GROUPS: Group[] = [
   {
     id: "code",
     label: "Code and diffs",
-    icon: Code,
     hint: "How an edit is drawn.",
     options: [
       {
@@ -294,7 +287,6 @@ const GROUPS: Group[] = [
   {
     id: "motion",
     label: "Motion",
-    icon: MousePointer2,
     hint: "What moves without being asked.",
     options: [
       {
@@ -318,136 +310,138 @@ const GROUPS: Group[] = [
 
 const ALL_OPTIONS = GROUPS.flatMap((group) => group.options)
 
-function ToolLayoutPreview({ layout }: { layout: ToolLayout }) {
+function ToolLayoutPreview({ layout, variant }: { layout: ToolLayout; variant: ToolVariant }) {
   const line = "h-1 rounded-full bg-muted-foreground/35"
+  const node = "size-1.5 shrink-0 rounded-full"
+  const rows = [["w-3/4"], ["w-1/2"], ["w-2/3"]]
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex h-12 flex-col justify-center gap-1.5 overflow-hidden rounded-md p-1.5",
-        layout === "cards" ? "bg-muted/40" : layout === "console" ? "border border-border/70 bg-muted/30" : layout === "spotlight" ? "bg-primary/5" : "bg-background/70",
-        layout === "outlined" && "border border-border/60",
-        layout === "minimal" && "bg-transparent"
-      )}
-    >
-      {layout === "cards" ? (
-        <>
-          <span className="flex items-center gap-1 rounded-sm border border-border/60 bg-background/80 px-1 py-0.5">
-            <span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-2/3")} />
-          </span>
-          <span className="flex items-center gap-1 rounded-sm border border-border/60 bg-background/80 px-1 py-0.5">
-            <span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-1/2")} />
-          </span>
-        </>
-      ) : layout === "compact" ? (
-        <>
-          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-muted-foreground/40" /><span className={cn(line, "w-3/4")} /></span>
-          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-muted-foreground/40" /><span className={cn(line, "w-1/2")} /></span>
-          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-muted-foreground/40" /><span className={cn(line, "w-2/3")} /></span>
-        </>
-      ) : layout === "rail" ? (
+    <span aria-hidden className="flex h-12 flex-col justify-center gap-1.5 overflow-hidden rounded-md bg-background/70 p-1.5">
+      {layout === "rail" ? (
         <span className="flex flex-col gap-1 border-l-2 border-primary/40 pl-1.5">
           <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2")} />
         </span>
-      ) : layout === "console" ? (
-        <>
-          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-2/3")} /></span>
-          <span className="h-3 rounded-sm border border-border/60 bg-background/80" />
-        </>
-      ) : layout === "outlined" ? (
-        <span className="flex flex-col gap-1 rounded-sm border border-primary/30 px-1 py-1">
-          <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2")} />
-        </span>
-      ) : layout === "minimal" ? (
-        <span className="flex flex-col gap-1">
-          <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2 opacity-50")} />
-        </span>
-      ) : layout === "spotlight" ? (
-        <span className="flex flex-col gap-1 rounded-sm bg-primary/10 px-1 py-1">
-          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-primary" /><span className={cn(line, "w-3/4")} /></span>
-          <span className="h-2 rounded-sm bg-background/80" />
-        </span>
+      ) : layout === "branch" ? (
+        <svg viewBox="0 0 60 36" className="h-full w-full" fill="none" strokeWidth={1.5}>
+          {variant === "fork" ? (
+            <>
+              <path d="M5 0V36" className="stroke-sky-500/70" />
+              <path d="M5 4V6Q5 10 9 10H12M5 22V24Q5 28 9 28H12" className="stroke-sky-500/70" />
+              <circle cx="14" cy="10" r="2.5" className="fill-sky-500 stroke-none" />
+              <circle cx="14" cy="28" r="2.5" className="fill-sky-500 stroke-none" />
+              <path d="M20 10H44M20 28H36" className="stroke-muted-foreground/35" />
+            </>
+          ) : (
+            <>
+              <path d="M5 2V34" className="stroke-sky-500/70" />
+              <path d="M5 14C5 18 13 16 13 22V34" className="stroke-emerald-500/70" />
+              <path d="M13 26C13 30 5 28 5 34" className="stroke-emerald-500/70" />
+              <circle cx="5" cy="6" r="2.5" className="fill-sky-500 stroke-none" />
+              <circle cx="13" cy="22" r="2.5" className={variant === "hollow" ? "fill-background stroke-emerald-500" : "fill-emerald-500 stroke-none"} />
+              <circle cx="5" cy="32" r="2.5" className="fill-sky-500 stroke-none" />
+              <path d="M22 6H44M22 22H36M22 32H40" className="stroke-muted-foreground/35" />
+            </>
+          )}
+        </svg>
       ) : (
-        <span className="flex flex-col gap-1 border-l border-border/70 pl-1.5">
-          <span className="flex items-center gap-1"><span className="size-1 rounded-full bg-primary/60" /><span className={cn(line, "w-3/4")} /></span>
-          <span className={cn(line, "ml-2 w-1/2")} />
+        <span className={cn("flex flex-col border-l border-border/70 pl-1.5", variant === "default" ? "gap-1" : variant === "compact" ? "gap-0.5" : "gap-1")}>
+          {rows.slice(0, variant === "default" ? 2 : 3).map(([w], i) => (
+            <span key={i} className="flex items-center gap-1">
+              {variant !== "minimal" && <span className={cn(node, "bg-primary/60")} />}
+              <span className={cn(line, w)} />
+            </span>
+          ))}
         </span>
       )}
     </span>
   )
 }
 
-/** What a row says in place of its description while another option has
-    already settled it. One sentence, and it names the option responsible —
-    a greyed switch with no reason is a bug report. */
-const MOOT_NOTE = "Nothing to apply it to while Answers only is on."
+const TOOL_LAYOUT_COPY: Record<ToolLayout, { label: string; description: string }> = {
+  timeline: { label: "Timeline", description: "Flowing steps" },
+  rail: { label: "Accent rail", description: "Indented sequence" },
+  branch: { label: "Branch", description: "Git graph, parallel calls fork" },
+}
+
+const TOOL_VARIANT_COPY: Record<ToolVariant, string> = {
+  default: "Default",
+  compact: "Compact",
+  minimal: "Minimal",
+  commits: "Commits",
+  fork: "Fork (connected)",
+  hollow: "Hollow",
+}
+
+/** A row reaches to the card's edges so its hover ground does too — the
+    card's rows sit in `px-3 @panel-sm:px-4`. */
+const BLEED = "-mx-3 px-3 @panel-sm:-mx-4 @panel-sm:px-4"
+
+/** The mark, tinted while the option is on (a column of marks says what is on
+    before a switch is read), and the title with a dot when it is not the
+    default — the one thing you cannot read off a switch is whether it is the
+    switch *you* moved. */
+function rowHead(icon: typeof Clock, title: string, on: boolean, changed: boolean) {
+  const Icon = icon
+  return {
+    icon: <Icon className={cn("size-4", on ? "text-primary" : "text-muted-foreground")} />,
+    title: (
+      <span className="inline-flex items-center gap-1.5">
+        {title}
+        {changed && <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />}
+      </span>
+    ),
+  }
+}
 
 function OptionRow({
   option,
   value,
   changed,
-  moot,
 }: {
   option: Option
   value: boolean
   changed: boolean
-  /** Another option has already decided this one — the row says so and is
-      inert, rather than offering a switch that would change nothing on
-      screen. Disabled, never rewritten: the value is still the reader's and
-      comes back the moment the option above it goes off. */
-  moot?: string
 }) {
-  const { icon: Icon, key, title, description } = option
+  const { icon, key, title, description } = option
   return (
     /* The whole row is the target — a switch is a small thing to hit on a
        phone. Not a <label>: the Switch is a button, which is not labelable, so
        the association would be decorative and the pointer cursor a lie. */
     <div
       role="presentation"
-      aria-disabled={moot ? true : undefined}
-      onClick={() => {
-        if (moot) return
-        setViewOption(key, !value)
-      }}
-      className={cn(
-        "flex items-start gap-3 px-3 py-2.5 transition-colors",
-        moot ? "opacity-55" : "cursor-pointer hover:bg-muted/40"
-      )}
+      onClick={() => setViewOption(key, !value)}
+      className={cn(BLEED, "cursor-pointer transition-colors hover:bg-muted/40")}
     >
-      <span
-        aria-hidden
-        className={cn(
-          "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-transparent transition-colors",
-          value ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground"
-        )}
-      >
-        <Icon className="size-3.5" />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
-          {title}
-          {/* Not the default. The one thing you cannot read off a switch is
-              whether it is the switch *you* moved. */}
-          {changed && (
-            <span
-              aria-label="changed from the default"
-              className="size-1.5 shrink-0 rounded-full bg-primary"
-            />
-          )}
+      <Row {...rowHead(icon, title, value, changed)} subtitle={description}>
+        {/* Stopped, or the row's own handler would toggle it straight back. */}
+        <span onClick={(event) => event.stopPropagation()}>
+          <Switch
+            checked={value}
+            onCheckedChange={(checked) => setViewOption(key, checked)}
+            aria-label={title}
+          />
         </span>
-        <span className="text-[11px] leading-4 text-balance text-muted-foreground">
-          {moot ?? description}
-        </span>
-      </span>
-      {/* Stopped, or the row's own handler would toggle it straight back. */}
-      <span className="mt-0.5 shrink-0" onClick={(event) => event.stopPropagation()}>
-        <Switch
-          checked={value}
-          disabled={moot !== undefined}
-          onCheckedChange={(checked) => setViewOption(key, checked)}
-          aria-label={title}
-        />
-      </span>
+      </Row>
+    </div>
+  )
+}
+
+/** A choice of more than two: a Row's head over a full-width control. Full
+    width because three short words fit a phone, where a select beside two
+    lines of text squeezed both. The control labels itself (`Segmented`,
+    `ChoiceTiles`); tiles bring their own vertical padding. */
+function PickerRow({
+  head,
+  tiles,
+  children,
+}: {
+  head: { icon: typeof Clock; title: string; description: string; changed: boolean }
+  tiles?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <Row {...rowHead(head.icon, head.title, false, head.changed)} subtitle={head.description} />
+      <div className={tiles ? "-mt-4" : "-mt-1 pb-3"}>{children}</div>
     </div>
   )
 }
@@ -455,8 +449,10 @@ function OptionRow({
 /**
  * How every thread is drawn on this device — Settings › Appearance › Transcript.
  *
- * It was a dialog opened from the app header; it is a section of the page now,
- * and ⌥V and the palette's row go to that page.
+ * It was a dialog opened from the app header; it is a part of the page now,
+ * and ⌥V and the palette's row go to that page. Every category in `GROUPS` is
+ * a Group, stacked. Search filters the rows within them and hides a Group
+ * with nothing left.
  */
 export function ViewSettings() {
   const options = useViewOptions()
@@ -464,7 +460,7 @@ export function ViewSettings() {
   const normalizedSearch = search.trim().toLowerCase()
   const matches = (...values: string[]) =>
     !normalizedSearch || values.some((value) => value.toLowerCase().includes(normalizedSearch))
-  const matchesPicker = (picker: NonNullable<Group["pickers"]>[number]) => {
+  const matchesPicker = (picker: NonNullable<Category["pickers"]>[number]) => {
     if (picker === "streamSpeed") {
       return matches("streaming speed", ...STREAM_SPEEDS.flatMap((speed) => [speed.label, speed.description]))
     }
@@ -473,15 +469,7 @@ export function ViewSettings() {
     }
     return matches(
       "tool call layout",
-      ...TOOL_LAYOUTS.flatMap((layout) => [
-        layout,
-        layout === "rail" ? "accent rail" : "",
-        layout === "console" ? "command-style" : "",
-        layout === "cards" ? "separate panels" : "",
-        layout === "compact" ? "tighter list" : "",
-        layout === "minimal" ? "no framing" : "",
-        layout === "spotlight" ? "live step focus" : "",
-      ])
+      ...TOOL_LAYOUTS.flatMap((layout) => [layout, TOOL_LAYOUT_COPY[layout].label, TOOL_LAYOUT_COPY[layout].description])
     )
   }
   const visibleGroups = GROUPS.flatMap((group) => {
@@ -489,17 +477,16 @@ export function ViewSettings() {
     const visibleOptions = headerMatches
       ? group.options
       : group.options.filter((option) => matches(option.title, option.description))
-    const visiblePickers = (headerMatches
+    const visiblePickers = headerMatches
       ? group.pickers ?? []
       : (group.pickers ?? []).filter(matchesPicker)
-    ).filter((picker) => !options.answersOnly || picker === "streamSpeed")
     return visibleOptions.length || visiblePickers.length
       ? [{ ...group, visibleOptions, visiblePickers }]
       : []
   })
-  /* Every key the dialog can move, not just the switches: the count in the
-     footer and the Reset beside it are about the whole surface, and a reveal
-     changed from the default is exactly as much a change as a switch is. */
+  /* Every key the page can move, not just the switches: the count on Reset is
+     about the whole surface, and a picker changed from the default is exactly
+     as much a change as a switch is. */
   const changedKeys = React.useMemo(
     () =>
       new Set(
@@ -507,6 +494,7 @@ export function ViewSettings() {
           ...ALL_OPTIONS.map((o) => o.key),
           "subagentPeek",
           "toolLayout",
+          "toolVariant",
           "streamSpeed",
         ] as (keyof ViewOptions)[]).filter(
           (key) => options[key] !== VIEW_DEFAULTS[key]
@@ -514,167 +502,121 @@ export function ViewSettings() {
       ),
     [options]
   )
-  /* "Answers only" takes the rows these describe off the screen, so the
-     switches for them have nothing left to say. Which ones is stated in
-     lib/view-options beside the option, not here: the dialog draws the
-     consequence, it does not decide it. */
-  const mootKeys = React.useMemo(
-    () =>
-      new Set([
-        ...(options.answersOnly ? ANSWERS_ONLY_SUPPRESSES : []),
-      ]),
-    [options.answersOnly]
+  const speed = STREAM_SPEEDS.find((entry) => entry.id === options.streamSpeed)
+
+  const rows = (entry: (typeof visibleGroups)[number]) => (
+    <React.Fragment>
+      {entry.visibleOptions.map((option) => (
+        <OptionRow
+          key={option.key}
+          option={option}
+          value={options[option.key]}
+          changed={changedKeys.has(option.key)}
+        />
+      ))}
+      {entry.visiblePickers.includes("subagentPeek") && (
+        <PickerRow
+          head={{
+            icon: Bot,
+            title: "Subagent activity",
+            description: SUBAGENT_PEEK_COPY[options.subagentPeek].description,
+            changed: changedKeys.has("subagentPeek"),
+          }}
+        >
+          <Segmented
+            label="Subagent activity"
+            options={SUBAGENT_PEEKS.map((peek) => ({ value: peek, label: SUBAGENT_PEEK_COPY[peek].label }))}
+            value={options.subagentPeek}
+            onChange={(peek) => setViewOption("subagentPeek", peek)}
+          />
+        </PickerRow>
+      )}
+      {entry.visiblePickers.includes("toolLayout") && (
+        <PickerRow
+          tiles
+          head={{
+            icon: Wrench,
+            title: "Tool call layout",
+            description: "Pick the visual style for tool steps.",
+            changed: changedKeys.has("toolLayout"),
+          }}
+        >
+          <ChoiceTiles
+            label="Tool call layout"
+            value={options.toolLayout}
+            onChange={(layout) => setViewOption("toolLayout", layout)}
+            choices={TOOL_LAYOUTS.map((layout) => ({
+              value: layout,
+              label: TOOL_LAYOUT_COPY[layout].label,
+              hint: TOOL_LAYOUT_COPY[layout].description,
+              preview: <ToolLayoutPreview layout={layout} variant={toolVariantOf(layout, options.toolVariant)} />,
+            }))}
+          />
+        </PickerRow>
+      )}
+      {entry.visiblePickers.includes("toolLayout") && TOOL_VARIANTS[options.toolLayout].length > 1 && (
+        <PickerRow
+          head={{
+            icon: Wrench,
+            title: "Layout variant",
+            description: `Ways to draw the ${TOOL_LAYOUT_COPY[options.toolLayout].label.toLowerCase()} layout.`,
+            changed: changedKeys.has("toolVariant"),
+          }}
+        >
+          <Segmented
+            label="Layout variant"
+            options={TOOL_VARIANTS[options.toolLayout].map((variant) => ({ value: variant, label: TOOL_VARIANT_COPY[variant] }))}
+            value={toolVariantOf(options.toolLayout, options.toolVariant)}
+            onChange={(variant) => setViewOption("toolVariant", variant)}
+          />
+        </PickerRow>
+      )}
+      {entry.visiblePickers.includes("streamSpeed") && (
+        <PickerRow
+          head={{
+            icon: Gauge,
+            title: "Streaming speed",
+            description: speed?.description ?? "How fast a live answer is written out.",
+            changed: changedKeys.has("streamSpeed"),
+          }}
+        >
+          <Segmented
+            label="Streaming speed"
+            options={STREAM_SPEEDS.map((entry) => ({ value: entry.id, label: entry.label }))}
+            value={options.streamSpeed}
+            onChange={(id) => setViewOption("streamSpeed", id)}
+          />
+        </PickerRow>
+      )}
+    </React.Fragment>
   )
 
+  const NOTE = "Display only — nothing here changes what the agent sees."
   return (
-    <div className="flex flex-col gap-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search view options…"
-              aria-label="Search view options"
-              className="h-9 pl-9 text-sm"
-            />
-          </div>
-          {visibleGroups.length === 0 && (
-            <p className="rounded-lg border border-border/60 px-3 py-6 text-center text-xs text-muted-foreground">
-              No view options match “{search.trim()}”.
-            </p>
-          )}
-          {visibleGroups.map((group) => (
-            <section key={group.id} className="flex flex-col gap-2">
-              <header className="flex items-center gap-2 px-1">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/8 text-primary">
-                  <group.icon className="size-3.5" aria-hidden />
-                </span>
-                <h3 className="text-[11px] font-semibold tracking-wide text-foreground uppercase">
-                  {group.label}
-                </h3>
-                <p className="min-w-0 truncate text-[11px] text-muted-foreground/70">
-                  {group.hint}
-                </p>
-              </header>
-              <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-card/40">
-                {group.visibleOptions.map((option) => (
-                  <OptionRow
-                    key={option.key}
-                    option={option}
-                    value={options[option.key]}
-                    changed={changedKeys.has(option.key)}
-                    moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
-                  />
-                ))}
-                {group.visiblePickers.includes("streamSpeed") && (
-                  <StreamSpeedPicker
-                    speed={options.streamSpeed}
-                    onSpeedChange={(speed) => setViewOption("streamSpeed", speed)}
-                  />
-                )}
-                {!options.answersOnly && group.visiblePickers.includes("subagentPeek") && (
-                  <div className="space-y-2.5 px-3 py-3">
-                    <div className="flex items-center gap-3">
-                      <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
-                        <Bot className="size-3.5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
-                          Subagent activity
-                          {changedKeys.has("subagentPeek") && (
-                            <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />
-                          )}
-                        </span>
-                        <span className="block text-[11px] leading-4 text-muted-foreground">
-                          {SUBAGENT_PEEK_COPY[options.subagentPeek].description}
-                        </span>
-                      </span>
-                    </div>
-                    {/* Segmented, full width: three short words fit a phone,
-                        where a select beside two lines of text squeezed both. */}
-                    <div role="radiogroup" aria-label="Subagent activity" className="flex gap-0.5 rounded-lg bg-muted/50 p-0.5">
-                      {SUBAGENT_PEEKS.map((peek) => {
-                        const selected = options.subagentPeek === peek
-                        return (
-                          <button
-                            key={peek}
-                            type="button"
-                            role="radio"
-                            aria-checked={selected}
-                            onClick={() => setViewOption("subagentPeek", peek)}
-                            className={cn(
-                              "min-h-8 flex-1 rounded-[7px] px-2 py-1 text-[11px] font-medium transition-colors",
-                              selected ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                            )}
-                          >
-                            {SUBAGENT_PEEK_COPY[peek].label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-                {!options.answersOnly && group.visiblePickers.includes("toolLayout") && (
-                  <div className="space-y-3 px-3 py-3">
-                    <div className="flex items-center gap-3">
-                      <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground">
-                        <Wrench className="size-3.5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-1.5 text-xs leading-5 font-medium">
-                          Tool call layout
-                          {changedKeys.has("toolLayout") && (
-                            <span aria-label="changed from the default" className="size-1.5 shrink-0 rounded-full bg-primary" />
-                          )}
-                        </span>
-                        <span className="block text-[11px] leading-4 text-muted-foreground">
-                          Pick the visual style for tool steps.
-                        </span>
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 @md:grid-cols-3">
-                      {TOOL_LAYOUTS.map((layout) => {
-                        const selected = options.toolLayout === layout
-                        const title = layout === "timeline" ? "Timeline" : layout === "cards" ? "Cards" : layout === "compact" ? "Compact" : layout === "rail" ? "Accent rail" : layout === "console" ? "Console" : layout === "outlined" ? "Outlined" : layout === "minimal" ? "Minimal" : "Spotlight"
-                        const description = layout === "timeline" ? "Flowing steps" : layout === "cards" ? "Separate panels" : layout === "compact" ? "Tighter list" : layout === "rail" ? "Indented sequence" : layout === "console" ? "Command-style" : layout === "outlined" ? "Fine borders" : layout === "minimal" ? "No framing" : "Live step focus"
-                        return (
-                          <button
-                            key={layout}
-                            type="button"
-                            aria-pressed={selected}
-                            onClick={() => setViewOption("toolLayout", layout)}
-                            className={cn(
-                              "min-w-0 rounded-lg border p-2 text-start transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                              selected ? "border-primary/60 bg-primary/5 shadow-sm" : "border-border/60 bg-background/40"
-                            )}
-                          >
-                            <ToolLayoutPreview layout={layout} />
-                            <span className="mt-2 block truncate text-[11px] font-medium">{title}</span>
-                            <span className="block truncate text-[10px] text-muted-foreground">{description}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-          ))}
-          <div className="flex items-center justify-between gap-3 px-1">
-            <p className="text-[11px] text-muted-foreground">
-              {changedKeys.size === 0
-                ? "Every option is at its default."
-                : `${changedKeys.size} option${changedKeys.size === 1 ? "" : "s"} changed from the defaults.`}
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={changedKeys.size === 0}
-              onClick={() => resetViewOptions()}
-            >
-              <RotateCcw /> Reset
-            </Button>
-          </div>
-        </div>
+    <div className="min-w-0">
+      <Toolbar search={search} onSearch={setSearch} placeholder="Search transcript options…">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-11 @panel-sm:h-9"
+          disabled={changedKeys.size === 0}
+          onClick={() => resetViewOptions()}
+        >
+          <RotateCcw />
+          {changedKeys.size === 0
+            ? "All at defaults"
+            : `Reset ${changedKeys.size} change${changedKeys.size === 1 ? "" : "s"}`}
+        </Button>
+      </Toolbar>
+      {visibleGroups.length === 0 ? (
+        <Empty size="lg">No transcript options match “{search.trim()}”.</Empty>
+      ) : (
+        visibleGroups.map((entry) => (
+          <Group key={entry.id} label={entry.label} hint={`${entry.hint} ${NOTE}`}>
+            {rows(entry)}
+          </Group>
+        ))
+      )}
+    </div>
   )
 }

@@ -22,10 +22,10 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Empty } from "@/components/empty"
 import { KIND_META, NotificationRow } from "@/components/notifications/items"
 import { NeedsYou } from "@/components/notifications/needs-you"
-import { EmptyCard, FormPageHeader } from "@/components/settings/primitives"
+import { SurfaceHeader } from "@/components/page-primitives"
+import { EmptyCard, Group, TabBar } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { AppNotification } from "@/lib/notifications-inbox"
 import {
   useClearInbox,
@@ -34,7 +34,6 @@ import {
 } from "@/lib/queries/surfaces"
 import { settingsPath } from "@/lib/router"
 import { periodLabel } from "@/lib/time"
-import { cn } from "@/lib/utils"
 
 type Filter = "all" | "unread" | "needs_you" | "turn_finished" | "turn_failed"
 
@@ -89,22 +88,67 @@ export function NotificationsInboxPage() {
 
   return (
     <>
-      <FormPageHeader
+      <SurfaceHeader
         title="Notifications"
         description="What the harness recorded while you were elsewhere: a turn that finished or failed, a permission the agent is blocked on, a question it asked. Opening one goes to its thread and marks it read."
         onBack={() => void navigate("/")}
+        flush={items.length > 0}
+        actions={
+          items.length > 0 ? (
+            <>
+              <Button variant="outline" disabled={unread === 0} onClick={() => markRead.mutate(undefined)}>
+                <CheckCheckIcon data-icon="inline-start" />
+                Mark all read
+              </Button>
+              <Button
+                variant="outline"
+                className="hover:text-destructive"
+                disabled={clearing}
+                onClick={async () => {
+                  if (
+                    !(await confirm({
+                      title: "Clear every notification?",
+                      description:
+                        "The inbox is emptied on every device. The threads themselves are untouched.",
+                      confirmLabel: "Clear",
+                      destructive: true,
+                    }))
+                  )
+                    return
+                  setClearing(true)
+                  clearInbox.mutate(undefined, { onSettled: () => setClearing(false) })
+                }}
+              >
+                <Trash2Icon data-icon="inline-start" />
+                Clear
+              </Button>
+            </>
+          ) : undefined
+        }
       />
+
+      {items.length > 0 && (
+        <TabBar
+          label="Filter notifications"
+          value={filter}
+          onChange={(id) => setFilter(id as Filter)}
+          items={FILTERS.map((f) => ({
+            id: f.id,
+            label: f.label,
+            count: counts[f.id],
+            dot: f.id === "unread" && counts.unread > 0,
+          }))}
+        />
+      )}
 
       <NeedsYou />
 
       {!inbox && isPending ? (
         /* A read in flight is not an empty inbox. The card below says "nothing
            here yet", and it would say it while the list is still arriving. */
-        <NotificationRowsSkeleton
-          rows={5}
-          detailed
-          className="overflow-hidden rounded-2xl border border-border/60 bg-card/45 backdrop-blur-md supports-[backdrop-filter]:bg-card/30"
-        />
+        <Group>
+          <NotificationRowsSkeleton rows={5} detailed className="-mx-3 @panel-sm:-mx-4" />
+        </Group>
       ) : items.length === 0 ? (
         <EmptyCard
           icon={BellIcon}
@@ -127,81 +171,6 @@ export function NotificationsInboxPage() {
         />
       ) : (
         <>
-          {/* The toolbar: filters on the left, housekeeping on the right. It
-              sticks under the header so a long history keeps its controls in
-              reach; the backdrop is the page's own colour, so scrolled rows
-              vanish under it rather than showing through. The offset is the
-              floating header's height, because the page scrolls beneath it. */}
-          <div className="sticky top-[var(--app-header-h)] z-10 -mx-1 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 bg-background/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-            <ToggleGroup
-              value={[filter]}
-              onValueChange={(v) => {
-                const next = (v as Filter[])[0]
-                if (next) setFilter(next)
-              }}
-              spacing={1}
-              size="sm"
-              className="-ml-1 flex-wrap"
-              aria-label="Filter notifications"
-            >
-              {FILTERS.map((f) => (
-                <ToggleGroupItem
-                  key={f.id}
-                  value={f.id}
-                  size="sm"
-                  className="h-7 gap-1.5 px-2.5 text-xs data-[pressed]:bg-muted data-[pressed]:text-foreground text-muted-foreground"
-                >
-                  {f.label}
-                  <span
-                    className={cn(
-                      "rounded-pill px-1.5 py-px text-[10px] leading-4 tabular-nums",
-                      f.id === "unread" && counts.unread > 0
-                        ? "bg-destructive text-white"
-                        : "bg-muted-foreground/10 text-muted-foreground"
-                    )}
-                  >
-                    {counts[f.id]}
-                  </span>
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            <div className="ml-auto flex items-center gap-1.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs text-muted-foreground"
-                disabled={unread === 0}
-                onClick={() => markRead.mutate(undefined)}
-              >
-                <CheckCheckIcon data-icon="inline-start" />
-                Mark all read
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs text-muted-foreground hover:text-destructive"
-                disabled={clearing}
-                onClick={async () => {
-                  if (
-                    !(await confirm({
-                      title: "Clear every notification?",
-                      description:
-                        "The inbox is emptied on every device. The threads themselves are untouched.",
-                      confirmLabel: "Clear",
-                      destructive: true,
-                    }))
-                  )
-                    return
-                  setClearing(true)
-                  clearInbox.mutate(undefined, { onSettled: () => setClearing(false) })
-                }}
-              >
-                <Trash2Icon data-icon="inline-start" />
-                Clear
-              </Button>
-            </div>
-          </div>
-
           {shown.length === 0 ? (
             /* A filter that matches nothing is not an empty inbox, so it does
                not get the inbox's empty card — it gets a line and a way back. */
@@ -218,21 +187,19 @@ export function NotificationsInboxPage() {
             </Empty>
           ) : (
             groups.map((g) => (
-              <section key={g.label} className="mb-6 last:mb-0">
-                <h2 className="mb-2 flex items-baseline gap-2 px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  {g.label}
-                  <span className="text-[10px] font-normal tabular-nums normal-case tracking-normal text-muted-foreground/70">
-                    {g.items.length}
-                  </span>
-                </h2>
-                <ul className="divide-y overflow-hidden rounded-2xl border border-border/60 bg-card/45 shadow-glass backdrop-blur-md supports-[backdrop-filter]:bg-card/30">
+              <Group
+                key={g.label}
+                label={g.label}
+                action={<span className="text-xs tabular-nums text-muted-foreground">{g.items.length}</span>}
+              >
+                <ul className="-mx-3 divide-y divide-border/60 @panel-sm:-mx-4">
                   {g.items.map((n) => (
                     <li key={n.id}>
                       <NotificationRow notification={n} detailed />
                     </li>
                   ))}
                 </ul>
-              </section>
+              </Group>
             ))
           )}
         </>

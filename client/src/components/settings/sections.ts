@@ -264,6 +264,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "voice",
     page: lazyPage(() => import("./voice"), "VoicePage"),
+    sub: [{ path: ":entryId", page: lazyPage(() => import("./voice"), "VoiceFormPage") }],
     label: "Voice",
     icon: AudioLines,
     title: "Voice",

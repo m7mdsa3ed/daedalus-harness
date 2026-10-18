@@ -56,7 +56,7 @@ import {
 } from "@/lib/workspace/layout"
 import { loadActiveSpace } from "@/lib/spaces"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
-import { setActiveChat, setChatFocusHandler, setNewTabHandler, setOpenThreads } from "@/lib/workspace/open-threads"
+import { setActiveChat, setChatFocusHandler, setLeaveHandler, setNewTabHandler, setOpenThreads, setRouteless } from "@/lib/workspace/open-threads"
 import { PANEL_SPECS, panelId, pageKey, parsePanel, type PanelDescriptor } from "@/lib/workspace/panels"
 
 const SAVE_DEBOUNCE_MS = 300
@@ -98,6 +98,12 @@ function routeOf(panel: IDockviewPanel): string | null {
   if (descriptor?.kind === "page") return descriptor.path
   return null
 }
+
+/** Where a page tab was opened from — the route it replaced — so leaving the
+    page (settings' "Back to threads") returns *this* tab to it. A tab is an
+    outlet, and the thread it was showing is gone the moment a page takes its
+    place; without this the only way back was some other tab, or the New tab page. */
+const cameFrom = new WeakMap<IDockviewPanel, string>()
 
 /** A tab come to the front: bring it into view in its strip (dockview scrolls
     for nothing — the one picked in the palette can be off the end of a narrow
@@ -209,7 +215,7 @@ export function useWorkspaceDock(): DockController {
   const addTab = React.useCallback(
     (descriptor: PanelDescriptor, replace?: IDockviewPanel) => {
       const api = apiRef.current
-      if (!api) return
+      if (!api) return undefined
       let desc = descriptor
       let id = panelId(desc)
       if (desc.kind === "chat") {
@@ -224,7 +230,7 @@ export function useWorkspaceDock(): DockController {
       }
       const anchor = replace ?? api.activeGroup?.activePanel
       const group = anchor?.group ?? api.activeGroup ?? undefined
-      api.addPanel({
+      const added = api.addPanel({
         id,
         component: desc.kind,
         title: PANEL_SPECS[desc.kind].defaultTitle,
@@ -238,6 +244,7 @@ export function useWorkspaceDock(): DockController {
           : undefined,
       })
       if (replace) silently(() => api.removePanel(replace))
+      return added
     },
     [silently]
   )
@@ -258,13 +265,24 @@ export function useWorkspaceDock(): DockController {
           if (here.path !== path) active.api.updateParameters({ kind: "page", path })
           return
         }
-        addTab(target, active)
+        const added = addTab(target, active)
+        const origin = routeOf(active)
+        if (added && origin && target.kind === "page") cameFrom.set(added, origin)
         return
       }
       addTab(target)
     },
     [addTab]
   )
+
+  /** Return the page in front to what it replaced. False when it replaced nothing. */
+  const leavePage = React.useCallback(() => {
+    const active = apiRef.current?.activeGroup?.activePanel
+    const origin = active && !isPanelPinned(active.id) ? cameFrom.get(active) : undefined
+    if (!origin) return false
+    navigateActive(origin)
+    return true
+  }, [navigateActive])
 
   const openTab = React.useCallback(
     (path = "/") => {
@@ -1045,6 +1063,7 @@ export function useWorkspaceDock(): DockController {
       const publishActiveChat = (panel: IDockviewPanel | undefined) => {
         const descriptor = panel ? descriptorOf(panel) : null
         setActiveChat(descriptor?.kind === "chat" ? descriptor.sessionId : null)
+        setRouteless(!!panel && !routeOf(panel))
       }
       const focusOpenChat = (id: string) => {
         const panel = api.getPanel(panelId({ kind: "chat", sessionId: id }))
@@ -1059,6 +1078,7 @@ export function useWorkspaceDock(): DockController {
       publishDockState()
       setChatFocusHandler(focusOpenChat)
       setNewTabHandler(openTab)
+      setLeaveHandler(leavePage)
 
       const flushSave = () => {
         if (saveTimerRef.current === undefined) return
@@ -1110,10 +1130,12 @@ export function useWorkspaceDock(): DockController {
         disposables.forEach((disposable) => disposable.dispose())
         setChatFocusHandler(null)
         setNewTabHandler(null)
+        setLeaveHandler(null)
         setActiveChat(null)
+        setRouteless(false)
       }
     },
-    [silently, openTab]
+    [silently, openTab, leavePage]
   )
 
   /* Digits count the tabs in the strip you are looking at. Bound through

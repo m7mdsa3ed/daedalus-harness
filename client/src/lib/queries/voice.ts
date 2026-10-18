@@ -17,6 +17,11 @@ export interface VoiceProvider {
   voice: string
   isDefault: boolean
   hasKey: boolean
+  /** MCP server library IDs this voice backend may call directly — voice
+      settings, not thread links. */
+  mcpServerIds: string[]
+  /** Custom voice-mode instructions, empty when the built-in prompt applies. */
+  instructions: string
 }
 
 export interface VoiceProviderInput {
@@ -25,6 +30,8 @@ export interface VoiceProviderInput {
   model: string
   voice: string
   isDefault: boolean
+  mcpServerIds: string[]
+  instructions: string
 }
 
 export const voiceKey = (s: ServerSettings) => scope(s).concat(["voice"])

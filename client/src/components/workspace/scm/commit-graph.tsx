@@ -34,8 +34,8 @@ const LANE_COLORS = [
   { stroke: "stroke-teal-500", fill: "fill-teal-500" },
 ] as const
 
-const strokeOf = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length].stroke
-const fillOf = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length].fill
+export const strokeOf = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length].stroke
+export const fillOf = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length].fill
 
 export function CommitGraph({
   commits,

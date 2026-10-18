@@ -3,9 +3,10 @@
    the user has made, each as a card wearing its own tokens. It also owns the
    one way a new theme comes into existence (`createTheme`, which the editor's
    Duplicate reuses), because a new theme is a copy of an existing one. */
-import { Check, Pencil, Plus } from "lucide-react"
+import { Pencil, Plus } from "lucide-react"
 import { useNavigate } from "react-router"
 
+import { ChoiceTiles } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
   customThemeId,
@@ -16,7 +17,6 @@ import {
   type CustomTheme,
 } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
-import { cn } from "@/lib/utils"
 
 import { ThemePreview } from "./preview"
 
@@ -45,42 +45,46 @@ export function ThemeGallery() {
           Built-ins ship with the app; your themes are saved to the server and followed across devices.
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-2 p-2 @panel-sm:grid-cols-3 @panel-md:grid-cols-4 @panel-lg:grid-cols-5">
-        {BUILTIN_THEMES.map(({ value, label, note }) => (
-          <ThemeCard
-            key={value}
-            label={label}
-            note={note}
-            themeValue={value}
-            selected={colorTheme === value}
-            onSelect={() => setColorTheme(value)}
-          />
-        ))}
-        {customThemes.map((theme) => {
-          const value = customThemeValue(theme.id)
-          return (
-            <ThemeCard
-              key={theme.id}
-              label={theme.name}
-              themeValue={value}
-              selected={colorTheme === value}
-              onSelect={() => setColorTheme(value)}
-              onEdit={() => {
-                setColorTheme(value)
-                void navigate(`/settings/appearance/themes/${encodeURIComponent(theme.id)}`)
-              }}
-            />
-          )
-        })}
-        <button
-          type="button"
+      <ChoiceTiles
+        label="Colour theme"
+        value={colorTheme}
+        onChange={setColorTheme}
+        choices={[
+          ...BUILTIN_THEMES.map(({ value, label, note }) => ({
+            value,
+            label,
+            preview: (
+              <span title={note} className="block">
+                <ThemePreview themeValue={value} />
+              </span>
+            ),
+          })),
+          ...customThemes.map((theme) => {
+            const value = customThemeValue(theme.id)
+            return { value, label: theme.name, preview: <ThemePreview themeValue={value} /> }
+          }),
+        ]}
+      />
+      <div className="flex flex-wrap gap-2 p-2">
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => create(colorTheme)}
           title="Copy the current theme into a new editable one"
-          className="flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-xs font-medium text-muted-foreground transition-colors hover:border-ring/60 hover:bg-accent/40 hover:text-foreground"
         >
           <Plus className="size-4" />
           New theme
-        </button>
+        </Button>
+        {isCustomTheme(colorTheme) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void navigate(`/settings/appearance/themes/${encodeURIComponent(customThemeId(colorTheme))}`)}
+          >
+            <Pencil className="size-3.5" />
+            Edit theme
+          </Button>
+        )}
       </div>
     </>
   )
@@ -107,59 +111,4 @@ function nextName(themes: CustomTheme[]): string {
     const name = n === 1 ? "My theme" : `My theme ${n}`
     if (!used.has(name)) return name
   }
-}
-
-function ThemeCard({
-  label,
-  note,
-  themeValue,
-  selected,
-  onSelect,
-  onEdit,
-}: {
-  label: string
-  /** What the theme is past its hue — its shape, type and depth in one line.
-      Built-ins carry one (generated with them); a user-made theme does not,
-      because it has no author but the person reading the card. */
-  note?: string
-  themeValue: string
-  selected: boolean
-  onSelect: () => void
-  onEdit?: () => void
-}) {
-  return (
-    <div
-      className={cn(
-        "group/theme relative rounded-xl border p-1.5 transition-colors",
-        selected
-          ? "border-ring bg-accent text-accent-foreground ring-2 ring-ring/25"
-          : "border-transparent text-muted-foreground hover:border-border hover:bg-accent/50"
-      )}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-pressed={selected}
-        title={note}
-        className="flex w-full flex-col gap-1.5 text-left text-xs font-medium"
-      >
-        <ThemePreview themeValue={themeValue} />
-        <span className="flex items-center gap-1 px-0.5">
-          <span className="truncate">{label}</span>
-          {selected && <Check className="ml-auto size-3 shrink-0 opacity-70" />}
-        </span>
-      </button>
-      {onEdit && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title={`Edit ${label}`}
-          onClick={onEdit}
-          className="absolute top-2 right-2 bg-card/70 opacity-70 backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100"
-        >
-          <Pencil className="size-3.5" />
-        </Button>
-      )}
-    </div>
-  )
 }

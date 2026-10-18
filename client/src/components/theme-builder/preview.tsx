@@ -5,6 +5,7 @@
    writes a theme — everything is handed one and paints it. */
 import * as React from "react"
 
+import { Segmented } from "@/components/settings/primitives"
 import { themeStyleVars, type CustomTheme } from "@/lib/custom-themes"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -136,7 +137,7 @@ function ThemeMock({ theme, mode }: { theme: CustomTheme; mode: Mode }) {
 
           {/* composer + controls */}
           <div className="p-2 pt-0">
-            <div className="rounded-2xl bg-composer p-1.5 shadow-glass-lg">
+            <div className="rounded-composer bg-composer p-1.5 shadow-glass-lg">
               <span className="block h-1 w-1/2 rounded-full bg-foreground/25" />
               <div className="mt-1.5 flex items-center gap-1">
                 <span className="h-4 flex-1 rounded-md border border-input" />
@@ -178,24 +179,13 @@ export function PreviewPane({
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <p className="hidden text-xs font-medium @panel-lg:block">Preview</p>
-        <div className="ml-auto flex rounded-lg bg-muted p-0.5">
-          {PREVIEW_MODES.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={preview === id}
-              onClick={() => setPreview(id)}
-              className={cn(
-                "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
-                preview === id
-                  ? "bg-background text-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Preview mode"
+          value={preview}
+          onChange={setPreview}
+          options={PREVIEW_MODES.map(({ id, label }) => ({ value: id, label }))}
+          className="ml-auto"
+        />
       </div>
 
       {/* Both modes stack in the column and sit side by side in the bar: two

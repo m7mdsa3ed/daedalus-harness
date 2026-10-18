@@ -42,6 +42,10 @@ const TAB_STATUS: Record<ThreadActivity, PanelStatus | null> = {
    next can slide in from that side. Module-level: the outgoing and incoming
    panels are different instances. */
 let lastSwipe = { dir: 0, at: 0 }
+/** The tab strip's swipe says the same thing a composer swipe does. */
+export function markSwipe(dir: number, dragged: boolean) {
+  lastSwipe = { dir, at: dragged ? 0 : Date.now() }
+}
 
 /* A thread that can be dragged into view beside the one in front. Dockview
    draws every panel in an overlay of its own (`.dv-render-overlay`), hidden
@@ -50,13 +54,13 @@ let lastSwipe = { dir: 0, at: 0 }
    dockview's own visibility state is untouched. `release` hands the overlay
    back to dockview. Terminals, previews and pages register nothing and get the
    name label instead. */
-interface Peek {
+export interface Peek {
   el: () => HTMLElement | null
   place: (x: number) => void
   settle: (x: number, spring?: boolean) => void
   release: () => void
 }
-const peeks = new Map<string, Peek>()
+export const peeks = new Map<string, Peek>()
 
 function makePeek(api: IDockviewPanelProps["api"], pane: React.RefObject<HTMLDivElement | null>): Peek {
   const el = () => pane.current?.closest<HTMLElement>(".dv-render-overlay") ?? null
@@ -302,7 +306,7 @@ export function ChatPanel({
           const me = peeks.get(api.id)
           /* A dragged-in neighbour is already on screen; only the unseen one
              slides in after the fact. */
-          lastSwipe = { dir: s.dir, at: s.nb ? 0 : Date.now() }
+          markSwipe(s.dir, !!s.nb)
           dock.cycleTab(s.dir)
           if (s.nb) {
             /* Dockview hides this overlay as the tab changes; hold it up

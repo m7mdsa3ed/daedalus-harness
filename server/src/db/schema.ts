@@ -388,6 +388,15 @@ export const profiles = pgTable("profiles", {
       for a provider that holds the headers of a streaming call until the
       first token, which on a reasoning model can be minutes. */
   upstreamTimeoutSeconds: integer("upstream_timeout_seconds"),
+  /** Extra request headers the gateway shim adds on the way upstream for every
+      call a thread on this profile makes (gateway-shim.ts). The one place a
+      provider's own wire requirement lives — as data on the row, never a
+      branch in the shim: a relay that fingerprints an official client and
+      refuses everything else is fixed by naming its header here, and nothing
+      in the codebase learns that vendor's name (CLAUDE.md). `{name, value}`
+      pairs, the shape the MCP library already stores. Null = send nothing of
+      its own. */
+  headers: jsonb("headers").$type<NameValue[]>(),
   /** Two selection flags, one column each — both keep the row, its credentials
       and its linked tools, and both leave every thread already on the profile
       running: a flag on a profile is a state, not a deletion, the same bargain
@@ -513,7 +522,7 @@ export const projects = pgTable("projects", {
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser";
+export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser" | "video";
 
 export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
@@ -522,7 +531,7 @@ export const mcpServers = pgTable("mcp_servers", {
   /** Optional registry-provided logo for the library list. */
   logoUrl: text("logo_url"),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents", "harness", "browser"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents", "harness", "browser", "video"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: jsonb("headers").$type<NameValue[]>(),
@@ -773,6 +782,12 @@ export const voiceProviders = pgTable("voice_providers", {
   model: text("model").notNull(),
   voice: text("voice").notNull().default(""),
   isDefault: boolean("is_default").notNull().default(false),
+  /** MCP server library IDs this voice backend may call directly — voice-mode
+     MCPs are configured here, separate from a thread's own links. */
+  mcpServerIds: text("mcp_server_ids").array().notNull().default([]),
+  /** Custom voice-mode instructions, overriding the built-in prompt. Empty
+     means the default instructions are used. */
+  instructions: text("instructions").notNull().default(""),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 

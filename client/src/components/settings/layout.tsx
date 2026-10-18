@@ -13,31 +13,20 @@
    so the route is the active panel, and one sidebar can answer for both. Two
    sidebars side by side was, in the end, two columns of nav before any setting.
 
-   ── The one place the list is still in the page ──
-   A phone, where the app sidebar is a drawer that closes the moment you pick
-   anything. `SectionPicker` is the section list as a single full-width control
-   there — not a scrolling chip strip, which hides most of itself off the right
-   edge and never shows the section you want. On a desktop the sidebar carries
-   it, open or collapsed to its icon rail (where the rows are labelled icons,
-   because `SidebarMenuButton`'s tooltip finally asks the sidebar it is in).
+   ── A phone drills down ──
+   The app sidebar is a drawer there and closes the moment you pick anything,
+   so the overview page is the list of sections and a section is one level
+   below it: `BackToSettings` is the way up. No dropdown of sections - the
+   sidebar is the one vertical navigation, and the phone's form of it is a list.
 
    The restored scroll position (`useScrollRestoration`) is this scroller's —
    coming back to a section lands where you left it. */
 import * as React from "react"
-import { ChevronsUpDown } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { PageFrame } from "@/components/page-primitives"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { useSidebar } from "@/components/ui/sidebar"
 import { SettingsSectionSkeleton } from "@/components/ui/skeletons"
 import { settingsSectionFor } from "@/components/sidebar/settings-nav"
@@ -45,14 +34,7 @@ import type { Actions } from "@/lib/actions"
 import { settingsPath, settingsRootPath } from "@/lib/router"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
 import type { ServerSettings } from "@/lib/settings"
-import {
-  SETTINGS_NAV_GROUPS,
-  SETTINGS_OVERVIEW,
-  isFullWidthSettings,
-  isWideSettings,
-  sectionMeta,
-  type SettingsSectionId,
-} from "./sections"
+import { isFullWidthSettings, isWideSettings, type SettingsSectionId } from "./sections"
 
 export interface SettingsPageContext {
   settings: ServerSettings
@@ -65,66 +47,23 @@ export function useSettingsPage(): SettingsPageContext {
   return useOutletContext<SettingsPageContext>()
 }
 
-/** The section list as one control, for the one surface the sidebar cannot
-    reach: a phone, where it is a drawer that closed when you tapped Settings. */
-function SectionPicker({
-  section,
-  go,
-}: {
-  section: SettingsSectionId | null
-  go: (id: SettingsSectionId | null) => void
-}) {
-  const current = section ? sectionMeta(section) : null
-  const Icon = current?.icon ?? SETTINGS_OVERVIEW.icon
+/** The way back on a phone, where the app sidebar is a drawer that closed when
+    you tapped Settings. The overview is the list of sections, so a section is
+    one level down and this is its back link - the drill-down every phone
+    settings app uses. It replaced a dropdown of all twenty sections: a second
+    way to navigate, and one the desktop does not have. */
+function BackToSettings({ go }: { go: () => void }) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="outline" className="mb-6 h-11 w-full justify-start gap-2.5">
-            <Icon className="size-4 shrink-0 text-muted-foreground" />
-            <span className="truncate">{current?.label ?? "All settings"}</span>
-            <ChevronsUpDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
-          </Button>
-        }
-      />
-      <DropdownMenuContent
-        align="start"
-        className="max-h-[60svh] w-[min(18rem,calc(var(--float-w)-2rem))] overflow-y-auto"
-      >
-        <DropdownMenuItem
-          onClick={() => go(null)}
-          aria-current={section === null ? "true" : undefined}
-          className={section === null ? "bg-accent/60" : undefined}
-        >
-          <SETTINGS_OVERVIEW.icon className="size-4" />
-          All settings
-        </DropdownMenuItem>
-        {SETTINGS_NAV_GROUPS.map((group) => (
-          <React.Fragment key={group.label}>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-[11px] tracking-wider uppercase">
-                {group.label}
-              </DropdownMenuLabel>
-              {group.sections.map((id) => {
-                const meta = sectionMeta(id)
-                return (
-                  <DropdownMenuItem
-                    key={id}
-                    onClick={() => go(id)}
-                    aria-current={section === id ? "true" : undefined}
-                    className={section === id ? "bg-accent/60" : undefined}
-                  >
-                    <meta.icon className="size-4" />
-                    {meta.label}
-                  </DropdownMenuItem>
-                )
-              })}
-            </DropdownMenuGroup>
-          </React.Fragment>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="-ml-2 mb-3 h-11 text-muted-foreground"
+      onClick={go}
+    >
+      <ArrowLeft />
+      Settings
+    </Button>
   )
 }
 
@@ -166,7 +105,7 @@ export function SettingsLayout({
       gutter="panel"
       className={bare ? undefined : "pb-24"}
     >
-      {!bare && !loading && isMobile && <SectionPicker section={section} go={go} />}
+      {!bare && !loading && isMobile && section !== null && <BackToSettings go={() => go(null)} />}
       {page}
     </PageFrame>
   )

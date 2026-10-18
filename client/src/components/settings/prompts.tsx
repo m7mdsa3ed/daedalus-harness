@@ -1,10 +1,11 @@
 import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
+import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type SavedPrompt, type ServerSettings } from "@/lib/settings"
 import { useInvalidateCatalog, usePrompts } from "@/lib/queries/catalog"
-import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions, FormSection, FormShell, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibrarySection, saveLibraryEntry } from "./library"
@@ -28,6 +29,18 @@ export function PromptsPage() {
       noun="saved prompt"
       importable={false}
       subtitle={(p) => [p.title, p.description || p.prompt.split("\n")[0]].filter(Boolean).join(" - ")}
+      rowHandle={(p) => `@${p.name}`}
+      rowBadges={(p) => (
+        <>
+          {p.title && (
+            <Badge variant="outline" className="max-w-full">
+              <span className="truncate">{p.title}</span>
+            </Badge>
+          )}
+          {p.seededVersion > 0 && <StatusBadge tone="neutral" dot={false}>built-in</StatusBadge>}
+        </>
+      )}
+      rowDetail={(p) => p.description || p.prompt}
       settings={settings}
       refresh={() => invalidate("prompts")}
     />
@@ -110,41 +123,54 @@ function PromptForm({
           },
         }}
       >
-        <Field
-          label="Handle"
-          hint={
-            form.name && !valid
-              ? "Lowercase letters, digits, - and _ only, starting with a letter or digit."
-              : `Mentioned as @${form.name || "handle"}.`
-          }
+        <FormShell
+          sections={[
+            { id: "identity", label: "Identity" },
+            { id: "prompt", label: "Prompt" },
+          ]}
         >
-          <Input
-            value={form.name}
-            onChange={(e) => set({ name: e.target.value })}
-            placeholder="quick-fix"
-            className="font-mono text-xs"
-            required
-          />
-        </Field>
-        <Field label="Title" hint="Display name, PascalCase. Optional.">
-          <Input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="QuickFix" />
-        </Field>
-        <Field label="Description" hint="One line, shown in the @ list. Optional.">
-          <Input
-            value={form.description}
-            onChange={(e) => set({ description: e.target.value })}
-            placeholder="The smallest correct change. No refactors."
-          />
-        </Field>
-        <Field label="Prompt" hint="The text that replaces the handle.">
-          <Textarea
-            value={form.prompt}
-            onChange={(e) => set({ prompt: e.target.value })}
-            rows={12}
-            className="font-mono text-xs"
-            required
-          />
-        </Field>
+          <FormSection id="identity" label="Identity">
+            <div className="grid gap-4 @panel-sm:grid-cols-2">
+              <Field
+                label="Handle"
+                hint={
+                  form.name && !valid
+                    ? "Lowercase letters, digits, - and _ only, starting with a letter or digit."
+                    : `Mentioned as @${form.name || "handle"}.`
+                }
+              >
+                <Input
+                  value={form.name}
+                  onChange={(e) => set({ name: e.target.value })}
+                  placeholder="quick-fix"
+                  className="font-mono text-xs"
+                  required
+                />
+              </Field>
+              <Field label="Title" hint="Display name, PascalCase. Optional.">
+                <Input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="QuickFix" />
+              </Field>
+            </div>
+            <Field label="Description" hint="One line, shown in the @ list. Optional.">
+              <Input
+                value={form.description}
+                onChange={(e) => set({ description: e.target.value })}
+                placeholder="The smallest correct change. No refactors."
+              />
+            </Field>
+          </FormSection>
+          <FormSection id="prompt" label="Prompt">
+            <Field label="Prompt" hint="The text that replaces the handle.">
+              <Textarea
+                value={form.prompt}
+                onChange={(e) => set({ prompt: e.target.value })}
+                rows={12}
+                className="font-mono text-xs"
+                required
+              />
+            </Field>
+          </FormSection>
+        </FormShell>
         <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>

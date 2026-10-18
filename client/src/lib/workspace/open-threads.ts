@@ -17,7 +17,10 @@ import * as React from "react"
 const EMPTY: readonly string[] = Object.freeze([])
 let open: readonly string[] = EMPTY
 let activeChat: string | null = null
+let lastChat: string | null = null
+let routeless = false
 let focusChat: ((id: string) => boolean) | null = null
+let leave: (() => boolean) | null = null
 const listeners = new Set<() => void>()
 
 /** Replace the list. A no-op when it says the same thing — the dock calls this
@@ -36,11 +39,27 @@ export function openThreadIds(): readonly string[] {
 export function setActiveChat(id: string | null): void {
   if (activeChat === id) return
   activeChat = id
+  if (id) lastChat = id
+  for (const listener of [...listeners]) listener()
+}
+
+/** Publish whether the panel in front has no route (a terminal, a web view,
+    the board). The URL then still names the last chat or page, so the sidebar
+    must not read it as the panel in front. */
+export function setRouteless(value: boolean): void {
+  if (routeless === value) return
+  routeless = value
   for (const listener of [...listeners]) listener()
 }
 
 export function activeChatId(): string | null {
   return activeChat
+}
+
+/** The chat that was last in front, kept while a page covers it: where "Back to
+    threads" returns when the page replaced nothing. */
+export function lastActiveChatId(): string | null {
+  return lastChat
 }
 
 /** Let sidebar rows focus an existing tab without depending on route changes. */
@@ -52,6 +71,15 @@ export function focusOpenChat(id: string): boolean {
   return focusChat?.(id) ?? false
 }
 
+/** Send the page in front back to the route it replaced (see `cameFrom` in dock.tsx). */
+export function setLeaveHandler(handler: (() => boolean) | null): void {
+  leave = handler
+}
+
+export function leavePage(): boolean {
+  return leave?.() ?? false
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
@@ -60,6 +88,11 @@ function subscribe(listener: () => void): () => void {
 /** The open threads, in tab order, for the sidebar's "Opened" tier. */
 export function useOpenThreads(): readonly string[] {
   return React.useSyncExternalStore(subscribe, openThreadIds, openThreadIds)
+}
+
+/** True while a panel with no route is in front: the route is stale. */
+export function useRouteless(): boolean {
+  return React.useSyncExternalStore(subscribe, () => routeless, () => routeless)
 }
 
 /** The active chat id; null means a non-chat panel is in front. */

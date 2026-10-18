@@ -8,10 +8,10 @@
 import * as React from "react"
 import { Shuffle } from "lucide-react"
 
+import { ChoiceTiles } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Slider } from "@/components/ui/slider"
-import { COLOR_SCHEMES, type ColorScheme } from "@/lib/color-schemes"
 import {
   PALETTE_PRESETS,
   STYLE_PRESETS,
@@ -19,7 +19,6 @@ import {
   type BaseTokens,
   type RampSpec,
 } from "@/lib/custom-themes"
-import { cn } from "@/lib/utils"
 
 const HUE_TRACK =
   "linear-gradient(to right, oklch(0.7 0.16 0), oklch(0.7 0.16 60), oklch(0.7 0.16 120), oklch(0.7 0.16 180), oklch(0.7 0.16 240), oklch(0.7 0.16 300), oklch(0.7 0.16 360))"
@@ -28,12 +27,10 @@ export function PresetsTab({
   base,
   onBase,
   onPalette,
-  onScheme,
 }: {
   base: BaseTokens
   onBase: (patch: BaseTokens) => void
   onPalette: (spec: RampSpec) => void
-  onScheme: (scheme: ColorScheme) => void
 }) {
   const [spec, setSpec] = React.useState<RampSpec>(PALETTE_PRESETS[2])
   const patch = (next: Partial<RampSpec>) => {
@@ -56,62 +53,27 @@ export function PresetsTab({
             Style
           </FieldLegend>
           <FieldDescription className="text-[11px]">
-            Sets the whole Design tab at once — type, shape, depth, glass and measure. Every part
+            Sets the whole Design half at once — type, shape, surfaces and layout. Every part
             stays editable afterwards.
           </FieldDescription>
         </div>
-        <div className="grid grid-cols-2 gap-1.5 @panel-sm:grid-cols-3">
-          {STYLE_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              title={preset.hint}
-              aria-pressed={activeStyle === preset.id}
-              onClick={() => onBase(preset.base)}
-              className={cn(
-                "flex flex-col gap-1.5 rounded-xl border p-2 text-left transition-colors",
-                activeStyle === preset.id
-                  ? "border-ring bg-accent text-accent-foreground ring-2 ring-ring/25"
-                  : "border-border hover:bg-accent/50"
-              )}
-            >
-              <StyleSwatch base={preset.base} />
-              <span className="text-[11px] font-medium">{preset.label}</span>
-            </button>
-          ))}
-        </div>
-      </FieldSet>
-
-      <FieldSet className="gap-3">
-        <div>
-          <FieldLegend variant="label" className="mb-0 text-xs">
-            Scheme
-          </FieldLegend>
-          <FieldDescription className="text-[11px]">
-            Established colour schemes, transcribed from each project's own source and checked
-            against WCAG AA. Unlike the generated palettes below, a scheme also sets the design
-            that goes with it — Revert undoes the whole thing.
-          </FieldDescription>
-        </div>
-        <div className="grid gap-1.5 @panel-sm:grid-cols-2">
-          {COLOR_SCHEMES.map((scheme) => (
-            <button
-              key={scheme.id}
-              type="button"
-              title={`${scheme.note}\nSource: ${scheme.source}`}
-              onClick={() => onScheme(scheme)}
-              className="flex flex-col gap-1.5 rounded-xl border p-2 text-left transition-colors hover:bg-accent/50"
-            >
-              <SchemeSwatch scheme={scheme} />
-              <span className="min-w-0">
-                <span className="block truncate text-[11px] font-medium">{scheme.label}</span>
-                <span className="block truncate text-[10px] text-muted-foreground">
-                  {scheme.note}
-                </span>
+        <ChoiceTiles
+          label="Style"
+          value={activeStyle ?? ""}
+          onChange={(id) => {
+            const preset = STYLE_PRESETS.find((entry) => entry.id === id)
+            if (preset) onBase(preset.base)
+          }}
+          choices={STYLE_PRESETS.map((preset) => ({
+            value: preset.id,
+            label: preset.label,
+            preview: (
+              <span title={preset.hint}>
+                <StyleSwatch base={preset.base} />
               </span>
-            </button>
-          ))}
-        </div>
+            ),
+          }))}
+        />
       </FieldSet>
 
       <FieldSet className="gap-3">
@@ -121,7 +83,7 @@ export function PresetsTab({
           </FieldLegend>
           <FieldDescription className="text-[11px]">
             Regenerates every colour, light and dark, through the same ramp the built-in themes are
-            built from. Individual tokens can still be overridden on the Color tab afterwards.
+            built from. Individual tokens can still be overridden in the Color section afterwards.
           </FieldDescription>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -189,44 +151,6 @@ export function PresetsTab({
         </div>
       </FieldSet>
     </>
-  )
-}
-
-/** A scheme drawn as both its halves at once: the light bar over the dark one,
-    each showing the surfaces it will paint (background, card, muted) and the
-    accents it will paint them with. Two rows because a scheme *is* a pair, and
-    half of these are known for one mode and improvised in the other — which is
-    exactly the half a single-row swatch would hide. */
-function SchemeSwatch({ scheme }: { scheme: ColorScheme }) {
-  return (
-    <span aria-hidden className="flex flex-col overflow-hidden rounded-lg border border-border">
-      {(["light", "dark"] as const).map((mode) => {
-        const a = scheme[mode]
-        return (
-          <span
-            key={mode}
-            className="flex items-center gap-1 p-1"
-            style={{ background: a.bg }}
-          >
-            <span
-              className="grid h-5 w-7 shrink-0 place-items-center rounded-sm text-[9px] leading-none font-medium"
-              style={{ background: a.card, color: a.fg }}
-            >
-              Aa
-            </span>
-            <span
-              className="h-5 w-4 shrink-0 rounded-sm"
-              style={{ background: a.muted }}
-            />
-            <span className="ml-auto flex gap-0.5">
-              {[a.primary, ...a.charts.slice(0, 4)].map((hex, i) => (
-                <span key={i} className="size-2.5 rounded-full" style={{ background: hex }} />
-              ))}
-            </span>
-          </span>
-        )
-      })}
-    </span>
   )
 }
 

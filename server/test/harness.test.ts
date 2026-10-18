@@ -14,6 +14,8 @@ import { profileRoutes } from "../src/routes/profiles.js";
 import { taskRoutes } from "../src/routes/tasks.js";
 import { harnessRoutes } from "../src/routes/harness.js";
 import type { WorkflowRunner } from "../src/workflows.js";
+import { mcpServers } from "../src/library.js";
+import { mcpServersFor, videoMissing, videoServer } from "../src/sessions.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -42,6 +44,10 @@ const runner = {
   resolveCaller: (key: string, sessionId: string) => (key === KEY && sessionId === SESSION ? { id: SESSION } : null),
 } as unknown as WorkflowRunner;
 harnessRoutes(app, { runner });
+// Stands in for POST /api/files: echoes the raw body and the headers that crossed.
+app.post("/api/echo-upload", async (c) =>
+  c.json({ filename: c.req.header("x-filename") ?? null, other: c.req.header("x-other") ?? null, bytes: (await c.req.arrayBuffer()).byteLength }),
+);
 
 const base = `/hm/${KEY}/${SESSION}/api`;
 const call = (path: string, init?: RequestInit) => app.request(`${base}${path}`, init);
@@ -112,6 +118,81 @@ await test("a profile is created and its credential never leaves the server", as
   const profile = (await created.json()) as Record<string, unknown>;
   assert.equal(profile.hasApiKey, true);
   assert.equal("apiKey" in profile, false);
+});
+
+await test("the proxy forwards x-filename for raw uploads, and no other caller header", async () => {
+  const res = await call("/echo-upload", {
+    method: "POST",
+    headers: { "content-type": "video/mp4", "x-filename": encodeURIComponent("demo v1.mp4"), "x-other": "nope" },
+    body: new Uint8Array([1, 2, 3, 4]),
+  });
+  assert.deepEqual(await res.json(), { filename: "demo%20v1.mp4", other: null, bytes: 4 });
+});
+
+console.log("builtin:video");
+
+const source = { harnessUrlFor: (s: { id: string }) => `http://127.0.0.1:1/hm/k/${s.id}` };
+const project = { id: "p1" } as never;
+
+await test("the row has the fixed id and is injected once", async () => {
+  const a = await mcpServers.ensureBuiltin("video");
+  const b = await mcpServers.ensureBuiltin("video");
+  assert.equal(a.id, "builtin:video");
+  assert.equal(b.id, a.id);
+});
+
+await test("a linked row resolves to video-mcp over the thread's loopback, with VIDEO_* passed through", async () => {
+  process.env.VIDEO_TTS = "silent";
+  process.env.ELEVENLABS_API_KEY = "el";
+  process.env.UNRELATED_SECRET = "x";
+  process.env.DAEDALUS_TOKEN = "bearer";
+  process.env.OPENAI_API_KEY = "sk";
+  process.env.XVIDEO_LOOKALIKE = "y";
+  const server = videoServer({ id: SESSION }, source, process.argv[1]); // any file that exists
+  const { servers } = await mcpServersFor({ mcpServerIds: ["builtin:video"] }, project, {} as never, null, null, null, null, server);
+  if (videoMissing(process.argv[1])) {
+    // No ffmpeg here: the feature degrades to "not advertised", which is the behaviour under test.
+    assert.equal(server, null);
+    assert.equal(servers.length, 0);
+    return;
+  }
+  assert.ok(server);
+  assert.equal(server.name, "video");
+  assert.deepEqual(server.args, [process.argv[1]]);
+  const env = Object.fromEntries(server.env.map((e) => [e.name, e.value]));
+  assert.equal(env.HARNESS_URL, `http://127.0.0.1:1/hm/k/${SESSION}`);
+  assert.equal(env.VIDEO_TTS, "silent");
+  // The child gets the loopback URL and the provider passthrough, nothing else.
+  assert.deepEqual(Object.keys(env).sort(), ["ELEVENLABS_API_KEY", "HARNESS_URL", "VIDEO_TTS"]);
+  assert.deepEqual(servers.map((s) => s.name), ["video"]);
+});
+
+await test("not advertised when the dist is missing or ffmpeg is", async () => {
+  assert.equal(videoServer({ id: SESSION }, source, "/nonexistent/video-mcp/dist/index.js"), null);
+  const { servers } = await mcpServersFor({ mcpServerIds: ["builtin:video"] }, project, {} as never, null, null, null, null, null);
+  assert.equal(servers.length, 0);
+  const path = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    assert.equal(videoServer({ id: SESSION }, source, process.argv[1]), null);
+    assert.match(videoMissing(process.argv[1]) ?? "", /ffmpeg/);
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+await test("a missing entry is logged once per process, not per spawn", async () => {
+  const lines: string[] = [];
+  const log = console.log;
+  console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+  try {
+    for (let i = 0; i < 3; i++) videoServer({ id: SESSION }, source, "/nonexistent/once/index.js");
+  } finally {
+    console.log = log;
+  }
+  const mine = lines.filter((l) => l.includes("builtin:video"));
+  assert.equal(mine.length, videoMissing("/nonexistent/once/index.js")?.includes("ffmpeg") ? 0 : 1);
+  assert.ok(mine.every((l) => /missing|ffmpeg/.test(l)));
 });
 
 console.log(`harness: ${passed} passed, ${failures.length} failed`);

@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils"
    page, a schedule, a routine, a trace), `full` no cap at all. */
 const PAGE_WIDTH = {
   form: "mx-auto max-w-3xl",
-  settings: "mx-auto max-w-4xl",
+  settings: "mx-auto max-w-5xl",
   wide: "mx-auto max-w-5xl",
   full: "",
 } as const
@@ -66,6 +66,7 @@ export function SurfaceHeader({
   meta,
   onBack,
   actions,
+  flush = false,
   className,
 }: {
   icon?: React.ReactNode
@@ -75,28 +76,30 @@ export function SurfaceHeader({
   meta?: React.ReactNode
   onBack?: () => void
   actions?: React.ReactNode
+  /** A tab bar follows: it draws the rule, so the header does not. */
+  flush?: boolean
   className?: string
 }) {
   return (
-    <header className={cn("mb-6 border-b pb-5", className)}>
+    <header className={cn(flush ? "mb-4" : "mb-8 border-b pb-6", className)}>
       {onBack && (
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="-ml-2 mb-3 text-muted-foreground"
+          className="-ml-2 mb-3 h-11 text-muted-foreground @panel-sm:h-8"
           onClick={onBack}
         >
           <ArrowLeft />
           Back
         </Button>
       )}
-      <div className="flex flex-wrap items-start gap-4">
+      <div className="flex flex-col gap-4 @panel-sm:flex-row @panel-sm:items-start">
         {icon && <div className="shrink-0">{icon}</div>}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-semibold tracking-tight sm:text-xl">{title}</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">{title}</h1>
           {description && (
-            <p className="mt-1 max-w-[65ch] text-sm text-pretty text-muted-foreground">
+            <p className="mt-1.5 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
               {description}
             </p>
           )}
@@ -107,7 +110,7 @@ export function SurfaceHeader({
           )}
         </div>
         {actions && (
-          <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:shrink-0">
+          <div className="flex w-full flex-wrap items-center gap-2 @panel-sm:ml-auto @panel-sm:w-auto @panel-sm:shrink-0">
             {actions}
           </div>
         )}

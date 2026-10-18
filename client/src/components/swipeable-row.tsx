@@ -23,6 +23,9 @@ interface SwipeableRowProps {
   neighborMotion?: SwipeNeighborMotion;
   neighborIndex?: number;
   neighborScope?: string;
+  /** A row in a continuous list: square, flat, on the card's ground — the list
+   *  owns the surface and the hairlines, not each row. */
+  flat?: boolean;
 }
 
 /**
@@ -38,6 +41,9 @@ interface SwipeableRowProps {
 const STRIP_SURFACE =
   "min-h-0 rounded-lg border-0 bg-background p-0 shadow-none cursor-auto active:cursor-auto";
 
+const FLAT_SURFACE =
+  "min-h-0 rounded-none border-0 bg-card p-0 shadow-none cursor-auto active:cursor-auto";
+
 export function SwipeableRow({
   children,
   onSwipeLeft,
@@ -47,6 +53,7 @@ export function SwipeableRow({
   neighborMotion,
   neighborIndex,
   neighborScope,
+  flat,
 }: SwipeableRowProps) {
   const rightActions: BeuiSwipeAction[] = (onSwipeLeft ?? []).map((action, index) => ({
     id: String(index),
@@ -72,8 +79,8 @@ export function SwipeableRow({
         // Shadow lives on the outer `item` — the `surface` sits inside beui's
         // `overflow-hidden` row container, which would clip a shadow placed there.
         root: className,
-        item: "rounded-lg shadow-sm",
-        surface: STRIP_SURFACE,
+        item: flat ? "rounded-none shadow-none" : "rounded-lg shadow-sm",
+        surface: flat ? FLAT_SURFACE : STRIP_SURFACE,
       }}
       neighborMotion={neighborMotion}
       neighborIndex={neighborIndex}

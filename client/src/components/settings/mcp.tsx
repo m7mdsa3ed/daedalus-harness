@@ -3,15 +3,9 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from "react-route
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
   api,
   authSummary,
+  mcpNeedsAuth,
   mcpSubtitle,
   type McpAuthProbe,
   type McpCheckResult,
@@ -22,7 +16,10 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   ChevronDownIcon,
+  DownloadIcon,
+  GlobeIcon,
   KeyRoundIcon,
+  SearchIcon,
   PencilIcon,
   Trash2Icon,
   PlugZapIcon,
@@ -30,34 +27,53 @@ import {
   PlugIcon,
   SearchCheckIcon,
   StoreIcon,
+  TerminalIcon,
   UnplugIcon,
+  WrenchIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { EntityIcon, McpIcon } from "@/components/entity-icon"
 import { ImageIcon } from "lucide-react"
 import { ErrorNote } from "@/components/error-note"
+import { Empty } from "@/components/empty"
+import { useConfirm } from "@/components/confirm-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useInvalidateCatalog, useMcpCatalog, useMcpServers } from "@/lib/queries/catalog"
+import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
+import type { ColumnDef } from "@/lib/table"
+import { useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
-import { useQueryClient } from "@tanstack/react-query"
-import { useStoreSelect } from "@/lib/store"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { useQueries, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
-import { EmptyCard, FormPageHeader, PageForm, Field, FormActions, INSET, LogoUpload, lines, pairs } from "./primitives"
+import {
+  Field,
+  FormActions,
+  FormPageHeader,
+  FormSection,
+  FormShell,
+  LogoUpload,
+  PageForm,
+  PageHeader,
+  Section,
+  Segmented,
+  StatStrip,
+  StatusBadge,
+  type StatusTone,
+  lines,
+  pairs,
+} from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
+import { LibraryImportPage, saveLibraryEntry } from "./library"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
-import { PickerSkeleton } from "@/components/ui/skeletons"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
-type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser"
+type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser" | "video"
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
    phrase the list needs to identify a row already there. */
@@ -73,46 +89,93 @@ const BUILTINS: {
   { kind: "agents", label: "Ask agents", detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
   { kind: "harness", label: "Harness", detail: "manage the harness", hint: "Let the agent manage the harness itself — read and write tasks on the board, list projects, and add profiles" },
   { kind: "browser", label: "Preview browser", detail: "drive the thread's preview", hint: "Chrome DevTools MCP on the thread's Preview in the desktop app, once you turn on Drive there (needs npm i -g chrome-devtools-mcp on the server)" },
+  { kind: "video", label: "Product videos", detail: "author product videos", hint: "Build a product-demo video from a storyboard the agent and you keep editing: narration, capture, review, publish to Files (needs ffmpeg on the server)" },
 ]
 
 const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
 
-function mcpIcon(server: McpServerDef): React.ReactNode {
-  return <McpIcon server={server} className="size-4" />
+/* ── The page ──
+   A status board with a table under it. The question this page answers is
+   "which of these is working?", so the four readings come first (how many,
+   how many connect, how many need a hand, what they offer in all), and the
+   table is the answer per server: what it is, how it connects, whether it did,
+   and what it offers. The listing each row draws is the server's own stored
+   one (`mcp_catalog`); nothing here connects until Check says so.
+
+   Wide, a row is a table row with its actions revealed on hover and its detail
+   (endpoint, OAuth, the failure) one click down. Narrow, the same row is a
+   list entry that carries that detail inline, because a phone has no hover and
+   no room for a second click to learn why a server is red. */
+
+type Health = "connected" | "auth" | "error" | "idle"
+
+/** One server with the stored reading its row is drawn from. The cells are
+    plain functions of this, so no cell calls a hook of its own. */
+interface ServerRow {
+  server: McpServerDef
+  health: Health
+  /** The status in words. */
+  text: string
+  data: McpCheckResult | undefined
+  /** The message of a read that failed. */
+  readError: string | undefined
+  fetching: boolean
 }
 
-/**
- * The detail line: what this row *is*, then what it points at.
- *
- * It used to be `mcpSubtitle` in monospace, which made three mistakes at once —
- * it set a built-in's plain-English description in a command font, it buried
- * the transport in a string nobody parses at a glance, and it repeated the
- * OAuth state that the Status column already draws as a badge two inches away.
- * The badge says the kind; the monospace is kept for the one thing that really
- * is a command or a URL. `mcpSubtitle` is still what search matches on.
- */
-function McpDetail({ server }: { server: McpServerDef }) {
-  const builtin = server.type === "builtin" ? builtinOf(server.builtin) : null
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-      <Badge variant="outline" className="shrink-0 font-normal">
-        {builtin ? "Built-in" : server.type === "http" ? "HTTP" : "stdio"}
-      </Badge>
-      {server.type === "builtin" ? (
-        <span className="text-xs text-muted-foreground">{builtin?.detail}</span>
-      ) : (
-        <span className="truncate font-mono text-xs text-muted-foreground">
-          {server.type === "http" ? server.url : [server.command, ...server.args].join(" ")}
-        </span>
-      )}
-    </span>
-  )
+/** A built-in whose server is a *thread's* own is never connectable from here,
+    so its row says so instead of reading a connection it cannot make. */
+const isThreadScoped = (server: McpServerDef) => server.type === "builtin" && !!server.threadScoped
+
+/** One server's health, from the stored listing. OAuth that nobody has
+    connected outranks the listing: the server will have answered 401, and
+    "Offline" would send the reader to debug a thing that needs a Connect. */
+function healthOf(server: McpServerDef, data: McpCheckResult | undefined, error: unknown): { health: Health; text: string } {
+  if (isThreadScoped(server)) return { health: "idle", text: "Per thread" }
+  if (mcpNeedsAuth(server)) return { health: "auth", text: "Needs authorization" }
+  if (!!error || (!!data && !data.ok && !data.deferred)) return { health: "error", text: "Offline" }
+  if (data?.deferred) return { health: "idle", text: "Not connected" }
+  if (data?.ok) return { health: "connected", text: "Connected" }
+  return { health: "idle", text: "Reading…" }
 }
+
+const TONE: Record<Health, StatusTone> = {
+  connected: "ok",
+  auth: "warn",
+  error: "bad",
+  idle: "neutral",
+}
+
+const FILTERS: { id: "all" | Exclude<Health, "idle">; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "connected", label: "Connected" },
+  { id: "auth", label: "Needs auth" },
+  { id: "error", label: "Error" },
+]
+type StatusFilter = (typeof FILTERS)[number]["id"]
+
+/** What a server is, in one line a reader can scan: its URL, its command, or
+    what the built-in is for. */
+function endpointOf(server: McpServerDef): string {
+  if (server.type === "http") return server.url
+  if (server.type === "stdio") return [server.command, ...server.args].join(" ")
+  return builtinOf(server.builtin)?.hint ?? ""
+}
+
+const transportOf = (server: McpServerDef) =>
+  server.type === "builtin" ? "Built-in" : server.type === "http" ? "HTTP" : "stdio"
+
+/** The read each row makes, taken out of the query objects so the combined
+    answer is plain data (structurally shared, stable between unrelated
+    renders). */
+const readListings = (results: UseQueryResult<McpCheckResult, Error>[]) =>
+  results.map((r) => ({ data: r.data, error: r.error?.message, fetching: r.isFetching }))
 
 export function McpPage() {
   const { settings } = useSettingsPage()
   const navigate = useNavigate()
   const invalidate = useInvalidateCatalog()
+  const confirm = useConfirm()
+  const qc = useQueryClient()
   const meta = sectionMeta("mcp")
   const mcpServers = useMcpServers()
 
@@ -132,19 +195,203 @@ export function McpPage() {
     }
   }
   const missing = BUILTINS.filter((b) => !has(b.kind))
+
+  /* The same key and fetch `useMcpCatalog` makes, so a row's own read (the
+     mark's) and this one are a single cache entry and a single request — the
+     table needs every row's answer in one place, and a hook cannot be called
+     in a loop. */
+  const listings = useQueries({
+    queries: mcpServers.map((s) => ({
+      queryKey: mcpCatalogKey(settings, s.id),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api<McpCheckResult>(settings, `/api/mcp-servers/${s.id}/catalog`, { signal }),
+      staleTime: Infinity,
+      refetchOnWindowFocus: false,
+      retry: false,
+      enabled: !isThreadScoped(s),
+    })),
+    combine: readListings,
+  })
+
+  const rows = React.useMemo<ServerRow[]>(
+    () =>
+      mcpServers.map((server, i) => {
+        const l = listings[i]
+        return {
+          server,
+          ...healthOf(server, l?.data, l?.error),
+          data: l?.data,
+          readError: l?.error,
+          fetching: !!l?.fetching,
+        }
+      }),
+    [mcpServers, listings]
+  )
+
+  const [query, setQuery] = React.useState("")
+  const [status, setStatus] = React.useState<StatusFilter>("all")
+  const needle = query.trim().toLowerCase()
+  const count = (id: StatusFilter) => (id === "all" ? rows.length : rows.filter((r) => r.health === id).length)
+  const offered = rows.reduce((n, r) => n + (r.data?.ok ? r.data.tools.length : 0), 0)
+  const shown = rows.filter(
+    (r) =>
+      (status === "all" || r.health === status) &&
+      (!needle || `${r.server.name} ${mcpSubtitle(r.server)}`.toLowerCase().includes(needle))
+  )
+
+  /* Row handlers read the latest closure through a ref, so the action list and
+     the renderers the table memoises against stay one identity while the page
+     re-renders around them. */
+  const [checking, setChecking] = React.useState<ReadonlySet<string>>(new Set())
+  const latest = React.useRef({ settings, navigate, invalidate, confirm, qc })
+  latest.current = { settings, navigate, invalidate, confirm, qc }
+
+  const actions = React.useMemo<TableAction<ServerRow>[]>(
+    () => [
+      {
+        id: "check",
+        label: "Check now",
+        icon: <SearchCheckIcon className="size-4" />,
+        position: "left",
+        hidden: (r) => isThreadScoped(r.server),
+        disabled: (r) => checking.has(r.server.id) || r.fetching,
+        onClick: ({ server }) => {
+          const { settings, qc } = latest.current
+          setChecking((s) => new Set(s).add(server.id))
+          /* The toast flavour, because Check stays on screen: it connects
+             *now* — the one door that refuses the stored answer — and writes
+             what comes back into the cache the row draws from. */
+          api<McpCheckResult>(settings, `/api/mcp-servers/${server.id}/check`, { method: "POST" })
+            .then((result) => qc.setQueryData(mcpCatalogKey(settings, server.id), result))
+            .catch((err) => reportError(err, `Couldn't check ${server.name}`))
+            .finally(() =>
+              setChecking((s) => {
+                const next = new Set(s)
+                next.delete(server.id)
+                return next
+              })
+            )
+        },
+      },
+      {
+        id: "edit",
+        label: "Edit",
+        icon: <PencilIcon className="size-4" />,
+        position: "left",
+        // A built-in has nothing to edit — it is resolved at spawn, not stored.
+        hidden: (r) => r.server.type === "builtin",
+        onClick: ({ server }) => void latest.current.navigate(settingsFormPath("mcp", server.id)),
+      },
+      {
+        id: "tools",
+        label: "What it offers",
+        icon: <WrenchIcon className="size-4" />,
+        hidden: (r) => !r.data?.ok,
+        onClick: ({ server }) => void latest.current.navigate(mcpDetailPath(server.id)),
+      },
+      {
+        id: "delete",
+        label: "Delete",
+        icon: <Trash2Icon className="size-4" />,
+        tone: "danger",
+        onClick: async ({ server }) => {
+          const { settings, confirm, invalidate } = latest.current
+          if (
+            !(await confirm({
+              title: `Delete "${server.name}"?`,
+              description: `The MCP server is removed from the library and unlinked from every profile and thread that used it. Threads already running keep it until they are restarted.`,
+              destructive: true,
+              confirmLabel: "Delete",
+            }))
+          )
+            return
+          try {
+            await api(settings, `/api/mcp-servers/${server.id}`, { method: "DELETE" })
+            await invalidate("mcp-servers")
+          } catch (err) {
+            reportError(err, "Couldn't delete the MCP server")
+          }
+        },
+      },
+    ],
+    [checking]
+  )
+
+  const refresh = React.useCallback(() => latest.current.invalidate("mcp-servers"), [])
+  const columns = React.useMemo<ColumnDef<ServerRow, unknown>[]>(
+    () => [
+      {
+        id: "server",
+        header: "Server",
+        meta: { title: true, className: "min-w-56" },
+        cell: ({ row }) => (
+          <TitleCell
+            title={row.original.server.name}
+            subtitle={
+              <span className={cn(row.original.server.type !== "builtin" && "font-mono text-[11px]")}>
+                {endpointOf(row.original.server)}
+              </span>
+            }
+          />
+        ),
+      },
+      {
+        id: "transport",
+        header: "Transport",
+        meta: { className: "hidden @panel-md:table-cell" },
+        cell: ({ row }) => (
+          <Badge variant="outline" className="font-normal">
+            {transportOf(row.original.server)}
+          </Badge>
+        ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => <McpStatus row={row.original} />,
+      },
+      {
+        id: "offers",
+        header: "Offers",
+        meta: { align: "end" },
+        cell: ({ row }) => <McpOffers row={row.original} />,
+      },
+    ],
+    []
+  )
+
+  const renderRow = React.useCallback(
+    (row: ServerRow) => <McpMobileRow row={row} settings={latest.current.settings} refresh={refresh} />,
+    [refresh]
+  )
+  const renderExpanded = React.useCallback(
+    (row: ServerRow) => <McpExpanded row={row} settings={latest.current.settings} refresh={refresh} />,
+    [refresh]
+  )
+
   /* Browse sits beside Import for a reason: they are the same question asked of
      two places — what is already on this machine, and what the world has
      published. Neither writes a row without the form. */
-  const browse = (
-    <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "browse"))}>
+  const newButton = (
+    <Button className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" onClick={() => void navigate(settingsFormPath(meta.id))}>
+      <PlusIcon className="size-4" /> New MCP server
+    </Button>
+  )
+  const browseButton = (
+    <Button variant="outline" className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" onClick={() => void navigate(settingsFormPath(meta.id, "browse"))}>
       <StoreIcon className="size-4" /> Browse
+    </Button>
+  )
+  const importButton = (
+    <Button variant="outline" className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
+      <DownloadIcon className="size-4" /> Import
     </Button>
   )
   const builtins = missing.length > 0 && (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" title="Add one of the harness's own MCP servers">
+          <Button variant="outline" className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" title="Add one of the harness's own MCP servers">
             <PlusIcon className="size-4" /> Add built-in
             <ChevronDownIcon className="size-3.5 opacity-60" />
           </Button>
@@ -161,186 +408,230 @@ export function McpPage() {
   )
 
   return (
-    <LibrarySection
-      meta={meta}
-      items={mcpServers}
-      endpoint="/api/mcp-servers"
-      noun="MCP server"
-      subtitle={mcpSubtitle}
-      settings={settings}
-      refresh={() => invalidate("mcp-servers")}
-      extraActions={
+    <>
+      <PageHeader
+        meta={meta}
+        action={
+          <div className="flex flex-wrap gap-2">
+            {newButton}
+            {browseButton}
+            {importButton}
+            {builtins}
+          </div>
+        }
+      />
+      {rows.length === 0 ? (
+        <Empty size="lg" icon={meta.icon} action={newButton}>
+          No MCP servers yet — add one, browse the registry, or import from the agents' own configs.
+        </Empty>
+      ) : (
         <>
-          {browse}
-          {builtins}
+          <StatStrip
+            stats={[
+              { label: "Servers", value: rows.length },
+              { label: "Connected", value: count("connected"), tone: count("connected") > 0 ? "ok" : "default" },
+              { label: "Need attention", value: count("auth") + count("error"), tone: count("error") > 0 ? "bad" : count("auth") > 0 ? "warn" : "default" },
+              { label: "Tools offered", value: offered },
+            ]}
+          />
+          <DataTable
+            columns={columns}
+            data={shown}
+            getRowId={(r) => r.server.id}
+            actions={actions}
+            mark={(r) => <McpIcon server={r.server} className="size-5" />}
+            mobile={{ renderRow }}
+            expand={{ render: renderExpanded }}
+            pageSize={50}
+            viewToggle={false}
+            emptyIcon={<PlugIcon />}
+            emptyMessage={needle || status !== "all" ? "No server matches." : "No MCP servers yet."}
+            filtering={{
+              search: { value: query, onChange: setQuery, placeholder: "Search MCP servers…" },
+              fields: [
+                {
+                  id: "status",
+                  label: "Status",
+                  type: "segmented",
+                  options: FILTERS.map(({ id, label }) => ({ value: id, label: `${label} ${count(id)}` })),
+                },
+              ],
+              values: { status },
+              onChange: (_id, value) => setStatus((value as StatusFilter) || "all"),
+              count: status === "all" ? 0 : 1,
+              onClear: () => setStatus("all"),
+              totalCount: rows.length,
+            }}
+          />
         </>
-      }
-      renderRows={({ items, canEdit, edit, remove }) => (
-        <McpCards
-          items={items}
-          settings={settings}
-          refresh={() => invalidate("mcp-servers")}
-          canEdit={canEdit}
-          edit={edit}
-          remove={remove}
-        />
       )}
-      // A built-in has nothing to edit — it is resolved at spawn, not stored.
-      editable={(s) => s.type !== "builtin"}
-    />
+    </>
   )
 }
 
-/* ── The list ──
-   One card per server, closed to a single line: mark, name, transport and a
-   status dot with what it offers. Open, it says everything the old table
-   spread across three columns — the full endpoint, the OAuth state, the
-   listing, and the row's actions — in one place. Open state is the card's own
-   and is not remembered: a list you came to read starts calm. */
+/* ── Cells ── */
 
-/** A built-in whose server is a *thread's* own is never connectable from here,
-    so its row says so instead of reading a connection it cannot make. */
-const isThreadScoped = (server: McpServerDef) => server.type === "builtin" && !!server.threadScoped
-
-function McpStatus({ server }: { server: McpServerDef }) {
-  const scoped = isThreadScoped(server)
-  const { data, error } = useMcpCatalog(server.id, !scoped)
-  if (scoped) {
-    return (
-      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="size-2 rounded-full bg-muted-foreground/30" />
-        <span className="hidden @panel-sm:inline">Per thread</span>
-      </span>
-    )
-  }
-  const down = !!error || (!!data && !data.ok && !data.deferred)
-  const n = data ? data.tools.length + data.prompts.length + data.resources.length : 0
-  const text = down
-    ? "Offline"
-    : data?.deferred
-      ? "Not connected"
-      : data?.ok
-        ? n > 0 ? `${n} offered` : "Nothing offered"
-        : "Reading…"
+function McpStatus({ row }: { row: ServerRow }) {
   return (
-    <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <span
-        className={cn(
-          "size-2 rounded-full",
-          down ? "bg-destructive" : data?.ok ? "bg-emerald-500" : "bg-muted-foreground/40"
-        )}
-      />
-      <span className="hidden @panel-sm:inline">{text}</span>
+    <span className="flex min-w-0" title={row.data?.error ?? row.readError}>
+      <StatusBadge tone={TONE[row.health]}>{row.text}</StatusBadge>
     </span>
   )
 }
 
-function McpCard({
-  server,
-  settings,
-  refresh,
-  canEdit,
-  edit,
-  remove,
-}: {
-  server: McpServerDef
-  settings: ServerSettings
-  refresh: () => Promise<void>
-  canEdit: boolean
-  edit: () => void
-  remove: () => void
-}) {
-  const [open, setOpen] = React.useState(false)
-  const builtin = server.type === "builtin" ? builtinOf(server.builtin) : null
-  const endpoint =
-    server.type === "http"
-      ? server.url
-      : server.type === "stdio"
-        ? [server.command, ...server.args].join(" ")
-        : builtin?.hint
+/** How old the listing is, said as the reading's own tooltip: a remembered
+    answer must never read as a connection that just happened. */
+function listedWhen(result: McpCheckResult) {
+  const connected = `connected in ${result.ms}ms`
+  if (!result.checkedAt) return connected
+  const mins = Math.round((Date.now() - result.checkedAt) / 60_000)
+  if (mins < 1) return `${connected}, just now`
+  return `${connected}, ${mins < 60 ? `${mins}m` : `${Math.round(mins / 60)}h`} ago`
+}
+
+/**
+ * What this server advertises — tools, prompts and resources.
+ *
+ * Drawn without being asked for: a row that says only its command tells the
+ * reader nothing about what a thread linking it actually gets. The result is a
+ * *reading*, so it is a badge with the counts in it, and a **link to the
+ * server's own page**, where each entry is drawn as the contract it is; the
+ * tooltip says how old the remembered answer is. A server that offers nothing
+ * is said to, rather than drawn as a row with an empty cell.
+ */
+function McpOffers({ row }: { row: ServerRow }) {
+  const { server, data } = row
+  if (isThreadScoped(server) || !data?.ok) return <span className="text-xs text-muted-foreground/60">—</span>
+  const groups = (
+    [
+      ["tools", data.tools],
+      ["prompts", data.prompts],
+      ["resources", data.resources],
+    ] as const
+  ).filter(([, list]) => list.length > 0)
+  if (groups.length === 0) {
+    return (
+      <span className="text-xs text-muted-foreground" title={listedWhen(data)}>
+        Nothing advertised
+      </span>
+    )
+  }
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm"
+    <Link
+      to={mcpDetailPath(server.id)}
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center pointer-coarse:min-h-11"
+      title={`${data.serverInfo?.name ?? server.name} — ${listedWhen(data)}`}
     >
-      <CollapsibleTrigger className="flex w-full items-center gap-3 p-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50 @panel-sm:p-4">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
-          {mcpIcon(server)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{server.name}</span>
-          <McpDetail server={server} />
-        </span>
-        <McpStatus server={server} />
-        <ChevronDownIcon
-          className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-3 border-t border-border/60 p-3 @panel-sm:p-4">
-        <div className={cn(INSET, "p-3")}>
-          <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            {server.type === "http" ? "Endpoint" : server.type === "stdio" ? "Command" : "About"}
-          </div>
-          <div className={cn("mt-1 text-sm break-all", server.type !== "builtin" && "font-mono text-xs")}>
-            {endpoint}
-          </div>
-        </div>
-        {server.type === "http" && server.auth === "oauth" && (
-          <McpConnection server={server} settings={settings} refresh={refresh} />
-        )}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <McpCheck server={server} settings={settings} />
-        </div>
-        <div className="flex justify-end gap-1.5 border-t border-border/60 pt-3">
-          {canEdit && (
-            <Button variant="outline" size="sm" onClick={edit}>
-              <PencilIcon className="size-4" /> Edit
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={remove}>
-            <Trash2Icon className="size-4" /> Delete
-          </Button>
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+      <Badge variant="secondary" className="cursor-pointer hover:bg-secondary/80">
+        <PlugZapIcon /> {groups.map(([label, list]) => `${list.length} ${label}`).join(", ")}
+      </Badge>
+    </Link>
   )
 }
 
-function McpCards({
-  items,
+/** The failure, the OAuth state and the thread-scoped explanation — what a
+    row has to say beyond its columns. Shared by the table's expanded row and
+    the narrow list's inline one, so the two cannot drift. */
+function McpDetail({
+  row,
   settings,
   refresh,
-  canEdit,
-  edit,
-  remove,
 }: {
-  items: McpServerDef[]
+  row: ServerRow
   settings: ServerSettings
   refresh: () => Promise<void>
-  canEdit: (s: McpServerDef) => boolean
-  edit: (s: McpServerDef) => void
-  remove: (s: McpServerDef) => void
 }) {
-  const [q, setQ] = React.useState("")
-  const needle = q.trim().toLowerCase()
-  const shown = needle
-    ? items.filter((s) => `${s.name} ${mcpSubtitle(s)}`.toLowerCase().includes(needle))
-    : items
+  const { server, data } = row
+  const failure = row.readError ?? (data && !data.ok && !data.deferred ? data.error : undefined)
   return (
-    <div className="flex flex-col gap-2">
-      {items.length > 8 && <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search MCP servers…" />}
-      {shown.map((s) => (
-        <McpCard
-          key={s.id}
-          server={s}
-          settings={settings}
-          refresh={refresh}
-          canEdit={canEdit(s)}
-          edit={() => edit(s)}
-          remove={() => remove(s)}
-        />
-      ))}
+    <>
+      {isThreadScoped(server) && <McpThreadScoped />}
+      {server.type === "http" && server.auth === "oauth" && (
+        <McpConnection server={server} settings={settings} refresh={refresh} />
+      )}
+      {row.health === "error" && failure && (
+        <pre className="max-h-40 overflow-auto rounded-md bg-destructive/5 p-2 font-mono text-[11px] whitespace-pre-wrap text-destructive">
+          {failure}
+        </pre>
+      )}
+    </>
+  )
+}
+
+/** The table's expanded row: the facts the columns cut short (the whole
+    endpoint, what the server calls itself, how old the reading is), then the
+    detail. */
+function McpExpanded({
+  row,
+  settings,
+  refresh,
+}: {
+  row: ServerRow
+  settings: ServerSettings
+  refresh: () => Promise<void>
+}) {
+  const { server, data } = row
+  const info = data?.ok ? data.serverInfo : undefined
+  const facts: [string, React.ReactNode][] = [
+    [
+      server.type === "http" ? "URL" : server.type === "stdio" ? "Command" : "Purpose",
+      <span key="e" className={cn("break-all", server.type !== "builtin" && "font-mono text-[11px]")}>
+        {endpointOf(server)}
+      </span>,
+    ],
+    ...(info ? ([["Reports as", `${info.name}${info.version ? ` ${info.version}` : ""}`]] as [string, React.ReactNode][]) : []),
+    ...(data?.ok ? ([["Listed", listedWhen(data)]] as [string, React.ReactNode][]) : []),
+  ]
+  return (
+    <div className="space-y-3 py-1">
+      <dl className="grid gap-x-6 gap-y-2 text-xs @panel-md:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
+        {facts.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
+            <dd className="mt-0.5">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <McpDetail row={row} settings={settings} refresh={refresh} />
+    </div>
+  )
+}
+
+/** The narrow list's row: mark, name, endpoint, status, then the badges and
+    whatever needs a hand — there is no hover on a phone and no room for a
+    second tap to learn why a server is red. */
+function McpMobileRow({
+  row,
+  settings,
+  refresh,
+}: {
+  row: ServerRow
+  settings: ServerSettings
+  refresh: () => Promise<void>
+}) {
+  const { server } = row
+  return (
+    <div className="min-w-0 flex-1 space-y-2">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+          <McpIcon server={server} className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{server.name}</div>
+          <div className={cn("truncate text-xs text-muted-foreground", server.type !== "builtin" && "font-mono text-[11px]")}>
+            {endpointOf(server)}
+          </div>
+          <McpStatus row={row} />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge variant="outline" className="font-normal">
+          {transportOf(server)}
+        </Badge>
+        {row.data?.ok && <McpOffers row={row} />}
+      </div>
+      <McpDetail row={row} settings={settings} refresh={refresh} />
     </div>
   )
 }
@@ -458,127 +749,20 @@ function McpConnection({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 @panel-md:justify-end">
+    <div className="flex flex-wrap items-center gap-1.5">
       {error && <ErrorNote error={error} className="basis-full" />}
       <Badge variant={connected ? "secondary" : "destructive"} title={state?.error ?? undefined}>
         <KeyRoundIcon /> {authSummary(server.authState)}
       </Badge>
-      <Button variant="outline" size="sm" disabled={busy || waiting} onClick={() => void connect()}>
+      <Button variant="outline" size="sm" className="h-11 @panel-sm:h-9" disabled={busy || waiting} onClick={() => void connect()}>
         <PlugIcon className="size-4" /> {waiting ? "Waiting…" : connected ? "Reconnect" : "Connect"}
       </Button>
       {state && state.state !== "disconnected" && (
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void disconnect()} title="Revoke and forget these tokens">
+        <Button variant="ghost" size="sm" className="h-11 @panel-sm:h-9" disabled={busy} onClick={() => void disconnect()} title="Revoke and forget these tokens">
           <UnplugIcon className="size-4" /> Disconnect
         </Button>
       )}
     </div>
-  )
-}
-
-/** How old the listing is, said as the reading's own tooltip: a remembered
-    answer must never read as a connection that just happened. */
-function listedWhen(result: McpCheckResult) {
-  const connected = `connected in ${result.ms}ms`
-  if (!result.checkedAt) return connected
-  const mins = Math.round((Date.now() - result.checkedAt) / 60_000)
-  if (mins < 1) return `${connected}, just now`
-  return `${connected}, ${mins < 60 ? `${mins}m` : `${Math.round(mins / 60)}h`} ago`
-}
-
-/**
- * What this server advertises — tools, prompts and resources.
- *
- * Drawn without being asked for: a row that says only its command tells the
- * reader nothing about what a thread linking it actually gets. The listing is
- * the server's to remember (`mcp_catalog`, one connect per row per TTL and
- * coalesced across tabs), so a settings visit costs a GET and not a dozen
- * child processes — and the read is what every row does on mount.
- *
- * The result is a *reading*, so it is the shape every other reading in the app
- * has — a badge with the counts in it. It is a **link to the server's own
- * page**, where each tool, prompt and resource is drawn as the contract it is;
- * the tooltip says how old the remembered answer is.
- *
- * Check is what is left of the old button and it still means what it said:
- * connect *now*. It POSTs, which is the one door that refuses the stored
- * answer, and writes what comes back into the cache the row draws from.
- */
-function McpCheck({ server, settings }: { server: McpServerDef; settings: ServerSettings }) {
-  const qc = useQueryClient()
-  const key = mcpCatalogKey(settings, server.id)
-  const scoped = isThreadScoped(server)
-  const query = useMcpCatalog(server.id, !scoped)
-  const result = query.data ?? null
-  /* The toast flavour, because this button stays on screen: the inline one
-     keeps `busy` up on purpose for the callers that navigate away on success,
-     which would leave Check reading "Checking…" for as long as the page is
-     open. */
-  const { busy, run } = useAsyncAction({ toast: true })
-
-  /* Nothing to check: the server it would connect to does not exist without a
-     thread. Saying that beats a Check button that can only ever fail. */
-  if (scoped) return <McpThreadScoped />
-
-  const check = () =>
-    void run(`Couldn't check ${server.name}`, async () => {
-      qc.setQueryData(
-        key,
-        await api<McpCheckResult>(settings, `/api/mcp-servers/${server.id}/check`, { method: "POST" })
-      )
-    })
-
-  const groups = result
-    ? ([
-        ["Tools", result.tools],
-        ["Prompts", result.prompts],
-        ["Resources", result.resources],
-      ] as const).filter(([, list]) => list.length > 0)
-    : []
-  const counts = groups.map(([label, list]) => `${list.length} ${label.toLowerCase()}`).join(", ")
-
-  return (
-    <>
-      {/* A read that failed is a reading too — the row says so where it would
-          have said what the server offers, rather than drawing as a server
-          that offers nothing. */}
-      {!result && query.error && (
-        <Badge variant="destructive" title={query.error.message}>
-          <PlugZapIcon /> Couldn't read what it offers
-        </Badge>
-      )}
-      {result?.deferred && <Badge variant="outline" title={result.error}>Not connected</Badge>}
-      {result && !result.ok && !result.deferred && (
-        <Badge variant="destructive" title={result.error}>
-          <PlugZapIcon /> {result.error ?? "Didn't connect"}
-        </Badge>
-      )}
-      {result?.ok &&
-        (groups.length === 0 ? (
-          /* Connected and advertises nothing: a real answer, and the one a
-             misconfigured server gives most often. */
-          <Badge variant="secondary" title={listedWhen(result)}>
-            <PlugZapIcon /> Connected, nothing advertised
-          </Badge>
-        ) : (
-          <Link
-            to={mcpDetailPath(server.id)}
-            title={`${result.serverInfo?.name ?? server.name} — ${listedWhen(result)}`}
-          >
-            <Badge variant="secondary" className="cursor-pointer hover:bg-secondary/80">
-              <PlugZapIcon /> {counts}
-            </Badge>
-          </Link>
-        ))}
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={busy || query.isFetching}
-        onClick={check}
-        title="Connect now and list what this server offers"
-      >
-        <SearchCheckIcon className="size-4" /> {busy || query.isFetching ? "Checking…" : "Check"}
-      </Button>
-    </>
   )
 }
 
@@ -593,7 +777,9 @@ function McpCheck({ server, settings }: { server: McpServerDef; settings: Server
  *
  * The search is the server's (`/api/mcp-registry`, a proxy — see
  * `mcp-registry.ts`), debounced here and aborted on the next keystroke, the
- * same bargain ⌘K's search destination makes.
+ * same bargain ⌘K's search destination makes. So the search box is the page's
+ * and the table under it has none of its own: filtering the rows already
+ * fetched would be a second, quieter search that disagrees with the first.
  */
 export function McpBrowsePage() {
   const { settings } = useSettingsPage()
@@ -628,7 +814,117 @@ export function McpBrowsePage() {
   /* A name already in the library is the one fact this page knows that the
      registry does not — and installing a second copy under the same name is
      two servers the agent cannot tell apart. */
-  const have = new Set(mcpServers.map((s) => s.name))
+  const have = React.useMemo(() => new Set(mcpServers.map((s) => s.name)), [mcpServers])
+  const navigateRef = React.useRef(navigate)
+  navigateRef.current = navigate
+  const install = React.useCallback(
+    (entry: RegistryEntry) =>
+      void navigateRef.current(settingsFormPath("mcp"), { state: { prefill: entry.server } }),
+    []
+  )
+
+  const columns = React.useMemo<ColumnDef<RegistryEntry, unknown>[]>(
+    () => [
+      {
+        id: "server",
+        header: "Server",
+        meta: { title: true, className: "min-w-56" },
+        cell: ({ row }) => (
+          <TitleCell
+            title={row.original.server.name}
+            subtitle={<span className="font-mono text-[11px]">{row.original.qualifiedName}</span>}
+          />
+        ),
+      },
+      {
+        id: "about",
+        header: "About",
+        meta: { className: "hidden @panel-md:table-cell max-w-72 min-w-48" },
+        cell: ({ row }) => (
+          <span className="line-clamp-2 text-xs whitespace-normal text-muted-foreground">
+            {row.original.description}
+          </span>
+        ),
+      },
+      {
+        id: "via",
+        header: "Transport",
+        cell: ({ row }) => (
+          <span className="flex items-center gap-1.5">
+            <Badge variant="outline" className="font-normal">
+              {row.original.via === "remote" ? "HTTP" : row.original.via}
+            </Badge>
+            <span className="text-xs text-muted-foreground">{row.original.version}</span>
+          </span>
+        ),
+      },
+      {
+        id: "needs",
+        header: "Needs",
+        meta: { className: "hidden @panel-lg:table-cell" },
+        cell: ({ row }) =>
+          row.original.needs.length > 0 ? (
+            <span className="font-mono text-[11px] text-muted-foreground" title={row.original.needs.join(", ")}>
+              {row.original.needs.join(", ")}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground/60">—</span>
+          ),
+      },
+      {
+        id: "install",
+        header: "",
+        meta: { align: "end" },
+        cell: ({ row }) => (
+          <span className="flex items-center justify-end gap-2">
+            {have.has(row.original.server.name) && <Badge variant="secondary">In library</Badge>}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="pointer-coarse:h-11"
+              aria-label={`Install ${row.original.server.name}`}
+              onClick={() => install(row.original)}
+            >
+              <PlusIcon className="size-4" /> Install
+            </Button>
+          </span>
+        ),
+      },
+    ],
+    [have, install]
+  )
+
+  const renderRow = React.useCallback(
+    (entry: RegistryEntry) => (
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <RegistryMark entry={entry} className="size-10" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{entry.server.name}</div>
+            <div className="truncate font-mono text-[11px] text-muted-foreground">{entry.qualifiedName}</div>
+          </div>
+        </div>
+        <p className="line-clamp-3 text-xs text-muted-foreground">{entry.description}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className="font-normal">
+            {entry.via === "remote" ? "HTTP" : entry.via}
+          </Badge>
+          <span className="text-xs text-muted-foreground">{entry.version}</span>
+          {have.has(entry.server.name) && <Badge variant="secondary">In library</Badge>}
+        </div>
+        {entry.needs.length > 0 && (
+          <p className="text-[11px] break-words text-muted-foreground">
+            Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
+          </p>
+        )}
+        <Button type="button" variant="outline" className="h-11 w-full" aria-label={`Install ${entry.server.name}`} onClick={() => install(entry)}>
+          <PlusIcon className="size-4" /> Install
+        </Button>
+      </div>
+    ),
+    [have, install]
+  )
 
   return (
     <>
@@ -638,72 +934,55 @@ export function McpBrowsePage() {
         onBack={() => void navigate(settingsPath(meta.id))}
       />
       <PageForm onSubmit={(e) => e.preventDefault()}>
-        <Field label="Search" hint="Leave empty for the most recently published.">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="github, postgres, figma…"
-            autoFocus
-          />
-        </Field>
-        <ErrorNote error={error} />
-        {entries === null ? (
-          <PickerSkeleton rows={5} />
-        ) : entries.length === 0 ? (
-          <EmptyCard icon={meta.icon} text={query ? `Nothing published matches "${query}".` : "The registry answered with nothing."} />
-        ) : (
-          <ul className="divide-y rounded-lg border">
-            {entries.map((entry) => (
-              <li key={entry.id} className="flex flex-wrap items-start gap-2 p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="truncate text-sm font-medium">{entry.server.name}</span>
-                    <Badge variant="outline" className="shrink-0 font-normal">
-                      {entry.via === "remote" ? "HTTP" : entry.via}
-                    </Badge>
-                    {entry.version && <span className="text-xs text-muted-foreground">{entry.version}</span>}
-                    {have.has(entry.server.name) && (
-                      <Badge variant="secondary" className="shrink-0">
-                        In library
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-xs text-pretty text-muted-foreground">{entry.description}</p>
-                  {/* Provenance: a reverse-DNS name is namespace-verified by the
-                      registry, and the repository is the only other thing worth
-                      reading before running somebody's command. */}
-                  <p className="mt-1 font-mono text-[11px] break-all text-muted-foreground/70">
-                    {entry.qualifiedName}
-                    {entry.repositoryUrl && (
-                      <>
-                        {" · "}
-                        <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="underline">
-                          source
-                        </a>
-                      </>
-                    )}
-                  </p>
-                  {entry.needs.length > 0 && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
-                    </p>
-                  )}
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    void navigate(settingsFormPath(meta.id), { state: { prefill: entry.server } })
-                  }
-                >
-                  <PlusIcon className="size-4" /> Install
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <FormShell sections={[{ id: "search", label: "Search" }]}>
+          <FormSection id="search" label="Search" hint="Leave empty for the most recently published.">
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="github, postgres, figma…"
+                aria-label="Search the MCP registry"
+                className="h-11 pl-9 text-sm"
+                autoFocus
+              />
+            </div>
+            <ErrorNote error={error} />
+          </FormSection>
+          <Section
+            label="Results"
+            hint={entries ? `${entries.length} ${entries.length === 1 ? "result" : "results"}` : undefined}
+          >
+            <DataTable
+              columns={columns}
+              data={entries ?? []}
+              getRowId={(e) => e.id}
+              isLoading={entries === null}
+              skeletonRows={5}
+              mark={(e) => <RegistryMark entry={e} className="size-5" />}
+              mobile={{ renderRow }}
+              pageSize={50}
+              viewToggle={false}
+              emptyIcon={<meta.icon />}
+              emptyMessage={query ? `Nothing published matches "${query}".` : "The registry answered with nothing."}
+            />
+          </Section>
+        </FormShell>
       </PageForm>
     </>
+  )
+}
+
+/** A registry row's mark: the publisher's logo where there is one, else the
+    transport's glyph. */
+function RegistryMark({ entry, className }: { entry: RegistryEntry; className?: string }) {
+  const Fallback = entry.via === "remote" ? GlobeIcon : TerminalIcon
+  return (
+    <EntityIcon
+      src={entry.logoUrl ?? undefined}
+      className={className}
+      fallback={<Fallback aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />}
+    />
   )
 }
 
@@ -829,6 +1108,13 @@ function McpForm({
         onBack={() => onDone(false)}
       />
       <PageForm onSubmit={save}>
+      <FormShell
+        sections={[
+          { id: "identity", label: "Identity" },
+          { id: "connection", label: form.type === "http" ? "Remote endpoint" : "Local process" },
+        ]}
+      >
+      <FormSection id="identity" label="Identity" hint="What the agent calls it and how it is drawn.">
       <div className="grid gap-4 @panel-sm:grid-cols-2">
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -851,34 +1137,41 @@ function McpForm({
           </div>
         </Field>
         <Field label="Transport">
-          <Select value={form.type} onValueChange={(type) => set({ type: (type as "stdio" | "http") ?? "stdio" })}>
-            <SelectTrigger className="w-full">
-              <SelectValue>{form.type === "http" ? "HTTP" : "stdio"}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="stdio">stdio</SelectItem>
-              <SelectItem value="http">HTTP</SelectItem>
-            </SelectContent>
-          </Select>
+          <Segmented
+            label="Transport"
+            value={form.type}
+            onChange={(type) => set({ type })}
+            options={[
+              { value: "stdio", label: "stdio" },
+              { value: "http", label: "HTTP" },
+            ]}
+          />
         </Field>
       </div>
+      </FormSection>
+      <FormSection
+        id="connection"
+        label={form.type === "http" ? "Remote endpoint" : "Local process"}
+        hint={form.type === "http" ? "Where the server lives and how it is reached." : "What the server runs, on the machine the harness runs on."}
+      >
       {form.type === "http" ? (
         <>
           <Field
             label="URL"
             hint="Check asks the server how it authenticates — a server that answers 401 is stored as OAuth and can be connected from the list."
           >
-            <div className="flex items-start gap-2">
+            <div className="flex flex-wrap items-start gap-2 @panel-sm:flex-nowrap">
               <Input
                 value={form.url}
                 onChange={(e) => set({ url: e.target.value, auth: "none" })}
                 placeholder="https://mcp.example.com/mcp"
-                className="font-mono text-xs"
+                className="min-w-0 flex-1 basis-full font-mono text-xs @panel-sm:basis-0"
                 required
               />
               <Button
                 type="button"
                 variant="outline"
+                className="h-11 @panel-sm:h-9"
                 disabled={!form.url || checking}
                 onClick={() => void check("Couldn't check the MCP server", async () => void (await runProbe()))}
               >
@@ -934,6 +1227,8 @@ function McpForm({
           </Field>
         </>
       )}
+      </FormSection>
+      </FormShell>
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>

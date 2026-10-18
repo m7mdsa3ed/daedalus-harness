@@ -197,11 +197,33 @@ export function startKeyboardInset(): () => void {
     if (!frame) frame = requestAnimationFrame(publish)
   }
 
+  /* The browser's own scroll-into-view still runs when the keyboard opens —
+     before the composer's lift has moved it — and it scrolls whatever is in
+     the way: the document, and boxes that are `overflow: hidden` (hidden still
+     scrolls programmatically; only the scrollbar is gone). Nothing scrolls them
+     back, so the app sat a keyboard's height up — the strip off the top, the
+     shell's ground showing under the composer. Neither is ever meant to be
+     scrolled, so any offset on one is undone as it happens.
+     ponytail: keyed on computed overflow-y; a box that scrolls itself on purpose
+     must be `auto`/`scroll` (hide the bar with `no-scrollbar`), never `hidden`. */
+  const unscroll = (event: Event) => {
+    const target = event.target
+    if (target === document) {
+      if (window.scrollX || window.scrollY) window.scrollTo(0, 0)
+      return
+    }
+    if (!(target instanceof Element) || target.scrollTop === 0) return
+    const { overflowY } = getComputedStyle(target)
+    if (overflowY === "hidden" || overflowY === "clip") target.scrollTop = 0
+  }
+
   publish()
   keyboard?.addEventListener("geometrychange", schedule)
   viewport?.addEventListener("resize", schedule)
   viewport?.addEventListener("scroll", schedule)
+  document.addEventListener("scroll", unscroll, { capture: true, passive: true })
   return () => {
+    document.removeEventListener("scroll", unscroll, { capture: true })
     if (frame) cancelAnimationFrame(frame)
     keyboard?.removeEventListener("geometrychange", schedule)
     viewport?.removeEventListener("resize", schedule)

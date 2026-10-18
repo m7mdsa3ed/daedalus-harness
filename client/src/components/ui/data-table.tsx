@@ -11,20 +11,27 @@ export interface DataTableColumnMeta {
   /** Extra classes for this column's header and cells — a width, or a
    *  responsive hide for a column not worth a horizontal scroll. */
   className?: string;
+  /** Marks the title column: the one a row is *called*. It gets the title
+   *  type, the leading `mark`, and is pinned while the table scrolls sideways;
+   *  on the narrow list it is the row's heading. Defaults to the first column. */
+  title?: boolean;
 }
 
 const columnMeta = (column: { columnDef: { meta?: unknown } }) =>
   (column.columnDef.meta ?? {}) as DataTableColumnMeta;
 import {
-  ArrowUpDown,
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronsUpDown,
   Inbox,
+  List,
   Rows3,
   MoreHorizontal,
-  LayoutGrid,
+  MoreVertical,
   Table2,
 } from "lucide-react";
 
@@ -33,12 +40,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  Table,
+
   TableBody,
   TableCell,
   TableFooter,
@@ -50,20 +52,22 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PaginationControls } from "@/components/pagination-controls";
 import { SwipeableRow } from "@/components/swipeable-row";
 import type { SwipeNeighborMotion } from "@/components/motion/swipeable-list";
 import { useMotionValue } from "motion/react";
 import { HeaderActionOverflow } from "@/components/ui/action-overflow";
-import { BulkActionBar } from "@/components/bulk-action-bar";
-import { PaginationControls } from "@/components/pagination-controls";
 import { useIsNarrow } from "@/hooks/use-device";
+import { KEYBOARD_RISE } from "@/lib/keyboard-inset";
 import {
   FiltersBar,
   type FilterFieldDef,
   type FilterSchemaValue,
 } from "@/components/ui/filters-bar";
+
 
 export interface TableAction<TData> {
   id: string;
@@ -218,6 +222,9 @@ export interface DataTableFiltering {
     onChange: (value: string) => void;
     placeholder?: string;
   };
+  /** How many rows exist before the search/filters narrowed them. With it, the
+   *  toolbar says "12 of 40" while a search or filter is active. */
+  totalCount?: number;
 }
 
 /** A generic icon action rendered in the table's own filter bar (e.g. refresh,
@@ -307,6 +314,19 @@ export interface DataTableProps<TData extends RowData, TValue> {
    *  bottom of the mobile card list. Each cell carries its own renderer and
    *  loading state, positioned under the matching table column. */
   footer?: DataTableFooter;
+  /** The leading mark of a row — an avatar, an icon, a logo. Drawn at the start
+   *  of the title cell on the table and in the mark slot of the default narrow
+   *  row. Also turns the table/list toggle on (the list is worth choosing). */
+  mark?: (row: TData) => ReactNode;
+  /** Free-form controls for the toolbar, between the filters and the view
+   *  toggle (e.g. an "Add" button). */
+  toolbar?: ReactNode;
+  /** Glyph and call to action for the empty state. */
+  emptyIcon?: ReactNode;
+  emptyAction?: ReactNode;
+  /** Caps the table's height so its header stays put while the rows scroll
+   *  (a CSS length, or px). Unset, the page scrolls and the table grows. */
+  maxHeight?: number | string;
 }
 
 /** One footer cell: a value rendered under the matching table column (desktop)
@@ -354,6 +374,140 @@ const rowFlagsSelector = (rowId: string) => (s: any): RowFlags => ({
   exp: Boolean(s.expanded?.[rowId]),
 });
 
+/* ── Shared look ──
+   Named once so the header, the body and the pinned column agree. */
+
+/** A sticky cell must be opaque or the columns scrolling under it show through,
+ *  which also hides the row's hover/selected wash — so the wash is mixed into
+ *  the ground here, keyed on the row's group. */
+const PIN_BG =
+  "bg-card group-hover/row:bg-[color-mix(in_oklab,var(--card),var(--muted)_40%)] group-data-[state=selected]/row:bg-[color-mix(in_oklab,var(--card),var(--primary)_5%)] group-data-[state=selected]/row:group-hover/row:bg-[color-mix(in_oklab,var(--card),var(--primary)_7%)]";
+/** The pinned column's trailing edge fades in once the table has scrolled. */
+const PIN_EDGE =
+  "after:pointer-events-none after:absolute after:inset-y-0 after:-end-2 after:w-2 after:bg-linear-to-r rtl:after:bg-linear-to-l after:from-black/[0.07] after:to-transparent after:opacity-0 after:transition-opacity group-data-[scrolled=true]/scroll:after:opacity-100";
+/** 2px primary bar on a selected row's start edge — drawn by the row's first
+ *  cell so it follows the row in both directions and shifts nothing. Only ever
+ *  worn by a sticky cell, which is the positioned box `before:` needs: a
+ *  `relative` here would win the merge against `sticky` and unpin the column. */
+const SELECT_BAR =
+  "before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0 group-data-[state=selected]/row:before:opacity-100";
+/** Row actions are present on hover/focus/selection and on touch, never by
+ *  moving layout: only opacity changes. */
+const REVEAL =
+  "opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 group-data-[state=selected]/row:opacity-100 group-aria-expanded/row:opacity-100 data-popup-open:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100";
+/** A collapsed border does not travel with a sticky cell, so the header's
+ *  hairline is an inset shadow that does. */
+const HEAD_BG =
+  "bg-[color-mix(in_oklab,var(--card),var(--muted)_40%)] shadow-[inset_0_-1px_0_color-mix(in_oklab,var(--border)_60%,transparent)]";
+/** Mark slot at the start of a title cell / list row. */
+const MARK_BOX =
+  "flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-4";
+
+/** Title + optional muted second line, the shape a title cell wants. A column
+ *  may render this, or anything else — it is a convenience, not a contract. */
+export function TitleCell({
+  title,
+  subtitle,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="truncate text-sm font-medium">{title}</div>
+      {subtitle ? (
+        <div className="truncate text-xs font-normal text-muted-foreground">
+          {subtitle}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Up to two inline icon buttons; the rest — destructive ones last — fold into
+ *  a menu. Two or fewer are never folded. */
+function splitActions<TData>(actions: TableAction<TData>[]) {
+  if (actions.length <= 2) return { inline: actions, overflow: [] };
+  const calm = actions.filter((a) => a.tone !== "danger");
+  const danger = actions.filter((a) => a.tone === "danger");
+  return {
+    inline: calm.slice(0, 2),
+    overflow: [...calm.slice(2), ...danger],
+  };
+}
+
+/** Items of an actions menu — shared by the desktop "more" and the phone's. */
+function ActionMenuItems<TData>({
+  actions,
+  row,
+}: {
+  actions: TableAction<TData>[];
+  row: TData;
+}) {
+  const danger = actions.filter((a) => a.tone === "danger");
+  const calm = actions.filter((a) => a.tone !== "danger");
+  const item = (a: TableAction<TData>) => (
+    <DropdownMenuItem
+      key={a.id}
+      disabled={a.disabled?.(row)}
+      variant={a.tone === "danger" ? "destructive" : "default"}
+      onClick={(e) => {
+        e.stopPropagation();
+        a.onClick(row);
+      }}
+      className={cn(
+        "gap-2 pointer-coarse:min-h-11",
+        a.tone && a.tone !== "danger" && a.tone !== "neutral" && ACTION_TONE_TEXT[a.tone],
+      )}
+    >
+      {a.icon}
+      {a.label}
+    </DropdownMenuItem>
+  );
+  return (
+    <>
+      {calm.map(item)}
+      {calm.length > 0 && danger.length > 0 && <DropdownMenuSeparator />}
+      {danger.map(item)}
+    </>
+  );
+}
+
+/** A three-dots menu over a set of row actions. */
+function ActionMenu<TData>({
+  actions,
+  row,
+  className,
+  icon,
+}: {
+  actions: TableAction<TData>[];
+  row: TData;
+  className?: string;
+  icon?: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            title="More actions"
+            aria-label="More actions"
+            className={cn("rounded-lg text-muted-foreground hover:text-foreground", className)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        }
+      >
+        {icon ?? <MoreHorizontal className="size-4" />}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        <ActionMenuItems actions={actions} row={row} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * One desktop `<tr>` (plus its expanded detail `<tr>`), subscribed to just its
  * own selection/expansion. Toggling a checkbox or expanding a row re-renders
@@ -369,6 +523,8 @@ interface DesktopRowProps<TData extends RowData> {
   hasExpandableRows: boolean;
   hasActions: boolean;
   expandColSpan: number;
+  titleColumnId?: string;
+  mark?: (row: TData) => ReactNode;
   onRowClick?: (row: TData) => void;
   onToggleExpanded: (rowId: string) => void;
   onToggleSelected: (rowId: string) => void;
@@ -391,6 +547,8 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
   hasExpandableRows,
   hasActions,
   expandColSpan,
+  titleColumnId,
+  mark,
   onRowClick,
   onToggleExpanded,
   onToggleSelected,
@@ -399,6 +557,11 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
   expandLoading,
   renderActionsColumn,
 }: DesktopRowProps<TData>) {
+  const activate = () => {
+    if (hasExpandableRows) onToggleExpanded(row.id);
+    else onRowClick?.(row.original);
+  };
+  const interactive = Boolean(onRowClick || hasExpandableRows);
   return (
     <Subscribe selector={rowFlagsSelector(row.id)}>
       {({ sel, exp }) => (
@@ -406,46 +569,84 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
           <TableRow
             data-state={sel ? "selected" : undefined}
             aria-expanded={hasExpandableRows ? exp : undefined}
-            onClick={() => {
-              if (hasExpandableRows) onToggleExpanded(row.id);
-              else onRowClick?.(row.original);
-            }}
+            tabIndex={interactive ? 0 : undefined}
+            onClick={activate}
+            onKeyDown={
+              interactive
+                ? (e) => {
+                    // Only the row itself: Space on a checkbox inside it is the checkbox's.
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      activate();
+                    }
+                  }
+                : undefined
+            }
             className={cn(
-              (onRowClick || hasExpandableRows) && "cursor-pointer",
+              "group/row h-14 border-border/60 outline-none hover:bg-muted/40 data-[state=selected]:bg-primary/5 data-[state=selected]:hover:bg-primary/[0.07] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring/70",
+              interactive && "cursor-pointer",
               rowClassName?.(row.original, index),
             )}
           >
             {hasSelection && (
               <TableCell
-                className="w-12 ps-4"
+                className={cn(
+                  "sticky start-0 z-[1] w-12 py-3 ps-4 pe-0",
+                  PIN_BG,
+                  SELECT_BAR,
+                )}
                 onClick={(e) => e.stopPropagation()}
               >
                 <Checkbox
                   checked={sel}
                   onCheckedChange={() => onToggleSelected(row.id)}
                   aria-label="Select row"
-                  className="h-4 w-4"
+                  className="size-4"
                 />
               </TableCell>
             )}
-            {row.getVisibleCells().map((cell) => (
-              <TableCell
-                key={cell.id}
-                className={cn(
-                  "px-3 py-3",
-                  columnMeta(cell.column).align === "end" && "text-end",
-                  columnMeta(cell.column).className,
-                )}
-              >
-                {flexRender(
-                  cell.column.columnDef.cell,
-                  cell.getContext(),
-                )}
-              </TableCell>
-            ))}
+            {row.getVisibleCells().map((cell, cellIndex) => {
+              const meta = columnMeta(cell.column);
+              const isTitle = cell.column.id === titleColumnId;
+              // Only a *leading* title column is pinned — pinning one in the
+              // middle would pull it out of its place in the row.
+              const pinned = isTitle && cellIndex === 0;
+              const content = flexRender(
+                cell.column.columnDef.cell,
+                cell.getContext(),
+              );
+              return (
+                <TableCell
+                  key={cell.id}
+                  className={cn(
+                    "px-3 py-3",
+                    isTitle && "min-w-48 max-w-[28rem] text-sm font-medium",
+                    pinned && [
+                      "sticky z-[1]",
+                      hasSelection ? "start-12" : "start-0 ps-4",
+                      PIN_BG,
+                      PIN_EDGE,
+                      !hasSelection && SELECT_BAR,
+                    ],
+                    meta.align === "end" && "text-end tabular-nums",
+                    meta.className,
+                  )}
+                >
+                  {isTitle && mark ? (
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className={cn(MARK_BOX, "size-9")}>{mark(row.original)}</div>
+                      <div className="min-w-0 flex-1">{content}</div>
+                    </div>
+                  ) : (
+                    content
+                  )}
+                </TableCell>
+              );
+            })}
             {hasActions && (
               <TableCell
-                className="text-end"
+                className="w-px py-3 ps-1 pe-3 text-end"
                 onClick={(e) => e.stopPropagation()}
               >
                 {renderActionsColumn(row.original)}
@@ -455,9 +656,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
           {/* Only built when open — previously `render` ran for every collapsed
               row on every render. */}
           {exp && hasExpandableRows && (
-            <TableRow
-              className="bg-muted/20 hover:bg-muted/20 border-b-0"
-            >
+            <TableRow className="border-b-0 bg-muted/20 hover:bg-muted/20">
               <TableCell colSpan={expandColSpan}>
                 {expandLoading?.(row.original) ? (
                   <ExpandedRowSkeleton />
@@ -474,14 +673,20 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
 }) as <TData extends RowData>(props: DesktopRowProps<TData>) => React.ReactElement;
 
 /**
- * One mobile card. The `Subscribe` boundary wraps the whole `SwipeableRow`,
+ * One mobile row. The `Subscribe` boundary wraps the whole `SwipeableRow`,
  * so the swipe rail's Select/Deselect state and the tap-to-select behavior
  * both track this row's selected flag alone.
+ *
+ * `flat` is the default continuous list: a square row on the surface, divided
+ * from its neighbours by the list's hairlines, with a leading checkbox (when
+ * selectable) and a visible "more" menu so actions don't hide behind a swipe.
+ * Not flat, it is the old floating card the `listClassName` escape hatch owns.
  */
 interface MobileCardProps<TData extends RowData> {
   row: Row<TData>;
   rowIndex: number;
   wrapperClassName?: string;
+  flat: boolean;
   Subscribe: RowSubscribe;
   renderMobileRow: (row: TData, helpers: any) => React.ReactNode;
   helpersFor: (row: Row<TData>) => {
@@ -493,6 +698,7 @@ interface MobileCardProps<TData extends RowData> {
     left: { label: string; icon: ReactNode; className: string; onClick: () => void }[];
     right: { label: string; icon: ReactNode; className: string; onClick: () => void }[];
   };
+  menuActionsFor: (row: TData) => TableAction<TData>[];
   hasSelection: boolean;
   isAnySelected: () => boolean;
   onRowClick?: (row: TData) => void;
@@ -503,15 +709,20 @@ interface MobileCardProps<TData extends RowData> {
   neighborScope: string;
 }
 
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP = 8;
+
 /* Generic-through-memo, as DesktopRow above. */
 const MobileCard = React.memo(function MobileCard<TData extends RowData>({
   row,
   rowIndex,
   wrapperClassName,
+  flat,
   Subscribe,
   renderMobileRow,
   helpersFor,
   swipeActionsFor,
+  menuActionsFor,
   hasSelection,
   isAnySelected,
   onRowClick,
@@ -524,7 +735,17 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
   const helpers = helpersFor(row);
   const content = renderMobileRow(row.original, helpers);
   const swipe = swipeActionsFor(row.original);
+  const menuActions = flat ? menuActionsFor(row.original) : [];
   const tappable = Boolean(onRowClick);
+
+  // Long-press enters selection mode. The press that fires must not also be a
+  // tap, so `fired` swallows the click the lift produces.
+  const press = React.useRef({ timer: 0, x: 0, y: 0, fired: false });
+  const cancelPress = () => {
+    window.clearTimeout(press.current.timer);
+    press.current.timer = 0;
+  };
+  React.useEffect(() => cancelPress, []);
 
   return (
     <Subscribe selector={rowFlagsSelector(row.id)}>
@@ -560,13 +781,61 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
         const inner = (
           <div
             className={cn(
-              "flex items-center gap-3 w-full min-w-0",
-              sel && "opacity-80",
+              "flex w-full min-w-0 items-center gap-1",
+              flat && "self-stretch",
+              !flat && sel && "opacity-80",
             )}
           >
+            {flat && hasSelection && (
+              // 44px target around a 16px box; stops the row's own tap.
+              <div
+                className="-ms-2 flex size-11 shrink-0 items-center justify-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Checkbox
+                  checked={sel}
+                  onCheckedChange={() => onToggleSelected(row.id)}
+                  aria-label="Select row"
+                  className="size-4"
+                />
+              </div>
+            )}
             <div
-              className="flex-1 min-w-0"
+              className={cn(
+                "min-w-0 flex-1",
+                flat && "flex items-center self-stretch py-3",
+                tappable && "rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+              )}
+              onPointerDown={(e) => {
+                if (!hasSelection || e.pointerType === "mouse") return;
+                press.current.x = e.clientX;
+                press.current.y = e.clientY;
+                press.current.fired = false;
+                cancelPress();
+                press.current.timer = window.setTimeout(() => {
+                  press.current.timer = 0;
+                  press.current.fired = true;
+                  navigator.vibrate?.(8);
+                  onToggleSelected(row.id);
+                }, LONG_PRESS_MS);
+              }}
+              onPointerMove={(e) => {
+                if (
+                  press.current.timer &&
+                  Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) >
+                    LONG_PRESS_SLOP
+                )
+                  cancelPress();
+              }}
+              onPointerUp={cancelPress}
+              onPointerCancel={cancelPress}
+              onPointerLeave={cancelPress}
               onClick={(e) => {
+                if (press.current.fired) {
+                  press.current.fired = false;
+                  e.stopPropagation();
+                  return;
+                }
                 // In selection mode, tap toggles selection instead of navigating.
                 if (hasSelection && isAnySelected()) {
                   e.stopPropagation();
@@ -579,19 +848,48 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
                 }
               }}
               onContextMenu={(e) => e.preventDefault()}
+              // A tappable row is a button to everything but the pointer. Only
+              // the row itself answers the key: a control inside it keeps its own.
+              role={tappable ? "button" : undefined}
+              tabIndex={tappable ? 0 : undefined}
+              onKeyDown={
+                tappable
+                  ? (e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        if (hasSelection && isAnySelected()) onToggleSelected(row.id);
+                        else onRowClick!(row.original);
+                      }
+                    }
+                  : undefined
+              }
             >
-              {content}
+              <div className="min-w-0 flex-1">{content}</div>
             </div>
+            {menuActions.length > 0 && (
+              <ActionMenu
+                actions={menuActions}
+                row={row.original}
+                className="-me-1 size-11 shrink-0"
+                icon={<MoreVertical className="size-4" />}
+              />
+            )}
           </div>
         );
 
         const card = (
           <div
             className={cn(
-              wrapperClassName ??
-                "flex items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm shadow-black/[0.03]",
+              flat
+                ? cn(
+                    "relative flex min-h-16 items-center ps-4 pe-2 transition-colors before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
+                    sel && "bg-primary/5 before:opacity-100",
+                  )
+                : (wrapperClassName ??
+                    "flex items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm shadow-black/[0.03]"),
               tappable && "cursor-pointer active:bg-muted/60 transition-colors",
-              sel && "ring-2 ring-primary ring-inset rounded-2xl",
+              !flat && sel && "ring-2 ring-primary ring-inset rounded-2xl",
               rowClassName?.(row.original, rowIndex),
             )}
           >
@@ -608,6 +906,7 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
             onSwipeLeft={swipe.right.length ? swipe.right : undefined}
             onSwipeRight={left.length ? left : undefined}
             disabled={!hasSwipe}
+            flat={flat}
             className="overflow-hidden"
             neighborMotion={neighborMotion}
             neighborIndex={neighborIndex}
@@ -647,6 +946,11 @@ export function DataTable<TData extends RowData, TValue>({
   viewToggle = true,
   className,
   footer,
+  mark,
+  toolbar: toolbarSlot,
+  emptyIcon,
+  emptyAction,
+  maxHeight,
 }: DataTableProps<TData, TValue>) {
   // Feature groups are unpacked into flat locals: the namespaces exist for the
   // call sites, the body reads one name per concern.
@@ -670,6 +974,7 @@ export function DataTable<TData extends RowData, TValue>({
     count: filterCount = 0,
     onClear: onClearFilters,
     search,
+    totalCount: filteringTotal,
   } = filtering ?? {};
   const {
     renderRow: renderMobileRow,
@@ -703,7 +1008,35 @@ export function DataTable<TData extends RowData, TValue>({
     localStorage.setItem(VIEW_STORAGE_KEY[viewport], next);
     setViewState(next);
   };
-  const showCards = viewToggle ? view === "cards" : isNarrow;
+  // A narrow panel always has a list to show (the default row); the toggle is
+  // offered once the caller has given the list something of its own.
+  const hasCustomCards = Boolean(renderMobileRow || renderFullRow || mark);
+  const showCards = viewToggle && hasCustomCards ? view === "cards" : isNarrow;
+  const loadStep = pageSize;
+  // Measured height of the toolbar row, lent to the bulk bar that replaces it.
+  const toolbarHeight = React.useRef(0);
+  // Which edges of the table's scroller have more behind them — drives the end
+  // fade and the pinned column's trailing shadow. A ref callback, because the
+  // scroller mounts and unmounts with the view, the loading state and the
+  // empty state; React 19 runs the returned cleanup.
+  const [edge, setEdge] = React.useState({ start: false, end: false });
+  const scrollRef = React.useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const measure = () => {
+      const x = Math.abs(el.scrollLeft); // negative in RTL
+      const next = { start: x > 1, end: x + el.clientWidth < el.scrollWidth - 1 };
+      setEdge((p) => (p.start === next.start && p.end === next.end ? p : next));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    el.addEventListener("scroll", measure, { passive: true });
+    measure();
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", measure);
+    };
+  }, []);
   const [internalSorting, setInternalSorting] = React.useState<
     DataTableSort[]
   >([]);
@@ -931,6 +1264,11 @@ export function DataTable<TData extends RowData, TValue>({
     (bulkActions && bulkActions.length) || selectionControlled,
   );
   const hasExpandableRows = Boolean(renderExpandedRow);
+  // The column a row is called by: the one that says so, else the first.
+  const leafColumns = table.getVisibleLeafColumns();
+  const titleColumnId = (
+    leafColumns.find((c) => columnMeta(c).title) ?? leafColumns[0]
+  )?.id;
 
   // Actions applicable to a row for a given layout (respects showOn + hidden).
   const actionsFor = React.useCallback(
@@ -963,69 +1301,50 @@ export function DataTable<TData extends RowData, TValue>({
     [actionsFor],
   );
 
+  // Every action a row's "more" menu offers on the narrow list, both rails.
+  const menuActionsFor = React.useCallback(
+    (row: TData) => actionsFor(row, "mobile"),
+    [actionsFor],
+  );
+
   // Desktop Actions column — stable identity so `React.memo` on DesktopRow
   // holds across page re-renders (selection sync re-renders the page, not rows).
   const renderActionsColumn = React.useCallback(
     (row: TData) => {
       const rowActions = actionsFor(row, "desktop");
       if (!rowActions.length) return null;
-
-      const maxInline = 3;
-      const inline = rowActions.slice(0, maxInline);
-      const overflow = rowActions.slice(maxInline);
-
+      const { inline, overflow } = splitActions(rowActions);
       return (
         <div className="flex items-center justify-end gap-0.5">
           {inline.map((a) => (
-            <Tooltip key={a.id}>
-              <TooltipTrigger
-                render={<Button
-                  variant="ghost"
-                  size="icon"
-                  disabled={a.disabled?.(row)}
-                  className={cn(
-                    "h-8 w-8 rounded-lg",
-                    ACTION_TONE_TEXT[a.tone ?? "neutral"],
-                  )}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    a.onClick(row);
-                  }} />}>
-                  {a.icon}
-                
-              </TooltipTrigger>
-              <TooltipContent>{a.label}</TooltipContent>
-            </Tooltip>
+            <Button
+              key={a.id}
+              variant="ghost"
+              size="icon"
+              title={a.label}
+              aria-label={a.label}
+              disabled={a.disabled?.(row)}
+              className={cn(
+                "size-8 rounded-lg pointer-coarse:size-11",
+                REVEAL,
+                a.tone && a.tone !== "neutral"
+                  ? ACTION_TONE_TEXT[a.tone]
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                a.onClick(row);
+              }}
+            >
+              {a.icon}
+            </Button>
           ))}
           {overflow.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
-                  onClick={(e) => e.stopPropagation()}
-                  aria-label={"More actions"} />}>
-                  <MoreHorizontal className="h-4 w-4" />
-                
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                {overflow.map((a) => (
-                  <DropdownMenuItem
-                    key={a.id}
-                    disabled={a.disabled?.(row)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      a.onClick(row);
-                    }}
-                    className={cn("gap-2", ACTION_TONE_TEXT[a.tone ?? "neutral"])}
-                  >
-                    {a.icon}
-                    {a.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ActionMenu
+              actions={overflow}
+              row={row}
+              className={cn("size-8 pointer-coarse:size-11", REVEAL)}
+            />
           )}
         </div>
       );
@@ -1033,16 +1352,63 @@ export function DataTable<TData extends RowData, TValue>({
     [actionsFor],
   );
 
-    // Untracked read — only ever called from event handlers, which run after render.
+  // Untracked read — only ever called from event handlers, which run after render.
   const isAnySelected = React.useCallback(
     () => Object.keys(table.atoms.rowSelection?.get() ?? {}).length > 0,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [table.atoms.rowSelection],
   );
 
-  // Renders a single mobile card (shared by the flat and grouped layouts).
-  // `wrapperClassName` overrides the default flat list-row chrome — grouped
-  // members pass a nested-card style instead.
+
+  // The default narrow row, for a caller that gave no `renderRow`: the title
+  // column over up to two muted lines, then a status slot (the first
+  // end-aligned column) and a chevron when the row goes somewhere. Columns the
+  // table hides for width are included — that is what the list is for.
+  const renderDefaultMobileRow = React.useCallback(
+    (original: TData, { row }: { row: Row<TData> }) => {
+      const cells = row.getVisibleCells();
+      const titleCell = cells.find((c) => columnMeta(c.column).title) ?? cells[0];
+      const statusCell = cells.find(
+        (c) => c !== titleCell && columnMeta(c.column).align === "end",
+      );
+      const lines = cells
+        .filter((c) => c !== titleCell && c !== statusCell)
+        .slice(0, 2);
+      const draw = (c: (typeof cells)[number]) =>
+        flexRender(c.column.columnDef.cell, c.getContext());
+      return (
+        <div className="flex min-w-0 items-center gap-3">
+          {mark && (
+            <div className={cn(MARK_BOX, "size-10")}>{mark(original)}</div>
+          )}
+          <div className="min-w-0 flex-1">
+            {titleCell && (
+              <div className="truncate text-sm font-medium">{draw(titleCell)}</div>
+            )}
+            {lines.map((c) => (
+              <div key={c.id} className="truncate text-xs text-muted-foreground">
+                {draw(c)}
+              </div>
+            ))}
+          </div>
+          {statusCell && (
+            <div className="shrink-0 text-xs tabular-nums">{draw(statusCell)}</div>
+          )}
+          {onRowClick && (
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180" />
+          )}
+        </div>
+      );
+    },
+    [mark, onRowClick],
+  );
+  const mobileRowRenderer = renderMobileRow ?? renderDefaultMobileRow;
+  // `listClassName` hands the rows' chrome to the caller; otherwise they are
+  // flat rows in one continuous list.
+  const flatList = !mobileListClassName;
+
+  // Renders a single mobile row (shared by the flat and grouped layouts).
+  // `wrapperClassName` only matters for the caller-owned card mode.
   const renderMobileCard = (
     row: Row<TData>,
     rowIndex: number,
@@ -1053,17 +1419,18 @@ export function DataTable<TData extends RowData, TValue>({
       const full = renderFullRow(row.original, "mobile", rowIndex);
       if (full) return <React.Fragment key={row.id}>{full}</React.Fragment>;
     }
-    if (!renderMobileRow) return null;
     return (
       <MobileCard
         key={row.id}
         row={row}
         rowIndex={rowIndex}
         wrapperClassName={wrapperClassName}
+        flat={flatList}
         Subscribe={table.Subscribe as RowSubscribe}
-        renderMobileRow={renderMobileRow}
+        renderMobileRow={mobileRowRenderer}
         helpersFor={helpersFor}
         swipeActionsFor={swipeActionsFor}
+        menuActionsFor={menuActionsFor}
         hasSelection={hasSelection}
         isAnySelected={isAnySelected}
         onRowClick={onRowClick}
@@ -1090,28 +1457,19 @@ export function DataTable<TData extends RowData, TValue>({
     return typeof header === "string" ? header : columnId;
   };
 
-  // Rendered next to the filters (toolbar), not in the pagination footer.
+  // Rows-per-page lives in the footer, and only where there is room to use it.
   // A page can opt out (`hidePageSize`) when it renders the control itself
   // (e.g. inline in <PageToolbar>).
-  const pageSizeNode = hidePageSize
-    ? null
-    : pagination
-      ? pagination.onLimitChange
-        ? <RowsPerPageSelect value={pagination.limit ?? PAGE_SIZE_OPTIONS[0]} onChange={pagination.onLimitChange} />
-        : null
-      : pageSize
-        ? <RowsPerPageSelect value={table.state.pagination.pageSize} onChange={(size) => table.setPageSize(size)} />
-        : null;
-
-  const paginationNode = pagination ? (
-    <PaginationControls
-      page={pagination.page}
-      totalPages={pagination.totalPages}
-      hasPrev={pagination.hasPrev}
-      hasNext={pagination.hasNext}
-      onPageChange={pagination.onPageChange}
-    />
-  ) : null;
+  const pageSizeNode =
+    hidePageSize || isNarrow
+      ? null
+      : pagination
+        ? pagination.onLimitChange
+          ? <RowsPerPageSelect value={pagination.limit ?? PAGE_SIZE_OPTIONS[0]} onChange={pagination.onLimitChange} align="end" />
+          : null
+        : pageSize
+          ? <RowsPerPageSelect value={table.state.pagination.pageSize} onChange={(size) => table.setPageSize(size)} align="end" />
+          : null;
 
   const toolbarActionsNode = toolbarActions?.length ? (
     <HeaderActionOverflow
@@ -1121,35 +1479,53 @@ export function DataTable<TData extends RowData, TValue>({
     />
   ) : null;
 
-  const canToggleView = viewToggle && Boolean(renderMobileRow || renderFullRow);
+  const canToggleView = viewToggle && hasCustomCards;
   const viewToggleNode = canToggleView ? (
-    <div className="flex items-center rounded-md border p-0.5">
-      <Button
-        variant={view === "table" ? "secondary" : "ghost"}
-        size="icon"
-        className="h-7 w-7 rounded-sm"
-        aria-label={"Table view"}
-        onClick={() => setView("table")}
-      >
-        <Table2 className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant={view === "cards" ? "secondary" : "ghost"}
-        size="icon"
-        className="h-7 w-7 rounded-sm"
-        aria-label={"Card view"}
-        onClick={() => setView("cards")}
-      >
-        <LayoutGrid className="h-3.5 w-3.5" />
-      </Button>
+    <div
+      role="group"
+      aria-label="Layout"
+      className="flex shrink-0 items-center rounded-lg bg-muted/60 p-0.5"
+    >
+      {(
+        [
+          ["table", "Table view", Table2],
+          ["cards", "List view", List],
+        ] as const
+      ).map(([value, label, Icon]) => (
+        <button
+          key={value}
+          type="button"
+          title={label}
+          aria-label={label}
+          aria-pressed={view === value}
+          onClick={() => setView(value)}
+          className={cn(
+            "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:size-10",
+            view === value && "bg-background text-foreground shadow-sm",
+          )}
+        >
+          <Icon className="size-4" />
+        </button>
+      ))}
     </div>
   ) : null;
 
+  // "12 of 40" — only while the list is narrowed by a search or a filter, and
+  // only when the caller can say what "of" is.
+  const narrowed = Boolean(search?.value.trim()) || filterCount > 0;
+  const resultCountNode =
+    narrowed && filteringTotal !== undefined && !pagination ? (
+      <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+        {`${data.length} of ${filteringTotal}`}
+      </span>
+    ) : null;
+
   const trailingNode =
-    pageSizeNode || toolbarActionsNode || viewToggleNode ? (
-      <div className="flex items-center gap-2">
-        {pageSizeNode}
+    resultCountNode || toolbarActionsNode || toolbarSlot || viewToggleNode ? (
+      <div className="flex items-center justify-end gap-2">
+        {resultCountNode}
         {toolbarActionsNode}
+        {toolbarSlot}
         {viewToggleNode}
       </div>
     ) : null;
@@ -1158,467 +1534,720 @@ export function DataTable<TData extends RowData, TValue>({
     search || (filters && filters.length > 0) || trailingNode,
   );
 
-  // Bulk selection toolbar — the shared <BulkActionBar> (inline on desktop,
-  // fixed bottom bar on mobile). `renderToolbar` replaces it entirely.
-  // Subscribed to the rowSelection atom so it tracks the live selection without
-  // the body re-subscribing on every tick.
-  const selectionToolbar = hasSelection ? (
-    <table.Subscribe source={table.atoms.rowSelection}>
-      {(selectionRecord) => {
-        const selectedCount = Object.keys(selectionRecord ?? {}).length;
-        const liveSelected = table
-          .getSelectedRowModel()
-          .rows.map((r) => r.original);
-        const allSelected = table.getIsAllPageRowsSelected()
-          ? true
-          : table.getIsSomePageRowsSelected()
-            ? "indeterminate"
-            : false;
-        if (renderSelectionToolbar) {
-          return renderSelectionToolbar(
-            liveSelected,
-            () => table.resetRowSelection(),
-          );
-        }
-        if (!bulkActions?.length) return null;
-        return (
-          <BulkActionBar
-            selectedCount={selectedCount}
-            isAllSelected={allSelected === true}
-            onToggleAll={() => table.toggleAllPageRowsSelected()}
-            onClear={() => table.resetRowSelection()}
-            totalCount={selectionTotalCount}
-            onSelectAllMatching={onSelectAllMatching}
-            actions={bulkActions
-              .filter((a) => !a.hidden?.(liveSelected))
-              .map((a) => ({
-                label: a.label,
-                icon: a.icon,
-                disabled: a.disabled?.(liveSelected),
-                variant:
-                  a.tone === "danger"
-                    ? ("destructive" as const)
-                    : a.tone === "neutral"
-                      ? ("outline" as const)
-                      : ("default" as const),
-                onClick: () => a.onClick(liveSelected),
-              }))}
-          />
-        );
-      }}
-    </table.Subscribe>
-  ) : null;
+  const bulkButtons = (liveSelected: TData[], narrow: boolean) =>
+    (bulkActions ?? [])
+      .filter((a) => !a.hidden?.(liveSelected))
+      .map((a) => (
+        <Button
+          key={a.id}
+          size={narrow ? "default" : "sm"}
+          variant={
+            a.tone === "danger"
+              ? "destructive"
+              : a.tone === "neutral"
+                ? "outline"
+                : "default"
+          }
+          disabled={a.disabled?.(liveSelected)}
+          onClick={() => a.onClick(liveSelected)}
+          className={cn("gap-1.5", narrow && "h-11 min-w-28 flex-1 shrink-0")}
+        >
+          {a.icon}
+          <span className={narrow ? "text-sm" : "text-xs"}>{a.label}</span>
+        </Button>
+      ));
 
-  return (
-    <div ref={rootRef} className={cn("w-full space-y-4", className)}>
-      {/* Search + filters + rows-per-page — owned by the table. */}
-      {hasFilterBar && (
-        <FiltersBar
-          search={search}
-          fields={filters}
-          values={filterValues}
-          onFilterChange={onFilterChange!}
-          filterCount={filterCount}
-          onClearFilters={onClearFilters}
-          trailing={trailingNode ?? undefined}
-        />
-      )}
-
-      {/* Bulk selection toolbar (desktop + mobile) */}
-      {selectionToolbar}
-
-      {/* DESKTOP TABLE — skipped entirely when cards are showing (mobile
-          viewport, or desktop opted into cards via `viewToggle`), so
-          navigations don't pay for a hidden second tree. */}
-      {!(showCards && (renderMobileRow || renderFullRow)) && (
-      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm shadow-black/[0.03]">
-        {/* `Table` renders its own `overflow-x-auto` container, so there is no
-            wrapper here: two nested scrollers meant a swipe scrolled whichever
-            one the browser picked, and only one of them could be told about the
-            back-gesture. w-max lets columns take their natural width and
-            overflow into that container instead of being squeezed to fit;
-            min-w-full keeps narrow tables filling the card. */}
-        <Table className="w-max min-w-full">
-            <TableHeader>
-              {table.getHeaderGroups().map((hg) => (
-                <TableRow key={hg.id} className="border-border/60 bg-muted/[0.22] hover:bg-muted/[0.22]">
-                  {hasSelection && (
-                    <TableHead className="bg-muted/[0.22] w-12 ps-4 first:rounded-ss-2xl">
-                      <table.Subscribe source={table.atoms.rowSelection}>
-                        {() => {
-                          const all = table.getIsAllPageRowsSelected();
-                          const some = table.getIsSomePageRowsSelected();
-                          return (
-                            <Checkbox
-                              checked={all}
-                              indeterminate={!all && some}
-                              onCheckedChange={() => table.toggleAllPageRowsSelected()}
-                              aria-label={"Select all rows"}
-                              className="h-4 w-4"
-                            />
-                          );
-                        }}
-                      </table.Subscribe>
-                    </TableHead>
-                  )}
-                  {hg.headers.map((h) => (
-                    <TableHead
-                      key={h.id}
-                      className={cn(
-                        "bg-muted/[0.22] px-3 text-start text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground first:rounded-ss-2xl last:rounded-se-2xl",
-                        columnMeta(h.column).align === "end" && "text-end",
-                        columnMeta(h.column).className,
-                      )}
+  // The toolbar row — or, while rows are selected, the bulk bar *in its place*
+  // at the same height, so ticking a box moves nothing below it. Subscribed to
+  // the rowSelection atom so it tracks the live selection without the body
+  // re-subscribing on every tick. `renderToolbar` replaces the bar entirely.
+  const selectionUi = hasSelection && Boolean(renderSelectionToolbar || bulkActions?.length);
+  const filtersNode = (
+    <FiltersBar
+      search={search}
+      fields={filters}
+      values={filterValues}
+      onFilterChange={onFilterChange!}
+      filterCount={filterCount}
+      onClearFilters={onClearFilters}
+      trailing={trailingNode ?? undefined}
+      narrow={isNarrow}
+    />
+  );
+  const toolbarNode =
+    hasFilterBar || selectionUi ? (
+      <table.Subscribe source={table.atoms.rowSelection}>
+        {(selectionRecord) => {
+          const selectedCount = Object.keys(selectionRecord ?? {}).length;
+          if (!selectionUi || selectedCount === 0) {
+            return hasFilterBar ? (
+              <div
+                ref={(node) => {
+                  // Remembered for the bulk bar, which takes this row's height.
+                  if (node) toolbarHeight.current = node.offsetHeight;
+                }}
+                className={cn("border-b", isNarrow ? "p-2.5" : "p-3")}
+              >
+                {filtersNode}
+              </div>
+            ) : null;
+          }
+          const liveSelected = table
+            .getSelectedRowModel()
+            .rows.map((r) => r.original);
+          if (renderSelectionToolbar) {
+            return (
+              <div className="border-b">
+                {renderSelectionToolbar(liveSelected, () => table.resetRowSelection())}
+              </div>
+            );
+          }
+          const allSelected = table.getIsAllPageRowsSelected();
+          const buttons = bulkButtons(liveSelected, false);
+          return (
+            <>
+              <div
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-primary/15 bg-primary/[0.05] px-3 py-2"
+                style={{ minHeight: toolbarHeight.current || undefined }}
+              >
+                <span className="flex size-4 items-center justify-center pointer-coarse:size-11">
+                  <Checkbox
+                    checked={allSelected}
+                    indeterminate={!allSelected && table.getIsSomePageRowsSelected()}
+                    onCheckedChange={() => table.toggleAllPageRowsSelected()}
+                    aria-label="Select all rows"
+                    className="size-4"
+                  />
+                </span>
+                <span className="text-sm font-medium tabular-nums">
+                  {`${selectedCount} selected`}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => table.resetRowSelection()}
+                  className="h-8 px-2 text-xs pointer-coarse:h-11 pointer-coarse:px-3"
+                >
+                  {"Clear"}
+                </Button>
+                {selectionTotalCount !== undefined &&
+                  onSelectAllMatching &&
+                  !allSelected &&
+                  selectionTotalCount > selectedCount && (
+                    <button
+                      type="button"
+                      onClick={onSelectAllMatching}
+                      className="rounded-md px-1 text-xs text-primary hover:underline pointer-coarse:min-h-11 pointer-coarse:px-2"
                     >
-                      {h.isPlaceholder
-                        ? null
-                        : flexRender(h.column.columnDef.header, h.getContext())}
-                    </TableHead>
+                      {`Select all ${selectionTotalCount}`}
+                    </button>
+                  )}
+                {!isNarrow && (
+                  <div className="ms-auto flex items-center gap-2">{buttons}</div>
+                )}
+              </div>
+            </>
+          );
+        }}
+      </table.Subscribe>
+    ) : null;
+
+  // The phone's bulk actions: a bar fixed above the home indicator and the soft
+  // keyboard (`KEYBOARD_RISE` is its `bottom`), never under either. It is out of
+  // flow, so an in-flow spacer of its height keeps the last row and the pager
+  // reachable while it is up.
+  const bulkBarNode =
+    isNarrow && selectionUi && !renderSelectionToolbar ? (
+      <table.Subscribe source={table.atoms.rowSelection}>
+        {(selectionRecord) => {
+          if (Object.keys(selectionRecord ?? {}).length === 0) return null;
+          const buttons = bulkButtons(
+            table.getSelectedRowModel().rows.map((r) => r.original),
+            true,
+          );
+          if (!buttons.length) return null;
+          return (
+            <>
+              <div
+                aria-hidden
+                className="h-[calc(3.5rem+max(0.5rem,var(--safe-bottom)))]"
+              />
+              <div
+                role="toolbar"
+                aria-label="Bulk actions"
+                className={cn(
+                  "fixed inset-x-0 z-50 border-t border-border/80 bg-background/95 px-3 pt-2 pb-[max(0.5rem,var(--safe-bottom))] shadow-[0_-8px_24px_-18px_black] backdrop-blur",
+                  KEYBOARD_RISE,
+                )}
+              >
+                <div className="flex gap-2 overflow-x-auto">{buttons}</div>
+              </div>
+            </>
+          );
+        }}
+      </table.Subscribe>
+    ) : null;
+
+  // The surface's foot: where you are in the data. Silent when everything is
+  // on one page and there is no page size to change.
+  const total = pagination
+    ? (selectionTotalCount ?? data.length)
+    : data.length;
+  const pageIdx = table.state.pagination.pageIndex;
+  const size = table.state.pagination.pageSize;
+  const pageCount = pagination ? pagination.totalPages : table.getPageCount();
+  const currentPage = pagination ? pagination.page : pageIdx + 1;
+  const canPrev = pagination
+    ? (pagination.hasPrev ?? pagination.page > 1)
+    : table.getCanPreviousPage();
+  const canNext = pagination
+    ? (pagination.hasNext ?? pagination.page < pagination.totalPages)
+    : table.getCanNextPage();
+  const goPrev = () =>
+    pagination ? pagination.onPageChange(pagination.page - 1) : table.previousPage();
+  const goNext = () =>
+    pagination ? pagination.onPageChange(pagination.page + 1) : table.nextPage();
+  const pageLimit = pagination ? pagination.limit : size;
+  const rangeLabel =
+    pagination && !(pageLimit && selectionTotalCount !== undefined)
+      ? `Page ${currentPage} of ${pageCount}`
+      : pageLimit
+        ? `${Math.min((currentPage - 1) * pageLimit + 1, total)}-${Math.min(currentPage * pageLimit, total)} of ${total}`
+        : `${total} rows`;
+  const showFooter =
+    !isLoading &&
+    total > 0 &&
+    (pageCount > 1 ||
+      (pageSizeNode !== null && total > PAGE_SIZE_OPTIONS[0]));
+  const footerNode = !showFooter ? null : isNarrow ? (
+    // A thumb-sized "Load more" for a client-paged list (the rows stay one
+    // continuous list); prev/next when the server owns the pages.
+    <div className="flex flex-col items-stretch gap-2 border-t bg-muted/20 px-3 py-3">
+      <span className="text-center text-xs tabular-nums text-muted-foreground">
+        {pagination
+          ? rangeLabel
+          : `Showing ${Math.min(size, total)} of ${total}`}
+      </span>
+      {pagination ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="outline" className="h-11 rounded-lg" disabled={!canPrev} onClick={goPrev}>
+            <ChevronLeft className="size-4 rtl:rotate-180" />
+            {"Previous"}
+          </Button>
+          <Button variant="outline" className="h-11 rounded-lg" disabled={!canNext} onClick={goNext}>
+            {"Next"}
+            <ChevronRight className="size-4 rtl:rotate-180" />
+          </Button>
+        </div>
+      ) : (
+        canNext && (
+          <Button
+            variant="outline"
+            className="h-11 rounded-lg"
+            onClick={() => {
+              table.setPageIndex(0);
+              table.setPageSize(size + loadStep);
+            }}
+          >
+            {"Load more"}
+          </Button>
+        )
+      )}
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t bg-muted/20 px-4 py-2">
+      <span className="text-xs tabular-nums text-muted-foreground">{rangeLabel}</span>
+      <div className="flex items-center gap-2">
+        {pageSizeNode}
+        {pageCount > 1 && (
+          <>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {`${currentPage} / ${pageCount}`}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                title="Previous page"
+                aria-label="Previous page"
+                className="size-8 rounded-lg pointer-coarse:size-11"
+                disabled={!canPrev}
+                onClick={goPrev}
+              >
+                <ChevronLeft className="size-4 rtl:rotate-180" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                title="Next page"
+                aria-label="Next page"
+                className="size-8 rounded-lg pointer-coarse:size-11"
+                disabled={!canNext}
+                onClick={goNext}
+              >
+                <ChevronRight className="size-4 rtl:rotate-180" />
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  const emptyNode = (
+    <DataTableEmpty message={emptyMessage} icon={emptyIcon} action={emptyAction} />
+  );
+  const rows = table.getRowModel().rows;
+
+  // ── Desktop table ──
+  const headCell = (
+    h: ReturnType<typeof table.getHeaderGroups>[number]["headers"][number],
+    index: number,
+  ) => {
+    const meta = columnMeta(h.column);
+    const isTitle = h.column.id === titleColumnId;
+    const pinned = isTitle && index === 0;
+    const canSort = h.column.getCanSort();
+    const sorted = h.column.getIsSorted();
+    // A plain header on a sortable column becomes the whole cell's button. A
+    // function header (`SortableHeader`) already draws its own — left alone.
+    const nativeSort =
+      canSort && !h.isPlaceholder && typeof h.column.columnDef.header !== "function";
+    const leadPad = pinned && !hasSelection;
+    return (
+      <TableHead
+        key={h.id}
+        aria-sort={
+          canSort
+            ? sorted === "asc"
+              ? "ascending"
+              : sorted === "desc"
+                ? "descending"
+                : "none"
+            : undefined
+        }
+        className={cn(
+          "group/head sticky top-0 z-10 h-10 px-3 text-start text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
+          HEAD_BG,
+          pinned && ["z-20", hasSelection ? "start-12" : "start-0", leadPad && "ps-4", PIN_EDGE],
+          nativeSort && "p-0",
+          meta.align === "end" && "text-end",
+          meta.className,
+        )}
+      >
+        {h.isPlaceholder ? null : nativeSort ? (
+          <button
+            type="button"
+            onClick={() => h.column.toggleSorting(sorted === "asc")}
+            className={cn(
+              "flex h-10 w-full items-center gap-1 px-3 uppercase tracking-wide outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+              leadPad && "ps-4",
+              meta.align === "end" && "justify-end",
+              sorted && "text-foreground",
+            )}
+          >
+            {flexRender(h.column.columnDef.header, h.getContext())}
+            <SortGlyph sorted={sorted} />
+          </button>
+        ) : (
+          flexRender(h.column.columnDef.header, h.getContext())
+        )}
+      </TableHead>
+    );
+  };
+
+  const tableView = (
+    <div className="relative">
+      {/* This is the surface's one scroller (`maxHeight` gives the sticky
+          header something to stick to). Overflow scrolls in here, never the
+          page: the pinned title column and the end fade keep it legible. */}
+      <div
+        ref={scrollRef}
+        data-scrolled={edge.start}
+        className="group/scroll overflow-auto"
+        style={maxHeight !== undefined ? { maxHeight } : undefined}
+      >
+        <table data-slot="table" className="w-max min-w-full caption-bottom text-sm">
+          <TableHeader className="[&_tr]:border-b-0">
+            {table.getHeaderGroups().map((hg) => (
+              <TableRow key={hg.id} className="hover:bg-transparent">
+                {hasSelection && (
+                  <TableHead
+                    className={cn(
+                      "sticky start-0 top-0 z-20 h-10 w-12 ps-4 pe-0",
+                      HEAD_BG,
+                    )}
+                  >
+                    <table.Subscribe source={table.atoms.rowSelection}>
+                      {() => {
+                        const all = table.getIsAllPageRowsSelected();
+                        const some = table.getIsSomePageRowsSelected();
+                        return (
+                          <Checkbox
+                            checked={all}
+                            indeterminate={!all && some}
+                            onCheckedChange={() => table.toggleAllPageRowsSelected()}
+                            aria-label={"Select all rows"}
+                            className="size-4"
+                          />
+                        );
+                      }}
+                    </table.Subscribe>
+                  </TableHead>
+                )}
+                {hg.headers.map(headCell)}
+                {hasActions && (
+                  <TableHead className={cn("sticky top-0 z-10 h-10 w-px px-3", HEAD_BG)}>
+                    <span className="sr-only">{"Actions"}</span>
+                  </TableHead>
+                )}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (
+              Array.from({ length: skeletonRows }).map((_, i) => (
+                <TableRow key={`skeleton-${i}`} className="h-14 border-border/60 hover:bg-transparent">
+                  {hasSelection && (
+                    <TableCell className="w-12 ps-4 pe-0">
+                      <Skeleton className="size-4 rounded" />
+                    </TableCell>
+                  )}
+                  {columns.map((_col, j) => (
+                    <TableCell key={j} className="px-3 py-3">
+                      {j === 0 && mark ? (
+                        <div className="flex items-center gap-3">
+                          <Skeleton className="size-9 shrink-0 rounded-lg" />
+                          <Skeleton className="h-4 w-full max-w-40" />
+                        </div>
+                      ) : (
+                        <Skeleton className={cn("h-4 w-full", j === 0 ? "max-w-48" : "max-w-24")} />
+                      )}
+                    </TableCell>
                   ))}
                   {hasActions && (
-                    <TableHead className="bg-muted/[0.22] px-3 text-end last:rounded-se-2xl">
-                      {"Actions"}
-                    </TableHead>
+                    <TableCell className="w-px">
+                      <Skeleton className="size-8 rounded-lg" />
+                    </TableCell>
                   )}
                 </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                Array.from({ length: skeletonRows }).map((_, i) => (
-                  <TableRow key={`skeleton-${i}`} className="hover:bg-transparent">
-                    {hasSelection && (
-                      <TableCell className="w-10 ps-4">
-                        <Skeleton className="h-4 w-4 rounded" />
-                      </TableCell>
-                    )}
-                    {columns.map((_col, j) => (
-                      <TableCell key={j}>
-                        <Skeleton className="h-4 w-full max-w-[160px]" />
-                      </TableCell>
-                    ))}
-                    {hasActions && (
-                      <TableCell className="w-12">
-                        <Skeleton className="h-8 w-8 rounded-lg" />
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))
-              ) : table.getRowModel().rows.length ? (
-                table.getRowModel().rows.reduce<React.ReactNode[]>(
-                  (acc, row, index) => {
-                    if (groupBy && renderGroupHeader) {
-                      const gk = groupBy(row.original);
-                      if (
-                        gk &&
-                        (index === 0 ||
-                          groupBy(
-                            table.getRowModel().rows[index - 1].original,
-                          ) !== gk)
-                      ) {
-                        const isExpanded = desktopExpandedGroups.has(gk);
-                        const onToggle = () =>
-                          setDesktopExpandedGroups((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(gk)) next.delete(gk);
-                            else next.add(gk);
-                            return next;
-                          });
-                        const content = renderGroupHeader(
-                          gk,
-                          row.original,
-                          isExpanded,
-                          onToggle,
+              ))
+            ) : rows.length ? (
+              rows.reduce<React.ReactNode[]>(
+                (acc, row, index) => {
+                  if (groupBy && renderGroupHeader) {
+                    const gk = groupBy(row.original);
+                    if (
+                      gk &&
+                      (index === 0 ||
+                        groupBy(rows[index - 1].original) !== gk)
+                    ) {
+                      const isExpanded = desktopExpandedGroups.has(gk);
+                      const onToggle = () =>
+                        setDesktopExpandedGroups((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(gk)) next.delete(gk);
+                          else next.add(gk);
+                          return next;
+                        });
+                      const content = renderGroupHeader(
+                        gk,
+                        row.original,
+                        isExpanded,
+                        onToggle,
+                      );
+                      if (content) {
+                        acc.push(
+                          <TableRow
+                            key={`group-${gk}`}
+                            className="border-border/60 bg-muted/30 hover:bg-muted/30"
+                          >
+                            <TableCell colSpan={totalColSpan}>
+                              {content}
+                            </TableCell>
+                          </TableRow>,
                         );
-                        if (content) {
-                          acc.push(
-                            <TableRow
-                              key={`group-${gk}`}
-                              className="bg-muted/20 hover:bg-muted/20 border-b-0"
-                            >
-                              <TableCell colSpan={totalColSpan}>
-                                {content}
-                              </TableCell>
-                            </TableRow>,
-                          );
-                        }
                       }
                     }
-                    const full = renderFullRow?.(row.original, "desktop", index);
-                    if (full) {
-                      acc.push(
-                        <React.Fragment key={row.id}>{full}</React.Fragment>,
-                      );
-                      return acc;
-                    }
+                  }
+                  const full = renderFullRow?.(row.original, "desktop", index);
+                  if (full) {
                     acc.push(
-                      <DesktopRow
-                        key={row.id}
-                        row={row}
-                        index={index}
-                        Subscribe={table.Subscribe as RowSubscribe}
-                        hasSelection={hasSelection}
-                        hasExpandableRows={hasExpandableRows}
-                        hasActions={hasActions}
-                        expandColSpan={totalColSpan}
-                        onRowClick={onRowClick}
-                        onToggleExpanded={toggleExpandedRow}
-                        onToggleSelected={toggleSelectedRow}
-                        rowClassName={rowClassName}
-                        renderExpandedRow={
-                          expandedRowId === row.id
-                            ? renderExpandedRow
-                            : undefined
-                        }
-                        expandLoading={
-                          expandedRowId === row.id
-                            ? expand?.loading
-                            : undefined
-                        }
-                        renderActionsColumn={renderActionsColumn}
-                      />,
+                      <React.Fragment key={row.id}>{full}</React.Fragment>,
                     );
                     return acc;
-                  },
-                  [],
-                )
-              ) : (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={totalColSpan} className="h-32">
-                    {typeof emptyMessage === "string" || !emptyMessage ? (
-                      <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                        <Inbox className="h-8 w-8 opacity-50" />
-                        <span className="text-sm">
-                          {emptyMessage ?? "No results."}
-                        </span>
-                      </div>
-                    ) : (
-                      emptyMessage
-                    )}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-            {footer && table.getRowModel().rows.length > 0 && (
-              <TableFooter>
-                <TableRow className="hover:bg-transparent">
-                  {hasSelection && <TableCell className="w-10 ps-4" />}
-                  {table.getHeaderGroups()[0].headers.map((header) => {
-                    const cell = footer.cells.find(
-                      (c) => c.columnId === header.column.id,
-                    );
-                    const isEnd =
-                      cell?.align === "end" || columnMeta(header.column).align === "end";
-                    return (
-                      <TableCell
-                        key={header.column.id}
-                        className={cn(isEnd && "text-end")}
-                      >
-                        {cell
-                          ? cell.loading
-                            ? <Skeleton className="h-4 w-16" />
-                            : cell.render()
-                          : " "}
-                      </TableCell>
-                    );
-                  })}
-                  {hasActions && <TableCell className="text-end" />}
-                </TableRow>
-              </TableFooter>
-            )}
-        </Table>
-      </div>
-      )}
-
-      {/* CARD LIST — mobile viewport, or desktop opted in via `viewToggle`. */}
-      {showCards && (renderMobileRow || renderFullRow) && (
-        <div
-          className={cn(
-            "[&>div]:transition-colors",
-            mobileListClassName ?? "space-y-2",
-          )}
-        >
-          {isLoading ? (
-            groupedMobile ? (
-              <div className="space-y-3">
-                {Array.from({ length: skeletonRows }).map((_, i) => (
-                  <MobileRowSkeleton
-                    key={`sk-${i}`}
-                    className="rounded-xl border bg-card"
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {Array.from({ length: skeletonRows }).map((_, i) => (
-                  <React.Fragment key={`sk-${i}`}>
-                    {mobileRowSkeleton ?? (
-                      <MobileRowSkeleton className="rounded-2xl border border-border/70 bg-card" />
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
-            )
-          ) : table.getRowModel().rows.length ? (
-            groupedMobile ? (
-              <div className="space-y-3">
-                {mobileGroups.map((seg) => {
-                  const gk = seg.key;
-                  const isExpanded =
-                    gk === undefined ? true : !collapsedGroups.has(gk);
-                  const onToggle = () =>
-                    setCollapsedGroups((prev) => {
-                      if (gk === undefined) return prev;
-                      const next = new Set(prev);
-                      if (next.has(gk)) next.delete(gk);
-                      else next.add(gk);
-                      return next;
-                    });
-                  const header =
-                    gk !== undefined && renderMobileGroupHeader
-                      ? renderMobileGroupHeader(
-                          gk,
-                          seg.rows[0].row.original,
-                          isExpanded,
-                          onToggle,
-                        )
-                      : null;
-
-                  // Real group: a single card binding its member rows. The
-                  // header (count + actions) sits on a tinted strip on top; the
-                  // members are always-visible connected rows below.
-                  if (header) {
-                    return (
-                      <div
-                        key={`group-${gk}`}
-                        className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm shadow-black/[0.03]"
-                      >
-                        <div className="bg-muted/[0.28] px-4 py-3 border-b border-border/70">
-                          {header}
-                        </div>
-                        <div className="divide-y divide-border">
-                          {seg.rows.map(({ row, index }) =>
-                            renderMobileCard(row, index, "px-4 py-3.5", `group-${gk}`),
-                          )}
-                        </div>
-                      </div>
-                    );
                   }
-
-                  // Singletons: each row stands alone as its own card.
-                  return seg.rows.map(({ row, index }) =>
-                    renderMobileCard(
-                      row,
-                      index,
-                      "rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm shadow-black/[0.03]",
-                      `singleton-${index}`,
-                    ),
+                  acc.push(
+                    <DesktopRow
+                      key={row.id}
+                      row={row}
+                      index={index}
+                      Subscribe={table.Subscribe as RowSubscribe}
+                      hasSelection={hasSelection}
+                      hasExpandableRows={hasExpandableRows}
+                      hasActions={hasActions}
+                      expandColSpan={totalColSpan}
+                      titleColumnId={titleColumnId}
+                      mark={mark}
+                      onRowClick={onRowClick}
+                      onToggleExpanded={toggleExpandedRow}
+                      onToggleSelected={toggleSelectedRow}
+                      rowClassName={rowClassName}
+                      renderExpandedRow={
+                        expandedRowId === row.id
+                          ? renderExpandedRow
+                          : undefined
+                      }
+                      expandLoading={
+                        expandedRowId === row.id
+                          ? expand?.loading
+                          : undefined
+                      }
+                      renderActionsColumn={renderActionsColumn}
+                    />,
+                  );
+                  return acc;
+                },
+                [],
+              )
+            ) : (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={totalColSpan} className="p-0">
+                  {emptyNode}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+          {footer && rows.length > 0 && (
+            <TableFooter className="bg-muted/30">
+              <TableRow className="hover:bg-transparent">
+                {hasSelection && <TableCell className="w-12 ps-4" />}
+                {table.getHeaderGroups()[0].headers.map((header) => {
+                  const cell = footer.cells.find(
+                    (c) => c.columnId === header.column.id,
+                  );
+                  const isEnd =
+                    cell?.align === "end" || columnMeta(header.column).align === "end";
+                  return (
+                    <TableCell
+                      key={header.column.id}
+                      className={cn(
+                        "px-3",
+                        isEnd && "text-end tabular-nums",
+                        columnMeta(header.column).className,
+                      )}
+                    >
+                      {cell
+                        ? cell.loading
+                          ? <Skeleton className="h-4 w-16" />
+                          : cell.render()
+                        : " "}
+                    </TableCell>
                   );
                 })}
-              </div>
-            ) : mobileListClassName ? (
-              table
-                .getRowModel()
-                .rows.map((row, rowIndex) => renderMobileCard(row, rowIndex))
-            ) : (
-              <>
-                <div className="space-y-2">
-                  {table
-                    .getRowModel()
-                    .rows.map((row, rowIndex) =>
-                      renderMobileCard(row, rowIndex),
-                    )}
-                </div>
-                {footer && footer.cells.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm font-medium">
-                    {footer.label && (
-                      <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                        {footer.label}
-                      </span>
-                    )}
-                    {footer.cells.map((c) => (
-                      <span
-                        key={c.columnId}
-                        className="flex items-center gap-1.5 text-xs"
-                      >
-                        <span className="uppercase tracking-wide text-muted-foreground">
-                          {footerLabel(c.columnId)}
-                        </span>
-                        {c.loading ? <Skeleton className="h-4 w-16" /> : c.render()}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </>
-            )
-          ) : typeof emptyMessage === "string" || !emptyMessage ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
-              <Inbox className="h-8 w-8 opacity-30" />
-              <span className="text-xs">
-                {emptyMessage ?? "No results."}
-              </span>
-            </div>
-          ) : (
-            <div className="py-8">{emptyMessage}</div>
+                {hasActions && <TableCell className="text-end" />}
+              </TableRow>
+            </TableFooter>
           )}
-        </div>
-      )}
+        </table>
+      </div>
+      {/* End-edge fade: more columns off-screen. The start edge is the pinned
+          column's own trailing shadow (PIN_EDGE). */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-0 end-0 z-30 w-8 bg-linear-to-l from-card to-transparent transition-opacity rtl:bg-linear-to-r",
+          edge.end ? "opacity-100" : "opacity-0",
+        )}
+      />
+    </div>
+  );
 
-      {/* Server-side pagination */}
-      {paginationNode}
-
-      {/* Client-side pagination */}
-      {pageSize && !pagination && !isLoading && table.getPageCount() > 1 && (
-        <div className="flex items-center justify-between gap-2 px-1">
-          <span className="text-xs text-muted-foreground">
-            {`Page ${table.state.pagination.pageIndex + 1} of ${table.getPageCount()}`}
+  // ── Narrow list ──
+  const mobileFooterStrip =
+    footer && footer.cells.length > 0 ? (
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t bg-muted/30 px-4 py-3 text-sm font-medium">
+        {footer.label && (
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+            {footer.label}
           </span>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-xl h-9"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-            >
-              <ChevronLeft className="h-4 w-4 ltr:block rtl:hidden" />
-              <ChevronRight className="h-4 w-4 ltr:hidden rtl:block" />
-              {"Previous"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-xl h-9"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-            >
-              {"Next"}
-              <ChevronRight className="h-4 w-4 ltr:block rtl:hidden" />
-              <ChevronLeft className="h-4 w-4 ltr:hidden rtl:block" />
-            </Button>
-          </div>
+        )}
+        {footer.cells.map((c) => (
+          <span key={c.columnId} className="flex items-center gap-1.5 text-xs">
+            <span className="uppercase tracking-wide text-muted-foreground">
+              {footerLabel(c.columnId)}
+            </span>
+            {c.loading ? <Skeleton className="h-4 w-16" /> : c.render()}
+          </span>
+        ))}
+      </div>
+    ) : null;
+
+  const listView = isLoading ? (
+    <div className={flatList ? "divide-y divide-border/60" : "space-y-2 p-3"}>
+      {Array.from({ length: skeletonRows }).map((_, i) => (
+        <React.Fragment key={`sk-${i}`}>
+          {mobileRowSkeleton ?? (
+            <MobileRowSkeleton
+              withMark={Boolean(mark)}
+              withSelect={flatList && hasSelection}
+              withMenu={flatList && hasActions}
+              className={flatList ? undefined : "rounded-2xl border border-border/70 bg-card"}
+            />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  ) : rows.length ? (
+    groupedMobile ? (
+      <>
+      <div className="divide-y divide-border/60">
+        {mobileGroups.map((seg) => {
+          const gk = seg.key;
+          const isExpanded =
+            gk === undefined ? true : !collapsedGroups.has(gk);
+          const onToggle = () =>
+            setCollapsedGroups((prev) => {
+              if (gk === undefined) return prev;
+              const next = new Set(prev);
+              if (next.has(gk)) next.delete(gk);
+              else next.add(gk);
+              return next;
+            });
+          const header =
+            gk !== undefined && renderMobileGroupHeader
+              ? renderMobileGroupHeader(
+                  gk,
+                  seg.rows[0].row.original,
+                  isExpanded,
+                  onToggle,
+                )
+              : null;
+
+          // A real group: a tinted header strip over its member rows, all in
+          // the one list. Singletons are just rows.
+          if (header) {
+            return (
+              <div key={`group-${gk}`}>
+                <div className="border-b border-border/60 bg-muted/40 px-4 py-2.5">
+                  {header}
+                </div>
+                <div className="divide-y divide-border/60">
+                  {seg.rows.map(({ row, index }) =>
+                    renderMobileCard(row, index, undefined, `group-${gk}`),
+                  )}
+                </div>
+              </div>
+            );
+          }
+          return seg.rows.map(({ row, index }) =>
+            renderMobileCard(row, index, undefined, `singleton-${index}`),
+          );
+        })}
+      </div>
+      {mobileFooterStrip}
+      </>
+    ) : mobileListClassName ? (
+      <>
+        <div className={cn("p-3", mobileListClassName)}>
+          {rows.map((row, rowIndex) => renderMobileCard(row, rowIndex))}
         </div>
-      )}
+        {mobileFooterStrip}
+      </>
+    ) : (
+      <>
+        <div className="divide-y divide-border/60">
+          {rows.map((row, rowIndex) => renderMobileCard(row, rowIndex))}
+        </div>
+        {mobileFooterStrip}
+      </>
+    )
+  ) : (
+    emptyNode
+  );
+
+  return (
+    <div ref={rootRef} className={cn("w-full", className)}>
+      {/* One surface: toolbar, rows, footer. Nothing floats beside it. */}
+      <div className="flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
+        {toolbarNode}
+        {showCards ? listView : tableView}
+        {footerNode}
+      </div>
+      {bulkBarNode}
     </div>
   );
 }
 
-/** Default loading placeholder for one mobile card: title + subtitle on the
- *  start side, a value on the end side — the shape every card in the app has.
- *  Override per page via `mobile.rowSkeleton` when the real card differs. */
-export function MobileRowSkeleton({ className }: { className?: string }) {
+/** Centred icon + message (+ action) for "nothing here", drawn inside the
+ *  surface at row height instead of as a bare line. A non-string message is
+ *  the caller's own markup and is drawn as is. */
+function DataTableEmpty({
+  message,
+  icon,
+  action,
+}: {
+  message?: React.ReactNode;
+  icon?: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex min-h-56 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+      <div className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-5">
+        {icon ?? <Inbox />}
+      </div>
+      {typeof message === "string" || !message ? (
+        <p className="max-w-xs text-pretty text-sm text-muted-foreground">
+          {message ?? "No results."}
+        </p>
+      ) : (
+        message
+      )}
+      {action}
+    </div>
+  );
+}
+
+/** Sort direction mark: a ghost chevron on hover, a solid arrow once active. */
+function SortGlyph({ sorted }: { sorted: false | "asc" | "desc" }) {
+  if (sorted === "asc") return <ArrowUp className="size-3 shrink-0" />;
+  if (sorted === "desc") return <ArrowDown className="size-3 shrink-0" />;
+  return (
+    <ChevronsUpDown className="size-3 shrink-0 opacity-0 transition-opacity group-hover/head:opacity-60 group-focus-within/head:opacity-60 pointer-coarse:opacity-40" />
+  );
+}
+
+/** Default loading placeholder for one narrow row: [mark] title + meta line on
+ *  the start side, a badge on the end — the shape the default row has.
+ *  Override per page via `mobile.rowSkeleton` when the real row differs. */
+export function MobileRowSkeleton({
+  className,
+  withMark,
+  withSelect,
+  withMenu,
+}: {
+  className?: string;
+  withMark?: boolean;
+  /** Leave room for the leading checkbox of a selectable list. */
+  withSelect?: boolean;
+  /** Leave room for the trailing "more" button. */
+  withMenu?: boolean;
+}) {
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 px-4 py-3.5",
+        "flex min-h-16 items-center gap-3 px-4 py-3",
         className,
       )}
     >
-      <div className="flex-1 min-w-0 space-y-2">
+      {withSelect && <Skeleton className="size-4 shrink-0 rounded" />}
+      {withMark && <Skeleton className="size-10 shrink-0 rounded-lg" />}
+      <div className="min-w-0 flex-1 space-y-2">
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-3 w-1/3" />
       </div>
-      <Skeleton className="h-4 w-16 shrink-0" />
+      <Skeleton className="h-5 w-14 shrink-0 rounded-full" />
+      {withMenu && <Skeleton className="size-4 shrink-0 rounded" />}
     </div>
   );
 }
@@ -1634,7 +2263,9 @@ function ExpandedRowSkeleton() {
   );
 }
 
-/** Sortable column header button — use as a column `header`. */
+/** Sortable column header — use as a column `header` when the header needs
+ *  more than plain text. A plain-text header on a sortable column is already
+ *  the whole cell's button, with no help from this. */
 export function SortableHeader({
   column,
   children,
@@ -1645,17 +2276,18 @@ export function SortableHeader({
   };
   children: React.ReactNode;
 }) {
+  const sorted = column.getIsSorted();
   return (
     <button
       type="button"
       className={cn(
-        "-ms-1 inline-flex items-center gap-1 rounded px-1 py-0.5 uppercase hover:text-foreground",
-        column.getIsSorted() && "text-foreground",
+        "-ms-1 inline-flex items-center gap-1 rounded px-1 py-0.5 uppercase tracking-wide outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
+        sorted && "text-foreground",
       )}
-      onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+      onClick={() => column.toggleSorting(sorted === "asc")}
     >
       {children}
-      <ArrowUpDown className="h-3 w-3" />
+      <SortGlyph sorted={sorted} />
     </button>
   );
 }
@@ -1679,7 +2311,7 @@ export function RowsPerPageSelect({
         render={<Button
           variant="outline"
           size="sm"
-          className={cn("h-8 gap-1.5 rounded-md px-2.5 text-xs", className)} />}>
+          className={cn("h-8 gap-1.5 rounded-lg px-2.5 text-xs", className)} />}>
           <Rows3 className="h-3.5 w-3.5 opacity-60" />
           {`${value} rows`}
           <ChevronDown className="h-3.5 w-3.5 opacity-60" />

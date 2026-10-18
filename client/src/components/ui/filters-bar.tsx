@@ -27,7 +27,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog";
-import { useIsMobile } from "@/hooks/use-device";
+import { useCoarsePointer, useIsMobile } from "@/hooks/use-device";
 
 /** One option for select / multi-select / segmented fields. */
 export interface FilterOption {
@@ -107,6 +107,9 @@ export interface FiltersBarProps {
   onClearFilters?: () => void;
   /** Trailing control rendered at the end of the bar (e.g. rows-per-page). */
   trailing?: ReactNode;
+  /** Whether the *panel* is narrow (the table measures it). Picks the drawer
+   *  over the popover and the icon-only trigger; defaults to the window. */
+  narrow?: boolean;
   className?: string;
 }
 
@@ -199,9 +202,12 @@ export function FiltersBar({
   filterCount = 0,
   onClearFilters,
   trailing,
+  narrow,
   className,
 }: FiltersBarProps) {
-  const isMobile = useIsMobile();
+  const windowNarrow = useIsMobile();
+  const isMobile = narrow ?? windowNarrow;
+  const coarse = useCoarsePointer();
   const hasFilters = Boolean(fields && fields.length);
   const [mobileFiltersOpen, setMobileFiltersOpen] = React.useState(false);
 
@@ -210,11 +216,11 @@ export function FiltersBar({
       type="button"
       variant="outline"
       size={isMobile ? "icon" : "default"}
-      className="relative shrink-0 gap-2"
+      className={cn("relative shrink-0 gap-2 rounded-lg", coarse ? "h-11 min-w-11" : "h-9")}
       onClick={isMobile ? () => setMobileFiltersOpen(true) : undefined}
     >
       <SlidersHorizontal className="size-4" />
-      <span className="hidden sm:inline">{"Filters"}</span>
+      {!isMobile && <span>{"Filters"}</span>}
       {filterCount > 0 && (
         <Badge
           variant="secondary"
@@ -242,7 +248,7 @@ export function FiltersBar({
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1 px-2 text-xs"
+            className="h-7 gap-1 px-2 text-xs pointer-coarse:h-11 pointer-coarse:px-3"
             onClick={clearFilters}
           >
             <X className="size-3" />
@@ -297,9 +303,35 @@ export function FiltersBar({
   return (
     <div data-header-fit className={cn("flex flex-wrap items-center gap-2", className)}>
       {search && (
-        <div className="relative order-last w-full min-w-0 sm:order-none sm:w-auto sm:flex-1 sm:max-w-md">
-          <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search.value} onChange={(e) => search.onChange(e.target.value)} placeholder={search.placeholder} className="h-10 ps-9 sm:h-9" />
+        // The search owns the first line on a narrow panel and the rest wrap
+        // under it; wide, it sits at the start and takes what the bar leaves.
+        <div className={cn("relative min-w-0", isMobile ? "w-full" : "w-auto max-w-sm flex-1")}>
+          <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={search.value}
+            onChange={(e) => search.onChange(e.target.value)}
+            placeholder={search.placeholder}
+            aria-label={search.placeholder ?? "Search"}
+            className={cn(
+              "rounded-lg ps-9 pe-9 text-sm [&::-webkit-search-cancel-button]:hidden",
+              coarse ? "h-11" : "h-9",
+            )}
+          />
+          {search.value && (
+            <button
+              type="button"
+              title="Clear search"
+              aria-label="Clear search"
+              onClick={() => search.onChange("")}
+              className={cn(
+                "absolute top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                coarse ? "end-0 size-11" : "end-1 size-7",
+              )}
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
         </div>
       )}
 
@@ -311,7 +343,8 @@ export function FiltersBar({
             type="button"
             variant="outline"
             size="icon"
-            className="relative shrink-0 gap-2"
+            title="Filters"
+            className={cn("relative shrink-0 gap-2 rounded-lg", coarse ? "size-11" : "size-9")}
             onClick={() => setMobileFiltersOpen(true)}
           >
             <SlidersHorizontal className="size-4" />

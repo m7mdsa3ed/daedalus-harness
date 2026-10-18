@@ -16,7 +16,6 @@ import { couldTouchFiles } from "@/lib/tools"
 import { extractEdits, type EditInputDiff } from "@/lib/tools/edits"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { turnSuggestions } from "@/lib/suggestions"
-import { isAnswerItem } from "@/lib/transcript-rows"
 import type { ThreadItem } from "@/lib/store"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 
@@ -56,11 +55,11 @@ function cachedTurnSources(turn: ThreadItem[]): TurnSources {
     both footers hang off. A turn still streaming is left out: a strip that
     grows under the reader is worse than one that arrives when the answer does.
     Shared by the sources strip and the token figure, which are two answers to
-    "what came of this turn" and must sit in the same place.
-    The turn is always the WHOLE turn, even under `answersOnly`: what a turn
-    cited and what it cost are read off the steps, which is exactly what that
-    option takes off the screen. Only the anchor moves — to the last row of the
-    turn still drawn, since a footer hung off a hidden item is dropped. */
+    "what came of this turn" and must sit in the same place. The turn is always
+    the WHOLE turn: what a turn cited and what it cost are read off its steps,
+    whether `answersOnly` has folded them out of sight or not, and the anchor is
+    the item the turn ends on — reached through a fold's tail (`rowTailId`), so
+    a footer hung off a step inside one still lands. */
 /* Six footers ask this of the same `items` on every streamed token; the walk
    (a Map of the thread plus `splitTurns`) is paid once per array and argument
    set, not once per footer. Keyed on the array object: the reducer hands back a
@@ -70,15 +69,14 @@ const FINISHED_TURNS_CACHE = new WeakMap<ThreadItem[], Map<string, { turn: Threa
 function finishedTurns(
   items: ThreadItem[],
   turnActive: boolean,
-  answersOnly = false,
   showConfigNotices = true
 ): { turn: ThreadItem[]; tailId: string }[] {
-  const key = `${turnActive}|${answersOnly}|${showConfigNotices}`
+  const key = `${turnActive}|${showConfigNotices}`
   let byArgs = FINISHED_TURNS_CACHE.get(items)
   if (!byArgs) FINISHED_TURNS_CACHE.set(items, (byArgs = new Map()))
   const hit = byArgs.get(key)
   if (hit) return hit
-  const out = walkFinishedTurns(items, turnActive, answersOnly, showConfigNotices)
+  const out = walkFinishedTurns(items, turnActive, showConfigNotices)
   byArgs.set(key, out)
   return out
 }
@@ -86,7 +84,6 @@ function finishedTurns(
 function walkFinishedTurns(
   items: ThreadItem[],
   turnActive: boolean,
-  answersOnly: boolean,
   showConfigNotices: boolean
 ): { turn: ThreadItem[]; tailId: string }[] {
   const byId = new Map(items.map((item) => [item.id, item]))
@@ -117,7 +114,7 @@ function walkFinishedTurns(
          footer would vanish with it). */
       if (item.kind === "shell" || item.kind === "voice") continue
       if (hidden(item)) continue
-      if (!answersOnly || isAnswerItem(item)) return item
+      return item
     }
     return undefined
   }
@@ -133,11 +130,10 @@ function walkFinishedTurns(
 export function withTurnSources(
   items: ThreadItem[],
   turnActive: boolean,
-  answersOnly: boolean,
   showConfigNotices = true
 ): Map<string, TurnSources> {
   const after = new Map<string, TurnSources>()
-  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+  for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
     const sources = cachedTurnSources(turn)
     if (sources.sources.length > 0) after.set(tailId, sources)
   }
@@ -155,11 +151,10 @@ export function withTurnUsage(
   items: ThreadItem[],
   turnActive: boolean,
   turnUsage: Record<string, acp.Usage>,
-  answersOnly: boolean,
   showConfigNotices = true
 ): Map<string, acp.Usage> {
   const after = new Map<string, acp.Usage>()
-  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+  for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
     const head = turn[0]
     const turnId = head.kind === "user" ? head.turnId : undefined
     const usage = turnId ? turnUsage[turnId] : undefined
@@ -176,11 +171,10 @@ export function withTurnDuration(
   items: ThreadItem[],
   turnActive: boolean,
   turnDuration: Record<string, number>,
-  answersOnly: boolean,
   showConfigNotices = true
 ): Map<string, number> {
   const after = new Map<string, number>()
-  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+  for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
     const head = turn[0]
     const turnId = head.kind === "user" ? head.turnId : undefined
     const durationMs = turnId ? turnDuration[turnId] : undefined
@@ -194,11 +188,10 @@ export function withTurnToolDuration(
   items: ThreadItem[],
   turnActive: boolean,
   turnToolDuration: Record<string, number>,
-  answersOnly: boolean,
   showConfigNotices = true
 ): Map<string, number> {
   const after = new Map<string, number>()
-  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+  for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
     const head = turn[0]
     const turnId = head.kind === "user" ? head.turnId : undefined
     const durationMs = turnId ? turnToolDuration[turnId] : undefined
@@ -236,11 +229,10 @@ export function withTurnChanges(
   items: ThreadItem[],
   turnActive: boolean,
   turnChanges: Record<string, TurnChanges>,
-  answersOnly: boolean,
   showConfigNotices = true
 ): Map<string, TurnChanges> {
   const after = new Map<string, TurnChanges>()
-  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+  for (const { turn, tailId } of finishedTurns(items, turnActive, showConfigNotices)) {
     const head = turn[0]
     const turnId = head.kind === "user" ? head.turnId : undefined
     const changes = turnId ? turnChanges[turnId] : undefined

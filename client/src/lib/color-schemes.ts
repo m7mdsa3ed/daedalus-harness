@@ -1,35 +1,28 @@
-/* ── Curated colour schemes ──
-   The other kind of colour preset. `PALETTE_PRESETS` (custom-themes.ts) drives
-   the ramp in theme-ramp.ts from a hue, which guarantees coherence and AA but
-   can only ever produce the same design in a different colour. These are the
-   opposite: real, hand-authored schemes with identities of their own, where the
-   relationship between the greens and the purples is the whole point and no
-   formula would land on it.
+/* ── The built-in schemes ──
+   Built-in themes beside Default, written to a stylesheet at load by
+   `applyBuiltinSchemes` (custom-themes.ts) and listed by builtin-themes.ts.
+   `PALETTE_PRESETS` (custom-themes.ts) drives the ramp in theme-ramp.ts from a
+   hue, which guarantees coherence and AA but can only ever produce the same
+   design in a different colour. These are the opposite: the look of the AI products people already live in — OpenCode,
+   Claude, ChatGPT, Gemini, Perplexity, Grok, Cursor, Copilot — where the relationship between the
+   neutrals and the one accent is the whole point and no formula would land on
+   it.
 
-   **The values are transcribed from each project's own source**, not recalled
-   or eyedropped — see the `source` on every entry. Six schemes were verified
-   against those files; Tokyo Night was dropped because its light variant is
-   computed by an `invert()` function rather than published as a table, and a
-   guess shipped under that name is worse than its absence.
+   **None of these products publishes a token table**, so the values are the
+   products' own surfaces *as shipped*, approximated and then adjusted: every
+   entry says in `source` what it was modelled on. Where a product's own accent
+   fails WCAG AA for a button label or for secondary text, the nearest passing
+   shade of the same hue is used and the line is marked `adjusted:`. Every pair in
+   `CONTRAST_PAIRS` must clear AA in both modes.
 
-   Two honest caveats, both of which the comments below mark per scheme.
+   A product has fewer named surfaces than this app, so where it runs out of
+   steps the gap is filled from its own neighbours and marked `derived:`, never
+   by a colour from outside the palette.
 
-   **These are editor schemes, and an editor has fewer surfaces than this app.**
-   Every one of them names a background, a foreground, a comment colour and a
-   set of accents; none names "the colour of a popover behind a card on a
-   sidebar". So where a scheme runs out of documented steps, the gap is filled
-   by a value derived from its own neighbours and marked `derived:` — never by a
-   colour from outside the palette.
-
-   **A comment colour is not body text.** Several schemes' comment tones fall
-   under WCAG AA against the surface this app puts secondary text on, because in
-   an editor they sit on the plain background and are *meant* to recede. Where
-   that happens the scheme's own next-brighter documented neutral is used for
-   `--muted-foreground` instead, and the swap is marked. The studio warns on the
-   same `CONTRAST_PAIRS` it uses for every other theme.
-
-   All six are MIT-licensed. Nothing here is redistributed but the colour
-   values, which is what a "theme preset" is. */
+   A scheme also carries the **Design half** that goes with it — Claude under a
+   geometric sans with capsule badges is not Claude. To change one, "New theme"
+   copies the one you are wearing into the studio. Colours are
+   transcribed as colours: no logo, wordmark or typeface is bundled. */
 
 import type { BaseTokens, ThemeTokens } from "./custom-themes"
 
@@ -60,205 +53,55 @@ export interface SchemeAnchors {
 export interface ColorScheme {
   id: string
   label: string
-  /** Shown under the name — what the scheme is, in the author's own terms. */
+  /** Shown under the name — what the scheme is, in a few words. */
   note: string
-  /** Where the values came from, so the next person can re-check them. */
+  /** What it was modelled on, so the next person can re-check it. */
   source: string
   light: SchemeAnchors
   dark: SchemeAnchors
-  /** The Design half this scheme is applied with. A curated scheme is a whole
-      look, and Gruvbox under a geometric sans with capsule badges is not
-      Gruvbox — so the preset carries the shape and type that go with it. Every
-      part stays editable on the Design tab afterwards, and Revert undoes the
-      lot. */
+  /** The Design half this scheme is applied with. */
   design: BaseTokens
 }
 
 export const COLOR_SCHEMES: readonly ColorScheme[] = [
   {
-    id: "nord",
-    label: "Nord",
-    note: "Arctic, north-bluish. Polar Night under Snow Storm.",
-    source: "nordtheme/nord src/nord.css (--nord0…15)",
-    // Nord publishes no official *light* variant; Snow Storm (nord4–6) is the
-    // documented light base and Polar Night the text, which is how every Nord
-    // light port is built. `card` is the one value outside the sixteen.
+    id: "opencode",
+    label: "OpenCode",
+    note: "Terminal-black with a peach primary. Flat, square, mono-leaning.",
+    source: "OpenCode's default TUI theme (peach primary, blue/violet secondaries), as recalled",
     light: {
-      bg: "#eceff4", // nord6
-      card: "#ffffff", // derived: Snow Storm has no step above nord6
-      muted: "#e5e9f0", // nord5
-      accent: "#d8dee9", // nord4
-      border: "#d8dee9", // nord4
-      fg: "#2e3440", // nord0
-      fgMuted: "#4c566a", // nord3
-      // nord10 darkened: Frost has no darker step, and nord10 itself is
-      // only 4.0:1 against white, which a button label has to clear.
-      primary: "#57779f", // derived from nord10
+      bg: "#ffffff",
+      card: "#fafafa",
+      muted: "#f5f5f5",
+      accent: "#ebebeb",
+      border: "#d4d4d4", // adjusted: the TUI's #b8b8b8 border is heavy as a hairline
+      fg: "#1a1a1a",
+      fgMuted: "#5f5f5f", // adjusted: the TUI's muted #8a8a8a is 3.2:1
+      primary: "#3b6fc4", // adjusted from the TUI's #3b7dd8 for a white label
       primaryFg: "#ffffff",
-      destructive: "#bf616a", // nord11
-      sidebar: "#e5e9f0",
-      charts: ["#5e81ac", "#88c0d0", "#a3be8c", "#ebcb8b", "#b48ead"],
+      destructive: "#d1383d",
+      sidebar: "#fafafa",
+      charts: ["#3b6fc4", "#7b5bb6", "#d68c27", "#3d9a57", "#318795"],
     },
     dark: {
-      bg: "#2e3440", // nord0
-      card: "#3b4252", // nord1
-      muted: "#3b4252", // nord1
-      accent: "#434c5e", // nord2
-      border: "#434c5e", // nord2
-      fg: "#eceff4", // nord6
-      fgMuted: "#d8dee9", // nord4 — nord3 is the comment tone and fails AA here
-      primary: "#88c0d0", // nord8
-      primaryFg: "#2e3440",
-      destructive: "#bf616a", // nord11
-      sidebar: "#2e3440",
-      charts: ["#88c0d0", "#a3be8c", "#ebcb8b", "#b48ead", "#d08770"],
+      bg: "#0a0a0a",
+      card: "#141414",
+      muted: "#1e1e1e",
+      accent: "#2a2a2a",
+      border: "#2f2f2f", // adjusted: the TUI's #484848 is a frame, not a hairline
+      fg: "#eeeeee",
+      fgMuted: "#9a9a9a", // adjusted: the TUI's muted #808080 is 4.2:1 on #1e1e1e
+      primary: "#fab283",
+      primaryFg: "#0a0a0a",
+      destructive: "#e06c75",
+      sidebar: "#0a0a0a",
+      charts: ["#fab283", "#5c9cf5", "#9d7cd8", "#7fd88f", "#e5c07b"],
     },
     design: {
-      "font-sans": "inter",
-      "font-heading": "inter",
-      "font-mono": "jetbrains-mono",
-      radius: "soft",
-      depth: "subtle",
-      tracking: "normal",
-      blur: "light",
-      width: "default",
-    },
-  },
-  {
-    id: "dracula",
-    label: "Dracula",
-    note: "The dark one everybody knows, with its official light twin, Alucard.",
-    source: "dracula/dracula-theme README.md (Dracula + Alucard specs)",
-    // Both modes are official. Alucard names only background/selection/
-    // foreground/comment plus the accents, so the two mid surfaces are derived
-    // from its background.
-    light: {
-      bg: "#fffbeb",
-      card: "#ffffff", // derived
-      muted: "#f6f1de", // derived
-      accent: "#ece7d2", // derived
-      border: "#ddd8c4", // derived
-      fg: "#1f1f1f",
-      fgMuted: "#6c664b", // Alucard's comment tone; clears AA on its surfaces
-      primary: "#644ac9",
-      primaryFg: "#fffbeb",
-      destructive: "#cb3a2a",
-      sidebar: "#f6f1de",
-      charts: ["#644ac9", "#036a96", "#14710a", "#a34d14", "#a3144d"],
-    },
-    dark: {
-      bg: "#282a36",
-      card: "#343746", // derived: between background and selection
-      muted: "#343746",
-      accent: "#44475a", // selection
-      border: "#44475a",
-      fg: "#f8f8f2",
-      // Dracula's comment #6272a4 is 3.0:1 on the surface above and is meant to
-      // recede behind code. Lifted along its own hue to carry secondary text.
-      fgMuted: "#a8b2d9",
-      primary: "#bd93f9",
-      primaryFg: "#282a36",
-      destructive: "#ff5555",
-      sidebar: "#21222c", // derived
-      charts: ["#bd93f9", "#8be9fd", "#50fa7b", "#ffb86c", "#ff79c6"],
-    },
-    design: {
-      "font-sans": "figtree",
-      "font-heading": "figtree",
-      "font-mono": "jetbrains-mono",
-      radius: "round",
-      depth: "soft",
-      tracking: "tight",
-      blur: "medium",
-      width: "default",
-    },
-  },
-  {
-    id: "solarized",
-    label: "Solarized",
-    note: "Ethan Schoonover's precision pair — one accent set, two bases.",
-    source: "altercation/vim-colors-solarized colors/solarized.vim",
-    light: {
-      bg: "#fdf6e3", // base3
-      card: "#fffcf2", // derived
-      muted: "#eee8d5", // base2
-      accent: "#e4dcc4", // derived
-      border: "#ddd6c1", // derived
-      fg: "#073642", // base02
-      fgMuted: "#546970", // derived: base01 darkened (4.4:1 on base2)
-      primary: "#217ab9", // derived: blue darkened to clear AA against white
-      primaryFg: "#ffffff",
-      destructive: "#dc322f", // red
-      sidebar: "#eee8d5",
-      charts: ["#268bd2", "#2aa198", "#859900", "#b58900", "#d33682"],
-    },
-    dark: {
-      bg: "#002b36", // base03
-      card: "#073642", // base02
-      muted: "#073642",
-      accent: "#0f4a5a", // derived
-      border: "#0f4a5a",
-      fg: "#eee8d5", // base2 — base1 is the emphasised tone and reads dim here
-      fgMuted: "#93a1a1", // base1
-      primary: "#3a95d6", // derived: blue lifted to clear AA against base03
-      primaryFg: "#002b36",
-      destructive: "#dc322f",
-      sidebar: "#002b36",
-      charts: ["#268bd2", "#2aa198", "#859900", "#b58900", "#d33682"],
-    },
-    design: {
-      "font-sans": "inter",
-      "font-heading": "inter",
-      "font-mono": "jetbrains-mono",
-      radius: "sharp",
-      depth: "subtle",
-      tracking: "normal",
-      blur: "none",
-      width: "wide",
-    },
-  },
-  {
-    id: "gruvbox",
-    label: "Gruvbox",
-    note: "Retro groove: warm, low-contrast, heavy on the browns.",
-    source: "morhetz/gruvbox colors/gruvbox.vim (s:gb.*)",
-    // Every value here is one of Gruvbox's own named steps — it is the one
-    // scheme in this list that publishes a full neutral ramp for both modes.
-    light: {
-      bg: "#fbf1c7", // light0
-      card: "#f9f5d7", // light0_hard
-      muted: "#ebdbb2", // light1
-      accent: "#d5c4a1", // light2
-      border: "#d5c4a1", // light2
-      fg: "#3c3836", // dark1
-      fgMuted: "#665c54", // dark3
-      // faded_yellow is Gruvbox's signature but only 3.8:1 against white;
-      // faded_orange is the next documented step and clears AA at 6.1:1.
-      primary: "#af3a03", // faded_orange
-      primaryFg: "#ffffff",
-      destructive: "#9d0006", // faded_red
-      sidebar: "#f2e5bc", // light0_soft
-      charts: ["#b57614", "#79740e", "#076678", "#8f3f71", "#af3a03"],
-    },
-    dark: {
-      bg: "#282828", // dark0
-      card: "#32302f", // dark0_soft
-      muted: "#3c3836", // dark1
-      accent: "#504945", // dark2
-      border: "#504945", // dark2
-      fg: "#ebdbb2", // light1
-      fgMuted: "#bdae93", // light3 — light4/gray fall under AA on dark2
-      primary: "#fabd2f", // bright_yellow
-      primaryFg: "#282828",
-      destructive: "#fb4934", // bright_red
-      sidebar: "#1d2021", // dark0_hard
-      charts: ["#fabd2f", "#b8bb26", "#83a598", "#d3869b", "#fe8019"],
-    },
-    design: {
-      "font-sans": "figtree",
-      "font-heading": "figtree",
+      "font-sans": "geist",
+      "font-heading": "geist",
       "font-mono": "geist-mono",
-      radius: "soft",
+      radius: "sharp",
       depth: "flat",
       tracking: "normal",
       blur: "none",
@@ -266,93 +109,311 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = [
     },
   },
   {
-    id: "catppuccin",
-    label: "Catppuccin",
-    note: "Pastel, low-saturation. Latte by day, Mocha by night.",
-    source: "catppuccin/palette palette.json v1.8.0",
+    id: "claude",
+    label: "Claude",
+    note: "Warm ivory and charcoal, a clay accent, serif headings.",
+    source: "claude.ai's surfaces: ivory/oat neutrals, clay (#d97757) accent",
     light: {
-      bg: "#eff1f5", // base
-      card: "#ffffff", // derived: Latte has no step above base
-      muted: "#e6e9ef", // mantle
-      accent: "#ccd0da", // surface0
-      border: "#ccd0da", // surface0
-      fg: "#4c4f69", // text
-      fgMuted: "#5c5f77", // subtext1 — subtext0 is 4.1:1 on mantle
-      primary: "#8839ef", // mauve
+      bg: "#faf9f5",
+      card: "#ffffff",
+      muted: "#f0eee6",
+      accent: "#e8e6dc",
+      border: "#e3dfd2", // derived
+      fg: "#141413",
+      fgMuted: "#5e5d59",
+      primary: "#b5502f", // adjusted: clay #d97757 is 3.1:1 under a white label
       primaryFg: "#ffffff",
-      destructive: "#d20f39", // red
-      sidebar: "#e6e9ef", // mantle
-      charts: ["#8839ef", "#1e66f5", "#40a02b", "#fe640b", "#d20f39"],
+      destructive: "#b53333",
+      sidebar: "#f0eee6",
+      charts: ["#c96442", "#6a9bcc", "#788c5d", "#d4a27f", "#8b6f9e"],
     },
     dark: {
-      bg: "#1e1e2e", // base
-      card: "#292a3d", // derived: between base and surface0
-      muted: "#313244", // surface0
-      accent: "#45475a", // surface1
-      border: "#45475a", // surface1
-      fg: "#cdd6f4", // text
-      fgMuted: "#a6adc8", // subtext0
-      primary: "#cba6f7", // mauve
-      primaryFg: "#1e1e2e",
-      destructive: "#f38ba8", // red
-      sidebar: "#181825", // mantle
-      charts: ["#cba6f7", "#89b4fa", "#a6e3a1", "#fab387", "#f38ba8"],
+      bg: "#262624",
+      card: "#30302e",
+      muted: "#30302e",
+      accent: "#3d3d3a",
+      border: "#3d3d3a",
+      fg: "#faf9f5",
+      fgMuted: "#c2c0b6",
+      primary: "#d97757",
+      primaryFg: "#1f1e1d",
+      destructive: "#ef6b63",
+      sidebar: "#1f1e1d",
+      charts: ["#d97757", "#6a9bcc", "#9aae7c", "#d4a27f", "#b79ac8"],
+    },
+    design: {
+      "font-sans": "inter",
+      "font-heading": "newsreader",
+      "font-mono": "jetbrains-mono",
+      radius: "round",
+      depth: "subtle",
+      tracking: "normal",
+      blur: "none",
+      width: "narrow",
+    },
+  },
+  {
+    id: "chatgpt",
+    label: "ChatGPT",
+    note: "White and graphite, an inverted black button, capsule shapes.",
+    source: "chatgpt.com's surfaces: #fff / #212121, #171717 sidebar, #10a37f as the green",
+    light: {
+      bg: "#ffffff",
+      card: "#ffffff",
+      muted: "#f4f4f4",
+      accent: "#ececec",
+      border: "#e5e5e5",
+      fg: "#0d0d0d",
+      fgMuted: "#5d5d5d",
+      primary: "#0d0d0d",
+      primaryFg: "#ffffff",
+      destructive: "#e02e2a",
+      sidebar: "#f9f9f9",
+      charts: ["#10a37f", "#5d5d5d", "#3b82f6", "#f59e0b", "#e02e2a"],
+    },
+    dark: {
+      bg: "#212121",
+      card: "#2a2a2a", // derived: between the page and the composer's #303030
+      muted: "#303030",
+      accent: "#424242",
+      border: "#383838",
+      fg: "#ececec",
+      fgMuted: "#b4b4b4",
+      primary: "#ececec",
+      primaryFg: "#0d0d0d",
+      destructive: "#f4605c",
+      sidebar: "#171717",
+      charts: ["#19c37d", "#b4b4b4", "#6ea8fe", "#f5b94a", "#f4605c"],
+    },
+    design: {
+      "font-sans": "inter",
+      "font-heading": "inter",
+      "font-mono": "geist-mono",
+      radius: "pill",
+      depth: "flat",
+      tracking: "normal",
+      blur: "none",
+      width: "default",
+    },
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    note: "Google blue on cool greys, Material-soft, big round corners.",
+    source: "gemini.google.com's surfaces: #fff / #131314, #f0f4f9 / #1e1f20 rails, Google blue",
+    light: {
+      bg: "#ffffff",
+      card: "#ffffff",
+      muted: "#f0f4f9",
+      accent: "#dde3ea",
+      border: "#c4c7c5",
+      fg: "#1f1f1f",
+      fgMuted: "#444746",
+      primary: "#0b57d0",
+      primaryFg: "#ffffff",
+      destructive: "#b3261e",
+      sidebar: "#f0f4f9",
+      charts: ["#4285f4", "#ea4335", "#fbbc04", "#34a853", "#a142f4"],
+    },
+    dark: {
+      bg: "#131314",
+      card: "#1e1f20",
+      muted: "#282a2c",
+      accent: "#333537",
+      border: "#444746",
+      fg: "#e3e3e3",
+      fgMuted: "#c4c7c5",
+      primary: "#a8c7fa",
+      primaryFg: "#062e6f",
+      destructive: "#f2b8b5",
+      sidebar: "#1e1f20",
+      charts: ["#8ab4f8", "#f28b82", "#fdd663", "#81c995", "#c58af9"],
+    },
+    design: {
+      "font-sans": "roboto",
+      "font-heading": "roboto",
+      "font-mono": "jetbrains-mono",
+      radius: "pill",
+      depth: "subtle",
+      tracking: "normal",
+      blur: "light",
+      width: "default",
+    },
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    note: "Paper-cream and deep teal on light; charcoal and aqua on dark.",
+    source: "perplexity.ai's surfaces: cream paper, #13343b ink, teal (#21808d / #32b8c6)",
+    light: {
+      bg: "#fcfcf9",
+      card: "#fffffd",
+      muted: "#f3f3ee",
+      accent: "#e7e7e0",
+      border: "#dcdcd3", // derived
+      fg: "#13343b",
+      fgMuted: "#4f6469", // derived: ink lightened for AA on muted
+      primary: "#21808d",
+      primaryFg: "#ffffff",
+      destructive: "#c0152f",
+      sidebar: "#f3f3ee",
+      charts: ["#21808d", "#a84b2f", "#626c71", "#e68161", "#5e5240"],
+    },
+    dark: {
+      bg: "#1f2121",
+      card: "#262828",
+      muted: "#2d3030",
+      accent: "#393c3d",
+      border: "#3a3d3e",
+      fg: "#f5f5f5",
+      fgMuted: "#b5babb", // derived
+      primary: "#32b8c6",
+      primaryFg: "#13343b",
+      destructive: "#ff5459",
+      sidebar: "#1a1c1c",
+      charts: ["#32b8c6", "#e68161", "#a8b2b5", "#e7b07a", "#7aa9d6"],
+    },
+    design: {
+      "font-sans": "inter",
+      "font-heading": "source-serif",
+      "font-mono": "jetbrains-mono",
+      radius: "round",
+      depth: "subtle",
+      tracking: "normal",
+      blur: "none",
+      width: "default",
+    },
+  },
+  {
+    id: "grok",
+    label: "Grok",
+    note: "Monochrome and near-black, no accent colour, sharp and quiet.",
+    source: "grok.com's surfaces: pure neutrals, a white-on-black inverse button",
+    light: {
+      bg: "#ffffff",
+      card: "#ffffff",
+      muted: "#f5f5f5",
+      accent: "#ebebeb",
+      border: "#e4e4e4",
+      fg: "#0a0a0a",
+      fgMuted: "#5c5c5c",
+      primary: "#0a0a0a",
+      primaryFg: "#ffffff",
+      destructive: "#dc2626",
+      sidebar: "#fafafa",
+      charts: ["#0a0a0a", "#6b6b6b", "#2563eb", "#d97706", "#dc2626"],
+    },
+    dark: {
+      bg: "#101010",
+      card: "#171717",
+      muted: "#1f1f1f",
+      accent: "#2a2a2a",
+      border: "#2e2e2e",
+      fg: "#f2f2f2",
+      fgMuted: "#a1a1a1",
+      primary: "#f2f2f2",
+      primaryFg: "#0a0a0a",
+      destructive: "#f87171",
+      sidebar: "#0b0b0b",
+      charts: ["#f2f2f2", "#a1a1a1", "#60a5fa", "#fbbf24", "#f87171"],
     },
     design: {
       "font-sans": "geist",
       "font-heading": "geist",
       "font-mono": "geist-mono",
-      radius: "pill",
-      depth: "soft",
+      radius: "soft",
+      depth: "flat",
       tracking: "tight",
-      blur: "heavy",
+      blur: "none",
       width: "default",
     },
   },
   {
-    id: "rose-pine",
-    label: "Rosé Pine",
-    note: "All natural pine, faux fur and a bit of soho vibes.",
-    source: "rose-pine/palette palette.json (main + dawn)",
+    id: "cursor",
+    label: "Cursor",
+    note: "Warm paper and charcoal with an orange accent, editor-tight.",
+    source: "cursor.com's surfaces: warm off-white (#f7f7f4) / #181818, orange (#f54e00)",
     light: {
-      bg: "#faf4ed", // dawn base
-      card: "#fffaf3", // dawn surface
-      muted: "#f2e9e1", // dawn overlay
-      accent: "#e8dbd0", // derived
-      border: "#dfd5cb", // derived
-      fg: "#464261", // dawn text
-      fgMuted: "#69657f", // derived: dawn subtle darkened (3.7:1 on overlay)
-      // Dawn iris is only 3.5:1 against white. Pine is equally canonical,
-      // documented, and clears AA — iris stays as the first chart series.
-      primary: "#286983", // dawn pine
+      bg: "#f7f7f4",
+      card: "#fcfcfa", // derived
+      muted: "#efeee9",
+      accent: "#e6e5e0",
+      border: "#dcdbd4",
+      fg: "#26251e",
+      fgMuted: "#5c5b54",
+      primary: "#c23f00", // adjusted: #f54e00 is 3.5:1 under a white label
       primaryFg: "#ffffff",
-      destructive: "#b4637a", // dawn love
-      sidebar: "#fffaf3",
-      charts: ["#907aa9", "#286983", "#56949f", "#ea9d34", "#b4637a"],
+      destructive: "#cf2d56",
+      sidebar: "#efeee9",
+      charts: ["#c23f00", "#4a7ab5", "#5f8a5a", "#b8892b", "#9b5fa8"],
     },
     dark: {
-      bg: "#191724", // base
-      card: "#1f1d2e", // surface
-      muted: "#26233a", // overlay
-      accent: "#302c48", // derived
-      border: "#26233a", // overlay
-      fg: "#e0def4", // text
-      fgMuted: "#908caa", // subtle
-      primary: "#c4a7e7", // iris
-      primaryFg: "#191724",
-      destructive: "#eb6f92", // love
-      sidebar: "#1f1d2e",
-      charts: ["#c4a7e7", "#9ccfd8", "#31748f", "#f6c177", "#eb6f92"],
+      bg: "#181818",
+      card: "#1e1e1e",
+      muted: "#262626",
+      accent: "#333333",
+      border: "#2f2f2f",
+      fg: "#ededed",
+      fgMuted: "#a3a3a3",
+      primary: "#f54e00",
+      primaryFg: "#141414",
+      destructive: "#f0647f",
+      sidebar: "#141414",
+      charts: ["#f54e00", "#6aa0e0", "#7fb87a", "#e0b04a", "#c58ad0"],
     },
     design: {
-      "font-sans": "figtree",
-      "font-heading": "source-serif",
+      "font-sans": "inter",
+      "font-heading": "inter",
       "font-mono": "jetbrains-mono",
-      radius: "round",
-      depth: "soft",
-      tracking: "tight",
-      blur: "medium",
-      width: "narrow",
+      radius: "soft",
+      depth: "subtle",
+      tracking: "normal",
+      blur: "none",
+      width: "default",
+    },
+  },
+  {
+    id: "copilot",
+    label: "Copilot",
+    note: "GitHub's Primer greys with Copilot purple.",
+    source: "GitHub Primer light / dark (canvas, border, fg) with Copilot's purple accent",
+    light: {
+      bg: "#ffffff",
+      card: "#ffffff",
+      muted: "#f6f8fa",
+      accent: "#eaeef2",
+      border: "#d1d9e0",
+      fg: "#1f2328",
+      fgMuted: "#59636e",
+      primary: "#8250df",
+      primaryFg: "#ffffff",
+      destructive: "#d1242f",
+      sidebar: "#f6f8fa",
+      charts: ["#8250df", "#0969da", "#1a7f37", "#bf8700", "#bf3989"],
+    },
+    dark: {
+      bg: "#0d1117",
+      card: "#151b23",
+      muted: "#212830",
+      accent: "#2a313c",
+      border: "#3d444d",
+      fg: "#f0f6fc",
+      fgMuted: "#9198a1",
+      primary: "#ab7df8",
+      primaryFg: "#0d1117",
+      destructive: "#f85149",
+      sidebar: "#010409",
+      charts: ["#ab7df8", "#4493f8", "#3fb950", "#d29922", "#db61a2"],
+    },
+    design: {
+      "font-sans": "inter",
+      "font-heading": "inter",
+      "font-mono": "jetbrains-mono",
+      radius: "soft",
+      depth: "subtle",
+      tracking: "normal",
+      blur: "none",
+      width: "default",
     },
   },
 ]

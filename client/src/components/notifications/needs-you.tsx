@@ -13,6 +13,7 @@ import { ArrowUpRightIcon } from "lucide-react"
 
 import type * as acp from "@daedalus/acp"
 import { ErrorNote } from "@/components/error-note"
+import { Group, StatusBadge } from "@/components/settings/primitives"
 import { KindGlyph } from "@/components/notifications/items"
 import { Button } from "@/components/ui/button"
 import { useCoarsePointer } from "@/hooks/use-device"
@@ -42,16 +43,10 @@ export function NeedsYou() {
   const loadError = inlineFromQuery(query.error, "Could not read what the agents are waiting on")
   if (!items.length && !loadError) return null
   return (
-    <section className="mb-6">
-      <h2 className="mb-2 flex items-baseline gap-2 px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-        Needs you
-        <span className="text-[10px] font-normal tabular-nums normal-case tracking-normal text-muted-foreground/70">
-          {items.length}
-        </span>
-      </h2>
-      <ErrorNote error={loadError} onRetry={() => void query.refetch()} className="mb-2" />
+    <Group label="Needs you" action={<StatusBadge tone="warn" dot={false}>{items.length}</StatusBadge>}>
+      <ErrorNote error={loadError} onRetry={() => void query.refetch()} className="my-3" />
       {items.length > 0 && (
-        <ul className="divide-y overflow-hidden rounded-2xl border border-amber-500/30 bg-card/45 shadow-glass backdrop-blur-md supports-[backdrop-filter]:bg-card/30">
+        <ul className="-mx-3 divide-y divide-border/60 @panel-sm:-mx-4">
           {items.map((item) => (
             <li key={`${item.sessionId}:${item.requestId}`}>
               <PendingCard item={item} />
@@ -59,7 +54,7 @@ export function NeedsYou() {
           ))}
         </ul>
       )}
-    </section>
+    </Group>
   )
 }
 

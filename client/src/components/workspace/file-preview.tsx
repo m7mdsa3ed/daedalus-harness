@@ -4,6 +4,7 @@
    routes let it reach. Drawn by extension (`previewKind`):
 
    - an image is an <img>, which renders even an SVG inertly;
+   - a video is the browser's own player on a blob (a product-video draft);
    - a PDF is the browser's own viewer on a blob — not sandboxed, because
      Chrome refuses to draw a PDF in a sandboxed frame, and a PDF runs no page
      script;
@@ -28,6 +29,8 @@ import { captureError, type InlineError } from "@/lib/errors"
 import { previewKind } from "@/lib/file-preview"
 import { csvHtml, officeHtml, renderSlides } from "@/lib/office-preview"
 import { readFile, readFileBytes, type WorkspaceFile } from "@/lib/workspace/fs-api"
+
+const VIDEO_MIME: Record<string, string> = { mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", ogv: "video/ogg" }
 
 type Loaded =
   | { state: "loading" }
@@ -54,7 +57,7 @@ export function FilePreview({
     const controller = new AbortController()
     let url: string | null = null
     setLoaded({ state: "loading" })
-    const bytes = kind === "image" || kind === "pdf" || kind === "office"
+    const bytes = kind === "image" || kind === "video" || kind === "pdf" || kind === "office"
     ;(bytes
       ? readFileBytes(projectId, path, controller.signal).then(async (data): Promise<Loaded> => {
           if (kind === "office") {
@@ -62,9 +65,13 @@ export function FilePreview({
             const buf = data.slice().buffer
             return ext === "pptx" ? { state: "slides", data: buf } : { state: "office", html: await officeHtml(buf, ext) }
           }
-          /* Bytes carry no type. A raster image is sniffed; an SVG and a PDF
-             are not, so those two are named. */
-          const type = kind === "pdf" ? "application/pdf" : /\.svg$/i.test(path) ? "image/svg+xml" : ""
+          /* Bytes carry no type. A raster image is sniffed; an SVG, a PDF and a
+             video are not, so those are named. */
+          const type =
+            kind === "pdf" ? "application/pdf"
+            : kind === "video" ? VIDEO_MIME[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "video/mp4"
+            : /\.svg$/i.test(path) ? "image/svg+xml"
+            : ""
           url = URL.createObjectURL(new Blob([data as BlobPart], { type }))
           return { state: "url", url }
         })
@@ -110,6 +117,12 @@ function Body({ kind, loaded, name, ext }: { kind: ReturnType<typeof previewKind
   if (loaded.state === "office")
     // Empty sandbox: no scripts, no origin — a document's content can do nothing.
     return <iframe srcDoc={loaded.html} title={name} sandbox="" className="h-full w-full border-0 bg-white" />
+  if (loaded.state === "url" && kind === "video")
+    return (
+      <div className="flex min-h-full items-center justify-center bg-black">
+        <video src={loaded.url} controls className="max-h-full max-w-full" />
+      </div>
+    )
   if (loaded.state === "url")
     return kind === "image" ? (
       <div className="flex min-h-full items-center justify-center p-4">

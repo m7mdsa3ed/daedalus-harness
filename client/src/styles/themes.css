@@ -54,6 +54,12 @@
   --depth-soft-glass-lg: 0 16px 48px oklch(0 0 0 / 10%), 0 2px 8px oklch(0 0 0 / 6%);
   --depth-deep-glass: 0 12px 40px oklch(0 0 0 / 12%), 0 2px 8px oklch(0 0 0 / 8%);
   --depth-deep-glass-lg: 0 28px 72px oklch(0 0 0 / 18%), 0 4px 14px oklch(0 0 0 / 12%);
+  /* The hairline each depth draws round the composer (`--app-edge`): the less
+     shadow, the more edge. Mode-independent — it is a share of the foreground. */
+  --depth-flat-edge: 18%;
+  --depth-subtle-edge: 13%;
+  --depth-soft-edge: 10%;
+  --depth-deep-edge: 8%;
 }
 
 .dark {
@@ -75,6 +81,7 @@
   --app-font-mono: var(--font-family-jetbrains-mono);
   --app-shadow-glass: var(--depth-soft-glass);
   --app-shadow-glass-lg: var(--depth-soft-glass-lg);
+  --app-edge: var(--depth-soft-edge);
   --app-tracking: var(--tracking-tight);
   --theme-radius: default;
   --theme-depth: soft;

@@ -58,11 +58,17 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     description:
       "Google's chrome-devtools-mcp, connected to the thread's Preview in the desktop app instead of a browser of its own — snapshot, click, fill, navigate, screenshot, console, network, performance. Answers while that panel's Drive toggle is on. Needs `npm i -g chrome-devtools-mcp` on the server.",
   },
+  video: {
+    id: "builtin:video",
+    name: "Product videos",
+    description:
+      "Author a product-demo video as a storyboard.json the agent and user keep editing: narration, browser capture, a live Remotion Studio preview, draft and final exports, a contact sheet to review, and publishing to the Files library. Needs ffmpeg on the server, Remotion installed under .daedalus/videos, and video-mcp built (pnpm build in video-mcp/).",
+  },
 };
 
 /**
  * The built-ins whose stdio server is synthesized from a *thread*: its env
- * names the calling session's own loopback URL (`workflow`, `agents`, `harness`)
+ * names the calling session's own loopback URL (`workflow`, `agents`, `harness`, `video`)
  * or the desktop preview that thread is driving (`browser`). There is no such
  * server without a thread, so a settings screen — or any caller with no session
  * behind it — can neither connect to one nor list its tools. The two that
@@ -70,7 +76,7 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
  * `knowledge` (on the project). Kept here, beside `BUILTIN_MCP`, in the module
  * that owns the built-in kinds and low enough that nothing imports it upward.
  */
-const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["workflow", "agents", "harness", "browser"]);
+const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["workflow", "agents", "harness", "browser", "video"]);
 
 /** Whether a built-in only exists as a thread's own server — see above. */
 export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
@@ -97,7 +103,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser"]),
+    builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser", "video"]),
   }),
   z.object({
     type: z.literal("http"),

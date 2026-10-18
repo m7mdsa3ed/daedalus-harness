@@ -6,13 +6,14 @@
    What the adapter is for: `DataTable` speaks TanStack (`ColumnDef`, an
    accessor per column, a flat `actions` array), and a settings page speaks
    "name, detail, two buttons". This maps one onto the other and picks the
-   defaults that suit a settings list — a view toggle, swipe rails on the
-   cards, no pagination until a list is long enough to want one. A page that
+   defaults that suit a settings list — a view toggle once there is a card or
+   a mark to choose, swipe rails and a "more" menu on the narrow rows, no
+   pagination until a list is long enough to want one. A page that
    needs sorting, selection, grouping or a footer should reach for `DataTable`
    directly; everything it can do is still there.
 
    ── The two layouts ──
-   `DataTable` keeps a table view and a card view and remembers which you chose,
+   `DataTable` keeps a table view and a list view and remembers which you chose,
    per viewport, in localStorage (`dataTable.desktopView` / `.mobileView`).
    Which viewport that is is the **panel's** width, not the window's
    (`useIsNarrow`, docs/client.md) — settings docked narrow beside a terminal
@@ -51,6 +52,10 @@ export interface ListColumn<T extends RowData> {
   /** Hidden on a narrow table rather than forcing a horizontal scroll. The
       card view shows it regardless — that is what the card view is for. */
   secondary?: boolean
+  /** The column a row is called by: type, pinned while the table scrolls
+      sideways, and the heading of the row on a narrow panel. Defaults to the
+      first column. */
+  title?: boolean
 }
 
 /** One row action. Re-exported shape of the table's own `TableAction`, minus
@@ -94,6 +99,16 @@ export interface SettingsListProps<T extends RowData> {
   /** Rows before the table pages itself. A settings list is usually shorter
       than this, in which case no pager is drawn at all. */
   pageSize?: number
+  /** Controls for the toolbar's action area (an "Add" button, say), between
+      the filters and the table/list toggle. */
+  toolbar?: React.ReactNode
+  /** A row's leading mark — an avatar, a logo, an icon. At the start of the
+      title cell on the table and in the default narrow row. Giving one also
+      turns the table/list toggle on. */
+  mark?: (row: T) => React.ReactNode
+  /** Force the table/list toggle on or off. Defaults to on when a `renderCard`
+      or a `mark` is given, off otherwise. */
+  viewToggle?: boolean
   className?: string
 }
 
@@ -111,6 +126,9 @@ export function SettingsList<T extends RowData>({
   renderCard,
   onRowClick,
   pageSize = 25,
+  toolbar,
+  mark,
+  viewToggle,
   className,
 }: SettingsListProps<T>) {
   const [query, setQuery] = React.useState("")
@@ -136,6 +154,7 @@ export function SettingsList<T extends RowData>({
         cell: ({ row }) => column.cell(row.original),
         meta: {
           align: column.align,
+          title: column.title,
           className: cn(column.width, column.secondary && "hidden @panel-md:table-cell"),
         } satisfies DataTableColumnMeta,
       })),
@@ -171,6 +190,7 @@ export function SettingsList<T extends RowData>({
       getRowId={(row) => rowId(row)}
       isLoading={loading}
       skeletonRows={skeletonRows}
+      emptyIcon={emptyIcon ? React.createElement(emptyIcon) : undefined}
       emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : (emptyText ?? "No results.")}
       pageSize={pageSize}
       actions={tableActions}
@@ -183,11 +203,14 @@ export function SettingsList<T extends RowData>({
                 onChange: setQuery,
                 placeholder: search.placeholder ?? "Search…",
               },
+              totalCount: rows.length,
             }
           : undefined
       }
       mobile={renderCard ? { renderRow: (row) => renderCard(row) } : undefined}
-      viewToggle={Boolean(renderCard)}
+      mark={mark}
+      toolbar={toolbar}
+      viewToggle={viewToggle ?? Boolean(renderCard || mark)}
     />
   )
 }

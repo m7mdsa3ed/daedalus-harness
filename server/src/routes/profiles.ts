@@ -172,9 +172,28 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
   app.delete("/api/profiles/:id", async (c) => {
     const id = c.req.param("id");
-    /* A profile a live thread still spawns from must not vanish under it — the
-       thread would keep its profileId and every revive would 404. Trashed
-       threads don't block: they are already on their way out. */
+    if (c.req.query("force") === "1") {
+      /* Confirmed: every thread on the profile is reset to its agent's
+         Default first, so nothing is left naming a profile that no longer
+         exists. Still atomic from the caller's side — a busy thread refuses
+         the whole reset rather than moving half the threads. */
+      const { moved, busy } = await sessions.resetThreadsFromProfile(id);
+      if (busy.length > 0) {
+        const names = busy.slice(0, 5).map((s) => `“${s.title}”`).join(", ");
+        const more = busy.length > 5 ? ` and ${busy.length - 5} more` : "";
+        return c.json(
+          {
+            error: `Couldn't delete the profile — ${busy.length} thread(s) are mid-turn: ${names}${more}. Stop them first.`,
+          },
+          409,
+        );
+      }
+      return (await deleteProfile(id)) ? c.json({ ok: true, moved }) : c.json({ error: "not found" }, 404);
+    }
+    /* A profile a thread still runs on must not vanish under it — the thread
+       would keep its profileId and every revive would 404. Trashed threads
+       don't block: they are already on their way out. Answered as names the
+       client confirms against, not just a count. */
     const referencing = sessions.list().filter((s) => s.profileId === id && s.deletedAt === null);
     if (referencing.length > 0) {
       const names = referencing.slice(0, 5).map((s) => `“${s.title}”`).join(", ");
@@ -182,6 +201,7 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       return c.json(
         {
           error: `${referencing.length} thread(s) still use this profile: ${names}${more}. Delete or move them first.`,
+          threads: referencing.map((s) => ({ id: s.id, title: s.title, agentId: s.agentId })),
         },
         409,
       );

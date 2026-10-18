@@ -1,7 +1,9 @@
 import * as React from "react"
-import { ArrowDown, ArrowUp, BotIcon, Download, Pencil, PlugZap, Plus, Trash2 } from "lucide-react"
+import { useIsMobile } from "@/hooks/use-device"
+import { ArrowDown, ArrowUp, BotIcon, Download, PlugZap, Plus, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
-import { Empty } from "@/components/empty"
+import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
+import type { ColumnDef } from "@/lib/table"
 import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
 import { captureError, type InlineError } from "@/lib/errors"
@@ -195,6 +197,147 @@ const summaryBadges = (row: ModelRow) => {
   return badges
 }
 
+/* ── the list ──
+   The rows as a compact table: a model is its mark, its name over its id, then
+   the numbers that tell one from another. Tapping a row opens its editor in a
+   dialog (a sheet on a phone) — the editor is a form of its own and an
+   accordion row cannot hold one on a narrow list. */
+
+/** A row plus what the table cannot read off it: where it sits in the whole
+    list (the reorder acts on that, not on the page's index) and whether it is
+    the profile's default. */
+interface ModelItem {
+  row: ModelRow
+  index: number
+  last: boolean
+  isDefault: boolean
+}
+
+const modelMark = (row: ModelRow) => (
+  <EntityIcon src={row.iconUrl} fallback={<BotIcon className="size-4 text-muted-foreground" />} className="size-5" />
+)
+
+function ModelName({ item }: { item: ModelItem }) {
+  const { row, isDefault } = item
+  return (
+    <TitleCell
+      title={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate" title={row.id}>
+            {row.label.trim() || "Unnamed model"}
+          </span>
+          {isDefault && (
+            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium tracking-wide">
+              default
+            </Badge>
+          )}
+        </span>
+      }
+      subtitle={<span className="font-mono text-[11px]">{row.id.trim() || "no id yet"}</span>}
+    />
+  )
+}
+
+const Dash = () => <span className="text-muted-foreground/60">—</span>
+
+const MODEL_COLUMNS: ColumnDef<ModelItem, unknown>[] = [
+  {
+    id: "model",
+    header: "Model",
+    cell: ({ row }) => <ModelName item={row.original} />,
+    meta: { title: true, className: "min-w-52" },
+  },
+  {
+    id: "context",
+    header: "Context",
+    cell: ({ row }) => {
+      const context = Number(row.original.row.contextWindow.trim())
+      return context > 0 ? <span className="text-xs">{formatTokens(Math.round(context))}</span> : <Dash />
+    },
+    meta: { align: "end", className: "hidden @panel-sm:table-cell w-24" },
+  },
+  {
+    id: "pricing",
+    header: "$ in / out",
+    cell: ({ row }) => {
+      const { pricingInput, pricingOutput } = row.original.row
+      return pricingInput.trim() && pricingOutput.trim() ? (
+        <span className="whitespace-nowrap text-xs">
+          ${trimNum(Number(pricingInput))} / ${trimNum(Number(pricingOutput))}
+        </span>
+      ) : (
+        <Dash />
+      )
+    },
+    meta: { align: "end", className: "hidden @panel-md:table-cell w-32" },
+  },
+  {
+    id: "efforts",
+    header: "Efforts",
+    cell: ({ row }) => {
+      const efforts = row.original.row.efforts.split(/[,\s]+/).filter(Boolean)
+      return efforts.length ? (
+        <span className="text-xs text-muted-foreground">{efforts.join(" · ")}</span>
+      ) : (
+        <Dash />
+      )
+    },
+    meta: { className: "hidden @panel-lg:table-cell" },
+  },
+  {
+    id: "group",
+    header: "Group",
+    cell: ({ row }) =>
+      row.original.row.group.trim() ? (
+        <Badge variant="outline" className="max-w-40 font-normal">
+          <span className="truncate">{row.original.row.group.trim()}</span>
+        </Badge>
+      ) : (
+        <Dash />
+      ),
+    meta: { className: "hidden @panel-lg:table-cell" },
+  },
+]
+
+/** The narrow row: name over id, then the same facts the columns carry, as
+    chips — a phone has no columns to read them from. */
+function ModelRowCard({ item }: { item: ModelItem }) {
+  const { row, isDefault } = item
+  const badges = summaryBadges(row)
+  return (
+    <div className="flex min-w-0 items-start gap-3">
+      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
+        {modelMark(row)}
+      </div>
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm font-medium">{row.label.trim() || "Unnamed model"}</span>
+          {isDefault && (
+            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium tracking-wide">
+              default
+            </Badge>
+          )}
+        </div>
+        <span className="block truncate font-mono text-[11px] text-muted-foreground">{row.id.trim() || "no id yet"}</span>
+        {badges.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {badges.map((badge) => (
+              <Badge key={badge} variant="outline" className="text-[11px] font-normal break-words text-muted-foreground">
+                {badge}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const modelRowId = (item: ModelItem) => item.row.uid
+const modelItemMark = (item: ModelItem) => modelMark(item.row)
+
+const MODEL_MOBILE = { renderRow: (item: ModelItem) => <ModelRowCard item={item} /> }
+
 /* ── the section ── */
 
 export function ModelsSection({
@@ -247,148 +390,156 @@ export function ModelsSection({
     onPatch(uid, p)
   }
 
+  const items = React.useMemo<ModelItem[]>(
+    () =>
+      rows.map((row, index) => ({
+        row,
+        index,
+        last: index === rows.length - 1,
+        isDefault: row.id.trim() !== "" && row.id.trim() === defaultModel,
+      })),
+    [rows, defaultModel]
+  )
+
+  /* The actions are memoised (the table memoises its rows against them), so the
+     callbacks they reach are read through a ref refreshed every render. */
+  const live = React.useRef({ rows, onReorder, onRemove })
+  live.current = { rows, onReorder, onRemove }
+  const move = (item: ModelItem, by: -1 | 1) => {
+    const next = [...live.current.rows]
+    const to = item.index + by
+    /* The phone's swipe rail does not honour `disabled`, so the ends are
+       guarded here: a swap past either one would write `undefined` into a row. */
+    if (to < 0 || to >= next.length) return
+    ;[next[to], next[item.index]] = [next[item.index], next[to]]
+    live.current.onReorder(next)
+  }
+  const actions = React.useMemo<TableAction<ModelItem>[]>(
+    () => [
+      {
+        id: "up",
+        label: "Move up",
+        icon: <ArrowUp />,
+        position: "left",
+        disabled: (item) => item.index === 0,
+        onClick: (item) => move(item, -1),
+      },
+      {
+        id: "down",
+        label: "Move down",
+        icon: <ArrowDown />,
+        position: "left",
+        disabled: (item) => item.last,
+        onClick: (item) => move(item, 1),
+      },
+      {
+        id: "remove",
+        label: "Remove model",
+        icon: <Trash2 />,
+        tone: "danger",
+        onClick: (item) => live.current.onRemove(item.row.uid),
+      },
+    ],
+    // `move` only reads the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+
+  const openRow = React.useCallback((item: ModelItem) => setEditingUid(item.row.uid), [])
+
+  /* A new row is blank and lands at the end of the list — on a long list, a
+     page the reader is not on. Open its editor, which is what Add is for. */
+  const adding = React.useRef(false)
+  React.useEffect(() => {
+    if (!adding.current) return
+    adding.current = false
+    const newest = rows[rows.length - 1]
+    if (newest) setEditingUid(newest.uid)
+  }, [rows])
+
+  const editing = editingUid ? rows.find((r) => r.uid === editingUid) : undefined
+  const editingDefault = editing ? editing.id.trim() !== "" && editing.id.trim() === defaultModel : false
+
   return (
-    <Field
-      label="Models"
-      hint="What the provider behind this profile serves. A model with no efforts has no reasoning-effort setting."
-    >
-      <div className="space-y-2">
-        {rows.length === 0 ? (
-          <Empty>
-            No models — this profile lets the agent use its own catalog. Add or fetch models to
-            override it.
-          </Empty>
-        ) : (
-          <div className={cn("divide-y divide-border/60", INSET)}>
-            {rows.map((row, index) => {
-              const isDefault = row.id.trim() !== "" && row.id.trim() === defaultModel
-              const badges = summaryBadges(row)
-              return (
-                <div key={row.uid} className="transition-colors hover:bg-muted/10">
-                  <div className="flex items-start gap-2.5 p-3 @panel-sm:items-center">
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 items-start gap-3 text-left @panel-sm:items-center"
-                      title={row.id}
-                      onClick={() => setEditingUid(editingUid === row.uid ? null : row.uid)}
-                    >
-                      <EntityIcon
-                        src={row.iconUrl}
-                        fallback={<BotIcon className="size-4 text-muted-foreground" />}
-                        className="mt-0.5 size-5 shrink-0 @panel-sm:mt-0"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-1.5 @panel-sm:gap-2">
-                          <span className="truncate text-sm font-medium">
-                            {row.label.trim() || "Unnamed model"}
-                          </span>
-                          {isDefault && (
-                            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium tracking-wide">
-                              default
-                            </Badge>
-                          )}
-                        </div>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                          {row.id.trim() || "no id yet"}
-                        </span>
-                      </div>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-lg"
-                        title="Move up"
-                        disabled={index === 0}
-                        onClick={() => {
-                          const next = [...rows]
-                          ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
-                          onReorder(next)
-                        }}
-                      >
-                        <ArrowUp />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-lg"
-                        title="Move down"
-                        disabled={index === rows.length - 1}
-                        onClick={() => {
-                          const next = [...rows]
-                          ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
-                          onReorder(next)
-                        }}
-                      >
-                        <ArrowDown />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-lg"
-                        title={editingUid === row.uid ? "Collapse" : "Edit"}
-                        onClick={() => setEditingUid(editingUid === row.uid ? null : row.uid)}
-                      >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-lg"
-                        title="Remove model"
-                        onClick={() => onRemove(row.uid)}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  </div>
-                  {badges.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 px-3 pb-3 @panel-sm:pl-10.5">
-                      {badges.map((badge) => (
-                        <Badge key={badge} variant="outline" className="font-normal text-muted-foreground text-[11px] break-words">
-                          {badge}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  {editingUid === row.uid && (
-                    <ModelEditorFields
-                      row={row}
-                      isDefault={isDefault}
-                      groups={groups}
-                      onSetDefault={() => onSetDefault(row.uid)}
-                      settings={settings}
-                      profileId={profileId}
-                      baseUrl={baseUrl}
-                      apiKey={apiKey}
-                      onPatch={(p) => patch(row.uid, p)}
-                    />
-                  )}
-                </div>
-              )
-            })}
+    /* The section around it (profiles.tsx `FormSection`) carries the title and the
+       sentence the Field used to; this is the body. */
+    <>
+      <DataTable
+        columns={MODEL_COLUMNS}
+        data={items}
+        getRowId={modelRowId}
+        actions={actions}
+        mobile={MODEL_MOBILE}
+        mark={modelItemMark}
+        viewToggle={false}
+        pageSize={25}
+        onRowClick={openRow}
+        emptyIcon={<BotIcon />}
+        emptyMessage="No models — this profile lets the agent use its own catalog. Add or fetch models to override it."
+        toolbar={
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="pointer-coarse:h-11"
+              title="Add model"
+              aria-label="Add model"
+              onClick={() => {
+                adding.current = true
+                onAdd()
+              }}
+            >
+              <Plus className="size-4" /> Add
+            </Button>
+            {/* Opens the panel below, which fetches at once — there is no source
+                to choose: the only one is the provider behind this profile's
+                credentials, and it needs a base URL to be asked. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="pointer-coarse:h-11"
+              disabled={!baseUrl.trim()}
+              title={baseUrl.trim() ? "Fetch models from the provider" : "Add a base URL first"}
+              aria-label="Fetch models"
+              onClick={() => setImporting(true)}
+            >
+              <Download className="size-4" /> Fetch
+            </Button>
           </div>
-        )}
-        <div className="flex flex-col @panel-sm:flex-row @panel-sm:flex-wrap items-stretch @panel-sm:items-center gap-2">
-          <Button type="button" variant="outline" size="lg" className="w-full @panel-sm:w-auto" onClick={onAdd}>
-            <Plus className="size-4" /> Add model
-          </Button>
-          {/* Opens the panel below, which fetches at once — there is no source
-              to choose: the only one is the provider behind this profile's
-              credentials, and it needs a base URL to be asked. */}
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            className="w-full @panel-sm:w-auto"
-            disabled={!baseUrl.trim()}
-            title={baseUrl.trim() ? undefined : "Add a base URL first"}
-            onClick={() => setImporting(true)}
-          >
-            <Download className="size-4" /> Fetch models
-          </Button>
-        </div>
-      </div>
+        }
+      />
+      <ResponsiveDialog open={editing !== undefined} onOpenChange={(open) => !open && setEditingUid(null)}>
+        <ResponsiveDialogContent className="sm:max-w-3xl">
+          <ResponsiveDialogHeader>
+            <ResponsiveDialogTitle>Edit model</ResponsiveDialogTitle>
+            <ResponsiveDialogDescription>
+              Changes apply to the form at once; they are saved with the profile.
+            </ResponsiveDialogDescription>
+          </ResponsiveDialogHeader>
+          {editing && (
+            <div className="@container">
+              <ModelEditorFields
+                row={editing}
+                isDefault={editingDefault}
+                groups={groups}
+                onSetDefault={() => onSetDefault(editing.uid)}
+                settings={settings}
+                profileId={profileId}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                onPatch={(p) => patch(editing.uid, p)}
+              />
+            </div>
+          )}
+          <ResponsiveDialogFooter>
+            <Button type="button" onClick={() => setEditingUid(null)}>
+              Done
+            </Button>
+          </ResponsiveDialogFooter>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
       {importing && (
         <FetchModelsDialog
           settings={settings}
@@ -403,11 +554,11 @@ export function ModelsSection({
           onClose={() => setImporting(false)}
         />
       )}
-    </Field>
+    </>
   )
 }
 
-/* ── expanded per-model editor ── */
+/* ── per-model editor (drawn in the dialog above) ── */
 
 function ModelEditorFields({
   row,
@@ -432,7 +583,7 @@ function ModelEditorFields({
   onPatch: (patch: Partial<ModelRow>) => void
 }) {
   return (
-    <div className="space-y-3 border-t bg-muted/20 p-3 @panel-sm:p-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border/40">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <EntityIcon
@@ -453,7 +604,7 @@ function ModelEditorFields({
           type="button"
           variant={isDefault ? "secondary" : "outline"}
           size="sm"
-          className="text-xs h-7 w-full @panel-sm:w-auto"
+          className="h-7 w-full text-xs pointer-coarse:h-11 @panel-sm:w-auto"
           onClick={onSetDefault}
         >
           {isDefault ? "Default model" : "Set as default"}
@@ -625,7 +776,7 @@ function ModelTest({
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 text-xs"
+          className="h-7 text-xs pointer-coarse:h-11"
           disabled={testing || !id || !baseUrl.trim()}
           title={baseUrl.trim() ? undefined : "Add a base URL first"}
           onClick={() => void run()}
@@ -799,7 +950,7 @@ function ModelsDevMatch({
         itemToStringLabel={(hit: ModelCandidate | null) => hit?.label || hit?.id || ""}
         onValueChange={(hit: ModelCandidate | null) => hit && apply(hit)}
       >
-        <ComboboxTrigger render={<Button type="button" variant="outline" size="sm" className="w-full @panel-sm:w-auto" />}>
+        <ComboboxTrigger render={<Button type="button" variant="outline" size="sm" className="w-full pointer-coarse:h-11 @panel-sm:w-auto" />}>
           {matched ? "Change models.dev match" : "Match on models.dev"}
         </ComboboxTrigger>
         <ComboboxContent>
@@ -945,6 +1096,7 @@ function FetchModelsDialog({
   onImport: (rows: ModelRow[]) => void
   onClose: () => void
 }) {
+  const isMobile = useIsMobile()
   const [step, setStep] = React.useState<"pick" | "fill">("pick")
   const [fetching, setFetching] = React.useState(true)
   const [fetched, setFetched] = React.useState<ModelCandidate[] | null>(null)
@@ -1019,7 +1171,7 @@ function FetchModelsDialog({
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="@panel-sm:max-w-lg">
+      <ResponsiveDialogContent className="sm:max-w-lg">
         {step === "pick" ? (
           <>
             <ResponsiveDialogHeader>
@@ -1039,16 +1191,16 @@ function FetchModelsDialog({
               <Button
                 type="button"
                 variant="ghost"
-                className="w-full @panel-sm:w-auto @panel-sm:mr-auto"
+                className={isMobile ? undefined : "mr-auto"}
                 disabled={fetching}
                 onClick={fetchModels}
               >
                 Fetch again
               </Button>
-              <Button type="button" variant="outline" className="w-full @panel-sm:w-auto" onClick={onClose}>
+              <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="button" className="w-full @panel-sm:w-auto" disabled={fetching || picked.length === 0} onClick={next}>
+              <Button type="button" disabled={fetching || picked.length === 0} onClick={next}>
                 Next{picked.length ? ` · ${picked.length}` : ""}
               </Button>
             </ResponsiveDialogFooter>
@@ -1103,10 +1255,10 @@ function FetchModelsDialog({
               })}
             </div>
             <ResponsiveDialogFooter>
-              <Button type="button" variant="outline" className="w-full @panel-sm:w-auto" onClick={() => setStep("pick")}>
+              <Button type="button" variant="outline" onClick={() => setStep("pick")}>
                 Back
               </Button>
-              <Button type="button" className="w-full @panel-sm:w-auto" onClick={importAll}>
+              <Button type="button" onClick={importAll}>
                 Import {picked.length} model{picked.length === 1 ? "" : "s"}
               </Button>
             </ResponsiveDialogFooter>

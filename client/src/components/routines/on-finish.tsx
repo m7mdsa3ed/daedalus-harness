@@ -11,6 +11,7 @@
 import * as React from "react"
 import { BellIcon, BookTextIcon, KanbanIcon, PlusIcon, RepeatIcon, Trash2Icon } from "lucide-react"
 
+import { INSET } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -88,7 +89,7 @@ export function OnFinishEditor({
         const meta = KIND_META[action.kind]
         const Icon = meta?.icon ?? BellIcon
         return (
-          <div key={index} className="rounded-xl border p-3">
+          <div key={index} className={`p-3 ${INSET}`}>
             <div className="flex items-center gap-2.5">
               <Icon className="size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
@@ -117,7 +118,7 @@ export function OnFinishEditor({
             )}
 
             {action.kind === "task" && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <div className="mt-3 grid gap-2 @xl:grid-cols-3">
                 <Input
                   placeholder="Card title — blank uses the routine's name"
                   value={action.title ?? ""}

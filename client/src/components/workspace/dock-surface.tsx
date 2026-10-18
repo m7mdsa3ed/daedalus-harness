@@ -15,7 +15,7 @@ import {
 } from "dockview-react"
 import "dockview-react/dist/styles/dockview.css"
 
-import { ChatPanel } from "@/components/workspace/chat-panel"
+import { ChatPanel, markSwipe, peeks, type Peek } from "@/components/workspace/chat-panel"
 import {
   DockContext,
   DockOpenersContext,
@@ -172,51 +172,138 @@ const SWIPE_COMMIT_PX = 56
  * `touch-action: pan-y` below `md` (`index.css`) so the browser hands us the
  * horizontal half instead of scrolling the strip.
  */
-function useTabSwipe(enabled: boolean, cycle: (delta: number) => void) {
+function useTabSwipe(
+  enabled: boolean,
+  cycle: (delta: number) => void,
+  getApi: () => DockviewApi | undefined
+) {
   const cycleRef = React.useRef(cycle)
   cycleRef.current = cycle
+  const apiRef = React.useRef(getApi)
+  apiRef.current = getApi
   React.useEffect(() => {
     if (!enabled) return
-    let start: { id: number; x: number; y: number; axis: "x" | "y" | null; grid?: boolean } | null = null
+    let start: {
+      id: number
+      x: number
+      y: number
+      axis: "x" | "y" | null
+      grid?: boolean
+      /* The pager, as the composer's swipe drives it (`chat-panel.tsx`): the
+         thread in front follows the finger and the neighbour is dragged in
+         beside it. Absent when either is not a thread — the swipe then
+         changes tab on release, as it always did. */
+      dir: number
+      w: number
+      me?: Peek
+      nb?: Peek
+      px: number
+      pt: number
+      v: number
+    } | null = null
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let release: (() => void) | undefined
+    /* Hands the overlays back to dockview once they have settled. */
+    const hold = (a: Peek | undefined, b: Peek | undefined, ms: number) => {
+      release?.()
+      const done = () => {
+        clearTimeout(timer)
+        release = undefined
+        a?.release()
+        b?.release()
+      }
+      timer = setTimeout(done, ms)
+      release = done
+    }
+    const home = (s: NonNullable<typeof start>) => {
+      s.me?.settle(0, true)
+      s.nb?.settle(s.dir * s.w, true)
+      hold(s.me, s.nb, 300)
+    }
     const down = (e: PointerEvent) => {
       if (e.pointerType !== "touch" || !e.isPrimary) return
       const target = e.target as Element | null
       /* The thread dock's own strip scrolls sideways; a swipe there is not a tab switch. */
       if (!target?.closest(".dv-tabs-and-actions-container") || target.closest(".dock-nested")) return
-      start = { id: e.pointerId, x: e.clientX, y: e.clientY, axis: null }
+      release?.()
+      start = { id: e.pointerId, x: e.clientX, y: e.clientY, axis: null, dir: 0, w: 0, px: e.clientX, pt: e.timeStamp, v: 0 }
     }
     const move = (e: PointerEvent) => {
       if (!start || e.pointerId !== start.id) return
-      const dx = Math.abs(e.clientX - start.x)
+      const dxs = e.clientX - start.x
+      const dx = Math.abs(dxs)
       const dy = Math.abs(e.clientY - start.y)
       if (!start.axis) {
         if (Math.max(dx, dy) < SWIPE_LOCK_PX) return
         start.axis = dx > dy * 1.5 ? "x" : "y"
+        if (start.axis === "x") {
+          start.dir = dxs < 0 ? 1 : -1
+          const group = apiRef.current()?.activeGroup
+          const panels = group?.panels ?? []
+          const i = group?.activePanel ? panels.indexOf(group.activePanel) : -1
+          const next = i >= 0 && panels.length > 1 ? panels[(i + start.dir + panels.length) % panels.length] : undefined
+          start.me = group?.activePanel ? peeks.get(group.activePanel.id) : undefined
+          start.nb = next ? peeks.get(next.id) : undefined
+          const mine = start.me?.el()
+          if (!mine || !start.nb) start.me = start.nb = undefined
+          else {
+            start.w = mine.offsetWidth
+            const theirs = start.nb.el()
+            /* A panel nobody has looked at since a resize holds stale geometry. */
+            if (theirs) for (const k of ["left", "top", "width", "height"] as const) theirs.style[k] = mine.style[k]
+          }
+        }
       }
       /* Dragging the tab down opens the card grid, as on Chrome. Marked here,
          opened when the finger lifts (or the browser cancels the touch, which
          it may do to a vertical drag): opening under a live touch starts the
          morph while the strip is still taking pointer events. */
       if (start.axis === "y" && e.clientY - start.y >= SWIPE_COMMIT_PX / 2) start.grid = true
+      if (start.axis === "x" && start.me && start.nb) {
+        const dt = e.timeStamp - start.pt
+        if (dt >= 50) {
+          start.v = (e.clientX - start.px) / dt
+          start.px = e.clientX
+          start.pt = e.timeStamp
+        }
+        /* Dragging back past the start never reveals what is behind. */
+        const x = -start.dir * Math.max(0, -start.dir * dxs)
+        start.me.place(x)
+        start.nb.place(x + start.dir * start.w)
+      }
     }
     const up = (e: PointerEvent) => {
       if (!start || e.pointerId !== start.id) return
-      const dx = e.clientX - start.x
-      const horizontal = start.axis === "x"
-      const grid = start.grid
+      const s = start
+      const dx = e.clientX - s.x
+      const horizontal = s.axis === "x"
       start = null
-      if (grid) window.dispatchEvent(new Event(TAB_GRID_EVENT))
-      if (horizontal && Math.abs(dx) >= SWIPE_COMMIT_PX) cycleRef.current(dx < 0 ? 1 : -1)
+      if (s.grid) window.dispatchEvent(new Event(TAB_GRID_EVENT))
+      const flick = Math.abs(dx) >= 24 && Math.abs(s.v) > 0.5 && s.v * dx > 0
+      const commit = horizontal && dx * s.dir < 0 && (Math.abs(dx) >= SWIPE_COMMIT_PX || flick)
+      if (!commit) return horizontal ? home(s) : undefined
+      markSwipe(s.dir, !!s.nb)
+      cycleRef.current(s.dir)
+      if (s.me && s.nb) {
+        /* Dockview hides the outgoing overlay as the tab changes; hold it up
+           while it slides out and the neighbour lands. */
+        s.me.settle(-s.dir * s.w)
+        s.nb.settle(0)
+        hold(s.me, s.nb, 240)
+      }
     }
     const cancel = () => {
-      if (start?.grid) window.dispatchEvent(new Event(TAB_GRID_EVENT))
+      const s = start
       start = null
+      if (s?.grid) window.dispatchEvent(new Event(TAB_GRID_EVENT))
+      if (s?.axis === "x") home(s)
     }
     document.addEventListener("pointerdown", down, true)
     document.addEventListener("pointermove", move, true)
     document.addEventListener("pointerup", up, true)
     document.addEventListener("pointercancel", cancel, true)
     return () => {
+      clearTimeout(timer)
       document.removeEventListener("pointerdown", down, true)
       document.removeEventListener("pointermove", move, true)
       document.removeEventListener("pointerup", up, true)
@@ -248,7 +335,8 @@ export function WorkspaceDock({
   React.useEffect(() => {
     if (isMobile) dock.stackAll()
   }, [isMobile, dock])
-  useTabSwipe(isMobile, dock.cycleTab)
+  const apiRef = React.useRef<DockviewApi | undefined>(undefined)
+  useTabSwipe(isMobile, dock.cycleTab, () => apiRef.current)
   /* Every kind gets an entry, including the ones this build has not written
      yet: Dockview throws on an unknown component name, so a layout saved by a
      newer build would take the whole dock down instead of showing one panel it
@@ -371,6 +459,7 @@ export function WorkspaceDock({
           headerResize.observe(cluster)
       }
       queueMicrotask(sync)
+      apiRef.current = api
       onReady(api)
       /* Run by `DockSurface` on the next ready and on unmount. */
       return () => {

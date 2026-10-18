@@ -450,7 +450,7 @@ export function ComposerStrip({
         data-front={front ? "" : undefined}
         hidden={!front}
         className={cn(
-          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-2xl",
+          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-composer ring-1 ring-edge-extra",
           front && cn("backdrop-blur-[var(--app-blur)]", ground)
         )}
         style={{ top: railHeight, bottom: footerHeight + tuck }}
@@ -505,7 +505,7 @@ export function ComposerStrip({
           // the way down. Without it the composer would jump rather than slide.
           // Never with a footer: that surface is already down there, and a
           // second one over it would wash the row it is under.
-          empty && !stowed && cn("overflow-hidden rounded-t-2xl", ground),
+          empty && !stowed && cn("overflow-hidden rounded-t-composer", ground),
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className
@@ -520,8 +520,8 @@ export function ComposerStrip({
             className={cn(
               "absolute z-20 flex min-w-0 gap-1",
               wideLayout
-                ? "inset-y-0 left-0 w-32 flex-col items-stretch overflow-y-auto rounded-tl-xl px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                : "inset-x-0 top-0 h-8 flex-row items-center overflow-x-auto rounded-t-xl px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                ? "inset-y-0 left-0 w-32 flex-col items-stretch overflow-y-auto rounded-tl-composer px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                : "inset-x-0 top-0 h-8 flex-row items-center overflow-x-auto rounded-t-composer px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             )}
           >
             {entries.map((entry) => {
@@ -541,7 +541,7 @@ export function ComposerStrip({
                     "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-pill px-2 text-left text-[11px] font-medium transition-colors",
                     wideLayout && "w-full justify-start",
                     selected
-                      ? "bg-composer text-foreground ring-1 ring-foreground/10"
+                      ? "bg-composer text-foreground ring-1 ring-edge"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   )}
@@ -579,7 +579,7 @@ export function ComposerStrip({
                  the box on the way down — one colour for the whole shelf,
                  because nothing on it is ever wrong (see `GROUND`). */
               ground,
-              entries.length === 0 && "rounded-t-2xl"
+              entries.length === 0 && "rounded-t-composer ring-1 ring-edge-extra"
             )}
           >
             {footer}

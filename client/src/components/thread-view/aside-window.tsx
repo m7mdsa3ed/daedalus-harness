@@ -19,6 +19,7 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadView } from "@/components/thread-view/thread-view"
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
+import { openInNewTab } from "@/lib/workspace/open-threads"
 import { safeAreaState } from "@/lib/safe-area-inset"
 import { useSessionMeta, useStoreSelect } from "@/lib/store"
 import { useThreadConnection } from "@/lib/thread/use-thread-connection"
@@ -137,7 +138,7 @@ export function AsideWindow({
           title="Open as tab"
           onClick={() => {
             onClose()
-            navigateTo(threadPath(at.id))
+            openInNewTab(threadPath(at.id)) || navigateTo(threadPath(at.id))
           }}
         >
           <ExternalLinkIcon className="size-3.5" />

@@ -10,7 +10,7 @@ import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import { FileBadge } from "@/components/tool-parts"
 import type { FileRange } from "@/lib/tools"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { toolVariantOf, useViewOptionsContext, type ToolLayout, type ToolVariant } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
@@ -156,6 +156,7 @@ export const StepRow = React.memo(function StepRow({
   iconAccent,
   iconChip,
   toolLayout,
+  toolVariant,
   dir,
 }: {
   /** Overrides the direction read from `target` — a node target (a live
@@ -243,7 +244,9 @@ export const StepRow = React.memo(function StepRow({
       icon wears its own background; a failure tints the tile red instead. */
   iconChip?: string
   /** Optional tool-specific layout; non-tool steps keep the transcript default. */
-  toolLayout?: "timeline" | "cards" | "compact" | "rail" | "console" | "outlined" | "minimal" | "spotlight"
+  toolLayout?: ToolLayout
+  /** The layout's variant; resolved against `toolLayout`, so a stale one is harmless. */
+  toolVariant?: ToolVariant
 }) {
   /* The reader's own answer, or `null` while they have not given one. Whatever
      they last clicked outranks everything below until the view option moves. */
@@ -306,13 +309,16 @@ export const StepRow = React.memo(function StepRow({
   const clockMs = elapsedMs ?? settledMs
   const runDir = React.useContext(StepDirContext)
   const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)
+  const variant = toolLayout && toolVariant ? toolVariantOf(toolLayout, toolVariant) : undefined
+  const compact = toolLayout === "timeline" && variant === "compact"
+  const minimal = toolLayout === "timeline" && variant === "minimal"
 
   return (
     <div
       dir={d}
       className={cn(
-        toolLayout === "cards" && "my-1 rounded-lg border border-border/60 bg-card/60 p-2 shadow-sm",
-        toolLayout === "compact" && "-my-0.5",
+        compact && "-my-0.5",
+        minimal && "my-0",
         toolLayout === "rail" &&
           cn(
             "my-1 border-s-2 ps-3",
@@ -323,11 +329,7 @@ export const StepRow = React.memo(function StepRow({
                 : status === "completed"
                   ? "border-emerald-500"
                   : "border-border/50"
-          ),
-        toolLayout === "console" && "my-1 rounded-lg border border-border/70 bg-muted/30 p-2 font-mono",
-        toolLayout === "outlined" && "my-1 rounded-md border border-primary/25 px-2 py-1",
-        toolLayout === "minimal" && "my-0",
-        toolLayout === "spotlight" && "my-2 rounded-lg border border-primary/25 bg-primary/5 p-2 shadow-sm"
+          )
       )}
     >
       {/* The row is the wrapper, not the button. The trailing columns — the
@@ -353,13 +355,9 @@ export const StepRow = React.memo(function StepRow({
           "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-150",
           plain && "mx-0 w-full px-0 py-0 hover:bg-transparent",
           expandable && !plain && "hover:bg-muted/40",
-          toolLayout === "cards" && "mx-0 w-full rounded-md hover:bg-muted/60",
-          toolLayout === "compact" && "py-0",
-          toolLayout === "rail" && "mx-0 w-full hover:bg-muted/30",
-          toolLayout === "console" && "mx-0 w-full rounded-md hover:bg-muted/50",
-          toolLayout === "outlined" && "mx-0 w-full rounded-sm hover:bg-primary/5",
-          toolLayout === "minimal" && "py-0",
-          toolLayout === "spotlight" && "mx-0 w-full rounded-md hover:bg-primary/10"
+          compact && "py-0",
+          minimal && "py-0",
+          toolLayout === "rail" && "mx-0 w-full hover:bg-muted/30"
         )}
       >
         <button
@@ -496,13 +494,9 @@ export const StepRow = React.memo(function StepRow({
             <div
             className={cn(
             plain ? "mt-0 mb-2.5 min-w-0 space-y-2" : "mt-1 mb-2.5 min-w-0 space-y-2",
-            toolLayout === "cards" && "mt-2 border-t border-border/50 pt-2",
-            toolLayout === "compact" && "mt-0.5 mb-1 space-y-1",
-            toolLayout === "rail" && "mt-1 ps-3",
-            toolLayout === "console" && "mt-2 rounded-md border border-border/60 bg-background/70 p-2 font-mono",
-            toolLayout === "outlined" && "border-t border-dashed border-border/60 pt-2",
-            toolLayout === "minimal" && "mt-0 mb-1 space-y-1",
-            toolLayout === "spotlight" && "mt-2 rounded-md bg-background/70 p-2 shadow-sm"
+            compact && "mt-0.5 mb-1 space-y-1",
+            minimal && "mt-0 mb-1 space-y-1",
+            toolLayout === "rail" && "mt-1 ps-3"
           )}
             >
           {detail}

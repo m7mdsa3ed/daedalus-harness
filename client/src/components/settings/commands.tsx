@@ -1,11 +1,11 @@
 import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
+import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type CommandDef, type ServerSettings } from "@/lib/settings"
 import { useCommands, useInvalidateCatalog } from "@/lib/queries/catalog"
-import { useStoreSelect } from "@/lib/store"
-import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions, FormSection, FormShell } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
@@ -23,7 +23,17 @@ export function CommandsPage() {
       items={commands}
       endpoint="/api/commands"
       noun="command"
-      subtitle={(c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""}`}
+      subtitle={(c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""} ${c.description}`}
+      rowHandle={(c) => `/${c.name}`}
+      badgesLabel="Arguments"
+      rowBadges={(c) =>
+        c.argumentHint ? (
+          <Badge variant="outline" className="max-w-full font-mono">
+            <span className="truncate">{c.argumentHint}</span>
+          </Badge>
+        ) : null
+      }
+      rowDetail={(c) => c.description || c.content}
       settings={settings}
       refresh={() => invalidate("commands")}
     />
@@ -110,44 +120,53 @@ function CommandForm({
           },
         }}
       >
-      <Field label="Name" hint="Typed as /name in the composer; also the filename on disk.">
-        <Input
-          value={form.name}
-          onChange={(e) => set({ name: e.target.value })}
-          placeholder="review-pr"
-          pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]*"
-          title="Letters, digits, . _ - only"
-          className="font-mono text-xs"
-          required
-        />
-      </Field>
-      <Field label="Description" hint="Shown next to the name in the autocomplete menu.">
-        <Input
-          value={form.description}
-          onChange={(e) => set({ description: e.target.value })}
-          required
-        />
-      </Field>
-      <Field label="Argument hint" hint="Optional placeholder for what follows the name, e.g. [pr-number].">
-        <Input
-          value={form.argumentHint}
-          onChange={(e) => set({ argumentHint: e.target.value })}
-          className="font-mono text-xs"
-        />
-      </Field>
-      <Field
-        label="Prompt"
-        hint="Markdown the agent receives when the command runs. $ARGUMENTS is replaced with whatever was typed after the name."
-      >
-        <Textarea
-          value={form.content}
-          onChange={(e) => set({ content: e.target.value })}
-          rows={8}
-          className="font-mono text-xs"
-          required
-        />
-      </Field>
-      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
+        <FormShell
+          sections={[
+            { id: "identity", label: "Identity" },
+            { id: "prompt", label: "Prompt" },
+          ]}
+        >
+          <FormSection id="identity" label="Identity">
+            <div className="grid gap-4 @panel-sm:grid-cols-2">
+              <Field label="Name" hint="Typed as /name in the composer; also the filename on disk.">
+                <Input
+                  value={form.name}
+                  onChange={(e) => set({ name: e.target.value })}
+                  placeholder="review-pr"
+                  pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]*"
+                  title="Letters, digits, . _ - only"
+                  className="font-mono text-xs"
+                  required
+                />
+              </Field>
+              <Field label="Argument hint" hint="Optional placeholder for what follows the name, e.g. [pr-number].">
+                <Input
+                  value={form.argumentHint}
+                  onChange={(e) => set({ argumentHint: e.target.value })}
+                  className="font-mono text-xs"
+                />
+              </Field>
+            </div>
+            <Field label="Description" hint="Shown next to the name in the autocomplete menu.">
+              <Input value={form.description} onChange={(e) => set({ description: e.target.value })} required />
+            </Field>
+          </FormSection>
+          <FormSection id="prompt" label="Prompt">
+            <Field
+              label="Prompt"
+              hint="Markdown the agent receives when the command runs. $ARGUMENTS is replaced with whatever was typed after the name."
+            >
+              <Textarea
+                value={form.content}
+                onChange={(e) => set({ content: e.target.value })}
+                rows={8}
+                className="font-mono text-xs"
+                required
+              />
+            </Field>
+          </FormSection>
+        </FormShell>
+        <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>
   )

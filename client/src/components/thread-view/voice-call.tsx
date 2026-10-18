@@ -16,7 +16,7 @@ import * as React from "react"
 import { experimental_useRealtime as useRealtime } from "@ai-sdk/react"
 import { openai } from "@ai-sdk/openai"
 import { google } from "@ai-sdk/google"
-import { Hand, Mic, MicOff, PhoneOff } from "lucide-react"
+import { Hand, Mic, MicOff } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -27,7 +27,10 @@ import { captureError, type InlineError } from "@/lib/errors"
 import { api, type ServerSettings } from "@/lib/settings"
 import type { ThreadState } from "@/lib/store"
 import type { VoiceProvider } from "@/lib/queries/voice"
-import { endVoiceCall, voiceCallLost } from "@/lib/voice-call"
+import { voiceCallLost } from "@/lib/voice-call"
+import { useShortcut } from "@/hooks/use-hotkey"
+import { useChords } from "@/lib/keybindings"
+import { formatChord } from "@/lib/shortcuts"
 
 const MAX_ANSWER = 4000
 
@@ -39,6 +42,44 @@ const MAX_ANSWER = 4000
    `audio.input` is not worth the risk. Module-level, because the hook rebuilds
    its session whenever `sessionConfig` changes identity. */
 const GOOGLE_SESSION = { inputAudioFormat: { type: "audio/pcm", rate: 24000 } } as const
+
+/* What a call has cost so far, as an estimate: published USD per million
+   tokens, which the providers change — a stale row skews the figure and
+   nothing else. OpenAI reports every response's usage, cached context
+   included, so its figure follows the bill; Gemini reports none to the
+   browser, so its audio is counted by the clock at the rate Google documents
+   (32 tokens/s heard, 25 tokens/s spoken). Input transcription is billed
+   apart by the provider and is not in either. */
+const OPENAI_RATES = { audioIn: 32, audioOut: 64, textIn: 4, textOut: 24, cachedAudio: 0.4, cachedText: 0.4 }
+const OPENAI_MINI_RATES = { audioIn: 10, audioOut: 20, textIn: 0.6, textOut: 2.4, cachedAudio: 0.3, cachedText: 0.06 }
+const GOOGLE_RATES = { audioIn: 3, audioOut: 12, inPerSecond: 32, outPerSecond: 25 }
+
+type TokenDetail = { audio_tokens?: number; text_tokens?: number }
+type OpenAiUsage = {
+  input_token_details?: TokenDetail & { cached_tokens_details?: TokenDetail }
+  output_token_details?: TokenDetail
+}
+
+/** One OpenAI response's cost, from its `response.done` usage. */
+function openAiCost(usage: OpenAiUsage, mini: boolean): number {
+  const r = mini ? OPENAI_MINI_RATES : OPENAI_RATES
+  const input = usage.input_token_details ?? {}
+  const cached = input.cached_tokens_details ?? {}
+  const out = usage.output_token_details ?? {}
+  const cachedAudio = cached.audio_tokens ?? 0
+  const cachedText = cached.text_tokens ?? 0
+  return (
+    (((input.audio_tokens ?? 0) - cachedAudio) * r.audioIn +
+      ((input.text_tokens ?? 0) - cachedText) * r.textIn +
+      cachedAudio * r.cachedAudio +
+      cachedText * r.cachedText +
+      (out.audio_tokens ?? 0) * r.audioOut +
+      (out.text_tokens ?? 0) * r.textOut) /
+    1e6
+  )
+}
+
+const formatCost = (usd: number) => `≈ $${usd < 0.1 ? usd.toFixed(3) : usd.toFixed(2)}`
 
 /** What the agent said since `from`, fences folded — the voice model is told
     never to read code aloud, and a fence it never receives it cannot read. */
@@ -165,6 +206,15 @@ export function VoiceCall({
 }) {
   const [error, setError] = React.useState<InlineError | null>(null)
   const [caption, setCaption] = React.useState("")
+  /* What the person is saying, as it is heard: OpenAI streams it as deltas
+     (a `custom` event), Gemini re-sends the running text. Kept until the voice
+     model starts to answer, so the last thing said stays readable. */
+  const [heard, setHeard] = React.useState("")
+  const heardText = React.useRef(new Map<string, string>())
+  /* Cost so far: OpenAI's is summed from each response's usage, Gemini's from
+     seconds of audio heard and spoken (`tick`, below). */
+  const [spent, setSpent] = React.useState(0)
+  const [audioSeconds, setAudioSeconds] = React.useState({ heard: 0, spoken: 0 })
   const [waiting, setWaiting] = React.useState(false)
   const [ptt, setPtt] = React.useState(false)
   const pttTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -172,12 +222,17 @@ export function VoiceCall({
   /* The tools run long after the render they were made in; they read these. */
   const threadRef = React.useRef(thread)
   threadRef.current = thread
-  const sentFrom = React.useRef(thread.items.length)
-  const sawTurn = React.useRef(false)
+  /* Mounted mid-turn — the console handing a first spoken message to its
+     thread view remounts the call — the turn is still owed to the person. */
+  const midTurn = thread.turnActive
+  const sentFrom = React.useRef(
+    midTurn ? thread.items.reduce((last, item, i) => (item.kind === "user" ? i : last), 0) : thread.items.length
+  )
+  const sawTurn = React.useRef(midTurn)
   const waitCall = React.useRef<string | null>(null)
   /* The voice sent something and has not been told how it ended; the asks
      already put to the person (a permission or question is told once). */
-  const owed = React.useRef(false)
+  const owed = React.useRef(midTurn)
   const told = React.useRef(new Set<string>())
   const held = React.useRef<{ voiceId: string; role: "user" | "assistant"; text: string }[]>([])
 
@@ -283,6 +338,17 @@ export function VoiceCall({
         case "agent_status":
           return describe(now, sentFrom.current)
       }
+      if (toolCall.toolName.startsWith("mcp__")) {
+        try {
+          const result = await api(settings, "/api/voice/mcp/call", {
+            method: "POST",
+            body: JSON.stringify({ key: toolCall.toolName, args: toolCall.args }),
+          })
+          return result
+        } catch (err) {
+          return { error: captureError(err, "MCP tool call failed")?.text ?? "The MCP tool call failed." }
+        }
+      }
       return { error: `Unknown tool ${toolCall.toolName}` }
     },
     [actions, sessionId, settleTold]
@@ -293,11 +359,32 @@ export function VoiceCall({
     (event: Parameters<NonNullable<Parameters<typeof useRealtime>[0]["onEvent"]>>[0]) => {
       switch (event.type) {
         case "input-transcription-completed":
+          setHeard(event.transcript)
           saveLine(event.itemId, "user", event.transcript)
           break
+        case "response-done": {
+          if (provider.provider !== "openai") break
+          const usage = (event.raw as { response?: { usage?: OpenAiUsage } })?.response?.usage
+          if (usage) setSpent((n) => n + openAiCost(usage, provider.model.includes("mini")))
+          break
+        }
+        case "speech-started":
+          heardText.current.clear()
+          setHeard("")
+          break
+        case "custom": {
+          if (event.rawType !== "conversation.item.input_audio_transcription.delta") break
+          const raw = event.raw as { item_id?: string; delta?: string }
+          const id = raw.item_id ?? ""
+          const next = (heardText.current.get(id) ?? "") + (raw.delta ?? "")
+          heardText.current.set(id, next)
+          setHeard(next)
+          break
+        }
         case "audio-transcript-delta": {
           const next = (assistantText.current.get(event.itemId) ?? "") + event.delta
           assistantText.current.set(event.itemId, next)
+          setHeard("")
           setCaption(next)
           break
         }
@@ -310,7 +397,7 @@ export function VoiceCall({
         }
       }
     },
-    [saveLine]
+    [saveLine, provider.provider, provider.model]
   )
 
   const realtime = useRealtime({
@@ -382,6 +469,67 @@ export function VoiceCall({
   }
   React.useEffect(() => () => clearTimeout(pttTimer.current), [])
 
+  /* Mute and unmute from the keyboard. A press is the person's own say, so it
+     also settles whatever the wait closed: the mic is not opened behind them
+     when the agent answers. */
+  const muteChord = formatChord(useChords("voiceMute")[0] ?? "")
+  useShortcut(
+    "voiceMute",
+    () => {
+      autoMuted.current = false
+      void (live.current.capturing ? stopAudioCapture() : resumeAudioCapture())
+    },
+    { enabled: realtime.status === "connected" && !ptt }
+  )
+
+  /* Gemini's clock: a second the mic is open is a second heard, a second of
+     playback a second spoken. Read through refs so the interval is set once. */
+  const live = React.useRef({ capturing: false, playing: false })
+  live.current = { capturing: realtime.isCapturing, playing: realtime.isPlaying }
+  React.useEffect(() => {
+    if (provider.provider !== "google" || realtime.status !== "connected") return
+    const id = setInterval(() => {
+      const { capturing, playing } = live.current
+      if (capturing || playing)
+        setAudioSeconds((s) => ({ heard: s.heard + (capturing ? 1 : 0), spoken: s.spoken + (playing ? 1 : 0) }))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [provider.provider, realtime.status])
+  const cost =
+    provider.provider === "google"
+      ? (audioSeconds.heard * GOOGLE_RATES.inPerSecond * GOOGLE_RATES.audioIn +
+          audioSeconds.spoken * GOOGLE_RATES.outPerSecond * GOOGLE_RATES.audioOut) /
+        1e6
+      : spent
+
+  /* The mic is shut while the voice model waits on the agent: nothing the
+     person says can be acted on then, and a provider that bills the audio it
+     is streamed (Gemini) would charge for the silence. It opens again when the
+     wait is answered, but only if this closed it — a mute or push-to-talk the
+     person chose stays as it was. */
+  const autoMuted = React.useRef(false)
+  React.useEffect(() => {
+    if (waiting) {
+      if (!ptt && realtime.isCapturing) {
+        autoMuted.current = true
+        void stopAudioCapture()
+      }
+    } else if (autoMuted.current) {
+      autoMuted.current = false
+      if (!ptt) resumeAudioCapture().catch((err: unknown) => setError(captureError(err, "Couldn't open the microphone")))
+    }
+    // Only the wait starting or ending is a reason to move the mic.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting])
+
+  /* A call opens with the mic on. The SDK's client-secret WebSocket path (our
+     `api.token`) never requests capture on connect — only its WebRTC and PCM
+     paths do — so without this every call started "Muted". */
+  React.useEffect(() => {
+    if (realtime.status !== "connected") return
+    resumeAudioCapture().catch((err: unknown) => setError(captureError(err, "Couldn't open the microphone")))
+  }, [realtime.status, resumeAudioCapture])
+
   /* A call that was up and is not, without End being pressed: say so. (End
      clears the active call first, so `voiceCallLost` ignores it.) */
   const prevStatus = React.useRef(realtime.status)
@@ -406,56 +554,75 @@ export function VoiceCall({
             ? "Listening"
             : "Muted"
 
+  /* A bar of the composer's own pill material, drawn beside the pill that ends
+     the call (the composer places it): the box is away for the whole call, so
+     this is the whole of the call's chrome. The caption is the label while the
+     voice model speaks; the failure sits over the bar, where it is read. */
+  const btn = "size-7 shrink-0 rounded-full [&_svg]:size-3.5"
   return (
-    <div className="flex flex-col gap-2 rounded-xl border bg-card p-3 text-sm shadow-sm">
-      <div className="flex items-center gap-2">
+    <div className="flex flex-col items-end gap-2">
+      <ErrorNote error={error} className="w-[min(24rem,calc(100vw-2rem))] text-left" />
+      {(heard || caption) && (
+        <p
+          dir="auto"
+          className={cn(
+            "line-clamp-3 w-fit max-w-[min(24rem,calc(100vw-2rem))] rounded-2xl px-4 py-2.5 text-start text-sm shadow-glass",
+            caption ? "rounded-bl-sm bg-muted" : "rounded-br-sm bg-primary/10"
+          )}
+        >
+          {caption || heard}
+        </p>
+      )}
+      <div className="flex h-(--composer-pill) items-center gap-1 rounded-pill bg-composer-glass-hi ps-3 pe-0.5 text-xs shadow-glass ring-1 ring-edge backdrop-blur-[var(--app-blur)]">
         <Wave mode={realtime.status !== "connected" ? "idle" : realtime.isPlaying ? "speaking" : realtime.isCapturing && !waiting ? "listening" : "idle"} />
-        <span className="font-medium">Voice</span>
-        <span className="text-muted-foreground">
-          {provider.provider === "openai" ? "OpenAI" : "Gemini"} · {label}
-        </span>
-        <div className="ms-auto flex gap-1">
-          <Button
-            variant={ptt ? "secondary" : "ghost"}
-            size="icon-sm"
-            disabled={realtime.status !== "connected"}
-            onClick={togglePtt}
-            title={ptt ? "Push-to-talk on (click for open mic)" : "Push-to-talk"}
-            aria-pressed={ptt}
+        <span className="hidden text-muted-foreground @panel-sm:inline">{label}</span>
+        {realtime.status === "connected" && (
+          <span
+            className="tabular-nums text-muted-foreground"
+            title="Estimated cost of this call so far, at the provider's published rates. Input transcription is billed separately."
           >
-            <Hand />
+            {formatCost(cost)}
+          </span>
+        )}
+        <Button
+          variant={ptt ? "secondary" : "ghost"}
+          size="icon-xs"
+          className={btn}
+          disabled={realtime.status !== "connected"}
+          onClick={togglePtt}
+          title={ptt ? "Push-to-talk on (click for open mic)" : "Push-to-talk"}
+          aria-pressed={ptt}
+        >
+          <Hand />
+        </Button>
+        {ptt && realtime.status === "connected" ? (
+          <Button
+            variant={realtime.isCapturing ? "default" : "outline"}
+            size="xs"
+            className="h-7 touch-none select-none rounded-full"
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId)
+              talkDown()
+            }}
+            onPointerUp={talkUp}
+            onPointerCancel={talkUp}
+          >
+            {realtime.isCapturing ? "Release" : "Hold to talk"}
           </Button>
+        ) : (
           <Button
             variant="ghost"
-            size="icon-sm"
-            disabled={realtime.status !== "connected" || ptt}
+            size="icon-xs"
+            className={btn}
+            disabled={realtime.status !== "connected"}
             onClick={() => void (realtime.isCapturing ? realtime.stopAudioCapture() : realtime.resumeAudioCapture())}
-            title={realtime.isCapturing ? "Mute" : "Unmute"}
+            title={`${realtime.isCapturing ? "Mute" : "Unmute"}${muteChord ? ` (${muteChord})` : ""}`}
             aria-pressed={!realtime.isCapturing}
           >
             {realtime.isCapturing ? <Mic /> : <MicOff />}
           </Button>
-          <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => endVoiceCall(sessionId)} title="End call">
-            <PhoneOff />
-          </Button>
-        </div>
+        )}
       </div>
-      {ptt && realtime.status === "connected" && (
-        <Button
-          variant={realtime.isCapturing ? "default" : "outline"}
-          className="touch-none select-none"
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId)
-            talkDown()
-          }}
-          onPointerUp={talkUp}
-          onPointerCancel={talkUp}
-        >
-          {realtime.isCapturing ? "Release to send" : "Hold to talk"}
-        </Button>
-      )}
-      {caption && <p className="text-muted-foreground">{caption}</p>}
-      <ErrorNote error={error} />
     </div>
   )
 }

@@ -26,6 +26,7 @@ import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { ActionIcon, actionClass, type ActionPhase } from "@/components/ui/action-state"
 import { Textarea } from "@/components/ui/textarea"
 import { IconAction } from "@/components/workspace/scm/shared"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
@@ -43,6 +44,7 @@ export function CommitBox({
   named,
   branch,
   busy,
+  commitPhase = "idle",
   /** Everything changed here, narrowed by the view's filter. */
   changeCount,
   stagedCount,
@@ -59,6 +61,7 @@ export function CommitBox({
   named: boolean
   branch: string
   busy: boolean
+  commitPhase?: ActionPhase
   changeCount: number
   stagedCount: number
   unstagedCount: number
@@ -196,11 +199,11 @@ export function CommitBox({
         <Button
           type="submit"
           size="xs"
-          className="min-w-0 flex-1"
+          className={cn("min-w-0 flex-1", actionClass(commitPhase))}
           disabled={busy || !typed || (changeCount === 0 && !amend)}
           title={`${amend ? "Amend the last commit" : "Commit"} on ${branch} (⌘Enter)`}
         >
-          <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" />
+          <ActionIcon phase={commitPhase}><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" /></ActionIcon>
           <span className="truncate">
             {amend
               ? stagedCount > 0

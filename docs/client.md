@@ -92,7 +92,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   a depth and a tracking, because twelve recolourings of one layout were never
   twelve themes. Themes live in `src/styles/themes.css`, not in `index.css`, and
   that file is **hand-maintained**: Default (shadcn's stock palette, whose
-  colours are index.css's `:root` / `.dark`) is the only built-in, and
+  colours are index.css's `:root` / `.dark`) is the one CSS built-in; the
+  product-inspired schemes (`lib/color-schemes.ts`, below) are built-ins too, but
+  their CSS is *emitted at load* by `applyBuiltinSchemes` in `custom-themes.ts`
+  from that one table (same three blocks as a saved theme, plus the `--theme-*`
+  echo vars), never hand-copied here. And
   `src/lib/builtin-themes.ts` is the list the gallery and the palette render,
   which `lib/theme.tsx` re-exports. The generator and the eleven generated
   themes were removed.
@@ -131,6 +135,42 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   keep `rounded-full` and never move. `--app-blur` is the same story for glass:
   it was hardcoded at 14px in five places, and the two heavier tiers are
   multiples of it now.
+  **Glass is blur *and* opacity, and they move together.** The card, sheet, menu
+  and composer fills are 72-90% of their token, which only reads as glass because
+  the blur softens what shows through; at `--app-blur: 0` the same fills were
+  see-through text on text. Each blur preset therefore also states `--app-solid`
+  (0-1, `BLUR_PRESETS.solid`), and the fills are `80% + 20% * var(--app-solid)`
+  etc. — None is fully opaque, Light halfway, Medium and Heavy unchanged. The
+  composer's fills are the `bg-composer-glass(-hi)` utilities for that reason: a
+  `bg-composer/80` alpha cannot follow a variable.
+  **The composer's shape follows the theme on four more axes.** The box is
+  `rounded-composer` (the 2xl step capped at 1.5rem, so Pill is not a lozenge) with
+  `p-composer-pad` (0.4 x that radius, floor 0.5rem — concentric with a 28px key at
+  the cap); its round buttons are `rounded-key` (the capsule radius, so a circle
+  in a round theme and a small square in a Sharp/Square one); its hairline is
+  `ring-edge`, whose strength is the depth's `--depth-<id>-edge` (flat 18% down to
+  deep 8%) because a flat theme has no shadow to separate the box; and its focus
+  ring is `ring-focus-soft`, an alpha that scales with the ring colour's chroma so
+  a black/white primary gets a whisper rather than a stark outline.
+  **The studio is a section nav, not tabs** (`theme-builder/editor.tsx`): Presets,
+  Type, Shape, Surfaces, Layout, Color — a column of rows beside the controls and
+  the sticky mock from `@panel-lg`, a scrolling chip row over them below it. The
+  Design half is `design-tab.tsx`'s four sections. Four axes beyond the first
+  version are theme-owned and **unset means "follow the old pairing", never a
+  default written on open**: `edge` (`--app-edge`; unset = the depth's own),
+  `solid` (`--app-solid`, the Opacity control; unset = the blur preset's pairing,
+  shown selected through `solidIdFor`), `density` (a multiplier inside the theme's
+  own `--spacing`) and `composer` (`--app-composer-mult`/`-cap`, the box's corner).
+  **The UI-scale slider no longer writes `--spacing`**: it writes `--app-scale`
+  and `--spacing` is derived from it in `:root`, because an inline `--spacing` on
+  `html` outranks any theme's block and would have made density unthemeable.
+
+  **The edge is the app's, not the composer's.** `Card` and the `ui/` surfaces
+  wear it: `ring-edge` (cards), `ring-edge-float` (menus, popovers, dialogs —
+  half of it, as their old `ring-foreground/5` was), and `ring-edge-extra` for
+  surfaces that were always separated by ground alone (the shelf's cards, the inset
+  layout's dock cards) — only the part above Default's 10%, so Default is
+  unchanged and a flat theme gets a hairline where it has no shadow.
   `src/lib/theme-ramp.ts` is the palette maths, and it is **pure** — no DOM —
   so it can run anywhere, and the studio's "Generate palette"
   runs it, so a hue the user picks is gated against `CONTRAST_PAIRS`.
@@ -158,24 +198,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   light/dark pair edited together). **Colour presets come in two kinds, and the
   split is the point.** The generated ones drive `theme-ramp.ts` from a hue,
   saturation and tint — coherent and AA by construction, but only ever the same
-  design in another colour, and they touch colour alone. The curated ones
-  (`lib/color-schemes.ts`: Nord, Dracula/Alucard, Solarized, Gruvbox,
-  Catppuccin, Rosé Pine — all MIT) are hand-authored identities no formula lands
-  on, and they set the **Design half too**, because Gruvbox under a geometric
-  sans with capsule badges is not Gruvbox. Every value is transcribed from the
-  project's own source file, named in `source` — Tokyo Night was dropped because
-  its light variant is computed by an `invert()` rather than published, and a
-  guess under that name is worse than its absence. Two things a scheme cannot
-  supply itself: an editor names a background, a foreground, a comment and some
-  accents but never "a popover behind a card on a sidebar", so gaps are filled
-  from the scheme's own neighbours and marked `derived:`; and **a comment colour
-  is not body text** — several fall under AA on the surface this app puts
-  secondary text on, since in an editor they are *meant* to recede. `pnpm
-  themes` gates the schemes on the same `CONTRAST_PAIRS` as the built-ins, which
-  is what caught thirteen such pairs; each was repaired with the scheme's own
-  next documented step where one exists (Gruvbox `faded_orange`, Catppuccin
-  `subtext1`, Rosé Pine `pine`) and only otherwise by deriving one (Nord and
-  Solarized publish no darker blue). Every preset swatch draws *itself* — the
+  design in another colour, and they touch colour alone. The curated ones are no longer studio presets but gallery
+  built-ins, so a copy via "New theme" is how one reaches the studio
+  (`lib/color-schemes.ts`: OpenCode, Claude, ChatGPT, Gemini, Perplexity, Grok, Cursor, Copilot) are the
+  looks of the AI products people already work in, and they set the **Design half
+  too**, because Claude under a geometric sans with capsule badges is not Claude.
+  **None of those products publishes a token table**, so the values are their
+  surfaces as shipped, approximated — each entry's `source` says what it was
+  modelled on, and a product accent that fails AA (Claude's clay under a white
+  label) is swapped for the nearest passing shade of the same hue, marked
+  `adjusted:`; gaps are marked `derived:`. No logo, wordmark or typeface is
+  bundled. The old editor schemes (Nord, Dracula, Solarized, Gruvbox, Catppuccin,
+  Rosé Pine) were replaced; they are in git history. The same
+  `CONTRAST_PAIRS` gate applies. Every preset swatch draws *itself* — the
   shape one shows a corner **and** a capsule, the glass one is a real
   `backdrop-filter` over a stripe — since "Soft" and "Deep" are not the choice.
   It is also why the settings frame's width is chosen by **`isFullWidthSettings`**

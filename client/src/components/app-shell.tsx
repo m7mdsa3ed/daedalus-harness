@@ -72,7 +72,7 @@ import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
 import { loadActiveSpace } from "@/lib/spaces"
 import { IS_POPOUT } from "@/lib/popout"
-import { setNewTabHandler, useActiveChat } from "@/lib/workspace/open-threads"
+import { setNewTabHandler, useActiveChat, useRouteless } from "@/lib/workspace/open-threads"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -151,9 +151,12 @@ export function AppShell({
   const dock = useWorkspaceDock()
   const isMobile = useIsMobile()
   const activeChat = useActiveChat()
+  const routeless = useRouteless()
   const headingFor = usePageHeading()
 
-  const inSettings = location.pathname.startsWith("/settings")
+  /* A terminal or web tab in front has no route, so the URL is still the last
+     page's: settings sections are the sidebar only when settings is in front. */
+  const inSettings = location.pathname.startsWith("/settings") && !routeless
   const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
   const sessionId = routedThreadId(location.pathname, location.search)
   const active = sessions.find((s) => s.id === sessionId)

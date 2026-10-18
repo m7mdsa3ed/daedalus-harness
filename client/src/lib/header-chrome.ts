@@ -8,12 +8,12 @@
    happened to be passing beneath them, and the four controls on the right read
    as four different things because three of them were invisible until hovered.
 
-   So every occupant of the header is a frosted capsule: the same translucent
-   ground, the same hairline ring, its own `backdrop-blur` over the progressive
-   blur behind it. Two shapes, because there are two kinds of occupant — a
-   label that names something (`HEADER_BADGE`) and a control you press
-   (`HEADER_CHIP`, which is the same ground on a `size="icon-sm"` button, whose
-   `rounded-4xl` already makes the pill).
+   Two shapes, because there are two kinds of occupant — a label that names
+   something (`HEADER_BADGE`, a frosted capsule) and a control you press
+   (`HEADER_CHIP`: a fully round ghost button at the chip height). Above `md`
+   the strip box is transparent, so these sit as shapes on the shell's ground;
+   below `md` each takes the shared mobile fill so a miss still lands on a
+   shape, not the transcript.
 
    Kept here rather than in `app-shell` so the bell, the ⋯ menu and the context
    ring — each its own component, each drawn only in this header — can wear it
@@ -24,32 +24,34 @@
 export const HEADER_BADGE =
   "rounded-full bg-background/50 ring-1 ring-border/50 backdrop-blur-sm"
 
-/** ── A ground for a control in the strip, on a phone ──
+/** ── The material every strip control and tab is made of ──
  *
- * Above `md` the row's occupants stand on the shell's own ground beside the
- * tabs and need nothing: the strip is a row of shapes and they are more of
- * them. Below it the strip is an *overlay* — the transcript scrolls under the
- * bar and goes out of focus in the progressive blur (`app-shell.tsx`) — so a
- * bare glyph sits on whatever line happens to be passing beneath it, and with
- * the tab beside them taking the whole strip they are the only things in the
- * row without a shape.
+ * **The composer card's own edge and depth**, at chip scale: `ring-1 ring-edge`
+ * and `shadow-glass` — the same two the box wears (`composer.tsx`). Shared by
+ * the header's controls, the strip's (`STRIP_CONTROL`, `tab-actions.tsx`, the
+ * tab-list switcher) and the tab itself (`index.css`), so a row is one family
+ * of raised shapes rather than bare glyphs beside a filled tab.
  *
- * **The tab item's mobile material** (`--dock-mobile-tab-ground`, `index.css`),
- * shared with the tab fills rather than a second frosted capsule. They stand in
- * the same row as the tabs, so matching their fill keeps the controls visually
- * part of that row. The hover/pressed state adds a stronger foreground wash.
+ * The strip box is transparent on every width — these are the shapes, not a bar
+ * under them. Above `md` the ground stays off (the shell under the strip is
+ * already a surface); below `md` the band overlays a blurred transcript, so a
+ * translucent wash disappears into the blur. Each takes
+ * `--dock-mobile-tab-ground`: the composer's own opaque ground — the colour the
+ * sidebar and the box wear — so the toggle, the switcher and the tab are the
+ * same surface as both, raised off the blur by the edge and the shadow.
  *
- * Shared by the header's own two controls and the strip's (`STRIP_CONTROL`,
- * `tab-actions.tsx`). Round rather than the tab's `calc(--radius - 2px)`: these
- * are 28px icon buttons, and a square-ish corner on a glyph that size reads as a
- * tab that failed to grow. */
+ * Fully round, as is the tab (`--dock-corner` is the pill). The header's stay
+ * round at the chip's height (`--dock-chip-h`): a square-ish corner on a glyph
+ * that size reads as a tab that failed to grow. */
 export const STRIP_GROUND =
-  "max-md:rounded-full max-md:bg-[var(--dock-mobile-tab-ground)] max-md:shadow-sm"
+  "rounded-pill shadow-glass ring-1 ring-edge max-md:bg-[var(--dock-mobile-tab-ground)]"
 
 /** The header's icon buttons — the sidebar toggle and the view-settings
-    sliders beside it. Bare ghost buttons, no ground: the row stands on the
-    wrapper's ground now rather than over a transcript, so there is nothing to
-    lift them off (the frosted chip they wore is the tab's alone, `index.css`).
+    sliders beside it. The same material as every strip item: fully round,
+    `ring-edge` + `shadow-glass` (the composer card's edge and depth). No fill
+    above `md` — the strip box is transparent and the shell underneath is
+    already a surface. Below `md` they take the shared mobile fill
+    (`STRIP_GROUND`).
 
     Its height is the **tab's** (`--dock-chip-h`, spelled in `index.css`), which
     is the number that matters: these two controls and that group's tabs are one

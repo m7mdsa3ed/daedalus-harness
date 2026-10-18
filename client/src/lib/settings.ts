@@ -467,7 +467,7 @@ export interface RegistryEntry {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser"
+  builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser" | "video"
   /** Only ever present on the rows whose server is synthesized from a *thread*
       (`workflow`, `agents`, `harness`, `browser`): its connection is the
       calling thread's own, so no session means nothing to connect to — the
@@ -501,6 +501,7 @@ export function mcpSubtitle(s: McpServerDef): string {
     if (s.builtin === "agents") return "built-in · ask other agents"
     if (s.builtin === "harness") return "built-in · manage the harness"
     if (s.builtin === "browser") return "built-in · drive the thread's preview"
+    if (s.builtin === "video") return "built-in · author product videos"
     return "built-in · project knowledge base"
   }
   if (s.type !== "http") return [s.command, ...s.args].join(" ")
@@ -655,6 +656,11 @@ export interface Profile {
   /** Seconds the server waits for this provider's response headers before
       aborting. Null/absent = the server's default (10 minutes). */
   upstreamTimeoutSeconds?: number | null
+  /** Extra request headers the server adds on the way to this provider
+      (`gateway-shim.ts`). A relay that fingerprints an official client and
+      refuses anything else is fixed by naming its header here. Absent/null =
+      none. */
+  headers?: { name: string; value: string }[] | null
   /** Two selection flags. `hidden`: kept and still resolvable for the threads
       already on it, but not offered when starting a new thread — while the
       usage plan keeps tracking it, which is the point of hiding. `disabled`:

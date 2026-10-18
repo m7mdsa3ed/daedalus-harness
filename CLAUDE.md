@@ -490,15 +490,31 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you
   tapped Settings — and that gate is `isMobile` (the device), never the panel's width, because
   a narrow settings panel on a desktop still has the sidebar beside it.
-- **A settings group is a card, and a box inside one is `INSET`** (`settings/primitives.tsx`):
-  a caption in small caps above a bordered, filled, `shadow-sm` box whose rows are divided by
-  hairlines. The inset is the **card's**, not the row's — pages put raw elements into a `Group`
-  as often as `Row`s — and it steps 16px → 12px below `@panel-sm` so a 320px panel keeps its
-  reading width; a child that must bleed reaches out with `-mx-3 @panel-sm:-mx-4`. A nested
-  list or inline form wears `INSET` (a recessed ground, a lighter hairline) and never a second
-  `rounded-lg border`, which on a card's own ground is two identical frames one inside the
-  other. `primitives.tsx` is shared past settings — routines, schedules, the inbox, the theme
-  studio — so the look is one file's edit for all of them.
+- **Every page answers each UI question one way, from one kit** (`settings/primitives.tsx` "The
+  kit", `page-primitives.tsx`, `components/ui/data-table.tsx`) - settings, the theme studio,
+  routines, schedules, the inbox and the project page alike. *Switch the page's view*: `TabBar`
+  (underline tabs under the header, sticky, the same at every width, scrolling sideways rather
+  than turning into a dropdown). *Jump within a long form*: `FormShell` (the same bar as
+  scroll-spied anchors). *Pick a value*: `Segmented` (2-4 short words) | `ui/Select` (more) |
+  `ChoiceTiles` (options you must see - mode, layout, tool-step style). *Filter a list*: the
+  `DataTable` toolbar. *Open an item*: a table row into `DetailSheet` (right on wide, bottom on
+  narrow) or its form route. *Say a state*: `StatusBadge`. *Create*: the header's action.
+  **There is no vertical rail, master-detail column, section dropdown or native `<select>` inside
+  a page - the sidebar is the app's one vertical navigation, and on a phone the overview list
+  plus a "Settings" back link (`BackToSettings`) is its form.** A `DropdownMenu` is an *action*
+  menu (row "more", "Send test"), never a way to pick a value or navigate. Every list or
+  collection is the `DataTable` (a wide panel: sticky-header table with a pinned title column and
+  hover-revealed actions; a narrow one, `useIsNarrow`: a continuous list with a "more" button,
+  swipe rails, selection and Load more). A page is `PageHeader`/`SurfaceHeader`/`FormPageHeader`
+  (one look; `flush` or a following `FormShell` bar means the bar draws the rule) -> `TabBar` ->
+  `StatStrip` -> blocks (`SectionHead` over a card). No page draws its own card, tab row, tile
+  grid, rail or status colour. Drift is found by grepping for old `ui/tabs`,
+  `tabs-subtle`, `segmented-control`, `toggle-group`, local `role="radiogroup"`, native selects,
+  `bg-emerald-*`/`text-amber-*` and bare `sm:`/`md:` layout classes in those pages (dialog
+  `sm:max-w-*` excepted). Reflow is the panel's (`@panel-*`) or the block's own container; the
+  32px between blocks is `Section`'s (`data-kit-block`, which `PageForm` reads). A missing
+  piece is a kit edit, never a second tab or sheet in a page. `primitives.tsx` is shared past
+  settings. The dock's tabs, the command palette and the thread inspector have their own rules.
 - **Everything with a face is drawn by `components/entity-icon.tsx`.** No component draws a
   folder for a project, and **an agent's mark is the server's** (`AgentDef.icon`, `"app"` =
   the harness's own) — the client holds no table of which runtimes exist. A **kind** wears the

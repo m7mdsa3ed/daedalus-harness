@@ -170,6 +170,11 @@ const ProfileRow = z.object({
     .object({ kind: z.enum(USAGE_KINDS), baseUrl: optStr, apiKey: optStr })
     .nullish(),
   upstreamTimeoutSeconds: z.number().int().nullish(),
+  /** Extra headers the gateway shim sends upstream for this profile
+      (profiles.headers). Configuration the user wrote, so it travels — and
+      declared here or Zod strips it and the profile restores without the
+      header its provider insists on. */
+  headers: z.array(z.object({ name: str, value: str })).nullish(),
   models: z.array(ModelRow).default([]),
   /** Absent in a bundle written before the flag existed, which reads as
       shown — the safe default for a profile a bundle would otherwise
@@ -190,7 +195,7 @@ const McpServerRow = z.object({
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
   logoUrl: optStr,
-  builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser"]).nullish(),
+  builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser", "video"]).nullish(),
   /** Absent in a bundle written before OAuth existed, which read as "none". */
   auth: z.enum(["none", "oauth"]).default("none"),
   url: optStr,
@@ -358,6 +363,8 @@ const VoiceRow = z.object({
   model: str,
   voice: str,
   isDefault: z.boolean(),
+  mcpServerIds: z.array(str).default([]),
+  instructions: str.default(""),
   updatedAt: int,
 });
 

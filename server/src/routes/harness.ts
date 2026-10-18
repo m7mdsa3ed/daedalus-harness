@@ -50,6 +50,10 @@ export function harnessRoutes(app: Hono, deps: { runner: WorkflowRunner }): void
     headers.set("x-harness-actor", encodeURIComponent(await threadActor(caller)));
     const contentType = c.req.header("content-type");
     headers.set("content-type", contentType ?? "application/json");
+    /* Raw file uploads (`POST /api/files`) carry the name in a header, not a
+       body field — the only caller header besides content-type that crosses. */
+    const filename = c.req.header("x-filename");
+    if (filename) headers.set("x-filename", filename);
 
     const response = await app.fetch(new Request(target, { method, headers, body }));
     return new Response(response.body, { status: response.status, headers: response.headers });

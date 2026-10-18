@@ -109,7 +109,7 @@ function SuggestPopup({
   if (!open) return null
   return (
     <div
-      className="absolute top-full right-0 left-0 z-30 mt-1.5 overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-2xl ring-1 ring-foreground/5 duration-100 animate-in fade-in-0 zoom-in-95"
+      className="absolute top-full right-0 left-0 z-30 mt-1.5 overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-2xl ring-1 ring-edge-float duration-100 animate-in fade-in-0 zoom-in-95"
       // Keep focus (and the popup) alive while clicking a row.
       onMouseDown={(e) => e.preventDefault()}
     >

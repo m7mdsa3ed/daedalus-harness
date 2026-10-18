@@ -1,0 +1,28 @@
+{
+  "name": "daedalus-video-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "daedalus-video-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "node test/smoke.mjs && node test/studio.test.mjs && node test/tts.test.mjs && node test/review.test.mjs && node test/publish.test.mjs",
+    "test:capture": "node test/capture.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "playwright-core": "^1.64.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "~7.0.2"
+  }
+}

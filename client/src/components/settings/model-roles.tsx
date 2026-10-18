@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Plus, Trash2 } from "lucide-react"
+import { Plus, Tag, Trash2 } from "lucide-react"
 import {
   useModelRoles,
   useCreateModelRole,
@@ -7,11 +7,16 @@ import {
   useDeleteModelRole,
 } from "@/lib/queries/model-roles"
 import { captureError, type InlineError } from "@/lib/errors"
+import type { ModelRole } from "@/lib/settings"
+import type { ColumnDef } from "@/lib/table"
+import { useIsNarrow } from "@/hooks/use-device"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { Field, FormActions, Group, INSET, PageForm, PageHeader } from "./primitives"
+import { Input } from "@/components/ui/input"
+import { DataTable, type TableAction } from "@/components/ui/data-table"
+import { ErrorNote } from "@/components/error-note"
+import { DetailSheet, Field, PageHeader, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /* ── Model roles ──
@@ -25,7 +30,20 @@ import { sectionMeta } from "./sections"
    (`updateModelRole` cannot change it). `label` and `description` are what a
    person reads and stay editable. A deleted role leaves dangling tags on the
    profiles that carried it on purpose — the readers ignore an id no row
-   answers for. */
+   answers for.
+
+   Layout: header, then one DataTable — Role (label edited in place, id under
+   it) | Description (edited in place) | Status (a warn StatusBadge on a role
+   with no description). "New role" is the page header's action and opens the
+   same DetailSheet a phone row opens to edit: a right sheet on a wide panel,
+   a bottom sheet on a phone, where the inline inputs would be too small to aim at.
+   Label and description save on change, as they always did. */
+
+const INPUT = "text-xs pointer-coarse:h-11"
+const UNSET = "border-dashed"
+
+/** The dialog is either adding a role or editing the one it names. */
+type Sheet = { kind: "add" } | { kind: "edit"; id: string } | null
 
 export function ModelRolesPage() {
   const meta = sectionMeta("model-roles")
@@ -34,9 +52,16 @@ export function ModelRolesPage() {
   const updateRole = useUpdateModelRole()
   const deleteRole = useDeleteModelRole()
   const [error, setError] = React.useState<InlineError | null>(null)
+  const [sheet, setSheet] = React.useState<Sheet>(null)
+  const [query, setQuery] = React.useState("")
 
-  /* The inline "add" form's fields. `id` is optional: the server mints a stable
-     one when it is left empty. */
+  /* The panel's width picks the rows (inline inputs / tap-to-edit), the same
+     measurement the table uses to choose between its two layouts. */
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  const narrow = useIsNarrow(rootRef)
+
+  /* The "add" form's fields. `id` is optional: the server mints a stable one
+     when it is left empty. */
   const [draftId, setDraftId] = React.useState("")
   const [draftLabel, setDraftLabel] = React.useState("")
   const [draftDescription, setDraftDescription] = React.useState("")
@@ -55,115 +80,338 @@ export function ModelRolesPage() {
           setDraftId("")
           setDraftLabel("")
           setDraftDescription("")
+          setSheet(null)
         },
         onError: (err) => setError(captureError(err, "Couldn't add the role")),
       },
     )
   }
 
-  const updateField = (id: string, field: "label" | "description", value: string) => {
-    updateRole.mutate({ id, [field]: value }, {
-      onError: (err) => setError(captureError(err, "Couldn't update the role")),
-    })
-  }
+  const { mutate: updateMutate } = updateRole
+  const { mutate: deleteMutate } = deleteRole
 
-  const removeRole = (id: string) => {
-    deleteRole.mutate({ id }, {
-      onError: (err) => setError(captureError(err, "Couldn't delete the role")),
-    })
-  }
+  const updateField = React.useCallback(
+    (id: string, field: "label" | "description", value: string) => {
+      updateMutate({ id, [field]: value }, {
+        onError: (err) => setError(captureError(err, "Couldn't update the role")),
+      })
+    },
+    [updateMutate],
+  )
+
+  const removeRole = React.useCallback(
+    (id: string) => {
+      deleteMutate({ id }, {
+        onError: (err) => setError(captureError(err, "Couldn't delete the role")),
+      })
+    },
+    [deleteMutate],
+  )
+
+  const needle = query.trim().toLowerCase()
+  const shown = React.useMemo(
+    () =>
+      needle
+        ? roles.filter((r) =>
+            `${r.id} ${r.label} ${r.description}`.toLowerCase().includes(needle),
+          )
+        : roles,
+    [roles, needle],
+  )
+  const editingId = sheet?.kind === "edit" ? sheet.id : null
+  const editing = editingId ? roles.find((r) => r.id === editingId) : undefined
+  /* The role was deleted from under the sheet (another device): close it. */
+  React.useEffect(() => {
+    if (editingId && !editing) setSheet(null)
+  }, [editingId, editing])
+  const unset = roles.filter((r) => !r.description.trim()).length
+
+  /* Desktop: label and description edit in the cells. The table memoises a row
+     against these, so they are rebuilt only when a handler changes. */
+  const columns = React.useMemo<ColumnDef<ModelRole, unknown>[]>(
+    () => [
+      {
+        id: "role",
+        header: "Role",
+        meta: { title: true, className: "w-[18rem]" },
+        cell: ({ row }) => {
+          const role = row.original
+          return (
+            <div className="min-w-0 space-y-1 py-0.5">
+              <SavedInput
+                value={role.label}
+                onSave={(v) => updateField(role.id, "label", v)}
+                placeholder="Role label"
+                aria-label={`Label for ${role.id}`}
+                className={cn(INPUT, "font-medium")}
+              />
+              <Badge variant="secondary" className="max-w-full truncate font-mono text-[11px]" title={role.id}>
+                {role.id}
+              </Badge>
+            </div>
+          )
+        },
+      },
+      {
+        id: "description",
+        header: "Description",
+        cell: ({ row }) => {
+          const role = row.original
+          return (
+            <SavedInput
+              value={role.description}
+              onSave={(v) => updateField(role.id, "description", v)}
+              placeholder="One line for the agent — e.g. Cheap side-jobs"
+              aria-label={`Description for ${role.id}`}
+              className={cn(INPUT, !role.description.trim() && UNSET)}
+            />
+          )
+        },
+      },
+      {
+        id: "status",
+        header: "Status",
+        meta: { align: "end", className: "w-32" },
+        cell: ({ row }) => <RoleStatus role={row.original} />,
+      },
+    ],
+    [updateField],
+  )
+
+  const actions = React.useMemo<TableAction<ModelRole>[]>(
+    () => [
+      {
+        id: "delete",
+        label: "Delete role",
+        icon: <Trash2 className="size-4" />,
+        tone: "danger",
+        onClick: (role) => removeRole(role.id),
+      },
+    ],
+    [removeRole],
+  )
+
+  const addButton = (
+    <Button type="button" className="h-11 @panel-sm:h-9" onClick={() => setSheet({ kind: "add" })}>
+      <Plus className="size-4" /> New role
+    </Button>
+  )
 
   return (
-    <>
-      <PageHeader meta={meta} />
-      <PageForm onSubmit={(e) => e.preventDefault()}>
-        {error && <p className="text-xs text-destructive">{error.text}</p>}
+    <div ref={rootRef}>
+      <PageHeader meta={meta} action={addButton} />
+      <ErrorNote error={error} />
 
-        <Group
-          label="Add a role"
-          hint="Id is optional — leave it empty and the server mints one. It is what a model's assignment points at, so it cannot be changed once the role exists; the label is what people read."
-        >
-          <div className="grid gap-3 py-3 @panel-sm:grid-cols-3">
+      <Section
+        label="Roles"
+        hint={`${roles.length} ${roles.length === 1 ? "role" : "roles"}${unset ? `, ${unset} without a description` : ""}. A role with no description has a dashed edge — the agent has nothing to choose it by.`}
+      >
+        <DataTable
+          columns={columns}
+          data={shown}
+          getRowId={(r) => r.id}
+          pageSize={25}
+          actions={actions}
+          mark={() => <Tag />}
+          viewToggle={false}
+          filtering={{
+            search: { value: query, onChange: setQuery, placeholder: "Search roles…" },
+            totalCount: roles.length,
+          }}
+          emptyIcon={<Tag />}
+          emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "No roles yet."}
+          emptyAction={needle ? undefined : addButton}
+          onRowClick={narrow ? (r) => setSheet({ kind: "edit", id: r.id }) : undefined}
+          mobile={{ renderRow: (role) => <RoleRow role={role} /> }}
+        />
+      </Section>
+
+      <DetailSheet
+        open={sheet !== null}
+        onOpenChange={(o) => !o && setSheet(null)}
+        title={sheet?.kind === "add" ? "Add a role" : "Edit role"}
+        description={
+          sheet?.kind === "add"
+            ? "Id is optional and cannot change once the role exists; leave it empty and the server mints one."
+            : editing && (
+                <>
+                  <Badge variant="secondary" className="max-w-full truncate font-mono text-[11px]">
+                    {editing.id}
+                  </Badge>{" "}
+                  cannot be renamed; label and description save as you type.
+                </>
+              )
+        }
+        footer={
+          sheet?.kind === "add" ? (
+            <>
+              <Button variant="outline" type="button" onClick={() => setSheet(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                form="add-role"
+                disabled={createRole.isPending || !draftLabel.trim()}
+                title="Add role"
+              >
+                <Plus className="size-4" />
+                Add role
+              </Button>
+            </>
+          ) : (
+            editing && (
+              <>
+                <Button
+                  variant="outline"
+                  type="button"
+                  className="text-destructive"
+                  onClick={() => {
+                    removeRole(editing.id)
+                    setSheet(null)
+                  }}
+                  aria-label={`Delete role ${editing.id}`}
+                >
+                  <Trash2 className="size-4" />
+                  Delete role
+                </Button>
+                <Button type="button" onClick={() => setSheet(null)}>
+                  Done
+                </Button>
+              </>
+            )
+          )
+        }
+      >
+        {sheet?.kind === "add" && (
+          <form
+            id="add-role"
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              addRole()
+            }}
+          >
             <Field label="Id">
               <Input
                 value={draftId}
                 onChange={(e) => setDraftId(e.target.value)}
-                placeholder="small"
-                className="font-mono text-xs"
+                placeholder="Id (optional) — small"
+                title="Optional. What a model's assignment points at; it cannot be changed once the role exists. Leave empty and the server mints one."
+                aria-label="Id"
+                className={cn(INPUT, "font-mono")}
               />
             </Field>
             <Field label="Label">
               <Input
                 value={draftLabel}
                 onChange={(e) => setDraftLabel(e.target.value)}
-                placeholder="Small"
-                className="text-xs"
+                placeholder="Label — Small"
+                aria-label="Label"
+                className={INPUT}
               />
             </Field>
             <Field label="Description">
               <Input
                 value={draftDescription}
                 onChange={(e) => setDraftDescription(e.target.value)}
-                placeholder="Cheap side-jobs"
-                className="text-xs"
+                placeholder="Description — Cheap side-jobs"
+                aria-label="Description"
+                className={INPUT}
               />
             </Field>
-          </div>
-          <div className="flex justify-end pb-3">
-            <Button
-              type="button"
-              onClick={addRole}
-              disabled={createRole.isPending || !draftLabel.trim()}
-            >
-              <Plus className="size-4" /> Add role
-            </Button>
-          </div>
-        </Group>
+          </form>
+        )}
+        {sheet?.kind === "edit" && editing && (
+          <>
+            <Field label="Label">
+              <SavedInput
+                value={editing.label}
+                onSave={(v) => updateField(editing.id, "label", v)}
+                placeholder="Role label"
+                aria-label={`Label for ${editing.id}`}
+                className={cn(INPUT, "font-medium")}
+              />
+            </Field>
+            <Field label="Description">
+              <SavedInput
+                value={editing.description}
+                onSave={(v) => updateField(editing.id, "description", v)}
+                placeholder="One line for the agent — e.g. Cheap side-jobs"
+                aria-label={`Description for ${editing.id}`}
+                className={cn(INPUT, !editing.description.trim() && UNSET)}
+              />
+            </Field>
+          </>
+        )}
+      </DetailSheet>
+    </div>
+  )
+}
 
-        <Group label="Roles">
-          {roles.length === 0 ? (
-            <p className="py-3 text-sm text-muted-foreground">
-              No roles yet. Add one above to get started.
-            </p>
-          ) : (
-            roles.map((role) => (
-              <div key={role.id} className="py-3">
-                <div className={cn("space-y-3 p-3", INSET)}>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="shrink-0 font-mono text-[11px]">
-                      {role.id}
-                    </Badge>
-                    <Input
-                      value={role.label}
-                      onChange={(e) => updateField(role.id, "label", e.target.value)}
-                      placeholder="Role label"
-                      className="text-xs font-medium"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="shrink-0"
-                      onClick={() => removeRole(role.id)}
-                      title="Delete role"
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                  <Input
-                    value={role.description}
-                    onChange={(e) => updateField(role.id, "description", e.target.value)}
-                    placeholder="One line for the agent — e.g. Cheap side-jobs"
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-            ))
+/** An input over a value the server owns: typing is kept locally (the save is
+    not optimistic, so a bound value would snap each character back until the
+    refetch lands) and the server's value is taken again once focus leaves.
+    Clicks stop here so a cell input never opens the row. */
+function SavedInput({
+  value,
+  onSave,
+  ...props
+}: Omit<React.ComponentProps<typeof Input>, "value" | "onChange"> & {
+  value: string
+  onSave: (value: string) => void
+}) {
+  const [local, setLocal] = React.useState(value)
+  const focused = React.useRef(false)
+  React.useEffect(() => {
+    if (!focused.current) setLocal(value)
+  }, [value])
+  return (
+    <Input
+      {...props}
+      value={local}
+      onChange={(e) => {
+        setLocal(e.target.value)
+        onSave(e.target.value)
+      }}
+      onFocus={() => (focused.current = true)}
+      onBlur={() => {
+        focused.current = false
+        setLocal(value)
+      }}
+      onClick={(e) => e.stopPropagation()}
+    />
+  )
+}
+
+/** The status cell: warn when the agent has nothing to choose the role by. */
+function RoleStatus({ role }: { role: ModelRole }) {
+  return role.description.trim() ? (
+    <StatusBadge tone="ok">Ready</StatusBadge>
+  ) : (
+    <StatusBadge tone="warn">No description</StatusBadge>
+  )
+}
+
+/** A role on a phone: read-only (tap to edit), mark + label + description,
+    the id and status beneath. */
+function RoleRow({ role }: { role: ModelRole }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <Tag className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium">{role.label || role.id}</div>
+        <div
+          className={cn(
+            "truncate text-xs",
+            role.description.trim() ? "text-muted-foreground" : "italic text-muted-foreground/70",
           )}
-        </Group>
-
-        <FormActions busy={createRole.isPending} error={error} />
-      </PageForm>
-    </>
+        >
+          {role.description.trim() || "No description"}
+        </div>
+        <div className="truncate font-mono text-[11px] text-muted-foreground/80">{role.id}</div>
+      </div>
+    </div>
   )
 }

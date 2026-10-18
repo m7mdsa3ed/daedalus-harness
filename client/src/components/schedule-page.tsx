@@ -14,7 +14,6 @@ import * as React from "react"
 import {
   AlertTriangle,
   CalendarClock,
-  ChevronRightIcon,
   ClockIcon,
   ExternalLinkIcon,
   MessageSquareTextIcon,
@@ -32,8 +31,22 @@ import { toast } from "@/lib/toast"
 import { useConfirm } from "@/components/confirm-dialog"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { Notice } from "@/components/notice"
-import { MetaFact, StatGrid, StatTile, SurfaceCard, SurfaceHeader } from "@/components/page-primitives"
-import { EmptyCard, Field, FormPageHeader, FormSection, PageForm } from "@/components/settings/primitives"
+import { MetaFact, SurfaceHeader } from "@/components/page-primitives"
+import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
+import {
+  DetailSheet,
+  EmptyCard,
+  Field,
+  FormPageHeader,
+  FormSection,
+  FormShell,
+  Group,
+  PageForm,
+  Row,
+  Segmented,
+  StatStrip,
+  StatusBadge,
+} from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -99,6 +112,12 @@ const RECURRENCE_LABEL: Record<Recurrence, string> = {
   day: "Every day",
   week: "Every week",
 }
+
+const NEW_SECTIONS = [
+  { id: "thread", label: "Thread" },
+  { id: "message", label: "Message" },
+  { id: "when", label: "When" },
+]
 
 const RECURRENCE_MS: Partial<Record<Recurrence, number>> = {
   hour: HOUR,
@@ -213,6 +232,8 @@ function SchedulesListPage() {
   const scheduledQuery = useScheduled()
   const scheduled = scheduledQuery.data ?? []
   const navigate = useNavigate()
+  const setEnabled = useSetEnabled()
+  const remove = useRemoveSchedule()
 
   const paused = scheduled.filter((s) => s.enabled === 0).length
   const undeliverable = scheduled.filter(scheduleSkipped).length
@@ -221,21 +242,118 @@ function SchedulesListPage() {
     .filter((s) => s.enabled !== 0 && !scheduleParked(s))
     .reduce<ScheduledMessage | null>((best, s) => (!best || s.nextAt < best.nextAt ? s : best), null)
 
-  /* Filed under the thread they will land in, soonest thread first: two
+  /* Kept together by the thread they will land in, soonest thread first: two
      schedules against one thread are one conversation's plans, and a reader
      asking "what is going to happen to this thread" wants them together. */
-  const groups = React.useMemo(() => {
+  const rows = React.useMemo(() => {
     const byThread = new Map<string, ScheduledMessage[]>()
     for (const s of [...scheduled].sort((a, b) => a.nextAt - b.nextAt))
       byThread.set(s.sessionId, [...(byThread.get(s.sessionId) ?? []), s])
-    return [...byThread.entries()].map(([sessionId, items]) => ({
-      sessionId,
-      session: sessions.find((s) => s.id === sessionId),
-      items,
-    }))
-  }, [scheduled, sessions])
+    return [...byThread.values()].flat()
+  }, [scheduled])
+
+  const threadTitle = React.useCallback(
+    (sessionId: string) => {
+      const session = sessions.find((s) => s.id === sessionId)
+      return session?.title || (session ? "Untitled thread" : "Thread missing")
+    },
+    [sessions]
+  )
 
   const newSchedule = () => void navigate(schedulePath(), { state: { returnTo: schedulesPath() } })
+  const open = React.useCallback((item: ScheduledMessage) => void navigate(scheduleDetailPath(item.id)), [navigate])
+
+  const columns = React.useMemo<ListColumn<ScheduledMessage>[]>(
+    () => [
+      {
+        id: "message",
+        header: "Message",
+        title: true,
+        cell: (item) => (
+          <div className="min-w-0">
+            <div className={cn("truncate text-sm font-medium", item.enabled === 0 && "text-muted-foreground")}>{item.text}</div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              {scheduleWhen(item.nextAt, item.everyMs)}
+              {item.enabled === 0 ? " · paused" : ` · ${untilLabel(item.nextAt)}`}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: "thread",
+        header: "Thread",
+        secondary: true,
+        cell: (item) => <span className="block truncate text-sm">{threadTitle(item.sessionId)}</span>,
+      },
+      {
+        id: "repeat",
+        header: "Repeat",
+        secondary: true,
+        cell: (item) => (item.everyMs === null ? "Once" : `Every ${everyLabel(item.everyMs)}`),
+      },
+      {
+        id: "status",
+        header: "Status",
+        align: "end",
+        cell: (item) => {
+          const parked = scheduleParked(item)
+          const skipped = scheduleSkipped(item)
+          const tone = parked ? "bad" : skipped ? "warn" : item.enabled === 0 ? "neutral" : "ok"
+          return (
+            <span title={skipped ? (item.lastError ?? undefined) : undefined}>
+              <StatusBadge tone={tone}>
+                {parked ? "Parked" : skipped ? "Undeliverable" : item.enabled === 0 ? "Paused" : "Active"}
+              </StatusBadge>
+            </span>
+          )
+        },
+      },
+    ],
+    [threadTitle]
+  )
+
+  const actions = React.useMemo<ListAction<ScheduledMessage>[]>(
+    () => [
+      {
+        id: "resume",
+        label: "Resume",
+        icon: <Play />,
+        hidden: (item) => item.enabled !== 0 && !scheduleSkipped(item),
+        onClick: (item) => setEnabled(item, true),
+      },
+      {
+        id: "pause",
+        label: "Pause",
+        icon: <Pause />,
+        hidden: (item) => item.enabled === 0,
+        onClick: (item) => setEnabled(item, false),
+      },
+      { id: "edit", label: "Edit…", icon: <Pencil />, onClick: open },
+      {
+        id: "thread",
+        label: "Open thread",
+        icon: <ExternalLinkIcon />,
+        onClick: (item) => void navigate(threadPath(item.sessionId)),
+      },
+      {
+        id: "cancel",
+        label: "Cancel schedule",
+        icon: <Trash2 />,
+        tone: "danger",
+        onClick: (item) => void remove(item.id),
+      },
+    ],
+    [open, navigate, remove, setEnabled]
+  )
+
+  const newButton = (
+    <Button onClick={newSchedule}>
+      <Plus data-icon="inline-start" />
+      New schedule
+    </Button>
+  )
+  const pending = scheduledQuery.isPending
+  const stat = (value: React.ReactNode) => (pending ? <Skeleton className="h-6 w-12" /> : value)
 
   return (
     <>
@@ -243,12 +361,7 @@ function SchedulesListPage() {
         title="Scheduled messages"
         description="Prompts the server delivers to a thread's agent at a set time — with or without a browser open. Pause a schedule to keep it without it firing."
         onBack={() => void navigate("/")}
-        actions={
-          <Button onClick={newSchedule}>
-            <Plus data-icon="inline-start" />
-            New schedule
-          </Button>
-        }
+        actions={newButton}
       />
       {scheduledQuery.error && (
         <ErrorNote
@@ -256,174 +369,66 @@ function SchedulesListPage() {
           onRetry={() => void scheduledQuery.refetch()}
         />
       )}
-      {scheduled.length === 0 && !scheduledQuery.isPending ? (
-        <EmptyCard
-          icon={CalendarClock}
-          text="Nothing scheduled yet."
-          action={
-            <Button size="sm" onClick={newSchedule}>
-              <Plus data-icon="inline-start" />
-              New schedule
-            </Button>
-          }
-        />
+      {scheduled.length === 0 && !pending ? (
+        <EmptyCard icon={CalendarClock} text="Nothing scheduled yet." action={newButton} />
       ) : (
         <>
-          <StatGrid>
-            <StatTile
-              icon={CalendarClock}
-              label="Scheduled"
-              value={scheduled.length}
-              loading={scheduledQuery.isPending}
-              hint={
-                paused > 0
-                  ? `${paused} paused`
-                  : recurring > 0
-                    ? `${recurring} recurring`
-                    : "all one-off"
-              }
-            />
-            <StatTile
-              icon={ClockIcon}
-              label="Next delivery"
-              value={next ? untilLabel(next.nextAt) : "—"}
-              loading={scheduledQuery.isPending}
-              hint={
-                next
+          <StatStrip
+            stats={[
+              {
+                label: "Scheduled",
+                value: stat(scheduled.length),
+                hint: paused > 0 ? `${paused} paused` : recurring > 0 ? `${recurring} recurring` : "all one-off",
+              },
+              {
+                label: "Next delivery",
+                value: stat(next ? untilLabel(next.nextAt) : "—"),
+                hint: next
                   ? new Date(next.nextAt).toLocaleString()
                   : scheduled.length > 0
                     ? "everything is paused or parked"
-                    : "nothing scheduled"
-              }
-            />
-            <StatTile
-              icon={RepeatIcon}
-              label="Recurring"
-              value={recurring}
-              loading={scheduledQuery.isPending}
-              hint={recurring === 1 ? "repeats until cancelled" : "repeat until cancelled"}
-            />
-            <StatTile
-              icon={AlertTriangle}
-              label="Undeliverable"
-              value={undeliverable}
-              loading={scheduledQuery.isPending}
-              tone={undeliverable > 0 ? "text-amber-600 dark:text-amber-400" : undefined}
-              hint={undeliverable > 0 ? "the sweep could not deliver" : "every thread reachable"}
-            />
-          </StatGrid>
-
-          <div className="mt-4 space-y-4">
-            {groups.map((group) => (
-              <SurfaceCard
-                key={group.sessionId}
-                title={
-                  <span className="inline-flex min-w-0 items-center gap-1.5">
-                    <MessageSquareTextIcon className="size-3.5 shrink-0" />
-                    <span className="truncate normal-case tracking-normal">
-                      {group.session?.title || (group.session ? "Untitled thread" : "Thread missing")}
-                    </span>
-                  </span>
-                }
-                action={
-                  group.session ? (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => void navigate(threadPath(group.sessionId))}
-                    >
-                      Open thread
-                      <ExternalLinkIcon data-icon="inline-end" />
-                    </Button>
-                  ) : undefined
-                }
-              >
-                <div className="divide-y">
-                  {group.items.map((item) => (
-                    <ScheduleRow key={item.id} item={item} />
-                  ))}
-                </div>
-              </SurfaceCard>
-            ))}
-          </div>
+                    : "nothing scheduled",
+              },
+              {
+                label: "Recurring",
+                value: stat(recurring),
+                hint: recurring === 1 ? "repeats until cancelled" : "repeat until cancelled",
+              },
+              {
+                label: "Undeliverable",
+                value: stat(undeliverable),
+                tone: undeliverable > 0 ? "warn" : undefined,
+                hint: undeliverable > 0 ? "the sweep could not deliver" : "every thread reachable",
+              },
+            ]}
+          />
+          <SettingsList
+            columns={columns}
+            rows={rows}
+            rowId={(item) => item.id}
+            actions={actions}
+            loading={pending}
+            onRowClick={open}
+            mark={(item) =>
+              item.enabled === 0 ? (
+                <Pause className="size-4 text-muted-foreground" aria-label="Paused" />
+              ) : scheduleSkipped(item) ? (
+                <AlertTriangle className="size-4 text-muted-foreground" aria-label="Undeliverable" />
+              ) : item.everyMs !== null ? (
+                <RepeatIcon className="size-4 text-muted-foreground" aria-label="Recurring" />
+              ) : (
+                <CalendarClock className="size-4 text-muted-foreground" aria-label="Once" />
+              )
+            }
+            search={{
+              placeholder: "Search schedules…",
+              matches: (item, needle) =>
+                item.text.toLowerCase().includes(needle) || threadTitle(item.sessionId).toLowerCase().includes(needle),
+            }}
+          />
         </>
       )}
     </>
-  )
-}
-
-function ScheduleRow({ item }: { item: ScheduledMessage }) {
-  const navigate = useNavigate()
-  const setEnabled = useSetEnabled()
-  const remove = useRemoveSchedule()
-  const paused = item.enabled === 0
-  const skipped = scheduleSkipped(item)
-  const open = () => void navigate(scheduleDetailPath(item.id))
-
-  return (
-    <div className="px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap">
-        {paused ? (
-          <Pause className="size-4 shrink-0 text-muted-foreground" aria-label="Paused" />
-        ) : skipped ? (
-          <AlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-label="Undeliverable" />
-        ) : item.everyMs !== null ? (
-          <RepeatIcon className="size-4 shrink-0 text-muted-foreground" aria-label="Recurring" />
-        ) : (
-          <CalendarClock className="size-4 shrink-0 text-muted-foreground" aria-label="Once" />
-        )}
-        <button type="button" onClick={open} className="min-w-0 flex-1 text-left">
-          <div className={cn("truncate text-sm font-medium", paused && "text-muted-foreground")}>
-            {item.text}
-          </div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-            {scheduleWhen(item.nextAt, item.everyMs)}
-            {paused ? " · paused" : ` · ${untilLabel(item.nextAt)}`}
-          </div>
-        </button>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <Switch
-            checked={!paused}
-            onCheckedChange={(checked) => setEnabled(item, checked)}
-            aria-label={paused ? "Resume schedule" : "Pause schedule"}
-          />
-          <Button variant="ghost" size="icon-sm" title="Open" onClick={open}>
-            <ChevronRightIcon />
-            <span className="sr-only">Open schedule</span>
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button variant="ghost" size="icon-sm" title="More">
-                  <MoreVerticalIcon />
-                  <span className="sr-only">More actions</span>
-                </Button>
-              }
-            />
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={open}>
-                <Pencil />
-                Edit…
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => void navigate(threadPath(item.sessionId))}>
-                <ExternalLinkIcon />
-                Open thread
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => void remove(item.id)}>
-                <Trash2 />
-                Cancel schedule
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-      {skipped && (
-        <div className="mt-2">
-          <SkipNote item={item} onResume={() => setEnabled(item, true)} />
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -484,16 +489,8 @@ function ScheduleDetail({ item, onBack }: { item: ScheduledMessage; onBack: () =
         title={
           <span className="inline-flex min-w-0 items-center gap-2">
             <span className="truncate">{item.everyMs === null ? "One-off message" : `Every ${everyLabel(item.everyMs)}`}</span>
-            {paused && (
-              <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
-                Paused
-              </span>
-            )}
-            {parked && (
-              <span className="rounded-pill bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-amber-700 dark:text-amber-400">
-                Parked
-              </span>
-            )}
+            {paused && <StatusBadge>Paused</StatusBadge>}
+            {parked && <StatusBadge tone="warn">Parked</StatusBadge>}
           </span>
         }
         meta={
@@ -536,9 +533,9 @@ function ScheduleDetail({ item, onBack }: { item: ScheduledMessage; onBack: () =
                 Open thread
               </Button>
             )}
-            <Button variant={editing ? "secondary" : "default"} onClick={() => setEditing((v) => !v)} aria-pressed={editing}>
+            <Button onClick={() => setEditing(true)}>
               <Pencil data-icon="inline-start" />
-              {editing ? "Close editor" : "Edit"}
+              Edit
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -576,80 +573,54 @@ function ScheduleDetail({ item, onBack }: { item: ScheduledMessage; onBack: () =
         </div>
       )}
       {!skipped && threadGone && (
-        <p className="mb-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs text-muted-foreground">
-          <AlertTriangle className="mt-px size-3.5 shrink-0" />
+        <Notice tone="warn" className="mb-4">
           <span className="text-pretty">
             {thread
               ? "The thread this lands in is in the trash. The next delivery will fail until it is restored."
               : "The thread this lands in is not in the list. The next delivery will fail; cancel this schedule and make a new one."}
           </span>
-        </p>
+        </Notice>
       )}
 
-      <StatGrid>
-        <StatTile
-          icon={ClockIcon}
-          label="Next delivery"
-          value={paused ? "—" : untilLabel(item.nextAt)}
-          hint={paused ? "paused — nothing fires" : new Date(item.nextAt).toLocaleString()}
-          tone={!paused && item.nextAt <= Date.now() ? "text-primary" : undefined}
-        />
-        <StatTile
-          icon={RepeatIcon}
-          label="Repeat"
-          value={item.everyMs === null ? "Once" : everyLabel(item.everyMs)}
-          hint={item.everyMs === null ? "then the schedule is removed" : "until cancelled"}
-        />
-        <StatTile
-          icon={AlertTriangle}
-          label="Failed deliveries"
-          value={item.skipCount}
-          tone={item.skipCount > 0 ? "text-amber-600 dark:text-amber-400" : undefined}
-          hint={
-            item.skipCount === 0
-              ? "none"
-              : parked
-                ? "parked — resume to retry"
-                : `parks at ${MAX_SCHEDULE_SKIPS}`
-          }
-        />
-        <StatTile
-          icon={CalendarClock}
-          label="Created"
-          value={shortAge(item.createdAt)}
-          hint={new Date(item.createdAt).toLocaleString()}
-        />
-      </StatGrid>
+      <StatStrip
+        stats={[
+          {
+            label: "Next delivery",
+            value: paused ? "—" : untilLabel(item.nextAt),
+            hint: paused ? "paused — nothing fires" : new Date(item.nextAt).toLocaleString(),
+          },
+          {
+            label: "Repeat",
+            value: item.everyMs === null ? "Once" : everyLabel(item.everyMs),
+            hint: item.everyMs === null ? "then the schedule is removed" : "until cancelled",
+          },
+          {
+            label: "Failed deliveries",
+            value: item.skipCount,
+            tone: item.skipCount > 0 ? "warn" : undefined,
+            hint: item.skipCount === 0 ? "none" : parked ? "parked — resume to retry" : `parks at ${MAX_SCHEDULE_SKIPS}`,
+          },
+          { label: "Created", value: shortAge(item.createdAt), hint: new Date(item.createdAt).toLocaleString() },
+        ]}
+      />
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <SurfaceCard title="Message">
-          <p className="max-h-96 overflow-y-auto px-4 py-3 text-sm whitespace-pre-wrap text-pretty">{item.text}</p>
-        </SurfaceCard>
-        <SurfaceCard title="How it works">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 px-4 py-3 text-xs">
-            <dt className="text-muted-foreground">Delivered by</dt>
-            <dd>The server, browser or no browser</dd>
-            <dt className="text-muted-foreground">Lands as</dt>
-            <dd>A prompt in the thread — queued if a turn is running</dd>
-            <dt className="text-muted-foreground">Record</dt>
-            <dd>The thread's own transcript; a schedule keeps none</dd>
-            <dt className="text-muted-foreground">Target</dt>
-            <dd>Fixed — cancel and reschedule to move it</dd>
-          </dl>
-        </SurfaceCard>
-      </div>
+      <Group label="Message">
+        <p className="max-h-96 overflow-y-auto py-3 text-sm whitespace-pre-wrap text-pretty">{item.text}</p>
+      </Group>
+      <Group label="How it works">
+        <Row title="Delivered by" subtitle="The server, browser or no browser" />
+        <Row title="Lands as" subtitle="A prompt in the thread — queued if a turn is running" />
+        <Row title="Record" subtitle="The thread's own transcript; a schedule keeps none" />
+        <Row title="Target" subtitle="Fixed — cancel and reschedule to move it" />
+      </Group>
 
-      {editing && (
-        <div className="mt-4">
-          <EditScheduleForm item={item} onDone={() => setEditing(false)} />
-        </div>
-      )}
+      {editing && <EditScheduleForm item={item} onDone={() => setEditing(false)} />}
     </>
   )
 }
 
-/** The editor: text, time, recurrence. The target thread is not editable (the
-    server has no patch for it — cancel and reschedule instead). */
+/** The editor: text, time, recurrence, in a sheet. The target thread is not
+    editable (the server has no patch for it — cancel and reschedule instead). */
 function EditScheduleForm({
   item,
   onDone,
@@ -705,45 +676,42 @@ function EditScheduleForm({
   }
 
   return (
-    <form onSubmit={submit} className="space-y-3 rounded-xl border bg-card p-4">
-      <Field label="Message to send">
-        <Textarea value={text} onChange={(event) => setText(event.target.value)} rows={3} />
-      </Field>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <DetailSheet
+      open
+      onOpenChange={(open) => !open && onDone()}
+      title="Edit schedule"
+      footer={
+        <>
+          <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={onDone}>
+            Cancel
+          </Button>
+          <Button type="submit" form="edit-schedule" className="h-11 @panel-sm:h-9" disabled={busy || !valid}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-schedule" onSubmit={submit} className="space-y-4">
+        <Field label="Message to send">
+          <Textarea value={text} onChange={(event) => setText(event.target.value)} rows={3} />
+        </Field>
         <Field label="Next run">
           <Input type="datetime-local" value={at} onChange={(event) => setAt(event.target.value)} />
         </Field>
         <Field label="Repeat">
-          <Select
+          <Segmented<EditRecurrence>
+            label="Repeat"
             value={recurrence}
-            onValueChange={(value) => setRecurrence(value as EditRecurrence)}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue>{recurrenceLabel(recurrence)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(RECURRENCE_LABEL) as Recurrence[]).map((key) => (
-                <SelectItem key={key} value={key}>
-                  {RECURRENCE_LABEL[key]}
-                </SelectItem>
-              ))}
-              {initialRecurrence === "custom" && (
-                <SelectItem value="custom">{recurrenceLabel("custom")}</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
+            onChange={setRecurrence}
+            options={[
+              ...(Object.keys(RECURRENCE_LABEL) as Recurrence[]).map((key) => ({ value: key, label: RECURRENCE_LABEL[key] })),
+              ...(initialRecurrence === "custom" ? [{ value: "custom" as const, label: recurrenceLabel("custom") }] : []),
+            ]}
+          />
         </Field>
-      </div>
-      <ErrorNote error={error} />
-      <div className="flex justify-end gap-2">
-        <Button type="button" size="sm" variant="ghost" onClick={onDone}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm" disabled={busy || !valid}>
-          {busy ? "Saving…" : "Save"}
-        </Button>
-      </div>
-    </form>
+        <ErrorNote error={error} />
+      </form>
+    </DetailSheet>
   )
 }
 
@@ -802,8 +770,9 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
       {sessions.length === 0 ? (
         <EmptyCard icon={CalendarClock} text="Open and send a thread before scheduling a message." />
       ) : (
+        <FormShell sections={NEW_SECTIONS}>
         <PageForm onSubmit={submit}>
-          <FormSection label="Thread">
+          <FormSection id="thread" label="Thread">
             <Field label="Send to">
               <Select value={target} onValueChange={(value) => setTarget(value ?? target)}>
                 <SelectTrigger className="w-full">
@@ -819,7 +788,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
               </Select>
             </Field>
           </FormSection>
-          <FormSection label="Message">
+          <FormSection id="message" label="Message">
             <Field label="Message to send">
               <Textarea
                 value={text}
@@ -829,8 +798,8 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
               />
             </Field>
           </FormSection>
-          <FormSection label="When">
-            <div className="grid gap-4 sm:grid-cols-2">
+          <FormSection id="when" label="When">
+            <div className="grid gap-4 @panel-sm:grid-cols-2">
               <Field label="Start at">
                 <Input
                   type="datetime-local"
@@ -840,18 +809,15 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
                 />
               </Field>
               <Field label="Repeat">
-                <Select value={recurrence} onValueChange={(value) => setRecurrence(value as Recurrence)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue>{RECURRENCE_LABEL[recurrence]}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(RECURRENCE_LABEL) as Recurrence[]).map((key) => (
-                      <SelectItem key={key} value={key}>
-                        {RECURRENCE_LABEL[key]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Segmented<Recurrence>
+                  label="Repeat"
+                  value={recurrence}
+                  onChange={setRecurrence}
+                  options={(Object.keys(RECURRENCE_LABEL) as Recurrence[]).map((key) => ({
+                    value: key,
+                    label: RECURRENCE_LABEL[key],
+                  }))}
+                />
               </Field>
             </div>
           </FormSection>
@@ -862,15 +828,16 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
               : `Repeats ${RECURRENCE_LABEL[recurrence].toLowerCase()} until you cancel it.`}
           </p>
           <ErrorNote error={error} />
-          <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-            <Button type="button" variant="outline" onClick={back}>
+          <footer className="flex flex-col-reverse gap-2 border-t pt-4 @panel-sm:flex-row @panel-sm:justify-end">
+            <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={back}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !valid}>
+            <Button type="submit" className="h-11 @panel-sm:h-9" disabled={busy || !valid}>
               {busy ? "Scheduling…" : "Schedule"}
             </Button>
           </footer>
         </PageForm>
+        </FormShell>
       )}
     </>
   )

@@ -217,6 +217,8 @@ export type ShortcutId =
   | "threadSearch"
   | "sendReview"
   | "viewOptions"
+  | "voiceCall"
+  | "voiceMute"
   | "sidebarFilter"
   | "send"
   | "steer"
@@ -325,6 +327,10 @@ export const KEYS = {
   chooseMcp: "alt+s",
   threadSearch: "mod+f",
   viewOptions: "alt+v",
+  /** Start or end a voice call on the thread in front of you: C for call. */
+  voiceCall: "alt+c",
+  /** Mute and unmute the mic during a call: U for the unmute you reach for. */
+  voiceMute: "alt+u",
   /** Filter the sidebar's loaded threads. Alt+T for Threads: ⌘F is the transcript's find, and ⌘⇧F the file search. */
   sidebarFilter: "alt+t",
   /** Send the pending review comments — answered only while the focus is in
@@ -471,6 +477,22 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "How transcripts are drawn on this device — the same dialog the sliders in the header open.",
   },
 
+  {
+    id: "voiceCall",
+    scope: "Thread",
+    label: "Start or end a voice call",
+    chords: [KEYS.voiceCall],
+    rebindable: true,
+    note: "On the thread in front of you, once a voice backend is set up in Settings › Voice.",
+  },
+  {
+    id: "voiceMute",
+    scope: "Thread",
+    label: "Mute or unmute the microphone",
+    chords: [KEYS.voiceMute],
+    rebindable: true,
+    note: "Only during a voice call. Not with push-to-talk on, where the mic is the Hold to talk button.",
+  },
   {
     id: "changeModel",
     scope: "Thread",

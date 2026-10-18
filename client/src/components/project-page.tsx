@@ -23,9 +23,7 @@ import {
   ActivityIcon,
   AlertTriangleIcon,
   AppWindowIcon,
-  BookOpenIcon,
   BotIcon,
-  CalendarClockIcon,
   CheckIcon,
   CopyIcon,
   DownloadIcon,
@@ -46,7 +44,9 @@ import {
   XIcon,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
-import { PageFrame } from "@/components/page-primitives"
+import { PageFrame, SurfaceHeader } from "@/components/page-primitives"
+import { Group, StatStrip, StatusBadge } from "@/components/settings/primitives"
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -204,61 +204,52 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           </Notice>
         )}
 
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          <Tile
-            icon={MessagesSquareIcon}
-            label="Threads"
-            value={threads.length}
-            statusIndicator={
-              running > 0 ? (
-                <span className="relative flex size-2">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+        <StatStrip
+          stats={[
+            {
+              label: "Threads",
+              value: (
+                <span className="inline-flex items-center gap-2">
+                  {threads.length}
+                  {running > 0 ? (
+                    <StatusBadge tone="ok">Running</StatusBadge>
+                  ) : waiting > 0 ? (
+                    <StatusBadge tone="warn">Waiting</StatusBadge>
+                  ) : null}
                 </span>
-              ) : waiting > 0 ? (
-                <span className="size-2 rounded-full bg-amber-500" />
-              ) : null
-            }
-            hint={
-              running > 0
-                ? `${running} running now`
-                : waiting > 0
-                  ? `${waiting} waiting on you`
-                  : trashed > 0
-                    ? `${trashed} in trash`
-                    : "none running"
-            }
-          />
-          <Tile
-            icon={ActivityIcon}
-            label="Turns"
-            value={stats?.turns}
-            loading={!stats}
-            hint="across every thread"
-          />
-          <Tile
-            icon={CalendarClockIcon}
-            label="Last active"
-            value={stats?.lastActivityAt ? shortAge(stats.lastActivityAt) : "—"}
-            loading={!stats}
-            hint={
-              stats?.lastActivityAt
+              ),
+              hint:
+                running > 0
+                  ? `${running} running now`
+                  : waiting > 0
+                    ? `${waiting} waiting on you`
+                    : trashed > 0
+                      ? `${trashed} in trash`
+                      : "none running",
+            },
+            {
+              label: "Turns",
+              value: stats ? stats.turns : <Skeleton className="h-6 w-16" />,
+              hint: "across every thread",
+            },
+            {
+              label: "Last active",
+              value: !stats ? <Skeleton className="h-6 w-16" /> : stats.lastActivityAt ? shortAge(stats.lastActivityAt) : "—",
+              hint: stats?.lastActivityAt
                 ? new Date(stats.lastActivityAt).toLocaleString()
-                : "nothing has run here yet"
-            }
-          />
-          <Tile
-            icon={BookOpenIcon}
-            label="Knowledge"
-            value={stats?.knowledge}
-            loading={!stats}
-            hint={stats?.knowledge === 1 ? "entry saved" : "entries saved"}
-          />
-        </div>
+                : "nothing has run here yet",
+            },
+            {
+              label: "Knowledge",
+              value: stats ? stats.knowledge : <Skeleton className="h-6 w-16" />,
+              hint: stats?.knowledge === 1 ? "entry saved" : "entries saved",
+            },
+          ]}
+        />
 
         <ActivityStrip stats={stats} />
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="mt-8 grid gap-8 @panel-lg:grid-cols-[minmax(0,1fr)_18rem]">
           <ThreadsCard
             threads={threads}
             trashed={trashed}
@@ -267,7 +258,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             onOpen={(id) => void navigate(threadPath(id))}
             onNewThread={() => startIn(project)}
           />
-          <div className="space-y-4">
+          <div className="min-w-0">
             <RuntimesCard stats={stats} />
             <ScheduledCard
               scheduled={scheduled}
@@ -371,7 +362,7 @@ function HelpersMenu({
               <Play className="size-3.5 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{helper.name}</span>
               {helper.confirm && (
-                <TriangleAlert className="size-3 shrink-0 text-amber-500" aria-hidden />
+                <TriangleAlert className="size-3 shrink-0 text-warning" aria-hidden />
               )}
             </DropdownMenuItem>
           ))}
@@ -420,7 +411,7 @@ function QuickHelpersBar({
           <span>{helper.name}</span>
           {/* The same mark the Run menu carries: a chip is one tap from a
               destructive command, so "asks first" has to be visible before it. */}
-          {helper.confirm && <TriangleAlert className="size-2.5 text-amber-500" aria-hidden />}
+          {helper.confirm && <TriangleAlert className="size-2.5 text-warning" aria-hidden />}
         </button>
       ))}
       <button
@@ -466,20 +457,12 @@ function ProjectHeader({
   }
 
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      {/* Identity block: avatar, title, directory breadcrumb, description */}
-      <div className="flex items-start gap-3.5 min-w-0 flex-1">
-        <div className="rounded-xl border bg-muted/30 p-1.5 shrink-0 shadow-xs">
-          <ProjectIcon project={project} className="size-10" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-              {project.name}
-            </h1>
-          </div>
-
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+    <SurfaceHeader
+      icon={<ProjectIcon project={project} className="size-10" />}
+      title={<span className="block truncate">{project.name}</span>}
+      description={project.description || undefined}
+      meta={
+        <>
           <button
             type="button"
             onClick={() => void copy()}
@@ -488,111 +471,68 @@ function ProjectHeader({
           >
             <span className="truncate font-mono text-[11px]">{project.cwd}</span>
             {copied ? (
-              <CheckIcon className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <CheckIcon className="size-3 shrink-0 text-foreground" />
             ) : (
               <CopyIcon className="size-3 shrink-0 opacity-60" />
             )}
           </button>
           <ProjectBranches projectId={project.id} />
+        </>
+      }
+      actions={
+        <>
+          {/* Wide panel: every action in the row. */}
+          <div className="hidden items-center gap-2 @panel-sm:flex">
+            <Button variant="ghost" size="icon" title="Refresh" onClick={onRefresh}>
+              <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
+              <span className="sr-only">Refresh</span>
+            </Button>
+            <HelpersMenu project={project} onRunHelper={onRunHelper} />
+            <Button variant="outline" onClick={onImport} size="sm">
+              <DownloadIcon className="size-3.5" /> Import
+            </Button>
+            <Button variant="outline" onClick={onEdit} size="sm">
+              <Pencil className="size-3.5" /> Edit
+            </Button>
+            <Button onClick={onNewThread} size="sm">
+              <Plus className="size-4" /> New thread
+            </Button>
           </div>
 
-          {project.description && (
-            <p className="mt-2 max-w-2xl text-xs sm:text-sm text-pretty text-muted-foreground leading-relaxed">
-              {project.description}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Desktop action toolbar */}
-      <div className="hidden sm:flex shrink-0 items-center gap-2">
-        <Button variant="ghost" size="icon" title="Refresh" onClick={onRefresh}>
-          <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
-          <span className="sr-only">Refresh</span>
-        </Button>
-        <HelpersMenu project={project} onRunHelper={onRunHelper} />
-        <Button variant="outline" onClick={onImport} size="sm">
-          <DownloadIcon className="size-3.5" /> Import
-        </Button>
-        <Button variant="outline" onClick={onEdit} size="sm">
-          <Pencil className="size-3.5" /> Edit
-        </Button>
-        <Button onClick={onNewThread} size="sm">
-          <Plus className="size-4" /> New thread
-        </Button>
-      </div>
-
-      {/* Mobile action bar: full-width, clean primary CTA + Run dropdown + overflow */}
-      <div className="flex sm:hidden items-center gap-2 pt-1 border-t border-border/50">
-        <Button onClick={onNewThread} className="flex-1 font-medium" size="sm">
-          <Plus className="size-4" /> New thread
-        </Button>
-        <HelpersMenu project={project} onRunHelper={onRunHelper} />
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="outline" size="icon" title="More options" aria-label="More options">
-                <MoreHorizontal className="size-4" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={onImport}>
-              <DownloadIcon className="size-4 text-muted-foreground" />
-              <span>Import threads</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onEdit}>
-              <Pencil className="size-4 text-muted-foreground" />
-              <span>Edit project</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onRefresh} disabled={refreshing}>
-              <RefreshCwIcon className={cn("size-4 text-muted-foreground", refreshing && "animate-spin")} />
-              <span>Refresh data</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
-  )
-}
-
-/** One number, its name and a line saying what the number is about. The value
-    is skeletoned rather than zeroed while the fetch is out: a 0 that turns
-    into 400 is a statement the page made and then took back. */
-function Tile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  loading,
-  statusIndicator,
-}: {
-  icon: typeof ActivityIcon
-  label: string
-  value: React.ReactNode
-  hint: string
-  loading?: boolean
-  statusIndicator?: React.ReactNode
-}) {
-  return (
-    <div className="group relative rounded-xl border bg-card p-3.5 sm:p-4 transition-all hover:border-border/90 hover:shadow-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-          {label}
-        </span>
-        <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground group-hover:text-foreground transition-colors">
-          <Icon className="size-3.5" />
-        </div>
-      </div>
-      <div className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight tabular-nums text-foreground">
-        {loading ? <Skeleton className="h-8 w-20" /> : value}
-      </div>
-      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground truncate" title={hint}>
-        {statusIndicator}
-        <span className="truncate">{hint}</span>
-      </div>
-    </div>
+          {/* Narrow panel: the primary action, Run, and an overflow menu. */}
+          <div className="flex w-full items-center gap-2 @panel-sm:hidden">
+            <Button onClick={onNewThread} className="flex-1 font-medium">
+              <Plus className="size-4" /> New thread
+            </Button>
+            <HelpersMenu project={project} onRunHelper={onRunHelper} />
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button variant="outline" size="icon" title="More options" aria-label="More options">
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={onImport}>
+                  <DownloadIcon className="size-4 text-muted-foreground" />
+                  <span>Import threads</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onEdit}>
+                  <Pencil className="size-4 text-muted-foreground" />
+                  <span>Edit project</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onRefresh} disabled={refreshing}>
+                  <RefreshCwIcon className={cn("size-4 text-muted-foreground", refreshing && "animate-spin")} />
+                  <span>Refresh data</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </>
+      }
+    />
   )
 }
 
@@ -608,44 +548,45 @@ function ActivityStrip({ stats }: { stats: ProjectStats | null }) {
   const total = days.reduce((sum, d) => sum + d.turns, 0)
 
   return (
-    <section className="mt-4 rounded-xl border bg-card p-4 transition-all hover:border-border/80">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold tracking-tight">Activity</h2>
+    <Group
+      label="Activity"
+      action={
+        <>
           {stats && (
-            <span className="rounded-full bg-muted/70 px-2 py-0.5 text-[11px] font-mono text-muted-foreground tabular-nums">
+            <StatusBadge dot={false}>
               {total} {total === 1 ? "turn" : "turns"}
-            </span>
+            </StatusBadge>
+          )}
+          <span className="text-xs text-muted-foreground tabular-nums">last {ACTIVITY_DAYS} days</span>
+        </>
+      }
+    >
+      <div className="py-4">
+        <div className="flex h-16 items-end gap-[3px]">
+          {(stats ? days : Array.from({ length: ACTIVITY_DAYS }, () => null)).map((day, i) =>
+            day ? (
+              <div
+                key={day.day}
+                title={`${day.day} · ${day.turns} ${day.turns === 1 ? "turn" : "turns"}`}
+                className={cn(
+                  "min-h-[3px] flex-1 rounded-t-[3px] transition-all duration-150",
+                  day.turns > 0
+                    ? "bg-primary/75 hover:bg-primary hover:brightness-110"
+                    : "bg-muted/60 hover:bg-muted"
+                )}
+                style={{ height: `${day.turns > 0 ? Math.max(8, (day.turns / peak) * 100) : 3}%` }}
+              />
+            ) : (
+              <div key={i} className="h-[3px] flex-1 rounded-t-[3px] bg-muted/40" />
+            )
           )}
         </div>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          last {ACTIVITY_DAYS} days
-        </span>
+        <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+          <span>{ACTIVITY_DAYS} days ago</span>
+          <span>today</span>
+        </div>
       </div>
-      <div className="mt-3.5 flex h-14 sm:h-16 items-end gap-[3px] sm:gap-1">
-        {(stats ? days : Array.from({ length: ACTIVITY_DAYS }, () => null)).map((day, i) =>
-          day ? (
-            <div
-              key={day.day}
-              title={`${day.day} · ${day.turns} ${day.turns === 1 ? "turn" : "turns"}`}
-              className={cn(
-                "min-h-[3px] flex-1 rounded-t-[3px] transition-all duration-150",
-                day.turns > 0
-                  ? "bg-primary/75 hover:bg-primary hover:brightness-110"
-                  : "bg-muted/60 hover:bg-muted"
-              )}
-              style={{ height: `${day.turns > 0 ? Math.max(8, (day.turns / peak) * 100) : 3}%` }}
-            />
-          ) : (
-            <div key={i} className="h-[3px] flex-1 rounded-t-[3px] bg-muted/40" />
-          )
-        )}
-      </div>
-      <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
-        <span>{ACTIVITY_DAYS} days ago</span>
-        <span>today</span>
-      </div>
-    </section>
+    </Group>
   )
 }
 
@@ -661,16 +602,9 @@ function CardShell({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-xl border bg-card">
-      <header className="flex items-center gap-2 border-b px-4 py-2.5">
-        <h2 className="text-sm font-medium">{title}</h2>
-        {count != null && (
-          <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
-        )}
-        {action && <div className="ml-auto">{action}</div>}
-      </header>
+    <Group label={count != null ? `${title} · ${count}` : title} action={action}>
       {children}
-    </section>
+    </Group>
   )
 }
 
@@ -743,28 +677,28 @@ function ThreadsCard({
       }
     >
       {threads.length === 0 ? (
-        <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground mb-3">
-            <MessagesSquareIcon className="size-5" />
-          </div>
-          <p className="text-sm font-medium text-foreground">No threads in this project yet</p>
-          <p className="mt-1 text-xs text-muted-foreground max-w-sm">
-            Start a new thread to begin working on this workspace with your AI agents.
-          </p>
-          <Button size="sm" onClick={onNewThread} className="mt-4 gap-1.5">
-            <Plus className="size-4" /> Start thread
-          </Button>
-        </div>
+        <Empty
+          size="lg"
+          icon={MessagesSquareIcon}
+          className="my-3"
+          action={
+            <Button size="sm" onClick={onNewThread} className="gap-1.5">
+              <Plus className="size-4" /> Start thread
+            </Button>
+          }
+        >
+          No threads in this project yet. Start a new thread to begin working on this workspace with your AI agents.
+        </Empty>
       ) : (
         <ul className="divide-y divide-border/60">
           {shown.map((session) => {
             const status = threadStatus(session, liveThreads[session.id])
             const checked = selected.has(session.id)
             return (
-              <li key={session.id} className="group transition-colors hover:bg-accent/30">
+              <li key={session.id} className="group transition-colors">
                 <div
                   className={cn(
-                    "flex w-full items-center gap-3 px-3.5 sm:px-4 transition-colors",
+                    "flex w-full items-center gap-3 transition-colors",
                     selecting && checked && "bg-accent/40"
                   )}
                 >
@@ -786,7 +720,7 @@ function ThreadsCard({
                     <span className="min-w-0 flex-1">
                       <span
                         className={cn(
-                          "block break-words text-sm font-medium text-foreground group-hover:text-primary transition-colors sm:truncate",
+                          "block break-words text-sm font-medium text-foreground group-hover:text-primary transition-colors @panel-sm:truncate",
                           status === "running" && !selecting && "harness-shimmer"
                         )}
                       >
@@ -813,7 +747,7 @@ function ThreadsCard({
         </ul>
       )}
       {(threads.length > THREAD_PAGE || trashed > 0) && (
-        <footer className="flex items-center justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
+        <footer className="flex items-center justify-between gap-2 py-2 text-xs text-muted-foreground">
           {threads.length > THREAD_PAGE ? (
             <button type="button" className="underline" onClick={() => setAll((v) => !v)}>
               {all ? "Show fewer" : `Show all ${threads.length}`}
@@ -929,7 +863,7 @@ function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
 
   return (
     <CardShell title="Worked on with">
-      <ul className="divide-y">
+      <ul className="divide-y divide-border/60">
         {stats.byAgent.map((entry) => (
           <MiniRow
             key={`agent:${entry.id}`}
@@ -974,9 +908,9 @@ function ScheduledCard({
         </Button>
       }
     >
-      <ul className="divide-y">
+      <ul className="divide-y divide-border/60">
         {scheduled.slice(0, 4).map((row) => (
-          <li key={row.id} className="px-4 py-2">
+          <li key={row.id} className="py-2">
             <p className="truncate text-xs" title={row.text}>
               {row.text}
             </p>
@@ -1034,7 +968,7 @@ function GlanceCard({ stats, trashed }: { stats: ProjectStats | null; trashed: n
 
   return (
     <CardShell title="At a glance">
-      <ul className="divide-y">
+      <ul className="divide-y divide-border/60">
         {rows.map((row) => (
           <MiniRow key={row.label} icon={row.icon} label={row.label} value={row.value} />
         ))}
@@ -1053,7 +987,7 @@ function MiniRow({
   value: React.ReactNode
 }) {
   return (
-    <li className="flex items-center gap-2 px-4 py-2">
+    <li className="flex items-center gap-2 py-2">
       {icon}
       <span className="min-w-0 flex-1 truncate text-xs">{label}</span>
       <span className="shrink-0 text-xs font-medium tabular-nums">{value}</span>
@@ -1063,7 +997,7 @@ function MiniRow({
 
 function CardSkeleton({ rows }: { rows: number }) {
   return (
-    <div className="space-y-2 p-4">
+    <div className="space-y-2 py-4">
       {Array.from({ length: rows }, (_, i) => (
         <Skeleton key={i} className="h-4 w-full" />
       ))}

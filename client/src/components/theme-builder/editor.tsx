@@ -9,11 +9,14 @@
    samples above the fold and the tokens below it, so every edit was made
    blind and verified by scrolling.
 
-   Three tabs, ordered the way a theme is actually made:
+   Three columns once there is room — a section nav, the controls of one
+   section, and the live mock — and a row of chips over the controls below that.
+   The sections are ordered the way a theme is actually made:
    - **Presets** — start from a coordinated whole. A style preset sets the
      entire Design half at once; a palette preset (or the hue/chroma/tint
      sliders) regenerates every colour through the palette ramp.
-   - **Design** — the mode-independent half: type, shape, depth, glass, measure.
+   - **Type**, **Shape**, **Surfaces**, **Layout** — the mode-independent half,
+     one section each (design-tab.tsx).
    - **Color** — the light/dark pair, edited together, because editing one
      blind is how you end up with a theme that only works after dark.
 
@@ -33,24 +36,28 @@ import {
   CloudOff,
   CloudUpload,
   Copy,
+  Layers,
   Palette,
   RotateCcw,
+  Ruler,
+  Sparkles,
+  SquareRoundCorner,
   Trash2,
   TriangleAlert,
+  Type,
+  type LucideIcon,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 
 import { useConfirm } from "@/components/confirm-dialog"
-import { FormPageHeader } from "@/components/settings/primitives"
+import { FormPageHeader, TabBar, type TabItem } from "@/components/settings/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup, ButtonGroupSeparator } from "@/components/ui/button-group"
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { schemePalette, type ColorScheme } from "@/lib/color-schemes"
 import { subscribeSyncStatus, syncStatusSnapshot, type SyncStatus } from "@/lib/custom-theme-sync"
 import {
   contrastRatio,
@@ -69,7 +76,7 @@ import { settingsPath } from "@/lib/router"
 import { useCustomThemes, useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
-import { DesignTab } from "./design-tab"
+import { LayoutSection, ShapeSection, SurfacesSection, TypeSection } from "./design-tab"
 import { createTheme } from "./gallery"
 import { MODES, PreviewPane, type Mode } from "./preview"
 import { PresetsTab } from "./presets-tab"
@@ -145,6 +152,17 @@ function ThemeSyncChip() {
   )
 }
 
+type SectionId = "presets" | "type" | "shape" | "surfaces" | "layout" | "color"
+
+const SECTIONS: { id: SectionId; label: string; hint: string; icon: LucideIcon }[] = [
+  { id: "presets", label: "Presets", hint: "Start from a whole look", icon: Sparkles },
+  { id: "type", label: "Type", hint: "Faces, size, tracking", icon: Type },
+  { id: "shape", label: "Shape", hint: "Corners and the composer", icon: SquareRoundCorner },
+  { id: "surfaces", label: "Surfaces", hint: "Depth, edge, glass", icon: Layers },
+  { id: "layout", label: "Layout", hint: "Measure and density", icon: Ruler },
+  { id: "color", label: "Color", hint: "Light and dark pair", icon: Palette },
+]
+
 function ThemeEditor({
   themeId,
   onClose,
@@ -157,6 +175,7 @@ function ThemeEditor({
   const customThemes = useCustomThemes()
   const { setColorTheme, colorTheme } = useTheme()
   const confirm = useConfirm()
+  const [section, setSection] = React.useState<SectionId>("presets")
   // The state to restore on Revert — taken once, when this theme is opened.
   const snapshot = React.useRef<CustomTheme | null>(null)
   const theme = customThemes.find((entry) => entry.id === themeId) ?? null
@@ -189,21 +208,6 @@ function ThemeEditor({
     write({ ...theme, light: { ...theme.light, ...light }, dark: { ...theme.dark, ...dark } })
   }
 
-  /** A curated scheme is the exception: it sets the Design half too. Gruvbox
-      under a geometric sans with capsule badges is not Gruvbox — the shape and
-      the type are as much of the identity as the browns. Everything it writes
-      stays editable on the other two tabs, and Revert undoes the whole thing at
-      once, which is why this can afford to be opinionated. */
-  const applyScheme = (scheme: ColorScheme) => {
-    if (!theme) return
-    write({
-      ...theme,
-      light: { ...theme.light, ...schemePalette(scheme.light) },
-      dark: { ...theme.dark, ...schemePalette(scheme.dark) },
-      base: { ...theme.base, ...scheme.design },
-    })
-  }
-
   const remove = async () => {
     if (!theme) return
     const ok = await confirm({
@@ -225,17 +229,32 @@ function ThemeEditor({
 
   return (
     <>
-      <FormPageHeader
-        title={`Edit ${theme.name}`}
-        description="Type, shape and colour, for light and dark together. Changes apply immediately and are saved to this server."
-        onBack={onClose}
+      {/* FormPageHeader has no `flush`; the TabBar below draws the rule. */}
+      <div className="[&>header]:mb-0 [&>header]:border-b-0 [&>header]:pb-4">
+        <FormPageHeader
+          title={`Edit ${theme.name}`}
+          description="Type, shape and colour, for light and dark together. Changes apply immediately and are saved to this server."
+          onBack={onClose}
+        />
+      </div>
+
+      <TabBar
+        label="Theme sections"
+        items={SECTIONS.map<TabItem>(({ id, label, icon }) => ({
+          id,
+          label,
+          icon,
+          dot: id === "color" && warnings > 0,
+        }))}
+        value={section}
+        onChange={(id) => setSection(id as SectionId)}
       />
 
       {/* The theme's live state, at a glance: whether the server has the latest
           edit, and how many contrast pairs fall short of AA — the two things
-          that are true of the theme no matter which tab you are on. Warnings
+          that are true of the theme no matter which section you are on. Warnings
           live here rather than under the preview so they survive the scroll. */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <ThemeSyncChip />
         {warnings > 0 && (
           <Badge
@@ -253,7 +272,7 @@ function ThemeEditor({
           thumbnail: this page runs at the settings frame's full width
           (isFullWidthSettings in settings/sections.ts), and the mock is the half
           that benefits from it. */}
-      <div className="grid gap-4 @panel-lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @panel-lg:items-start @panel-xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] @panel-xl:gap-6">
+      <div className="grid gap-4 @panel-lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] @panel-lg:items-start @panel-xl:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] @panel-xl:gap-6">
         {/* Controls */}
         <div className="flex min-w-0 flex-col gap-4">
           <Field>
@@ -265,31 +284,21 @@ function ThemeEditor({
             />
           </Field>
 
-          <Tabs defaultValue="presets">
-            <TabsList className="w-full">
-              <TabsTrigger value="presets">Presets</TabsTrigger>
-              <TabsTrigger value="design">Design</TabsTrigger>
-              <TabsTrigger value="color">Color</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="presets" className="flex flex-col gap-4 pt-3">
-              <PresetsTab
-                base={theme.base}
-                onBase={setBase}
-                onPalette={setPalette}
-                onScheme={applyScheme}
-              />
-            </TabsContent>
-
-            <TabsContent value="design" className="flex flex-col gap-4 pt-3">
-              <DesignTab base={theme.base} onChange={setBase} />
-            </TabsContent>
-
+          <SectionHeader section={section} />
+          <div className="flex flex-col gap-4">
+            {section === "presets" && (
+              <PresetsTab base={theme.base} onBase={setBase} onPalette={setPalette} />
+            )}
+            {section === "type" && <TypeSection base={theme.base} onChange={setBase} />}
+            {section === "shape" && <ShapeSection base={theme.base} onChange={setBase} />}
+            {section === "surfaces" && <SurfacesSection base={theme.base} onChange={setBase} />}
+            {section === "layout" && <LayoutSection base={theme.base} onChange={setBase} />}
             {/* Two columns of token groups only once the controls column can
                 hold a label plus both mode fields twice over (~350px each);
                 below that the pair wraps, and the light/dark comparison is the
                 one thing this grid exists for. */}
-            <TabsContent value="color" className="grid items-start gap-4 pt-3 @panel-xl:grid-cols-2">
+            {section === "color" && (
+              <div className="grid items-start gap-4 @panel-xl:grid-cols-2">
               {THEME_TOKEN_GROUPS.map((group) => (
                 <FieldSet key={group.label} className="gap-3">
                   <div className="flex items-end justify-between gap-3">
@@ -340,8 +349,9 @@ function ThemeEditor({
                   </ItemGroup>
                 </FieldSet>
               ))}
-            </TabsContent>
-          </Tabs>
+            </div>
+            )}
+          </div>
 
           <footer className="flex flex-wrap items-center gap-2 border-t pt-4">
             <ButtonGroup>
@@ -380,7 +390,7 @@ function ThemeEditor({
         </div>
 
         {/* Preview. Beside the controls and sticky from the split up, where it
-            stays in view for the whole length of the Color tab.
+            stays in view for the whole length of the Color section.
 
             Below the split it is still sticky — pinned to the top of the panel
             rather than to the side — because a preview that scrolls away is a
@@ -391,14 +401,26 @@ function ThemeEditor({
             than through it. */}
         <aside
           className={cn(
-            "order-first sticky top-[var(--dock-content-overlap,0px)] z-20 min-w-0 rounded-xl border bg-surface/95 p-2 shadow-glass backdrop-blur",
-            "@panel-lg:order-none @panel-lg:top-2 @panel-lg:max-h-[calc(var(--panel-h,100svh)-1rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2 @panel-lg:shadow-none @panel-lg:backdrop-blur-none"
+            "order-first sticky top-[calc(var(--app-header-h,0px)+2.75rem)] z-20 min-w-0 rounded-xl border bg-surface/95 p-2 shadow-glass backdrop-blur",
+            "@panel-lg:order-none @panel-lg:top-[calc(var(--app-header-h,0px)+3rem)] @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h,0px)-3.5rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2 @panel-lg:shadow-none @panel-lg:backdrop-blur-none"
           )}
         >
           <PreviewPane theme={theme} worn={worn} />
         </aside>
       </div>
     </>
+  )
+}
+
+/** The section's name and what it is for, over its controls. */
+function SectionHeader({ section }: { section: SectionId }) {
+  const entry = SECTIONS.find((item) => item.id === section)
+  if (!entry) return null
+  return (
+    <div className="flex items-baseline gap-2 border-b pb-2">
+      <h3 className="text-sm font-medium">{entry.label}</h3>
+      <p className="text-[11px] text-muted-foreground">{entry.hint}</p>
+    </div>
   )
 }
 

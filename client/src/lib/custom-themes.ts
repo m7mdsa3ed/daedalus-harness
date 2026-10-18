@@ -24,6 +24,7 @@
    saved stays legible and re-editable, which a raw `0 8px 32px oklch(...)`
    string would not be. */
 
+import { COLOR_SCHEMES, schemePalette } from "./color-schemes"
 import { fontStack, isGoogleFont, googleFontFamily, syncWebFonts, type FontRole } from "./fonts"
 import { darkRamp, lightRamp, type RampSpec } from "./theme-ramp"
 
@@ -182,6 +183,12 @@ export interface BlurPreset {
   label: string
   hint: string
   value: string
+  /** `--app-solid`, 0–1: how far the translucent surfaces (cards, menus,
+      sheets, the composer) are pulled toward opaque. Their 72–90% fills only
+      read as glass because the blur softens what shows through; with no blur
+      the same fills are see-through text on text. So the less glass a preset
+      has, the more solid its surfaces are. */
+  solid: string
 }
 
 /** Backdrop blur behind cards, popovers, the composer and the sidebar — the
@@ -190,10 +197,10 @@ export interface BlurPreset {
     Terminal theme wants none of it, and the heavy tiers want visibly more. The
     two stronger tiers in index.css are multiples of this one number. */
 export const BLUR_PRESETS: readonly BlurPreset[] = [
-  { id: "none", label: "None", hint: "Opaque surfaces. Flat, fast, and legible over anything.", value: "0px" },
-  { id: "light", label: "Light", hint: "A hint of the page showing through.", value: "8px" },
-  { id: "medium", label: "Medium", hint: "The app's default frost.", value: "14px" },
-  { id: "heavy", label: "Heavy", hint: "Pronounced glass — surfaces melt into the page.", value: "24px" },
+  { id: "none", label: "None", hint: "Opaque surfaces. Flat, fast, and legible over anything.", value: "0px", solid: "1" },
+  { id: "light", label: "Light", hint: "A hint of the page showing through.", value: "8px", solid: "0.5" },
+  { id: "medium", label: "Medium", hint: "The app's default frost.", value: "14px", solid: "0" },
+  { id: "heavy", label: "Heavy", hint: "Pronounced glass — surfaces melt into the page.", value: "24px", solid: "0" },
 ]
 
 export interface WidthPreset {
@@ -242,6 +249,82 @@ export const DEPTH_PRESETS: readonly DepthPreset[] = [
     hint: "The app's default — a wide, low-opacity lift under frosted surfaces.",
   },
   { id: "deep", label: "Deep", hint: "Pronounced elevation — panels sit well above the page." },
+]
+
+export interface EdgePreset {
+  id: string
+  label: string
+  hint: string
+  /** `--app-edge`: the hairline round cards, menus and the composer, as a share
+      of the foreground colour. */
+  value: string
+}
+
+/** The hairline, chosen outright. Unset, a theme takes its depth's own edge
+    (`--depth-<id>-edge`: less shadow, more edge); this overrides that. */
+export const EDGE_PRESETS: readonly EdgePreset[] = [
+  { id: "none", label: "None", hint: "No outline — surfaces separate by colour and shadow alone.", value: "0%" },
+  { id: "faint", label: "Faint", hint: "A whisper of an outline.", value: "6%" },
+  { id: "default", label: "Default", hint: "The app's outline.", value: "10%" },
+  { id: "strong", label: "Strong", hint: "A clear outline — what a flat theme needs.", value: "18%" },
+  { id: "bold", label: "Bold", hint: "A drawn edge on every surface.", value: "28%" },
+]
+
+export interface SolidPreset {
+  id: string
+  label: string
+  hint: string
+  /** `--app-solid`, 0–1. */
+  value: string
+}
+
+/** How see-through frosted surfaces are, independent of how much they blur.
+    Unset, it is the blur preset's own pairing (`BlurPreset.solid`). */
+export const SOLID_PRESETS: readonly SolidPreset[] = [
+  { id: "clear", label: "Clear", hint: "The most see-through: the page shows well through cards and menus.", value: "0" },
+  { id: "frosted", label: "Frosted", hint: "Mostly opaque, with a little of the page showing.", value: "0.5" },
+  { id: "solid", label: "Solid", hint: "Fully opaque surfaces.", value: "1" },
+]
+
+/** The `SOLID_PRESETS` id a blur preset implies — what the Opacity control
+    shows as selected while the theme has not chosen one. */
+export const solidIdFor = (blurId: string | undefined): string => {
+  const paired = BLUR_PRESETS.find((p) => p.id === (blurId ?? "medium"))?.solid ?? "0"
+  return SOLID_PRESETS.find((p) => p.value === paired)?.id ?? "clear"
+}
+
+export interface DensityPreset {
+  id: string
+  label: string
+  hint: string
+  /** A multiplier on `--spacing`, on top of the device's own UI scale. */
+  value: string
+}
+
+/** Spacing, as a property of the theme. The device's UI-scale slider
+    (`--app-scale`) still applies on top, so a theme sets how airy it is and the
+    reader still sets how big. */
+export const DENSITY_PRESETS: readonly DensityPreset[] = [
+  { id: "compact", label: "Compact", hint: "Tighter paddings and gaps — more on screen.", value: "0.9" },
+  { id: "default", label: "Default", hint: "The app's spacing.", value: "1" },
+  { id: "airy", label: "Airy", hint: "Looser paddings and gaps.", value: "1.1" },
+]
+
+export interface ComposerPreset {
+  id: string
+  label: string
+  hint: string
+  /** The composer box's corner is `min(radius x mult, cap)`. */
+  mult: string
+  cap: string
+}
+
+/** The composer box's own corner, relative to the theme's radius: it is the one
+    surface that grows tall and wide, so it has a cap the other steps do not. */
+export const COMPOSER_PRESETS: readonly ComposerPreset[] = [
+  { id: "tight", label: "Tight", hint: "A small corner, however round the theme.", mult: "1", cap: "0.75rem" },
+  { id: "default", label: "Follow theme", hint: "The theme's own large corner, capped.", mult: "1.8", cap: "1.5rem" },
+  { id: "round", label: "Round", hint: "A generous corner, up to 2rem.", mult: "2.6", cap: "2rem" },
 ]
 
 export interface TrackingPreset {
@@ -306,7 +389,7 @@ export interface StylePreset {
   base: BaseTokens
 }
 
-/** Whole-Design starting points. Every control on the Design tab is one
+/** Whole-Design starting points. Every control in the Design sections is one
     decision, and the decisions are not independent — a serif at 880px with
     capsule badges and heavy glass is six choices that each look defensible and
     together look like nothing. A preset is the coordinated answer; every part
@@ -415,6 +498,10 @@ export const BASE_KEYS = [
   "text",
   "ground",
   "vibrancy",
+  "edge",
+  "solid",
+  "density",
+  "composer",
   ...FONT_SLOTS.map((s) => s.key),
 ] as const
 
@@ -440,6 +527,11 @@ export const customThemeId = (value: string): string => value.slice(PREFIX.lengt
 const radiusPreset = (id: string | undefined) => RADIUS_PRESETS.find((p) => p.id === id)
 const radiusValue = (id: string | undefined) => radiusPreset(id)?.value
 const blurValue = (id: string | undefined) => BLUR_PRESETS.find((p) => p.id === id)?.value
+const blurSolid = (id: string | undefined) => BLUR_PRESETS.find((p) => p.id === id)?.solid ?? "0"
+const edgeValue = (id: string | undefined) => EDGE_PRESETS.find((p) => p.id === id)?.value
+const solidValue = (id: string | undefined) => SOLID_PRESETS.find((p) => p.id === id)?.value
+const densityValue = (id: string | undefined) => DENSITY_PRESETS.find((p) => p.id === id)?.value
+const composerPreset = (id: string | undefined) => COMPOSER_PRESETS.find((p) => p.id === id)
 const widthValue = (id: string | undefined) => WIDTH_PRESETS.find((p) => p.id === id)?.value
 const depthPreset = (id: string | undefined) => DEPTH_PRESETS.find((p) => p.id === id)
 const trackingValue = (id: string | undefined) => TRACKING_PRESETS.find((p) => p.id === id)?.value
@@ -697,6 +789,14 @@ export function readThemeBase(builtin: string): BaseTokens {
   if (GROUND_PRESETS.some((p) => p.id === ground)) base.ground = ground
   const vibrancy = read("vibrancy")
   if (VIBRANCY_PRESETS.some((p) => p.id === vibrancy)) base.vibrancy = vibrancy
+  const edge = read("edge")
+  if (EDGE_PRESETS.some((p) => p.id === edge)) base.edge = edge
+  const solid = read("solid")
+  if (SOLID_PRESETS.some((p) => p.id === solid)) base.solid = solid
+  const density = read("density")
+  if (DENSITY_PRESETS.some((p) => p.id === density)) base.density = density
+  const composer = read("composer")
+  if (COMPOSER_PRESETS.some((p) => p.id === composer)) base.composer = composer
   for (const slot of FONT_SLOTS) {
     const value = read(slot.key)
     if (value) base[slot.key] = value
@@ -756,14 +856,18 @@ const modeDeclarations = (theme: CustomTheme, mode: "light" | "dark") =>
     block with no mode qualifier, so it applies to both — including depth,
     whose two `--depth-*` vars are themselves redeclared under `.dark`, so one
     declaration here still yields the right shadow after dark. */
-function baseDeclarations(base: BaseTokens): string {
+function baseDeclarations(base: BaseTokens, echo = false): string {
   const lines: string[] = []
+  /* A built-in names its choices as ids too (`--theme-radius: soft`), which is
+     how `readThemeBase` seeds a copy of it. A saved theme carries `base` and
+     needs no echo. */
+  if (echo) for (const [key, id] of Object.entries(base)) lines.push(`  --theme-${key}: ${id};`)
   const radius = radiusPreset(base.radius)
   if (radius) {
     lines.push(`  --radius: ${radius.value};`, `  --app-radius-pill: ${radius.pill};`)
   }
   const blur = blurValue(base.blur)
-  if (blur) lines.push(`  --app-blur: ${blur};`)
+  if (blur) lines.push(`  --app-blur: ${blur};`, `  --app-solid: ${blurSolid(base.blur)};`)
   const width = widthValue(base.width)
   if (width) lines.push(`  --harness-chat-width: ${width};`)
   const tracking = trackingValue(base.tracking)
@@ -777,9 +881,20 @@ function baseDeclarations(base: BaseTokens): string {
   if (depthPreset(base.depth)) {
     lines.push(
       `  --app-shadow-glass: var(--depth-${base.depth}-glass);`,
-      `  --app-shadow-glass-lg: var(--depth-${base.depth}-glass-lg);`
+      `  --app-shadow-glass-lg: var(--depth-${base.depth}-glass-lg);`,
+      `  --app-edge: var(--depth-${base.depth}-edge);`
     )
   }
+  /* After the depth and blur lines on purpose: an explicit edge or opacity
+     outranks the one those presets imply. */
+  const edge = edgeValue(base.edge)
+  if (edge) lines.push(`  --app-edge: ${edge};`)
+  const solid = solidValue(base.solid)
+  if (solid) lines.push(`  --app-solid: ${solid};`)
+  const density = densityValue(base.density)
+  if (density) lines.push(`  --spacing: calc(0.25rem * var(--app-scale, 1) * ${density});`)
+  const composer = composerPreset(base.composer)
+  if (composer) lines.push(`  --app-composer-mult: ${composer.mult};`, `  --app-composer-cap: ${composer.cap};`)
   for (const slot of FONT_SLOTS) {
     const id = base[slot.key]
     if (id) lines.push(`  --${slot.cssVar}: ${fontStack(id, slot.role)};`)
@@ -792,11 +907,10 @@ function baseDeclarations(base: BaseTokens): string {
     document element (the gallery previews themes on nested divs). See the
     header of styles/themes.css. A custom theme and a shipped one are
     indistinguishable to every component. */
-export function themeCss(theme: CustomTheme): string {
-  const value = customThemeValue(theme.id)
+export function themeCss(theme: CustomTheme, value = customThemeValue(theme.id), echo = false): string {
   const selector = `[data-color-theme="${value}"][data-color-theme]`
   const blocks: string[] = []
-  const base = baseDeclarations(theme.base)
+  const base = baseDeclarations(theme.base, echo)
   if (base) blocks.push(`${selector} {\n${base}\n}`)
   const light = modeDeclarations(theme, "light")
   if (light) blocks.push(`${selector}:not(.dark) {\n${light}\n}`)
@@ -828,7 +942,10 @@ export function themeStyleVars(
     vars["--app-radius-pill"] = radius.pill
   }
   const blur = blurValue(theme.base?.blur)
-  if (blur) vars["--app-blur"] = blur
+  if (blur) {
+    vars["--app-blur"] = blur
+    vars["--app-solid"] = blurSolid(theme.base?.blur)
+  }
   const width = widthValue(theme.base?.width)
   if (width) vars["--harness-chat-width"] = width
   const tracking = trackingValue(theme.base?.tracking)
@@ -843,6 +960,18 @@ export function themeStyleVars(
   if (depthPreset(theme.base?.depth)) {
     vars["--app-shadow-glass"] = `var(--depth-${theme.base.depth}-glass)`
     vars["--app-shadow-glass-lg"] = `var(--depth-${theme.base.depth}-glass-lg)`
+    vars["--app-edge"] = `var(--depth-${theme.base.depth}-edge)`
+  }
+  const edge = edgeValue(theme.base?.edge)
+  if (edge) vars["--app-edge"] = edge
+  const solid = solidValue(theme.base?.solid)
+  if (solid) vars["--app-solid"] = solid
+  /* Density is deliberately not drawn in the mock, like text size: the mock is
+     a fixed-size drawing, and its swatch carries the sample instead. */
+  const composer = composerPreset(theme.base?.composer)
+  if (composer) {
+    vars["--app-composer-mult"] = composer.mult
+    vars["--app-composer-cap"] = composer.cap
   }
   for (const slot of FONT_SLOTS) {
     const id = theme.base?.[slot.key]
@@ -873,9 +1002,33 @@ export function applyCustomThemes(themes: CustomTheme[]): void {
     style.id = STYLE_ID
     document.head.appendChild(style)
   }
-  style.textContent = themes.map(themeCss).filter(Boolean).join("\n\n")
+  style.textContent = themes.map((theme) => themeCss(theme)).filter(Boolean).join("\n\n")
   syncWebFonts(webFontsOf(themes))
 }
+
+/* The built-in schemes (lib/color-schemes.ts) are written once, at load, into a
+   sheet of their own: the same three blocks a saved theme gets, under the
+   scheme's bare id. The data lives in one place and is bundled, so they paint on
+   a cold offline load like the CSS ones do. */
+function applyBuiltinSchemes(): void {
+  const style = document.createElement("style")
+  style.id = "daedalus-builtin-themes"
+  style.textContent = COLOR_SCHEMES.map((scheme) =>
+    themeCss(
+      {
+        id: scheme.id,
+        name: scheme.label,
+        light: schemePalette(scheme.light),
+        dark: schemePalette(scheme.dark),
+        base: scheme.design,
+      },
+      scheme.id,
+      true
+    )
+  ).join("\n\n")
+  document.head.appendChild(style)
+}
+applyBuiltinSchemes()
 
 const listeners = new Set<() => void>()
 let cache = loadCustomThemes()

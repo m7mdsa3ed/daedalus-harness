@@ -73,6 +73,7 @@ import {
   Mic,
   Minimize2,
   Pause,
+  PhoneOff,
   Play,
   Square,
 } from "lucide-react"
@@ -110,7 +111,8 @@ import { ProjectCommandMenu, shellLineFor, useProjectCommands } from "@/componen
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
 import { useVoice } from "@/hooks/use-voice"
-import { defaultVoice, useVoiceProviders } from "@/lib/queries/voice"
+import { useProfiles } from "@/lib/queries/catalog"
+import { defaultVoice, useVoiceProviders, voiceFor } from "@/lib/queries/voice"
 import { endVoiceCall, startVoiceCall, useVoiceCallActive } from "@/lib/voice-call"
 import type { Actions } from "@/lib/actions"
 import { useComposerPrefs } from "@/lib/composer-prefs"
@@ -123,6 +125,7 @@ import { HARNESS_MCP_ID, splitTaskContext } from "@/lib/task-mentions"
 import { mcpPromptCommands, mcpPromptFor, readMcpResourceFile, renderMcpPrompt } from "@/lib/mcp-composer"
 import { useServer } from "@/lib/server-context"
 import { useChords } from "@/lib/keybindings"
+import { useShortcut } from "@/hooks/use-hotkey"
 import {
   clearPastes,
   expandPastes,
@@ -152,6 +155,10 @@ import type { TurnChanges } from "@/lib/workspace/git-api"
 import { holdOf } from "@/lib/thread/hold"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
+
+/* Lazy: the realtime providers ride this chunk, so a composer with no call
+   never pays for them. */
+const VoiceCall = React.lazy(() => import("@/components/thread-view/voice-call"))
 
 /* Past this the prompt is long enough that its size is worth a reading, and
    the expand toggle is worth a slot on the row. Both are about the same
@@ -221,8 +228,9 @@ export function Composer({
       The reserved height stays (`--composer-dock-h`): collapsing must not
       re-flow the transcript under somebody who is reading it. */
   collapsed?: boolean
-  /** Offer the voice call. Only a thread view draws the call (at its foot), so
-      the landing console, which has no transcript to put it in, does not. */
+  /** Offer the voice call. Wherever it is offered, something has to draw the
+      call card with it — a thread view at the transcript's foot, the landing
+      console above its box (`landing-page.tsx`). */
   voiceCall?: boolean
   ref?: React.Ref<ComposerHandle>
 }) {
@@ -300,6 +308,14 @@ export function Composer({
   /* The thread's MCP servers, read by the harness's own client: their prompts
      join the `/` menu and their resources the `@` one, for every runtime. */
   const server = useServer()
+  /* The call's backend: project, then profile, then default — the order the
+     server resolves `?sessionId=` in, decided once here so the bar and the
+     token it connects with agree on which one they are using. */
+  const voiceProvider = voiceFor(
+    useVoiceProviders().data,
+    useProjects().find((p) => p.id === meta?.projectId)?.defaults?.voiceProvider,
+    useProfiles().find((p) => p.id === meta?.profileId)?.voiceProvider
+  )
   const mcpServers = useThreadMcp(sessionId, !draft)
   const lock = composerLock(thread.phase, draft)
   const disabled = !lock.typable
@@ -590,6 +606,17 @@ export function Composer({
      After a frame: dockview moves focus itself as it activates a new panel,
      and the later mover wins. */
   const routed = currentThreadId(location.pathname, location.search) === sessionId
+  /* Only the composer in front of you answers the call chord, like the
+     pickers' keys: a background tab's composer must not start a call. */
+  const voiceChord = formatChord(useChords("voiceCall")[0] ?? "")
+  useShortcut(
+    "voiceCall",
+    () => {
+      if (inCall) return endVoiceCall(sessionId)
+      startVoiceCall(sessionId)
+    },
+    { enabled: Boolean(voiceBackend && voiceCall && (routed || autoFocus)) }
+  )
   const focusRequest = useComposerFocusRequest(sessionId)
   React.useEffect(() => {
     if (!(routed || autoFocus)) return
@@ -799,24 +826,41 @@ export function Composer({
         tabIndex={away ? 0 : -1}
         aria-hidden={!away || undefined}
         aria-label={inCall ? "End voice call" : "Message the agent"}
-        title={inCall ? "End voice call" : text.trim() || "Message the agent"}
+        title={inCall ? `End voice call${voiceChord ? ` (${voiceChord})` : ""}` : text.trim() || "Message the agent"}
         onClick={() => {
           if (inCall) return endVoiceCall(sessionId)
           setRevealed(true)
           requestAnimationFrame(() => composerRef.current?.focus())
         }}
         className={cn(
-          "absolute bottom-[max(0.75rem,var(--safe-bottom))] right-[max(1rem,calc((100%_-_var(--harness-composer-width))/2))] z-20 flex size-9 items-center justify-center rounded-pill bg-composer/90 text-muted-foreground shadow-glass ring-1 ring-foreground/10 backdrop-blur-[var(--app-blur)] hover:text-foreground",
+          "composer-pill absolute bottom-[max(0.75rem,var(--safe-bottom))] right-[max(1rem,calc((100%_-_var(--harness-composer-width))/2))] z-20",
           "transition-opacity duration-300 ease-out motion-reduce:transition-none",
           away ? "pointer-events-auto opacity-100 delay-100" : "pointer-events-none opacity-0"
         )}
       >
         {inCall ? (
-          <AudioLines className="size-4 shrink-0 animate-pulse text-primary" />
+          <PhoneOff className="size-4 shrink-0 text-destructive" />
         ) : (
           <MessageSquareText className="size-4 shrink-0" />
         )}
       </button>
+      {/* The call's controls, beside the pill that ends it: the box is away
+          for the whole call, so this is where it is run from. Mounted here,
+          not in the transcript, so a call belongs to the composer it replaces. */}
+      {inCall && voiceProvider && (
+        <div className="pointer-events-auto absolute bottom-[max(0.75rem,var(--safe-bottom))] right-[calc(max(1rem,calc((100%_-_var(--harness-composer-width))/2))_+_var(--composer-pill)_+_0.5rem)] z-20">
+          <React.Suspense fallback={null}>
+            <VoiceCall
+              sessionId={sessionId}
+              thread={thread}
+              actions={actions}
+              settings={server}
+              provider={voiceProvider}
+              draft={draft}
+            />
+          </React.Suspense>
+        </div>
+      )}
       <ComposerStrip
         aria-hidden={away || undefined}
         inert={away || undefined}
@@ -900,7 +944,7 @@ export function Composer({
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
           It wears the theme's card treatment — `shadow-glass` (the card-level
           `--app-shadow-glass` depth, not the overlay-level `-lg`), a
-          `ring-foreground/10` hairline like `Card`, and the theme's own blur
+          `ring-edge` hairline (the depth's own `--app-edge`), and the theme's own blur
           and saturation (`--app-blur`, `--app-saturate`) — so the card reads
           as the raised top of the composer unit in every palette, and a Flat
           theme draws no shadow, exactly like the theme studio's own composer
@@ -918,20 +962,20 @@ export function Composer({
         aria-hidden={away || undefined}
         inert={away || undefined}
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl p-2 shadow-glass ring-1 ring-foreground/10 focus-within:ring-2 focus-within:ring-ring/40",
-          /* The morph: clipped down to the pill's box (2.25rem square, bottom
-             right) while away. Open is a negative inset, not `none`, so the
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-composer p-composer-pad shadow-glass ring-1 ring-edge focus-within:ring-2 focus-within:ring-focus-soft",
+          /* The morph: clipped down to the pill's box (`--composer-pill` square,
+             bottom right) while away. Open is a negative inset, not `none`, so the
              two shapes interpolate and the 4rem shadow is not clipped off. A
              clip moves no layout, so `--composer-dock-h` holds. The pill
              corner uses the theme's pill radius, so square themes stay square. */
           "transition-[clip-path,ring-color] duration-300 ease-out motion-reduce:transition-none",
           "[&>*]:transition-opacity [&>*]:duration-200",
           away
-            ? "[clip-path:inset(calc(100%_-_2.25rem)_0_0_calc(100%_-_2.25rem)_round_var(--app-radius-pill))] [&>*]:opacity-0"
+            ? "[clip-path:inset(calc(100%_-_var(--composer-pill))_0_0_calc(100%_-_var(--composer-pill))_round_var(--app-radius-pill))] [&>*]:opacity-0"
             : "[clip-path:inset(-5rem)]",
           /* Theme glass: the card token at card-level blur/saturation, the
              same recipe `Card` wears — never a hardcoded blur or shadow. */
-          "bg-composer/80 backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))]",
+          "bg-composer-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))]",
           voice.listening && "ring-1 ring-destructive/40"
         )}
         onDragOver={(e) => {
@@ -958,7 +1002,7 @@ export function Composer({
         }}
       >
         {dragging && (
-          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-composer/80 text-xs font-medium text-primary">
+          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-composer border-2 border-dashed border-primary bg-composer-glass text-xs font-medium text-primary">
             Drop to attach
           </div>
         )}
@@ -967,7 +1011,7 @@ export function Composer({
             of controls about sending. It rewrites the draft through the AI SDK
             against the profile picked in Settings › General — a device habit,
             not a property of the thread. */}
-        <div className="absolute top-2 right-2 z-10">
+        <div className="absolute top-composer-pad right-composer-pad z-10">
           <EnhanceButton
             sessionId={sessionId}
             meta={meta}
@@ -1095,7 +1139,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                 iconFit,
                 expanded && "text-primary hover:text-primary"
               )}
@@ -1112,7 +1156,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                 iconFit,
                 // Listening is a live state, so it stays coloured — but as text,
                 // not as a filled chip that reintroduces the chrome.
@@ -1131,12 +1175,12 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                 iconFit,
                 inCall && "text-primary hover:text-primary"
               )}
               onClick={() => (inCall ? endVoiceCall(sessionId) : startVoiceCall(sessionId))}
-              title={inCall ? "End voice call" : "Voice call"}
+              title={voiceChord ? `${inCall ? "End voice call" : "Voice call"} (${voiceChord})` : inCall ? "End voice call" : "Voice call"}
               aria-pressed={inCall}
             >
               <AudioLines />
@@ -1157,7 +1201,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                 iconFit,
                 thread.paused && "text-primary hover:text-primary"
               )}
@@ -1183,7 +1227,7 @@ export function Composer({
             <Button
               variant="ghost"
               size={iconSize}
-              className={cn("shrink-0 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30", iconFit)}
+              className={cn("shrink-0 rounded-key bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30", iconFit)}
               /* Stop and Escape are the same gesture, so they answer the same
                  way: a message the user has not seen land comes back into the
                  box rather than staying parked in a queue nothing will drain.
@@ -1209,7 +1253,7 @@ export function Composer({
           <Button
             variant="ghost"
             size={iconSize}
-            className={cn("shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100", iconFit)}
+            className={cn("shrink-0 rounded-key bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100", iconFit)}
             onClick={() => void send()}
             disabled={!canSend}
             title={sendTitle}

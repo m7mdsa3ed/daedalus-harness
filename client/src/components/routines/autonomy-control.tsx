@@ -33,7 +33,7 @@ import { AlertTriangleIcon, ShieldCheckIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
 import { useConfirm } from "@/components/confirm-dialog"
-import { Field } from "@/components/settings/primitives"
+import { Field, INSET, Segmented } from "@/components/settings/primitives"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -162,7 +162,7 @@ export function AutonomyPermissions({
       <div
         key={key}
         className={cn(
-          "flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 sm:flex-nowrap",
+          "flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 @panel-sm:flex-nowrap",
           value === "allow" && opts.grave && "bg-destructive/5"
         )}
       >
@@ -189,7 +189,7 @@ export function AutonomyPermissions({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-2.5 rounded-lg border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+      <div className={`flex items-start gap-2.5 px-3 py-2.5 text-xs text-muted-foreground ${INSET}`}>
         <ShieldCheckIcon className="mt-0.5 size-4 shrink-0" />
         <p>
           A run fires with nobody watching, so every question the agent would have asked you has to
@@ -199,7 +199,7 @@ export function AutonomyPermissions({
         </p>
       </div>
 
-      <div className="divide-y overflow-hidden rounded-xl border">
+      <div className={`divide-y overflow-hidden ${INSET}`}>
         {KINDS.map((k) => row(k.kind, k.label, k.blurb, { grave: k.grave }))}
         {/* Last, and visually apart: the blanket answer is the fallback for the
             rows above and for every kind ACP has not shipped yet, which is the
@@ -236,7 +236,7 @@ export function AutonomyLimits({
 }) {
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 @lg:grid-cols-2">
         <Field
           label="Questions the agent asks outright"
           hint="Not a permission — a form the agent puts up mid-turn. Declining is a real answer: the turn carries on and says it was skipped."
@@ -290,7 +290,7 @@ export function AutonomyLimits({
         </Field>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 @xl:grid-cols-3">
         <Field label="Run time limit (seconds)" hint="Whole run, not one turn. 0 = none.">
           <Input
             type="number"
@@ -324,9 +324,8 @@ export function AutonomyLimits({
   )
 }
 
-/** Three buttons rather than a select: the choice is one of three words, it is
-    made ten times down the page, and a select would hide two thirds of it
-    behind a click each time. */
+/** Three words, one pick, made ten times down the page: the kit's `Segmented`.
+    A select would hide two thirds of it behind a click each time. */
 function StanceSelect({
   value,
   label,
@@ -336,43 +335,21 @@ function StanceSelect({
   value: Stance
   label: string
   /** Non-empty means Allow is refused, and the string says why (drawn as the
-      row's blurb — a control that is off without saying so is a bug report). */
+      row's blurb - a control that is off without saying so is a bug report). */
   disabledAllow?: string
   onChange: (next: Stance) => void
 }) {
   return (
-    <div
-      role="radiogroup"
-      aria-label={`${label} — what the harness answers`}
-      className="flex shrink-0 rounded-lg border bg-background p-0.5"
-    >
-      {STANCES.map((stance) => {
-        const on = value === stance.value
-        const off = stance.value === "allow" && Boolean(disabledAllow) && !on
-        return (
-          <button
-            key={stance.value}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            disabled={off}
-            title={off ? disabledAllow : undefined}
-            onClick={() => !off && onChange(stance.value)}
-            className={cn(
-              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-              on
-                ? stance.value === "allow"
-                  ? "bg-destructive/15 text-destructive"
-                  : "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-              off && "cursor-not-allowed opacity-40 hover:text-muted-foreground"
-            )}
-          >
-            {stance.label}
-          </button>
-        )
-      })}
-    </div>
+    <Segmented
+      label={`${label} \u2014 what the harness answers`}
+      value={value}
+      onChange={onChange}
+      className="shrink-0"
+      options={STANCES.map((stance) => ({
+        ...stance,
+        disabled: stance.value === "allow" && Boolean(disabledAllow) && value !== "allow",
+      }))}
+    />
   )
 }
 

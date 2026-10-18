@@ -308,6 +308,17 @@ export function TerminalPanel({
     terminal.loadAddon(searchAddon)
     terminal.loadAddon(new WebLinksAddon())
     terminal.open(container)
+    /* Mobile keyboards otherwise hold keystrokes in an IME composition
+       (predictions/autocorrect) and the PTY sees nothing until the word is
+       committed — typing that never sends. These ask the keyboard to commit
+       each key, so `onData` fires per character like a hardware keyboard.
+       xterm already sets autocorrect/autocapitalize/spellcheck; the rest is
+       what it leaves out. */
+    const helper = container.querySelector<HTMLTextAreaElement>("textarea.xterm-helper-textarea")
+    helper?.setAttribute("autocomplete", "off")
+    helper?.setAttribute("autocapitalize", "none")
+    helper?.setAttribute("enterkeyhint", "enter")
+    helper?.setAttribute("inputmode", "text")
     term.current = terminal
     fit.current = fitAddon
     search.current = searchAddon
@@ -812,9 +823,17 @@ export function TerminalPanel({
         ref={host}
         aria-label="Terminal"
         className="min-h-0 flex-1 overflow-hidden px-2 py-1"
-        /* A bell is news about a panel nobody is reading; clicking into it is
-           the reader arriving. */
-        onPointerDown={() => setBell(false)}
+        /* A bell is news about a panel nobody is reading; touching the panel
+           is the reader arriving — and on touch the arrival has to focus here.
+           xterm focuses its hidden textarea on mousedown, but a touch tap only
+           gets that as an emulated event (late, and outside the gesture iOS
+           requires to raise the keyboard — or never, when the dock handles the
+           pointer first). Focusing synchronously in the gesture is what opens
+           the soft keyboard, so each tap types straight into the PTY. */
+        onPointerDown={() => {
+          setBell(false)
+          term.current?.focus()
+        }}
       />
 
       {/* The keys a soft keyboard cannot reach. `input()` routes through onData

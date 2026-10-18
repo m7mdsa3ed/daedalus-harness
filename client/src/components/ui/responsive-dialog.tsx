@@ -45,7 +45,7 @@ const TallCtx = React.createContext(false)
 /* The panel: shared by the centred popup and the sheet. `data-slot` is what
    index.css keys the glass background/blur/shadow on. */
 const SURFACE =
-  "text-sm text-popover-foreground bg-popover ring-1 ring-foreground/5 outline-none"
+  "text-sm text-popover-foreground bg-popover ring-1 ring-edge-float outline-none"
 
 /* The backdrop tint lives in index.css under [data-slot="dialog-overlay"]. */
 const OVERLAY = "fixed inset-0 isolate z-50 bg-black/80 supports-backdrop-filter:backdrop-blur-xs"

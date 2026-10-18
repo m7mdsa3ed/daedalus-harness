@@ -600,6 +600,17 @@ beside Import in Settings › MCP.
 - **One level, like `agents`**: a child thread — a workflow step or a subagent — is never
   handed it.
 
+- **`builtin:video` is `video-mcp/` as a stdio child, over the thread's own `/hm` loopback.**
+  A product video is the *build* of a `storyboard.json` the agent and user keep editing, so
+  the row is the library handle and `videoServer` (`sessions.ts`) resolves it at spawn:
+  `node <repo>/video-mcp/dist/index.js` (found relative to the server package, from `src/`
+  and `dist/` alike), `HARNESS_URL` = the thread's loopback, and the server process's
+  `VIDEO_*` / `ELEVENLABS_*` env passed through — providers are configured where the server
+  runs. **Not advertised without `ffmpeg` on PATH and a built `video-mcp/dist`**, like the
+  browser row. Top-level threads only. `video_publish` uploads through that loopback, which
+  is why `routes/harness.ts` forwards `x-filename` (raw `POST /api/files` carries the name
+  in a header) — and no other caller header. `pnpm test:harness` covers all three.
+
 ## Pausing a run
 
 - **A run pauses as a state of the run, never as a cancel-and-restart.** The Codex

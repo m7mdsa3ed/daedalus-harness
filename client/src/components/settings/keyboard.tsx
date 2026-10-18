@@ -19,9 +19,16 @@
    because the two questions differ: choosing is "do you want this", living with
    it is "why is this one not firing". */
 import * as React from "react"
-import { AlertTriangleIcon, InfoIcon, KeyboardIcon, RotateCcwIcon } from "lucide-react"
+import {
+  AlertTriangleIcon,
+  InfoIcon,
+  KeyboardIcon,
+  LockIcon,
+  PencilIcon,
+  RotateCcwIcon,
+  SearchIcon,
+} from "lucide-react"
 
-import { useCoarsePointer } from "@/hooks/use-device"
 import { Shortcut } from "@/components/shortcut"
 import { Button } from "@/components/ui/button"
 import {
@@ -58,7 +65,9 @@ import { Input } from "@/components/ui/input"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Notice } from "@/components/notice"
 import { QUICK_ENTRY_DEFAULT, useQuickEntry } from "@/lib/desktop"
-import { PageHeader, Group, Row } from "./primitives"
+import { DataTable, TitleCell, type DataTableSort, type TableAction } from "@/components/ui/data-table"
+import type { ColumnDef } from "@/lib/table"
+import { Group, INSET, PageHeader, Row, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** The desktop shell is the one place a browser-reserved chord is free: the
@@ -86,7 +95,56 @@ function WarningLine({ warning }: { warning: ChordWarning }) {
   )
 }
 
-/** The recorder. Open, press the chord, read what it will cost, save. */
+/** One shortcut, with everything a column needs already worked out — the cells
+    close over nothing, so the table's per-row memo holds until a binding
+    actually moves. */
+interface ShortcutRowData {
+  id: ShortcutId
+  def: ShortcutDef
+  chords: string[]
+  override: boolean
+  rebindable: boolean
+  custom: boolean
+  reserved: ReturnType<typeof reservedChord>
+  warnings: ChordWarning[]
+}
+
+/** Alternatives read as alternatives, the way the help sheet prints them. */
+function Chords({ def, chords }: { def: ShortcutDef; chords: string[] }) {
+  if (def.display) return <Shortcut keys={def.display} />
+  if (chords.length === 0) return <span className="text-xs text-muted-foreground">Not bound</span>
+  return (
+    <>
+      {chords.map((chord, index) => (
+        <React.Fragment key={chord}>
+          {index > 0 && <span className="text-[11px] text-muted-foreground">or</span>}
+          <Shortcut chord={chord} />
+        </React.Fragment>
+      ))}
+    </>
+  )
+}
+
+/** The row's standing complaint: a mark that says "something else wants this
+    key", with the words on hover and in the recorder. */
+function WarnMark({ warnings }: { warnings: ChordWarning[] }) {
+  if (warnings.length === 0) return null
+  const hard = warnings.some((warning) => warning.kind === "hard")
+  return (
+    <span
+      role="img"
+      aria-label={warnings.map((warning) => warning.text).join(" ")}
+      title={warnings.map((warning) => warning.text).join(" ")}
+      className={cn("shrink-0", hard ? "text-destructive" : "text-muted-foreground")}
+    >
+      <AlertTriangleIcon className="size-3.5" />
+    </span>
+  )
+}
+
+/** The recorder. Open, press the chord, read what it will cost, save. It also
+    carries what the table has no room for on a phone: the binding as it stands,
+    its warnings, and the Override switch for a chord something else wants. */
 function RecordDialog({
   shortcut,
   open,
@@ -96,6 +154,7 @@ function RecordDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const bindings = useKeybindings()
   const [chord, setChord] = React.useState<string | null>(null)
   React.useEffect(() => {
     if (open) setChord(null)
@@ -120,6 +179,9 @@ function RecordDialog({
 
   if (!shortcut) return null
   const warnings = chord ? chordWarnings(chord, shortcut.id, DESKTOP) : []
+  const live = bindings[shortcut.id]
+  const liveWarnings = live.chords.flatMap((entry) => chordWarnings(entry, shortcut.id, DESKTOP))
+  const liveReserved = live.chords.map((entry) => reservedChord(entry)).find(Boolean)
 
   const save = () => {
     if (!chord) return
@@ -129,11 +191,12 @@ function RecordDialog({
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="@panel-sm:max-w-md">
+      <ResponsiveDialogContent className="sm:max-w-md">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>{shortcut.label}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            Press the keys you want. Escape closes this without changing anything.
+            {shortcut.note ? `${shortcut.note} ` : ""}Press the keys you want. Escape closes this without
+            changing anything.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         <div className="pb-2">
@@ -156,6 +219,31 @@ function RecordDialog({
               ))}
             </div>
           )}
+          <div className={cn(INSET, "mt-4 space-y-2 p-3")}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">Now</span>
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                <Chords def={shortcut} chords={live.chords} />
+              </div>
+            </div>
+            {liveWarnings.map((warning) => (
+              <WarningLine key={warning.kind + warning.text} warning={warning} />
+            ))}
+            {/* Only offered where something else wants the key: elsewhere there
+                is nothing to override and a switch would be a question with one
+                answer. A hard-reserved chord is not overridable at all — the page
+                never receives it — so the switch says so by being disabled. */}
+            {liveReserved && (
+              <label className="flex min-h-9 items-center justify-between gap-3 text-xs pointer-coarse:min-h-11">
+                <span>Override the other use of this key</span>
+                <Switch
+                  checked={live.override && liveReserved.reserved !== "hard"}
+                  disabled={liveReserved.reserved === "hard"}
+                  onCheckedChange={(value) => setShortcutOverride(shortcut.id, value)}
+                />
+              </label>
+            )}
+          </div>
         </div>
         <ResponsiveDialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
@@ -170,111 +258,146 @@ function RecordDialog({
   )
 }
 
-function ShortcutRow({
-  shortcut,
-  chords,
-  override,
-  onRecord,
-}: {
-  shortcut: ShortcutDef
-  chords: string[]
-  override: boolean
-  onRecord: () => void
-}) {
-  /* The pointer, not the width: a finger needs a bigger target on a phone AND
-     on a touch laptop, and a narrow dock panel on a desktop has a mouse in
-     front of it. (docs/client.md: width is the panel's, the pointer is the
-     device's.) */
-  const coarse = useCoarsePointer()
-  const rebindable = shortcut.rebindable === true
-  const custom = isCustomized(shortcut.id)
-  const reserved = chords.map((chord) => reservedChord(chord)).find(Boolean)
-  const warnings = rebindable
-    ? chords.flatMap((chord) => chordWarnings(chord, shortcut.id, DESKTOP))
-    : []
+/** What a row's binding is, in words: the Source column on a table, the second
+    word of the meta line on a phone. */
+function sourceLabel(row: ShortcutRowData): string {
+  if (!row.rebindable) return "Fixed"
+  const key = row.reserved ? (row.reserved.reserved === "hard" ? "Browser key" : "Shared key") : null
+  if (key) return row.custom ? `Customized · ${key}` : key
+  return row.custom ? "Customized" : "Default"
+}
 
-  const subtitle = (
-    <span className="block space-y-1">
-      {shortcut.note && <span className="block text-pretty">{shortcut.note}</span>}
-      {warnings.map((warning) => (
-        <WarningLine key={warning.kind + warning.text} warning={warning} />
-      ))}
-    </span>
-  )
+const SOURCES = [
+  { value: "all", label: "All" },
+  { value: "customized", label: "Custom" },
+  { value: "reserved", label: "Reserved" },
+  { value: "fixed", label: "Fixed" },
+]
 
-  /* Two lines on mobile — title with its warnings, then the chord on the left
-     and its controls on the right — because a right-aligned cluster of keycaps,
-     a switch and two buttons fighting the title for 300px reads as noise. From
-     sm up there is room for the one-line row again. */
-  return (
-    <div className="flex min-h-11 flex-col gap-2.5 py-3 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between @panel-sm:gap-x-4">
-      <div className="min-w-0 @panel-sm:flex-1">
-        <div className="truncate text-sm font-medium">{shortcut.label}</div>
-        {subtitle && (
-          <div className="mt-0.5 text-xs break-words text-muted-foreground">{subtitle}</div>
-        )}
+const SOURCE_TEST: Record<string, (row: ShortcutRowData) => boolean> = {
+  all: () => true,
+  customized: (row) => row.custom,
+  reserved: (row) => !!row.reserved,
+  fixed: (row) => !row.rebindable,
+}
+
+const FILTER_FIELDS = [
+  {
+    id: "scope",
+    label: "Category",
+    type: "multi-select" as const,
+    options: SHORTCUT_SCOPES.map((name) => ({ value: name, label: name })),
+  },
+  { id: "source", label: "Source", type: "segmented" as const, options: SOURCES },
+]
+
+const markOf = (row: ShortcutRowData) => (row.rebindable ? <KeyboardIcon /> : <LockIcon />)
+
+const COLUMNS: ColumnDef<ShortcutRowData, unknown>[] = [
+  {
+    id: "action",
+    header: "Action",
+    accessorFn: (row) => row.def.label,
+    cell: ({ row }) => <TitleCell title={row.original.def.label} subtitle={row.original.def.note} />,
+    meta: { title: true, className: "min-w-56" },
+  },
+  {
+    id: "scope",
+    header: "Category",
+    accessorFn: (row) => row.def.scope,
+    cell: ({ row }) => <span className="text-muted-foreground">{row.original.def.scope}</span>,
+    meta: { className: "hidden w-28 @panel-md:table-cell" },
+  },
+  {
+    id: "shortcut",
+    header: "Shortcut",
+    enableSorting: false,
+    cell: ({ row }) => (
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <Chords def={row.original.def} chords={row.original.chords} />
+        <WarnMark warnings={row.original.warnings} />
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 @max-panel-sm:justify-between @panel-sm:shrink-0 @panel-sm:justify-end @panel-sm:gap-1.5">
-        {/* Alternatives read as alternatives, the way the help sheet prints them. */}
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {shortcut.display ? (
-            <Shortcut keys={shortcut.display} />
-          ) : chords.length === 0 ? (
-            <span className="text-xs text-muted-foreground">Not bound</span>
+    ),
+    meta: { className: "min-w-44" },
+  },
+  {
+    id: "source",
+    header: "Source",
+    enableSorting: false,
+    cell: ({ row }) => {
+      const data = row.original
+      return (
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {!data.rebindable ? (
+            <StatusBadge>Fixed</StatusBadge>
+          ) : data.custom ? (
+            <StatusBadge tone="info">Customized</StatusBadge>
           ) : (
-            chords.map((chord, index) => (
-              <React.Fragment key={chord}>
-                {index > 0 && <span className="text-[11px] text-muted-foreground">or</span>}
-                <Shortcut chord={chord} />
-              </React.Fragment>
-            ))
+            <StatusBadge dot={false}>Default</StatusBadge>
+          )}
+          {data.reserved && (
+            <StatusBadge tone={data.reserved.reserved === "hard" ? "bad" : "warn"}>
+              {data.reserved.reserved === "hard" ? "Browser key" : "Shared key"}
+            </StatusBadge>
           )}
         </div>
-        {rebindable ? (
-          <>
-            {/* Only offered where something else wants the key: elsewhere there is
-                nothing to override and a switch would be a question with one
-                answer. A hard-reserved chord is not overridable at all — the page
-                never receives it — so the switch says so by being disabled. */}
-            {reserved && (
-              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground @max-panel-sm:text-xs">
-                <span>Override</span>
-                <Switch
-                  checked={override && reserved.reserved !== "hard"}
-                  disabled={reserved.reserved === "hard"}
-                  onCheckedChange={(value) => setShortcutOverride(shortcut.id, value)}
-                />
-              </label>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={cn(coarse && "h-9", "@max-panel-sm:flex-1")}
-              onClick={onRecord}
-            >
-              Change
-            </Button>
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              className={cn(coarse && "size-9")}
-              aria-label="Reset to the default"
-              title="Reset to the default"
-              disabled={!custom}
-              onClick={() => resetShortcut(shortcut.id)}
-            >
-              <RotateCcwIcon />
-            </Button>
-          </>
-        ) : (
-          <span className="text-[11px] text-muted-foreground @max-panel-sm:text-xs">Fixed</span>
-        )}
+      )
+    },
+    meta: { align: "end", className: "w-44" },
+  },
+]
+
+/** Rebind and Reset are the whole vocabulary. On a phone the first is the left
+    swipe rail and the second the right; both are in the row's menu too. */
+const rowActions = (record: (id: ShortcutId) => void): TableAction<ShortcutRowData>[] => [
+  {
+    id: "rebind",
+    label: "Rebind",
+    icon: <PencilIcon />,
+    position: "left",
+    hidden: (row) => !row.rebindable,
+    onClick: (row) => record(row.id),
+  },
+  {
+    id: "reset",
+    label: "Reset to the default",
+    icon: <RotateCcwIcon />,
+    hidden: (row) => !row.rebindable,
+    disabled: (row) => !row.custom,
+    onClick: (row) => resetShortcut(row.id),
+  },
+]
+
+/** The phone row: [mark] action over category and source, keycaps at the end. */
+function renderPhoneRow(row: ShortcutRowData) {
+  const status = sourceLabel(row)
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
+        {markOf(row)}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium">{row.def.label}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {row.def.scope}
+          {status !== "Default" && ` · ${status}`}
+        </div>
+        {row.def.note && <div className="line-clamp-2 text-xs text-muted-foreground/80">{row.def.note}</div>}
+      </div>
+      <div className="flex max-w-[50%] shrink-0 flex-wrap items-center justify-end gap-1">
+        <WarnMark warnings={row.warnings} />
+        <Chords def={row.def} chords={row.chords} />
       </div>
     </div>
   )
 }
+
+const groupHeader = (counts: Record<string, number>) => (key: string) => (
+  <div className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+    <span>{key}</span>
+    <span className="font-normal tabular-nums">{counts[key] ?? 0}</span>
+  </div>
+)
 
 /** The desktop shell's one system-wide key: bring the app forward on a new
     thread from anywhere (lib/desktop.ts). An Electron accelerator, not one of
@@ -289,7 +412,7 @@ function QuickEntryGroup() {
     setSaving(false)
   }
   return (
-    <Group label="Desktop">
+    <Group label="Desktop" hint="System-wide">
       <Row
         icon={KeyboardIcon}
         title="Quick entry"
@@ -304,18 +427,23 @@ function QuickEntryGroup() {
         >
           <Input
             aria-label="Quick entry shortcut"
-            className="w-48 font-mono text-xs"
+            className="h-11 w-40 min-w-0 font-mono text-xs @panel-sm:h-9 @panel-sm:w-48"
             value={value}
             placeholder="Off"
             onChange={(event) => setValue(event.target.value)}
           />
-          <Button type="submit" variant="outline" disabled={saving || value.trim() === quick.accelerator}>
+          <Button
+            type="submit"
+            variant="outline"
+            className="h-11 @panel-sm:h-9"
+            disabled={saving || value.trim() === quick.accelerator}
+          >
             Save
           </Button>
         </form>
       </Row>
       {quick.error && (
-        <div className="pb-3">
+        <div className="py-3">
           <Notice tone="error" action={<CopyButton text={quick.error} />}>
             {quick.error}
           </Notice>
@@ -330,9 +458,32 @@ export function KeyboardPage() {
   const bindings = useKeybindings()
   const confirm = useConfirm()
   const [recording, setRecording] = React.useState<ShortcutId | null>(null)
+  const [query, setQuery] = React.useState("")
+  const [scopes, setScopes] = React.useState<string[]>([])
+  const [source, setSource] = React.useState("all")
+  const [sort, setSort] = React.useState<DataTableSort | null>(null)
   const target = SHORTCUTS.find((entry) => entry.id === recording) ?? null
 
-  const anyCustom = SHORTCUTS.some((entry) => isCustomized(entry.id))
+  const all = React.useMemo<ShortcutRowData[]>(
+    () =>
+      SHORTCUTS.map((def) => {
+        const chords = bindings[def.id].chords
+        const rebindable = def.rebindable === true
+        return {
+          id: def.id,
+          def,
+          chords,
+          override: bindings[def.id].override,
+          rebindable,
+          custom: isCustomized(def.id),
+          reserved: chords.map((chord) => reservedChord(chord)).find(Boolean),
+          warnings: rebindable ? chords.flatMap((chord) => chordWarnings(chord, def.id, DESKTOP)) : [],
+        }
+      }),
+    [bindings]
+  )
+  const customCount = all.filter((row) => row.custom).length
+  const anyCustom = customCount > 0
 
   const resetAll = async () => {
     const ok = await confirm({
@@ -343,50 +494,129 @@ export function KeyboardPage() {
     if (ok) resetAllShortcuts()
   }
 
+  /* The search reads what the reader sees: the label, the note, the scope and
+     the chord as it prints (⌘K, not mod+k). Rows are ordered here, not by the
+     table: a sort moves the groups (Category) or the rows inside them (Action),
+     and never interleaves them, which a table-side sort would. */
+  const needle = query.trim().toLowerCase()
+  const rows = React.useMemo(() => {
+    const test = SOURCE_TEST[source] ?? SOURCE_TEST.all
+    const order = sort?.id === "scope" && sort.desc ? [...SHORTCUT_SCOPES].reverse() : SHORTCUT_SCOPES
+    return order.flatMap((name) => {
+      if (scopes.length && !scopes.includes(name)) return []
+      const list = all.filter(
+        (row) =>
+          row.def.scope === name &&
+          test(row) &&
+          (!needle ||
+            [
+              row.def.label,
+              row.def.note ?? "",
+              row.def.scope,
+              ...row.chords.map((chord) => `${chord} ${formatChord(chord)}`),
+              ...(row.def.display ?? []),
+            ]
+              .join(" ")
+              .toLowerCase()
+              .includes(needle))
+      )
+      if (sort?.id === "action") {
+        list.sort((a, b) => a.def.label.localeCompare(b.def.label) * (sort.desc ? -1 : 1))
+      }
+      return list
+    })
+  }, [all, needle, scopes, source, sort])
+
+  const counts = React.useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const row of rows) out[row.def.scope] = (out[row.def.scope] ?? 0) + 1
+    return out
+  }, [rows])
+
+  const actions = React.useMemo(() => rowActions(setRecording), [])
+  const grouping = React.useMemo(
+    () => ({
+      by: (row: ShortcutRowData) => row.def.scope,
+      renderHeader: groupHeader(counts),
+      renderMobileHeader: groupHeader(counts),
+    }),
+    [counts]
+  )
+  const mobile = React.useMemo(() => ({ renderRow: renderPhoneRow }), [])
+
+  const filterCount = (scopes.length ? 1 : 0) + (source !== "all" ? 1 : 0)
+  const clearFilters = () => {
+    setQuery("")
+    setScopes([])
+    setSource("all")
+  }
+
   return (
     <>
-      <PageHeader
-        meta={meta}
-        action={
-          <Button type="button" variant="outline" disabled={!anyCustom} onClick={() => void resetAll()}>
+      <PageHeader meta={meta} />
+      <DataTable
+        columns={COLUMNS}
+        data={rows}
+        getRowId={(row) => row.id}
+        mark={markOf}
+        actions={actions}
+        grouping={grouping}
+        mobile={mobile}
+        manualSorting
+        sorting={sort}
+        onSortingChange={setSort}
+        pageSize={SHORTCUTS.length}
+        hidePageSize
+        maxHeight="min(70dvh, 52rem)"
+        emptyIcon={<SearchIcon />}
+        emptyMessage={needle ? `No shortcut matches “${query.trim()}”.` : "No shortcuts match these filters."}
+        emptyAction={
+          <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        }
+        filtering={{
+          search: { value: query, onChange: setQuery, placeholder: "Search by action or key…" },
+          fields: FILTER_FIELDS,
+          values: { scope: scopes, source },
+          onChange: (id, value) => {
+            if (id === "scope") setScopes(value as string[])
+            else setSource((value as string) || "all")
+          },
+          count: filterCount,
+          onClear: () => {
+            setScopes([])
+            setSource("all")
+          },
+          totalCount: SHORTCUTS.length,
+        }}
+        toolbar={
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 @panel-sm:h-9"
+            disabled={!anyCustom}
+            title={anyCustom ? `${customCount} customized` : "Nothing is customized"}
+            onClick={() => void resetAll()}
+          >
             <RotateCcwIcon />
             Reset all
           </Button>
         }
       />
-      {SHORTCUT_SCOPES.map((scope) => {
-        const rows = SHORTCUTS.filter((entry) => entry.scope === scope)
-        if (rows.length === 0) return null
-        return (
-          <Group key={scope} label={scope}>
-            {rows.map((entry) => (
-              <ShortcutRow
-                key={entry.id}
-                shortcut={entry}
-                chords={bindings[entry.id].chords}
-                override={bindings[entry.id].override}
-                onRecord={() => setRecording(entry.id)}
-              />
-            ))}
-          </Group>
-        )
-      })}
       {window.desktop?.setQuickEntry && <QuickEntryGroup />}
-      <Group label="About these keys">
-        <div className="flex items-start gap-3 py-3 text-xs text-muted-foreground">
-          <KeyboardIcon className="mt-0.5 size-4 shrink-0" />
-          <p className="text-pretty">
-            Shortcuts are stored on this device and never synced.{" "}
-            {DESKTOP
-              ? "In the desktop app the page receives every chord the operating system does not take first, so a binding here wins over the browser defaults it names."
-              : `In a browser tab a few chords never reach the page at all — ${formatChord(
-                  "mod+n"
-                )}, ${formatChord("mod+t")}, ${formatChord(
-                  "mod+w"
-                )} and the like are the browser's own and can only be taken back by the installed desktop app. The rest are yours as long as "Override" is on.`}
-          </p>
-        </div>
-      </Group>
+      <Section>
+        <Notice size="md" icon={<KeyboardIcon className="size-4" />}>
+          Shortcuts are stored on this device and never synced.{" "}
+          {DESKTOP
+            ? "In the desktop app the page receives every chord the operating system does not take first, so a binding here wins over the browser defaults it names."
+            : `In a browser tab a few chords never reach the page at all — ${formatChord(
+                "mod+n"
+              )}, ${formatChord("mod+t")}, ${formatChord(
+                "mod+w"
+              )} and the like are the browser's own and can only be taken back by the installed desktop app. The rest are yours as long as "Override" is on.`}
+        </Notice>
+      </Section>
       <RecordDialog
         shortcut={target}
         open={recording !== null}

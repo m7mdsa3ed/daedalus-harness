@@ -48,8 +48,29 @@ export function isSubagentPeek(value: unknown): value is SubagentPeek {
   return SUBAGENT_PEEKS.some((peek) => peek === value)
 }
 
-export const TOOL_LAYOUTS = ["timeline", "cards", "compact", "rail", "console", "outlined", "minimal", "spotlight"] as const
+export const TOOL_LAYOUTS = ["timeline", "rail", "branch"] as const
 export type ToolLayout = (typeof TOOL_LAYOUTS)[number]
+
+/** Each layout's variants, the first being its own default. One stored
+    `toolVariant` serves every layout, so switching layout keeps the pick and
+    `toolVariantOf` falls back to the new layout's first when it names none. */
+export const TOOL_VARIANTS = {
+  timeline: ["default", "compact", "minimal"],
+  rail: ["default"],
+  branch: ["commits", "fork", "hollow"],
+} as const satisfies Record<ToolLayout, readonly string[]>
+export type ToolVariant = (typeof TOOL_VARIANTS)[ToolLayout][number]
+
+const ALL_TOOL_VARIANTS: readonly string[] = Object.values(TOOL_VARIANTS).flat()
+
+export function isToolVariant(value: unknown): value is ToolVariant {
+  return ALL_TOOL_VARIANTS.includes(value as string)
+}
+
+export function toolVariantOf(layout: ToolLayout, variant: ToolVariant): ToolVariant {
+  const own: readonly string[] = TOOL_VARIANTS[layout]
+  return own.includes(variant) ? variant : TOOL_VARIANTS[layout][0]
+}
 
 export function isToolLayout(value: unknown): value is ToolLayout {
   return TOOL_LAYOUTS.some((layout) => layout === value)
@@ -96,6 +117,8 @@ export interface ViewOptions {
   showRawToolData: boolean
   /** The visual arrangement of tool-call rows in the transcript. */
   toolLayout: ToolLayout
+  /** The layout's variant (`TOOL_VARIANTS`); read through `toolVariantOf`. */
+  toolVariant: ToolVariant
   /** Render file diffs side by side instead of unified. */
   splitDiffs: boolean
   /** Hairline rule above each user turn. */
@@ -123,14 +146,18 @@ export interface ViewOptions {
    *  still want to read along rather than be handed a paragraph at once.
    *  `instant` is how they ask for the paragraph. */
   streamSpeed: StreamSpeed
-  /** Hide the work and keep the conversation: your messages and the agent's
-   *  answers, with thinking, tool steps, plans, subagents and compactions left
-   *  out. Errors stay — a failure hidden reads as an answer that never came. */
+  /** Fold the work into a line you can open: whatever the agent did between
+   *  two things said — thinking, tool steps, plans, subagents, compactions —
+   *  collected into one collapsed row, so the transcript reads as the
+   *  conversation. Errors stay out of the fold, since a failure hidden reads as
+   *  an answer that never came, as do your own `!` commands. Nothing is
+   *  dropped: open the line and the whole transcript is there, every fold it
+   *  already had intact. */
   answersOnly: boolean
 }
 
 export const VIEW_DEFAULTS: ViewOptions = {
-  showTimestamps: false,
+  showTimestamps: true,
   groupTools: false,
   openRunningGroup: true,
   groupShellCommands: false,
@@ -146,6 +173,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   showToolCommand: true,
   showRawToolData: false,
   toolLayout: "timeline",
+  toolVariant: "default",
   splitDiffs: false,
   stepDividers: false,
   turnRail: true,
@@ -158,36 +186,12 @@ export const VIEW_DEFAULTS: ViewOptions = {
   streamSpeed: "natural",
 }
 
-/* ── Options that answer a question `answersOnly` has already answered ──
-   Not *forced* off — the stored value is the reader's and comes back the moment
-   the filter does — and not read defensively at the render sites either: with
-   no tool, thought or diff row on screen, "expand tool output" and "wrap code"
-   are already no-ops, so making them lie about their state would be a second
-   source of truth for nothing. What they need is to stop *offering* a choice
-   that changes nothing, which is a property of the dialog, so it is stated once
-   here and the rows read it. Deliberately not the whole Detail group:
-   timestamps, sources and token figures are all still on screen and still say
-   something about the turn that is left. */
 /** What the transcript should actually draw: the sweep, the one reveal there
  *  is (lib/stream-words), unless calm motion has stopped the transcript moving
  *  on its own. Read this anywhere the reveal is rendered. */
 export function resolveStreamEffect(options: ViewOptions): StreamEffect {
   return options.calmMotion ? "none" : "sweep"
 }
-
-export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
-  "showThinking",
-  "showToolDetails",
-  "expandEdits",
-  "showToolCommand",
-  "showRawToolData",
-  "toolLayout",
-  "subagentPeek",
-  "groupTools",
-  "openRunningGroup",
-  "codeWrap",
-  "splitDiffs",
-]
 
 /** Carries the resolved options to the items that render the transcript, so the
  *  deep tool/diff/thought components can read them without prop drilling. */
@@ -224,6 +228,14 @@ function pick(raw: unknown): Partial<ViewOptions> {
       else if (typeof legacy === "number" || legacy === true) out[key] = "always"
     } else if (key === "toolLayout") {
       if (isToolLayout(value)) out[key] = value
+      /* "compact" and "minimal" were layouts of their own before they became
+         timeline variants; the other retired ones fall back to the default. */
+      else if (value === "compact" || value === "minimal") {
+        out[key] = "timeline"
+        if (!isToolVariant(source.toolVariant)) out.toolVariant = value
+      }
+    } else if (key === "toolVariant") {
+      if (isToolVariant(value)) out[key] = value
     } else if (key === "streamSpeed") {
       if (isStreamSpeed(value)) out[key] = value
     }

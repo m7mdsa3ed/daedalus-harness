@@ -26,7 +26,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="tablist"
       className={cn(
-        "flex w-full items-center gap-1 rounded-xl bg-muted p-1",
+        "flex w-full items-center gap-1 frame-xl bg-muted frame-p-1",
         className,
       )}
     >
@@ -42,7 +42,7 @@ export function SegmentedControl<T extends string>({
               if (!active) onChange(seg.value)
             }}
             className={cn(
-              "flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-all",
+              "flex-1 rounded-inner px-3 py-1.5 text-sm font-medium transition-all",
               active
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground active:scale-95",

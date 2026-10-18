@@ -27,10 +27,10 @@ import {
   CoinsIcon,
   HistoryIcon,
   MoreVerticalIcon,
-  PencilIcon,
   PlayIcon,
   PlusIcon,
-  SearchIcon,
+  PowerIcon,
+  PowerOffIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
   Trash2Icon,
@@ -43,8 +43,20 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { useConfirm } from "@/components/confirm-dialog"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
-import { MetaFact, StatGrid, StatTile, SurfaceCard, SurfaceHeader } from "@/components/page-primitives"
-import { EmptyCard, FormPageHeader } from "@/components/settings/primitives"
+import { Notice } from "@/components/notice"
+import { MetaFact, SurfaceHeader } from "@/components/page-primitives"
+import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
+import {
+  EmptyCard,
+  FormPageHeader,
+  Group,
+  Row,
+  Section,
+  StatStrip,
+  StatusBadge,
+  TabBar,
+  type TabItem,
+} from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -53,10 +65,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   blankDraft,
   draftOf,
@@ -88,7 +98,6 @@ import {
 } from "@/lib/queries/routines"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
-import { cn } from "@/lib/utils"
 
 export function RoutinesPage({ actions }: { actions: Actions }) {
   const location = useLocation()
@@ -175,11 +184,14 @@ function RoutinesListPage() {
   const routinesQuery = useRoutines()
   const routines = React.useMemo(() => routinesQuery.data ?? [], [routinesQuery.data])
   const projects = useProjects()
+  const agents = useAgents()
   const navigate = useNavigate()
-  const [query, setQuery] = React.useState("")
+  const fire = useFire()
+  const toggle = useToggle()
+  const remove = useRemove()
 
   /* The newest run of each routine — the one read this page owns. Held in one
-     map here rather than in each row so the tiles can count across them. */
+     map here rather than in each row so the stats can count across them. */
   const latest = useLatestRuns(routines)
 
   const enabled = routines.filter((r) => r.enabled).length
@@ -194,32 +206,170 @@ function RoutinesListPage() {
     null
   )
 
-  const needle = query.trim().toLowerCase()
-  const shown = needle
-    ? routines.filter(
-        (r) =>
-          r.name.toLowerCase().includes(needle) ||
-          (r.description ?? "").toLowerCase().includes(needle) ||
-          (projects.find((p) => p.id === r.projectId)?.name ?? "").toLowerCase().includes(needle)
-      )
-    : routines
-
-  /* Grouped by project, in the projects' own order, with the ones whose
-     project is gone at the end under their own heading — a routine that can
-     no longer fire is worth seeing, not hiding. */
-  const groups = React.useMemo(() => {
-    const byProject = new Map<string, Routine[]>()
-    for (const r of shown) byProject.set(r.projectId, [...(byProject.get(r.projectId) ?? []), r])
-    const ordered = projects
-      .filter((p) => byProject.has(p.id))
-      .map((p) => ({ key: p.id, project: p, routines: byProject.get(p.id)! }))
-    const orphaned = [...byProject.entries()]
-      .filter(([id]) => !projects.some((p) => p.id === id))
-      .map(([id, rs]) => ({ key: id, project: undefined, routines: rs }))
-    return [...ordered, ...orphaned]
-  }, [shown, projects])
-
   const newRoutine = () => void navigate(newRoutinePath())
+  const open = (routine: Routine) => void navigate(routinePath(routine.id))
+  const pending = routinesQuery.isPending
+  const skeleton = <Skeleton className="h-7 w-16" />
+
+  /* Rows are flat, with the project as a column and a filter on it: a routine
+     whose project is gone is worth seeing, so it reads "Project missing"
+     rather than dropping out. */
+  const columns = React.useMemo<ListColumn<Routine>[]>(
+    () => [
+      {
+        id: "routine",
+        header: "Routine",
+        title: true,
+        cell: (routine) => (
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <span className={routine.enabled ? "truncate" : "truncate text-muted-foreground"}>{routine.name}</span>
+            {routine.body.kind === "workflow" && (
+              <WorkflowIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Runs a workflow" />
+            )}
+            {!routine.enabled && <StatusBadge dot={false}>Disabled</StatusBadge>}
+          </span>
+        ),
+      },
+      {
+        /* What happened last — a dot, a word and an age. Skeletoned until the
+           read lands; "never run" once it has and there is nothing. */
+        id: "last",
+        header: "Last run",
+        align: "end",
+        width: "w-48",
+        cell: (routine) => {
+          const last = latest[routine.id]
+          if (last === undefined) return <Skeleton className="h-4 w-24" />
+          if (last === null) return <span className="text-xs text-muted-foreground/70">Never run</span>
+          const tone = runStatus(last.status)
+          return (
+            <span className="inline-flex items-center gap-2" title={tone.meaning}>
+              <StatusBadge tone={tone.badge}>{tone.label}</StatusBadge>
+              <span className="text-xs text-muted-foreground" title={new Date(last.startedAt).toLocaleString()}>
+                {shortAge(last.startedAt)}
+              </span>
+            </span>
+          )
+        },
+      },
+      {
+        id: "agent",
+        header: "Agent",
+        cell: (routine) => (
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            <AgentIcon agentId={routine.agentId} className="size-3.5 shrink-0" />
+            <span className="truncate">
+              {agents.find((a) => a.id === routine.agentId)?.name ?? routine.agentId}
+              {routine.model && ` · ${routine.model}`}
+              {routine.description && ` · ${routine.description}`}
+            </span>
+          </span>
+        ),
+      },
+      {
+        id: "project",
+        header: "Project",
+        secondary: true,
+        cell: (routine) => {
+          const project = projects.find((p) => p.id === routine.projectId)
+          return (
+            <span className="inline-flex min-w-0 items-center gap-1.5">
+              <ProjectIcon project={project} className="size-3.5 shrink-0" />
+              <span className="truncate">{project?.name ?? "Project missing"}</span>
+            </span>
+          )
+        },
+      },
+      {
+        /* How much this routine decides on its own. Two states only — it
+           either answers something with `allow` or it does not — because the
+           row is a place to notice, not a place to audit; the form is where
+           the ten kinds are read one at a time. */
+        id: "autonomy",
+        header: "Autonomy",
+        secondary: true,
+        cell: (routine) => {
+          const grants = grantsOf(routine)
+          return grants === 0 ? (
+            <StatusBadge>Asks for everything</StatusBadge>
+          ) : (
+            <StatusBadge tone="warn">
+              Acts without asking · {grants} kind{grants === 1 ? "" : "s"}
+            </StatusBadge>
+          )
+        },
+      },
+    ],
+    [latest, agents, projects]
+  )
+
+  const actions = React.useMemo<ListAction<Routine>[]>(
+    () => [
+      { id: "run", label: "Run now", icon: <PlayIcon />, position: "left", onClick: (r) => void fire(r, false) },
+      {
+        id: "dry",
+        label: "Run now, forced to ask",
+        icon: <ShieldCheckIcon />,
+        position: "left",
+        onClick: (r) => void fire(r, true),
+      },
+      {
+        id: "thread",
+        label: "Open last run's thread",
+        icon: <HistoryIcon />,
+        position: "left",
+        hidden: (r) => !latest[r.id]?.sessionId,
+        onClick: (r) => void navigate(threadPath(latest[r.id]!.sessionId!)),
+      },
+      {
+        id: "disable",
+        label: "Disable routine",
+        icon: <PowerOffIcon />,
+        hidden: (r) => !r.enabled,
+        onClick: (r) => toggle(r, false),
+      },
+      {
+        id: "enable",
+        label: "Enable routine",
+        icon: <PowerIcon />,
+        hidden: (r) => r.enabled,
+        onClick: (r) => toggle(r, true),
+      },
+      { id: "delete", label: "Delete", icon: <Trash2Icon />, tone: "danger", onClick: (r) => void remove(r) },
+    ],
+    [fire, toggle, remove, latest, navigate]
+  )
+
+  const stats = [
+    {
+      label: "Routines",
+      value: pending ? skeleton : routines.length,
+      hint: enabled === routines.length ? "all enabled" : `${routines.length - enabled} disabled`,
+    },
+    {
+      label: "Running now",
+      value: pending ? skeleton : runningNow,
+      hint: runningNow === 1 ? "run in progress" : "runs in progress",
+    },
+    {
+      label: "Need a person",
+      value: pending ? skeleton : attention,
+      tone: attention > 0 ? ("warn" as const) : undefined,
+      hint:
+        attention > 0
+          ? "last run blocked or failed"
+          : acting > 0
+            ? `${acting} act${acting === 1 ? "s" : ""} without asking`
+            : "every routine asks for everything",
+    },
+    {
+      label: "Last fired",
+      value: pending ? skeleton : lastFired ? shortAge(lastFired.startedAt) : "—",
+      hint: lastFired
+        ? `${routines.find((r) => r.id === lastFired.routineId)?.name ?? "a routine"} · ${runStatus(lastFired.status).label.toLowerCase()}`
+        : "nothing has run yet",
+    },
+  ]
 
   return (
     <>
@@ -242,7 +392,7 @@ function RoutinesListPage() {
         />
       )}
 
-      {routines.length === 0 && !routinesQuery.isPending ? (
+      {routines.length === 0 && !pending ? (
         <EmptyCard
           icon={ZapIcon}
           text="No routines yet. A routine starts a thread the way you would, then answers for you while it runs."
@@ -255,90 +405,22 @@ function RoutinesListPage() {
         />
       ) : (
         <>
-          <StatGrid>
-            <StatTile
-              icon={ZapIcon}
-              label="Routines"
-              value={routines.length}
-              loading={routinesQuery.isPending}
-              hint={
-                enabled === routines.length
-                  ? "all enabled"
-                  : `${routines.length - enabled} disabled`
-              }
-            />
-            <StatTile
-              icon={ActivityIcon}
-              label="Running now"
-              value={runningNow}
-              loading={routinesQuery.isPending}
-              hint={runningNow === 1 ? "run in progress" : "runs in progress"}
-            />
-            <StatTile
-              icon={attention > 0 ? ShieldAlertIcon : ShieldCheckIcon}
-              label="Need a person"
-              value={attention}
-              loading={routinesQuery.isPending}
-              tone={attention > 0 ? "text-amber-600 dark:text-amber-400" : undefined}
-              hint={
-                attention > 0
-                  ? "last run blocked or failed"
-                  : acting > 0
-                    ? `${acting} act${acting === 1 ? "s" : ""} without asking`
-                    : "every routine asks for everything"
-              }
-            />
-            <StatTile
-              icon={HistoryIcon}
-              label="Last fired"
-              value={lastFired ? shortAge(lastFired.startedAt) : "—"}
-              loading={routinesQuery.isPending}
-              hint={
-                lastFired
-                  ? `${routines.find((r) => r.id === lastFired.routineId)?.name ?? "a routine"} · ${runStatus(lastFired.status).label.toLowerCase()}`
-                  : "nothing has run yet"
-              }
-            />
-          </StatGrid>
-
-          {routines.length > 5 && (
-            <div className="relative mt-4">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Filter by name, description or project"
-                className="pl-9"
-                aria-label="Filter routines"
-              />
-            </div>
-          )}
-
-          {shown.length === 0 && routines.length > 0 ? (
-            <p className="mt-6 text-center text-sm text-muted-foreground">
-              No routine matches “{query.trim()}”.
-            </p>
-          ) : (
-            <div className="mt-4 space-y-4">
-              {groups.map((group) => (
-                <SurfaceCard
-                  key={group.key}
-                  title={
-                    <span className="inline-flex items-center gap-1.5">
-                      <ProjectIcon project={group.project} className="size-3.5" />
-                      {group.project?.name ?? "Project missing"}
-                    </span>
-                  }
-                >
-                  <div className="divide-y">
-                    {group.routines.map((routine) => (
-                      <RoutineRow key={routine.id} routine={routine} last={latest[routine.id]} />
-                    ))}
-                  </div>
-                </SurfaceCard>
-              ))}
-            </div>
-          )}
+          <StatStrip stats={stats} />
+          <SettingsList
+            columns={columns}
+            rows={routines}
+            rowId={(routine) => routine.id}
+            loading={pending}
+            actions={actions}
+            onRowClick={open}
+            search={{
+              placeholder: "Filter by name, description or project",
+              matches: (r, needle) =>
+                r.name.toLowerCase().includes(needle) ||
+                (r.description ?? "").toLowerCase().includes(needle) ||
+                (projects.find((p) => p.id === r.projectId)?.name ?? "").toLowerCase().includes(needle),
+            }}
+          />
         </>
       )}
     </>
@@ -365,130 +447,6 @@ function useLatestRuns(routines: Routine[]): Record<string, RoutineRun | null | 
     out[r.id] = data === undefined ? undefined : (data[0] ?? null)
   })
   return out
-}
-
-function RoutineRow({ routine, last }: { routine: Routine; last: RoutineRun | null | undefined }) {
-  const agents = useAgents()
-  const navigate = useNavigate()
-  const fire = useFire()
-  const toggle = useToggle()
-  const remove = useRemove()
-  const agent = agents.find((a) => a.id === routine.agentId)
-  const grants = grantsOf(routine)
-  const tone = last ? runStatus(last.status) : null
-  const open = () => void navigate(routinePath(routine.id))
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:flex-nowrap">
-      <AutonomyMark grants={grants} />
-      <button type="button" onClick={open} className="min-w-0 flex-1 text-left">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className={cn("truncate text-sm font-medium", !routine.enabled && "text-muted-foreground")}>
-            {routine.name}
-          </span>
-          {routine.body.kind === "workflow" && (
-            <WorkflowIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Runs a workflow" />
-          )}
-          {!routine.enabled && (
-            <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
-              Disabled
-            </span>
-          )}
-        </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <AgentIcon agentId={routine.agentId} className="size-3.5 shrink-0" />
-          <span className="truncate">
-            {agent?.name ?? routine.agentId}
-            {routine.model && ` · ${routine.model}`}
-            {routine.description && ` · ${routine.description}`}
-          </span>
-        </div>
-      </button>
-
-      {/* What happened last — a dot, a word and an age. Skeletoned until the
-          read lands; "never run" once it has and there is nothing. */}
-      <div className="flex w-full shrink-0 items-center gap-2 text-xs sm:w-40 sm:justify-end">
-        {last === undefined ? (
-          <Skeleton className="h-4 w-24" />
-        ) : last === null ? (
-          <span className="text-muted-foreground/70">Never run</span>
-        ) : (
-          <>
-            <span aria-hidden className={cn("size-2 shrink-0 rounded-full", tone!.dot)} />
-            <span className={cn("truncate", tone!.text)} title={tone!.meaning}>
-              {tone!.label}
-            </span>
-            <span className="text-muted-foreground" title={new Date(last.startedAt).toLocaleString()}>
-              {shortAge(last.startedAt)}
-            </span>
-          </>
-        )}
-      </div>
-
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Switch
-          checked={routine.enabled}
-          onCheckedChange={(enabled) => toggle(routine, enabled)}
-          aria-label={routine.enabled ? "Disable routine" : "Enable routine"}
-        />
-        <Button variant="ghost" size="icon-sm" title="Run now" onClick={() => void fire(routine, false)}>
-          <PlayIcon />
-          <span className="sr-only">Run {routine.name} now</span>
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button variant="ghost" size="icon-sm" title="More">
-                <MoreVerticalIcon />
-                <span className="sr-only">More actions for {routine.name}</span>
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem onClick={open}>
-              <PencilIcon />
-              Open
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void fire(routine, true)}>
-              <ShieldCheckIcon />
-              Run now, forced to ask
-            </DropdownMenuItem>
-            {last?.sessionId && (
-              <DropdownMenuItem onClick={() => void navigate(threadPath(last.sessionId!))}>
-                <HistoryIcon />
-                Open last run's thread
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => void remove(routine)}>
-              <Trash2Icon />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
-  )
-}
-
-/** How much this routine decides on its own, as a mark on the row. Two states
-    only — it either answers something with `allow` or it does not — because the
-    row is a place to notice, not a place to audit; the form is where the ten
-    kinds are read one at a time. */
-function AutonomyMark({ grants }: { grants: number }) {
-  if (grants === 0)
-    return (
-      <ShieldCheckIcon
-        className="size-4 shrink-0 text-muted-foreground"
-        aria-label="Asks a person for everything"
-      />
-    )
-  return (
-    <ShieldAlertIcon
-      className="size-4 shrink-0 text-amber-600 dark:text-amber-400"
-      aria-label={`Acts without asking for ${grants} kind${grants === 1 ? "" : "s"} of tool`}
-    />
-  )
 }
 
 /* ── Creation ── */
@@ -581,6 +539,12 @@ function NewRoutinePage({ actions }: { actions: Actions }) {
 const TABS = ["overview", "runs", "triggers", "settings"] as const
 type Tab = (typeof TABS)[number]
 const isTab = (v: string | null): v is Tab => TABS.includes(v as Tab)
+const TAB_LABEL: Record<Tab, string> = {
+  overview: "Overview",
+  runs: "Runs",
+  triggers: "Triggers",
+  settings: "Settings",
+}
 
 function RoutineDetailPage({
   routineId,
@@ -700,19 +664,76 @@ function RoutineDetailPage({
   const armed = triggers?.filter((t) => t.enabled) ?? []
   const grants = grantsOf(routine)
 
+  const statTone = (status: string) => {
+    const badge = runStatus(status).badge
+    return badge === "bad" || badge === "warn" ? badge : undefined
+  }
+  const loadingRuns = runs === undefined && !runsError
+  const skeleton = <Skeleton className="h-7 w-16" />
+  const stats = [
+    {
+      label: "Last run",
+      value: loadingRuns ? skeleton : last ? runStatus(last.status).label : "—",
+      tone: last ? statTone(last.status) : undefined,
+      hint: last
+        ? `${shortAge(last.startedAt)} ago · ${SOURCE_LABEL[last.source] ?? last.source}`
+        : runsError
+          ? "couldn't read the runs"
+          : "has not run yet",
+    },
+    {
+      label: "Next fire",
+      value: triggers === undefined && !triggersQuery.error ? skeleton : nextFire ? untilLabel(nextFire) : "—",
+      hint: nextFire
+        ? new Date(nextFire).toLocaleString()
+        : !routine.enabled
+          ? "the routine is disabled"
+          : armed.length === 0
+            ? "no trigger is armed — fires by hand only"
+            : armed.some((t) => t.kind !== "schedule")
+              ? "waits on a webhook or a commit"
+              : "the sweep has not armed a clock yet",
+    },
+    {
+      label: "Runs",
+      value: loadingRuns ? skeleton : runs ? (runs.length >= 50 ? "50+" : runs.length) : "—",
+      hint:
+        running > 0
+          ? `${running} running now`
+          : outcomes
+            ? `${outcomes.completed} completed · ${outcomes.failed} needed a person · ${outcomes.skipped} skipped`
+            : "not read",
+    },
+    {
+      label: "Tokens",
+      value: loadingRuns ? skeleton : tokens === undefined ? "—" : tokens.toLocaleString(),
+      hint: runs && runs.length >= 50 ? "across the newest 50 runs" : "across every run",
+    },
+  ]
+
+  const tabItems: TabItem[] = [
+    { id: "overview", label: TAB_LABEL.overview },
+    { id: "runs", label: TAB_LABEL.runs, count: running > 0 ? running : undefined },
+    {
+      id: "triggers",
+      label: TAB_LABEL.triggers,
+      count: triggers && triggers.length > 0 ? triggers.length : undefined,
+    },
+    { id: "settings", label: TAB_LABEL.settings },
+  ]
+
+  const cancelRun = async (runId: string) => cancelRoutineRun.mutate({ routineId: routine.id, runId })
+
   return (
     <>
       <SurfaceHeader
+        flush
         onBack={back}
         icon={<ProjectIcon project={project} className="size-11" />}
         title={
           <span className="inline-flex min-w-0 items-center gap-2">
             <span className="truncate">{routine.name}</span>
-            {!routine.enabled && (
-              <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
-                Disabled
-              </span>
-            )}
+            {!routine.enabled && <StatusBadge dot={false}>Disabled</StatusBadge>}
           </span>
         }
         description={routine.description ?? undefined}
@@ -731,15 +752,13 @@ function RoutineDetailPage({
               {profile?.name ?? routine.profileId}
             </MetaFact>
             {routine.model && <MetaFact title="Model">{routine.model}{routine.effort && ` · ${routine.effort}`}</MetaFact>}
-            <MetaFact
-              icon={grants > 0 ? ShieldAlertIcon : ShieldCheckIcon}
-              className={grants > 0 ? "text-amber-600 dark:text-amber-400" : undefined}
-              title="Autonomy"
-            >
-              {grants > 0
-                ? `Acts without asking for ${grants} kind${grants === 1 ? "" : "s"} of tool`
-                : "Asks a person for everything"}
-            </MetaFact>
+            <span title="Autonomy">
+              <StatusBadge tone={grants > 0 ? "warn" : "neutral"}>
+                {grants > 0
+                  ? `Acts without asking for ${grants} kind${grants === 1 ? "" : "s"} of tool`
+                  : "Asks a person for everything"}
+              </StatusBadge>
+            </span>
           </>
         }
         actions={
@@ -774,10 +793,6 @@ function RoutineDetailPage({
                 }
               />
               <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem onClick={() => setTab("settings")}>
-                  <PencilIcon />
-                  Edit settings
-                </DropdownMenuItem>
                 {last?.sessionId && (
                   <DropdownMenuItem onClick={() => void navigate(threadPath(last.sessionId!))}>
                     <HistoryIcon />
@@ -800,257 +815,187 @@ function RoutineDetailPage({
         }
       />
 
-      <StatGrid>
-        <StatTile
-          icon={HistoryIcon}
-          label="Last run"
-          value={
-            last ? (
-              <span className={runStatus(last.status).text}>{runStatus(last.status).label}</span>
-            ) : (
-              "—"
-            )
-          }
-          loading={runs === undefined && !runsError}
-          hint={
-            last
-              ? `${shortAge(last.startedAt)} ago · ${SOURCE_LABEL[last.source] ?? last.source}`
-              : runsError
-                ? "couldn't read the runs"
-                : "has not run yet"
-          }
-        />
-        <StatTile
-          icon={CalendarClockIcon}
-          label="Next fire"
-          value={nextFire ? untilLabel(nextFire) : "—"}
-          loading={triggers === undefined && !triggersQuery.error}
-          hint={
-            nextFire
-              ? new Date(nextFire).toLocaleString()
-              : !routine.enabled
-                ? "the routine is disabled"
-                : armed.length === 0
-                  ? "no trigger is armed — fires by hand only"
-                  : armed.some((t) => t.kind !== "schedule")
-                    ? "waits on a webhook or a commit"
-                    : "the sweep has not armed a clock yet"
-          }
-        />
-        <StatTile
-          icon={ActivityIcon}
-          label="Runs"
-          value={runs ? (runs.length >= 50 ? "50+" : runs.length) : "—"}
-          loading={runs === undefined && !runsError}
-          tone={running > 0 ? "text-primary" : undefined}
-          hint={
-            running > 0
-              ? `${running} running now`
-              : outcomes
-                ? `${outcomes.completed} completed · ${outcomes.failed} needed a person · ${outcomes.skipped} skipped`
-                : "not read"
-          }
-        />
-        <StatTile
-          icon={CoinsIcon}
-          label="Tokens"
-          value={tokens === undefined ? "—" : tokens.toLocaleString()}
-          loading={runs === undefined && !runsError}
-          hint={runs && runs.length >= 50 ? "across the newest 50 runs" : "across every run"}
-        />
-      </StatGrid>
+      <TabBar
+        label="Routine"
+        items={tabItems}
+        value={tab}
+        onChange={(id) => setTab(id as Tab)}
+      />
+
+      {tab !== "settings" && <StatStrip stats={stats} />}
 
       {!routine.dryRunCompleted && (
-        <p className="mt-4 rounded-lg border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+        <Notice className="mb-8">
           This routine has not completed a run yet, so it cannot be granted a blanket{" "}
           <strong className="font-medium text-foreground">Allow</strong>. Press{" "}
           <strong className="font-medium text-foreground">Run, forced to ask</strong> and watch
           what it does first — the per-kind answers in Settings are available either way.
-        </p>
+        </Notice>
       )}
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mt-6">
-        <TabsList variant="line" className="w-full justify-start border-b">
-          <TabsTrigger value="overview" className="flex-none">Overview</TabsTrigger>
-          <TabsTrigger value="runs" className="flex-none">
-            Runs
-            {running > 0 && (
-              <span className="rounded-pill bg-primary/10 px-1.5 text-[10px] font-medium text-primary">
-                {running}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="triggers" className="flex-none">
-            Triggers
-            {triggers && triggers.length > 0 && (
-              <span className="rounded-pill bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-                {triggers.length}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="settings" className="flex-none">Settings</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="pt-4">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-            <div className="space-y-4">
-              <SurfaceCard
-                title="Recent runs"
-                action={
-                  runs && runs.length > 5 ? (
-                    <Button variant="ghost" size="xs" onClick={() => setTab("runs")}>
-                      All runs
-                      <ChevronRightIcon data-icon="inline-end" />
-                    </Button>
-                  ) : undefined
-                }
-              >
-                <div className="p-3">
-                  <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
-                  {runsError ? null : (
-                    <RunList
-                      runs={runs?.slice(0, 5)}
-                      hasOutputSchema={routine.output !== null}
-                      onCancel={async (runId) => cancelRoutineRun.mutate({ routineId: routine.id, runId })}
-                    />
-                  )}
-                </div>
-              </SurfaceCard>
-              <SurfaceCard title={routine.body.kind === "workflow" ? "What it runs" : "What it asks"}>
-                {routine.body.kind === "prompt" ? (
-                  <p className="max-h-64 overflow-y-auto px-4 py-3 text-sm whitespace-pre-wrap text-pretty">
-                    {routine.body.text}
-                  </p>
-                ) : (
-                  <p className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
-                    <WorkflowIcon className="size-4" />
-                    A declarative workflow, {Object.keys(routine.body.definition).length} top-level keys.
-                    Open Settings to read it.
-                  </p>
-                )}
-              </SurfaceCard>
-            </div>
-            <div className="space-y-4">
-              <SurfaceCard
-                title="Triggers"
-                action={
-                  <Button variant="ghost" size="xs" onClick={() => setTab("triggers")}>
-                    Manage
+      <div role="tabpanel" aria-label={TAB_LABEL[tab]}>
+        {tab === "overview" && (
+          <>
+            <Section
+              label="Recent runs"
+              action={
+                runs && runs.length > 5 ? (
+                  <Button variant="ghost" size="xs" onClick={() => setTab("runs")}>
+                    All runs
                     <ChevronRightIcon data-icon="inline-end" />
                   </Button>
-                }
-              >
-                {triggersQuery.error ? (
-                  <div className="p-3">
+                ) : undefined
+              }
+            >
+              <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
+              {runsError ? null : (
+                <RunList
+                  runs={runs?.slice(0, 5)}
+                  hasOutputSchema={routine.output !== null}
+                  onCancel={cancelRun}
+                />
+              )}
+            </Section>
+
+            <Group label={routine.body.kind === "workflow" ? "What it runs" : "What it asks"}>
+              {routine.body.kind === "prompt" ? (
+                <p className="max-h-64 overflow-y-auto py-3 text-sm whitespace-pre-wrap text-pretty">
+                  {routine.body.text}
+                </p>
+              ) : (
+                <p className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+                  <WorkflowIcon className="size-4" />
+                  A declarative workflow, {Object.keys(routine.body.definition).length} top-level keys.
+                  Open Settings to read it.
+                </p>
+              )}
+            </Group>
+
+            {(() => {
+              const manage = (
+                <Button variant="ghost" size="xs" onClick={() => setTab("triggers")}>
+                  Manage
+                  <ChevronRightIcon data-icon="inline-end" />
+                </Button>
+              )
+              if (triggers !== undefined && triggers.length > 0 && !triggersQuery.error)
+                return (
+                  <Group label="Triggers" action={manage}>
+                    {triggers.map((t) => {
+                      const meta = TRIGGER_KIND[t.kind]
+                      return (
+                        <Row
+                          key={t.id}
+                          icon={<meta.icon className="size-4 text-muted-foreground" />}
+                          title={
+                            <>
+                              {meta.label}
+                              {!t.enabled && " · off"}
+                            </>
+                          }
+                          subtitle={
+                            <>
+                              <span className="block truncate">{triggerTerms(t)}</span>
+                              {t.enabled && t.nextFireAt !== null && (
+                                <span className="block" title={new Date(t.nextFireAt).toLocaleString()}>
+                                  Fires {untilLabel(t.nextFireAt)}
+                                </span>
+                              )}
+                              {t.lastError && (
+                                <StatusBadge tone="warn" dot={false}>
+                                  {t.lastError}
+                                </StatusBadge>
+                              )}
+                            </>
+                          }
+                        />
+                      )
+                    })}
+                  </Group>
+                )
+              return (
+                <Section label="Triggers" action={manage}>
+                  {triggersQuery.error ? (
                     <ErrorNote
                       error={captureError(triggersQuery.error, "Couldn't read the triggers")}
                       onRetry={() => void triggersQuery.refetch()}
                     />
-                  </div>
-                ) : triggers === undefined ? (
-                  <div className="space-y-2 p-3">
-                    <Skeleton className="h-10 w-full rounded-lg" />
-                    <Skeleton className="h-10 w-full rounded-lg" />
-                  </div>
-                ) : triggers.length === 0 ? (
-                  <p className="px-4 py-3 text-xs text-muted-foreground">
-                    No triggers. This routine only fires when you press Run.
-                  </p>
-                ) : (
-                  <ul className="divide-y">
-                    {triggers.map((t) => {
-                      const meta = TRIGGER_KIND[t.kind]
-                      return (
-                        <li key={t.id} className="flex items-start gap-2.5 px-4 py-2.5 text-xs">
-                          <meta.icon
-                            className={cn("mt-0.5 size-3.5 shrink-0", t.enabled ? "text-foreground" : "text-muted-foreground/60")}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className={cn("font-medium", !t.enabled && "text-muted-foreground")}>
-                              {meta.label}
-                              {!t.enabled && " · off"}
-                            </div>
-                            <div className="truncate text-muted-foreground">{triggerTerms(t)}</div>
-                            {t.enabled && t.nextFireAt !== null && (
-                              <div className="text-muted-foreground" title={new Date(t.nextFireAt).toLocaleString()}>
-                                Fires {untilLabel(t.nextFireAt)}
-                              </div>
-                            )}
-                            {t.lastError && (
-                              <div className="text-amber-600 dark:text-amber-400">{t.lastError}</div>
-                            )}
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </SurfaceCard>
-              <SurfaceCard title="Policy">
-                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 px-4 py-3 text-xs">
-                  <dt className="text-muted-foreground">Default</dt>
-                  <dd className="capitalize">{routine.autonomy.permissions.default}</dd>
-                  <dt className="text-muted-foreground">Questions</dt>
-                  <dd>{routine.autonomy.elicitations === "ask" ? "Wait for a person" : "Decline and carry on"}</dd>
-                  <dt className="text-muted-foreground">Unanswered</dt>
-                  <dd>
-                    {routine.autonomy.askTimeoutSeconds > 0
-                      ? `${routine.autonomy.askFallback === "deny" ? "Denied" : "Cancelled"} after ${Math.round(routine.autonomy.askTimeoutSeconds / 60)} min`
-                      : "Waits forever"}
-                  </dd>
-                  <dt className="text-muted-foreground">Ceiling</dt>
-                  <dd>
-                    {routine.autonomy.maxRunSeconds > 0 ? `${Math.round(routine.autonomy.maxRunSeconds / 60)} min` : "none"}
-                    {routine.autonomy.maxRunTokens ? ` · ${routine.autonomy.maxRunTokens.toLocaleString()} tokens` : ""}
-                  </dd>
-                  <dt className="text-muted-foreground">Overlap</dt>
-                  <dd>{routine.overlap === "skip" ? "Skip while one is running" : "Queue behind it"}</dd>
-                  <dt className="text-muted-foreground">On finish</dt>
-                  <dd>
-                    {routine.onFinish.length === 0
-                      ? "nothing"
-                      : routine.onFinish.map((a) => a.kind).join(", ")}
-                  </dd>
-                </dl>
-              </SurfaceCard>
-            </div>
-          </div>
-        </TabsContent>
+                  ) : triggers === undefined ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                    </div>
+                  ) : (
+                    <EmptyCard icon={CalendarClockIcon} text="No triggers. This routine only fires when you press Run." />
+                  )}
+                </Section>
+              )
+            })()}
 
-        <TabsContent value="runs" className="pt-4">
-          <p className="mb-3 text-xs text-muted-foreground">
-            Newest first. {Object.values(RUN_STATUS).map((s) => s.label).join(", ")} — each row says what its word means.
-          </p>
-          <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
-          {runsError ? null : (
-            <RunList
-              runs={runs}
-              hasOutputSchema={routine.output !== null}
-              onCancel={async (runId) => cancelRoutineRun.mutate({ routineId: routine.id, runId })}
-            />
-          )}
-        </TabsContent>
+            <Group label="Policy">
+              <Row title="Default">
+                <span className="text-sm capitalize">{routine.autonomy.permissions.default}</span>
+              </Row>
+              <Row title="Questions">
+                <span className="text-sm">
+                  {routine.autonomy.elicitations === "ask" ? "Wait for a person" : "Decline and carry on"}
+                </span>
+              </Row>
+              <Row title="Unanswered">
+                <span className="text-sm">
+                  {routine.autonomy.askTimeoutSeconds > 0
+                    ? `${routine.autonomy.askFallback === "deny" ? "Denied" : "Cancelled"} after ${Math.round(routine.autonomy.askTimeoutSeconds / 60)} min`
+                    : "Waits forever"}
+                </span>
+              </Row>
+              <Row title="Ceiling">
+                <span className="text-sm">
+                  {routine.autonomy.maxRunSeconds > 0 ? `${Math.round(routine.autonomy.maxRunSeconds / 60)} min` : "none"}
+                  {routine.autonomy.maxRunTokens ? ` · ${routine.autonomy.maxRunTokens.toLocaleString()} tokens` : ""}
+                </span>
+              </Row>
+              <Row title="Overlap">
+                <span className="text-sm">
+                  {routine.overlap === "skip" ? "Skip while one is running" : "Queue behind it"}
+                </span>
+              </Row>
+              <Row title="On finish">
+                <span className="text-sm">
+                  {routine.onFinish.length === 0 ? "nothing" : routine.onFinish.map((a) => a.kind).join(", ")}
+                </span>
+              </Row>
+            </Group>
+          </>
+        )}
 
-        <TabsContent value="triggers" className="pt-4">
-          <TriggersPanel routineId={routine.id} />
-        </TabsContent>
+        {tab === "runs" && (
+          <Section
+            hint={`Newest first. ${Object.values(RUN_STATUS).map((s) => s.label).join(", ")} — each row says what its word means.`}
+          >
+            <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
+            {runsError ? null : (
+              <RunList runs={runs} hasOutputSchema={routine.output !== null} onCancel={cancelRun} />
+            )}
+          </Section>
+        )}
 
-        <TabsContent value="settings" className="pt-4">
-          {draft && (
-            <RoutineForm
-              draft={draft}
-              onChange={setDraft}
-              actions={actions}
-              routine={routine}
-              onSubmit={submit}
-              onCancel={back}
-              busy={busy}
-              error={error}
-              submitLabel="Save routine"
-            />
-          )}
-        </TabsContent>
-      </Tabs>
+        {tab === "triggers" && <TriggersPanel routineId={routine.id} />}
+
+        {tab === "settings" && draft && (
+          <RoutineForm
+            draft={draft}
+            onChange={setDraft}
+            actions={actions}
+            routine={routine}
+            onSubmit={submit}
+            onCancel={back}
+            busy={busy}
+            error={error}
+            submitLabel="Save routine"
+            sectionBar={false}
+          />
+        )}
+      </div>
     </>
   )
 }

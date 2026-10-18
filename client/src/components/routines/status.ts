@@ -11,6 +11,7 @@
    and a routine run are the same kind of thing to a reader, and two tables in
    one app disagreeing about what "failed" looks like is the bug that table
    exists to prevent. */
+import type { StatusTone as BadgeTone } from "@/components/settings/primitives"
 import type { RoutineRunStatus } from "@/lib/settings"
 
 export interface StatusTone {
@@ -20,6 +21,9 @@ export interface StatusTone {
       on, and is deliberately not the same thing as a run that was refused a
       tool and carried on to say so — that one is an ordinary completion. */
   meaning: string
+  /** The kit's `StatusBadge` tone - what pages draw. The `text`/`chip`/`dot`
+      classes below remain only for the command palette's run rows. */
+  badge: BadgeTone
   text: string
   chip: string
   dot: string
@@ -29,6 +33,7 @@ export const RUN_STATUS: Record<RoutineRunStatus, StatusTone> = {
   running: {
     label: "Running",
     meaning: "The run's thread is open and its turn has not settled yet.",
+    badge: "info",
     text: "text-primary",
     chip: "bg-primary/10 text-primary",
     dot: "bg-primary animate-pulse",
@@ -36,6 +41,7 @@ export const RUN_STATUS: Record<RoutineRunStatus, StatusTone> = {
   completed: {
     label: "Completed",
     meaning: "The turn ended. Nothing more than that is claimed — see the run's thread for what it actually did.",
+    badge: "neutral",
     text: "text-muted-foreground",
     chip: "bg-muted text-muted-foreground",
     dot: "bg-muted-foreground/50",
@@ -44,6 +50,7 @@ export const RUN_STATUS: Record<RoutineRunStatus, StatusTone> = {
     label: "Blocked",
     meaning:
       "The agent asked for something, nobody answered in time, and the fallback answered for it. The run needs a person.",
+    badge: "warn",
     text: "text-amber-600 dark:text-amber-400",
     chip: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
     dot: "bg-amber-500",
@@ -52,6 +59,7 @@ export const RUN_STATUS: Record<RoutineRunStatus, StatusTone> = {
     label: "Skipped",
     meaning:
       "It never started: a fire condition said nothing had changed, the plan was too low, or a previous run was still going. Not an error.",
+    badge: "neutral",
     text: "text-muted-foreground/70",
     chip: "bg-muted text-muted-foreground/70",
     dot: "bg-muted-foreground/25",
@@ -59,6 +67,7 @@ export const RUN_STATUS: Record<RoutineRunStatus, StatusTone> = {
   failed: {
     label: "Failed",
     meaning: "The run started and did not finish — the turn errored, or it ran past a ceiling.",
+    badge: "bad",
     text: "text-destructive",
     chip: "bg-destructive/10 text-destructive",
     dot: "bg-destructive",
