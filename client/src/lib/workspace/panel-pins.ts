@@ -9,7 +9,7 @@
    the set is ours.
 
    Device-local and keyed by server, like every other reader's-property store
-   (`lib/drafts.ts`, `lib/pins.ts`, `lib/view-options.ts`): what you keep open
+   (`lib/drafts.ts`, `lib/pins.ts`, `lib/layout-options.ts`): what you keep open
    is yours, not the conversation's. Keyed by **panel id** rather than by
    descriptor because that is what the dock, the tab and the layout all already
    agree a panel is called. */

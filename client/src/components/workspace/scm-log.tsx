@@ -29,6 +29,7 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import { CommitGraph } from "@/components/workspace/scm/commit-graph"
 
 import { Button } from "@/components/ui/button"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { CopyButton } from "@/components/ui/copy-button"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -302,12 +303,14 @@ export function StashSection({
         <p className="px-2 py-1 text-[11px] text-muted-foreground">Nothing is stashed.</p>
       ) : (
         list.items.map((entry) => (
-          <div
-            key={entry.ref}
+          <ContextMenu key={entry.ref}>
+          <ContextMenuTrigger
+            render={<div
             className={cn(
               "group flex items-center gap-1 rounded-md pr-1 pl-2 text-xs hover:bg-accent/40",
               coarse ? "min-h-11" : "min-h-7"
             )}
+          />}
           >
             <span className="min-w-0 flex-1 truncate" title={`${entry.ref} — ${entry.message}`}>
               {entry.message}
@@ -346,7 +349,14 @@ export function StashSection({
                 onClick={() => void act("drop", entry)}
               />
             </div>
-          </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem disabled={writing} onClick={() => void act("apply", entry)}>Apply (keep the stash)</ContextMenuItem>
+            <ContextMenuItem disabled={writing} onClick={() => void act("pop", entry)}>Pop</ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" disabled={writing} onClick={() => void act("drop", entry)}>Drop…</ContextMenuItem>
+          </ContextMenuContent>
+          </ContextMenu>
         ))
       )}
     </Section>

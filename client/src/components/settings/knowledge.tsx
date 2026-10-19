@@ -298,7 +298,6 @@ export function KnowledgePage() {
         expand={expand}
         onRowClick={onRowClick}
         mobile={mobile}
-        viewToggle={false}
         toolbar={projectFilter}
         filtering={{
           search: { value: search, onChange: setSearch, placeholder: "Search entries..." },

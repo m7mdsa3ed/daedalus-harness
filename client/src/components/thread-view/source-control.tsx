@@ -14,15 +14,15 @@ import {
   MoreHorizontalIcon,
   PlusIcon,
   RefreshCwIcon,
-  SearchIcon,
   Undo2Icon,
   XIcon,
 } from "lucide-react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CopyButton } from "@/components/ui/copy-button"
 import { ActionIcon, actionClass, useActionState } from "@/components/ui/action-state"
 import type { WebDiff } from "@/lib/workspace/panels"
@@ -30,8 +30,11 @@ import { DockContext } from "@/components/workspace/dock-context"
 import { DiffTab, type DiffSide } from "@/components/workspace/diff-tab"
 import { BranchPicker } from "@/components/workspace/scm/branch-picker"
 import { CommitBox } from "@/components/workspace/scm/commit-box"
-import { HistorySection, StashSection } from "@/components/workspace/scm-log"
 import { CommitDetailView } from "@/components/workspace/scm/commit-detail"
+import { CommitTable } from "@/components/workspace/scm/commit-table"
+import { HunkDiff, type DiffSource, type HunkVerb } from "@/components/workspace/scm/hunk-diff"
+import { Locations } from "@/components/workspace/scm/locations"
+import { ScmDock } from "@/components/workspace/scm/scm-dock"
 import { LineCounts } from "@/components/workspace/scm/shared"
 import {
   DropdownMenu,
@@ -42,64 +45,37 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tracking } from "@/components/workspace/scm/branch-menu"
 import { useConfirm } from "@/components/confirm-dialog"
-import { setScmPanelView, useChangesMarks, type ScmPanelView } from "@/lib/changes-marks"
 import { describeError } from "@/lib/errors"
 import { useCoarsePointer } from "@/hooks/use-device"
-import { projectGitStatusKey, projectReposKey } from "@/lib/queries/keys"
+import { projectGitBranchesKey, projectGitRefsKey, projectGitLogKey, projectGitStatusKey, projectReposKey } from "@/lib/queries/keys"
 import { useGitStatus } from "@/lib/queries/surfaces"
 import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
 import { countsOf, linesOf, scmGroups, workingSet, type GroupId, type WorkingFile } from "@/lib/workspace/working-set"
 import { basename } from "@/lib/workspace/fs-api"
 import {
+  gitLog,
   gitRepos,
   gitWrite,
   projectPath,
   stashPush,
+  type CommitFile,
   type GitAction,
   type GitCommit,
   type GitRepo,
   type GitStatus,
 } from "@/lib/workspace/git-api"
 import { watchProject } from "@/lib/workspace/watch"
-import InspectorChanges from "./inspector-changes"
 
-type Props = React.ComponentProps<typeof InspectorChanges>
-type FileFilter = "all" | "staged" | "unstaged" | "conflicts"
+/** Commits per page of the table; the server's own ceiling is 200. */
+const LOG_PAGE = 50
 
-const VIEWS: { value: ScmPanelView; label: string }[] = [
-  { value: "git", label: "Changes" },
-  { value: "review", label: "Review" },
-]
-
-export default function SourceControl(props: Props) {
-  const view = useChangesMarks(props.sessionId).view ?? "git"
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div role="tablist" aria-label="Source control views" className="flex shrink-0 items-center gap-1 border-b border-border/60 px-3 py-2">
-        {VIEWS.map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            role="tab"
-            aria-selected={view === item.value}
-            onClick={() => setScmPanelView(props.sessionId, item.value)}
-            className={cn(
-              "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-              view === item.value ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-      <div className={cn("min-h-0 flex-1", view !== "git" && "hidden")}>
-        <GitWorkspace projectId={props.projectId} pinnedRepo={props.repo} />
-      </div>
-      {view === "review" && <InspectorChanges {...props} />}
-    </div>
-  )
+/** The panel is the Git half and nothing else: the turn review it used to
+    share the space with is gone, and a turn's files are the working
+    directory's in the commit table's first row. `repo` is the thread's own
+    checkout when it is not the project's. */
+export default function SourceControl({ projectId, repo }: { projectId: string; repo?: string }) {
+  return <GitWorkspace projectId={projectId} pinnedRepo={repo} />
 }
 
 interface OpenDiff {
@@ -109,15 +85,14 @@ interface OpenDiff {
   repo?: string
 }
 
-type Tab = "changes" | "history" | "stashes"
-
 /* ── The Git half ──
-   Top to bottom: which repository and branch, where it stands against its
-   upstream (fetch, pull, push), a summary of what is outstanding in lines, the
-   commit box, then three tabs — the working set grouped as VS Code groups it
-   (Merge / Staged / Changes, each with its bulk verbs), the history (a commit
-   opens to its message and files, a file to its diff against the parent), and
-   the stashes. Every write answers the next status, which is what repaints. */
+   Sublime Merge's shape: a Locations pane (branches, remotes, tags, stashes) at
+   the left, the commit table above and a detail pane below. The table's first
+   row is the Working Directory; selecting it makes the detail the staging area
+   (files at the left, the file's hunks at the right, the commit box under the
+   files), and selecting a commit makes it the commit's message, files and
+   hunks. The header keeps the repository, branch and fetch/pull/push. Every
+   write answers the next status, which is what repaints. */
 function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo?: string }) {
   const settings = useServer()
   const queryClient = useQueryClient()
@@ -126,16 +101,20 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   const [repos, setRepos] = React.useState<GitRepo[] | null>(null)
   const [repoError, setRepoError] = React.useState<string | null>(null)
   const [repoPath, setRepoPath] = React.useState(pinnedRepo ?? "")
-  const [filter, setFilter] = React.useState<FileFilter>("all")
-  const [search, setSearch] = React.useState("")
   const [busy, setBusy] = React.useState(false)
   const act = useActionState<"fetch" | "pull" | "push" | "commit">()
   const [error, setError] = React.useState<string | null>(null)
   const [notice, setNotice] = React.useState<string | null>(null)
-  const [tab, setTab] = React.useState<Tab>("changes")
-  const [logGeneration, setLogGeneration] = React.useState(0)
   const [stashGeneration, setStashGeneration] = React.useState(0)
-  const [stashMessage, setStashMessage] = React.useState("")
+  /* A commit, or null for the Working Directory. */
+  const [selected, setSelected] = React.useState<GitCommit | null>(null)
+  const [openFile, setOpenFile] = React.useState<{ path: string; staged: boolean } | null>(null)
+  const [commitFile, setCommitFile] = React.useState<CommitFile | null>(null)
+  /* The rows ticked for a bulk verb, `${group}\0${path}` - a path can stand in
+     two groups, and each row is its own tick. Dropped with the repository, and
+     read through `livePicks` so a tick on a row that moved or went is not acted on. */
+  const [picks, setPicks] = React.useState<ReadonlySet<string>>(() => new Set())
+  const pickAnchor = React.useRef<{ group: GroupId; index: number } | null>(null)
   const [diff, setDiff] = React.useState<OpenDiff | null>(null)
   /* The diff is read in the Preview panel, like a file; without a dock (a phone's
      stacked sheet) it falls back to replacing this view. */
@@ -144,17 +123,27 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     dock
       ? dock.openPanel({ kind: "web", trust: "project", viewId: "default", projectId, file: undefined, diff: next as WebDiff })
       : setDiff(next)
-  const [commit, setCommit] = React.useState<GitCommit | null>(null)
   const [collapsed, setCollapsed] = React.useState<ReadonlySet<GroupId>>(() => new Set())
   /* An undone commit's message, handed back to the box it came from. */
   const [prefill, setPrefill] = React.useState<{ text: string; id: number } | null>(null)
   const statusQuery = useGitStatus(projectId, repoPath)
   const status = statusQuery.data ?? null
+  /* The history loads a page at a time as the table's foot scrolls into view. */
+  const log = useInfiniteQuery({
+    queryKey: projectGitLogKey(settings, projectId, repoPath).concat(["pages"]),
+    queryFn: ({ pageParam, signal }) => gitLog(settings, projectId, { limit: LOG_PAGE, skip: pageParam, all: true, repo: repoPath || undefined }, signal),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => (last.length < LOG_PAGE ? undefined : pages.reduce((sum, page) => sum + page.length, 0)),
+    staleTime: 30_000,
+  })
+  const commits = React.useMemo(() => log.data?.pages.flat() ?? [], [log.data])
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = log
+  const moreLog = React.useCallback(() => void fetchNextPage(), [fetchNextPage])
 
   React.useEffect(() => {
     let active = true
     const read = pinnedRepo !== undefined
-      ? Promise.resolve([{ path: pinnedRepo, name: pinnedRepo.split("/").pop() || "Project", branch: null }])
+      ? Promise.resolve([{ path: pinnedRepo, name: pinnedRepo.split("/").pop() || "Project", branch: null, worktree: false }])
       : gitRepos(settings, projectId)
     void read.then((found) => {
       if (!active) return
@@ -196,38 +185,59 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   const files = React.useMemo(() => status ? workingSet(status) : [], [status])
   const counts = React.useMemo(() => countsOf(files), [files])
   const groups = React.useMemo(() => status ? scmGroups(status) : [], [status])
-  const summary = React.useMemo(() => {
-    const of = (id: GroupId) => groups.find((group) => group.id === id)?.files ?? []
-    return {
-      staged: linesOf(of("staged")),
-      changed: linesOf(of("changes")),
-      untracked: files.filter((file) => file.untracked).length,
-    }
-  }, [groups, files])
+  /* The file the diff shows: the one picked if it is still in the working set,
+     else the same path in its other state, else the first. */
+  const flat = groups.flatMap((group) => group.files.map((file) => ({ file, group: group.id })))
+  const active =
+    flat.find((row) => row.file.path === openFile?.path && (row.group === "staged") === openFile.staged) ??
+    flat.find((row) => row.file.path === openFile?.path) ??
+    flat[0] ??
+    null
 
-  /* The filter picks groups and the search narrows rows inside them — the
-     headers' bulk verbs then act on what is drawn, never on hidden rows. */
-  const visibleGroups = React.useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    const shown: Record<FileFilter, GroupId[]> = {
-      all: ["merge", "staged", "changes"],
-      staged: ["staged"],
-      unstaged: ["changes"],
-      conflicts: ["merge"],
-    }
-    return groups
-      .filter((group) => shown[filter].includes(group.id))
-      .map((group) => ({
-        ...group,
-        files: needle ? group.files.filter((file) => file.path.toLowerCase().includes(needle)) : group.files,
-      }))
-      .filter((group) => group.files.length > 0)
-  }, [groups, filter, search])
+  const pickKey = (group: GroupId, path: string) => `${group}\0${path}`
+  const picked = flat.filter((row) => picks.has(pickKey(row.group, row.file.path)))
+  const togglePick = (group: GroupId, index: number, shift: boolean) => {
+    const rows = groups.find((item) => item.id === group)?.files ?? []
+    const anchor = pickAnchor.current
+    const range = shift && anchor?.group === group ? rows.slice(Math.min(anchor.index, index), Math.max(anchor.index, index) + 1) : [rows[index]!]
+    setPicks((current) => {
+      const next = new Set(current)
+      const on = !current.has(pickKey(group, rows[index]!.path))
+      for (const file of range) {
+        if (on) next.add(pickKey(group, file.path))
+        else next.delete(pickKey(group, file.path))
+      }
+      return next
+    })
+    pickAnchor.current = { group, index }
+  }
+  const pickGroup = (group: GroupId, on: boolean) =>
+    setPicks((current) => {
+      const next = new Set(current)
+      for (const file of groups.find((item) => item.id === group)?.files ?? []) {
+        if (on) next.add(pickKey(group, file.path))
+        else next.delete(pickKey(group, file.path))
+      }
+      return next
+    })
+  /* The bulk verbs act on what is ticked, per state: a ticked staged row is
+     unstaged, a changed or conflicted one is staged (resolved), and only a
+     tracked changed one can be discarded. */
+  const bulk = async (verb: "stage" | "unstage" | "discard") => {
+    const paths = picked
+      .filter((row) => (verb === "unstage" ? row.group === "staged" : verb === "stage" ? row.group !== "staged" : row.group === "changes" && !row.file.untracked))
+      .map((row) => row.file.path)
+    if (paths.length === 0) return
+    if (verb === "discard") await discard(paths, `${paths.length} files`)
+    else if (!(await write({ action: verb, paths }))) return
+    setPicks(new Set())
+  }
 
   const updateStatus = (next: GitStatus) => {
     queryClient.setQueryData(projectGitStatusKey(settings, projectId, repoPath), next)
   }
 
+  const LOG_MOVERS = new Set<GitAction["action"]>(["commit", "pull", "push", "fetch", "undo", "checkout", "merge", "rebase", "rename-branch", "delete-branch", "delete-tag"])
   const DONE: Partial<Record<GitAction["action"], string>> = {
     commit: "Commit created.",
     pull: "Pull complete.",
@@ -247,10 +257,14 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
         const text = result.output?.trim() ?? ""
         setNotice(`Undid “${text.split("\n")[0]}” — its changes are staged.`)
         if (text) setPrefill({ text, id: Date.now() })
-        setLogGeneration((current) => current + 1)
       } else if (DONE[action.action]) {
-        setLogGeneration((current) => current + 1)
         setNotice(result.output?.split("\n").find((line) => line.trim())?.trim() ?? DONE[action.action]!)
+      }
+      /* These move HEAD or a ref, which is what the table draws. */
+      if (LOG_MOVERS.has(action.action)) {
+        void queryClient.invalidateQueries({ queryKey: projectGitLogKey(settings, projectId, repoPath) })
+        void queryClient.invalidateQueries({ queryKey: projectGitBranchesKey(settings, projectId, repoPath) })
+        void queryClient.invalidateQueries({ queryKey: projectGitRefsKey(settings, projectId, repoPath) })
       }
       return true
     } catch (err) {
@@ -306,15 +320,14 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     if (ok) await write({ action: "undo" })
   }
 
-  const stash = async () => {
+  const stash = async (stashMessage: string) => {
     setBusy(true)
     setError(null)
     try {
-      const next = await stashPush(settings, projectId, { repo: repoPath || undefined, message: stashMessage.trim() || undefined })
+      const next = await stashPush(settings, projectId, { repo: repoPath || undefined, message: stashMessage || undefined })
       updateStatus(next)
       setNotice(next.created ? "Working tree stashed." : "Nothing to stash.")
       if (next.created) {
-        setStashMessage("")
         setStashGeneration((current) => current + 1)
       }
     } catch (err) {
@@ -329,6 +342,22 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     if (file.untracked || file.conflicted || (group === "changes" && file.mark === "A")) showDiff({ path, left: "head", right: "worktree", repo: repoPath })
     else if (group === "staged") showDiff({ path, left: "head", right: "staged", repo: repoPath })
     else showDiff({ path, left: "staged", right: "worktree", repo: repoPath })
+  }
+
+  /* One hunk, or some of its lines, through the `apply` door: stage is
+     `--cached`, unstage is `--cached --reverse`, discard is `--reverse` on the
+     worktree. Only discard asks - the others are one click from undone. */
+  const applyHunk = async (patch: string, verb: HunkVerb) => {
+    if (verb === "discard") {
+      const ok = await confirm({
+        title: "Discard this change?",
+        description: "It is thrown away from the working tree. This cannot be undone.",
+        confirmLabel: "Discard",
+        destructive: true,
+      })
+      if (!ok) return false
+    }
+    return write({ action: "apply", patch, cached: verb !== "discard", reverse: verb !== "stage" })
   }
 
   const branch = status?.branch ?? repo?.branch ?? (status?.unborn ? "no commits yet" : "detached")
@@ -363,184 +392,110 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   if (repos.length === 0) return <PanelMessage title="No repository found" text="This project does not contain a Git repository." />
   if (!repo) return null
 
-  if (commit) {
-    return (
-      <CommitDetailView
-        projectId={projectId}
-        repo={repoPath}
-        commit={commit}
-        coarse={coarse}
-        onBack={() => setCommit(null)}
-        onOpenFile={(file, detail) =>
-          showDiff({
-            path: projectPath(repoPath, file.path),
-            left: { rev: file.status === "A" ? "" : (detail.parents[0] ?? "") },
-            right: { rev: file.status === "D" ? "" : detail.hash },
-          })
-        }
-      />
-    )
-  }
-
   const remote = !!status?.repository && !status.unborn
-  const iconButton = coarse ? "size-10" : "size-7"
+  const iconButton = coarse ? "size-10" : "size-6"
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b border-border/60 px-3 py-2">
-        <div className="mb-2 flex min-w-0 items-center gap-1">
-          {repos.length > 1 ? (
-            <select aria-label="Repository" value={repoPath} onChange={(event) => { setRepoPath(event.target.value); setDiff(null); setCommit(null) }} className="min-w-0 flex-1 truncate rounded-md border border-border/70 bg-background px-2 py-1.5 text-sm font-semibold">
-              {repos.map((item) => <option key={item.path || "."} value={item.path}>{item.name}</option>)}
-            </select>
-          ) : <div className="min-w-0 flex-1 truncate text-sm font-semibold">{repo.name}</div>}
-          <Button variant="ghost" size="icon-xs" title="Refresh repository status" aria-label="Refresh repository status" disabled={statusQuery.isFetching} onClick={() => void statusQuery.refetch()} className={iconButton}>
-            <RefreshCwIcon className={cn("size-3.5", statusQuery.isFetching && "animate-spin")} />
-          </Button>
-          {status?.repository && (
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`More for ${repo.name}`} className={iconButton}><MoreHorizontalIcon className="size-3.5" /></Button>} />
-              <DropdownMenuContent align="end" className="w-auto min-w-52">
-                <DropdownMenuItem disabled={busy} onClick={() => void write({ action: "fetch" })}><CloudDownloadIcon />Fetch all remotes</DropdownMenuItem>
-                <DropdownMenuItem disabled={busy || counts.staged === 0} onClick={() => void write({ action: "unstage", paths: files.filter((file) => file.staged !== "no").map((file) => file.path) })}><MinusIcon />Unstage everything</DropdownMenuItem>
-                <DropdownMenuItem disabled={busy || counts.total === 0} onClick={() => void stash()}><ArchiveIcon />Stash everything</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem disabled={busy || status.unborn} onClick={() => void undo()}><Undo2Icon />Undo last commit</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-        <div className="flex min-w-0 items-center gap-2">
-          <BranchPicker
-            projectId={projectId}
-            repo={repoPath}
-            branch={branch}
-            unborn={status?.unborn ?? false}
-            disabled={busy || !status?.repository}
-            onPick={(choice) => void write({ action: "checkout", branch: choice.branch, create: choice.create, track: choice.track })}
-            className={cn("flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1.5 font-mono text-xs", coarse && "min-h-11")}
-          >
-            <GitBranchIcon className="size-3.5 shrink-0" /><span className="truncate">{branch}</span>
-          </BranchPicker>
-          <Tracking status={status} />
-          <div className="ml-auto flex shrink-0 gap-1">
-            <Button variant="ghost" size="icon-xs" disabled={busy || !status?.repository} onClick={() => void act.run("fetch", () => write({ action: "fetch" }))} title="Fetch all remotes (updates ahead/behind)" aria-label="Fetch" className={cn(iconButton, actionClass(act.phase("fetch")))}>
-              <ActionIcon phase={act.phase("fetch")}><CloudDownloadIcon className="size-3.5" /></ActionIcon>
-            </Button>
-            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("pull", () => write({ action: "pull" }))} title={status?.upstream ? `Pull from ${status.upstream} (fast-forward only)` : "Pull"} className={cn(coarse && "min-h-10", actionClass(act.phase("pull")))}>
-              <ActionIcon phase={act.phase("pull")}><ArrowDownToLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">Pull{status?.behind ? ` ${status.behind}` : ""}</span>
-            </Button>
-            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("push", () => write({ action: "push" }))} title={status?.upstream ? `Push to ${status.upstream}` : "Publish this branch to origin"} className={cn(coarse && "min-h-10", actionClass(act.phase("push")))}>
-              <ActionIcon phase={act.phase("push")}><ArrowUpFromLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">{status?.upstream ? `Push${status.ahead ? ` ${status.ahead}` : ""}` : "Publish"}</span>
-            </Button>
-          </div>
-        </div>
-        {standing && <p className="mt-1.5 truncate text-[10px] text-muted-foreground" title={standing}>{standing}</p>}
-      </header>
+  /* The four panes, built here and handed to the dock: they all read the one
+     selection (which commit, which file), which a dock cannot own. */
+  const locationsPane = (
+  <Locations
+    projectId={projectId}
+    repo={repoPath}
+    head={status?.branch ?? null}
+    coarse={coarse}
+    busy={busy}
+    canStash={counts.total > 0}
+    stashGeneration={stashGeneration}
+    onReveal={(ref) => {
+      const found = commits.find((item) => item.refs.includes(ref))
+      if (found) { setSelected(found); setCommitFile(null) }
+    }}
+    onCheckout={(name, remoteRef) => void write({ action: "checkout", branch: name, track: remoteRef })}
+    onAction={write}
+    onStash={(message) => void stash(message)}
+    onStatus={updateStatus}
+  />
+  )
 
-      {/* ── The summary ── how much is outstanding, and where, in lines. */}
-      {status?.repository && (
-        <div className="grid shrink-0 grid-cols-2 gap-px border-b border-border/60 bg-border/40 @panel-sm:grid-cols-4">
-          <Figure label="Staged" value={counts.staged} lines={summary.staged} />
-          <Figure label="Changed" value={counts.unstaged - summary.untracked} lines={summary.changed} />
-          <Figure label="Untracked" value={summary.untracked} />
-          <Figure label="Conflicts" value={counts.conflicted} tone={counts.conflicted > 0 ? "error" : undefined} />
-        </div>
-      )}
+  const historyPane = (
+  <CommitTable
+    commits={commits}
+    current={status?.branch ?? null}
+    changes={counts.total}
+    selected={selected?.hash ?? null}
+    onSelect={(next) => { setSelected(next); setCommitFile(null) }}
+    onMore={hasNextPage ? moreLog : undefined}
+    loading={isFetchingNextPage || log.isPending}
+  />
+  )
 
-      {error && <PanelMessage title="Git operation failed" text={error} compact />}
-      {notice && <div role="status" className="flex items-center gap-2 border-b border-border/50 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300"><CheckIcon className="size-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate" title={notice}>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice(null)}><XIcon className="size-3.5" /></button></div>}
-
-      <CommitBox
-        key={`${projectId}:${repoPath}`}
-        projectId={projectId}
-        repo={repoPath}
-        repoName={repo.name}
-        named={repos.length > 1}
-        branch={branch}
-        busy={busy}
-        commitPhase={act.phase("commit")}
-        changeCount={counts.total}
-        stagedCount={counts.staged}
-        unstagedCount={counts.unstaged}
-        canAmend={remote}
-        prefill={prefill}
-        onCommit={commitWith}
-        onStageAll={() => void write({ action: "stage", paths: files.filter((file) => file.staged !== "yes" && !file.conflicted).map((file) => file.path) })}
-        onError={setError}
-      />
-
-      <div role="tablist" aria-label="Repository views" className="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-1">
-        {([
-          ["changes", "Changes", counts.total],
-          ["history", "History", null],
-          ["stashes", "Stashes", null],
-        ] as const).map(([value, label, amount]) => (
-          <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={cn("rounded-md px-2 py-1 text-[11px] font-medium", tab === value ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60", coarse && "min-h-10")}>
-            {label}{amount ? <span className="ml-1 font-mono tabular-nums opacity-70">{amount}</span> : null}
-          </button>
-        ))}
-      </div>
-
-      {tab === "changes" && (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
-            <div className="relative min-w-0 flex-1">
-              <SearchIcon className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a changed file" aria-label="Find a changed file" className="h-8 pl-7 text-xs" />
-            </div>
-          </div>
-          <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/50 px-3 py-1.5">
-            {(["all", "staged", "unstaged", "conflicts"] as FileFilter[]).map((item) => {
-              const amount = item === "all" ? counts.total : item === "staged" ? counts.staged : item === "unstaged" ? counts.unstaged : counts.conflicted
-              return <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)} className={cn("shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium capitalize", filter === item ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70")}>{item} <span className="font-mono tabular-nums opacity-70">{amount}</span></button>
-            })}
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto px-2 py-1.5">
+  const filesPane = selected ? (
+  <CommitDetailView
+    projectId={projectId}
+    repo={repoPath}
+    commit={selected}
+    coarse={coarse}
+    selected={commitFile?.path}
+    onOpenFile={setCommitFile}
+  />
+  ) : (
+    <>
+          <div className="min-h-0 flex-1 overflow-auto">
             {statusQuery.isLoading && !status ? (
               <div className="grid h-24 place-items-center"><Spinner /></div>
             ) : statusQuery.error ? (
               <PanelMessage title="Status unavailable" text={describeError(statusQuery.error).title} compact />
-            ) : visibleGroups.length === 0 ? (
-              <div className="grid min-h-32 place-items-center px-4 text-center"><div><FileIcon className="mx-auto mb-2 size-5 text-muted-foreground/60" /><p className="text-xs font-medium">{counts.total === 0 ? "Working tree is clean" : "No files match"}</p><p className="mt-1 text-[10px] text-muted-foreground">{counts.total === 0 ? "Changes will appear here as the project moves." : "Try another filter or search."}</p></div></div>
+            ) : groups.length === 0 ? (
+              <div className="grid min-h-24 place-items-center px-4 text-center"><div><FileIcon className="mx-auto mb-2 size-5 text-muted-foreground/60" /><p className="text-xs font-medium">Working tree is clean</p><p className="mt-1 text-[10px] text-muted-foreground">Changes will appear here as the project moves.</p></div></div>
             ) : (
-              visibleGroups.map((group) => {
+              groups.map((group) => {
                 const shut = collapsed.has(group.id)
                 const paths = group.files.map((file) => file.path)
                 const lines = linesOf(group.files)
                 const tracked = group.files.filter((file) => !file.untracked).map((file) => file.path)
                 return (
-                  <section key={group.id} className="mb-1">
-                    <div className={cn("group flex items-center gap-1 rounded-md pr-1 text-[11px] font-semibold text-muted-foreground hover:bg-muted/40", coarse ? "min-h-11" : "min-h-8")}>
-                      <button type="button" aria-expanded={!shut} onClick={() => setCollapsed((current) => toggled(current, group.id))} className="flex min-w-0 flex-1 items-center gap-1 py-1 pl-1 text-left">
+                  <section key={group.id}>
+                    <div className={cn("flex items-center gap-1 bg-muted/50 pr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground", coarse ? "min-h-11" : "min-h-6")}>
+                      <Checkbox
+                        aria-label={`Select all in ${group.title}`}
+                        className="ml-1.5 size-3.5 rounded-[4px]"
+                        checked={group.files.every((file) => picks.has(pickKey(group.id, file.path)))}
+                        indeterminate={group.files.some((file) => picks.has(pickKey(group.id, file.path))) && !group.files.every((file) => picks.has(pickKey(group.id, file.path)))}
+                        onCheckedChange={(on) => pickGroup(group.id, on)}
+                      />
+                      <button type="button" aria-expanded={!shut} onClick={() => setCollapsed((current) => toggled(current, group.id))} className="flex min-w-0 items-center gap-1 py-0.5 text-left">
                         {shut ? <ChevronRightIcon className="size-3.5 shrink-0" /> : <ChevronDownIcon className="size-3.5 shrink-0" />}
                         <span className="truncate">{group.title}</span>
-                        <span className="rounded-full bg-muted px-1.5 font-mono text-[10px] leading-4 tabular-nums">{group.files.length}</span>
-                        <LineCounts insertions={lines.insertions} deletions={lines.deletions} className="font-normal" />
+                        <span className="font-mono tabular-nums normal-case">({group.files.length})</span>
+                        <LineCounts insertions={lines.insertions} deletions={lines.deletions} className="font-normal normal-case" />
                       </button>
-                      <RowVerbs coarse={coarse}>
-                        {group.id === "staged" ? (
-                          <Verb label={`Unstage all ${paths.length}`} disabled={busy} onClick={() => void write({ action: "unstage", paths })}><MinusIcon className="size-3.5" /></Verb>
-                        ) : (
-                          <>
-                            {group.id === "changes" && tracked.length > 0 && (
-                              <Verb label={`Discard all ${tracked.length}`} destructive disabled={busy} onClick={() => void discard(tracked, `all ${tracked.length} files`)}><Undo2Icon className="size-3.5" /></Verb>
-                            )}
-                            <Verb label={group.id === "merge" ? `Mark all ${paths.length} resolved` : `Stage all ${paths.length}`} disabled={busy} onClick={() => void write({ action: "stage", paths })}><PlusIcon className="size-3.5" /></Verb>
-                          </>
-                        )}
-                      </RowVerbs>
+                      {group.id === "staged" ? (
+                        <TextVerb disabled={busy} onClick={() => void write({ action: "unstage", paths })}>Unstage All</TextVerb>
+                      ) : (
+                        <>
+                          {group.id === "changes" && tracked.length > 0 && (
+                            <TextVerb destructive disabled={busy} onClick={() => void discard(tracked, `all ${tracked.length} files`)}>Discard All</TextVerb>
+                          )}
+                          <TextVerb disabled={busy} onClick={() => void write({ action: "stage", paths })}>{group.id === "merge" ? "Mark Resolved" : "Stage All"}</TextVerb>
+                        </>
+                      )}
+                      {/* The rest of the bar still folds the group, as the title did. */}
+                      <button type="button" tabIndex={-1} aria-hidden onClick={() => setCollapsed((current) => toggled(current, group.id))} className="min-h-5 flex-1 self-stretch" />
                     </div>
                     {!shut && (
-                      <div className="space-y-px">
-                        {group.files.map((file) => (
+                      <div>
+                        {group.files.map((file, index) => (
                           <FileRow
                             key={file.path}
                             file={file}
                             group={group.id}
+                            picked={picks.has(pickKey(group.id, file.path))}
+                            selecting={picked.length > 0}
+                            onPick={(shift) => togglePick(group.id, index, shift)}
+                            active={active?.file.path === file.path && active.group === group.id}
                             busy={busy}
                             coarse={coarse}
-                            onOpen={() => openRow(file, group.id)}
+                            onOpen={() => setOpenFile({ path: file.path, staged: group.id === "staged" })}
                             onStage={() => void write({ action: group.id === "staged" ? "unstage" : "stage", paths: [file.path] })}
                             onDiscard={() => void discard([file.path], basename(file.path))}
                           />
@@ -552,41 +507,145 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
               })
             )}
           </div>
-        </div>
-      )}
+          {picked.length > 0 && (
+            <div role="toolbar" aria-label="Bulk actions" className="flex shrink-0 flex-wrap items-center gap-1 border-t border-border/60 bg-accent/60 px-2 py-1 text-[11px]">
+              <span className="mr-auto font-medium tabular-nums">{picked.length} selected</span>
+              {picked.some((row) => row.group !== "staged") && <TextVerb disabled={busy} onClick={() => void bulk("stage")}>{picked.every((row) => row.group === "merge") ? "Mark Resolved" : "Stage"}</TextVerb>}
+              {picked.some((row) => row.group === "staged") && <TextVerb disabled={busy} onClick={() => void bulk("unstage")}>Unstage</TextVerb>}
+              {picked.some((row) => row.group === "changes" && !row.file.untracked) && <TextVerb destructive disabled={busy} onClick={() => void bulk("discard")}>Discard</TextVerb>}
+              <button type="button" title="Clear selection" aria-label="Clear selection" onClick={() => setPicks(new Set())} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-background hover:text-foreground"><XIcon className="size-3" /></button>
+            </div>
+          )}
+          <CommitBox
+            key={`${projectId}:${repoPath}`}
+            projectId={projectId}
+            repo={repoPath}
+            repoName={repo.name}
+            named={repos.length > 1}
+            branch={branch}
+            busy={busy}
+            commitPhase={act.phase("commit")}
+            changeCount={counts.total}
+            stagedCount={counts.staged}
+            unstagedCount={counts.unstaged}
+            canAmend={remote}
+            prefill={prefill}
+            onCommit={commitWith}
+            onError={setError}
+          />
+    </>
+  )
 
-      {tab === "history" && (
-        <div className="min-h-0 flex-1 overflow-auto">
-          <HistorySection projectId={projectId} repo={repoPath} open fixed onToggle={() => {}} coarse={coarse} generation={logGeneration} onSelect={setCommit} />
-        </div>
-      )}
+  const diffPane = selected
+    ? commitFile && (
+        <HunkDiff
+          projectId={projectId}
+          repo={repoPath}
+          path={commitFile.path}
+          from={commitFile.from}
+          source={{ rev: selected.hash }}
+          version={0}
+          onOpenFull={() => showDiff({
+            path: projectPath(repoPath, commitFile.path),
+            left: { rev: commitFile.status === "A" ? "" : (selected.parents[0] ?? "") },
+            right: { rev: commitFile.status === "D" ? "" : selected.hash },
+          })}
+        />
+      )
+    : active && (
+        <HunkDiff
+          projectId={projectId}
+          repo={repoPath}
+          path={active.file.path}
+          from={active.file.from}
+          untracked={active.file.untracked}
+          source={(active.group === "staged" ? "staged" : "unstaged") satisfies DiffSource}
+          version={statusQuery.dataUpdatedAt}
+          busy={busy}
+          onApply={active.group === "merge" ? undefined : applyHunk}
+          onOpenFull={() => openRow(active.file, active.group)}
+        />
+      )
 
-      {tab === "stashes" && (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <form className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-3 py-2" onSubmit={(event) => { event.preventDefault(); void stash() }}>
-            <Input value={stashMessage} onChange={(event) => setStashMessage(event.target.value)} placeholder="Stash message (optional)" aria-label="Stash message" className="h-8 min-w-0 flex-1 text-xs" />
-            <Button type="submit" size="xs" variant="outline" disabled={busy || counts.total === 0} className={coarse ? "min-h-10" : ""}>
-              <ArchiveIcon className="size-3.5" /> Stash {counts.total > 0 ? counts.total : ""}
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <header title={standing ?? undefined} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/60 bg-muted/30 px-2 py-1">
+        <div className="contents">
+          {repos.length > 1 ? (
+            <Select value={repoPath} onValueChange={(value) => { setRepoPath(value as string); setPicks(new Set()); setDiff(null); setSelected(null); setOpenFile(null) }}>
+              <SelectTrigger size="sm" aria-label="Repository" className="order-1 h-6 min-w-0 max-w-44 shrink rounded border-border/70 bg-background px-2 text-xs font-semibold">
+                <SelectValue>
+                  <span className="truncate">{repo.name}</span>
+                  {repo.worktree && <WorktreeBadge />}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {repos.map((item) => (
+                  <SelectItem key={item.path || "."} value={item.path}>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate">{item.name}</span>
+                      {item.worktree && <WorktreeBadge />}
+                      {item.branch && <span className="truncate font-mono text-[10px] font-normal text-muted-foreground">{item.branch}</span>}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-1.5 text-xs font-semibold"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
+          <Button variant="ghost" size="icon-xs" title="Refresh repository status" aria-label="Refresh repository status" loading={statusQuery.isFetching} onClick={() => void statusQuery.refetch()} className={cn(iconButton, "order-5")}>
+            <RefreshCwIcon className={cn("size-3.5", statusQuery.isFetching && "animate-spin")} />
+          </Button>
+          {status?.repository && (
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`More for ${repo.name}`} className={cn(iconButton, "order-6")}><MoreHorizontalIcon className="size-3.5" /></Button>} />
+              <DropdownMenuContent align="end" className="w-auto min-w-52">
+                <DropdownMenuItem disabled={busy} onClick={() => void write({ action: "fetch" })}><CloudDownloadIcon />Fetch all remotes</DropdownMenuItem>
+                <DropdownMenuItem disabled={busy || counts.staged === 0} onClick={() => void write({ action: "unstage", paths: files.filter((file) => file.staged !== "no").map((file) => file.path) })}><MinusIcon />Unstage everything</DropdownMenuItem>
+                <DropdownMenuItem disabled={busy || counts.total === 0} onClick={() => void stash("")}><ArchiveIcon />Stash everything</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled={busy || status.unborn} onClick={() => void undo()}><Undo2Icon />Undo last commit</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+        <div className="contents">
+          <BranchPicker
+            projectId={projectId}
+            repo={repoPath}
+            branch={branch}
+            unborn={status?.unborn ?? false}
+            disabled={busy || !status?.repository}
+            onPick={(choice) => void write({ action: "checkout", branch: choice.branch, create: choice.create, track: choice.track })}
+            className={cn("order-2 flex min-w-0 max-w-full items-center gap-1.5 rounded border border-border/70 bg-background px-2 py-0.5 font-mono text-xs", coarse && "min-h-11")}
+          >
+            <GitBranchIcon className="size-3.5 shrink-0" /><span className="truncate">{branch}</span>
+          </BranchPicker>
+          <div className="order-3"><Tracking status={status} /></div>
+          <div className="order-4 ml-auto flex shrink-0 gap-1">
+            <Button variant="ghost" size="icon-xs" disabled={busy || !status?.repository} onClick={() => void act.run("fetch", () => write({ action: "fetch" }))} title="Fetch all remotes (updates ahead/behind)" aria-label="Fetch" className={cn(iconButton, actionClass(act.phase("fetch")))}>
+              <ActionIcon phase={act.phase("fetch")}><CloudDownloadIcon className="size-3.5" /></ActionIcon>
             </Button>
-          </form>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <StashSection key={stashGeneration} projectId={projectId} repo={repoPath} open fixed onToggle={() => {}} onStatus={updateStatus} coarse={coarse} />
+            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("pull", () => write({ action: "pull" }))} title={status?.upstream ? `Pull from ${status.upstream} (fast-forward only)` : "Pull"} className={cn(coarse && "min-h-10", actionClass(act.phase("pull")))}>
+              <ActionIcon phase={act.phase("pull")}><ArrowDownToLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">Pull{status?.behind ? ` ${status.behind}` : ""}</span>
+            </Button>
+            <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("push", () => write({ action: "push" }))} title={status?.upstream ? `Push to ${status.upstream}` : "Publish this branch to origin"} className={cn(coarse && "min-h-10", actionClass(act.phase("push")))}>
+              <ActionIcon phase={act.phase("push")}><ArrowUpFromLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">{status?.upstream ? `Push${status.ahead ? ` ${status.ahead}` : ""}` : "Publish"}</span>
+            </Button>
           </div>
         </div>
-      )}
-    </div>
-  )
-}
+      </header>
 
-/** One cell of the summary: a count, and its lines where git counted them. */
-function Figure({ label, value, lines, tone }: { label: string; value: number; lines?: { insertions: number; deletions: number }; tone?: "error" }) {
-  return (
-    <div className="bg-background px-3 py-1.5">
-      <p className="text-[10px] text-muted-foreground">{label}</p>
-      <p className="flex items-baseline gap-1.5">
-        <span className={cn("font-mono text-sm font-semibold tabular-nums", value === 0 && "text-muted-foreground/60", tone === "error" && "text-red-600 dark:text-red-400")}>{value}</span>
-        {lines && <LineCounts insertions={lines.insertions} deletions={lines.deletions} />}
-      </p>
+      {error && <PanelMessage title="Git operation failed" text={error} compact />}
+      {notice && <div role="status" className="flex items-center gap-2 border-b border-border/50 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300"><CheckIcon className="size-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate" title={notice}>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice(null)}><XIcon className="size-3.5" /></button></div>}
+
+      <ScmDock
+        panes={{
+          locations: locationsPane,
+          history: historyPane,
+          files: filesPane,
+          diff: diffPane || <p className="px-3 py-6 text-center text-xs text-muted-foreground">Pick a file to see its changes.</p>,
+        }}
+      />
     </div>
   )
 }
@@ -604,14 +663,35 @@ function Verb({ label, onClick, disabled, destructive, children }: { label: stri
   )
 }
 
-function FileRow({ file, group, busy, coarse, onOpen, onStage, onDiscard }: { file: WorkingFile; group: GroupId; busy: boolean; coarse: boolean; onOpen: () => void; onStage: () => void; onDiscard: () => void }) {
+/** This directory is a linked worktree (`git worktree add`), not a main checkout. */
+function WorktreeBadge() {
+  return <span title="A linked git worktree - it shares its repository with another checkout" className="shrink-0 rounded-sm border border-violet-500/50 bg-violet-500/15 px-1 text-[9px] font-medium uppercase leading-4 tracking-wide text-violet-700 dark:text-violet-300">worktree</span>
+}
+
+function TextVerb({ onClick, disabled, destructive, children }: { onClick: () => void; disabled?: boolean; destructive?: boolean; children: React.ReactNode }) {
+  return (
+    <button type="button" disabled={disabled} onClick={onClick} className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-foreground/80 hover:bg-background hover:text-foreground disabled:opacity-40", destructive && "hover:text-destructive")}>
+      {children}
+    </button>
+  )
+}
+
+function FileRow({ file, group, active, picked, selecting, onPick, busy, coarse, onOpen, onStage, onDiscard }: { file: WorkingFile; group: GroupId; active: boolean; picked: boolean; selecting: boolean; onPick: (shift: boolean) => void; busy: boolean; coarse: boolean; onOpen: () => void; onStage: () => void; onDiscard: () => void }) {
   const markColor = file.conflicted ? "text-red-600 dark:text-red-400" : file.mark === "A" || file.mark === "?" ? "text-emerald-600 dark:text-emerald-400" : file.mark === "D" ? "text-red-600 dark:text-red-400" : file.mark === "R" ? "text-sky-600 dark:text-sky-400" : "text-amber-600 dark:text-amber-400"
   const name = basename(file.path)
   const dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : ""
   return (
-    <div className={cn("group flex items-center gap-2 rounded-lg border border-transparent pl-5 pr-1 hover:border-border/60 hover:bg-muted/40", file.conflicted && "bg-destructive/5", coarse ? "min-h-11" : "min-h-8")}>
+    <div className={cn("group flex items-center gap-2 border-l-2 border-transparent pl-2 pr-1 hover:bg-muted/50", file.conflicted && "bg-destructive/5", active && "border-primary bg-accent", picked && "bg-sky-500/15", coarse ? "min-h-11" : "min-h-6")}>
+      {/* The tick shows on hover, and everywhere once something is ticked - so
+          a second row is one click, and shift-click takes the range between. */}
+      <Checkbox
+        aria-label={`Select ${name}`}
+        className={cn("size-3.5 rounded-[4px]", !(picked || selecting || coarse) && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+        checked={picked}
+        onClick={(event) => onPick(event.shiftKey)}
+      />
       <button type="button" onClick={onOpen} title={`Open diff: ${file.from ? `${file.from} → ${file.path}` : file.path}`} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <span className={cn("w-3 shrink-0 text-center font-mono text-[10px] font-bold", markColor)}>{file.mark}</span>
+        <span className={cn("grid size-4 shrink-0 place-items-center rounded-sm bg-current/10 font-mono text-[10px] font-bold", markColor)}>{file.mark}</span>
         <span className={cn("min-w-0 shrink-0 truncate text-xs", file.mark === "D" && "line-through opacity-70")}>{name}</span>
         <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{file.from ? `← ${file.from}` : dir}</span>
         <LineCounts insertions={file.insertions} deletions={file.deletions} />

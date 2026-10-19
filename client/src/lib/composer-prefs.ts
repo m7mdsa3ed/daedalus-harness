@@ -1,6 +1,6 @@
 /* ── Composer preferences ──
    How the box *behaves* for the person typing into it — not how a transcript
-   is drawn (that is `view-options.ts`) and not a key binding (`keybindings.ts`
+   is drawn (that is `layout-options.ts`) and not a key binding (`keybindings.ts`
    stores chords, and Enter is deliberately not one: rebinding it is a broken
    composer, but choosing what a bare Enter *means* is a preference every chat
    app offers). Device-local and global, like the reading options: the hand

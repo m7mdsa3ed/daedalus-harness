@@ -55,7 +55,7 @@ export function makeThreadCallbacks(
        server holds its promise now, so `resolve` is a message rather than a
        callback: it names the request the server minted, which is also how a
        peer's answer is matched against this card. */
-    onPermission: (requestId, request) => {
+    onPermission: (requestId, request, from) => {
       notifyThreadEvent("permissionNeeded", id, host.titleOf(), request.toolCall?.title ?? undefined)
       send({
         type: "permission",
@@ -64,6 +64,7 @@ export function makeThreadCallbacks(
         permission: {
           requestId,
           request,
+          ...(from ? { from } : {}),
           resolve: (response) => {
             send({ type: "permission", id, requestId, permission: null })
             owner().answerPermission(requestId, response)
@@ -71,7 +72,7 @@ export function makeThreadCallbacks(
         },
       })
     },
-    onElicitation: (requestId, request) => {
+    onElicitation: (requestId, request, from) => {
       notifyThreadEvent("questionAsked", id, host.titleOf(), request.message)
       send({
         type: "elicitation",
@@ -80,6 +81,7 @@ export function makeThreadCallbacks(
         elicitation: {
           requestId,
           request,
+          ...(from ? { from } : {}),
           resolve: (response) => {
             send({ type: "elicitation", id, requestId, elicitation: null })
             owner().answerElicitation(requestId, response)
@@ -219,8 +221,8 @@ export function makeThreadCallbacks(
        what ends this device's optimism about it: the row moves and the
        overlay the menu was drawing from is dropped in the same commit, so
        the value never flickers between the two. */
-    onSpawnConfig: (profileId, model, effort, suggestFollowups, uiBlocks, helperModels) => {
-      send({ type: "spawn-config", id, profileId, model, effort, suggestFollowups, uiBlocks, helperModels })
+    onSpawnConfig: (profileId, model, effort, suggestKinds, helperModels, uiGroups) => {
+      send({ type: "spawn-config", id, profileId, model, effort, suggestKinds, helperModels, uiGroups })
       send({ type: "pending-config", id, patch: null })
     },
     onStagedConfig: (config) => send({ type: "staged-config", id, config }),

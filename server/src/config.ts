@@ -88,6 +88,14 @@ export interface ServerConfig {
    * browse page an internal catalog rather than the public one.
    */
   mcpRegistryUrl?: string;
+  /**
+   * The openui Map's Google Maps Platform keys (`geo.ts`). `googleMapsKey` is the Maps JavaScript
+   * key the browser loads the map with - restrict it by HTTP referrer. `googleServerKey` is used
+   * server-side for the Routes and Places APIs (restrict it by IP); it falls back to the browser
+   * key, which only works while that key has no referrer restriction. `googleMapId` is an
+   * optional cloud map style. Unset keys mean the map says how to configure it.
+   */
+  geo?: { googleMapsKey?: string; googleServerKey?: string; googleMapId?: string };
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
 }
@@ -159,6 +167,7 @@ export function loadConfig(): ServerConfig {
     agentOptionsTtlHours: existing.agentOptionsTtlHours ?? 24,
     ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
     ...(existing.mcpRegistryUrl ? { mcpRegistryUrl: existing.mcpRegistryUrl } : {}),
+    ...(existing.geo ? { geo: existing.geo as ServerConfig["geo"] } : {}),
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
   };

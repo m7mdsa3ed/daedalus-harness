@@ -40,6 +40,9 @@ export const settingsFormPath = (section: string, id: string = "new") =>
     (`settingsFormPath("mcp", id)`) is where the row is edited; this is what
     the row turned out to be. */
 export const mcpDetailPath = (id: string) => `/settings/mcp/${encodeURIComponent(id)}/tools`
+/** One entry of an MCP server (a tool, prompt, resource) on a page of its own. */
+export const mcpEntryPath = (id: string, key: string) =>
+  `${mcpDetailPath(id)}/${encodeURIComponent(key)}`
 /** A project's own page — the overview, its threads and its numbers. Settings
     keeps the *form* (`settingsFormPath("projects", id)`); this is the workspace
     seen as a thing that has a history, which is not a settings screen. */
@@ -50,6 +53,8 @@ export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
 /** One scheduled message's own page — what it says, where it lands, when it
     fires next, and the form that changes any of those. */
+export const scheduleEditPath = (scheduleId: string) =>
+  `/schedules/${encodeURIComponent(scheduleId)}/edit`
 export const scheduleDetailPath = (scheduleId: string) =>
   `/schedules/${encodeURIComponent(scheduleId)}`
 /** The task workspace: one board, optionally with one task's detail open
@@ -70,6 +75,8 @@ export const notificationsPath = () => `/notifications`
    as much as to be edited. */
 export const routinesPath = () => `/routines`
 export const newRoutinePath = () => `/routines/new`
+export const routineRunPath = (routineId: string, runId: string) =>
+  `/routines/${encodeURIComponent(routineId)}/runs/${encodeURIComponent(runId)}`
 export const routinePath = (routineId: string) => `/routines/${encodeURIComponent(routineId)}`
 
 /** The thread the URL points at, if any — legacy /?session= deep links too.

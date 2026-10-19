@@ -22,6 +22,10 @@ import { runShellLine } from "../shell.js";
 import type { Scope } from "../turn-changes.js";
 import { containedPath, projectRoot } from "../workspace-fs.js";
 import { workspace } from "./helpers.js";
+import { normalizeSuggestKinds, normalizeUiGroups } from "../personas.js";
+
+/** Which profile (and model) `ask_agent` uses, by agent id. */
+const AskProfilesSchema = z.record(z.string(), z.object({ profileId: z.string().min(1), model: z.string().min(1).optional() }));
 
 const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -86,7 +90,12 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      "load more" knows where the window ends. */
   app.get("/api/sessions/page", (c) => {
     const all = sessions.list();
-    const live = all.filter((s) => s.deletedAt === null).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    /* Paged over top-level threads only: a child (an ask, a workflow step) is
+       drawn under its parent, so it rides along with whichever page or pin
+       carries the parent (`children`) rather than taking a slot of its own. */
+    const live = all
+      .filter((s) => s.deletedAt === null && !s.parentSessionId)
+      .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
     const trashed = all
       .filter((s) => s.deletedAt !== null)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
@@ -95,11 +104,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       .sort((a, b) => (a.pinnedAt ?? 0) - (b.pinnedAt ?? 0));
     const limit = clampInt(c.req.query("limit"), PAGE_SIZE_DEFAULT, 1, PAGE_SIZE_MAX);
     const offset = clampInt(c.req.query("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+    const page = live.slice(offset, offset + limit);
+    const parents = new Set([...page, ...pinned].map((s) => s.id));
     return c.json({
-      sessions: live.slice(offset, offset + limit),
+      sessions: page,
       total: live.length,
       trashed,
       pinned,
+      children: all.filter((s) => s.deletedAt === null && s.parentSessionId && parents.has(s.parentSessionId)),
     });
   });
 
@@ -158,8 +170,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       model,
       effort,
       modeId,
-      suggestFollowups,
-      uiBlocks,
+      suggestKinds,
+      uiGroups,
+      askProfiles,
       configChoices,
       helperModels: rawHelperModels,
       title,
@@ -228,12 +241,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         commandIds: ids(commandIds),
       }, {
         taskId: task,
-        // Omitted reads as off — a draft that never asked is a thread that
-        // never asked, the same default the row carries.
-        suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
-        // The drawn-UI lane, the same draft-picked spawn input: omitted reads as
-        // on, which is what the row's default says.
-        uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
+        // Omitted reads as the default set; an empty array is a draft that
+        // asked for none.
+        suggestKinds: Array.isArray(suggestKinds) ? normalizeSuggestKinds(suggestKinds) : undefined,
+        // The drawn-UI lane, the same draft-picked spawn input: empty is off,
+        // omitted (or not an array) reads as all.
+        uiGroups: Array.isArray(uiGroups) ? normalizeUiGroups(uiGroups) : undefined,
+        // Which profile and model `ask_agent` uses per agent; omitted = ask.
+        askProfiles: AskProfilesSchema.safeParse(askProfiles).data,
         // The draft's permission mode, picked against the agent's probed `modes`.
         // Best-effort like the config choices: a mode the agent does not offer
         // costs the pick, not the thread. The bridge guards on the agent's own
@@ -488,7 +503,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        change it was asked to take. This is what answers a caller that does
        not. */
     const staged = body.defer === false ? (sessions.stagedRequest(session.id) ?? {}) : {};
-    const { profileId, agentId: askedAgent, model, effort, suggestFollowups, uiBlocks, helperModels } = {
+    const { profileId, agentId: askedAgent, model, effort, suggestKinds, uiGroups, helperModels } = {
       ...staged,
       ...body,
     };
@@ -514,12 +529,12 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         project,
         model,
         effort,
-        // Omitted means unchanged; a boolean flips the suggestions trailer and
-        // respawns.
-        suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
-        // Same bargain for the drawn-UI lane: system-prompt text, so a flip
-        // costs the process.
-        uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
+        // Omitted means unchanged; a set that differs changes the suggestions
+        // trailer and respawns.
+        suggestKinds: Array.isArray(suggestKinds) ? normalizeSuggestKinds(suggestKinds) : undefined,
+        // The drawn-UI lane: spawn text, and a set that differs costs the
+        // process (`applyConfigLive` compares as sets); empty is off.
+        uiGroups: Array.isArray(uiGroups) ? normalizeUiGroups(uiGroups) : undefined,
         // The role → model map: read at spawn (the env var and the materialised
         // files), so a change costs the process like a profile move.
         helperModels: parsedHelpers ? parsedHelpers.data : undefined,
@@ -549,8 +564,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       profileId: session.profileId,
       model: session.model,
       effort: session.effort,
-      suggestFollowups: session.suggestFollowups,
-      uiBlocks: session.uiBlocks,
+      suggestKinds: session.suggestKinds,
+      uiGroups: session.uiGroups,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
     });
@@ -780,8 +795,15 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
 
   app.patch("/api/sessions/:id", async (c) => {
-    const { title, pinned } = await c.req.json();
+    const { title, pinned, askProfiles } = await c.req.json();
     if (!sessions.get(c.req.param("id"))) return c.json({ error: "not found" }, 404);
+    // Which profile (and model) `ask_agent` uses per agent on this thread.
+    // Travels alone, like a pin.
+    if (askProfiles !== undefined && title === undefined) {
+      const parsed = AskProfilesSchema.safeParse(askProfiles);
+      if (!parsed.success) return c.json({ error: "askProfiles must map an agent id to { profileId, model? }" }, 400);
+      return c.json({ askProfiles: (await sessions.setAskProfiles(c.req.param("id"), parsed.data)) ?? {} });
+    }
     // Pinning is the other thing this row edits, and it travels alone: a menu
     // toggling a pin has no title to send.
     if (typeof pinned === "boolean" && title === undefined) {

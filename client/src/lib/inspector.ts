@@ -3,7 +3,7 @@
    open, how wide, which tab — and the door the composer's readings use to open
    it at a tab.
 
-   Device-local and global, like `view-options`: the inspector is a way of
+   Device-local and global, like `layout-options`: the inspector is a way of
    reading threads, not a fact about one, so opening it in one thread opens it
    in the next. The *sheet* a narrow panel shows instead is not stored at all —
    a restored overlay covering every transcript on a phone is a panel that

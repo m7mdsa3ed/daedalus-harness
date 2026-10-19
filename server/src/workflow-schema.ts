@@ -31,12 +31,6 @@ export const AGENTS_SERVER_NAME = "agents";
 /** The `harness` MCP server: the agent managing this harness (tasks, boards,
     profiles, projects). */
 export const HARNESS_SERVER_NAME = "harness";
-/** The `builtin:browser` row's server: Google's `chrome-devtools-mcp`, pointed
-    at the thread's preview. Its own name, so the tools read as models know
-    them (`mcp__chrome-devtools__take_snapshot`). */
-export const BROWSER_SERVER_NAME = "chrome-devtools";
-/** The `builtin:video` row's server (`video-mcp/`): storyboard-driven demo videos. */
-export const VIDEO_SERVER_NAME = "video";
 
 export const STEP_NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/i;
 
@@ -146,10 +140,18 @@ export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & {
   isolation?: "worktree";
   /* ── Set only by `WorkflowRunner.ask` ──
      An ask is a one-step run on a pair of the caller's choosing rather than
-     the parent's own, drawn as a plain subagent named `label`. */
+     the parent's own, drawn as a plain subagent. */
   profileId?: string;
   agentId?: string;
+  /** The pair as a person reads it (`Codex`, `9router`): who answered. The ids
+      above are what spawns the child; these are what a transcript that outlives
+      the profile can still say. */
   label?: string;
+  agentName?: string;
+  profileName?: string;
+  /** The caller's short name for the errand, when it gave one — titles the child
+      thread and its row, where `label` names the pair instead. */
+  description?: string;
 };
 
 /** A validated definition, always in the engine's one shape: a flat step list

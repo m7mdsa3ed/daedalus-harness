@@ -27,7 +27,7 @@ import {
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 
 /** A fetch: the URL as a link first, because that is the thing you want to open. */
 export function FetchDetail({ item }: { item: ToolItem }) {
@@ -168,7 +168,7 @@ const ROW_SOURCES = 6
  */
 export function ToolSources({ item }: { item: ToolItem }) {
   const [all, setAll] = React.useState(false)
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   const fetched = extractWebFetch(item)
   const search = fetched ? null : extractWebSearch(item)
   const pages: WebResult[] = fetched

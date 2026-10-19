@@ -1,50 +1,67 @@
 /* ── Sort / filter, remembered on this device ──
    How the thread list is *read* is the reader's property, not the
    conversation's: the harness's session list is shared, and one person's
-   sidebar must not reorder another's. The store below and the menu that writes
-   it are one file because they are one setting. */
-import { ListFilter } from "lucide-react"
+   sidebar must not reorder another's. The values live with every other layout
+   option (`lib/layout-options`: `sidebarSort`, `sidebarFilter`,
+   `sidebarWithin`), so Settings › Appearance › Sidebar edits the same ones;
+   this is the quick menu on the Threads label. */
+import { ListFilter, SlidersHorizontal } from "lucide-react"
+import { useNavigate } from "react-router"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { createLocalStore } from "@/lib/local-store"
+import {
+  setLayoutOption,
+  type SidebarFilter,
+  type SidebarSort,
+  type SidebarWithin,
+} from "@/lib/layout-options"
+import { settingsPath } from "@/lib/router"
 import { cn } from "@/lib/utils"
 
-export type SidebarSort = "recent" | "project"
-export type SidebarFilter = "all" | "running" | "waiting"
-export interface SidebarView {
-  sort: SidebarSort
-  filter: SidebarFilter
+export const SORT_LABELS: Record<SidebarSort, string> = {
+  recent: "Recent activity",
+  created: "Newest created",
+  title: "Title (A–Z)",
+  project: "By project",
 }
-function parseView(raw: unknown): SidebarView {
-  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<SidebarView>
-  return {
-    sort: r.sort === "project" ? "project" : "recent",
-    filter: r.filter === "running" || r.filter === "waiting" ? r.filter : "all",
-  }
+export const FILTER_LABELS: Record<SidebarFilter, string> = {
+  all: "All threads",
+  running: "Running",
+  waiting: "Needs you",
+  unread: "Unread",
 }
-// Same key and JSON shape as before, so a stored choice carries over.
-const viewStore = createLocalStore<SidebarView>("ui.sidebarView", parseView, parseView(null))
+export const WITHIN_LABELS: Record<SidebarWithin, string> = {
+  any: "Any time",
+  day: "Last 24 hours",
+  week: "Last 7 days",
+  month: "Last 30 days",
+}
 
-function writeView(patch: Partial<SidebarView>) {
-  viewStore.set({ ...viewStore.get(), ...patch })
-}
-
-export const useSidebarView = viewStore.use
-export const setSidebarFilter = (filter: SidebarFilter) => writeView({ filter })
+const HEADING = "text-[11px] uppercase tracking-wide text-muted-foreground"
 
 /** Sort and filter, in one small menu on the Threads label — the controls
     Claude Code desktop puts at the top of its session list. The trigger
     lights up while a filter is on so a short list is never mistaken for an
     empty install. */
-export function ViewMenu({ view }: { view: SidebarView }) {
-  const filtered = view.filter !== "all"
+export function ViewMenu({
+  sort,
+  filter,
+  within,
+}: {
+  sort: SidebarSort
+  filter: SidebarFilter
+  within: SidebarWithin
+}) {
+  const navigate = useNavigate()
+  const filtered = filter !== "all" || within !== "any"
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -62,32 +79,41 @@ export function ViewMenu({ view }: { view: SidebarView }) {
         <ListFilter className="size-3.5" />
         <span className="sr-only">Sort and filter threads</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="right" align="start" className="w-44">
+      <DropdownMenuContent side="right" align="start" className="w-48">
         {/* The label is Base UI's Menu.GroupLabel: it reads its group from
             context and throws outside one, so it sits inside the radio group
             it names rather than loose in the content. */}
-        <DropdownMenuRadioGroup
-          value={view.sort}
-          onValueChange={(value) => writeView({ sort: value as SidebarSort })}
-        >
-          <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Sort
-          </DropdownMenuLabel>
-          <DropdownMenuRadioItem value="recent">Recent first</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="project">By project</DropdownMenuRadioItem>
+        <DropdownMenuRadioGroup value={sort} onValueChange={(value) => setLayoutOption("sidebarSort", value as SidebarSort)}>
+          <DropdownMenuLabel className={HEADING}>Sort</DropdownMenuLabel>
+          {(Object.keys(SORT_LABELS) as SidebarSort[]).map((value) => (
+            <DropdownMenuRadioItem key={value} value={value}>
+              {SORT_LABELS[value]}
+            </DropdownMenuRadioItem>
+          ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup
-          value={view.filter}
-          onValueChange={(value) => writeView({ filter: value as SidebarFilter })}
-        >
-          <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Show
-          </DropdownMenuLabel>
-          <DropdownMenuRadioItem value="all">All threads</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="running">Running</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="waiting">Needs you</DropdownMenuRadioItem>
+        <DropdownMenuRadioGroup value={filter} onValueChange={(value) => setLayoutOption("sidebarFilter", value as SidebarFilter)}>
+          <DropdownMenuLabel className={HEADING}>Show</DropdownMenuLabel>
+          {(Object.keys(FILTER_LABELS) as SidebarFilter[]).map((value) => (
+            <DropdownMenuRadioItem key={value} value={value}>
+              {FILTER_LABELS[value]}
+            </DropdownMenuRadioItem>
+          ))}
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={within} onValueChange={(value) => setLayoutOption("sidebarWithin", value as SidebarWithin)}>
+          <DropdownMenuLabel className={HEADING}>Active in</DropdownMenuLabel>
+          {(Object.keys(WITHIN_LABELS) as SidebarWithin[]).map((value) => (
+            <DropdownMenuRadioItem key={value} value={value}>
+              {WITHIN_LABELS[value]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => void navigate(`${settingsPath("appearance")}#interface`)}>
+          <SlidersHorizontal />
+          Sidebar settings…
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

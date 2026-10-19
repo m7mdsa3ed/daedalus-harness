@@ -38,6 +38,7 @@ import {
 import type { ColumnDef } from "@/lib/table"
 import type { RowData } from "@tanstack/react-table"
 import { cn } from "@/lib/utils"
+import { useTableFilter, type TableFilterField } from "@/lib/use-table-filter"
 
 /** One column, in the words a settings page uses. Mapped to a TanStack
     `ColumnDef` below — `cell` still receives the row, not a cell context. */
@@ -109,6 +110,8 @@ export interface SettingsListProps<T extends RowData> {
   /** Force the table/list toggle on or off. Defaults to on when a `renderCard`
       or a `mark` is given, off otherwise. */
   viewToggle?: boolean
+  /** Filters drawn beside the search, one multi-select per field, options read off the rows. */
+  fields?: TableFilterField<T>[]
   className?: string
 }
 
@@ -129,16 +132,14 @@ export function SettingsList<T extends RowData>({
   toolbar,
   mark,
   viewToggle,
+  fields,
   className,
 }: SettingsListProps<T>) {
-  const [query, setQuery] = React.useState("")
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () => (search && needle ? rows.filter((row) => search.matches(row, needle)) : rows),
-    // `matches` is an inline arrow at every call site; the rows and the needle move.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, needle]
-  )
+  const filter = useTableFilter(rows, {
+    matches: search?.matches,
+    placeholder: search?.placeholder,
+    fields,
+  })
 
   /* `ColumnDef`s are rebuilt only when the caller's columns change. The table
      memoizes each row against them, so an unstable array here would defeat the
@@ -186,27 +187,16 @@ export function SettingsList<T extends RowData>({
     <DataTable
       className={className}
       columns={tableColumns}
-      data={shown}
+      data={filter.rows}
       getRowId={(row) => rowId(row)}
       isLoading={loading}
       skeletonRows={skeletonRows}
       emptyIcon={emptyIcon ? React.createElement(emptyIcon) : undefined}
-      emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : (emptyText ?? "No results.")}
+      emptyMessage={filter.narrowed ? "Nothing matches that." : (emptyText ?? "No results.")}
       pageSize={pageSize}
       actions={tableActions}
       onRowClick={onRowClick}
-      filtering={
-        search
-          ? {
-              search: {
-                value: query,
-                onChange: setQuery,
-                placeholder: search.placeholder ?? "Search…",
-              },
-              totalCount: rows.length,
-            }
-          : undefined
-      }
+      filtering={search || fields ? filter.filtering : undefined}
       mobile={renderCard ? { renderRow: (row) => renderCard(row) } : undefined}
       mark={mark}
       toolbar={toolbar}

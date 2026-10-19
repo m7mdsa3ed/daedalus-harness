@@ -78,6 +78,7 @@ export { applyTerminalMeta, hasTerminalContent } from "./tools/terminal"
 export type { TodoEntry } from "./tools/todos"
 export { extractTodos } from "./tools/todos"
 
+
 export type { McpCall } from "./tools/mcp"
 export { extractMcpCall } from "./tools/mcp"
 
@@ -95,11 +96,13 @@ export {
   harnessTable,
 } from "./tools/harness"
 
-export type { AgentMessageCall, SubagentCall, WorkflowStepInfo, WorkflowPlanPhase } from "./tools/subagents"
+export type { AgentMessageCall, AskInfo, SubagentCall, WorkflowStepInfo, WorkflowPlanPhase } from "./tools/subagents"
 export {
   agentLabel,
+  askInfoOf,
   extractAgentMessage,
   isSubagentLaunch,
+  ASK_AGENT,
   extractSubagent,
   parseTaskWrapper,
   parentToolIdOf,

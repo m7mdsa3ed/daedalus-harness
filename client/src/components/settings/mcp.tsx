@@ -49,6 +49,7 @@ import { useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
 import { useQueries, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
+import { useTableFilter } from "@/lib/use-table-filter"
 import {
   Field,
   FormActions,
@@ -73,7 +74,7 @@ import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
-type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser" | "video"
+type BuiltinKind = "web-search" | "knowledge" | "workflow" | "agents" | "harness"
 
 /* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
    phrase the list needs to identify a row already there. */
@@ -88,8 +89,6 @@ const BUILTINS: {
   { kind: "workflow", label: "Workflows", detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
   { kind: "agents", label: "Ask agents", detail: "ask other profiles and agents", hint: "Let the agent hand a task to another profile and agent pair (Codex, Claude Code, Daedalus), drawn as a subagent" },
   { kind: "harness", label: "Harness", detail: "manage the harness", hint: "Let the agent manage the harness itself — read and write tasks on the board, list projects, and add profiles" },
-  { kind: "browser", label: "Preview browser", detail: "drive the thread's preview", hint: "Chrome DevTools MCP on the thread's Preview in the desktop app, once you turn on Drive there (needs npm i -g chrome-devtools-mcp on the server)" },
-  { kind: "video", label: "Product videos", detail: "author product videos", hint: "Build a product-demo video from a storyboard the agent and you keep editing: narration, capture, review, publish to Files (needs ffmpeg on the server)" },
 ]
 
 const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
@@ -443,7 +442,6 @@ export function McpPage() {
             mobile={{ renderRow }}
             expand={{ render: renderExpanded }}
             pageSize={50}
-            viewToggle={false}
             emptyIcon={<PlugIcon />}
             emptyMessage={needle || status !== "all" ? "No server matches." : "No MCP servers yet."}
             filtering={{
@@ -789,6 +787,12 @@ export function McpBrowsePage() {
   const [query, setQuery] = React.useState("")
   const [entries, setEntries] = React.useState<RegistryEntry[] | null>(null)
   const [error, setError] = React.useState<InlineError | null>(null)
+  const registryRows = React.useMemo(() => entries ?? [], [entries])
+  const f = useTableFilter(registryRows, {
+    text: (e) => `${e.qualifiedName} ${e.description}`,
+    placeholder: "Filter these results…",
+    fields: [{ id: "via", label: "Source", of: (e) => e.via, optionLabel: (v) => (v === "remote" ? "Remote" : v) }],
+  })
 
   React.useEffect(() => {
     const abort = new AbortController()
@@ -955,16 +959,16 @@ export function McpBrowsePage() {
           >
             <DataTable
               columns={columns}
-              data={entries ?? []}
+              data={f.rows}
               getRowId={(e) => e.id}
               isLoading={entries === null}
               skeletonRows={5}
               mark={(e) => <RegistryMark entry={e} className="size-5" />}
               mobile={{ renderRow }}
               pageSize={50}
-              viewToggle={false}
               emptyIcon={<meta.icon />}
-              emptyMessage={query ? `Nothing published matches "${query}".` : "The registry answered with nothing."}
+              emptyMessage={query || f.narrowed ? "Nothing published matches." : "The registry answered with nothing."}
+              filtering={{ ...f.filtering, search: undefined }}
             />
           </Section>
         </FormShell>

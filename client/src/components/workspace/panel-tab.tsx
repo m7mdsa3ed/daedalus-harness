@@ -76,6 +76,7 @@ import { reportError } from "@/lib/errors"
 import { pageKey } from "@/lib/workspace/panels"
 import { usePageHeadingFor } from "@/components/workspace/page-panel"
 import { activityAt, relativeAge } from "@/lib/settings"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { useAgents, useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
 import { useSessionMeta } from "@/lib/store"
@@ -272,6 +273,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const status = usePanelStatus(api.id)
   const neighbours = useTabNeighbours(api, containerApi)
   const meta = useSessionMeta(descriptor?.kind === "chat" ? descriptor.sessionId : "")
+  const options = useLayoutOptions()
   const projects = useProjects()
   const agents = useAgents()
   const projectId =
@@ -287,8 +289,9 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
      section it is in; a shell its directory and a preview its address. Short on
      purpose — the hover card has the rest. */
   const headingFor = usePageHeadingFor()
-  const subtitle =
-    descriptor?.kind === "chat"
+  const subtitle = !options.showTabDetails
+    ? ""
+    : descriptor?.kind === "chat"
       ? [meta?.draft ? "Draft" : undefined, project?.name, meta?.model].filter(Boolean).join(" · ")
       : descriptor?.kind === "page"
         ? (headingFor(descriptor.path)?.crumb ?? (pageKey(descriptor.path) === "home" ? "Quick actions" : ""))
@@ -297,6 +300,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           : descriptor?.kind === "web"
             ? (descriptor.file ?? descriptor.url ?? "")
             : ""
+  /* The age rides the second row and never opens one. */
   /* When the thread last did anything. The age only moves by the minute, so one
      re-render a minute keeps it honest and a tab nobody looks at costs nothing. */
   const [, tick] = React.useReducer((n: number) => n + 1, 0)
@@ -394,7 +398,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                   a strip that talks over itself. */}
               <PanelStatusDot status={status} aria-hidden role={undefined} title={undefined} />
             </span>
-            {(subtitle || age) && (
+            {subtitle && (
               <span className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3 font-normal text-muted-foreground/80">
                 <span className="min-w-0 flex-1 truncate">{subtitle}</span>
                 {age && <span className="shrink-0 tabular-nums">{age}</span>}

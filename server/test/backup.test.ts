@@ -11,13 +11,14 @@ import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import {
   agents as agentsTable,
   commands as commandsTable,
-  savedPrompts as promptsTable,
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
   
   profiles as profilesTable,
+  projectSpaces as projectSpacesTable,
   projects as projectsTable,
+  spaces as spacesTable,
   routineMcpServers,
   routineRuns as routineRunsTable,
   routineTriggers as routineTriggersTable,
@@ -45,7 +46,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 }
 
 async function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, promptsTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, spacesTable, mcpServersTable, skillsTable, commandsTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     await db.delete(table);
   }
 }
@@ -61,9 +62,6 @@ async function seed() {
   await db.insert(mcpServersTable).values({ id: "m1", type: "http", name: "srv", url: "http://x", headers: [{ name: "Authorization", value: "Bearer s3cret" }] });
   await db.insert(skillsTable).values({ id: "s1", name: "skill", path: "/tmp/skill" });
   await db.insert(commandsTable).values({ id: "c1", name: "go", description: "d", content: "body" });
-  /* A built-in, edits and all: it carries a `seededVersion`, so a restore that
-     dropped it would never be re-seeded. */
-  await db.insert(promptsTable).values({ id: "builtin:terse", name: "terse", description: "d", prompt: "One line.", seededVersion: 1, sortOrder: 10 });
   await db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [], group: "Speed", iconUrl: "https://models.dev/logos/gw.svg" }] });
   
   /* A project with start defaults picked, so the round trip below is a real
@@ -83,9 +81,20 @@ async function seed() {
     defaultMcpServerIds: ["m1"],
     defaultSkillIds: ["s1"],
     defaultCommandIds: ["c1"],
-    defaultSuggestFollowups: false,
+    defaultSuggestKinds: [],
     defaultUiBlocks: false,
+    defaultUiGroups: ["layout", "numbers"],
+    defaultAskProfiles: { fake: { profileId: "p1", model: "m1" } },
   });
+  /* One project in two spaces: the join table is what the bundle has to carry. */
+  await db.insert(spacesTable).values([
+    { id: "sp1", name: "Personal", sortOrder: 0, createdAt: now },
+    { id: "sp2", name: "Work", sortOrder: 1, createdAt: now },
+  ]);
+  await db.insert(projectSpacesTable).values([
+    { projectId: "w1", spaceId: "sp1" },
+    { projectId: "w1", spaceId: "sp2" },
+  ]);
   await db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now });
   await db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", title: "Thread", acpSessionId: "acp-1", createdAt: now });
   await db.insert(eventsTable).values([
@@ -150,15 +159,7 @@ await test("a full export round-trips through the schema", async () => {
   assert.ok(!("mcpServerIds" in (bundle.profiles[0] as object)));
   assert.equal(bundle.events.length, 2);
   assert.equal(bundle.queue.length, 1);
-  assert.deepEqual(bundle.prompts[0], {
-    id: "builtin:terse",
-    name: "terse",
-    title: "",
-    description: "d",
-    prompt: "One line.",
-    seededVersion: 1,
-    sortOrder: 10,
-  });
+  assert.ok(!("prompts" in bundle) && !("personas" in bundle), "the legacy keys are never exported");
   /* A model's `group` and `iconUrl` are the user's own writing, like the price
      beside them — a bundle that did not carry them would hand back a restored
      profile whose picker headings were silently gone. */
@@ -166,18 +167,20 @@ await test("a full export round-trips through the schema", async () => {
   assert.equal(bundle.profiles[0]!.models[0]!.iconUrl, "https://models.dev/logos/gw.svg");
 });
 
-await test("a legacy bundle's personas import as saved prompts with slugged handles", async () => {
+await test("a legacy bundle's prompts and personas import as slash commands with slugged names", async () => {
   await seed();
   const bundle = JSON.parse(JSON.stringify(await exportBundle({ includeSecrets: true, includeJournals: true })));
-  bundle.prompts = [];
+  bundle.commands = [];
+  bundle.prompts = [{ id: "pc", name: "terse", description: "", prompt: "C" }];
   bundle.personas = [
     { id: "pa", name: "Think more!", prompt: "A", thinking: 0, effort: "low" },
     { id: "pb", name: "think more", prompt: "B" },
   ];
   await wipe();
   await importBundle(BundleSchema.parse(bundle), "replace");
-  const rows = await db.select().from(promptsTable);
-  assert.deepEqual(rows.map((r) => [r.id, r.name]).sort(), [["pa", "think-more"], ["pb", "think-more-2"]]);
+  const rows = await db.select().from(commandsTable);
+  assert.deepEqual(rows.map((r) => [r.id, r.name]).sort(), [["pa", "think-more"], ["pb", "think-more-2"], ["pc", "terse"]]);
+  assert.equal(rows.find((r) => r.id === "pc")!.content, "C");
 });
 
 await test("a routine round-trips with its triggers, runs and links", async () => {
@@ -238,6 +241,22 @@ await test("replace restores an emptied install exactly", async () => {
   const again = await exportBundle({ includeSecrets: true, includeJournals: true });
   const strip = (b: Bundle) => ({ ...b, exportedAt: 0 });
   assert.deepEqual(strip(again), strip(bundle));
+});
+
+await test("a project's spaces round-trip, and an old bundle's single space still lands", async () => {
+  await seed();
+  const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
+  assert.deepEqual(bundle.projects.find((p) => p.id === "w1")!.spaceIds, ["sp1", "sp2"]);
+  await wipe();
+  // A bundle from before spaces were many-to-many names one `spaceId`.
+  const old = BundleSchema.parse(JSON.parse(JSON.stringify(bundle)));
+  for (const p of old.projects) {
+    delete p.spaceIds;
+    p.spaceId = "sp2";
+  }
+  await importBundle(old, "replace");
+  const rows = await db.select().from(projectSpacesTable);
+  assert.deepEqual(rows, [{ projectId: "w1", spaceId: "sp2" }]);
 });
 
 await test("boards and their columns round-trip", async () => {
@@ -313,8 +332,10 @@ await test("a project's start defaults survive export and import", async () => {
     mcpServerIds: ["m1"],
     skillIds: ["s1"],
     commandIds: ["c1"],
-    suggestFollowups: false,
-    uiBlocks: false,
+    suggestKinds: [],
+    uiGroups: ["layout", "numbers"],
+    voiceProvider: "",
+    askProfiles: { fake: { profileId: "p1", model: "m1" } },
   });
   /* A bundle from before the columns: the key is absent and every field of
      the defaults is missing too, which is the shape `prefault` exists for. */
@@ -323,15 +344,33 @@ await test("a project's start defaults survive export and import", async () => {
   await importBundle(BundleSchema.parse(legacy), "replace");
   const restored = (await db.select().from(projectsTable).where(eq(projectsTable.id, "w1")))[0]!;
   assert.equal(restored.defaultModel, null, "a bundle from before the columns clears them");
-  assert.equal(restored.defaultSuggestFollowups, true, "and the booleans land on their defaults");
+  assert.equal(restored.defaultUiGroups, null, "and the group set reads as every group");
+  assert.deepEqual(restored.defaultSuggestKinds, ["prompts", "commands"], "and the suggestion set lands on its default");
   // And the modern bundle puts them back.
   await importBundle(bundle, "replace");
   const round = (await db.select().from(projectsTable).where(eq(projectsTable.id, "w1")))[0]!;
   assert.equal(round.defaultModel, "m");
   assert.deepEqual(round.defaultConfigChoices, { sandbox: "workspace-write" });
   assert.deepEqual(round.defaultMcpServerIds, ["m1"]);
-  assert.equal(round.defaultSuggestFollowups, false);
-  assert.equal(round.defaultUiBlocks, false);
+  assert.deepEqual(round.defaultSuggestKinds, []);
+  assert.deepEqual(round.defaultUiGroups, ["layout", "numbers"]);
+  assert.deepEqual(round.defaultAskProfiles, { fake: { profileId: "p1", model: "m1" } });
+
+  // A bundle from before the set carried only the legacy switch: off is the empty set.
+  const old = JSON.parse(JSON.stringify(bundle)) as { projects: { defaults: Record<string, unknown> }[] };
+  delete old.projects[0]!.defaults.uiGroups;
+  old.projects[0]!.defaults.uiBlocks = false;
+  await importBundle(BundleSchema.parse(old), "replace");
+  const off = (await db.select().from(projectsTable).where(eq(projectsTable.id, "w1")))[0]!;
+  assert.deepEqual(off.defaultUiGroups, [], "legacy uiBlocks:false imports as an empty group set");
+
+  // The same for a thread: a row carrying only `uiBlocks:false` lands as [].
+  const oldSession = JSON.parse(JSON.stringify(bundle)) as { sessions: Record<string, unknown>[] };
+  delete oldSession.sessions[0]!.uiGroups;
+  oldSession.sessions[0]!.uiBlocks = false;
+  await importBundle(BundleSchema.parse(oldSession), "replace");
+  const thread = (await db.select().from(sessionsTable).where(eq(sessionsTable.id, "t1")))[0]!;
+  assert.deepEqual(thread.uiGroups, [], "legacy session uiBlocks:false imports as uiGroups []");
 });
 
 await test("merge upserts by id without cascading the row's children", async () => {

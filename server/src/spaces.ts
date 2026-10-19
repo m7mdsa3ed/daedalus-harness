@@ -12,9 +12,10 @@ import { db, spaces as spacesTable } from "./db/index.js";
  * would be a second value that can disagree with the first, which is the drift
  * the schema warns about elsewhere.
  *
- * Deleting a space is refused while a project still points at it — the same
- * bargain `deleteProfile` makes with a live thread — so nothing this table owns
- * is ever silently orphaned by a cascade.
+ * A project may be in several spaces (`project_spaces`). Deleting a space is
+ * refused while a project lives *only* there — the same bargain `deleteProfile`
+ * makes with a live thread — so no project is ever left in no space; the
+ * memberships of the rest cascade away with the row.
  */
 
 export const SpaceInputSchema = z.object({
@@ -80,12 +81,17 @@ export async function updateSpace(id: string, input: SpaceInput): Promise<Space 
   return changed > 0 ? await getSpace(id) : undefined;
 }
 
-/** How many projects would be orphaned by deleting this space — the question
-    the route asks before it answers. */
-export async function projectsInSpace(id: string): Promise<number> {
-  const rows = await db.execute<{ n: number }>(
-    sql`SELECT count(*)::int AS n FROM projects WHERE space_id = ${id}`,
-  );
+/** How many projects would be left in no space by deleting this one — those
+    whose only space it is. A project that is also filed elsewhere just loses
+    this membership (the join table cascades), so it does not count. */
+export async function projectsOnlyIn(id: string): Promise<number> {
+  const rows = await db.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM project_spaces ps
+    WHERE ps.space_id = ${id}
+      AND NOT EXISTS (
+        SELECT 1 FROM project_spaces o WHERE o.project_id = ps.project_id AND o.space_id <> ps.space_id
+      )
+  `);
   return rows.rows[0]?.n ?? 0;
 }
 

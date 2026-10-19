@@ -10,6 +10,7 @@
    or out of it — a shell rooted in this thread's worktree means nothing beside
    another thread. Dockview already refuses a drop from another instance
    (nothing accepts `onUnhandledDragOver`), so the rule costs no code. */
+import * as React from "react"
 import type { SerializedDockview } from "dockview-react"
 
 import { createLocalStore } from "@/lib/local-store"
@@ -30,6 +31,27 @@ export interface ThreadDockHandle {
       terminal, the only kind a thread holds more than one of. */
   open: (kind: ThreadPanelKind, reuse?: boolean) => void
   jump: (id?: string, turn?: { turnId: string; seq: number }) => void
+}
+
+/* Which thread's dock a panel (or a tool row in its transcript) is in. Lives
+   here, not in the component, so a tool view can ask without importing the
+   dock that renders it. */
+export interface ThreadDockValue {
+  sessionId: string
+  handle: ThreadDockHandle
+}
+export const ThreadDockContext = React.createContext<ThreadDockValue | null>(null)
+
+/** The thread whose dock this panel is in, or null in the outer dock. */
+export function useThreadDockSession(): string | null {
+  return React.useContext(ThreadDockContext)?.sessionId ?? null
+}
+
+/** The dock's own handle, so a panel can bring a sibling pane forward — the
+    Preview's "Send to agent" shows the transcript it just filled. Null in the
+    outer dock. */
+export function useThreadDockHandle(): ThreadDockHandle | null {
+  return React.useContext(ThreadDockContext)?.handle ?? null
 }
 
 const docks = new Map<string, ThreadDockHandle>()

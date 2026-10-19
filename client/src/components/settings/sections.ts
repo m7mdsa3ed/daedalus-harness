@@ -36,7 +36,6 @@ import {
   Search,
   Server,
   Settings2,
-  MessageSquareText,
   Lightbulb,
   Sparkles,
   SquareSlash,
@@ -60,6 +59,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "ai",
     page: lazyPage(() => import("./ai"), "AiPage"),
+    sub: [{ path: ":entryId", page: lazyPage(() => import("./ai"), "AiHelperPage") }],
     label: "AI helpers",
     icon: Sparkles,
     title: "AI helpers",
@@ -129,6 +129,7 @@ export const SETTINGS_SECTIONS = [
       /* A chunk of its own: the contract rendering is a page somebody
          navigates to, and the library list must not carry it. */
       { path: ":entryId/tools", page: lazyPage(() => import("./mcp-detail"), "McpDetailPage") },
+      { path: ":entryId/tools/:itemKey", page: lazyPage(() => import("./mcp-detail"), "McpEntryPage") },
       { path: ":entryId", page: lazyPage(() => import("./mcp"), "McpFormPage") },
     ],
     label: "MCP servers",
@@ -175,6 +176,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "rules",
     page: lazyPage(() => import("./rules"), "RulesPage"),
+    sub: [{ path: ":entryId", page: lazyPage(() => import("./rules"), "RuleFormPage") }],
     label: "Rules",
     icon: ScrollText,
     title: "Rules",
@@ -184,24 +186,12 @@ export const SETTINGS_SECTIONS = [
   {
     id: "model-roles",
     page: lazyPage(() => import("./model-roles"), "ModelRolesPage"),
+    sub: [{ path: ":entryId", page: lazyPage(() => import("./model-roles"), "ModelRoleFormPage") }],
     label: "Model roles",
     icon: Tag,
     title: "Model roles",
     description:
       "The vocabulary a profile's models tag themselves with — a subagent is spawned on a role (\"small\", \"advisor\") rather than on a hardcoded model. Assign roles to models in the profile editor; a role's model is the first model carrying it.",
-  },
-  {
-    id: "prompts",
-    page: lazyPage(() => import("./prompts"), "PromptsPage"),
-    /* No import route: no agent has a saved prompt to give. */
-    sub: [
-      { path: ":entryId", page: lazyPage(() => import("./prompts"), "PromptFormPage") },
-    ],
-    label: "Saved prompts",
-    icon: MessageSquareText,
-    title: "Saved prompts",
-    description:
-      "Reusable text you mention with @handle in the composer. The client sends the handle as typed; the server swaps in the prompt's text when the message is sent.",
   },
   {
     id: "model-prompts",
@@ -229,6 +219,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "agents",
     page: lazyPage(() => import("./agents"), "AgentsPage"),
+    sub: [{ path: ":entryId", page: lazyPage(() => import("./agents"), "AgentFormPage") }],
     label: "Agents",
     icon: Cpu,
     title: "Agents",
@@ -345,7 +336,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
 }[] = [
   { label: "Personal", sections: ["general", "appearance", "keyboard", "notifications"] },
   { label: "Workspace", sections: ["projects", "files", "knowledge", "rules"] },
-  { label: "Tools", sections: ["mcp", "skills", "commands", "prompts"] },
+  { label: "Tools", sections: ["mcp", "skills", "commands"] },
   { label: "AI & models", sections: ["profiles", "agents", "model-roles", "model-prompts", "ai"] },
   { label: "Services", sections: ["usage", "web-search", "voice"] },
   { label: "Server", sections: ["backup"] },

@@ -139,7 +139,7 @@ export function CommandPalette({
       which unmounts the moment a command runs. */
   onImportThreads: () => void
   onShortcuts: () => void
-  /** The view-options dialog, app-shell's for the same reason the sheet is. */
+  /** The layout-options dialog, app-shell's for the same reason the sheet is. */
   onViewOptions: () => void
   /** Which page an open lands on. `root` for every ordinary ⌘K; a page for the
       chords that name one (see `useCommandPalette`). */

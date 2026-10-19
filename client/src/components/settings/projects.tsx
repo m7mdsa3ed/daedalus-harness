@@ -56,6 +56,7 @@ import {
   INSET,
   LogoUpload,
   PageForm,
+  Picker,
   PageHeader,
   SectionHead,
   StatStrip,
@@ -67,6 +68,7 @@ import { HelperForm } from "@/components/helper-form"
 import { VoiceBackendField } from "./voice"
 import { saveProjectDefaults } from "@/lib/project-defaults"
 import { useQueryClient } from "@tanstack/react-query"
+import { useTableFilter } from "@/lib/use-table-filter"
 
 /* ── The collection ──
    One DataTable: a project is a name over its path, then what hangs off it
@@ -148,15 +150,10 @@ export function ProjectsPage() {
     setDragged((d) => (d && d.map((p) => p.id).join() === ids ? null : d))
   }, [ids])
 
-  const [query, setQuery] = React.useState("")
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? list.filter((p) => `${p.name} ${p.cwd} ${p.description ?? ""}`.toLowerCase().includes(needle))
-        : list,
-    [list, needle],
-  )
+  const f = useTableFilter(list, {
+    text: (p) => `${p.name} ${p.cwd} ${p.description ?? ""}`,
+    placeholder: "Search projects...",
+  })
 
   const move = (project: Project, delta: -1 | 1) => {
     const from = list.findIndex((p) => p.id === project.id)
@@ -199,7 +196,7 @@ export function ProjectsPage() {
      re-read. */
   const firstId = list[0]?.id
   const lastId = list.at(-1)?.id
-  const filtered = Boolean(needle)
+  const filtered = f.narrowed
 
   const actions = React.useMemo<TableAction<Project>[]>(
     () => [
@@ -263,18 +260,15 @@ export function ProjectsPage() {
       ) : (
         <DataTable
           columns={PROJECT_COLUMNS}
-          data={shown}
+          data={f.rows}
           getRowId={(p) => p.id}
           pageSize={50}
           mark={(p) => <ProjectIcon project={p} className="size-5" />}
           actions={actions}
           onRowClick={(p) => void navigate(settingsFormPath("projects", p.id))}
           emptyIcon={<FolderIcon />}
-          emptyMessage={`Nothing matches “${query.trim()}”.`}
-          filtering={{
-            search: { value: query, onChange: setQuery, placeholder: "Search projects..." },
-            totalCount: projects.length,
-          }}
+          emptyMessage="Nothing matches."
+          filtering={f.filtering}
         />
       )}
     </>
@@ -320,7 +314,7 @@ export function ProjectForm({
   const [form, setForm] = React.useState(() => ({
     name: project?.name ?? "",
     cwd: project?.cwd ?? "",
-    spaceId: project?.spaceId ?? "",
+    spaceIds: project?.spaceIds ?? [],
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
     previewUrl: project?.previewUrl ?? "",
@@ -330,9 +324,12 @@ export function ProjectForm({
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
-  /* The space this project is filed under. A new project defaults to the space
-     you are in — "make a project while working in Work" means a project in
-     Work" — and the picker is what moves an existing one between spaces. */
+  /* The spaces this project is filed under — one or several. A new project
+     defaults to the space you are in ("make a project while working in Work"
+     means a project in Work), and the picker is what moves an existing one
+     between spaces or adds it to more. A project is always in at least one, so
+     the last box cannot be unticked; an untouched new project shows the space
+     it will land in as ticked. */
   const { spaces, id: activeSpaceId } = useActiveSpace()
   /* The at-a-glance strip reads the same cached queries the sections below
      draw from, so it costs no request of its own. */
@@ -351,7 +348,7 @@ export function ProjectForm({
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
         previewUrl: form.previewUrl.trim(),
-        spaceId: form.spaceId || activeSpaceId || undefined,
+        spaceIds: form.spaceIds.length > 0 ? form.spaceIds : activeSpaceId ? [activeSpaceId] : undefined,
       }
       const saved = project
         ? await api<Project>(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -368,34 +365,25 @@ export function ProjectForm({
      dialog (no panel above it) stays one column. A card is not a container and does not clip: the path picker's popup hangs below its field. */
   const fields = (
     <div className="grid gap-4 @panel-sm:grid-cols-2">
-        <div className={spaces.length > 0 ? undefined : "@panel-sm:col-span-2"}>
+        <div className="@panel-sm:col-span-2">
           <Field label="Name">
             <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
           </Field>
         </div>
-        {/* The scope above the project: which space this one is filed under, and
-            so which one you find it in. Moved here rather than created on — a
-            project is filed once and repointed when the work moves. */}
+        {/* The scope above the project: which spaces this one is filed under,
+            and so where you find it. A project can be in several. */}
         {spaces.length > 0 && (
-          <Field label="Space" hint="Where this project is filed. Switching spaces switches the projects, and their threads, the sidebar shows.">
-            <Select
-              value={form.spaceId || activeSpaceId || undefined}
-              onValueChange={(value) => set({ spaceId: value ?? "" })}
-            >
-              <SelectTrigger className="h-9 w-full pointer-coarse:h-11">
-                <SelectValue>
-                  {spaces.find((space) => space.id === (form.spaceId || activeSpaceId))?.name ?? "Pick a space"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {spaces.map((space) => (
-                  <SelectItem key={space.id} value={space.id}>
-                    {space.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+          <div className="@panel-sm:col-span-2">
+            <Field label="Spaces" hint="Where this project is filed. Switching spaces switches the projects, and their threads, the sidebar shows. A project can be in more than one.">
+              <Picker
+                items={spaces}
+                selected={form.spaceIds.length > 0 ? form.spaceIds : activeSpaceId ? [activeSpaceId] : []}
+                onToggle={(ids) => ids.length > 0 && set({ spaceIds: ids })}
+                subtitle={() => null}
+                empty="No spaces yet."
+              />
+            </Field>
+          </div>
         )}
         <div className="@panel-sm:col-span-2">
           <Field label="Working directory" hint="Path on the server, not on this device.">
@@ -671,6 +659,12 @@ function HelpersSection({ project }: { project: Project | null }) {
     [],
   )
 
+  const f = useTableFilter(helpers, {
+    text: (h) => `${h.name} ${h.command} ${h.description ?? ""} ${h.cwd ?? ""}`,
+    placeholder: "Search helpers...",
+    fields: [{ id: "behaviour", label: "Behaviour", of: (h) => (h.preview ? "Preview" : h.confirm ? "Asks first" : "Plain") }],
+  })
+
   return (
     <Block
       id="helpers"
@@ -687,14 +681,15 @@ function HelpersSection({ project }: { project: Project | null }) {
           ) : (
             <DataTable
               columns={HELPER_COLUMNS}
-              data={helpers}
+              data={f.rows}
+              filtering={f.filtering}
               getRowId={(h) => h.id}
               pageSize={25}
               maxHeight={420}
               mark={() => <SquareTerminal />}
               actions={actions}
               emptyIcon={<SquareTerminal />}
-              emptyMessage="No helper commands."
+              emptyMessage={f.narrowed ? "Nothing matches." : "No helper commands."}
             />
           )}
           <div ref={formRef} className={cn("space-y-3 p-3", INSET)}>
@@ -816,15 +811,10 @@ function KnowledgeSection({ project }: { project: Project | null }) {
     }
   }
 
-  const [query, setQuery] = React.useState("")
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? rows.filter((e) => `${e.title} ${e.content} ${e.tags.join(" ")}`.toLowerCase().includes(needle))
-        : rows,
-    [rows, needle],
-  )
+  const f = useTableFilter(rows, {
+    text: (e) => `${e.title} ${e.content} ${e.tags.join(" ")}`,
+    placeholder: "Search knowledge...",
+  })
   const live = React.useRef({ remove })
   React.useLayoutEffect(() => {
     live.current = { remove }
@@ -875,18 +865,15 @@ function KnowledgeSection({ project }: { project: Project | null }) {
           ) : (
             <DataTable
               columns={KNOWLEDGE_COLUMNS}
-              data={shown}
+              data={f.rows}
               getRowId={(e) => e.id}
               pageSize={25}
               maxHeight={420}
               mark={() => <BookOpenIcon />}
               actions={actions}
               emptyIcon={<BookOpenIcon />}
-              emptyMessage={`Nothing matches “${query.trim()}”.`}
-              filtering={{
-                search: { value: query, onChange: setQuery, placeholder: "Search knowledge..." },
-                totalCount: rows.length,
-              }}
+              emptyMessage="Nothing matches."
+              filtering={f.filtering}
             />
           )}
           <form onSubmit={add} className={cn("space-y-4 p-3", INSET)}>

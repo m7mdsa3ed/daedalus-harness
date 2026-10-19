@@ -35,15 +35,19 @@ export function CommitDetailView({
   coarse,
   onBack,
   onOpenFile,
+  selected,
 }: {
   projectId: string
   repo: string
   /** The row that was clicked — drawn at once while the rest is read. */
   commit: GitCommit
   coarse: boolean
-  onBack: () => void
+  /** Absent when the view is a pane beside a list rather than a page of its own. */
+  onBack?: () => void
   /** `path` is repository-relative; `parent` is "" for a root commit. */
   onOpenFile: (file: CommitFile, detail: CommitDetail) => void
+  /** The open file's path; when it names nothing here the first file opens. */
+  selected?: string
 }) {
   const settings = useServer()
   const [detail, setDetail] = React.useState<CommitDetail | null>(null)
@@ -61,6 +65,14 @@ export function CommitDetailView({
     return () => controller.abort()
   }, [settings, projectId, repo, commit.hash])
 
+  /* A pane always has a file open, as Sublime Merge's does. */
+  React.useEffect(() => {
+    const first = detail?.files[0]
+    if (detail && first && !detail.files.some((file) => file.path === selected)) onOpenFile(first, detail)
+    // Only a new commit's files can change the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail])
+
   const [subject, ...rest] = (detail?.body ?? commit.subject).split("\n")
   const body = rest.join("\n").trim()
   const when = new Date(commit.at * 1000)
@@ -68,9 +80,11 @@ export function CommitDetailView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1">
-        <Button variant="ghost" size="xs" className="gap-1" onClick={onBack}>
-          <ArrowLeftIcon className="size-3.5" /> History
-        </Button>
+        {onBack && (
+          <Button variant="ghost" size="xs" className="gap-1" onClick={onBack}>
+            <ArrowLeftIcon className="size-3.5" /> History
+          </Button>
+        )}
         <span className="ml-auto font-mono text-[10px] text-muted-foreground">{commit.short}</span>
         <CopyButton text={commit.hash} size="icon-xs" />
       </div>
@@ -147,6 +161,7 @@ export function CommitDetailView({
                     title={file.from ? `${file.from} → ${file.path}` : file.path}
                     className={cn(
                       "flex w-full items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-accent/50",
+                      file.path === selected && "bg-accent",
                       coarse ? "min-h-11" : "min-h-7"
                     )}
                   >

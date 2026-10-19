@@ -12,7 +12,7 @@ import type {
   WireError,
 } from "@daedalus/protocol"
 import { sameRow } from "../settings"
-import type { SessionMeta } from "../settings"
+import type { AskProfiles, SessionMeta } from "../settings"
 import { unclaimed } from "../thread/carry"
 import type { ConnPhase } from "../thread/phase"
 import { mintItemId } from "./items"
@@ -49,8 +49,9 @@ export type Action =
           | "model"
           | "effort"
           | "modeId"
-          | "suggestFollowups"
-          | "uiBlocks"
+          | "suggestKinds"
+          | "uiGroups"
+          | "askProfiles"
           | "helperModels"
           | "mcpServerIds"
           | "skillIds"
@@ -69,8 +70,8 @@ export type Action =
       profileId: string
       model: string
       effort: string
-      suggestFollowups?: boolean
-      uiBlocks?: boolean
+      suggestKinds?: string[]
+      uiGroups?: string[]
       helperModels?: { role: string; model: string }[]
     }
   /** This device's own optimism about a config change, or the end of it.
@@ -189,6 +190,7 @@ export type Action =
       the list read that replaces it with the server's own. */
   | { type: "promote-draft"; id: string }
   | { type: "pin-session"; id: string; pinnedAt: number | null }
+  | { type: "ask-profiles-session"; id: string; askProfiles: AskProfiles }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
       that is resolved, because during a batched replay the caller cannot read
@@ -319,8 +321,8 @@ export function reducer(state: State, action: Action): State {
                 model: action.model,
                 effort: action.effort,
                 // Omitted by a server that predates the toggle — same bargain.
-                ...(action.suggestFollowups === undefined ? {} : { suggestFollowups: action.suggestFollowups }),
-                ...(action.uiBlocks === undefined ? {} : { uiBlocks: action.uiBlocks }),
+                ...(action.suggestKinds === undefined ? {} : { suggestKinds: action.suggestKinds }),
+                ...(action.uiGroups === undefined ? {} : { uiGroups: action.uiGroups }),
                 ...(action.helperModels === undefined ? {} : { helperModels: action.helperModels }),
               }
             : session
@@ -642,6 +644,13 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: state.sessions.map((s) =>
           s.id === action.id ? { ...s, pinnedAt: action.pinnedAt } : s
+        ),
+      }
+    case "ask-profiles-session":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id ? { ...s, askProfiles: action.askProfiles } : s
         ),
       }
     case "session-config":

@@ -34,6 +34,8 @@ import {
   BotIcon,
   GitCompareIcon,
   InfoIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   ListChecksIcon,
   CoinsIcon,
   PlusIcon,
@@ -62,6 +64,7 @@ import {
   type WorkspaceDock,
 } from "@/components/workspace/dock-context"
 import { PanelContainer } from "@/components/workspace/panel-container"
+import { subscribeDockLayout } from "@/lib/workspace/panel-overlap"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { InspectorContext, ThreadJumpContext, type InspectorTab } from "@/lib/inspector"
@@ -75,6 +78,9 @@ import {
   registerThreadDock,
   saveThreadLayout,
   threadLayout,
+  ThreadDockContext,
+  useThreadDockHandle,
+  useThreadDockSession,
   type ThreadDockHandle,
   type ThreadPanelKind,
 } from "@/lib/workspace/thread-docks"
@@ -130,6 +136,8 @@ function place(
   params?: object,
   stacked = false
 ) {
+  /* A maximized group hides the rest, and so would the panel being opened. */
+  if (api.hasMaximizedGroup()) api.exitMaximizedGroup()
   const existing = api.getPanel(id)
   if (existing) {
     if (params) existing.api.updateParameters(params as Record<string, unknown>)
@@ -161,8 +169,16 @@ function place(
     title: KINDS[kind].title,
     params: params as Record<string, unknown> | undefined,
     position,
-    ...(home ? {} : slot === "below" ? { initialHeight: 260 } : { initialWidth: slot === "side" ? 340 : 520 }),
+    ...(home
+      ? {}
+      : slot === "below"
+        ? { initialHeight: 260 }
+        : /* Source Control is a dock of its own and wants room: most of the
+             thread's width, the transcript keeping the rest. */
+          { initialWidth: kind === "changes" ? Math.max(340, Math.round(api.width * 0.7)) : slot === "side" ? 340 : 520 }),
   })
+  /* Joined to a column that was already there, it would keep that column's width. */
+  if (kind === "changes") api.getPanel(id)?.group.api.setSize({ width: Math.max(340, Math.round(api.width * 0.7)) })
 }
 
 /** Fold every group into the transcript's — a layout split on a wide screen,
@@ -183,23 +199,21 @@ function syncStrips(api: DockviewApi) {
   }
 }
 
-interface ThreadDockValue {
-  sessionId: string
-  handle: ThreadDockHandle
+/** A strip that is shown at the top of this dock is under the app header when
+    the outer group is a banded overlay (flush layout): the nested dock has no
+    padding of its own, so each group clears whatever the header covers of *it*
+    (`.dock-nested` reads `--dock-header-overlap` for the strip's margin). */
+function clearHeader(api: DockviewApi) {
+  const header = document.querySelector<HTMLElement>("[data-app-header]")
+  const bottom = header?.getBoundingClientRect().bottom ?? 0
+  for (const group of api.groups) {
+    const top = group.element.getBoundingClientRect().top
+    const covered = group.header.hidden ? 0 : Math.max(0, Math.round(bottom - top))
+    group.element.style.setProperty("--dock-header-overlap", `${covered}px`)
+  }
 }
-const ThreadDockContext = React.createContext<ThreadDockValue | null>(null)
 
-/** The thread whose dock this panel is in, or null in the outer dock. */
-export function useThreadDockSession(): string | null {
-  return React.useContext(ThreadDockContext)?.sessionId ?? null
-}
-
-/** The dock's own handle, so a panel can bring a sibling pane forward — the
-    Preview's "Send to agent" shows the transcript it just filled. Null in the
-    outer dock. */
-export function useThreadDockHandle(): ThreadDockHandle | null {
-  return React.useContext(ThreadDockContext)?.handle ?? null
-}
+export { useThreadDockHandle, useThreadDockSession }
 
 export function ThreadDock({ sessionId, actions }: { sessionId: string; actions: Actions }) {
   const outer = useDock()
@@ -339,7 +353,21 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
          narrower than a preview. */
       const stopReset = watchSashReset(api)
       let timer: ReturnType<typeof setTimeout> | undefined
-      const strips = () => syncStrips(api)
+      /* Measured a frame late: a rect read inside the event that moved a group
+         is the one it is leaving. */
+      let frame: number | undefined
+      const clear = () => {
+        if (frame !== undefined) cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(() => {
+          frame = undefined
+          clearHeader(api)
+        })
+      }
+      const strips = () => {
+        syncStrips(api)
+        clear()
+      }
+      strips()
       const disposables = [
         api.onDidLayoutChange(() => {
           clearTimeout(timer)
@@ -350,9 +378,12 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
         /* A drag runs under dockview's lock and raises neither of the two above. */
         api.onDidMovePanel(strips),
         api.onDidAddGroup(strips),
+        api.onDidLayoutChange(clear),
+        { dispose: subscribeDockLayout(clear) },
       ]
       return () => {
         clearTimeout(timer)
+        if (frame !== undefined) cancelAnimationFrame(frame)
         saveThreadLayout(sessionId, api.toJSON())
         stopReset()
         disposables.forEach((disposable) => disposable.dispose())
@@ -384,7 +415,7 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
       trajectory: contained(() => <Trajectory sessionId={sessionId} variant="panel" />),
     }
     for (const section of SECTIONS)
-      map[section] = contained(() => <SectionPanel section={section} sessionId={sessionId} actions={actions} />)
+      map[section] = contained(() => <SectionPanel section={section} sessionId={sessionId} />)
     return map
   }, [sessionId, actions])
 
@@ -434,11 +465,9 @@ export function ThreadDock({ sessionId, actions }: { sessionId: string; actions:
 function SectionPanel({
   section,
   sessionId,
-  actions,
 }: {
   section: ThreadSectionKind
   sessionId: string
-  actions: Actions
 }) {
   const meta = useSessionMeta(sessionId)
   const thread = useThread(sessionId)
@@ -451,7 +480,6 @@ function SectionPanel({
         section={section}
         thread={thread}
         meta={meta}
-        onSend={(text) => actions.send(sessionId, text)}
         onJump={(id) => {
           dock?.handle.open("transcript", true)
           jump?.current?.(id)
@@ -476,7 +504,7 @@ function useApiValue<T>(subscribe: (onChange: () => void) => { dispose: () => vo
 /** The inner tab: the outer tab's material (`.dock-tab`), without its menu —
     every row of that menu is about the outer dock. Nothing inside it is
     focusable, for the reason `panel-tab.tsx` gives. */
-function ThreadTab({ api }: IDockviewPanelHeaderProps) {
+function ThreadTab({ api, containerApi }: IDockviewPanelHeaderProps) {
   const dock = useDock()
   const ctx = React.useContext(ThreadDockContext)
   const meta = useSessionMeta(ctx?.sessionId ?? "")
@@ -487,6 +515,16 @@ function ThreadTab({ api }: IDockviewPanelHeaderProps) {
   const kind = api.component as ThreadPanelKind
   const Icon = KINDS[kind]?.icon
   const closable = api.id !== "transcript"
+  const onLayout = React.useCallback(
+    (fn: () => void) => {
+      const subs = [containerApi.onDidMaximizedGroupChange(fn), containerApi.onDidLayoutChange(fn)]
+      return { dispose: () => subs.forEach((sub) => sub.dispose()) }
+    },
+    [containerApi]
+  )
+  /* Only worth offering where there is another group to fill over. */
+  const canFill = useApiValue(onLayout, () => containerApi.hasMaximizedGroup() || containerApi.groups.length > 1)
+  const filled = useApiValue(onLayout, () => !!containerApi.getPanel(api.id)?.api.isMaximized())
   return (
     <div className="flex h-full min-w-0 flex-1 items-center py-0.5">
       <div
@@ -505,6 +543,25 @@ function ThreadTab({ api }: IDockviewPanelHeaderProps) {
         <span data-tab-title className="flex min-w-0 flex-1 items-center">
           <span className="truncate">{title}</span>
         </span>
+        {canFill && (
+          <button
+            type="button"
+            tabIndex={-1}
+            data-tab-action="maximize"
+            aria-label={filled ? "Restore the columns" : "Fill the thread"}
+            title={filled ? "Restore the columns" : "Fill the thread"}
+            className="grid size-4 shrink-0 place-items-center rounded-sm opacity-60 hover:bg-foreground/10 hover:opacity-100"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              const panel = containerApi.getPanel(api.id)
+              if (containerApi.hasMaximizedGroup()) containerApi.exitMaximizedGroup()
+              else if (panel) containerApi.maximizeGroup(panel)
+            }}
+          >
+            {filled ? <Minimize2Icon className="size-3" /> : <Maximize2Icon className="size-3" />}
+          </button>
+        )}
         {closable && (
           <button
             type="button"

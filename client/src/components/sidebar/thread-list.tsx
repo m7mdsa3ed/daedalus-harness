@@ -6,12 +6,47 @@ import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sideba
 import { useThreadRowActions } from "@/components/thread-menu"
 import { threadPath } from "@/lib/router"
 import { useActiveChat } from "@/lib/workspace/open-threads"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { MENU } from "./scale"
+import { MENU, NEST } from "./scale"
 import { useSidebarEnv } from "./env"
 import { ThreadRow, type ThreadRowHandlers } from "./thread-row"
+import { useFold } from "./fold"
+
+type ThreadFold = React.ComponentProps<typeof ThreadRow>["fold"]
+
+/** A thread over its sub threads, foldable by the chevron on its row; the fold
+    is remembered on this device beside the project folders'. Open by default. */
+function ThreadFamily({
+  parent,
+  subs,
+  row,
+}: {
+  parent: SessionMeta
+  subs: SessionMeta[]
+  row: (session: SessionMeta, fold?: ThreadFold) => React.ReactNode
+}) {
+  const [open, toggle] = useFold(`thread:${parent.id}`, true)
+  const fold = React.useMemo(() => ({ open, count: subs.length, toggle }), [open, subs.length, toggle])
+  return (
+    <>
+      {row(parent, fold)}
+      {open && (
+        /* The indent is the item's, never the menu's: the menu is `w-full`, so
+           a margin on it pushed the rows (and their ⋯) past the parent's edge. */
+        <li data-slot="sidebar-menu-item" data-sidebar="menu-item" className={NEST}>
+          <SidebarMenu className={MENU}>
+            {subs.map((child) => (
+              <React.Fragment key={child.id}>{row(child)}</React.Fragment>
+            ))}
+          </SidebarMenu>
+        </li>
+      )}
+    </>
+  )
+}
 
 /* Memoized (the whole list, and each row below): the sidebar re-renders per
    streamed token, and with stable session objects, an identity-stable status
@@ -24,12 +59,9 @@ export const ThreadList = React.memo(function ThreadList({
   grouped = false,
   showProject,
   onClose,
-  revealActive = false,
 }: {
   sessions: SessionMeta[]
   onClose?: (session: SessionMeta) => void
-  /** Keep the active row in view for the dock's Opened tier. */
-  revealActive?: boolean
   /** Rendering the Trash: these threads are deleted, so the row restores
       instead of opening and the menu offers the two ways back out. */
   trash?: boolean
@@ -39,7 +71,8 @@ export const ThreadList = React.memo(function ThreadList({
   limit?: number
   /** Print a period heading — Today, Yesterday, Previous 7 days, … — above
       each run of rows that falls in it. The list is already newest-first, so
-      the buckets come out in order and grouping is one pass over the rows
+      the buckets come out in order (sorting by title, or the reader's
+      "Period headings" switch, prints none) and grouping is one pass over the rows
       that are actually visible: the limit still counts threads, not headings,
       and "Show more" cannot reveal a heading with nothing under it. */
   grouped?: boolean
@@ -52,9 +85,14 @@ export const ThreadList = React.memo(function ThreadList({
   const [expanded, setExpanded] = React.useState(false)
   const visible = limit && !expanded ? sessions.slice(0, limit) : sessions
   const hidden = sessions.length - visible.length
+  /* The row's dress is read here and handed down as plain props, so a row stays
+     memoized on narrow props instead of subscribing to the store itself. */
+  const options = useLayoutOptions()
+  const headings = grouped && options.sidebarPeriodHeadings && options.sidebarSort !== "title"
+  const periodAt = options.sidebarSort === "created" ? (session: SessionMeta) => session.createdAt : activityAt
   const navigate = useNavigate()
   const activeThreadId = useActiveChat()
-  const { actions, status, pinSet, projectNames } = useSidebarEnv()
+  const { actions, status, pinSet, projectNames, children } = useSidebarEnv()
   const { isMobile, setOpenMobile } = useSidebar()
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
@@ -94,21 +132,6 @@ export const ThreadList = React.memo(function ThreadList({
      focusable buttons (Tab still enters and leaves the list as before); no
      roving tabindex, on purpose. */
   const listRef = React.useRef<HTMLUListElement>(null)
-  React.useEffect(() => {
-    if (
-      !revealActive ||
-      !activeThreadId ||
-      !sessions.some((session) => session.id === activeThreadId)
-    )
-      return
-    const frame = requestAnimationFrame(() => {
-      const row = Array.from(
-        listRef.current?.querySelectorAll<HTMLElement>("[data-thread-id]") ?? []
-      ).find((candidate) => candidate.dataset.threadId === activeThreadId)
-      row?.scrollIntoView({ block: "nearest", inline: "nearest" })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [activeThreadId, revealActive, sessions])
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLUListElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
@@ -121,11 +144,27 @@ export const ThreadList = React.memo(function ThreadList({
     rows[(index + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length]?.focus()
   }
 
+  const row = (session: SessionMeta, fold?: ThreadFold) => (
+    <ThreadRow
+      session={session}
+      state={trash ? "idle" : status(session)}
+      trash={trash}
+      pinned={pinSet.has(session.id)}
+      showProject={showProject ?? !grouped}
+      agentIcon={options.sidebarAgentIcon}
+      showAge={options.sidebarShowAge}
+      projectLabel={options.sidebarShowProject}
+      project={projectNames.get(session.projectId) ?? "Other"}
+      handlers={handlers}
+      fold={fold}
+    />
+  )
+
   let previousLabel: string | null = null
   return (
     <SidebarMenu ref={listRef} onKeyDown={onListKeyDown} className={MENU}>
       {visible.map((session) => {
-        const label = grouped ? periodLabel(activityAt(session)) : null
+        const label = headings ? periodLabel(periodAt(session)) : null
         const heading = label && label !== previousLabel
         previousLabel = label
         return (
@@ -145,16 +184,13 @@ export const ThreadList = React.memo(function ThreadList({
                 <span className="truncate">{label}</span>
               </li>
             )}
-            <ThreadRow
-              session={session}
-              state={trash ? "idle" : status(session)}
-              trash={trash}
-              active={activeThreadId === session.id}
-              pinned={pinSet.has(session.id)}
-              showProject={showProject ?? !grouped}
-              project={projectNames.get(session.projectId) ?? "Other"}
-              handlers={handlers}
-            />
+            {/* Its sub threads (asks, workflow steps), indented under it. Not
+                in the trash: a deleted parent took its children with it. */}
+            {!trash && children.has(session.id) ? (
+              <ThreadFamily parent={session} subs={children.get(session.id)!} row={row} />
+            ) : (
+              row(session)
+            )}
           </React.Fragment>
         )
       })}

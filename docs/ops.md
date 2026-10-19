@@ -1,4 +1,4 @@
-# Git, backup & quota
+# Git & quota
 
 _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
@@ -106,38 +106,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   whose surroundings have moved on, with its own message. Routes:
   `GET /api/sessions/:id/changes` (every turn's summary), `…/changes/files?scope=`,
   `…/changes/patch?scope=&path=`, `…/changes/file?scope=&path=&side=` (scope `turn:<id>`,
-  `thread`, `uncommitted` or `branch`). `pnpm test:fs` covers the tree helpers. The rows are not
-  in a backup: the trees live in the repository, and a row without them is a summary that
-  can no longer be opened.
-
-## Backup & import
-
-- **Backup is one JSON document, and import is one transaction.** `server/src/backup.ts`
-  exports every user-data table in `db/schema.ts` (agents, profiles with their links,
-  the library, projects, knowledge, sessions with their links, queue,
-  schedules, the event log, tasks, web-search usage, push tokens) plus config.json's
-  `webSearch` block — never the server's token/host/port, the `agent_options` probe
-  cache, or the `history_*` rows (meaningless without the snapshot files). Two opt-outs:
-  `secrets=0` blanks profile keys, MCP header/env values and the search token, and
-  `journals=0` leaves the transcripts out (the bulk of any install; a thread without one
-  still revives through `session/load`). `GET /api/backup` downloads it;
-  `POST /api/backup/import?mode=merge|replace` validates it against `BundleSchema` and
-  writes it — `merge` upserts by id with a non-cascading `ON CONFLICT DO UPDATE` (an
-  `INSERT OR REPLACE` would fire the cascades and take a profile's links with it),
-  `replace` empties every table first. A thread's queue/schedules/log are replaced as a
-  unit for every thread the bundle names (a merged log is two accounts stitched together);
-  child rows whose parent exists nowhere are counted as `orphaned`, not fatal; a blank
-  secret keeps the install's existing value, so a redacted bundle merged over its own
-  install changes nothing. The route retires the threads it is about to rewrite first
-  (`SessionManager.retireAll`) and `reload()`s the manager after — that is the same code
-  the constructor runs at boot, and it leaves a live process untouched, rebuilds
-  process-less rows (closing peers reading a changed archive), and drops rows that are
-  gone. The client page is Settings › Backup (`components/settings/backup.tsx`): it reads
-  the counts out of the chosen file locally, confirms, and hard-reloads after an import.
-  `pnpm test:backup` round-trips it. The `agent_quota` cache is left out for the same
-  reason the probe cache is — a percentage restored onto another machine describes an
-  account that machine may not be logged into — but an agent's `quotaProbe` **is**
-  carried, because a restored row keeps its `seededVersion` and would never be backfilled.
+  `thread`, `uncommitted` or `branch`). `pnpm test:fs` covers the tree helpers.
 
 ## Subscription quota (agent CLI)
 

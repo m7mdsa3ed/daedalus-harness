@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import {
   AlertCircle,
   Check,
@@ -11,16 +12,21 @@ import {
   Trash2,
 } from "lucide-react"
 import { useRules, useCreateRule, useUpdateRule, useDeleteRule, type Rule } from "@/lib/queries/catalog"
+import { useInvalidate } from "@/lib/queries/helpers"
+import { rulesKey } from "@/lib/queries/keys"
+import { settingsFormPath, settingsPath } from "@/lib/router"
 import { captureError, type InlineError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { useTableFilter } from "@/lib/use-table-filter"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { ErrorNote } from "@/components/error-note"
-import { DetailSheet, Field, PageHeader } from "./primitives"
+import { Field, FormPageHeader, FormSection, PageHeader } from "./primitives"
 import { sectionMeta } from "./sections"
+import { useSettingsPage } from "./layout"
 
 /* ── Rules ──
    Individual standing instructions every thread spawns with — beneath any
@@ -29,7 +35,8 @@ import { sectionMeta } from "./sections"
    can be managed individually rather than as one blob.
 
    Layout: the table IS the order the rules are read in (row actions move and
-   delete); a row opens ONE roomy editor in a DetailSheet at every width.
+   delete); a row opens ONE roomy editor on a route page of its own
+   (`RuleFormPage`, /settings/rules/:entryId) at every width.
    Edits save as they are typed (there is no Save button to forget), so the
    editor says, in one place and in words, what the last write did. */
 
@@ -96,38 +103,23 @@ export function RulesPage() {
   const updateRule = useUpdateRule()
   const deleteRule = useDeleteRule()
   const [error, setError] = React.useState<InlineError | null>(null)
-  const [selectedId, setSelectedId] = React.useState<string | null>(null)
-  const [sheetOpen, setSheetOpen] = React.useState(false)
-  const [query, setQuery] = React.useState("")
+  const navigate = useNavigate()
+  const invalidate = useInvalidate()
+  const { settings } = useSettingsPage()
 
-  /* A selection that no longer exists (deleted here or on another device)
-     closes the sheet rather than drawing an empty editor. */
-  const idx = rules.findIndex((r) => r.id === selectedId)
-  const rule = idx === -1 ? undefined : rules[idx]
-
-  /* A sheet left open over a rule that vanished would reopen by itself when
-     a rule came back. */
-  React.useEffect(() => {
-    if (!rule) setSheetOpen(false)
-  }, [rule])
-
+  /* Rules autosave, so a new one exists on the server before its page does:
+     the list is re-read first, or the page would find no such id and bounce. */
   const addRule = () => {
     createRule.mutate(
       { projectId: null, title: "New rule", content: "" },
       {
-        onSuccess: (created) => {
-          setSelectedId(created.id)
-          setSheetOpen(true)
+        onSuccess: async (created) => {
+          await invalidate(rulesKey(settings))
+          void navigate(settingsFormPath("rules", created.id))
         },
         onError: (err) => setError(captureError(err, "Couldn't add a rule")),
       },
     )
-  }
-
-  const updateField = (id: string, field: "title" | "content", value: string) => {
-    updateRule.mutate({ id, [field]: value }, {
-      onError: (err) => setError(captureError(err, "Couldn't update the rule")),
-    })
   }
 
   const removeRule = (id: string) => {
@@ -160,12 +152,7 @@ export function RulesPage() {
   const total = rules.length
 
   const rows = React.useMemo<RuleRow[]>(() => rules.map((r, i) => ({ ...r, n: i + 1 })), [rules])
-  const shown = React.useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return needle
-      ? rows.filter((r) => `${r.title}\n${r.content}`.toLowerCase().includes(needle))
-      : rows
-  }, [rows, query])
+  const f = useTableFilter(rows, { text: (r) => `${r.title}\n${r.content}`, placeholder: "Search rules…" })
 
   const columns = React.useMemo<ColumnDef<RuleRow, unknown>[]>(
     () => [
@@ -233,12 +220,6 @@ export function RulesPage() {
     </Button>
   )
 
-  const saveState = (
-    <SaveState pending={updateRule.isPending} failed={updateRule.isError} saved={updateRule.isSuccess} />
-  )
-
-  const onField = (field: "title" | "content", value: string) => rule && updateField(rule.id, field, value)
-
   return (
     <>
       <PageHeader meta={meta} action={addButton} />
@@ -247,53 +228,88 @@ export function RulesPage() {
         <DataTable<RuleRow, unknown>
           className="min-w-0"
           columns={columns}
-          data={shown}
+          data={f.rows}
           getRowId={(r) => r.id}
           pageSize={50}
           actions={actions}
           mark={() => <Globe aria-hidden />}
-          onRowClick={(r) => {
-            setSelectedId(r.id)
-            setSheetOpen(true)
-          }}
-          filtering={{
-            search: { value: query, onChange: setQuery, placeholder: "Search rules…" },
-            totalCount: rows.length,
-          }}
+          onRowClick={(r) => void navigate(settingsFormPath("rules", r.id))}
+          filtering={f.filtering}
           emptyIcon={<ScrollText />}
           emptyMessage={
-            query.trim() ? `Nothing matches “${query.trim()}”.` : "No rules yet."
+            f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No rules yet."
           }
-          emptyAction={query.trim() ? undefined : addButton}
+          emptyAction={f.narrowed ? undefined : addButton}
         />
       </div>
 
-      <DetailSheet
-        open={sheetOpen && !!rule}
-        onOpenChange={setSheetOpen}
-        title={`Rule ${idx + 1} of ${total}`}
-        description={saveState}
-        footer={
-          rule && (
-            <>
-              <EditorActions
-                idx={idx}
-                total={total}
-                onMove={(d) => moveRule(rule.id, d)}
-                onDelete={() => {
-                  removeRule(rule.id)
-                  setSheetOpen(false)
-                }}
-              />
-              <Button className="h-11" onClick={() => setSheetOpen(false)}>
-                Done
-              </Button>
-            </>
-          )
-        }
-      >
-        {rule && <Fields rule={rule} onField={onField} />}
-      </DetailSheet>
+    </>
+  )
+}
+
+/** One rule on a page of its own. Edits save as they are typed. */
+export function RuleFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const rules = useRules()
+  const updateRule = useUpdateRule()
+  const deleteRule = useDeleteRule()
+  const [error, setError] = React.useState<InlineError | null>(null)
+  const idx = rules.findIndex((r) => r.id === entryId)
+  const rule = idx === -1 ? undefined : rules[idx]
+  /* A rule deleted here or on another device has no page. */
+  if (!rule) return <Navigate to={settingsPath("rules")} replace />
+  const back = () => void navigate(settingsPath("rules"))
+  const total = rules.length
+
+  const onField = (field: "title" | "content", value: string) =>
+    updateRule.mutate({ id: rule.id, [field]: value }, {
+      onError: (err) => setError(captureError(err, "Couldn't update the rule")),
+    })
+
+  const move = (direction: "up" | "down") => {
+    const other = rules[direction === "up" ? idx - 1 : idx + 1]
+    if (!other) return
+    for (const [a, b] of [[rule, other], [other, rule]])
+      updateRule.mutate(
+        { id: a.id, sortOrder: b.sortOrder },
+        { onError: (err) => setError(captureError(err, "Couldn't reorder rules")) },
+      )
+  }
+
+  return (
+    <>
+      <FormPageHeader title={`Rule ${idx + 1} of ${total}`} onBack={back} />
+      <div className="space-y-6">
+        <ErrorNote error={error} />
+        <FormSection
+          label="Rule"
+          action={
+            <SaveState pending={updateRule.isPending} failed={updateRule.isError} saved={updateRule.isSuccess} />
+          }
+        >
+          <Fields rule={rule} onField={onField} />
+        </FormSection>
+        <div className="flex items-center justify-between gap-2">
+          <EditorActions
+            idx={idx}
+            total={total}
+            onMove={move}
+            onDelete={() =>
+              deleteRule.mutate(
+                { id: rule.id },
+                {
+                  onSuccess: back,
+                  onError: (err) => setError(captureError(err, "Couldn't delete the rule")),
+                },
+              )
+            }
+          />
+          <Button className="h-11 @panel-sm:h-9" onClick={back}>
+            Done
+          </Button>
+        </div>
+      </div>
     </>
   )
 }

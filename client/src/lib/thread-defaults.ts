@@ -26,6 +26,8 @@
    every reader resolves with a fallback — a dangling id costs a default,
    never a crash. */
 import { profileAgentIds, profileSupports, type ProjectDefaults, type Profile } from "@/lib/settings"
+import { DEFAULT_SUGGEST_KINDS } from "@/lib/suggestions"
+import { DEFAULT_UI_GROUPS } from "@/lib/openui/groups"
 
 const KEY = "ui.newThread"
 
@@ -69,8 +71,9 @@ export const emptyDefaults = (): ProjectDefaults => ({
   mcpServerIds: [],
   skillIds: [],
   commandIds: [],
-  suggestFollowups: true,
-  uiBlocks: true,
+  suggestKinds: [...DEFAULT_SUGGEST_KINDS],
+  uiGroups: [...DEFAULT_UI_GROUPS],
+  askProfiles: {},
 })
 
 /** What a project row says, with an absent object read as the empty set —

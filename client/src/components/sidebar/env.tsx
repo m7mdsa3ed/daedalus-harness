@@ -12,6 +12,9 @@ export interface SidebarEnv {
   pinSet: ReadonlySet<string>
   /** Project id -> name; a missing id reads "Other". */
   projectNames: ReadonlyMap<string, string>
+  /** Parent id -> its live child threads (asks, workflow steps), oldest
+      first: drawn under the parent's row, never as rows of their own. */
+  children: ReadonlyMap<string, SessionMeta[]>
 }
 
 export const SidebarEnvContext = React.createContext<SidebarEnv | null>(null)

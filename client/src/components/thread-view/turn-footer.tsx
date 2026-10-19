@@ -1,14 +1,14 @@
 /* The readings a finished turn leaves under its answer: sources, usage and
-   follow-ups. Kept together so the transcript owns one turn-tail layout while
+   suggestions. Kept together so the transcript owns one turn-tail layout while
    each part keeps its own component and entrance timing. */
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 
-import { CommandSuggestions } from "@/components/command-suggestions"
-import { PromptSuggestions } from "@/components/prompt-suggestions"
+import { SuggestionGroup } from "@/components/suggestion-group"
 import { SourcesStrip } from "@/components/thread-cards"
 import { TokenSummary, TurnTime } from "@/components/token-usage"
 import type { TurnSources } from "@/lib/sources"
+import type { SuggestGroup } from "@/lib/suggestions"
 import { stagger } from "@/lib/utils"
 
 /* Memoised: one per row, and the transcript re-renders on every streamed token. */
@@ -18,22 +18,19 @@ export const TurnFooter = React.memo(function TurnFooter({
   durationMs,
   toolDurationMs,
   suggestions,
-  commands,
   onPick,
-  onPickCommand,
 }: {
   sources?: TurnSources
   usage?: acp.Usage
   durationMs?: number
   toolDurationMs?: number
-  suggestions?: string[]
-  /** The project commands the answer recommended, already filtered to the ones
-      the project defines (`keepDefinedCommands`). */
-  commands?: string[]
-  onPick: (prompt: string) => void
-  onPickCommand: (command: string) => void
+  /** One group per kind the answer carried, already filtered to rows that name
+      something real (`SuggestKindDef.keep`). */
+  suggestions?: SuggestGroup[]
+  /** Fill the composer with a picked row's words. */
+  onPick: (text: string) => void
 }) {
-  if (!sources && !usage && durationMs === undefined && !suggestions?.length && !commands?.length) return null
+  if (!sources && !usage && durationMs === undefined && !suggestions?.length) return null
 
   return (
     <div className="min-w-0">
@@ -57,16 +54,11 @@ export const TurnFooter = React.memo(function TurnFooter({
           <TurnTime durationMs={durationMs} />
         </div>
       )}
-      {suggestions && suggestions.length > 0 && (
-        <div className="harness-item-in mt-1" style={stagger(3)}>
-          <PromptSuggestions suggestions={suggestions} onPick={onPick} />
+      {suggestions?.map((group, index) => (
+        <div key={group.kind.id} className="harness-item-in mt-1" style={stagger(3 + index)}>
+          <SuggestionGroup group={group} onPick={onPick} />
         </div>
-      )}
-      {commands && commands.length > 0 && (
-        <div className="harness-item-in mt-1" style={stagger(4)}>
-          <CommandSuggestions commands={commands} onPick={onPickCommand} />
-        </div>
-      )}
+      ))}
     </div>
   )
 })

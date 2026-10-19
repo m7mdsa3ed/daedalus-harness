@@ -1,6 +1,6 @@
 /**
  * One persisted secret behind every loopback credential an agent process is
- * handed (`/gw`, `/mx`, `/ph`, `/wf`, `/hm`, `/cdp`, `/rt` keys). An agent
+ * handed (`/gw`, `/mx`, `/ph`, `/wf`, `/hm`, `/rt` keys). An agent
  * outlives a server restart, so what the old server gave it must still open
  * the new one: keys are `derive(purpose)`, HMACs of this file, not per-boot
  * randomness. Unguessable without the file; never logged, never exported by

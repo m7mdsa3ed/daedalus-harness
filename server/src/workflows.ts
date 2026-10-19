@@ -24,6 +24,7 @@
  * can act for exactly the thread that asked. A step is never handed that
  * server: one level, never a tree.
  */
+import type { AutonomyPolicy } from "./autonomy.js";
 import { createHash, randomUUID } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 import { eq, inArray } from "drizzle-orm";
@@ -32,7 +33,7 @@ import { safeKeyEqual } from "./gateway-shim.js";
 import { checkInstalled } from "./agent-status.js";
 import { getProfile, listProfiles } from "./profiles.js";
 import { getProject } from "./projects.js";
-import { expandPrompts } from "./saved-prompts.js";
+import { commands as commandLibrary } from "./library.js";
 import { createScheduled, fire } from "./scheduler.js";
 import { loadSaved } from "./workflow-saved.js";
 import { listAgents } from "./registry.js";
@@ -231,13 +232,6 @@ export class WorkflowRunner {
     return `http://127.0.0.1:${this.opts.port}/hm/${this.key}/${session.id}`;
   }
 
-  /** The same key under `/cdp`, as a WebSocket: what `chrome-devtools-mcp`
-      is handed as its `--wsEndpoint`, piped to the thread's driving preview
-      (browser-hosts.ts). */
-  cdpUrlFor(session: Pick<Session, "id">): string {
-    return `ws://127.0.0.1:${this.opts.port}/cdp/${this.key}/${session.id}`;
-  }
-
   /** The thread a `/wf/<key>/<sessionId>` path speaks for, or null. */
   resolveCaller(key: string, sessionId: string): Session | null {
     if (!safeKeyEqual(key, this.key)) return null;
@@ -308,19 +302,47 @@ export class WorkflowRunner {
    */
   async ask(
     parent: Session,
-    input: { profile: string; agent: string; prompt: string; model?: string; effort?: string; timeoutSec?: number },
+    input: {
+      profile?: string;
+      agent?: string;
+      prompt: string;
+      /** The errand in the caller's words, as a subagent's `description` is:
+          what it is doing, not who is doing it. Titles the child and its row. */
+      description?: string;
+      model?: string;
+      effort?: string;
+      timeoutSec?: number;
+    },
   ): Promise<RunView> {
     if (parent.parentSessionId) throw new WorkflowError("a subagent cannot ask another agent", 409);
     const prompt = input.prompt.trim();
     if (!prompt) throw new WorkflowError("prompt must not be empty");
     const is = (id: string, name: string, q: string) => id === q || name.toLowerCase() === q.trim().toLowerCase();
     const all = await this.pairs(parent);
-    const matches = all.filter((p) => is(p.profileId, p.profile, input.profile) && is(p.agentId, p.agent, input.agent));
+    /* The person's choice for this thread outranks whatever the model passed:
+       the point of setting it is that the model does not get to pick. An ask
+       that names no agent goes to the one agent the thread has a choice for,
+       when there is exactly one. */
+    let { profile, agent, model } = input;
+    const preset = Object.entries(parent.askProfiles);
+    const named = agent ? all.find((p) => is(p.agentId, p.agent, agent!)) : undefined;
+    const set = named ? ([named.agentId, parent.askProfiles[named.agentId]] as const) : !agent && preset.length === 1 ? preset[0]! : undefined;
+    if (set?.[1]) {
+      agent = set[0];
+      profile = set[1].profileId;
+      model = set[1].model ?? model;
+    }
+    if (!profile || !agent) {
+      throw new WorkflowError("no profile chosen for this agent on this thread — ask the user which profile to use (list_agents shows them)", 409);
+    }
+    const [wantProfile, wantAgent] = [profile, agent];
+    const matches = all.filter((p) => is(p.profileId, p.profile, wantProfile) && is(p.agentId, p.agent, wantAgent));
     const known = () => all.map((p) => `${p.profile} / ${p.agent}`).join(", ") || "none";
-    if (matches.length === 0) throw new WorkflowError(`no profile "${input.profile}" with agent "${input.agent}" — available: ${known()}`, 404);
-    if (matches.length > 1) throw new WorkflowError(`"${input.profile}" / "${input.agent}" matches ${matches.length} pairs — name the profile by id`);
+    if (matches.length === 0) throw new WorkflowError(`no profile "${wantProfile}" with agent "${wantAgent}" — available: ${known()}`, 404);
+    if (matches.length > 1) throw new WorkflowError(`"${wantProfile}" / "${wantAgent}" matches ${matches.length} pairs — name the profile by id`);
     const pair = matches[0]!;
     if (!pair.installed) throw new WorkflowError(`${pair.agent} is not installed on this server`, 409);
+    const description = input.description?.trim() || undefined;
     const step = {
       name: "ask",
       prompt,
@@ -330,11 +352,22 @@ export class WorkflowRunner {
       timeoutSec: input.timeoutSec ? Math.min(input.timeoutSec, LIMITS.stepTimeoutSec.max) : undefined,
       profileId: pair.profileId,
       agentId: pair.agentId,
-      model: input.model,
+      agentName: pair.agent,
+      profileName: pair.profile,
+      model,
       effort: input.effort,
       label: `${pair.agent} · ${pair.profile}`,
+      ...(description ? { description } : {}),
     } satisfies WorkflowStep;
-    return this.launch(parent, { name: `Ask ${pair.agent}`, steps: [step], phases: [], maxParallel: 1 }, {}, true);
+    /* `notify`: an answer that outlives the call's own wait arrives as a
+       <task-notification>, as a background workflow's does, so the caller is
+       never left polling `wait_agent`. One that lands inside a wait is handed
+       to that waiter instead, and no message says it twice. */
+    /* The run's name is what a late `<task-notification>` calls it, and several
+       asks run at once: the errand, when the caller named one, is what tells
+       two of them apart in the message that wakes it. */
+    const name = description ? `Ask ${pair.agent}: ${description}` : `Ask ${pair.agent}`;
+    return this.launch(parent, { name, steps: [step], phases: [], maxParallel: 1 }, {}, true, true);
   }
 
   private async launch(parent: Session, def: WorkflowDefinition, inputs: Record<string, unknown>, ask = false, notify = false): Promise<RunView> {
@@ -600,11 +633,12 @@ export class WorkflowRunner {
       .digest("hex")
       .slice(0, 32);
     const cached = script.cache.get(key)?.shift();
-    /* `agentType` is a saved prompt's handle: its text leads the prompt, which
-       the bridge expands as it does any `@handle`. Refused by name when there
-       is no such prompt, rather than reaching the agent as a literal `@`. */
-    if (spec.agentType && !(await expandPrompts(`@${spec.agentType}`)).names.has(spec.agentType)) {
-      throw new ScriptError(`agent(…, {agentType}): no saved prompt is named @${spec.agentType}`);
+    /* `agentType` is a library command's name: its body leads the prompt (the
+       `$ARGUMENTS` slot is the prompt that follows). Refused by name when there
+       is no such command. */
+    const lead = spec.agentType ? (await commandLibrary.list()).find((c) => c.name === spec.agentType) : undefined;
+    if (spec.agentType && !lead) {
+      throw new ScriptError(`agent(…, {agentType}): no slash command is named /${spec.agentType}`);
     }
     if (!cached) await this.acquireSlot(run);
     if (terminal(run.status) || run.abort.signal.aborted) throw new ScriptError("the run was cancelled");
@@ -632,7 +666,7 @@ export class WorkflowRunner {
       ...(spec.effort ? { effort: spec.effort } : {}),
       ...(spec.isolation ? { isolation: spec.isolation } : {}),
     };
-    if (spec.agentType) step.prompt = `@${spec.agentType}\n\n${spec.prompt}`;
+    if (lead) step.prompt = `${lead.content.replaceAll("$ARGUMENTS", "").trim()}\n\n${spec.prompt}`;
     run.def.steps.push(step);
     if (phaseIndex !== -1) run.def.phases[phaseIndex].steps.push(name);
     run.steps.set(name, {
@@ -919,7 +953,7 @@ export class WorkflowRunner {
           };
       child = await this.manager.create(profile, agentId, project, step.model ?? (samePair ? run.parent.model : undefined), step.effort ?? (samePair ? run.parent.effort : undefined), undefined, undefined, run.parent.links, {
         parentSessionId: run.parent.id,
-        title: run.ask ? `Ask · ${step.label ?? step.name}` : `${run.def.name} · ${step.name}`,
+        title: run.ask ? `Ask · ${rowNameOf(step)}` : `${run.def.name} · ${step.name}`,
         restore,
         /* A step works where its parent does — in the parent's worktree, when
            the parent was isolated in one. */
@@ -930,7 +964,14 @@ export class WorkflowRunner {
         /* And whether it offers follow-ups, for the same reason: the step's
            answer reads in the parent's transcript, where a missing fence
            would be the inconsistency showing. */
-        suggestFollowups: run.parent.suggestFollowups,
+        suggestKinds: run.parent.suggestKinds,
+        uiGroups: run.parent.uiGroups,
+        /* An ask is the person's go-ahead for its whole brief, and its child
+           has nobody in front of it: every permission is granted on the spot.
+           What no policy can answer — a question, or a request offering no
+           allow-shaped option — still parks, and is repeated on the parent
+           (`SessionManager.emit`), where the person is. */
+        ...(run.ask ? { autonomy: ASK_AUTONOMY } : {}),
       });
       this.patchStep(run, step.name, { sessionId: child.id });
       const childId = child.id;
@@ -941,7 +982,7 @@ export class WorkflowRunner {
         update: {
           sessionUpdate: "subagent_spawned",
           subagentSessionId: childId,
-          name: step.label ?? step.name,
+          name: rowNameOf(step),
           task: firstLine(prompt),
           capabilities: { cancel: true },
           /* What tells the client this subagent is a workflow step — and of
@@ -952,25 +993,36 @@ export class WorkflowRunner {
              started, so the card shows the shape the user wrote from the
              first step rather than growing a row every time one spawns. It is
              a dozen names, and repeating it is what keeps it journaled — an
-             outline sent once would be an event kind of its own. */
-          /* An ask is no workflow: without this it draws as a plain subagent. */
-          ...(run.ask ? {} : { _meta: {
-            daedalus: {
-              workflow: {
-                runId: run.id,
-                /* The thread the run belongs to, so the card — which is drawn
-                   from the log with no thread of its own in hand — can address
-                   `/api/sessions/:id/workflows/:runId/…`. */
-                sessionId: run.parent.id,
-                name: run.def.name,
-                step: step.name,
-                index: run.def.steps.findIndex((s) => s.name === step.name),
-                total: run.def.steps.length,
-                phase: step.phase,
-                plan: planOf(run.def),
-              },
-            },
-          } }),
+             outline sent once would be an event kind of its own.
+             An ask carries the pair instead (`ask`, never `workflow`): it is
+             no run, so it draws as a plain subagent — one that has to say it is
+             a *different* agent, which is what the chip on its row reads. */
+          _meta: {
+            daedalus: run.ask
+              ? {
+                  ask: {
+                    agent: step.agentName,
+                    profile: step.profileName,
+                    agentId: step.agentId,
+                    profileId: step.profileId,
+                  },
+                }
+              : {
+                  workflow: {
+                    runId: run.id,
+                    /* The thread the run belongs to, so the card — which is drawn
+                       from the log with no thread of its own in hand — can address
+                       `/api/sessions/:id/workflows/:runId/…`. */
+                    sessionId: run.parent.id,
+                    name: run.def.name,
+                    step: step.name,
+                    index: run.def.steps.findIndex((s) => s.name === step.name),
+                    total: run.def.steps.length,
+                    phase: step.phase,
+                    plan: planOf(run.def),
+                  },
+                },
+          },
         },
       });
       /* Everything the child journals is said again on the parent, addressed
@@ -1098,7 +1150,7 @@ export class WorkflowRunner {
       new Promise((resolve) => {
         onAbort = () => resolve({ kind: "cancelled" });
         /* A cancel that landed while `prompt` was still awaiting (attachments,
-           saved prompts — database round trips after `promptActive` is already
+           database round trips after `promptActive` is already
            true) has fired its event already, and a listener added to an aborted
            signal never hears it. */
         if (run.abort.signal.aborted) onAbort();
@@ -1147,8 +1199,8 @@ export class WorkflowRunner {
     for (const w of run.waiters.splice(0)) w(view);
     if (run.notify && !told) {
       if (error === "server shutting down") {
-        void createScheduled({ sessionId: run.parent.id, text: notification(view), nextAt: Date.now() }).catch(() => {});
-      } else void fire(run.parent.id, notification(view), this.manager);
+        void createScheduled({ sessionId: run.parent.id, text: notification(view, !!run.ask), nextAt: Date.now() }).catch(() => {});
+      } else void fire(run.parent.id, notification(view, !!run.ask), this.manager);
     }
     // Kept for status reads until the parent is done with it; the row is the
     // durable record. A bounded grace so a cancelled run can still be read.
@@ -1230,6 +1282,23 @@ function sanitizeStepName(label: string): string {
   return named.slice(0, 40).replace(/-+$/, "") || "agent";
 }
 
+/** An ask's child: allow every permission, park every question (for the
+    parent to answer), no timer and no deadline beyond the step's own. */
+const ASK_AUTONOMY: AutonomyPolicy = {
+  permissions: { default: "allow" },
+  elicitations: "ask",
+  askTimeoutSeconds: 0,
+  askFallback: "cancel",
+  maxRunSeconds: 0,
+};
+
+/** What a step's row — and an ask's child thread — is named: the ask caller's
+    own word for the errand, else the pair it went to, else the step's name. A
+    definition's step has neither of the first two and reads as it was written. */
+function rowNameOf(step: WorkflowStep): string {
+  return step.description ?? step.label ?? step.name;
+}
+
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? "";
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
@@ -1251,19 +1320,21 @@ function jsonClone(value: unknown): unknown {
     Claude Code's `<task-notification>`, so an agent that knows one reads the
     other. The full run stays one `workflow_status` call away. */
 const NOTIFY_BYTES = 32 * 1024;
-export function notification(view: RunView): string {
+/** `ask`: the run is one `ask_agent`, said as an ask and pointing at its own
+    tool — a thread may carry the agents server and not the workflow one. */
+export function notification(view: RunView, ask = false): string {
   const failed = view.steps.filter((s) => s.status === "failed").map((s) => `${s.name}: ${s.error ?? "failed"}`);
   const body = view.result !== undefined
     ? JSON.stringify(view.result, null, 2)
     : JSON.stringify(Object.fromEntries(view.steps.filter((s) => s.status === "completed").map((s) => [s.name, s.output])), null, 2);
   const result = body.length > NOTIFY_BYTES
-    ? `${body.slice(0, NOTIFY_BYTES)}\n… (truncated — call workflow_status with this runId for the whole of it)`
+    ? `${body.slice(0, NOTIFY_BYTES)}\n… (truncated — call ${ask ? "wait_agent with this askId" : "workflow_status with this runId"} for the whole of it)`
     : body;
   return [
     "<task-notification>",
     `<task-id>${view.id}</task-id>`,
     `<status>${view.status}</status>`,
-    `<summary>Workflow "${view.name}" ${view.status}${view.error ? `: ${view.error}` : ""}</summary>`,
+    `<summary>${ask ? `${view.name} (askId ${view.id})` : `Workflow "${view.name}"`} ${view.status}${view.error ? `: ${view.error}` : ""}</summary>`,
     ...(failed.length ? [`<failed-agents>\n${failed.join("\n")}\n</failed-agents>`] : []),
     `<result>\n${result}\n</result>`,
     "</task-notification>",

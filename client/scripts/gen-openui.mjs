@@ -62,7 +62,7 @@ const PROMPT_OPTIONS = {
        extra positional args, the prop comes out null, and the component is
        dropped with a validation error. Leading with the prohibition and a
        worked counter-example is the only thing that has held. */
-    "Arguments are POSITIONAL ONLY. Write `Stat(\"Builds\", \"412\", \"-2 vs yesterday\")` — NEVER `Stat(label=\"Builds\", value=\"412\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
+    "Arguments are POSITIONAL ONLY. Write `Section(\"Builds\", \"412 today\")` — NEVER `Section(title=\"Builds\", text=\"412 today\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
     "Use plain prose for ordinary questions, explanations, and facts. When a structured answer is clearer as a view, put the complete OpenUI program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
     "Reach for a fenced block ONLY when the answer is a structure that reads better drawn than described: a comparison, a trend, a handful of figures, a status board. A question, an explanation or a single fact is prose.",
     "Nothing in a generated program can read a file, run a command or fetch anything. Compose the view from what is already in this conversation; never write a Query, a Mutation or an Action.",
@@ -73,22 +73,27 @@ const PROMPT_OPTIONS = {
        reflow themselves (`@panel-*`), so all the model has to get right is the
        shape and the size. */
     "Every standalone component fills the available width. Use side-by-side layouts only for an intentional comparison or a small related group; otherwise keep components full-width and stacked.",
-    "The view may be read on a phone. Prefer shapes that survive a narrow column: a StatRow of two to four figures, or a Table/Chart, rather than a wide custom layout. Keep every label and title short.",
+    /* No component names: a thread may switch groups off (`uiGroups`), and a rule that
+       names one would teach it to a model that was told it does not exist. */
+    "The view may be read on a phone. Prefer shapes that survive a narrow column, rather than a wide custom layout. Keep every label and title short.",
     "Keep the program to roughly a dozen statements. A long fence is harder to follow and likelier to be cut off before `root` — and a program with no `root` draws nothing at all.",
   ],
+  /* Layout-only: the example is shown whatever groups are on, and `layout` is the one
+     group that always is. */
   examples: [
-    `root = Stack([title, cards, big])
+    `root = Stack([title, summary, log])
 title = Section("Build health", "The last 24 hours.")
-cards = StatRow([builds, fails])
-builds = Stat("Builds", "412")
-fails = Stat("Failures", "7", "-2 vs yesterday")
-big = Table(["Stage", "Pass rate"], [["unit", "99%"], ["e2e", "94%"]])`,
+summary = Card("Failures", "Seven, down from nine", [cause])
+cause = Section("Most common", "The e2e stage timing out.")
+log = Details("Raw log", [entry])
+entry = Section("unit", "Passed.")`,
   ],
 }
 
 const ENTRY = `
 import { openuiLibrary } from "@/lib/openui/library"
-process.stdout.write(openuiLibrary.prompt(${JSON.stringify(PROMPT_OPTIONS)}))
+import { UI_GROUPS } from "@/lib/openui/groups"
+process.stdout.write(JSON.stringify({ prompt: openuiLibrary.prompt(${JSON.stringify(PROMPT_OPTIONS)}), groups: UI_GROUPS.map(({ id, label }) => ({ id, label })) }))
 `
 
 async function generate() {
@@ -104,6 +109,17 @@ async function generate() {
        local imports are compiled. */
     packages: "external",
     alias: { "@": join(ROOT, "src") },
+    /* The Map's Google Maps half is a lazy browser-only chunk (it touches `window` and imports CSS);
+       the prompt needs only the specs, so it is compiled as nothing. */
+    plugins: [
+      {
+        name: "stub-google-map",
+        setup(b) {
+          b.onResolve({ filter: /\/(google-map|place-photo)$/ }, () => ({ path: "google-map", namespace: "stub" }))
+          b.onLoad({ filter: /.*/, namespace: "stub" }, () => ({ contents: "export default () => null; export const usePlacePhoto = () => undefined", loader: "js" }))
+        },
+      },
+    ],
     logLevel: "silent",
     write: false,
   })
@@ -115,8 +131,30 @@ async function generate() {
   }
 }
 
+/** Cut the prompt where a thread's `uiGroups` can cut it: a frame head, one
+    "### <label>" section per group (signatures, then that group's notes) and a
+    tail. The walk is over the known labels and never a generic "### " match,
+    because the tail has "###" headings of its own. A label that is missing or out
+    of order throws — the split must never quietly drop a group. */
+function split(prompt, groups) {
+  let from = -1
+  const starts = groups.map(({ id, label }) => {
+    const at = prompt.indexOf(`\n### ${label}\n`, from + 1)
+    if (at < 0) throw new Error(`group "${id}": no "### ${label}" heading in the generated prompt (or out of order)`)
+    from = at
+    return at + 1
+  })
+  const last = starts[starts.length - 1]
+  const tailAt = prompt.indexOf("\n## ", last)
+  if (tailAt < 0) throw new Error("no section after the last group: the tail was not found")
+  const sections = Object.fromEntries(
+    groups.map(({ id }, i) => [id, prompt.slice(starts[i], i + 1 < groups.length ? starts[i + 1] : tailAt + 1)]),
+  )
+  return { head: prompt.slice(0, starts[0]), sections, tail: prompt.slice(tailAt + 1), order: groups.map(({ id }) => id) }
+}
+
 /** The file as it would be written, so `--check` and the write agree. */
-function render(prompt) {
+function render(prompt, parts) {
   return `/* GENERATED by client/scripts/gen-openui.mjs — do not edit.
  *
  * The server's copy of the OpenUI system prompt, generated from the component
@@ -133,11 +171,21 @@ function render(prompt) {
  * rest of the prompt it is folded into is English too.
  */
 export const OPENUI_PROMPT = ${JSON.stringify(prompt)};
+
+/* The same prompt cut for a thread's \`uiGroups\`: head + the chosen sections in
+ * OPENUI_GROUP_ORDER + tail is OPENUI_PROMPT when every group is chosen. */
+export const OPENUI_FRAME_HEAD = ${JSON.stringify(parts.head)};
+export const OPENUI_GROUPS: Record<string, string> = ${JSON.stringify(parts.sections, null, 2)};
+export const OPENUI_FRAME_TAIL = ${JSON.stringify(parts.tail)};
+export const OPENUI_GROUP_ORDER: string[] = ${JSON.stringify(parts.order)};
 `
 }
 
-const prompt = await generate()
-const rendered = render(prompt)
+const { prompt, groups } = JSON.parse(await generate())
+const parts = split(prompt, groups)
+/* The cut loses nothing: the pieces, joined, are the prompt. */
+if (parts.head + parts.order.map((id) => parts.sections[id]).join("") + parts.tail !== prompt) throw new Error("the split does not reassemble into the prompt")
+const rendered = render(prompt, parts)
 
 if (process.argv.includes("--check")) {
   const current = existsSync(OUT) ? readFileSync(OUT, "utf8") : ""

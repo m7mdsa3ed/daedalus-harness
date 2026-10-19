@@ -46,7 +46,7 @@ import { extractSubagent, toolHeading, toolOutputText } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { formatTokens, sumUsage } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 import { useStoreSelect, type ToolItem } from "@/lib/store"
 import { reportError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
@@ -371,7 +371,7 @@ function StepCard({
   const live = useElapsed(startedAt, state === "running" && startedAt > 0)
   const end = group ? lastActivityAt(group.children) : 0
   const ms = state === "running" ? live : end > startedAt && startedAt > 0 ? end - startedAt : null
-  const tokens = stepTokensLabel(group, useViewOptionsContext().showTokens)
+  const tokens = stepTokensLabel(group, useLayoutOptionsContext().showTokens)
   const meta = [tokens, ms !== null && ms >= 1000 ? formatElapsed(ms) : null].filter(Boolean).join(" · ")
   const detail = group
     ? state === "running"
@@ -604,7 +604,7 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
 function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
   /* Elapsed since 0 is simply now — one clock for every running bar. */
   const now = useElapsed(0, active)
-  const { showTokens } = useViewOptionsContext()
+  const { showTokens } = useLayoutOptionsContext()
   const spans = phases.flatMap((phase) => phase.steps.map((step) => spanOf(step.group, now)))
   const known = spans.filter((span): span is [number, number] => span !== null)
   const t0 = known.length ? Math.min(...known.map((span) => span[0])) : 0
@@ -932,7 +932,7 @@ export function RunLayout({
   fill?: boolean
 }) {
   const [picked, setPicked] = React.useState<string | null>(null)
-  const { showTokens } = useViewOptionsContext()
+  const { showTokens } = useLayoutOptionsContext()
   /* A second click on the picked card puts it away again. */
   const pick = (id: string) => setPicked((current) => (current === id ? null : id))
   const pickedStep = picked
@@ -1097,7 +1097,7 @@ function RunRow({
   showTimestamps?: boolean
   stepRow: StepRowComponent
 }) {
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   const phases = phasesOf({ steps: runSteps, plan })
   const staged = phases.length > 1
   const all = phases.flatMap((p) => p.steps)

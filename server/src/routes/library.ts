@@ -13,7 +13,6 @@ import {
   isThreadScopedBuiltin,
 } from "../library.js";
 import { ModelPromptInputSchema, modelPrompts, modelPromptsFilePath, writeModelPromptsLibrary } from "../model-prompts.js";
-import { PromptInputSchema, savedPrompts } from "../saved-prompts.js";
 import { discoverCommands, discoverMcpServers, discoverSkills } from "../discover.js";
 import {
   authStateOf,
@@ -35,22 +34,16 @@ import { searchRegistry } from "../mcp-registry.js";
 import { mcpServersFor, threadCwd, type SessionManager } from "../sessions.js";
 import { getProject, listProjects, type Project } from "../projects.js";
 
-/** The library: MCP servers, skills, slash commands, saved prompts and model
-    prompts, shared across projects — plus the import scan over the agents' own
-    configs.
+/** The library: MCP servers, skills, slash commands and model prompts, shared
+    across projects — plus the import scan over the agents' own configs.
 
-    Saved prompts are here rather than beside profiles because they are the same kind
-    of thing as the other three: a reusable row a message mentions (`@name`), with no
-    credentials in it and nothing per-project about it. The only asymmetry is
-    that nothing links to one: a message names it. Model
-    prompts are here for the same "reusable row, no credentials" reason; nothing
+    Model prompts are here for the same "reusable row, no credentials" reason; nothing
     points at one — a row applies by matching the model id. */
 export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): void {
   for (const [base, reg, schema] of [
     ["mcp-servers", mcpServers, McpServerInputSchema],
     ["skills", skills, SkillInputSchema],
     ["commands", commands, CommandInputSchema],
-    ["prompts", savedPrompts, PromptInputSchema],
     ["model-prompts", modelPrompts, ModelPromptInputSchema],
   ] as const) {
     /* The MCP list is the one that says more than the row holds: each `http`

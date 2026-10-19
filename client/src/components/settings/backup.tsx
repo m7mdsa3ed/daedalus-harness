@@ -212,7 +212,7 @@ function ExportPanel({ settings }: { settings: ServerSettings }) {
         <Check on={secrets} label="Credentials" />
       </Group>
       <Foot hint="Downloads to this device.">
-        <Button className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => void run()} disabled={busy}>
+        <Button className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => void run()} loading={busy}>
           {busy ? <Spinner /> : <Download className="size-4" />}
           Export
         </Button>
@@ -360,7 +360,7 @@ function ImportPanel({ settings }: { settings: ServerSettings }) {
             </Section>
           )}
           <Foot hint="The app reloads when the import finishes.">
-            <Button variant={replace ? "destructive" : "default"} className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => void run()} disabled={busy}>
+            <Button variant={replace ? "destructive" : "default"} className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => void run()} loading={busy}>
               {busy ? <Spinner /> : <Upload className="size-4" />}
               {replace ? "Replace and import" : "Merge and import"}
             </Button>

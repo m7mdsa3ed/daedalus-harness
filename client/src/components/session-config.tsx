@@ -1,3 +1,4 @@
+import { AskAgentsSub } from "@/components/ask-agents"
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { BotIcon, CheckIcon, ClockIcon, Loader2Icon, XIcon } from "lucide-react"
@@ -15,6 +16,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons"
 import { type ChoicePick, HelperModelsSub, MenuRow, MenuRowSkeleton, PILL, PillLabel, SessionSettingsSub, selectChoices } from "@/components/config-menu"
+import { DEFAULT_SUGGEST_KINDS } from "@/lib/suggestions"
+import { DEFAULT_UI_GROUPS } from "@/lib/openui/groups"
 import { DraftConfigPopover } from "@/components/draft-config"
 import { ThreadToolsSections } from "@/components/thread-tools/menu"
 import { useIsMobile } from "@/hooks/use-device"
@@ -379,6 +382,14 @@ export function SessionConfigPopover({
           ) : (
             unanswered && <MenuRowSkeleton label="Effort" />
           )}
+          <AskAgentsSub
+            value={meta.askProfiles ?? {}}
+            onChange={(askProfiles) =>
+              actions
+                .setAskProfiles(sessionId, askProfiles)
+                .catch((err) => reportError(err, "Couldn't change who this thread asks"))
+            }
+          />
           {meta && agent?.subagentModelsVia === "acp-env" && (
             <HelperModelsSub
               rows={meta.helperModels ?? []}
@@ -396,22 +407,18 @@ export function SessionConfigPopover({
         <DropdownMenuSeparator />
         {/* Its own submenu: how the thread's answers should behave, not who
             answers nor the agent's own selectors. The UI lane is system-prompt
-            text, so a flip costs a respawn; off, the model is never *asked* for
-            one — a fence that arrives anyway still draws, because the renderer
-            reads no toggle. */}
+            text, so a flip costs a respawn; an empty set is off, and the model
+            is never *asked* for one — a fence that arrives anyway still draws,
+            because the renderer reads no toggle. */}
         <SessionSettingsSub
-          items={[
-            {
-              label: "Suggest follow-ups",
-              checked: meta.suggestFollowups === true,
-              onChange: (checked) => actions.changeThreadSuggestions(row, checked),
-            },
-            {
-              label: "Draw answers as UI",
-              checked: meta.uiBlocks !== false,
-              onChange: (checked) => actions.changeThreadUiBlocks(row, checked),
-            },
-          ]}
+          suggestions={{
+            kinds: meta.suggestKinds ?? DEFAULT_SUGGEST_KINDS,
+            onChange: (kinds) => actions.changeThreadSuggestions(row, kinds),
+          }}
+          ui={{
+            groups: meta.uiGroups ?? DEFAULT_UI_GROUPS,
+            onChange: (groups) => actions.changeThreadUiGroups(row, groups),
+          }}
         />
         {(modes || options.rest.length > 0) && (
           <>

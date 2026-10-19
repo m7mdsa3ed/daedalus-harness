@@ -13,7 +13,7 @@
    A summary of the server on top, then a TabBar (Tools | Prompts | Resources)
    over one table of that kind's entries (searchable). A row opens the
    contract of the entry — its input and, for a tool, its output side by
-   side — in a DetailSheet: right on a wide panel, bottom on a narrow one.
+   side — on a page of its own (`McpEntryPage`, `/settings/mcp/:id/tools/:key`).
    Resources and templates share a tab (a template is a resource whose URI is
    the thing a reader fills in); the table's Kind column tells them apart. */
 import * as React from "react"
@@ -32,24 +32,52 @@ import type { ColumnDef } from "@/lib/table"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { useMcpCatalog, useMcpServers, useProjects } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
-import { settingsPath } from "@/lib/router"
+import { mcpDetailPath, mcpEntryPath, settingsPath } from "@/lib/router"
 import { api, mcpSubtitle, type McpCheckEntry, type McpCheckResult, type McpServerDef } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { DetailSheet, FormPageHeader, Group, INSET, Row, TabBar } from "./primitives"
+import { FormPageHeader, Group, INSET, Row, TabBar } from "./primitives"
 import { useSettingsPage } from "./layout"
+
+/** The row and its stored listing — shared by the list page and an entry's page. */
+function useMcpListing(entryId: string) {
+  const servers = useMcpServers()
+  const server = servers.find((s) => s.id === entryId)
+  /* A thread-scoped built-in has no server to connect to without a thread, so
+     these pages never read one — they explain, like the row they were opened from. */
+  const scoped = server?.type === "builtin" && !!server.threadScoped
+  const query = useMcpCatalog(entryId, !scoped)
+  return { servers, server, scoped, query, result: query.data?.deferred ? null : (query.data ?? null) }
+}
+
+/** One entry's page: the contract of a single tool, prompt or resource. */
+export function McpEntryPage() {
+  const { entryId = "", itemKey = "" } = useParams()
+  const navigate = useNavigate()
+  const { servers, server, scoped, query, result } = useMcpListing(entryId)
+  // A row or listing still loading is not a missing one.
+  if (!server) return servers.length === 0 ? null : <Navigate to={settingsPath("mcp")} replace />
+  if (!scoped && query.isPending) return null
+  const row = entryRows(result).find((r) => r.key === itemKey)
+  if (!row) return <Navigate to={mcpDetailPath(entryId)} replace />
+  return (
+    <>
+      <FormPageHeader
+        title={row.entry.uri ?? row.entry.name}
+        description={row.entry.description}
+        onBack={() => void navigate(mcpDetailPath(entryId))}
+      />
+      <EntryDetail kind={row.kind} entry={row.entry} />
+    </>
+  )
+}
 
 export function McpDetailPage() {
   const { entryId = "" } = useParams()
   const { settings } = useSettingsPage()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const servers = useMcpServers()
-  const server = servers.find((s) => s.id === entryId)
+  const { servers, server, scoped, query, result } = useMcpListing(entryId)
   const projects = useProjects()
-  /* A thread-scoped built-in has no server to connect to without a thread, so
-     this page never reads one — it explains, like the row it was opened from. */
-  const scoped = server?.type === "builtin" && !!server.threadScoped
-  const query = useMcpCatalog(entryId, !scoped)
   const { busy, run } = useAsyncAction({ toast: true })
 
   /* Which project a listing is read against. It matters only for the harness's
@@ -105,7 +133,7 @@ export function McpDetailPage() {
           {query.error.message}
         </Notice>
       )}
-      <Offering server={server} result={query.data?.deferred ? null : query.data ?? null}>
+      <Offering server={server} result={result}>
         {server.type === "builtin" && projects.length > 1 && (
           <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>
             <SelectTrigger size="sm" className="w-40 min-w-0 @panel-sm:w-56 pointer-coarse:h-11" title="Which project a listing is read against">
@@ -150,27 +178,13 @@ function Offering({
   result: McpCheckResult | null
   children?: React.ReactNode
 }) {
-  /* Every entry the server offers, in the order the kinds run. A filter narrows
-     what is *listed* and a selection is resolved against the whole set, so an
-     entry you have open never vanishes while the collection is searched. */
-  const rows = React.useMemo<EntryRow[]>(
-    () => [
-      ...(result?.tools ?? []).map((entry) => entryRow("tool", entry)),
-      ...(result?.prompts ?? []).map((entry) => entryRow("prompt", entry)),
-      ...(result?.resources ?? []).map((entry) => entryRow("resource", entry)),
-      ...(result?.resourceTemplates ?? []).map((entry) => entryRow("template", entry)),
-    ],
-    [result]
-  )
+  const navigate = useNavigate()
+  const rows = React.useMemo(() => entryRows(result), [result])
   const [query, setQuery] = React.useState("")
   const [tab, setTab] = React.useState<EntryTab>("tool")
-  /* The *explicit* pick: the entry whose contract is open in the sheet. It is
-     resolved against the whole set, so a search never closes it. */
-  const [chosen, setChosen] = React.useState<string | null>(null)
   const needle = query.trim().toLowerCase()
   const inTab = (row: EntryRow, id: EntryTab) => (id === "resource" ? row.kind === "resource" || row.kind === "template" : row.kind === id)
   const shown = rows.filter((row) => inTab(row, tab) && (!needle || entryMatches(row.entry, needle)))
-  const current = rows.find((row) => row.key === chosen) ?? null
   const tabCount = (id: EntryTab) => rows.filter((r) => inTab(r, id)).length
 
   const columns = React.useMemo<ColumnDef<EntryRow, unknown>[]>(
@@ -311,10 +325,10 @@ function Offering({
                 return <Icon className="size-4" />
               }}
               mobile={{ renderRow }}
-              onRowClick={(row) => setChosen(row.key)}
+              onRowClick={(row) => void navigate(mcpEntryPath(server.id, row.key))}
               pageSize={100}
               maxHeight="30rem"
-              viewToggle={false}
+             
               emptyIcon={<WrenchIcon />}
               emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "Nothing of this kind."}
               filtering={{
@@ -325,14 +339,6 @@ function Offering({
           ) : (
             <Empty size="lg">{NOTHING_TO_RUN}</Empty>
           )}
-          <DetailSheet
-            open={!!current}
-            onOpenChange={(open) => !open && setChosen(null)}
-            title={current ? (current.entry.uri ?? current.entry.name) : ""}
-            description={current?.entry.description}
-          >
-            {current && <EntryDetail key={current.key} kind={current.kind} entry={current.entry} />}
-          </DetailSheet>
         </>
       )}
     </>
@@ -376,6 +382,14 @@ interface EntryRow {
 }
 const entryRow = (kind: EntryKind, entry: McpCheckEntry): EntryRow => ({ key: `${kind}:${entry.name}`, kind, entry })
 
+/** Every entry the server offers, in the order the kinds run. */
+const entryRows = (result: McpCheckResult | null): EntryRow[] => [
+  ...(result?.tools ?? []).map((entry) => entryRow("tool", entry)),
+  ...(result?.prompts ?? []).map((entry) => entryRow("prompt", entry)),
+  ...(result?.resources ?? []).map((entry) => entryRow("resource", entry)),
+  ...(result?.resourceTemplates ?? []).map((entry) => entryRow("template", entry)),
+]
+
 /** Said by the page when the server offers nothing at all. */
 const NOTHING_TO_RUN = "This server advertises nothing to run."
 
@@ -408,7 +422,7 @@ function EntryDetail({ kind, entry }: { kind: EntryKind; entry: McpCheckEntry })
   const inputs = inputFields(kind, entry)
   const outputs = schemaFields(entry.outputSchema)
 
-  /* The sheet's title says the thing that will be requested (a resource's
+  /* The page title says the thing that will be requested (a resource's
      URI), so here: the kind, the type, then the contract. */
   return (
     <>

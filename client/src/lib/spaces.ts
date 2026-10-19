@@ -3,7 +3,7 @@
  *
  * The spaces themselves are the server's (`GET /api/spaces`, cached in
  * `lib/queries/catalog`); what is device-local is only *which one you are in*,
- * exactly like `lib/view-options` and `lib/drafts` — how you are looking at the
+ * exactly like `lib/layout-options` and `lib/drafts` — how you are looking at the
  * work is the reader's property, not the conversation's. It is per server,
  * because a space id names a row the server that minted it holds, and one
  * device may talk to several.

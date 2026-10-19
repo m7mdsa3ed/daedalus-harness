@@ -80,6 +80,7 @@ import {
   useProfileQuota,
 } from "@/lib/queries/surfaces"
 import { Empty } from "@/components/empty"
+import { useTableFilter } from "@/lib/use-table-filter"
 import {
   DataTable,
   TitleCell,
@@ -99,7 +100,7 @@ const defaultProfileId = (agentId: string) => `default:${agentId}`
 
 function RefreshAction({ busy, onClick, label }: { busy: boolean; onClick: () => void; label: string }) {
   return (
-    <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-11" disabled={busy} onClick={onClick} aria-label={label} title={label}>
+    <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-11" loading={busy} onClick={onClick} aria-label={label} title={label}>
       <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
     </Button>
   )
@@ -365,19 +366,14 @@ function ProviderHead({ provider, accounts }: { provider: string; accounts: numb
 /** A reading's windows as a table. Search appears once there is enough to
     search — a gateway account can carry a dozen model windows. */
 function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?: boolean }) {
-  const [query, setQuery] = React.useState("")
   const rows = React.useMemo(() => (quota ? usageRows(quota) : []), [quota])
   const withAccounts = (quota?.accounts?.length ?? 0) > 0
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? rows.filter((row) =>
-            [row.window?.label, row.account?.name, row.account?.plan, row.provider].some((text) => text?.toLowerCase().includes(needle))
-          )
-        : rows,
-    [rows, needle]
-  )
+  const f = useTableFilter(rows, {
+    matches: (row, needle) =>
+      [row.window?.label, row.account?.name, row.account?.plan, row.provider].some((text) => text?.toLowerCase().includes(needle)),
+    placeholder: "Search quotas…",
+    fields: [{ id: "provider", label: "Provider", of: (row) => row.provider }],
+  })
   /* Accounts per provider, for the group heading. */
   const counts = React.useMemo(() => {
     const seen = new Map<string, Set<string>>()
@@ -403,7 +399,7 @@ function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?:
   return (
     <DataTable
       columns={withAccounts ? COLUMNS_ACCOUNTS : COLUMNS_FLAT}
-      data={shown}
+      data={f.rows}
       getRowId={(row) => row.id}
       isLoading={loading}
       skeletonRows={3}
@@ -411,14 +407,9 @@ function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?:
       mark={markOf}
       grouping={grouping}
       mobile={MOBILE}
-      viewToggle={false}
       emptyIcon={<GaugeIcon />}
-      emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "No quotas reported."}
-      filtering={
-        rows.length > 8
-          ? { search: { value: query, onChange: setQuery, placeholder: "Search quotas…" }, totalCount: rows.length }
-          : undefined
-      }
+      emptyMessage={f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No quotas reported."}
+      filtering={f.filtering}
     />
   )
 }
@@ -767,7 +758,7 @@ export function QuotaPage() {
       <PageHeader
         meta={meta}
         action={
-          <Button variant="outline" className="h-11 @panel-sm:h-9" disabled={busy} onClick={() => reload(true)}>
+          <Button variant="outline" className="h-11 @panel-sm:h-9" loading={busy} onClick={() => reload(true)}>
             <RefreshCwIcon className={cn("size-4", busy && "animate-spin")} />
             Refresh all
           </Button>

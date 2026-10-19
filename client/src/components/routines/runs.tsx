@@ -16,16 +16,17 @@ import * as React from "react"
 import { ExternalLinkIcon, HistoryIcon, SquareIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { EmptyCard, DetailSheet, StatusBadge } from "@/components/settings/primitives"
+import { EmptyCard, StatusBadge } from "@/components/settings/primitives"
 import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
 import { Button } from "@/components/ui/button"
 import { reportError } from "@/lib/errors"
-import { threadPath } from "@/lib/router"
+import { routineRunPath, threadPath } from "@/lib/router"
 import type { RoutineRun } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
 import { SOURCE_LABEL, runStatus } from "./status"
 
 export function RunList({
+  routineId,
   /** Undefined means "not read yet" and draws skeletons; an empty array means
       "this routine has never run" and draws the empty card. The store keys runs
       by routine precisely so those two can be told apart. */
@@ -33,15 +34,14 @@ export function RunList({
   hasOutputSchema,
   onCancel,
 }: {
+  routineId: string
   runs: RoutineRun[] | undefined
   hasOutputSchema: boolean
   /** Stop a run that is still going. Omitted where there is nothing to act on. */
   onCancel?: (runId: string) => Promise<void>
 }) {
   const navigate = useNavigate()
-  const [openId, setOpenId] = React.useState<string | null>(null)
   const [stopping, setStopping] = React.useState<ReadonlySet<string>>(new Set())
-  const opened = runs?.find((r) => r.id === openId)
 
   /* A row action in a list - so a failure is a toast, not an inline note. */
   const stop = (run: RoutineRun) => {
@@ -116,48 +116,68 @@ export function RunList({
   )
 
   return (
-    <>
-      <SettingsList
+    <SettingsList
         columns={columns}
         rows={runs ?? []}
         rowId={(run) => run.id}
         loading={runs === undefined}
         skeletonRows={3}
         actions={actions}
-        onRowClick={(run) => setOpenId(run.id)}
+        mark={() => <HistoryIcon className="size-4 text-muted-foreground" />}
+        search={{
+          placeholder: "Search runs…",
+          matches: (run, n) =>
+            `${runStatus(run.status).label} ${SOURCE_LABEL[run.source] ?? run.source} ${run.error ?? ""} ${run.output ?? ""}`.toLowerCase().includes(n),
+        }}
+        fields={[
+          { id: "status", label: "Status", of: (run) => run.status, optionLabel: (v) => runStatus(v as RoutineRun["status"]).label },
+          { id: "source", label: "Source", of: (run) => run.source, optionLabel: (v) => SOURCE_LABEL[v as RoutineRun["source"]] ?? v },
+        ]}
+        onRowClick={(run) => void navigate(routineRunPath(routineId, run.id))}
         empty={<EmptyCard icon={HistoryIcon} text="This routine has not run yet." />}
       />
-      <DetailSheet
-        open={opened !== undefined}
-        onOpenChange={(open) => !open && setOpenId(null)}
-        title={opened ? <RunHead run={opened} /> : "Run"}
-        description={
-          opened
-            ? `${new Date(opened.startedAt).toLocaleString()}${opened.tokens !== null ? ` \u00b7 ${opened.tokens.toLocaleString()} tokens` : ""}`
-            : undefined
-        }
-        footer={
-          opened && (
-            <>
-              {opened.status === "running" && onCancel && (
-                <Button variant="outline" disabled={stopping.has(opened.id)} onClick={() => stop(opened)}>
-                  <SquareIcon data-icon="inline-start" />
-                  {stopping.has(opened.id) ? "Stopping\u2026" : "Stop"}
-                </Button>
-              )}
-              {opened.sessionId && (
-                <Button variant="outline" onClick={() => void navigate(threadPath(opened.sessionId!))}>
-                  <ExternalLinkIcon data-icon="inline-start" />
-                  Open this run&rsquo;s thread
-                </Button>
-              )}
-            </>
-          )
-        }
-      >
-        {opened && <RunDetail run={opened} hasOutputSchema={hasOutputSchema} />}
-      </DetailSheet>
-    </>
+  )
+}
+
+/** One run on a page of its own: the head, the whole of what it produced, and
+    the actions the row carries. */
+export function RunPage({
+  run,
+  hasOutputSchema,
+  onCancel,
+}: {
+  run: RoutineRun
+  hasOutputSchema: boolean
+  onCancel?: (runId: string) => Promise<void>
+}) {
+  const navigate = useNavigate()
+  const [stopping, setStopping] = React.useState(false)
+  const stop = () => {
+    if (!onCancel) return
+    setStopping(true)
+    void onCancel(run.id)
+      .catch((err) => reportError(err, "Couldn't stop the run"))
+      .finally(() => setStopping(false))
+  }
+  return (
+    <div className="space-y-4">
+      <RunHead run={run} />
+      <RunDetail run={run} hasOutputSchema={hasOutputSchema} />
+      <div className="flex flex-wrap gap-2">
+        {run.status === "running" && onCancel && (
+          <Button variant="outline" disabled={stopping} onClick={stop}>
+            <SquareIcon data-icon="inline-start" />
+            {stopping ? "Stopping\u2026" : "Stop"}
+          </Button>
+        )}
+        {run.sessionId && (
+          <Button variant="outline" onClick={() => void navigate(threadPath(run.sessionId!))}>
+            <ExternalLinkIcon data-icon="inline-start" />
+            Open this run&rsquo;s thread
+          </Button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -238,7 +258,7 @@ function RunDetail({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
 
 /** A verdict on one line for the row. It is arbitrary JSON - the schema is the
     routine's - so there is nothing to key on; the shape is shown, truncated by
-    the row, and the sheet has the whole of it. */
+    the row, and the run page has the whole of it. */
 function compact(verdict: unknown): string {
   if (typeof verdict === "string") return verdict
   try {

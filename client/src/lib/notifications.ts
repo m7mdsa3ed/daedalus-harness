@@ -13,7 +13,7 @@
    "Moved to Trash" one) — bottom-trailing corner, not a header takeover: a
    notification should not displace the thread title you are reading.
 
-   Preferences are device-local (localStorage), same pattern as view-options —
+   Preferences are device-local (localStorage), same pattern as layout-options —
    what interrupts you on this device is not the server's business. */
 import { toast } from "@/lib/toast"
 import { useSyncExternalStore } from "react"

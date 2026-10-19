@@ -167,11 +167,12 @@ export function useGitStatus(projectId: string, repo: string, enabled = true) {
 /** The newest commits on one repository. `limit` is the caller's, because the
     surfaces asking differ by an order of magnitude — a glance in the composer's
     popover is five, the panel's history is a page. */
-export function useGitLog(projectId: string, repo: string, limit: number, enabled = true) {
+export function useGitLog(projectId: string, repo: string, limit: number, enabled = true, all = false) {
   const search = new URLSearchParams({ limit: String(limit) })
   if (repo) search.set("repo", repo)
+  if (all) search.set("all", "1")
   return useApiQuery<GitCommit[]>(
-    projectGitLogKey(useServer(), projectId, repo).concat([limit]),
+    projectGitLogKey(useServer(), projectId, repo).concat([limit, all]),
     `/api/projects/${encodeURIComponent(projectId)}/git/log?${search.toString()}`,
     { enabled }
   )

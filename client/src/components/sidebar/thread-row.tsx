@@ -1,6 +1,6 @@
 /* ── One thread, one line ── the row, its actions, and its menus. */
 import * as React from "react"
-import { MoreVertical, X } from "lucide-react"
+import { ChevronRight, MoreVertical, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,7 +22,7 @@ import { activityAt, type SessionMeta } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
-import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
+import { ACTION, FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
 
 /* The reading a row shows comes from `lib/thread/phase.ts` and is shared with
    the dock tabs and the project page. It used to be declared here as
@@ -59,23 +59,33 @@ export const ThreadRow = React.memo(function ThreadRow({
   session,
   state,
   trash,
-  active,
   pinned,
   showProject,
   project,
+  agentIcon,
+  showAge,
+  projectLabel,
   handlers,
+  fold,
 }: {
   session: SessionMeta
   state: ThreadStatus
   trash: boolean
-  active: boolean
   pinned: boolean
   /** Whether the row names its project. Under a project's own folder it would
       only repeat the folder, so it wears the agent's mark alone. */
   showProject: boolean
   /** The project's name; "Other" when the catalog has no such project. */
   project: string
+  /** The reader's row dress (Settings › Appearance › Sidebar). */
+  agentIcon: boolean
+  showAge: boolean
+  /** Name the project on the row itself rather than only in its tooltip. */
+  projectLabel: boolean
   handlers: ThreadRowHandlers
+  /** Set on a thread with sub threads: a chevron at the row's trailing end
+      folds them. `toggle` must be stable — the row is memoized. */
+  fold?: { open: boolean; count: number; toggle: (open: boolean) => void }
 }) {
   const { onOpen, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree, onClose } = handlers
   /* One list feeds both the ⋯ menu and the right-click menu. */
@@ -113,7 +123,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   const age = shortAge(activityAt(session))
   const row = (
     <span className="flex min-w-0 flex-1 items-center gap-2" title={detail}>
-      <AgentIcon agentId={session.agentId} className="size-3.5 shrink-0" />
+      {agentIcon && <AgentIcon agentId={session.agentId} className="size-3.5 shrink-0" />}
       <span
         className={cn(
           "min-w-0 flex-1 truncate",
@@ -136,11 +146,16 @@ export const ThreadRow = React.memo(function ThreadRow({
           Aside
         </span>
       )}
+      {projectLabel && showProject && (
+        <span className="max-w-[35%] shrink-0 truncate text-[11px] text-muted-foreground/70">{project}</span>
+      )}
       {/* The ⋯ floats over the age on hover (`FLOAT_ACTION`, painted in the
           row's own hover colour), so nothing is reserved for it. */}
-      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground transition-opacity group-hover/menu-item:opacity-0">
-        {age}
-      </span>
+      {showAge && (
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground transition-opacity group-hover/menu-item:opacity-0">
+          {age}
+        </span>
+      )}
     </span>
   )
 
@@ -155,7 +170,6 @@ export const ThreadRow = React.memo(function ThreadRow({
         <SidebarMenuButton
           data-thread-id={session.id}
           size="sm"
-          isActive={active}
           onClick={() => onOpen(session)}
           /* A finger resting on the row must not raise the browser's own
              callout or native context menu — the one context menu is Base
@@ -166,23 +180,38 @@ export const ThreadRow = React.memo(function ThreadRow({
           className={cn(
             ROW,
             FLOAT_ROW,
+            /* A parent's chevron always holds the trailing slot (a button cannot
+               sit inside the row's own button), so the age stops short of it. */
+            fold && "pr-7!",
             /* A faint wash over the whole row for the two states addressed to
-               the reader, a step stronger on hover. The active row keeps its
-               own selected ground. */
-            !trash && !active && state === "waiting" && "bg-amber-500/10 hover:bg-amber-500/15",
-            !trash && !active && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
+               the reader, a step stronger on hover. */
+            !trash && state === "waiting" && "bg-amber-500/10 hover:bg-amber-500/15",
+            !trash && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
             isMobile && "select-none [-webkit-touch-callout:none]"
           )}
         >
           {row}
         </SidebarMenuButton>
       </ItemContextMenu>
+      {fold && (
+        <SidebarMenuAction
+          title={`${fold.open ? "Hide" : "Show"} ${fold.count} sub thread${fold.count === 1 ? "" : "s"}`}
+          aria-expanded={fold.open}
+          className={cn(ACTION, "text-muted-foreground")}
+          onClick={(event) => {
+            event.stopPropagation()
+            fold.toggle(!fold.open)
+          }}
+        >
+          <ChevronRight className={cn("transition-transform duration-200", fold.open && "rotate-90")} />
+        </SidebarMenuAction>
+      )}
       {onClose && (
         <SidebarMenuAction
           showOnHover
           title={`Close ${session.title}`}
           aria-label={`Close ${session.title}`}
-          className={cn(FLOAT_ACTION, "right-8")}
+          className={cn(FLOAT_ACTION, fold ? "right-13" : "right-8")}
           onClick={(event) => {
             event.stopPropagation()
             onClose(session)
@@ -194,7 +223,7 @@ export const ThreadRow = React.memo(function ThreadRow({
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <SidebarMenuAction showOnHover title={`Actions for ${session.title}`} className={FLOAT_ACTION}>
+            <SidebarMenuAction showOnHover title={`Actions for ${session.title}`} className={cn(FLOAT_ACTION, fold && "right-7")}>
               <MoreVertical />
             </SidebarMenuAction>
           }

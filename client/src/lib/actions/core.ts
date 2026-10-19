@@ -25,6 +25,8 @@ import type { Action, StoreHandle } from "../store"
 import { threadRegistry } from "../thread/registry"
 import type { ThreadConnection } from "../thread/connection"
 import { recordThreadError } from "../thread/record-error"
+import { DEFAULT_SUGGEST_KINDS } from "../suggestions"
+import { DEFAULT_UI_GROUPS } from "../openui/groups"
 import {
   serverReachable,
   startHealthPoll,
@@ -217,15 +219,16 @@ export function createCore(deps: CoreDeps) {
            applied by the server right after session/new, and replaced by the
            live thread's own mode state from then on. */
         modeId: modeId || undefined,
-        /* Whether answers should close with follow-up suggestions. Picked on
-           the draft, and free for the same reason. On
-           unless the draft turned it off — `??` rather than `||`, so an
-           explicit off survives the trip instead of reading as unset. */
-        suggestFollowups: meta.suggestFollowups ?? true,
-        /* Whether an answer may carry a drawn view. The same draft-picked,
-           spawn-input bargain as the suggestions trailer: on unless the draft
-           turned it off. */
-        uiBlocks: meta.uiBlocks ?? true,
+        /* Which closing blocks answers should carry. Picked on the draft, and
+           free for the same reason. `??` rather than `||`, so an explicit empty
+           set (everything off) survives the trip instead of reading as unset. */
+        suggestKinds: meta.suggestKinds ?? [...DEFAULT_SUGGEST_KINDS],
+        /* Which component groups the drawn-view lane teaches; empty is the lane
+           off, unset is all of them (the server's own reading of an absent set). */
+        uiGroups: meta.uiGroups ?? [...DEFAULT_UI_GROUPS],
+        /* Which profile and model `ask_agent` uses per agent — free on the
+           draft, and read by the server at ask time, never at spawn. */
+        askProfiles: meta.askProfiles ?? {},
         /* The agent options as the draft showed them. The server applies them
            the moment session/new answers, best-effort and only where they
            differ from what it came up on: a remembered option the agent no
@@ -334,7 +337,7 @@ export function createCore(deps: CoreDeps) {
    */
   const fetchSessionPage = async (offset: number, limit: number, reset: boolean): Promise<SessionMeta[]> => {
     const page = await api<SessionPage>(settings, `/api/sessions/page?limit=${limit}&offset=${offset}`)
-    const rows = dedupeById([...page.sessions, ...page.trashed, ...page.pinned])
+    const rows = dedupeById([...page.sessions, ...page.trashed, ...page.pinned, ...(page.children ?? [])])
     dispatch({
       type: "session-page",
       sessions: rows,

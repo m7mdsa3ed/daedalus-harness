@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type CommandDef, type ServerSettings } from "@/lib/settings"
 import { useCommands, useInvalidateCatalog } from "@/lib/queries/catalog"
-import { FormPageHeader, PageForm, Field, FormActions, FormSection, FormShell } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
@@ -120,13 +120,7 @@ function CommandForm({
           },
         }}
       >
-        <FormShell
-          sections={[
-            { id: "identity", label: "Identity" },
-            { id: "prompt", label: "Prompt" },
-          ]}
-        >
-          <FormSection id="identity" label="Identity">
+          <FormSection label="Identity">
             <div className="grid gap-4 @panel-sm:grid-cols-2">
               <Field label="Name" hint="Typed as /name in the composer; also the filename on disk.">
                 <Input
@@ -151,7 +145,7 @@ function CommandForm({
               <Input value={form.description} onChange={(e) => set({ description: e.target.value })} required />
             </Field>
           </FormSection>
-          <FormSection id="prompt" label="Prompt">
+          <FormSection label="Prompt">
             <Field
               label="Prompt"
               hint="Markdown the agent receives when the command runs. $ARGUMENTS is replaced with whatever was typed after the name."
@@ -165,7 +159,6 @@ function CommandForm({
               />
             </Field>
           </FormSection>
-        </FormShell>
         <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>

@@ -12,7 +12,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **`server/` is the ACP client** (Node 22 + Hono + ws): one agent process per thread, one
   `AcpBridge` (`src/acp-bridge.ts`) per process, derived state to the browser over a
   WebSocket (`src/protocol.ts`). It owns profiles (provider config + the MCP/skill/command
-  links its threads get), projects (a cwd and a name — nothing linked), the library, saved prompts,
+  links its threads get), projects (a cwd and a name — nothing linked), the library,
   bearer auth, the event log and FCM push. `data/` holds secrets — gitignored, never commit.
 - **Storage is SQLite via Drizzle** (`server/src/db/`), better-sqlite3, synchronous because
   spawn paths are. Every query goes through the `db` exported by `db/index.ts`. Links are join
@@ -194,7 +194,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`pnpm fake:agent` writes its row). Samples are scenes; the default turn stays small,
   because a turn is what the replay window is measured in.
 
-## Profiles, models, config, saved prompts → `docs/profiles-and-config.md`
+## Profiles, models, config → `docs/profiles-and-config.md`
 
 - **A profile is a provider, not an agent; a thread is a (profile, agent) pair.** The agent is
   chosen at draft time, lives on `sessions.agent_id`, and survives a respawn.
@@ -267,17 +267,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
   **The key in the path is the credential** — derived (HMAC) from `data/loopback-secret`, so stable across restarts and never written anywhere else; a leaked key is revoked by rotating that file (every key changes, stranding adopted agents), not by restarting.
-- **Saved prompts replace personas, and they are mentioned, never selected.** `@handle`
-  (`server/src/saved-prompts.ts`, Settings › Saved prompts, `/api/prompts`) is expanded to the
-  prompt's text **in what the agent receives only** (`expandPrompts`, in the bridge beside
-  `mentionLinks`); the journal, queue and history keep the literal `@handle`, and nothing goes
-  in the system prompt. There is no persona id on a thread, project, routine or workflow.
-  The legacy `personas` table stays declared (a table push does not know about is dropped)
-  and is copied once at boot (`migrateLegacyPersonas`).
+- **There are no personas and no saved prompts: reusable text is a library slash command.**
+  Both became `commands` rows (`server/src/legacy-prompts.ts`, once at boot, marker
+  `savedPromptsToCommands`), run like any command the runtime materialises — so one is
+  *linked* to a thread, never offered to all of them, and a runtime with no
+  `workspaceLayout` (codex) has none. There is no persona id on a thread, project, routine or
+  workflow. The `personas` and `saved_prompts` tables stay declared (a table push does not
+  know about is dropped) until the migration has run everywhere.
 - **Rules ride the spawn-instruction doors** (`AgentDef.personaVia`, `{personaPrompt}`,
   `{personaFile}` — names are historical): `server/src/rules.ts`, one global block plus one per
-  project, plus the spawn trailers. Spawn-time — a change costs a respawn — and backup carries
-  them upsert-per-key. Claude Code's and the Daedalus agent's door is AIR's
+  project, plus the spawn trailers. Spawn-time — a change costs a respawn. Claude Code's and the Daedalus agent's door is AIR's
   `_meta.jetbrains.air.customInstructions` (`"air-meta"`, re-sent on new/load/resume; the
   bridge logs a runtime that never advertised it); **codex stays on `"env"`** because codex-acp reads that key on
   `session/new` only, so a revived thread would never get a change.
@@ -334,12 +333,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   speaks the rest — media, instructions, `list_changed`, elicitation, sampling (behind a
   permission), roots, progress — and joins a tool's images to the next step as a user message,
   because an OpenAI-compatible tool message is text only.
-- **`builtin:browser` is `chrome-devtools-mcp` on the thread's Preview, never a browser of its
-  own**: `--wsEndpoint` is the `/cdp/<key>/<sessionId>` loopback, the server pipes it to the
-  desktop window whose Preview has **Drive** on (`browser-hosts.ts`) and interprets no CDP,
-  and Electron main answers as a browser of one page (`electron/cdp-shim.cjs`) — **never
-  `--remote-debugging-port`**, which hands every window and the token to anything local.
-  The preview is a `<webview>` only in the desktop shell; the PWA keeps the sandboxed iframe.
+- **Driving the Preview is a plain stdio library row, not a built-in**: `chrome-devtools-mcp
+  --browserUrl http://127.0.0.1:9222` against Electron's own `--remote-debugging-port`
+  (`DAEDALUS_DEBUG_PORT`, `"0"` = off; `electron/main.cjs`). That port is **every window of the
+  app, the harness page and its token included, to anything local** - a deliberate trade for a
+  stock MCP, replacing the per-thread `builtin:browser` pipe. Desktop shell only; the PWA's
+  iframe has no CDP. Boot deletes any leftover `builtin:browser` row.
 - **The marketplace indexes nothing** (`server/src/mcp-registry.ts`): Browse proxies an MCP
   Registry's `GET /v0/servers` (`config.mcpRegistryUrl`, the official one by default) and maps
   `server.json` onto `McpServerInput` — `version=latest` or a search is twenty copies of one
@@ -359,10 +358,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
   `WorkflowRunner.ask`): a **one-step run** whose step names its own profile and agent, so
   the child, the mirroring, the cost and the cancel are the workflow's. Drawn as a plain
-  subagent (no workflow `_meta`). The parent's model and mode ids never cross to another
+  subagent — no workflow `_meta`, a `_meta.daedalus.ask` pair instead, so its row is named by
+  the `description` the caller gave it (else `agent · profile`) and wears the asked agent's
+  own mark and an `AskAgentChip` naming the pair, because it is the one worker in a
+  transcript that is not this thread's agent. The parent's model and mode ids never cross to another
   pair — the child starts on its profile's default model and its runtime's default mode.
   Offered to every runtime, Claude Code included (it rivals nothing), one level, and capped
-  apart from workflows. The asked agent sees only the brief.
+  apart from workflows. The asked agent sees only the brief. **The user picks the profile and
+  model, per agent per thread** (`sessions.ask_profiles`, seeded by `projects.default_ask_profiles`,
+  the "Ask agents" rows of the config menus): read at ask time, so no respawn; unset, the `agents`
+  server raises a picker by MCP elicitation (the client draws it as the config menu's rows),
+  and a set choice outranks the model's arguments. **An ask's child is granted every permission**
+  (`ASK_AUTONOMY`), and **any child's question that still parks is repeated live on its parent**
+  (`<childId>:<requestId>`, `from`) and answered there — never left where nobody reads.
 
 ## Client and UI → `docs/client.md`
 
@@ -389,7 +397,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   no `toolProvider` is passed, so a `Query()`/`Mutation()` is dropped rather than run, and the
   prompt carries `bindings:false`/`toolCalls:false` so a form is never offered — a generated
   view composes what the model already knows, and every tool call stays an ACP one with a
-  permission in front of it. **An unclosed fence draws too, from the moment it opens** — the
+  permission in front of it. **The one thing it may reach is the network, and only through `Image` and `Map`**: `Image`
+  loads a remote URL on a click, and `Map` is Google Maps (`lib/openui/google-map.tsx`, its own
+  lazy chunk, loaded on a click ("Show map" or a location row) because every rendered map is a billed load) with a directions panel whose
+  routing, search and places-along-the-route are the server's (`/api/geo/*`, `server/src/geo.ts`:
+  Google's Routes and Places APIs under `config.geo.googleServerKey`). **Two keys, two doors**:
+  the Maps JavaScript key (`geo.googleMapsKey`, referrer-restricted) is handed to the browser by
+  `GET /api/geo/config`; the server key never leaves the server; with no key the map says how to set one. **An unclosed fence draws too, from the moment it opens** — the
   language puts `root` first and resolves forward references as their statements arrive, so a
   program fills in over the answer rather than appearing at the end; what that demands is that
   the drawing be forgiving, so the "came out empty" fallback is suspended while the row is
@@ -405,15 +419,28 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   so the text the model is told and the components the reader gets cannot disagree. **The
   table travels in the spawn trailer, like the suggestions one** (`OPENUI_INSTRUCTIONS`,
   `personas.ts`), so every runtime on a profile is asked with the same components — it used
-  to be pushed by our own runtime alone, which told every other one the lane was not for it. Adding a
-  component is the library edit and one regeneration. **A generated view reflows on the panel's
+  to be pushed by our own runtime alone, which told every other one the lane was not for it.
+  **The table is generated as head + one section per group + tail**, and **a thread names which
+  groups it is taught** (`sessions.ui_groups`, project default `projects.default_ui_groups`,
+  `uiGroups` on the wire) — **the set is the only switch**: empty = the model is not told the
+  lane exists, non-empty = on, and `layout` is forced into any non-empty set because `Stack`, the
+  root, lives there (so unticking it in the picker is "off"). `sessions.ui_blocks` and
+  `projects.default_ui_blocks` are legacy, still declared, read only by `uiGroupsOf` (a row with
+  no set of its own: `false` = off, else all), never written. **The set governs the asking, never
+  the drawing**: a fence naming a group the thread was not taught still renders.
+  It travels the way `suggestKinds` does, through the same staged-config / respawn door and the
+  same project defaults. Adding a component is a file in `lib/openui/components/`, an entry in
+  `lib/openui/groups.ts` (plain data, no React, so the picker never pulls the lazy chunk), its
+  notes in `library.tsx` and one `pnpm openui`. **A generated view reflows on the panel's
   width, not the window's** — the components carry `@panel-sm:` variants (`StatRow` falls two-up,
-  `KeyValue` stacks key over value, the chart's tick gutters shrink), because the one thing the
+  `KeyValue` stacks key over value, the chart's tick gutters shrink, and a **`Table` becomes one
+  block per row** — first column its name, the rest named facts under it — because a five-column
+  grid in a phone panel was a sideways scroller showing two of them), because the one thing the
   model cannot control is how wide the box it lands in is. The lane is written for a thread with a
   **reader**: a subagent's answer is a report to its caller, and an unattended run
   (`holdOnError` off, the workflow-step and scheduled-run case) wants prose it can grep.
-  **The toggle governs the asking, never the drawing** (`sessions.ui_blocks`, "Draw answers as
-  UI"): off, the model is not told the lane exists — and a fence that arrives anyway, whether
+  **The set governs the asking, never the drawing** (`sessions.ui_groups`, "Draw answers as
+  UI"): empty, the model is not told the lane exists — and a fence that arrives anyway, whether
   the user typed it or the toggle was flipped back on mid-thread, still renders, because the
   renderer reads no switch. That is what makes a mid-thread flip change nothing already on
   screen.
@@ -426,7 +453,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   reopens it; "Open as tab" (sent or still a draft) is the same thread in the dock.
 - **⌘K's root page never asks the server**; searching is a destination owning its own query,
   debounce and abort. Rows are data, not JSX, and cmdk's own filter is off.
-- Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/view-options.ts`,
+- Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/layout-options.ts`,
   `lib/keybindings.ts`) — how a transcript is drawn is the reader's property, not the
   conversation's. **A pin is not one of them**: it is a fact about the thread
   (`sessions.pinned_at`, `PATCH /api/sessions/:id {pinned}`), so it follows the thread to
@@ -478,18 +505,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`useThreadConnection`).
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
-- **The sidebar has two contents and the *active panel* picks, never a route match of its
-  own.** Settings sections are its content while the panel in front of you is a settings page
-  (`sidebar/settings-nav.tsx`); threads otherwise. This was tried and reverted once, when the
-  sidebar read `/settings` directly and a settings tab open beside a chat rewrote the sidebar
-  of the chat you were reading. What makes it correct is that **the dock writes the focused
-  panel's path to the URL** (`onDidActivePanelChange`), so the route *is* the active panel's
-  descriptor — focusing the chat gives the threads back on the same gesture, and focusing a
-  terminal navigates nowhere, which is why the sidebar does not change under one. Settings
-  therefore carries **no second sidebar of its own**; the in-page `SectionPicker` survives for
-  the one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you
-  tapped Settings — and that gate is `isMobile` (the device), never the panel's width, because
-  a narrow settings panel on a desktop still has the sidebar beside it.
+- **The sidebar has two contents and the reader picks, never the route or the active panel.**
+  The footer's gear swaps the thread list for the settings sections (`sidebar/settings-nav.tsx`)
+  and "Back to threads" swaps it back — **neither navigates**; a section row is what opens a page,
+  in the tab in front. It was a reading of the active panel's path before, which made the gear
+  a redirect. State lives in `app-shell` (`settingsNav`). The in-page `SectionPicker` survives for
+  a phone, gated on `isMobile` (the device), never the panel's width.
 - **Every page answers each UI question one way, from one kit** (`settings/primitives.tsx` "The
   kit", `page-primitives.tsx`, `components/ui/data-table.tsx`) - settings, the theme studio,
   routines, schedules, the inbox and the project page alike. *Switch the page's view*: `TabBar`
@@ -497,8 +518,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   than turning into a dropdown). *Jump within a long form*: `FormShell` (the same bar as
   scroll-spied anchors). *Pick a value*: `Segmented` (2-4 short words) | `ui/Select` (more) |
   `ChoiceTiles` (options you must see - mode, layout, tool-step style). *Filter a list*: the
-  `DataTable` toolbar. *Open an item*: a table row into `DetailSheet` (right on wide, bottom on
-  narrow) or its form route. *Say a state*: `StatusBadge`. *Create*: the header's action.
+  `DataTable` toolbar. *Open an item*: a table row into its own page (a route, `settingsFormPath` and
+  friends) - never a sheet. *Say a state*: `StatusBadge`. *Create*: the header's action.
   **There is no vertical rail, master-detail column, section dropdown or native `<select>` inside
   a page - the sidebar is the app's one vertical navigation, and on a phone the overview list
   plus a "Settings" back link (`BackToSettings`) is its form.** A `DropdownMenu` is an *action*
@@ -772,7 +793,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Every strip is the app header's own row** (`--dv-tabs-and-actions-container-height`): a
   strip in the band and a strip docked under it are the same bar, and a shorter one below
   reads as a lesser thing rather than as another group of the same kind. **The sidebar has two layouts, and the reader picks** (Settings › Appearance › Sidebar
-  layout, `lib/sidebar-layout.ts` `variant`, device-local). **Flush** (default,
+  layout, `sidebarVariant` in `lib/layout-options.ts`, device-local; the open/closed state is the one sidebar fact that stays in `lib/sidebar-layout.ts`, because a toggle must not re-render every transcript row). **Flush** (default,
   `Sidebar variant="sidebar"`): a rail with no border, the content filling the rest, a top group's
   strip an overlay on its content under a progressive blur (panels pad by the measured
   `--dock-content-overlap`). **Inset** (`variant="inset"`, `p-0` on the container): the shell stands on
@@ -811,7 +832,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the sidebar toggle. Opening a thread or a panel is the strip's +; what the app can search and
   which notifications have arrived are rows in the sidebar, which is where a place you go is
   named, and **how transcripts are drawn is Settings › Appearance › Transcript**
-  (`ViewSettings`, ⌥V goes there). The space switch is the sidebar footer's icon, not a header chip. The header is the band the *tabs* join, so what stands in it
+  (`LayoutSettings`, ⌥V goes there). The space switch is the sidebar footer's icon, not a header chip. The header is the band the *tabs* join, so what stands in it
   is the tab's own material and height and nothing that is about the app rather than this group.
 - **Under Electron the header band clears the OS's own controls, measured.** Windows/Linux pad
   the band's right by the caption overlay (`env(titlebar-area-width)` + 12px, 148px fallback);
@@ -879,7 +900,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the newest gated turn's, which is a reading of the thread and belongs where the other three
   are, and the file list a chip could never hold is what its popover is for. `ThreadView` picks
   the turn (the last value of `withTurnChanges`) — the composer holds no opinion about which.
-  **Reviewing a turn is the Source Control panel's Review half** (the turn timeline, below); its Git half is `thread-view/source-control.tsx` (on the `workspace/scm/` pieces: commit box, branch picker, commit graph and detail) — grouped working set with line counts, stage, commit/amend/undo, branch, fetch/pull/push, stashes, history that opens a commit to its files and diffs.
+  **The Source Control panel is the Git half and nothing else** (`thread-view/source-control.tsx`, on the `workspace/scm/` pieces; a Sublime Merge layout as a dockview of its own: Locations, History, Files and Diff panes, hideable, movable and kept per device (`workspace/scm/scm-dock.tsx`), with hunk/line staging). The turn Review half (timeline, review drafts, viewed marks, Revert turn) was removed from the client; the server's `changes/*` and `turn-changes/:id/revert` routes remain, unused.
 - **A chat tab on a wide screen is a thread dock** (`workspace/thread-dock.tsx`): a nested
   dockview holding the transcript and the panels about *that* thread — Source Control, Plan, Agents,
   Details (`ThreadSection`, the inspector's readings one panel each), Terminal, Preview —
@@ -903,16 +924,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   it is the same dock, stacked**: every panel is a tab in the transcript's group, nothing
   splits or drags, and a wide layout folds on the way in (`stack`). "Open in inspector"
   opens the reading's panel (`InspectorContext`).
-- **A review is drafts on this device, sent as ONE ordinary message through `actions.send`**
-  (`lib/review-comments.ts`): it queues behind a running turn and never steers, and the drafts
-  are cleared only once the send resolves. **Hunk actions reuse the existing doors** — stage
-  is the `apply` git route (`cached`, patch cut by `lib/workspace/hunks.ts`, context from the
-  index), revert is the file route at the version the diff was read at — and are offered only
-  where the right side is the disk (or a scope's "after" tree that still reads as it) and the
-  left the index or a scope tree, with a named `repo`; git's preimage check refuses the rest.
-  "Ask to review" and "Fix flagged" are the same one-message door. **Viewed and flagged marks
-  are device-local** (`lib/changes-marks.ts`), and a viewed mark is keyed on the file's
-  fingerprint, so a file that moved comes back unread.
+- **Hunk actions reuse the existing doors** - stage is the `apply` git route (`cached`, a patch cut by `lib/workspace/diff-patch.ts` from git's own diff; the Monaco diff's `HunkBar` cuts its own with `lib/workspace/hunks.ts`), and git's preimage check refuses what moved.
 - **Reverting a turn restores exactly its paths to its start tree, in the working tree only**
   (`git.revertTurn`, `POST …/turn-changes/:turnId/revert`): written out of a scratch index,
   **never the real one**, never another path. It **refuses (409 with the paths) when any of
@@ -990,7 +1002,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the turn-end push gate reads `watchers(session)` — fan-out, idle sweep and peer counts still
   count sockets. It is `freeze`/`resume`, not `visibilitychange`.
 
-## Ops: git, backup, quota → `docs/ops.md`
+## Ops: git, quota → `docs/ops.md`
 
 - **A project is a directory, and a directory is not one git repository.** `server/src/git.ts`
   addresses a `RepoContext`, never "the project's git".
@@ -1014,8 +1026,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   app's origin. Its one chooser is `FilePicker` over it in pick mode: the
   composer's "From library" (`multiple`; bytes → `File` → the ordinary attachment path) and
   every logo field's Upload (one; → `logoFromFile` → a small `data:` URL on the row).
-- **Backup is one JSON document and import is one transaction.** Never exported: the server
-  token/host/port, the probe cache, `history_*` rows.
 - **Subscription quota is read by asking the runtime's own CLI, out of band**, naming the
   plain CLI and never the ACP binary. **"No quota" is an answer, not a failure** — never a
   zeroed bar.
@@ -1037,10 +1047,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 | --- | --- |
 | `docs/architecture.md` | server, storage, the `agent/` runtime, agent registry/seeding, deploy, schema push, dev tunnel |
 | `docs/protocol.md` | ACP bridge, thread open, replay/windowing, session ids, import, capabilities, subagents |
-| `docs/profiles-and-config.md` | profiles, models, live reconfiguration, queue, gateway shim, saved prompts, option probe |
+| `docs/profiles-and-config.md` | profiles, models, live reconfiguration, queue, gateway shim, option probe |
 | `docs/mcp-and-workflows.md` | built-in MCP rows, the MCP OAuth shim, workflows, link ownership |
 | `docs/client.md` | state ownership, theming, palette, sidebar, tool views, shortcuts, errors, toasts, dock, project page |
 | `docs/pwa-and-notifications.md` | service worker, FCM, notification shape, backgrounded pages |
 | `docs/tasks.md` | boards, keys, columns and categories, the parent tree, activity, sprints, links, custom fields, views |
-| `docs/ops.md` | git, backup/import, agent quota, provider plan usage |
+| `docs/ops.md` | git, agent quota, provider plan usage |
 | `agent/docs/` | the Daedalus Agent runtime: prompting, managing it from the harness, standalone use |

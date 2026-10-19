@@ -227,6 +227,9 @@ export interface GitRepo {
   /** What to call it — the directory's own name, or "Project" at the root. */
   name: string;
   branch: string | null;
+  /** A linked worktree (`git worktree add`) rather than a main checkout: its
+      git dir is not the common one. */
+  worktree: boolean;
 }
 
 /** How deep below the project a repository is still found. */
@@ -290,11 +293,24 @@ export async function repositories(projectId: string): Promise<GitRepo[]> {
      the list is capped: this is N processes, and the walk above is cheap by
      comparison. */
   return Promise.all(
-    named.map(async (repo) => ({
-      ...repo,
-      branch: await currentBranch(join(root, repo.path.split("/").join(sep))),
-    })),
+    named.map(async (repo) => {
+      const dir = join(root, repo.path.split("/").join(sep));
+      const [branch, worktree] = await Promise.all([currentBranch(dir), isLinkedWorktree(dir)]);
+      return { ...repo, branch, worktree };
+    }),
   );
+}
+
+/** A linked worktree keeps its own git dir under the main one's `worktrees/`,
+    so the two paths differ; in a main checkout they are the same. */
+async function isLinkedWorktree(dir: string): Promise<boolean> {
+  try {
+    const { stdout } = await run(dir, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
+    const [gitDir, common] = stdout.trim().split("\n");
+    return !!gitDir && !!common && gitDir !== common;
+  } catch {
+    return false; // git older than 2.31, or not a repository: say nothing
+  }
 }
 
 /** What the sidebar says about a thread's checkout: its branch and the lines
@@ -599,16 +615,20 @@ export interface BranchList {
   /** Remote-tracking branches, `origin/main` shaped. A switcher offers these
       as "check this out", which is a *create* — see `checkout`'s `track`. */
   remotes: string[];
+  /** Tag names. */
+  tags: string[];
 }
 
 export async function branches(projectId: string, repo?: string): Promise<BranchList> {
   const { dir } = await repoOrThrow(projectId, repo);
   const refs = (out: string) => out.split("\n").map((l) => l.trim()).filter(Boolean);
-  const [local, remote] = await Promise.all([
+  const [local, remote, tagRefs] = await Promise.all([
     run(dir, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]),
     run(dir, ["for-each-ref", "--format=%(refname:short)", "refs/remotes"]),
+    run(dir, ["for-each-ref", "--format=%(refname:short)", "--sort=-creatordate", "refs/tags"]),
   ]);
   return {
+    tags: refs(tagRefs.stdout),
     current: await currentBranch(dir),
     branches: refs(local.stdout),
     /* `origin/HEAD` is a symbolic ref pointing at the remote's default branch,
@@ -616,6 +636,81 @@ export async function branches(projectId: string, repo?: string): Promise<Branch
        under a name nobody typed. */
     remotes: refs(remote.stdout).filter((name) => !name.endsWith("/HEAD")),
   };
+}
+
+/**
+ * One page of a kind of ref, for a list that loads as it scrolls. Names only -
+ * `for-each-ref` is cheap, but a repository with thousands of remote branches
+ * should still cost the client one page, not the lot. Local branches come
+ * newest-commit first with the checked-out one pinned to the top of page one.
+ */
+export type RefKind = "local" | "remote" | "tag";
+
+export async function refsPage(
+  projectId: string,
+  kind: RefKind,
+  options: { offset?: number; limit?: number; q?: string; repo?: string } = {},
+): Promise<{ items: string[]; total: number }> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  const [prefix, sort] =
+    kind === "local" ? ["refs/heads", "-committerdate"] : kind === "remote" ? ["refs/remotes", "-committerdate"] : ["refs/tags", "-creatordate"];
+  const { stdout } = await run(dir, ["for-each-ref", "--format=%(refname:short)", `--sort=${sort}`, prefix]);
+  const needle = (options.q ?? "").trim().toLowerCase();
+  let names = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (kind === "remote") names = names.filter((name) => !name.endsWith("/HEAD"));
+  if (needle) names = names.filter((name) => name.toLowerCase().includes(needle));
+  if (kind === "local") {
+    const head = await currentBranch(dir);
+    if (head && names.includes(head)) names = [head, ...names.filter((name) => name !== head)];
+  }
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 30)));
+  return { items: names.slice(offset, offset + limit), total: names.length };
+}
+
+/**
+ * The branch menu's verbs on a ref: merge it into the current branch, rebase
+ * the current branch onto it, rename or delete a local branch, delete a tag.
+ * A merge that conflicts is left as it is - the conflicts are files the panel
+ * already draws and resolves. A rebase that conflicts is *aborted*: a stopped
+ * rebase has no continue/abort in this panel, and a repository left mid-rebase
+ * with nowhere to go is worse than a refusal that says why.
+ */
+export type RefOp = "merge" | "rebase" | "rename-branch" | "delete-branch" | "delete-tag";
+
+export async function refOp(
+  projectId: string,
+  op: RefOp,
+  name: string,
+  options: { to?: string; force?: boolean; repo?: string } = {},
+): Promise<void> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  /* Same reason as `checkout`: a leading `-` would be read as a flag. */
+  for (const value of [name, options.to ?? "x"])
+    if (!value.trim() || value.startsWith("-")) throw fail(400, "a ref needs a name that does not start with '-'");
+  switch (op) {
+    case "merge":
+      await run(dir, ["merge", "--no-edit", name]);
+      return;
+    case "rebase":
+      try {
+        await run(dir, ["rebase", name]);
+      } catch (err) {
+        await run(dir, ["rebase", "--abort"]).catch(() => undefined);
+        throw fail(409, `Rebase onto ${name} hit conflicts and was aborted. ${err instanceof Error ? err.message : ""}`.trim());
+      }
+      return;
+    case "rename-branch":
+      if (!options.to) throw fail(400, "a rename needs the new name");
+      await run(dir, ["branch", "-m", name, options.to]);
+      return;
+    case "delete-branch":
+      await run(dir, ["branch", options.force ? "-D" : "-d", "--", name]);
+      return;
+    case "delete-tag":
+      await run(dir, ["tag", "-d", name]);
+      return;
+  }
 }
 
 export async function checkout(
@@ -738,7 +833,7 @@ const LOG_MAX = 200;
     unborn repository is an empty list, not an error. */
 export async function log(
   projectId: string,
-  options: { limit?: number; repo?: string } = {},
+  options: { limit?: number; repo?: string; all?: boolean; skip?: number } = {},
 ): Promise<GitCommit[]> {
   const { dir } = await repoOrThrow(projectId, options.repo);
   const limit = Math.max(1, Math.min(LOG_MAX, Math.floor(options.limit ?? 50)));
@@ -747,6 +842,11 @@ export async function log(
     ({ stdout } = await run(dir, [
       "log",
       `--max-count=${limit}`,
+      ...(options.skip ? [`--skip=${Math.max(0, Math.floor(options.skip))}`] : []),
+      /* Every branch, remote and tag — but not `--all`, which would draw the
+         stash's two synthetic commits as history. Parents before children,
+         because the lane walk needs that order. */
+      ...(options.all ? ["--topo-order", "--branches", "--remotes", "--tags", "HEAD"] : []),
       "--shortstat",
       `--format=${RS}%H${US}%h${US}%s${US}%an${US}%at${US}%P${US}%D`,
     ]));
@@ -1303,6 +1403,37 @@ function buildPrompt(
     patch.trim() || "(empty)",
     "```",
   ].join("\n");
+}
+
+/**
+ * One file's unified diff, as the panel's hunk view reads it: the worktree
+ * against the index, the index against HEAD, or a commit against its first
+ * parent. `--relative` so the paths are the ones `applyPatch` runs against.
+ * An untracked file has no diff of its own, so it is read in as a new file.
+ */
+export async function filePatch(
+  projectId: string,
+  path: string,
+  comparison: "worktree" | "staged" | { rev: string },
+  options: { repo?: string; from?: string; untracked?: boolean } = {},
+): Promise<{ patch: string }> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  if (!path) throw fail(400, "a diff needs a path");
+  const paths = ["--", ...(options.from ? [options.from] : []), path];
+  const common = ["--relative", "-M", "--no-color", "--no-ext-diff"];
+  let args: string[];
+  if (typeof comparison !== "string") {
+    if (!HASH.test(comparison.rev)) throw fail(400, "a commit needs a hash");
+    args = ["diff-tree", "-p", "--no-commit-id", "-m", "--first-parent", "--root", ...common, comparison.rev, ...paths];
+  } else if (comparison === "staged") {
+    args = ["diff", "--cached", ...common, ...paths];
+  } else if (options.untracked) {
+    args = ["diff", "--no-index", "--no-color", "--", "/dev/null", path];
+  } else {
+    args = ["diff", ...common, ...paths];
+  }
+  const { stdout } = await run(dir, args, undefined, [1]);
+  return { patch: stdout };
 }
 
 export async function patchBetween(dir: string, from: string, to: string, path?: string): Promise<string> {

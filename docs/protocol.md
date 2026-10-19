@@ -560,8 +560,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   machine's own login, and codex filters its thread list by the spawned profile's model
   provider, so a gateway profile can answer with none of the CLI's work.
 - **The import dialog is also the recovery surface, which is what its filters are for.** The
-  agent's own store outlives the harness's rows, so a thread deleted here — or lost to a
-  database restored from an older backup — is still in the runtime and comes back through
+  agent's own store outlives the harness's rows, so a thread deleted here is still in the runtime and comes back through
   this dialog. A machine-wide listing runs to hundreds of rows, so finding the window that
   went missing is a matter of narrowing: **status** (`Not here yet` is the default, because
   the dialog exists to add what is missing), a **time window** measured against each row's

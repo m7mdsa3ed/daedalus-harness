@@ -82,7 +82,7 @@ export interface ScriptHooks {
     effort?: string;
     /** `'worktree'`: the agent works in a git worktree of its own. */
     isolation?: "worktree";
-    /** A saved prompt's handle, the harness's stand-in for a custom subagent type. */
+    /** A library command's name, the harness's stand-in for a custom subagent type. */
     agentType?: string;
   }): Promise<unknown>;
   /** `workflow(ref)`: the source of a saved workflow or a script file. */

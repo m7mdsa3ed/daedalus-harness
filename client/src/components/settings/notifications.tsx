@@ -25,6 +25,7 @@ import { setupPush, teardownPush } from "@/lib/push"
 import { Notice } from "@/components/notice"
 import { Group, PageHeader, Row, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
+import { useTableFilter } from "@/lib/use-table-filter"
 
 const THREAD_EVENT_ROWS: {
   key: keyof Pick<
@@ -199,6 +200,11 @@ export function NotificationsPage() {
     [prefs]
   )
   const eventsOn = rows.filter((row) => row.on).length
+  const f = useTableFilter(rows, {
+    text: (r) => `${r.title} ${r.subtitle}`,
+    placeholder: "Search events…",
+    fields: [{ id: "announce", label: "Announce", of: (r) => (r.on ? "On" : "Off") }],
+  })
   return (
     <>
       <PageHeader meta={meta} />
@@ -261,13 +267,14 @@ export function NotificationsPage() {
       <Section label="Events" hint="Choose which thread events are announced.">
         <DataTable
           columns={EVENT_COLUMNS}
-          data={rows}
+          data={f.rows}
+          filtering={f.filtering}
           getRowId={(row) => row.key}
           actions={EVENT_ACTIONS}
           mark={eventMark}
           mobile={{ renderRow: eventPhoneRow }}
-          viewToggle={false}
           emptyIcon={<BellIcon />}
+          emptyMessage={f.narrowed ? "No events match." : undefined}
           toolbar={
             <span className="text-xs text-muted-foreground tabular-nums">
               {eventsOn} of {rows.length} announced

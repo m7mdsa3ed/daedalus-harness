@@ -7,7 +7,7 @@
    The SVG reaches 2px past its row at both ends (rows are 2px apart), so the
    lines join from one row to the next instead of breaking in the gap. */
 import { cn } from "@/lib/utils"
-import type { ToolVariant } from "@/lib/view-options"
+import type { ToolVariant } from "@/lib/layout-options"
 import type { BranchRow } from "@/lib/tool-graph"
 import { fillOf, strokeOf } from "@/components/workspace/scm/commit-graph"
 

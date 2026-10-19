@@ -1,7 +1,7 @@
 import { getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { PROMPT_NAME_RE, uniqueSlug } from "./saved-prompts.js";
+import { commandFromPrompt } from "./legacy-prompts.js";
 import {
   agentOptions as agentOptionsTable,
   USAGE_KINDS,
@@ -15,9 +15,9 @@ import {
   modelPrompts as modelPromptsTable,
   notifications as notificationsTable,
   composerHistory as composerHistoryTable,
-  savedPrompts as promptsTable,
   profiles as profilesTable,
   projectHelpers as projectHelpersTable,
+  projectSpaces as projectSpacesTable,
   projects as projectsTable,
   pushTokens as pushTokensTable,
   routineRuns as routineRunsTable,
@@ -54,6 +54,7 @@ import { SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx
    back through the same mapping the route uses, so the bundle and the API
    cannot disagree about which column a field lives in. */
 import { projectDefaultsColumns, projectDefaultsOf, withoutDefaults } from "./projects.js";
+import { suggestKindsOf } from "./personas.js";
 /* The routine link descriptor lives with the engine rather than in db/links.ts
    — see the note there. It is imported for its links exactly as
    SESSION_LINKS is used above. */
@@ -195,7 +196,7 @@ const McpServerRow = z.object({
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
   logoUrl: optStr,
-  builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser", "video"]).nullish(),
+  builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness"]).nullish(),
   /** Absent in a bundle written before OAuth existed, which read as "none". */
   auth: z.enum(["none", "oauth"]).default("none"),
   url: optStr,
@@ -239,8 +240,8 @@ const CommandRow = z.object({
   content: str,
 });
 
-/* A user's own saved prompts travel; so do the built-ins, edits and all, for the
-   `seededVersion` reason above — a restored built-in is never re-seeded. */
+/* Legacy: bundles written while saved prompts existed. Still accepted on import,
+   and mapped to slash commands; never exported. */
 const PromptRow = z.object({
   id: str.min(1),
   name: str,
@@ -250,8 +251,7 @@ const PromptRow = z.object({
   sortOrder: int.default(0),
 });
 
-/* The pre-saved-prompts shape (`personas`), still accepted on import: mapped to
-   prompts with slugged handles. */
+/* The older shape (`personas`), accepted the same way. */
 const PersonaRow = z.object({
   id: str.min(1),
   name: str,
@@ -263,7 +263,7 @@ const PersonaRow = z.object({
   sortOrder: int.default(0),
 });
 
-/* Model prompts travel whole, for the same reason saved prompts do: a restored row
+/* Model prompts travel whole: a restored row
    without its prompt would be an assignment that does nothing, and the seed
    would never repair it — a built-in the importer brought back is stamped as
    already carried, so `seedModelPrompts` will not rewrite it. `seededVersion`
@@ -295,10 +295,19 @@ const ProjectDefaultsRow = z.object({
   mcpServerIds: z.array(str).default([]),
   skillIds: z.array(str).default([]),
   commandIds: z.array(str).default([]),
-  suggestFollowups: z.boolean().default(true),
-  uiBlocks: z.boolean().default(true),
+  /* The set that replaced the old boolean. Absent in a bundle from before it,
+     which `suggestKindsOf` reads as what the legacy flag said. */
+  suggestKinds: z.array(str).optional(),
+  suggestFollowups: z.boolean().optional(),
+  /* LEGACY: a bundle from before the set. Read only when `uiGroups` is absent. */
+  uiBlocks: z.boolean().optional(),
+  /* Absent or null in a bundle from before the groups existed: the legacy
+     switch decides (off = none, otherwise every group). */
+  uiGroups: z.array(str).nullish(),
   /** A provider this install lacks is harmless: voiceSetup falls through. */
   voiceProvider: str.default(""),
+  /** Absent in a bundle from before it: ask each time, as every thread did. */
+  askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).default({}),
 });
 
 /** A space — a named scope above projects (spaces.ts). Carried so a bundle's
@@ -315,9 +324,12 @@ const ProjectRow = z.object({
   id: str.min(1),
   name: str,
   cwd: str,
-  /** The space this project is filed under. Absent on bundles from before
-      spaces existed, which reads as "no scope" and is backfilled to the first
-      space at the next boot. */
+  /** The spaces this project is filed under. Absent on bundles from before a
+      project could be in several, which fall back to the single `spaceId`
+      below, then to the install's first space. */
+  spaceIds: z.array(str).optional(),
+  /** The single space of a bundle from before spaces were many-to-many. Absent
+      on older ones still. */
   spaceId: optStr,
   description: optStr,
   logoUrl: optStr,
@@ -416,11 +428,15 @@ const SessionRow = z.object({
      the agent's default — which is exactly what the thread ran on. */
   modeId: optStr,
   /* Absent in a bundle written before suggestion toggles existed, which
-     reads as on — suggestions default on, like every new thread. */
+     reads as on — suggestions default on, like every new thread. A bundle from
+     before the set is `suggestFollowups` alone; one after it has both. */
   suggestFollowups: z.boolean().default(true),
-  /* Same bargain for the drawn-UI lane: a bundle written before the switch
-     existed reads as on, which is the default every new thread carries. */
-  uiBlocks: z.boolean().default(true),
+  suggestKinds: z.array(str).nullish(),
+  /* LEGACY: the drawn-UI switch before it was a set. A bundle that carries only
+     this imports as `uiGroups` (off = none); absent reads as on. */
+  uiBlocks: z.boolean().optional(),
+  /* The group set, empty = off. Absent or null: the legacy switch decides. */
+  uiGroups: z.array(str).nullish(),
   /* The thread's role → model assignment (`docs/model-roles.md`). Absent in a
      bundle written before the column existed, which reads as no helpers. */
   helperModels: z.array(z.object({ role: str, model: str })).default([]),
@@ -444,6 +460,8 @@ const SessionRow = z.object({
   /* Absent in a bundle written before pins moved to the server, which reads as
      unpinned — which is what every thread in it was. */
   pinnedAt: int.nullish(),
+  /* Absent in a bundle from before the setting: ask each time, as every thread did. */
+  askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).nullish(),
   parentSessionId: optStr,
   /* Absent in a bundle written before forks existed, which reads as a thread
      that was never branched — which is what every thread in it was. */
@@ -810,9 +828,9 @@ export const BundleSchema = z.object({
   mcpOauth: z.array(McpOauthRow).default([]),
   skills: z.array(SkillRow).default([]),
   commands: z.array(CommandRow).default([]),
-  prompts: z.array(PromptRow).default([]),
-  /** Legacy key (bundles written before saved prompts). */
-  personas: z.array(PersonaRow).default([]),
+  /** Legacy keys (bundles written before slash commands took their place). */
+  prompts: z.array(PromptRow).optional(),
+  personas: z.array(PersonaRow).optional(),
   modelPrompts: z.array(ModelPromptRow).default([]),
   spaces: z.array(SpaceRow).default([]),
   projects: z.array(ProjectRow).default([]),
@@ -875,6 +893,10 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
   const routines = await db.select().from(routinesTable);
   const triggers = await db.select().from(routineTriggersTable);
   const webSearch = readWebSearch();
+  const spaceIdsOf = new Map<string, string[]>();
+  for (const { projectId, spaceId } of await db.select().from(projectSpacesTable)) {
+    spaceIdsOf.set(projectId, [...(spaceIdsOf.get(projectId) ?? []), spaceId]);
+  }
 
   return {
     format: BUNDLE_FORMAT,
@@ -902,12 +924,11 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
       : mcpOauthRows.map((r) => ({ ...r, accessToken: "", refreshToken: "", clientSecret: "" })),
     skills: await db.select().from(skillsTable),
     commands: await db.select().from(commandsTable),
-    prompts: await db.select().from(promptsTable),
-    personas: [],
     modelPrompts: await db.select().from(modelPromptsTable),
     spaces: await db.select().from(spacesTable),
     projects: (await db.select().from(projectsTable)).map((row) => ({
       ...withoutDefaults(row),
+      spaceIds: spaceIdsOf.get(row.id) ?? [],
       defaults: projectDefaultsOf(row),
     })),
     projectHelpers: await db.select().from(projectHelpersTable),
@@ -964,7 +985,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "prompts" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "modelPrompts" | "spaces" | "projects" | "projectHelpers" | "knowledge" | "settings"
   | "rules" | "modelRoles" | "themes" | "voiceProviders" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
@@ -1050,7 +1071,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, prompts: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, modelPrompts: 0, spaces: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
     rules: 0, modelRoles: 0, themes: 0, voiceProviders: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
@@ -1074,7 +1095,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         // `mcp_oauth` cascades off `mcp_servers`, and is named here anyway so
         // the list reads as the whole of what `replace` empties.
         sessionsTable, profilesTable, spacesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
-        promptsTable, modelPromptsTable,
+        modelPromptsTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
         agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, boardListsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
@@ -1159,39 +1180,34 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
 
     upsertChunked(tx, skillsTable, "id", bundle.skills);
     summary.skills = bundle.skills.length;
-    upsertChunked(tx, commandsTable, "id", bundle.commands.map((c) => ({ ...c, argumentHint: c.argumentHint ?? null })));
-    summary.commands = bundle.commands.length;
-    /* A handle is unique, so one that collides with a different row (another
-       id already holds it, here or in the bundle) is re-slugged, not refused. */
-    const incoming = [...bundle.prompts, ...bundle.personas.map(({ thinking: _t, effort: _e, ...p }) => p)];
-    const ids = new Set(incoming.map((p) => p.id));
+    /* A legacy prompt arrives as a command; a name another command holds (here
+       or in the bundle) is suffixed, not refused. */
+    const legacy = [...(bundle.prompts ?? []), ...(bundle.personas ?? [])];
+    const ids = new Set([...bundle.commands, ...legacy].map((c) => c.id));
     const usedNames = new Set(
-      (await tx.select({ id: promptsTable.id, name: promptsTable.name }).from(promptsTable))
-        .filter((r) => !ids.has(r.id))
-        .map((r) => r.name),
+      [
+        ...(await tx.select({ id: commandsTable.id, name: commandsTable.name }).from(commandsTable)).filter((r) => !ids.has(r.id)),
+        ...bundle.commands,
+      ].map((r) => r.name.toLowerCase()),
     );
-    upsertChunked(
-      tx,
-      promptsTable,
-      "id",
-      incoming.map((p) => ({
-        ...p,
-        name: PROMPT_NAME_RE.test(p.name) && !usedNames.has(p.name) ? (usedNames.add(p.name), p.name) : uniqueSlug(p.name, usedNames),
-      })),
-    );
-    summary.prompts = incoming.length;
+    const commandRows = [
+      ...bundle.commands.map((c) => ({ ...c, argumentHint: c.argumentHint ?? null })),
+      ...legacy.map((p) => commandFromPrompt(p, usedNames)),
+    ];
+    await upsertChunked(tx, commandsTable, "id", commandRows);
+    summary.commands = commandRows.length;
     upsertChunked(tx, modelPromptsTable, "id", bundle.modelPrompts.map((r) => ({ ...r })));
     summary.modelPrompts = bundle.modelPrompts.length;
     /* Spaces before projects: a project names one, and the running install may
        already hold rows under a space id the bundle also uses. */
-    upsertChunked(tx, spacesTable, "id", bundle.spaces.map((s) => ({ ...s })));
+    await upsertChunked(tx, spacesTable, "id", bundle.spaces.map((s) => ({ ...s })));
     summary.spaces = bundle.spaces.length;
-    upsertChunked(
+    await upsertChunked(
       tx,
       projectsTable,
       "id",
       bundle.projects.map((p) => {
-        const { defaults, ...row } = p;
+        const { defaults, spaceIds: _ids, spaceId: _legacy, ...row } = p;
         return {
           ...row,
           description: p.description ?? null,
@@ -1200,11 +1216,34 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           /* The two writers of these columns are this and `setProjectDefaults`,
              and both go through `projectDefaultsColumns` — a bundle that
              rewrote them by hand would be a second spelling of the mapping. */
-          ...projectDefaultsColumns(defaults),
+          ...projectDefaultsColumns({
+            ...defaults,
+            // A bundle from before the set carried the old boolean here.
+            suggestKinds: defaults.suggestKinds ?? suggestKindsOf(null, defaults.suggestFollowups),
+            // Absent keeps the column null (every group) unless the legacy switch said off.
+            uiGroups: defaults.uiGroups ?? (defaults.uiBlocks === false ? [] : undefined),
+          }),
         };
       }),
     );
     summary.projects = bundle.projects.length;
+    /* A project's spaces are the bundle's word for them: the new list, else the
+       single space of an older bundle, else (nothing named, or only spaces this
+       install lacks) the install's first. Replaced per project, so a merge
+       leaves a project the bundle does not name exactly as it was. */
+    const knownSpaces = (
+      await tx.select({ id: spacesTable.id }).from(spacesTable).orderBy(spacesTable.sortOrder, spacesTable.name)
+    ).map((r) => r.id);
+    const memberships = bundle.projects.flatMap((p) => {
+      const named = (p.spaceIds ?? (p.spaceId ? [p.spaceId] : [])).filter((id) => knownSpaces.includes(id));
+      return (named.length > 0 ? named : knownSpaces.slice(0, 1)).map((spaceId) => ({ projectId: p.id, spaceId }));
+    });
+    if (bundle.projects.length > 0) {
+      await tx.delete(projectSpacesTable).where(inArray(projectSpacesTable.projectId, bundle.projects.map((p) => p.id)));
+      for (let i = 0; i < memberships.length; i += CHUNK) {
+        await tx.insert(projectSpacesTable).values(memberships.slice(i, i + CHUNK)).onConflictDoNothing();
+      }
+    }
 
     /* Settings upsert per key, never a delete: a key the bundle names is that
        key's value, and one it does not name stays the install's. A bundle
@@ -1276,9 +1315,11 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         return {
           ...columns,
           modeId: columns.modeId ?? null,
+          uiGroups: columns.uiGroups ?? (columns.uiBlocks === false ? [] : null),
           acpSessionId: columns.acpSessionId ?? null,
           deletedAt: columns.deletedAt ?? null,
           pinnedAt: columns.pinnedAt ?? null,
+          askProfiles: columns.askProfiles ?? null,
           parentSessionId: columns.parentSessionId ?? null,
           forkedFromSessionId: columns.forkedFromSessionId ?? null,
           forkedFromTurnId: columns.forkedFromTurnId ?? null,

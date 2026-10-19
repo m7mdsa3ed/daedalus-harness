@@ -63,6 +63,9 @@ export interface FollowStream {
   pinned: boolean
   /** Jump to the end and resume following. */
   follow: () => void
+  /** Stop following without moving: for a change that grows the content above
+      the reader (older history paged in), which must not drag them to the end. */
+  release: () => void
 }
 
 export function useFollowStream(enabled: boolean): FollowStream {
@@ -165,5 +168,7 @@ export function useFollowStream(enabled: boolean): FollowStream {
     if (viewport) stick(viewport)
   }, [pin, stick, viewport])
 
-  return { viewportRef: setViewport, contentRef: setContent, viewport, pinned, follow }
+  const release = React.useCallback(() => pin(false), [pin])
+
+  return { viewportRef: setViewport, contentRef: setContent, viewport, pinned, follow, release }
 }

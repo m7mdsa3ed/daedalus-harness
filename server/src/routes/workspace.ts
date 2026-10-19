@@ -358,13 +358,44 @@ export function workspaceRoutes(app: Hono): void {
     workspace(c, () => git.branches(c.req.param("projectId"), c.req.query("repo"))),
   );
 
+  app.get("/api/projects/:projectId/git/refs", (c) => {
+    const kind = c.req.query("kind");
+    const number = (name: string) => {
+      const value = Number(c.req.query(name));
+      return Number.isFinite(value) ? value : undefined;
+    };
+    return workspace(c, () =>
+      git.refsPage(c.req.param("projectId"), kind === "remote" || kind === "tag" ? kind : "local", {
+        offset: number("offset"),
+        limit: number("limit"),
+        q: c.req.query("q"),
+        repo: c.req.query("repo"),
+      }),
+    );
+  });
+
   app.get("/api/projects/:projectId/git/log", (c) => {
     const limit = Number(c.req.query("limit"));
     return workspace(c, () =>
       git.log(c.req.param("projectId"), {
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
         repo: c.req.query("repo"),
+        all: c.req.query("all") === "1",
+        skip: Number(c.req.query("skip")) || undefined,
       }),
+    );
+  });
+
+  app.get("/api/projects/:projectId/git/diff", (c) => {
+    const comparison = c.req.query("comparison");
+    const rev = c.req.query("rev");
+    return workspace(c, () =>
+      git.filePatch(
+        c.req.param("projectId"),
+        c.req.query("path") ?? "",
+        rev ? { rev } : comparison === "staged" ? "staged" : "worktree",
+        { repo: c.req.query("repo"), from: c.req.query("from") || undefined, untracked: c.req.query("untracked") === "1" },
+      ),
     );
   });
 
@@ -458,6 +489,8 @@ export function workspaceRoutes(app: Hono): void {
       amend?: unknown;
       repo?: unknown;
       patch?: unknown;
+      to?: unknown;
+      force?: unknown;
       cached?: unknown;
       reverse?: unknown;
     };
@@ -522,6 +555,19 @@ export function workspaceRoutes(app: Hono): void {
           await git.checkout(projectId, String(body.branch ?? ""), {
             create: body.create === true,
             track: body.track === true,
+            repo,
+          });
+          return git.status(projectId, repo);
+        });
+      case "merge":
+      case "rebase":
+      case "rename-branch":
+      case "delete-branch":
+      case "delete-tag":
+        return workspace(c, async () => {
+          await git.refOp(projectId, action, String(body.branch ?? ""), {
+            to: typeof body.to === "string" ? body.to : undefined,
+            force: body.force === true,
             repo,
           });
           return git.status(projectId, repo);

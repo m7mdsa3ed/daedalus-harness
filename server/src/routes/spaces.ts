@@ -5,7 +5,7 @@ import {
   deleteSpace,
   listSpaces,
   onlySpace,
-  projectsInSpace,
+  projectsOnlyIn,
   updateSpace,
 } from "../spaces.js";
 import { crud } from "./helpers.js";
@@ -17,7 +17,7 @@ export function spaceRoutes(app: Hono): void {
   const spaceCrud = crud(SpaceInputSchema);
   app.post("/api/spaces", spaceCrud.create(createSpace));
   app.put("/api/spaces/:id", spaceCrud.update(updateSpace));
-  /* Deleting a space refuses while it still holds anything — the same bargain
+  /* Deleting a space refuses while it holds a project that is in no other space — the same bargain
      `DELETE /api/profiles/:id` makes with a live thread, so nothing the row
      scopes is orphaned by a cascade. The last space is refused too: the app has
      to have somewhere for a project to land. */
@@ -26,10 +26,10 @@ export function spaceRoutes(app: Hono): void {
     if (await onlySpace(id)) {
       return c.json({ error: "This is the only space — the app needs at least one." }, 409);
     }
-    const count = await projectsInSpace(id);
+    const count = await projectsOnlyIn(id);
     if (count > 0) {
       return c.json(
-        { error: `${count} project${count === 1 ? "" : "s"} still live in this space. Move or delete them first.` },
+        { error: `${count} project${count === 1 ? "" : "s"} live only in this space. Add them to another space or delete them first.` },
         409,
       );
     }

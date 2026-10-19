@@ -20,6 +20,8 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { flattenSelectOptions, recommendedValue } from "@/lib/session-options"
+import { normalizeSuggestKinds, SUGGEST_KINDS } from "@/lib/suggestions"
+import { DEFAULT_UI_GROUPS, normalizeUiGroups, UI_GROUPS } from "@/lib/openui/groups"
 import type { ModelRole } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
@@ -259,39 +261,141 @@ export function MenuRow({
 }
 
 /**
- * The session's on/off settings as one submenu — the same shape as every other
- * row, with how many are on beside the label. They were a labelled group of
- * checkboxes, which made a menu of selectors end in a block of a different
- * kind. Toggling keeps the submenu open: these are flags, often flipped
- * together.
+ * The session's answer settings as one submenu — the same shape as every other
+ * row, with how many are on beside the label.
+ *
+ * Both are *sets*, each a submenu of its own inside this one, a row per entry
+ * of a registry — so an entry added there appears here with no edit — and each
+ * counts as one setting, on while any entry is:
+ *
+ * - `suggestions`: which closing blocks answers carry (`SUGGEST_KINDS`);
+ * - `ui`: "Draw answers as UI" — which groups of components the model is taught
+ *   (`UI_GROUPS`). It is the one setting for the drawn-view lane: empty is off.
  */
 export function SessionSettingsSub({
-  items,
+  suggestions,
+  ui,
 }: {
-  items: { label: string; checked: boolean; onChange: (checked: boolean) => void }[]
+  suggestions: { kinds: readonly string[]; onChange: (kinds: string[]) => void }
+  ui: { groups: readonly string[]; onChange: (groups: string[]) => void }
 }) {
-  const on = items.filter((i) => i.checked).length
+  const on = (suggestions.kinds.length > 0 ? 1 : 0) + (ui.groups.length > 0 ? 1 : 0)
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
         <SlidersHorizontalIcon className="size-4 text-muted-foreground" />
         <span className="flex-1">Session settings</span>
+        <span className="text-xs tabular-nums text-muted-foreground">{on} of 2</span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuPortal>
+        <DropdownMenuSubContent className="max-w-80">
+          <SuggestionKindsSub {...suggestions} />
+          <UiGroupsSub {...ui} />
+        </DropdownMenuSubContent>
+      </DropdownMenuPortal>
+    </DropdownMenuSub>
+  )
+}
+
+/**
+ * Which closing blocks answers carry, as a submenu of switches: one row per
+ * entry of the registry (`lib/suggestions`) with what it does beneath. Each
+ * toggle sends the whole new set — the server stages or respawns on a set that
+ * differs, so a burst of toggles is one change, not one per row.
+ */
+function SuggestionKindsSub({
+  kinds,
+  onChange,
+}: {
+  kinds: readonly string[]
+  onChange: (kinds: string[]) => void
+}) {
+  const picked = new Set(kinds)
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <span className="flex-1">Suggestions</span>
         <span className="text-xs tabular-nums text-muted-foreground">
-          {on} of {items.length}
+          {kinds.length === 0 ? "Off" : `${kinds.length} of ${SUGGEST_KINDS.length}`}
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent className="max-w-80">
-          {items.map((item) => (
+          {SUGGEST_KINDS.map((kind) => (
             <DropdownMenuCheckboxItem
-              key={item.label}
-              checked={item.checked}
+              key={kind.id}
+              checked={picked.has(kind.id)}
               closeOnClick={false}
-              onCheckedChange={(checked) => item.onChange(checked === true)}
+              onCheckedChange={(checked) => {
+                const next = new Set(picked)
+                if (checked === true) next.add(kind.id)
+                else next.delete(kind.id)
+                onChange(normalizeSuggestKinds([...next]))
+              }}
             >
-              {item.label}
+              <kind.icon className="size-4 text-muted-foreground" />
+              <span className="flex min-w-0 flex-col">
+                <span>{kind.label}</span>
+                <span className="whitespace-normal text-xs text-muted-foreground">{kind.description}</span>
+              </span>
             </DropdownMenuCheckboxItem>
           ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuPortal>
+    </DropdownMenuSub>
+  )
+}
+
+/**
+ * "Draw answers as UI": which component groups a drawn view may use, as a
+ * submenu of checkboxes drawn from the registry (`lib/openui/groups`). The set
+ * is the whole setting — empty is off. `layout` is the master row (the root
+ * `Stack` lives there): unticking it turns the lane off and disables the rest,
+ * ticking it from off turns every group on. Each toggle sends the whole new
+ * set, like the suggestions above, so a burst coalesces into one change.
+ */
+function UiGroupsSub({
+  groups,
+  onChange,
+}: {
+  groups: readonly string[]
+  onChange: (groups: string[]) => void
+}) {
+  const picked = new Set(normalizeUiGroups(groups))
+  const enabled = picked.size > 0
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <span className="flex-1">Draw answers as UI</span>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {enabled ? `${picked.size} of ${UI_GROUPS.length}` : "Off"}
+        </span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuPortal>
+        <DropdownMenuSubContent className="max-w-80">
+          {UI_GROUPS.map((group) => {
+            const master = group.id === "layout"
+            return (
+              <DropdownMenuCheckboxItem
+                key={group.id}
+                checked={picked.has(group.id)}
+                disabled={!master && !enabled}
+                closeOnClick={false}
+                onCheckedChange={(checked) => {
+                  if (master) return onChange(checked === true ? [...DEFAULT_UI_GROUPS] : [])
+                  const next = new Set(picked)
+                  if (checked === true) next.add(group.id)
+                  else next.delete(group.id)
+                  onChange(normalizeUiGroups([...next]))
+                }}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span>{group.label}</span>
+                  <span className="whitespace-normal text-xs text-muted-foreground">{group.caption}</span>
+                </span>
+              </DropdownMenuCheckboxItem>
+            )
+          })}
         </DropdownMenuSubContent>
       </DropdownMenuPortal>
     </DropdownMenuSub>

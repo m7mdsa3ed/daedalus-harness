@@ -177,7 +177,7 @@ export function WebProblemView({
           title="Nothing is answering at this address"
           action={
             previewHelperName && onStartPreview ? (
-              <Button size="sm" variant="outline" onClick={onStartPreview} disabled={starting}>
+              <Button size="sm" variant="outline" onClick={onStartPreview} loading={starting}>
                 {starting ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
                 {starting ? "Starting…" : `Start ${previewHelperName}`}
               </Button>

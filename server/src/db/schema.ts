@@ -443,16 +443,36 @@ export const spaces = pgTable("spaces", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
+/**
+ * Which spaces a project is filed under — many-to-many, so one project can show
+ * in "Personal" and "Work" at once. A project belongs to at least one (the
+ * routes enforce it; the schema cannot). A join table with `ON DELETE CASCADE`
+ * like every other link here, so a deleted space or project leaves no dangling
+ * id; the delete-space route refuses while a project would be left with none.
+ */
+export const projectSpaces = pgTable(
+  "project_spaces",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => spaces.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.spaceId] }), index("project_spaces_space").on(t.spaceId)],
+);
+
 export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   cwd: text("cwd").notNull(),
-  /** The space this project belongs to (see `spaces`). Nullable so a project
-      from before spaces existed is a row Postgres can hold; the boot backfill
-      (`ensureSchema`) assigns it to the first space, and every project the API
-      creates is given one. Not a foreign key, for the reason the `sessions`
-      columns below are not: a project has to survive the row it names, and the
-      route that deletes a space refuses while one still points at it. */
+  /** DEPRECATED — superseded by `project_spaces` (a project may live in several
+      spaces). Read only by the boot backfill (`ensureSchema`), which copies it
+      into the join table for a project that has no membership yet; nothing
+      writes it. Still declared because a table push does not know about is a
+      table push drops, and the backfill reads it. Drop it once every install
+      has booted on the join table. */
   spaceId: text("space_id"),
   /** Optional free-text notes; null on rows from before the column existed. */
   description: text("description"),
@@ -511,18 +531,33 @@ export const projects = pgTable("projects", {
       carry a drawn view. Instruction fields rather than provider state, so
       they travel with the persona; their column default is what a draft's
       `suggestFollowups: defaults.suggestFollowups ?? true` reads as. */
+  /** LEGACY: the on/off this was before it was a set. Read only when
+      `default_suggest_kinds` is null (`suggestKindsOf`); never written. Kept
+      declared because a push drops what the schema does not name. */
   defaultSuggestFollowups: boolean("default_suggest_followups").notNull().default(true),
+  /** Which closing blocks a thread started here asks for (`SUGGEST_KINDS` in
+      `personas.ts`). Null = never picked: the legacy boolean decides. */
+  defaultSuggestKinds: jsonb("default_suggest_kinds").$type<string[]>(),
+  /** LEGACY: the on/off this was before it was a set. Read only when
+      `default_ui_groups` is null (`uiGroupsOf`); never written. Kept declared
+      because a push drops what the schema does not name. */
   defaultUiBlocks: boolean("default_ui_blocks").notNull().default(true),
+  /** Which component groups a thread started here teaches (`UI_GROUP_IDS` in
+      `personas.ts`). Empty = drawn answers off. Null = never picked: the
+      legacy boolean decides, and "on" is every group. */
+  defaultUiGroups: jsonb("default_ui_groups").$type<string[]>(),
   /** Which voice backend a call on a thread in this project uses (`voice.ts`);
       the first scope asked. Null = no say, the profile's then the default. */
   defaultVoiceProvider: text("default_voice_provider"),
+  /** Profile (and optionally model) per agent id that a new thread's `ask_agent` starts with. */
+  defaultAskProfiles: jsonb("default_ask_profiles").$type<Record<string, { profileId: string; model?: string }>>(),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser" | "video";
+export type BuiltinMcp = "web-search" | "knowledge" | "workflow" | "agents" | "harness";
 
 export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
@@ -531,7 +566,7 @@ export const mcpServers = pgTable("mcp_servers", {
   /** Optional registry-provided logo for the library list. */
   logoUrl: text("logo_url"),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents", "harness", "browser", "video"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow", "agents", "harness"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: jsonb("headers").$type<NameValue[]>(),
@@ -637,8 +672,8 @@ export const commands = pgTable("commands", {
 
 /**
  * LEGACY — the old personas. Kept declared only so `db:push` does not drop the
- * table: the boot migration (`saved-prompts.ts`, `migrateLegacyPersonas`) copies
- * every row into `saved_prompts` once. Nothing else reads or writes it.
+ * table: the boot migration (`legacy-prompts.ts`) copies every row into `commands`
+ * once. Nothing else reads or writes it.
  */
 export const personas = pgTable("personas", {
   id: text("id").primaryKey(),
@@ -652,10 +687,9 @@ export const personas = pgTable("personas", {
 });
 
 /**
- * A saved prompt: reusable text a message mentions as `@name`. The server
- * expands the mention into `prompt` in the text the agent receives only
- * (`saved-prompts.ts`); the journal keeps the literal `@name`. `name` is the
- * unique handle. Seeded like `agents` (`seededVersion`).
+ * LEGACY — the saved prompts, which are slash commands (`commands`) now. Kept
+ * declared for the same reason as `personas`: `legacy-prompts.ts` copies every
+ * row into `commands` once, at boot. Nothing else reads or writes it.
  */
 export const savedPrompts = pgTable("saved_prompts", {
   id: text("id").primaryKey(),
@@ -907,17 +941,26 @@ export const sessions = pgTable(
     suggestFollowups: boolean("suggest_followups")
       .notNull()
       .default(true),
-    /** True when the agent is *asked* to answer with a fenced `openui-lang`
-        block, which the client draws as real UI (`client/src/lib/openui/`, and
-        the runtime's copy of the generated prompt in `agent/src/openui-prompt.ts`).
-        On unless turned off. It governs the asking and nothing else: the client
-        renders a fence whatever this says, so a mid-thread flip changes no
-        answer already on screen. A spawn input exactly like
-        `suggest_followups` — the lane is system-prompt text, read only at
-        `session/new`/`session/load`, so toggling it costs a respawn. */
+    /** The set that replaced the boolean above: which closing blocks the agent
+        is asked for (`SUGGEST_KINDS`, `personas.ts`), empty = off. Null on a row
+        from before it existed, read through `suggestKindsOf`; written on every
+        pick since. A spawn input like its predecessor, so a change costs a
+        respawn. */
+    suggestKinds: jsonb("suggest_kinds").$type<string[]>(),
+    /** LEGACY: the on/off this was before it was a set. Read only when
+        `ui_groups` is null (`uiGroupsOf`); never written. Kept declared
+        because a push drops what the schema does not name. */
     uiBlocks: boolean("ui_blocks")
       .notNull()
       .default(true),
+    /** Which component groups the drawn-answers trailer teaches
+        (`UI_GROUP_IDS`, `personas.ts`). Empty = drawn answers off: the model
+        is not told the lane exists. Non-empty = on, and always includes
+        "layout". Null = never written (a row from before the set): the legacy
+        `ui_blocks` decides. It narrows the asking only — the client renders a
+        fence whatever this says — and is a spawn input: a change costs a
+        respawn. */
+    uiGroups: jsonb("ui_groups").$type<string[]>(),
     title: text("title").notNull(),
     /** The git worktree this thread runs in, project-relative
         (`.daedalus/worktrees/<short-id>`), or null for a thread in the
@@ -983,6 +1026,12 @@ export const sessions = pgTable(
         pinned on the phone. The timestamp is also the order — oldest pin
         first, so the group you built by hand stays where you put it. */
     pinnedAt: bigint("pinned_at", { mode: "number" }),
+    /** Which profile this thread's `ask_agent` uses for each agent, by agent
+        id: chosen up front (the project's default, the draft's menu, the
+        thread's settings) or by answering the picker an ask raised and ticking
+        "remember". An agent with no entry is asked about. Read at ask time on
+        the server, so a change costs no respawn. */
+    askProfiles: jsonb("ask_profiles").$type<Record<string, { profileId: string; model?: string }>>(),
     /** The thread this one is a workflow step of (`workflows.ts`), else null.
         Indexed, and NOT a foreign key like the three above — but for a different
         reason: an SQL cascade would delete the children's rows underneath the

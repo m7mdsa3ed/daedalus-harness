@@ -183,7 +183,7 @@ export function ConnectScreen({
                   Cancel
                 </Button>
               )}
-              <Button type="submit" className="flex-1" disabled={busy}>
+              <Button type="submit" className="flex-1" loading={busy}>
                 {busy && <Loader2 className="size-4 animate-spin" />}
                 {busy ? "Connecting…" : "Connect"}
               </Button>

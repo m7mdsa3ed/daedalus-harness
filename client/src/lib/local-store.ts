@@ -23,7 +23,7 @@ import { useSyncExternalStore } from "react"
 
    The cached value is referentially stable between writes, so `get` is safe as
    a useSyncExternalStore snapshot directly. A store whose *exposed* value is
-   derived from what it persists (view-options, keybindings) memoises the
+   derived from what it persists (layout-options, keybindings) memoises the
    derivation against the stored reference in its own module. */
 
 export interface Store<T> {

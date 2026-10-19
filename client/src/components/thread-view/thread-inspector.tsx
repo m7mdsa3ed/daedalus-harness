@@ -32,10 +32,8 @@ import {
   setInspectorPref,
   type InspectorTab,
 } from "@/lib/inspector"
-import { useReviewComments } from "@/lib/review-comments"
 import { cn } from "@/lib/utils"
 import type { TurnChanges } from "@/lib/workspace/git-api"
-import { changesTimeline } from "./turn-footers"
 import { ProjectIcon } from "@/components/entity-icon"
 import {
   agentOutline,
@@ -49,7 +47,7 @@ import {
   type StepRowComponent,
 } from "@/components/workflow-run"
 import { SubagentStep } from "@/components/thread-items/rows"
-import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
 import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
@@ -169,7 +167,7 @@ function LocatableStep(props: React.ComponentProps<StepRowComponent>) {
     within one workflow/batch share an outline. Rows use the reader's own view
     options, so a rail groups its tools here as it does in the transcript. */
 function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: SubagentGroup[]; onJump: (id: string) => void }) {
-  const options = useViewOptions()
+  const options = useLayoutOptions()
   const { agentsView: view } = inspectorPrefs.use()
   const [filter, setFilter] = React.useState<AgentFilter>("all")
   const rows = React.useMemo(
@@ -209,7 +207,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
     .filter((entry) => entry.phases.length > 0)
 
   return (
-    <ViewOptionsContext.Provider value={options}>
+    <LayoutOptionsContext.Provider value={options}>
       <AgentJumpContext.Provider value={onJump}>
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="space-y-1.5 border-b border-border/40 px-2 py-1.5">
@@ -256,7 +254,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
           </div>
         </div>
       </AgentJumpContext.Provider>
-    </ViewOptionsContext.Provider>
+    </LayoutOptionsContext.Provider>
   )
 }
 
@@ -508,7 +506,6 @@ export function ThreadInspector({
   thread,
   meta,
   changes,
-  onSend,
   mode,
   onClose,
   locate,
@@ -519,8 +516,6 @@ export function ThreadInspector({
   /** The newest gated turn's changes, picked by `ThreadView` — the same value
       `ChangesIndicator` draws. */
   changes?: TurnChanges
-  /** The thread's prompt door, for "Send review". */
-  onSend: (text: string) => Promise<void>
   mode: "docked" | "sheet"
   onClose: () => void
   /** The transcript row an item is drawn in — a subagent nested in a run or
@@ -531,7 +526,6 @@ export function ThreadInspector({
   maxWidth: number
 }) {
   const prefs = inspectorPrefs.use()
-  const comments = useReviewComments(meta.id)
   /* Rendered inside `ThreadView`'s scroller provider, so a jump is the rail's
      own gesture; a sheet gets out of the way of what it jumped to. */
   const { scrollToMessage } = useMessageScroller()
@@ -621,14 +615,6 @@ export function ThreadInspector({
             <TabsTrigger value="changes" className="text-xs">
               Source Control
               {changes && changes.files.length > 0 && <TabCount>{changes.files.length}</TabCount>}
-              {comments.length > 0 && (
-                <span
-                  className="ml-1 rounded-full bg-primary px-1.5 font-mono text-[10px] leading-4 text-primary-foreground tabular-nums"
-                  title={`${comments.length} review ${comments.length === 1 ? "comment" : "comments"} not sent yet`}
-                >
-                  {comments.length}
-                </span>
-              )}
             </TabsTrigger>
             <TabsTrigger value="plan" className="text-xs">
               Plan
@@ -660,7 +646,7 @@ export function ThreadInspector({
 
         {(["changes", "plan", "agents", "details", "tokens"] as const).map((section) => (
           <TabsContent key={section} value={section} className="flex min-h-0 flex-1 flex-col">
-            <ThreadSection section={section} thread={thread} meta={meta} onSend={onSend} onJump={onJump} />
+            <ThreadSection section={section} thread={thread} meta={meta} onJump={onJump} />
           </TabsContent>
         ))}
       </Tabs>
@@ -677,13 +663,11 @@ export function ThreadSection({
   section,
   thread,
   meta,
-  onSend,
   onJump,
 }: {
   section: ThreadSectionKind
   thread: ThreadState
   meta: SessionMeta
-  onSend: (text: string) => Promise<void>
   /** Scroll the transcript to the row holding this item. */
   onJump: (id: string) => void
 }) {
@@ -692,10 +676,6 @@ export function ThreadSection({
     [thread.items, thread.turnActive]
   )
   const groups = React.useMemo(() => activityGroups(rows), [rows])
-  const timeline = React.useMemo(
-    () => changesTimeline(thread.items, thread.turnChanges),
-    [thread.items, thread.turnChanges]
-  )
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
   const todos = React.useMemo(() => threadTodos(thread), [thread.items])
 
@@ -708,11 +688,7 @@ export function ThreadSection({
       <React.Suspense fallback={<PanelRowsSkeleton rows={5} className="py-1" />}>
         <SourceControl
           projectId={meta.projectId}
-          sessionId={meta.id}
-          turns={timeline}
-          turnActive={thread.turnActive}
           repo={meta.worktree?.path}
-          onSend={onSend}
         />
       </React.Suspense>
     )

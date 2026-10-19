@@ -72,6 +72,7 @@ import {
   type ModelRow,
 } from "./profile-models"
 import { sectionMeta } from "./sections"
+import { useTableFilter } from "@/lib/use-table-filter"
 import { useSettingsPage } from "./layout"
 import { settingsFormPath, settingsPath } from "@/lib/router"
 
@@ -324,7 +325,6 @@ export function ProfilesPage() {
      catalog is already here (one `/api/profiles` read), so filtering it is a
      string match, and what a reader wants first is the profiles still in play
      — disabled last, hidden after shown, each group by name. */
-  const [query, setQuery] = React.useState("")
   /* Hidden profiles are folded away by default and the switch says how many, so
      the only way back to one is never a thing you have to already know about.
      A search reaches them regardless: a needle that matches nothing *visible*
@@ -393,21 +393,25 @@ export function ProfilesPage() {
     setIncludeSecrets(false)
   }
 
-  const needle = query.trim().toLowerCase()
   const hiddenCount = stored.filter((p) => p.hidden).length
-  const shown = React.useMemo(() => {
+  const ranked = React.useMemo(() => {
     const rank = (p: Profile) => (p.disabled ? 2 : p.hidden ? 1 : 0)
-    return stored
-      .filter((p) => showHidden || needle || !p.hidden)
-      .filter(
-        (p) =>
-          !needle ||
-          `${p.name} ${p.baseUrl} ${p.defaultModel} ${profileAgentIds(p).map((id) => agentName(id) ?? id).join(" ")} ${p.models.map((m) => `${m.id} ${m.label}`).join(" ")}`
-            .toLowerCase()
-            .includes(needle)
-      )
-      .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
-  }, [stored, showHidden, needle, agentName])
+    return [...stored].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+  }, [stored])
+  const f = useTableFilter(ranked, {
+    text: (p) =>
+      `${p.name} ${p.baseUrl} ${p.defaultModel} ${profileAgentIds(p).map((id) => agentName(id) ?? id).join(" ")} ${p.models.map((m) => `${m.id} ${m.label}`).join(" ")}`,
+    placeholder: "Search profiles, agents, models…",
+    fields: [
+      { id: "state", label: "State", of: (p) => (p.disabled ? "Disabled" : p.hidden ? "Hidden" : "Active") },
+      { id: "key", label: "Key", of: (p) => (p.hasApiKey ? "Has key" : "Needs key") },
+    ],
+  })
+  /* A search or a pick reaches hidden profiles too (see showHidden). */
+  const shown = React.useMemo(
+    () => (showHidden || f.narrowed ? f.rows : f.rows.filter((p) => !p.hidden)),
+    [f.rows, f.narrowed, showHidden],
+  )
 
   const totalModels = stored.reduce((n, p) => n + p.models.length, 0)
   const needKey = stored.filter((p) => !p.hasApiKey && !p.disabled).length
@@ -609,17 +613,9 @@ export function ProfilesPage() {
         actions={rowActions}
         mobile={mobile}
         mark={profileMark}
-        viewToggle={false}
         pageSize={25}
         onRowClick={editRow}
-        filtering={
-          stored.length > 0
-            ? {
-                search: { value: query, onChange: setQuery, placeholder: "Search profiles, agents, models…" },
-                totalCount: stored.length,
-              }
-            : undefined
-        }
+        filtering={stored.length > 0 ? f.filtering : undefined}
         toolbar={
           hiddenCount > 0 ? (
             <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground @panel-sm:min-h-0">
@@ -632,8 +628,8 @@ export function ProfilesPage() {
         emptyMessage={
           stored.length === 0
             ? "No profiles yet. Every agent already runs on its own defaults — add a profile to point one at your own gateway, key or model catalog."
-            : needle
-              ? `Nothing matches “${query.trim()}”.`
+            : f.narrowed
+              ? "No profile matches."
               : `Every profile is hidden. Turn on “Show ${hiddenCount} hidden” to see ${hiddenCount === 1 ? "it" : "them"}.`
         }
         emptyAction={stored.length === 0 ? newButton : undefined}
@@ -867,6 +863,14 @@ export function ProfileForm({
       .filter((id) => !agents.some((a) => a.id === id))
       .map((id) => ({ id, name: id, unregistered: true })),
   ]
+  const agentFilter = useTableFilter(agentRows, {
+    text: (a) => `${a.name} ${a.id}`,
+    placeholder: "Search agents…",
+    fields: [
+      { id: "linked", label: "Linked", of: (a) => (links[a.id] ? "Linked" : "Not linked") },
+      { id: "registered", label: "Registered", of: (a) => ("unregistered" in a && a.unregistered ? "Missing" : "Registered") },
+    ],
+  })
   const [rows, setRows] = React.useState<ModelRow[]>(() => toModelRows(profile?.models ?? []))
   /* The coding plan this new profile started from, if any. Only the form
      remembers it — the saved profile carries no preset id (see
@@ -1066,13 +1070,14 @@ export function ProfileForm({
             >
               <DataTable
                 columns={AGENT_COLUMNS}
-                data={agentRows}
+                data={agentFilter.rows}
                 getRowId={(agent) => agent.id}
                 mobile={AGENT_MOBILE}
-                viewToggle={false}
+                mark={() => <Cpu className="size-4" />}
+                filtering={agentFilter.filtering}
                 pageSize={50}
                 emptyIcon={<Cpu />}
-                emptyMessage="No agents are registered on this server."
+                emptyMessage={agentFilter.narrowed ? "No agent matches." : "No agents are registered on this server."}
               />
             </AgentLinksContext.Provider>
           </FormSection>

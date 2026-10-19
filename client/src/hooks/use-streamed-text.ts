@@ -41,7 +41,7 @@
 import * as React from "react"
 
 import { drainFor } from "@/lib/stream-pace"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 
 /** Bound each frame's reveal so a buffered chunk cannot land as a paragraph. */
 const MAX_CHARS_PER_FRAME = 48
@@ -74,10 +74,10 @@ function boundary(text: string, n: number): number {
  * hook is mounted on the one row being written and nowhere else, so it is two
  * context reads in the whole transcript, and every call site would otherwise
  * have to pass a value it has no opinion about. Read during render, never into
- * a `useState` initialiser — see the note at the top of `lib/view-options`.
+ * a `useState` initialiser — see the note at the top of `lib/layout-options`.
  */
 export function useStreamedText(text: string, streaming: boolean): string {
-  const drain = drainFor(useViewOptionsContext().streamSpeed)
+  const drain = drainFor(useLayoutOptionsContext().streamSpeed)
   const [shown, setShown] = React.useState(streaming && drain !== null ? "" : text)
   const wasStreaming = React.useRef(streaming)
   /* The loop reads these: it runs per frame, far more often than React renders,

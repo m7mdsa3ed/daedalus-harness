@@ -1,7 +1,7 @@
 /* ── Custom keyboard shortcuts ──
    `lib/shortcuts` says what a shortcut *is* and what it ships with; this is the
    reader's own answer to it. Device-local and global — one set of chords for
-   every thread and every server, the same bargain `lib/view-options` makes,
+   every thread and every server, the same bargain `lib/layout-options` makes,
    because which key does what is a property of the hands at the keyboard and
    not of anything the server stores.
 
@@ -74,7 +74,7 @@ function resolveAll(stored: Record<string, StoredBinding>): Record<ShortcutId, B
 
 const store = createLocalStore<Record<string, StoredBinding>>(STORAGE_KEY, pick, {})
 
-/* Memoised for the same reason view-options' is: a fresh object per snapshot
+/* Memoised for the same reason layout-options' is: a fresh object per snapshot
    read is an infinite render loop in useSyncExternalStore, not an
    inefficiency. */
 let lastStored = store.get()

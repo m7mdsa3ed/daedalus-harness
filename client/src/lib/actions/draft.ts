@@ -23,7 +23,7 @@ import {
   resolveThreadStart,
   saveThreadDefaults,
 } from "../thread-defaults"
-import { api, profileAgentIds, type Profile, type Project, type SessionMeta } from "../settings"
+import { api, inSpace, profileAgentIds, type Profile, type Project, type SessionMeta } from "../settings"
 import { emptyThread } from "../store"
 import { loadActiveSpace } from "../spaces"
 import { patchDraft, rememberDraft } from "../draft-sessions"
@@ -74,8 +74,9 @@ export function draftActions(core: ActionsCore) {
     copy("agentId")
     copy("model")
     copy("effort")
-    if (next.suggestFollowups !== undefined) patch.suggestFollowups = next.suggestFollowups
-    if (next.uiBlocks !== undefined) patch.uiBlocks = next.uiBlocks
+    if (next.suggestKinds !== undefined) patch.suggestKinds = next.suggestKinds
+    if (next.uiGroups !== undefined) patch.uiGroups = next.uiGroups
+    if (next.askProfiles !== undefined) patch.askProfiles = next.askProfiles
     if (next.mcpServerIds !== undefined) patch.mcpServerIds = next.mcpServerIds
     if (next.skillIds !== undefined) patch.skillIds = next.skillIds
     if (next.commandIds !== undefined) patch.commandIds = next.commandIds
@@ -191,8 +192,9 @@ export function draftActions(core: ActionsCore) {
       agentId: opts.agentId ?? profileAgentIds(profile)[0] ?? "",
       model: model ?? "",
       effort: effort ?? "",
-      suggestFollowups: defaults.suggestFollowups,
-      uiBlocks: defaults.uiBlocks,
+      suggestKinds: defaults.suggestKinds,
+      uiGroups: defaults.uiGroups,
+      askProfiles: defaults.askProfiles,
       /* The picks against the agent's advertised selectors, and the permission
          mode, are the project's too — they are what the menu there showed. An
          empty set is what a project nobody has configured holds, and
@@ -239,11 +241,11 @@ export function draftActions(core: ActionsCore) {
          space in front of you, then anywhere rather than nowhere. */
       const space = loadActiveSpace(settings.id)
       const all = catalog.projects()
-      const inSpace = space ? all.filter((p) => p.spaceId === space) : all
+      const inActive = space ? all.filter((p) => inSpace(p, space)) : all
       const project =
         (opts.projectId ? all.find((p) => p.id === opts.projectId) : undefined) ??
-        inSpace.find((p) => p.id === loadThreadDefaults().projectId) ??
-        inSpace[0] ??
+        inActive.find((p) => p.id === loadThreadDefaults().projectId) ??
+        inActive[0] ??
         all[0]
       if (!project) return null
       const start = resolveThreadStart(project.defaults ?? emptyDefaults(), catalog.profiles())
@@ -310,6 +312,7 @@ export function draftActions(core: ActionsCore) {
           configOptions: acp.SessionConfigOption[]
           byModel: AgentOptionSet["byModel"]
           modes?: acp.SessionModeState | null
+          commands?: acp.AvailableCommand[]
           expiresAt?: number | null
         }>(settings, `/api/profiles/${profileId}/options${force ? "?refresh=1" : ""}`, {
           method: "POST",
@@ -319,6 +322,7 @@ export function draftActions(core: ActionsCore) {
           base: probed.configOptions ?? [],
           byModel: probed.byModel ?? {},
           ...(probed.modes ? { modes: probed.modes } : {}),
+          ...(probed.commands ? { commands: probed.commands } : {}),
           expiresAt: probed.expiresAt ?? null,
         }, replace)
         markProbed(key, true)
@@ -353,8 +357,9 @@ export function draftActions(core: ActionsCore) {
           | "model"
           | "effort"
           | "modeId"
-          | "suggestFollowups"
-          | "uiBlocks"
+          | "suggestKinds"
+          | "uiGroups"
+          | "askProfiles"
           | "helperModels"
           | "configChoices"
           | "mcpServerIds"
@@ -399,8 +404,9 @@ export function draftActions(core: ActionsCore) {
             modeId: named ? d.modeId || undefined : undefined,
             configChoices: named ? d.configChoices : {},
             helperModels: named ? d.helperModels : [],
-            suggestFollowups: d.suggestFollowups,
-            uiBlocks: d.uiBlocks,
+            suggestKinds: d.suggestKinds,
+            uiGroups: d.uiGroups,
+            askProfiles: d.askProfiles,
             ...defaultToolPicks(d),
           }
           remember = false

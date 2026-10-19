@@ -8,7 +8,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocket, WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
-import { migrateLegacyPersonas, seedPrompts } from "./saved-prompts.js";
+import { migrateLegacyPrompts } from "./legacy-prompts.js";
 import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
 import { seedDefaultModelRoles } from "./model-roles.js";
@@ -23,7 +23,6 @@ import { WorkflowRunner } from "./workflows.js";
 import { workflowRoutes } from "./routes/workflows.js";
 import { harnessRoutes } from "./routes/harness.js";
 import { sqlRoutes } from "./routes/sql.js";
-import { attachBrowserHost, attachCdpClient, cdpRefusal } from "./browser-hosts.js";
 import { routineRoutes } from "./routes/routines.js";
 import { RoutineGitTriggers } from "./routine-git-trigger.js";
 import { RoutineEngine } from "./routines.js";
@@ -68,10 +67,8 @@ configurePauseHooks({ port: config.port });
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
-// Legacy personas become saved prompts once, then the same rules: only the
-// built-ins this install has never been offered, never over an edited row.
-await migrateLegacyPersonas();
-await seedPrompts();
+// Legacy saved prompts and personas become slash commands, once.
+await migrateLegacyPrompts();
 /* Same rules again for the model-prompt library, then the file the runtime
    reads. The write is unconditional and not the seed's: the library is derived
    state, and a boot after a hand-edited `data/` — or after an import, which
@@ -261,7 +258,7 @@ app.use("/api/sessions/:id/spans/:spanId", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /gw/* + /mx/* + /wf/* + /hm/* + /rt/* (and the /cdp socket) are outside /api with the key-in-path
+   and /gw/* + /mx/* + /wf/* + /hm/* + /rt/* are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
@@ -365,24 +362,7 @@ const heartbeat = setInterval(() => {
 heartbeat.unref();
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  /* `chrome-devtools-mcp`'s connection to the thread's preview. Key-in-path,
-     like /hm: the derived key is the credential and the id names the thread.
-     Refused over HTTP while nobody is driving, so the MCP's error says so. */
-  const cdp = /^\/cdp\/([^/]+)\/([^/]+)$/.exec(url.pathname);
-  if (cdp) {
-    const caller = workflows?.resolveCaller(cdp[1]!, decodeURIComponent(cdp[2]!)) ?? null;
-    const refused = caller ? cdpRefusal(caller.id) : "not found";
-    if (refused) {
-      socket.end(`HTTP/1.1 ${caller ? 409 : 404} ${refused}\r\nConnection: close\r\n\r\n`);
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      trackLiveness(ws);
-      attachCdpClient(caller!.id, ws);
-    });
-    return;
-  }
-  if (url.pathname !== "/ws" && url.pathname !== "/terminal" && url.pathname !== "/browser") {
+  if (url.pathname !== "/ws" && url.pathname !== "/terminal") {
     // Destroying the socket leaves the browser with a bare "connection failed".
     // An HTTP response at least names the problem in the network panel.
     socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -402,11 +382,6 @@ server.on("upgrade", (req, socket, head) => {
         url.searchParams.get("projectId") ?? "",
         ws,
       );
-      if (refused) ws.close(4004, refused);
-      return;
-    }
-    if (url.pathname === "/browser") {
-      const refused = attachBrowserHost(url.searchParams.get("sessionId") ?? "", ws);
       if (refused) ws.close(4004, refused);
       return;
     }

@@ -51,17 +51,18 @@ import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, TIER } from "./scale"
 import { ThreadList } from "./thread-list"
 import type { ThreadStatus } from "./thread-row"
 import { EmptyTrash } from "./trash"
-import { markSeen } from "./activity"
-import { useSidebarView, ViewMenu } from "./view"
+import { markSeen, useUnreadIds } from "./activity"
+import { ViewMenu } from "./view"
 import { useThreadStatuses } from "@/lib/thread/statuses"
 import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
 import { openInNewTab } from "@/lib/workspace/open-threads"
 import { usePins } from "@/lib/pins"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { useActiveSpace, useProjects } from "@/lib/queries/catalog"
 import { useActiveChat, useOpenThreads } from "@/lib/workspace/open-threads"
-import { activityAt, isListed, type Project, type SessionMeta } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { activityAt, inSpace as isInSpace, isListed, type Project, type SessionMeta } from "@/lib/settings"
+import { useStoreSelect, type ThreadItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useCoarsePointer } from "@/hooks/use-device"
@@ -91,6 +92,19 @@ export function useStartThreadIn(actions: Actions) {
 }
 
 /* ── The list ── */
+/* Per items array: the streaming thread's array is new per token, every other
+   thread's is not, so a token rescans one transcript at most. */
+const subagentIds = new WeakMap<readonly ThreadItem[], string[]>()
+function subagentIdsOf(items: readonly ThreadItem[] | undefined): string[] {
+  if (!items) return []
+  let ids = subagentIds.get(items)
+  if (!ids) {
+    ids = items.flatMap((item) => (item.kind === "subagent" && item.sessionId ? [item.sessionId] : []))
+    subagentIds.set(items, ids)
+  }
+  return ids
+}
+
 export function ThreadSidebar({ actions }: { actions: Actions }) {
   /* The session list and the project catalog — never `state.threads` itself,
      which is replaced on every streamed token of every thread. Projects come
@@ -99,7 +113,8 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const projects = useProjects()
   const { id: activeSpaceId } = useActiveSpace()
   const pins = usePins()
-  const view = useSidebarView()
+  const options = useLayoutOptions()
+  const { sidebarSort: sort, sidebarFilter: filter, sidebarWithin: within } = options
   /* The threads with a tab open, in the dock's order — kept loaded below so a
      tab never goes missing from the list. Published by the dock
      (lib/workspace/open-threads), so a reload rebuilds it from the restored
@@ -137,6 +152,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   }, [actions, refreshing])
 
   const statuses = useThreadStatuses()
+  const unread = useUnreadIds(sessions, statuses, activeThreadId)
   const status = React.useCallback(
     (session: SessionMeta): ThreadStatus => statuses.get(session.id) ?? "idle",
     [statuses]
@@ -150,7 +166,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const spaceProjectIds = React.useMemo(
     () =>
       activeSpaceId
-        ? new Set(projects.filter((project) => project.spaceId === activeSpaceId).map((project) => project.id))
+        ? new Set(projects.filter((project) => isInSpace(project, activeSpaceId)).map((project) => project.id))
         : null,
     [projects, activeSpaceId]
   )
@@ -176,8 +192,8 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   )
   const { live, trashed, pinned, filed } = React.useMemo(
     () =>
-      deriveTiers({ sessions, inSpace, filter: view.filter, statuses, pins, query, projectNames }),
-    [sessions, statuses, pins, view.filter, inSpace, query, projectNames]
+      deriveTiers({ sessions, inSpace, filter, within, sort, unread, statuses, pins, query, projectNames }),
+    [sessions, statuses, unread, pins, filter, within, sort, inSpace, query, projectNames]
   )
 
   /* The Sessions label's numbers come from the unfiltered
@@ -218,9 +234,20 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   }, [filed, knownProject])
 
   const pinSet = React.useMemo(() => new Set(pins), [pins])
+  const children = React.useMemo(() => {
+    const byParent = new Map<string, SessionMeta[]>()
+    for (const session of sessions) {
+      if (!session.parentSessionId || session.deletedAt || session.draft) continue
+      const list = byParent.get(session.parentSessionId) ?? []
+      list.push(session)
+      byParent.set(session.parentSessionId, list)
+    }
+    for (const list of byParent.values()) list.sort((a, b) => a.createdAt - b.createdAt)
+    return byParent
+  }, [sessions])
   const env = React.useMemo<SidebarEnv>(
-    () => ({ actions, status, pinSet, projectNames }),
-    [actions, status, pinSet, projectNames]
+    () => ({ actions, status, pinSet, projectNames, children }),
+    [actions, status, pinSet, projectNames, children]
   )
 
   /* ── Threads arrive a page at a time ──
@@ -232,13 +259,19 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      next page as you reach it. Loaded rows the in-panel filter hides are still
      loaded — nothing here re-fetches or drops a row to filter it. */
   const sessionWindow = useStoreSelect((state) => state.sessionWindow)
+  /* And the sub threads those tabs have spawned (an ask, a workflow step):
+     drawn under their parent, but born after the page that carried it. A
+     joined string, so a streamed token that spawns nothing re-renders nothing. */
+  const childIds = useStoreSelect((state) =>
+    openIds.flatMap((id) => subagentIdsOf(state.threads[id]?.items)).join(",")
+  )
   React.useEffect(() => {
-    const needed = [...openIds, activeThreadId].filter((id): id is string => !!id)
+    const needed = [...openIds, activeThreadId, ...childIds.split(",")].filter((id): id is string => !!id)
     if (needed.length === 0) return
     void actions.ensureSessionsLoaded(needed).catch(() => {
       /* Ambient: a thread that could not be looked up simply does not draw. */
     })
-  }, [actions, openIds, activeThreadId])
+  }, [actions, openIds, activeThreadId, childIds])
 
   const [loadingMore, setLoadingMore] = React.useState(false)
   const sentinelRef = React.useRef<HTMLDivElement>(null)
@@ -293,7 +326,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   }, [actions, sessionWindow.total])
 
   const hasMore = sessionWindow.ids.length < sessionWindow.total
-  const filtered = view.filter !== "all"
+  const filtered = filter !== "all" || within !== "any"
   const searched = query.trim() !== ""
   const nothingLive = live.length === 0
 
@@ -331,7 +364,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
               size="icon-xs"
               title="Refresh threads"
               aria-label="Refresh threads"
-              disabled={refreshing}
+              loading={refreshing}
               onClick={refreshSessions}
               className={cn(
                 "rounded-sm text-muted-foreground hover:text-sidebar-foreground",
@@ -340,7 +373,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
             >
               <RefreshCwIcon className={cn("size-3.5", refreshing && "animate-spin")} />
             </Button>
-            <ViewMenu view={view} />
+            <ViewMenu sort={sort} filter={filter} within={within} />
           </div>
         </SidebarGroupLabel>
         {searching && (
@@ -383,9 +416,13 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
             {query.trim()
               ? "No thread matches that."
               : filtered
-              ? view.filter === "running"
+              ? filter === "running"
                 ? "Nothing is running right now."
-                : "Nothing is waiting on you."
+                : filter === "waiting"
+                  ? "Nothing is waiting on you."
+                  : filter === "unread"
+                    ? "Nothing unread."
+                    : "No thread was active in that time."
               : scopedProjects.length > 0
                 ? "No threads yet — start one from a project below."
                 : "No threads yet."}
@@ -393,7 +430,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         </SidebarGroup>
       )}
 
-      {pinned.length > 0 && (
+      {pinned.length > 0 && options.sidebarShowPinned && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
           <ThreadList sessions={pinned} />
         </FoldableGroup>
@@ -402,7 +439,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {/* Flat: every live thread, newest activity first, under Today /
           Yesterday / … headings, each row naming its project. The thread in
           front of you is highlighted in place — it is always one of these. */}
-      {view.sort === "recent" && filed.length > 0 && (
+      {sort !== "project" && filed.length > 0 && (
         <SidebarGroup className={GROUP}>
           <ThreadList sessions={filed} grouped showProject />
         </SidebarGroup>
@@ -411,11 +448,18 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {/* Projects: one folder each. Not a foldable tier itself — the folders
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
-      {view.sort === "project" && scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
+      {sort === "project" && scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
         <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon className="size-3 shrink-0" />}>
             <SidebarMenu className={MENU}>
               {scopedProjects
-                .filter((project) => !searched || byProject.has(project.id))
+                /* A folder with nothing in it is "empty" only when nothing is
+                   narrowing the list; under a search or a filter it is just
+                   not a match. */
+                .filter(
+                  (project) =>
+                    byProject.has(project.id) ||
+                    (options.sidebarEmptyProjects && !searched && !filtered)
+                )
                 .map((project) => (
                 <ProjectFolder
                   key={project.id}

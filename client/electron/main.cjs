@@ -3,7 +3,6 @@ const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
 const { installTray, setActivity, refreshTray } = require("./tray.cjs")
-const { createCdpShim } = require("./cdp-shim.cjs")
 
 const DEV_URL = process.env.ELECTRON_DEV_URL || ""
 
@@ -13,6 +12,16 @@ const IS_WSL = process.platform === "linux" && !!(process.env.WSL_DISTRO_NAME ||
 if (IS_WSL || process.env.ELECTRON_DISABLE_GPU) {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch("disable-gpu-compositing")
+}
+
+/* DevTools protocol for a plain `chrome-devtools-mcp --browserUrl http://127.0.0.1:<port>`
+   library row. Loopback only, but it is every window of the app, the harness page and
+   its token included, to anything local - which is the cost of a stock MCP. Port from
+   DAEDALUS_DEBUG_PORT; "0" turns it off. Must be set before `ready`. */
+const DEBUG_PORT = process.env.DAEDALUS_DEBUG_PORT ?? "9222"
+if (DEBUG_PORT !== "0") {
+  app.commandLine.appendSwitch("remote-debugging-port", DEBUG_PORT)
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
 }
 
 /* Windows shows a notification only if it can attribute it to an installed
@@ -500,43 +509,6 @@ app.on("web-contents-created", (_event, contents) => {
       if (!contents.isDestroyed()) contents.send("guest-console", guestId, { type: "gone" })
     })
   })
-})
-
-/* ── Drive: chrome-devtools-mcp on a preview ──
-   The renderer relays a CDP connection from the server (lib/browser-host.ts)
-   and this end answers it as a browser of one page (cdp-shim.cjs). Keyed by
-   the guest's webContents id. Fire-and-forget `send`s, never `invoke`, so a
-   reset and the messages after it arrive in the order they were sent. A
-   window may only drive a guest it embeds. */
-const cdpShims = new Map()
-ipcMain.on("cdp-reset", (_event, guestId) => cdpShims.get(guestId)?.end("reset"))
-ipcMain.on("cdp-send", (event, guestId, data) => {
-  const host = event.sender
-  let shim = cdpShims.get(guestId)
-  if (!shim) {
-    const guest = webContents.fromId(guestId)
-    if (!guest || guest.hostWebContents !== host) {
-      host.send("cdp-closed", guestId, "not a preview in this window")
-      return
-    }
-    try {
-      shim = createCdpShim(
-        guest,
-        (message) => {
-          if (!host.isDestroyed()) host.send("cdp-message", guestId, message)
-        },
-        (reason) => {
-          cdpShims.delete(guestId)
-          if (!host.isDestroyed()) host.send("cdp-closed", guestId, reason)
-        }
-      )
-    } catch (error) {
-      host.send("cdp-closed", guestId, error.message)
-      return
-    }
-    cdpShims.set(guestId, shim)
-  }
-  shim.handle(data)
 })
 
 /* ── Point at an element ──

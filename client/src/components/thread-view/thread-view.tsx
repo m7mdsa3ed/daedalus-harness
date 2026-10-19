@@ -7,10 +7,11 @@
    connection wait) and `welcome.tsx` (the empty state the landing console
    shares). `thread-view.tsx` above is the barrel that keeps `ThreadView` and
    `ThreadWelcome` at the path every caller already spells. */
+import type { RequestFrom } from "@daedalus/protocol"
 import { ScrollToEnd } from "@/components/thread-view/scroll-to-end"
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { ChevronUp } from "lucide-react"
+import { ArrowUpRightIcon, ChevronUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ComposerQueue } from "@/components/composer-queue"
 import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
@@ -33,10 +34,10 @@ import { FilePreviewContext, type FilePreviewValue } from "@/lib/file-preview"
 import { DockContext } from "@/components/workspace/dock-context"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useProjectScripts } from "@/lib/queries"
-import { keepDefinedCommands } from "@/lib/suggestions"
+import { DEFAULT_SUGGEST_KINDS, type SuggestGroup } from "@/lib/suggestions"
 import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
-import { useLocation } from "react-router"
-import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
+import { Link, useLocation } from "react-router"
+import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn, stagger } from "@/lib/utils"
 import { ThreadIdContext } from "@/lib/thread-id-context"
@@ -51,7 +52,6 @@ import { useThreadStatus } from "@/lib/thread/status"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
 import { buildRows, rowTailId, type Row } from "@/lib/transcript-rows"
-import { PromptSuggestions } from "@/components/prompt-suggestions"
 import { Composer, type ComposerHandle } from "@/components/composer/composer"
 import { ThreadRail } from "@/components/thread-rail"
 import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
@@ -133,6 +133,25 @@ function Entrance({ animate, children }: { animate: boolean; children: React.Rea
     the key down (see workspace/chat-panel): every store read, every action and
     every device-local draft below is keyed by it, because a bare session id is
     unique only on the server that minted it. */
+/** Over a card a child thread is blocked on (an ask, a workflow step): whose
+    question it is, and the way into that thread. The answer goes back to the
+    child — the server routes it by the request's id. */
+function AskedBy({ from }: { from: RequestFrom }) {
+  return (
+    <p className="mb-1.5 flex min-w-0 items-center gap-1.5 px-1 text-xs text-muted-foreground">
+      <span className="truncate">
+        Asked by <span className="font-medium text-foreground/80">{from.title}</span>
+      </span>
+      <Link
+        to={threadPath(from.sessionId)}
+        className="inline-flex shrink-0 items-center gap-0.5 hover:text-foreground"
+      >
+        Open thread <ArrowUpRightIcon className="size-3" />
+      </Link>
+    </p>
+  )
+}
+
 export function ThreadView({
   sessionId,
   actions,
@@ -183,7 +202,7 @@ export function ThreadView({
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
   /* Deferred, and this is the *only* place it is: a view option is read through
-     `ViewOptionsContext` by every row, tool pane and diff below, and a context
+     `LayoutOptionsContext` by every row, tool pane and diff below, and a context
      value change punches straight through every `React.memo` on the way down —
      the same thing the `stepTokens` note further down guards against. With no
      virtualization, one flipped switch is a synchronous re-render of every row
@@ -191,14 +210,14 @@ export function ThreadView({
      before the switch itself moved.
 
      `useDeferredValue` splits that in two: the dialog reads the store directly
-     (`session-settings.tsx`), so its switch is still instant, and the
+     (`layout-settings.tsx`), so its switch is still instant, and the
      transcript re-renders at low priority a frame behind. Nothing here is
      time-critical enough to notice the frame — `autoScroll` included.
 
-     Not `startTransition` at the write: `useViewOptions` is a
+     Not `startTransition` at the write: `useLayoutOptions` is a
      `useSyncExternalStore`, and an external store's update is always urgent.
      Deferring the value is the only side of this that works. */
-  const options = React.useDeferredValue(useViewOptions())
+  const options = React.useDeferredValue(useLayoutOptions())
   const follow = useFollowStream(options.autoScroll)
   /* Paging back costs a round trip and then a re-fold of the whole widened
      window. Only the round trip can be paid before it is asked for, so it is:
@@ -227,9 +246,12 @@ export function ThreadView({
   /* The click that pages history back is the one thing on this surface that
      moves the scroll position under the reader: the re-fold replaces every row
      and the position has to be put back by hand. See the helper. */
-  const loadEarlier = useEarlierAnchor(follow.viewport, thread.loadingEarlier, () =>
+  /* A thread short enough to be pinned at its tail would otherwise be carried
+     to the end by the growth the page adds above it: release the pin first. */
+  const loadEarlier = useEarlierAnchor(follow.viewport, thread.loadingEarlier, () => {
+    follow.release()
     void actions.loadEarlier(sessionId)
-  )
+  })
   /* Memoised separately: `.filter` would hand `rows` a fresh array every render
      even when nothing changed, and `rows`' memo depends on it. Two stable layers
      (items → visible → rows) is what lets a streaming update — which mutates one
@@ -516,14 +538,12 @@ export function ThreadView({
     else if (kind === "retryAsPaths") h.retryAsPaths()
     else if (kind === "dismiss") h.dismiss()
   }
-  const pickSuggestion = React.useCallback((prompt: string) => composerApiRef.current?.fill(prompt), [])
-  /* A recommended command picked from its card fills the box with the `!` line
-     — the same act the `!` completer's pick is, and for the same reason: the
-     line is read and edited before it runs, so nothing is executed by the click. */
-  const pickCommand = React.useCallback(
-    (command: string) => composerApiRef.current?.fill(`!${command}`),
-    []
-  )
+  /* A picked suggestion fills the box with the kind's own words (`fill`: a
+     follow-up as written, a command as its `!` line, a file as its `@` mention)
+     — the same act the matching completer's pick is, and for the same reason:
+     the line is read and edited before it goes anywhere, so nothing happens on
+     the click. */
+  const pickSuggestion = React.useCallback((text: string) => composerApiRef.current?.fill(text), [])
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
@@ -553,24 +573,11 @@ export function ThreadView({
      renders nothing still reserves its intrinsic size. */
   const skeletonShown = !meta?.draft && thread.items.length === 0 && isOpening(thread.phase)
 
-  /* Which finished answers get a suggestion card, keyed by the answer's own id
-     — the same per-turn slot the sources and token footers occupy. The thread's
-     toggle (a spawn bargain with the model, see lib/actions) is read here, so
-     turning suggestions off takes every card away at once. */
-  const suggestionsAfter = React.useMemo(
-    () => withTurnSuggestions(thread.items, thread.turnActive, meta?.suggestFollowups === true),
-    [thread.items, thread.turnActive, meta?.suggestFollowups]
-  )
-  const suggestionsFor = (
-    row: Row
-  ): { itemId: string; prompts: string[]; commands: string[] } | undefined =>
-    suggestionsAfter.get(rowTailId(row))
-
   /* The commands a thread may recommend are its project's own — the same union
      the `!` completer offers (saved helpers + package.json scripts, folded into
-     `useProjects` and one query). The recommendation is filtered against this
-     set before it is drawn, so a line that names nothing defined never becomes a
-     command the user could click and watch fail. */
+     `useProjects` and one query). A recommendation is filtered against this set
+     before it is drawn (`SuggestKindDef.keep`), so a line that names nothing
+     defined never becomes a command the user could click and watch fail. */
   const suggestionProject = useProjects().find((candidate) => candidate.id === meta?.projectId)
   const suggestionScripts =
     useProjectScripts(meta?.projectId ?? "", Boolean(meta?.projectId)).data ?? []
@@ -582,18 +589,18 @@ export function ThreadView({
       ]),
     [suggestionProject?.helpers, suggestionScripts]
   )
-  /* Each answer's defined commands, one identity per entry so a streaming
-     re-render does not hand `TurnFooter` a fresh array every frame and defeat
-     its memo. Keyed by the same answer id the follow-ups are. */
-  const commandsAfter = React.useMemo(() => {
-    const map = new Map<string, string[]>()
-    for (const [id, entry] of suggestionsAfter) {
-      const commands = keepDefinedCommands(entry.commands, definedCommands)
-      if (commands.length > 0) map.set(id, commands)
-    }
-    return map
-  }, [suggestionsAfter, definedCommands])
-  const commandsFor = (row: Row): string[] | undefined => commandsAfter.get(rowTailId(row))
+  /* Which finished answers get a suggestion card, keyed by the answer's own id
+     — the same per-turn slot the sources and token footers occupy. The thread's
+     set of kinds (a spawn bargain with the model, see lib/actions) is read here,
+     so turning a kind off takes its cards away at once. A server that predates
+     the set sends none, which reads as the default two. */
+  const suggestKinds = meta?.suggestKinds ?? DEFAULT_SUGGEST_KINDS
+  const suggestionsAfter = React.useMemo(
+    () => withTurnSuggestions(thread.items, thread.turnActive, suggestKinds, { definedCommands }),
+    [thread.items, thread.turnActive, suggestKinds, definedCommands]
+  )
+  const suggestionsFor = (row: Row): SuggestGroup[] | undefined =>
+    suggestionsAfter.get(rowTailId(row))?.groups
 
   const rootRef = React.useRef<HTMLDivElement>(null)
   /* The aside open over this thread, if any — one at a time. */
@@ -652,10 +659,6 @@ export function ThreadView({
   const locate = React.useCallback(
     (id: string) => rowsRef.current.find((row) => rowContains(row, id))?.id,
     []
-  )
-  const sendFromInspector = React.useCallback(
-    (text: string) => actions.send(sessionId, text),
-    [actions, sessionId]
   )
   const closeInspector = React.useCallback(
     () => (inspectorDocked ? setInspectorPref("open", false) : setSheetOpen(false)),
@@ -739,7 +742,6 @@ export function ThreadView({
             thread={lazyThread}
             meta={meta}
             changes={latestChanges}
-            onSend={sendFromInspector}
             mode={inspectorDocked ? "docked" : "sheet"}
             onClose={closeInspector}
             locate={locate}
@@ -780,7 +782,7 @@ export function ThreadView({
               !centred && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
             )}
           >
-            <ViewOptionsContext.Provider value={options}>
+            <LayoutOptionsContext.Provider value={options}>
             <StepTokensProvider value={stepTokens}>
             <MessageScrollerContent
               ref={follow.contentRef}
@@ -908,10 +910,8 @@ export function ThreadView({
                     usage={options.showTokens ? usageFor(row) : undefined}
                     durationMs={durationFor(row)}
                     toolDurationMs={toolDurationFor(row)}
-                    suggestions={suggestionsFor(row)?.prompts}
-                    commands={commandsFor(row)}
+                    suggestions={suggestionsFor(row)}
                     onPick={pickSuggestion}
-                    onPickCommand={pickCommand}
                   />
                 </MessageScrollerItem>
                 )
@@ -966,6 +966,7 @@ export function ThreadView({
                       other the way a run's steps do. */}
                   <div className="harness-item-in" style={stagger(4 + index)}>
                     <div className="py-1">
+                      {pending.from && <AskedBy from={pending.from} />}
                       <InlineApproval
                         permission={pending}
                         item={thread.items.find(
@@ -995,6 +996,7 @@ export function ThreadView({
                 >
                   <div className="harness-item-in">
                     <div className="py-1">
+                      {pending.from && <AskedBy from={pending.from} />}
                       <InlineElicitation elicitation={pending} />
                     </div>
                   </div>
@@ -1033,7 +1035,7 @@ export function ThreadView({
               )}
             </MessageScrollerContent>
             </StepTokensProvider>
-            </ViewOptionsContext.Provider>
+            </LayoutOptionsContext.Provider>
           </MessageScrollerViewport>
           {/* The primitive's own scroll-to-end runs on click; re-pinning here as
               well is what makes the button mean "and keep up from now on"

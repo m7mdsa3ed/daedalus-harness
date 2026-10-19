@@ -10,7 +10,6 @@ import type { TraceNotificationParams } from "./protocol.js";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
-import { expandPrompts } from "./saved-prompts.js";
 import { attachmentBlocks } from "./attachment-blocks.js";
 import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
@@ -1748,10 +1747,7 @@ export class AcpBridge implements ConnectionRoute {
       // makes the degrade below it legible when it appears.
       console.log(`[attachments] ${note.name}: ${note.delivery} — ${note.reason}`);
     }
-    /* Saved prompts (`@name`) expand into what the agent receives only; the
-       journal and history above keep the literal handle. */
-    const expanded = await expandPrompts(text);
-    const outgoing = expanded.text + attach.textSuffix;
+    const outgoing = text + attach.textSuffix;
     const blocks = attach.blocks;
 
     /* The turn's own request carries its span out, so a runtime that traces
@@ -1786,7 +1782,7 @@ export class AcpBridge implements ConnectionRoute {
            `attachmentBlocks` may append to the text as well (a materialised
            path, or `[attached: shot.png]`), for the reason mentions.ts states:
            the text is what every runtime reads without being taught anything. */
-        prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, text + attach.textSuffix, expanded.names)],
+        prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, text + attach.textSuffix)],
         ...(traceMeta ? { _meta: traceMeta } : {}),
       })
       .then(

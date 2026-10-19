@@ -64,8 +64,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   ends up disconnected. `mcp_servers.auth` is a **stored** answer (`probeMcpAuth` sets it,
   from the form's Check and from the probe it runs on save), never a typed one, because a
   spawn must not make a network call to find out what to hand the agent; the tokens are a
-  table of their own (`mcp_oauth`, `ON DELETE CASCADE` off the row) so `backup.ts` can blank
-  three columns rather than reach into a row of mixed provenance, so connecting is an insert
+  table of their own (`mcp_oauth`, `ON DELETE CASCADE` off the row) so connecting is an insert
   rather than an edit that collides with somebody renaming the server, and so deleting the
   server takes the tokens with it. An **unconnected** server is not advertised to the agent
   at all — `mcpServersFor` returns `{servers, skipped}` and the thread's tools read-out marks
@@ -93,7 +92,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   rejects. The documented escape hatch for a server this flow cannot handle is still a stdio
   row running `npx mcp-remote <url>` — it works today with no code, at the cost of running
   the flow on the *server's* machine (so a phone can authorize nothing), tokens in
-  `~/.mcp-auth` outside the database and outside `backup.ts`, and a node process per server.
+  `~/.mcp-auth` outside the database, and a node process per server.
   `pnpm test:mcp-oauth` drives the whole of it against a stand-in authorization server and a
   stand-in protected MCP server.
 
@@ -348,9 +347,7 @@ beside Import in Settings › MCP.
   `processGone`, so a child that dies mid-step fails the step rather than hanging the run.
   `parent_session_id` is **not a foreign key**, and the `sessions` row's own comment says
   why: an SQL cascade would delete the children's rows underneath the manager's in-memory
-  map — their journals, FTS rows and processes are the manager's to take down — and a backup
-  merge inserts sessions in bundle order, where a child may precede its parent inside the one
-  transaction; so `softDelete`/`restore`/`purge` cascade to `childrenOf` by hand, children
+  map — their journals, FTS rows and processes are the manager's to take down — so `softDelete`/`restore`/`purge` cascade to `childrenOf` by hand, children
 - **A native (Claude Code) workflow run is drawn as the same row, from a different
   source.** A harness run's steps are real threads, so they arrive as `subagent_spawned`
   and fold through `mergeWorkflowRuns`. A dynamic workflow's agents live inside the CLI:
@@ -480,9 +477,8 @@ beside Import in Settings › MCP.
 
   **The rest of Claude Code's script surface rides doors that already existed.**
   `agent(…, {isolation: 'worktree'})` is `manager.create({worktree: true})` — a checkout of
-  the step's own, left in place like any thread's. `agentType` is a saved prompt's handle
-  prefixed to the prompt, which the bridge expands as it does every `@handle` (an unknown one
-  is refused by name). `workflow(nameOrRef, args)` runs a child script inside the same run —
+  the step's own, left in place like any thread's. `agentType` is a library command's name,
+  its body prepended to the step's prompt (an unknown one is refused by name). `workflow(nameOrRef, args)` runs a child script inside the same run —
   one agent counter, its phases drawn under `▸ <name>`, one level. Saved workflows are files
   in **Claude Code's own directories** (`workflow-saved.ts`: `<project>/.claude/workflows/`
   and `~/.claude/workflows/` or `$CLAUDE_CONFIG_DIR/workflows/`, keyed by `meta.name`, the
@@ -514,12 +510,31 @@ beside Import in Settings › MCP.
   (`builtin:agents`, a library row like the others) offers `list_agents`, `ask_agent`,
   `wait_agent` and `cancel_agent`, over the workflow runner's own loopback.
 - **An ask is a one-step workflow run** (`WorkflowRunner.ask` → `launch`), its step carrying
-  `profileId`/`agentId`/`label`. `runStep` reads the pair off the step and falls back to the
+  `profileId`/`agentId`/`agentName`/`profileName`/`label`, plus the caller's `description`
+  when it gave one (`rowNameOf`: the errand titles the child thread and its row, where `label`
+  names the pair). `runStep` reads the pair off the step and falls back to the
   parent's. Everything else — the child thread with `parentSessionId`, the mirrored events,
   `_daedalus/subagent_usage`, the clocks, cancel on the parent's process going — is the
-  workflow's. Waiting and cancelling are the `/runs/:id` routes. The spawn carries **no
-  `_meta.daedalus.workflow`**, so the client draws it as a plain subagent named
-  `<agent> · <profile>` rather than a one-row run card.
+  workflow's. Waiting and cancelling are the `/runs/:id` routes. **An ask still running when its call's wait ends reports back as a `<task-notification>`** (`launch`'s `notify`, worded as an ask by `notification(view, ask)`), as a background workflow does, so the caller never polls `wait_agent`; one that ends inside a wait is handed to that waiter and no message repeats it. The spawn carries **no
+  `_meta.daedalus.workflow`** and a `_meta.daedalus.ask` (`{agent, profile, agentId,
+  profileId}`) instead, so the client draws it as a plain subagent rather than a one-row run
+  card — `workflowInfoOf` finds no run and `askInfoOf` finds the pair, which is what makes the
+  row wear the asked agent's own mark (`AgentIcon`, by that id) and an `AskAgentChip` saying
+  `agent · profile` where every other subagent's row has only its title. It is the one worker
+  in a transcript that is not the thread's own agent, and the row says so; the brief, the rail
+  and the report are the ones any subagent draws. The answer the model reads stays one JSON
+  object (`askId`, `status`, `threadId`, `output`), while the *row's* report is the
+  `output` in it — the envelope is bookkeeping, and the asked agent's words are the answer.
+- **An ask's child asks nobody for permission** (`ASK_AUTONOMY` in `workflows.ts`, an
+  `autonomy.ts` policy: every permission `allow`, questions parked, no timer): the ask is the
+  person's go-ahead for its brief, and the child has no reader. **What still parks — a question,
+  or a request offering nothing allow-shaped — is repeated on the parent** (`SessionManager.emit`
+  forwards a child's `permission`/`elicitation`/`request_answered` live, `requestId` namespaced
+  `<childId>:<requestId>` with `from: {sessionId, title}`; `childPendingEvents` is the attach
+  handover), drawn in the parent's transcript under "Asked by <thread>", and answered on the
+  parent's socket, which routes a namespaced id to the child's bridge (`answerChild`) before it
+  asks whether the parent has a process at all. This holds for every child, workflow steps too —
+  a step parked where nobody reads was a run stuck. Still live-only and never journaled.
 - **Nothing that belongs to the parent's pair crosses to another one.** Model and effort are
   inherited only when the pair is the parent's own; otherwise the profile's default model.
   The permission mode is restored only when the *agent* is the same, because mode ids are a
@@ -531,10 +546,21 @@ beside Import in Settings › MCP.
   zero or two matches is an error naming what exists.
 - **The user picks the profile, not the caller.** `installed` is a path check, not a
   credential check, so a pair can be listed and still fail on its first request — a Default
-  profile leans on the runtime's own login, and Defaults cannot be disabled. `ask_agent`'s
-  description tells the calling agent to ask the user which profile unless they named one,
-  and never to fall back to another after a failure. No setting: only the user knows which
-  keys are good.
+  profile leans on the runtime's own login, and Defaults cannot be disabled. So `profile` and
+  `agent` are optional on `ask_agent` and the caller leaves them out unless the user named
+  them. The choice is **per agent, per thread**: `sessions.ask_profiles` maps an agent id to
+  `{ profileId, model? }`. It is seeded from the project (`projects.default_ask_profiles`),
+  picked in the draft's config menu and editable on a started thread (both: Ask agents, a
+  row per installed agent with the menu's own Profile and Model rows —
+  `components/ask-agents.tsx`), and **read at ask time on the server**
+  (`WorkflowRunner.ask`), so unlike `suggest_kinds` it is no spawn input: no trailer, no
+  respawn, no staging. A set choice **outranks whatever the model passed**, and an ask that
+  names no agent goes to the one agent the thread has a choice for. With none, the `agents`
+  server raises an MCP form elicitation whose `askAgentPair` field the client recognises and
+  draws as those same pickers (plus "use for every ask to this agent", which writes the
+  choice through `PUT …/ask-profiles`); a generic client shows it as a plain form, and a
+  runtime that cannot show one gets an error telling the model to ask in prose. A declined
+  picker aborts the ask; nothing falls back to another pair.
 - **Offered to every runtime, including Claude Code.** Unlike the workflow server it
   rivals nothing native, so `workflowsVia` does not gate it. One level: a child is never
   handed it. Four asks per thread at once, counted apart from `MAX_RUNS_PER_PARENT` so
@@ -542,31 +568,19 @@ beside Import in Settings › MCP.
 
 ## Driving the preview
 
-- **`builtin:browser` is Google's `chrome-devtools-mcp`, pointed at the thread's Preview —
-  never at a browser of its own.** At spawn the row resolves to the globally installed
-  `chrome-devtools-mcp` (a PATH scan; not installed → not advertised, and the log says the
-  install line) with `--wsEndpoint ws://127.0.0.1:<port>/cdp/<key>/<sessionId>`, the
-  workflow runner's derived key as the credential, plus `--no-usage-statistics
-  --no-performance-crux` because the URLs are someone's dev server. Top-level threads only.
-  It is advertised whenever linked: Drive comes and goes long after `session/new`, and the
-  MCP connects on its first call and again after any drop.
-- **The server is a pipe and interprets no CDP** (`browser-hosts.ts`). The desktop window
-  whose thread-dock Preview has **Drive** on holds `/browser?sessionId=`; a `/cdp` client is
-  piped to it frame for frame (`open`/`cdp`/`close` down, `cdp`/`closed` up). One host per
-  thread and one client per host, newest wins both — the terminal's rule, 4009 to the loser.
-  With no host the `/cdp` upgrade is refused over HTTP (409), so the MCP's error says so.
-- **Electron main answers as a browser of one page** (`electron/cdp-shim.cjs`). Puppeteer
-  wants a *browser* endpoint (contexts, discovery, auto-attach) and a `<webview>` offers only
-  its page's `webContents.debugger`, so the browser-level methods are answered there with a
-  single target and everything on that page's session — or a child's: iframe, worker — goes
-  to the debugger verbatim. Opening, closing or selecting another page is refused. **Not
-  `--remote-debugging-port`**: that exposes every window of the app, the harness page and its
-  token included, to anything local; here the only page to find is the one Drive was turned
-  on for, and a window may only drive a guest it embeds (`hostWebContents`).
+- **It is a normal stdio library row**: `command: chrome-devtools-mcp`, `args: ["--browserUrl",
+  "http://127.0.0.1:9222"]`, linked like any other. It replaced `builtin:browser` (a per-thread
+  `--wsEndpoint` pipe through the server and an Electron CDP shim that exposed only the one
+  Drive-enabled guest); `retitleBuiltinMcp` deletes a leftover row at boot, links cascade.
+- **Electron main opens `--remote-debugging-port`** on 127.0.0.1 (`DAEDALUS_DEBUG_PORT`, default
+  9222, `"0"` disables; set before `ready`). The cost is the reason the shim existed: the port is
+  every window of the app, the harness page and its token included, to anything local, and the
+  MCP sees all of them (`list_pages` / `select_page`). It is per desktop app, not per thread - two
+  threads share one browser.
 - **The preview is a `<webview>` in the desktop shell and an iframe everywhere else**
   (`web-panel.tsx`). `will-attach-webview` pins every guest down as the sandbox pinned the
-  frame — no preload, no Node, sandboxed, its own `persist:preview` session, http(s) only —
-  and buys history, a real reload and a `webContents` to attach to.
+  frame - no preload, no Node, sandboxed, its own `persist:preview` session, http(s) only.
+  The PWA's iframe has no CDP, so nothing can attach there.
 
 ## Managing the harness
 
@@ -599,17 +613,6 @@ beside Import in Settings › MCP.
   (temp) database.
 - **One level, like `agents`**: a child thread — a workflow step or a subagent — is never
   handed it.
-
-- **`builtin:video` is `video-mcp/` as a stdio child, over the thread's own `/hm` loopback.**
-  A product video is the *build* of a `storyboard.json` the agent and user keep editing, so
-  the row is the library handle and `videoServer` (`sessions.ts`) resolves it at spawn:
-  `node <repo>/video-mcp/dist/index.js` (found relative to the server package, from `src/`
-  and `dist/` alike), `HARNESS_URL` = the thread's loopback, and the server process's
-  `VIDEO_*` / `ELEVENLABS_*` env passed through — providers are configured where the server
-  runs. **Not advertised without `ffmpeg` on PATH and a built `video-mcp/dist`**, like the
-  browser row. Top-level threads only. `video_publish` uploads through that loopback, which
-  is why `routes/harness.ts` forwards `x-filename` (raw `POST /api/files` carries the name
-  in a header) — and no other caller header. `pnpm test:harness` covers all three.
 
 ## Pausing a run
 

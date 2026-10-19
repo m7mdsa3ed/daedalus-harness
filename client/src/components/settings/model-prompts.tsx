@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { useTableFilter } from "@/lib/use-table-filter"
 import {
   DataTable,
   TitleCell,
@@ -19,7 +20,6 @@ import { api, type ModelPrompt, type ServerSettings } from "@/lib/settings"
 import { reportError } from "@/lib/errors"
 import { useInvalidateCatalog, useModelPrompts } from "@/lib/queries/catalog"
 import {
-  DetailSheet,
   Field,
   FormActions,
   FormPageHeader,
@@ -67,29 +67,12 @@ function lineDelta(before: string, after: string) {
   return { added, removed }
 }
 
-/** The whole text of a rule, in the row's DetailSheet. */
-function PromptDetail({ item }: { item: ModelPrompt }) {
-  const scope = scopeOf(item.match)
-  return (
-    <div className="min-w-0 space-y-3">
-      <pre className={cn(INSET, "max-h-80 overflow-auto p-3 font-mono text-xs/relaxed break-words whitespace-pre-wrap select-text")}>
-        {item.prompt}
-      </pre>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
-        <span>{scope.detail}</span>
-        <span>Order {item.sortOrder}</span>
-        {!item.enabled && <span>Off: the runtime's built-in calibration stands in.</span>}
-      </div>
-    </div>
-  )
-}
-
 /**
  * Model prompts: instruction text assigned to a model by id or glob pattern.
  *
  * One table, in the order the runtime reads the rules: the pattern (the title,
  * in mono), the text it adds, what it reaches and whether it is on. A row opens
- * to its whole text. There is no Import on purpose — no agent ships a model
+ * its edit page. There is no Import on purpose — no agent ships a model
  * prompt in its own config: this is the harness's concept, delivered to the
  * runtime through `{modelPromptsFile}`. The built-in family calibrations in the
  * runtime are the auto-detect half; these rows are the assignment half — "this
@@ -102,20 +85,18 @@ export function ModelPromptsPage() {
   const invalidate = useInvalidateCatalog()
   const navigate = useNavigate()
   const confirm = useConfirm()
-  const [search, setSearch] = React.useState("")
-  const [openId, setOpenId] = React.useState<string | null>(null)
   const rows = React.useMemo(
     () => [...prompts].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
     [prompts]
   )
-  const needle = search.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? rows.filter((item) => `${item.name}\n${item.match}\n${item.prompt}`.toLowerCase().includes(needle))
-        : rows,
-    [rows, needle]
-  )
+  const f = useTableFilter(rows, {
+    text: (item) => `${item.name}\n${item.match}\n${item.prompt}`,
+    placeholder: "Search patterns, names, text...",
+    fields: [
+      { id: "state", label: "State", of: (item) => (item.enabled ? "On" : "Off") },
+      { id: "origin", label: "Origin", of: (item) => (item.seededVersion > 0 ? "Built-in" : "Yours") },
+    ],
+  })
   const enabled = rows.filter((item) => item.enabled).length
   const families = rows.filter((item) => /[*?]/.test(item.match)).length
 
@@ -206,8 +187,7 @@ export function ModelPromptsPage() {
     [edit]
   )
 
-  const onRowClick = React.useCallback((item: ModelPrompt) => setOpenId(item.id), [])
-  const opened = rows.find((item) => item.id === openId) ?? null
+  const onRowClick = edit
 
   const mobile = React.useMemo<DataTableMobile<ModelPrompt>>(
     () => ({
@@ -256,37 +236,18 @@ export function ModelPromptsPage() {
       )}
       <DataTable
         columns={columns}
-        data={shown}
+        data={f.rows}
         getRowId={(item) => item.id}
         pageSize={25}
         mark={() => <meta.icon />}
         actions={tableActions}
         onRowClick={onRowClick}
         mobile={mobile}
-        viewToggle={false}
-        filtering={{
-          search: { value: search, onChange: setSearch, placeholder: "Search patterns, names, text..." },
-          totalCount: rows.length,
-        }}
+        filtering={f.filtering}
         emptyIcon={<meta.icon />}
-        emptyMessage={needle ? "No model prompts match that search." : "No model prompts yet."}
-        emptyAction={needle ? undefined : newButton}
+        emptyMessage={f.narrowed ? "No model prompts match that search." : "No model prompts yet."}
+        emptyAction={f.narrowed ? undefined : newButton}
       />
-      <DetailSheet
-        open={opened !== null}
-        onOpenChange={(open) => !open && setOpenId(null)}
-        title={opened ? <code className="font-mono text-[13px] break-all">{opened.match}</code> : null}
-        description={opened?.name}
-        footer={
-          opened && (
-            <Button className="pointer-coarse:h-11" onClick={() => edit(opened)}>
-              <Pencil className="size-3.5" /> Edit
-            </Button>
-          )
-        }
-      >
-        {opened && <PromptDetail item={opened} />}
-      </DetailSheet>
     </>
   )
 }

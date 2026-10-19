@@ -13,12 +13,13 @@
    that draw the top level (thread-items), and thread-view already imports
    those — the types have to live somewhere both can reach without a cycle. */
 import type { AsyncTaskItem, ShellItem, SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
-import { extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId, toolKindOf, toolViewOf } from "./tools"
+import { ASK_AGENT, extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId, toolKindOf, toolViewOf } from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
 import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
 /** A run of consecutive calls with the same resolved tool view, folded into
- *  one row (view-options). Interleaved thinking stays alongside its calls. */
+ *  one row (layout-options). Interleaved thinking stays alongside its calls,
+ *  and so does a setting changed between two of them. */
 export interface ToolRunGroup {
   kind: "run"
   id: string
@@ -122,7 +123,7 @@ export interface ShellRun {
 
 /**
  * The work between two things that were said, collected into one line you can
- * open (`answersOnly`, view-options).
+ * open (`answersOnly`, layout-options).
  *
  * Everything else on this list is a way of drawing items that are all the same
  * kind of thing; this one holds *rows*. That is the whole point: the transcript
@@ -169,7 +170,7 @@ export function rowTailId(row: Row): string {
 }
 
 /**
- * What "Answers only" (view-options) keeps OUT of the fold: the conversation.
+ * What "Answers only" (layout-options) keeps OUT of the fold: the conversation.
  *
  * Kept: the user's messages, the agent's prose, the notices that carry an
  * interrupted turn's Continue button, and errors — a failure hidden reads as
@@ -724,7 +725,10 @@ function sessionLaunches(items: ThreadItem[]): Map<string, ToolItem> {
         const words = [call.description, call.prompt].filter((w): w is string => !!w?.trim()).map((w) => w.trim())
         const codexSpawn = call.tool === "spawnAgent"
         if (codexSpawn && call.receiverThreadIds?.length) continue
-        dangling.push({ tool: item, words, any: codexSpawn && words.length === 0 })
+        /* An ask's child is titled after the pair, not the brief, so no word
+           of the call's is said by it — the next session to start is it. */
+        const ask = call.tool === ASK_AGENT
+        dangling.push({ tool: item, words, any: ask || (codexSpawn && words.length === 0) })
       }
     }
   }
@@ -836,6 +840,11 @@ function groupCodexLifecycle(
   }
 }
 
+/** A setting the person changed mid-turn: the server's `config_notice`, kept as
+    a `notice` row flagged `config` (store/items.ts) so a view option can hide
+    it. Not a break in the conversation — a line about the run it landed in. */
+const isConfigNotice = (row: Row): row is TextItem => row.kind === "notice" && row.config === true
+
 /**
  * Runs of at least two non-edit tool calls, with any thinking between them,
  * become one parent group. Its children split at specialized-view changes,
@@ -843,11 +852,25 @@ function groupCodexLifecycle(
  * stays outside these groups. A leading or trailing thought joins only if the
  * run it borders has at least two calls; a lone tool call remains ungrouped,
  * including while a turn is active.
+ *
+ * A setting changed mid-turn goes *inside* the run when it is between two of
+ * its calls, and nowhere else. Between them the agent changed nothing about the
+ * work it was doing: drawn as a rule across the transcript it split one run in
+ * two, so the same run was read as two and its counting lines said half each.
+ * Before a run's first call or after its last it is still a break — trailing,
+ * it is the last thing that happened, and it is also the item the turn's footer
+ * anchors on (`turn-footers.ts`), so folding it into the run would both hide it
+ * behind a counting line and move the strip that belongs under it.
  */
 export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
   const out: Row[] = []
   let items: (ToolItem | TextItem)[] = []
-  let thoughts: TextItem[] = []
+  /* What arrived between two steps and has not been placed yet: thinking, and
+     the odd setting change. In arrival order, so a notice holds its place among
+     the thoughts around it. */
+  let held: TextItem[] = []
+
+  const toolCount = () => items.filter((item) => item.kind === "tool").length
 
   const flush = () => {
     const tools = items.filter((item): item is ToolItem => item.kind === "tool")
@@ -865,31 +888,46 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
     items = []
   }
 
+  /* Where the held rows go once the run they sat in the middle of is over:
+     thinking joins a run with two calls to be behind (the rule it has always
+     had), a setting change never does — trailing one ends the run, and is drawn
+     after it. Returns the rows that stay outside, in order. */
+  const settle = (): TextItem[] => {
+    const between = held
+    held = []
+    const cut = between.findIndex(isConfigNotice)
+    const joined = cut < 0 ? between : between.slice(0, cut)
+    const outside = cut < 0 ? [] : between.slice(cut)
+    if (toolCount() > 1) {
+      items.push(...joined)
+      return outside
+    }
+    return [...joined, ...outside]
+  }
+
   for (const row of rows) {
     if (row.kind === "tool" && (groupEdits || toolViewOf(row) !== "edit")) {
-      items.push(...thoughts, row)
-      thoughts = []
-    } else if (row.kind === "thought") {
-      thoughts.push(row)
-    } else {
-      if (items.some((item) => item.kind === "tool") && thoughts.length > 0) {
-        const toolCount = items.filter((item) => item.kind === "tool").length
-        if (toolCount > 1) {
-          items.push(...thoughts)
-          thoughts = []
-        }
+      /* Held before a run's first call, a notice is a break rather than a line
+         inside the work: this run starts after it. (Thinking before a first call
+         still rides along — whether the run it borders is a run is the call.) */
+      if (toolCount() === 0 && held.some(isConfigNotice)) {
+        flush()
+        out.push(...held)
+        held = []
       }
+      items.push(...held, row)
+      held = []
+    } else if (row.kind === "thought" || isConfigNotice(row)) {
+      held.push(row)
+    } else {
+      const outside = settle()
       flush()
-      out.push(...thoughts, row)
-      thoughts = []
+      out.push(...outside, row)
     }
   }
-  if (items.filter((item) => item.kind === "tool").length > 1) {
-    items.push(...thoughts)
-    thoughts = []
-  }
+  const outside = settle()
   flush()
-  out.push(...thoughts)
+  out.push(...outside)
   return out
 }
 

@@ -232,7 +232,7 @@ function Sidebar({
         <div
           data-slot="sidebar-hot-zone"
           aria-hidden
-          className="peer/hot fixed inset-y-0 z-30 hidden w-2 data-[side=left]:left-0 data-[side=right]:right-0 md:block"
+          className="peer/hot fixed inset-y-0 z-45 hidden w-2 data-[side=left]:left-0 data-[side=right]:right-0 md:block"
           data-side={side}
         />
       )}
@@ -240,7 +240,7 @@ function Sidebar({
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
-          "group-data-[collapsible=offcanvas]:peer-hover/hot:z-30 group-data-[collapsible=offcanvas]:hover:z-30 group-data-[collapsible=offcanvas]:has-[[data-popup-open]]:z-30",
+          "group-data-[collapsible=offcanvas]:peer-hover/hot:z-45 group-data-[collapsible=offcanvas]:hover:z-45 group-data-[collapsible=offcanvas]:has-[[data-popup-open]]:z-45",
           "group-data-[collapsible=offcanvas]:data-[side=left]:peer-hover/hot:left-0! group-data-[collapsible=offcanvas]:data-[side=left]:hover:left-0! group-data-[collapsible=offcanvas]:data-[side=left]:has-[[data-popup-open]]:left-0!",
           "group-data-[collapsible=offcanvas]:data-[side=right]:peer-hover/hot:right-0! group-data-[collapsible=offcanvas]:data-[side=right]:hover:right-0! group-data-[collapsible=offcanvas]:data-[side=right]:has-[[data-popup-open]]:right-0!",
           "group-data-[collapsible=offcanvas]:peer-hover/hot:shadow-2xl group-data-[collapsible=offcanvas]:hover:shadow-2xl group-data-[collapsible=offcanvas]:has-[[data-popup-open]]:shadow-2xl",

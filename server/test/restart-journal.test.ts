@@ -105,7 +105,7 @@ const sentBefore = peer.sent.length;
 // This test is about what that restart does to the journal.
 const result = await manager.applyConfig(
   session.id,
-  { profile, agentId: "fake", project, suggestFollowups: !session.suggestFollowups },
+  { profile, agentId: "fake", project, suggestKinds: session.suggestKinds.length ? [] : ["prompts"] },
   { defer: false },
 );
 assert.equal(result.live, false, "a suggestions flip cannot be applied live");
@@ -158,7 +158,7 @@ const quiet = new MockWs();
 assert.equal(await manager.attach(fresh.id, quiet as never), null);
 await manager.applyConfig(
   fresh.id,
-  { profile, agentId: "fake", project, suggestFollowups: !fresh.suggestFollowups },
+  { profile, agentId: "fake", project, suggestKinds: fresh.suggestKinds.length ? [] : ["prompts"] },
   { defer: false },
 );
 assert.deepEqual(

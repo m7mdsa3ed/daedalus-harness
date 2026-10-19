@@ -1,3 +1,4 @@
+import { AskAgentsSub } from "@/components/ask-agents"
 import type { PopoverShell } from "@/components/session-config";
 import * as React from "react";
 import type * as acp from "@daedalus/acp";
@@ -70,7 +71,7 @@ import {
   partitionSessionOptions,
 } from "@/lib/session-options";
 import { useStoreSelect } from "@/lib/store";
-import { profileSupports, type SessionMeta } from "@/lib/settings";
+import { inSpace, profileSupports, type SessionMeta } from "@/lib/settings";
 import {
   useActiveSpace,
   useAgents,
@@ -82,6 +83,8 @@ import { gitReposKey } from "@/lib/queries/keys";
 import { useServer } from "@/lib/server-context";
 import { useModelRoles } from "@/lib/queries/model-roles";
 import { gitRepos } from "@/lib/workspace/git-api";
+import { DEFAULT_SUGGEST_KINDS } from "@/lib/suggestions";
+import { DEFAULT_UI_GROUPS } from "@/lib/openui/groups";
 
 const DEFAULT_CHOICE = "__default__";
 
@@ -185,7 +188,7 @@ export function DraftScopeRow({
      picker still marks what the thread is on. */
   const { id: spaceId } = useActiveSpace();
   const pickable = projects.filter(
-    (p) => !spaceId || p.spaceId === spaceId || p.id === meta.projectId,
+    (p) => inSpace(p, spaceId) || p.id === meta.projectId,
   );
   const newProject = useNewProject();
   return (
@@ -418,7 +421,7 @@ export function PickerMenu({
       />
       <DropdownMenuContent
         align="start"
-        className="w-56"
+        className="w-max min-w-56 max-w-[min(28rem,var(--available-width))]"
         finalFocus={finalFocus}
       >
         {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: it reads its group
@@ -439,9 +442,9 @@ export function PickerMenu({
               <DropdownMenuRadioItem key={option.value} value={option.value}>
                 {option.icon}
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{option.name}</span>
+                  <span className="truncate" title={option.name}>{option.name}</span>
                   {option.hint && (
-                    <span className="truncate font-mono text-[10px] text-muted-foreground">
+                    <span className="break-all font-mono text-[10px] text-muted-foreground">
                       {option.hint}
                     </span>
                   )}
@@ -807,6 +810,10 @@ export function DraftConfigPopover({
             <MenuRow {...modelPick} />
           )}
           {effortPick && <MenuRow {...effortPick} />}
+          <AskAgentsSub
+            value={meta.askProfiles ?? {}}
+            onChange={(askProfiles) => configure({ askProfiles })}
+          />
           {profile && agent?.subagentModelsVia === "acp-env" && (
             <HelperModelsSub
               rows={meta.helperModels ?? []}
@@ -859,18 +866,14 @@ export function DraftConfigPopover({
         />
         <DropdownMenuSeparator />
         <SessionSettingsSub
-          items={[
-            {
-              label: "Suggest follow-ups",
-              checked: meta.suggestFollowups !== false,
-              onChange: (checked) => configure({ suggestFollowups: checked }),
-            },
-            {
-              label: "Draw answers as UI",
-              checked: meta.uiBlocks !== false,
-              onChange: (checked) => configure({ uiBlocks: checked }),
-            },
-          ]}
+          suggestions={{
+            kinds: meta.suggestKinds ?? DEFAULT_SUGGEST_KINDS,
+            onChange: (suggestKinds) => configure({ suggestKinds }),
+          }}
+          ui={{
+            groups: meta.uiGroups ?? DEFAULT_UI_GROUPS,
+            onChange: (uiGroups) => configure({ uiGroups }),
+          }}
         />
         {/* Never touched by the profile: mode and the rest are the agent's. */}
         {(modes || agentOptions.rest.length > 0) && (

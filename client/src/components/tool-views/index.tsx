@@ -35,7 +35,7 @@ import { AgentMessageDetail, SubagentDetail } from "@/components/tool-views/suba
 import { FetchDetail, WebFetchDetail, WebSearchDetail } from "@/components/tool-views/web"
 import { CodeBlock, DetailSection, JsonView } from "@/components/tool-parts"
 import { extractBackgroundTask, safeJson, toolOutputText, toolViewOf, type ToolView } from "@/lib/tools"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 import type { ToolItem } from "@/lib/store"
 
 /* What the rest of the transcript reaches for: the pieces of a view that are
@@ -43,7 +43,7 @@ import type { ToolItem } from "@/lib/store"
    between its brief and its report, and `thread-cards.tsx` draws a checklist
    from ACP's plan channel), plus the row-level strips. */
 export { TodoList, ToolAnswers } from "@/components/tool-views/structured"
-export { BriefSection, SubagentBrief, SubagentReport } from "@/components/tool-views/subagent"
+export { AskAgentChip, BriefSection, SubagentBrief, SubagentReport } from "@/components/tool-views/subagent"
 export { ToolSources } from "@/components/tool-views/web"
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
  */
 export function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const { Detail } = TOOL_VIEWS[toolViewOf(item)]
-  const { showRawToolData } = useViewOptionsContext()
+  const { showRawToolData } = useLayoutOptionsContext()
   if (!showRawToolData) return <Detail item={item} active={active} />
   return (
     <div className="space-y-3">

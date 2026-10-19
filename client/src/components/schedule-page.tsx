@@ -34,7 +34,6 @@ import { Notice } from "@/components/notice"
 import { MetaFact, SurfaceHeader } from "@/components/page-primitives"
 import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
 import {
-  DetailSheet,
   EmptyCard,
   Field,
   FormPageHeader,
@@ -69,7 +68,7 @@ import { Textarea } from "@/components/ui/textarea"
 import type { Actions } from "@/lib/actions"
 import { ErrorNote } from "@/components/error-note"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
-import { scheduleDetailPath, schedulePath, schedulesPath, threadPath } from "@/lib/router"
+import { scheduleDetailPath, scheduleEditPath, schedulePath, schedulesPath, threadPath } from "@/lib/router"
 import {
   DAY,
   HOUR,
@@ -136,7 +135,14 @@ export function SchedulePage({ actions }: { actions: Actions }) {
   const location = useLocation()
   const params = useParams()
   if (location.pathname.endsWith("/new")) return <NewSchedulePage actions={actions} />
-  if (params.scheduleId) return <ScheduleDetailPage key={params.scheduleId} scheduleId={params.scheduleId} />
+  if (params.scheduleId)
+    return (
+      <ScheduleDetailPage
+        key={params.scheduleId}
+        scheduleId={params.scheduleId}
+        edit={location.pathname.endsWith("/edit")}
+      />
+    )
   return <SchedulesListPage />
 }
 
@@ -420,6 +426,10 @@ function SchedulesListPage() {
                 <CalendarClock className="size-4 text-muted-foreground" aria-label="Once" />
               )
             }
+            fields={[
+              { id: "state", label: "State", of: (item) => (item.enabled === 0 ? "Paused" : scheduleSkipped(item) ? "Undeliverable" : "Active") },
+              { id: "repeat", label: "Repeat", of: (item) => (item.everyMs !== null ? "Recurring" : "Once") },
+            ]}
             search={{
               placeholder: "Search schedules…",
               matches: (item, needle) =>
@@ -434,7 +444,7 @@ function SchedulesListPage() {
 
 /* ── One schedule (/schedules/<id>) ── */
 
-function ScheduleDetailPage({ scheduleId }: { scheduleId: string }) {
+function ScheduleDetailPage({ scheduleId, edit }: { scheduleId: string; edit: boolean }) {
   const scheduledQuery = useScheduled()
   const item = scheduledQuery.data?.find((s) => s.id === scheduleId)
   const navigate = useNavigate()
@@ -458,6 +468,16 @@ function ScheduleDetailPage({ scheduleId }: { scheduleId: string }) {
       </>
     )
   }
+  if (edit)
+    return (
+      <>
+        <FormPageHeader
+          title="Edit schedule"
+          onBack={() => void navigate(scheduleDetailPath(scheduleId))}
+        />
+        <EditScheduleForm item={item} onDone={() => void navigate(scheduleDetailPath(scheduleId))} />
+      </>
+    )
   return <ScheduleDetail item={item} onBack={back} />
 }
 
@@ -468,7 +488,6 @@ function ScheduleDetail({ item, onBack }: { item: ScheduledMessage; onBack: () =
   const navigate = useNavigate()
   const setEnabled = useSetEnabled()
   const remove = useRemoveSchedule()
-  const [editing, setEditing] = React.useState(false)
 
   const paused = item.enabled === 0
   const skipped = scheduleSkipped(item)
@@ -533,7 +552,7 @@ function ScheduleDetail({ item, onBack }: { item: ScheduledMessage; onBack: () =
                 Open thread
               </Button>
             )}
-            <Button onClick={() => setEditing(true)}>
+            <Button onClick={() => void navigate(scheduleEditPath(item.id))}>
               <Pencil data-icon="inline-start" />
               Edit
             </Button>
@@ -613,13 +632,11 @@ function ScheduleDetail({ item, onBack }: { item: ScheduledMessage; onBack: () =
         <Row title="Record" subtitle="The thread's own transcript; a schedule keeps none" />
         <Row title="Target" subtitle="Fixed — cancel and reschedule to move it" />
       </Group>
-
-      {editing && <EditScheduleForm item={item} onDone={() => setEditing(false)} />}
     </>
   )
 }
 
-/** The editor: text, time, recurrence, in a sheet. The target thread is not
+/** The editor: text, time, recurrence, on its own page. The target thread is not
     editable (the server has no patch for it — cancel and reschedule instead). */
 function EditScheduleForm({
   item,
@@ -676,42 +693,34 @@ function EditScheduleForm({
   }
 
   return (
-    <DetailSheet
-      open
-      onOpenChange={(open) => !open && onDone()}
-      title="Edit schedule"
-      footer={
-        <>
-          <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={onDone}>
-            Cancel
-          </Button>
-          <Button type="submit" form="edit-schedule" className="h-11 @panel-sm:h-9" disabled={busy || !valid}>
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </>
-      }
-    >
-      <form id="edit-schedule" onSubmit={submit} className="space-y-4">
-        <Field label="Message to send">
-          <Textarea value={text} onChange={(event) => setText(event.target.value)} rows={3} />
-        </Field>
-        <Field label="Next run">
-          <Input type="datetime-local" value={at} onChange={(event) => setAt(event.target.value)} />
-        </Field>
-        <Field label="Repeat">
-          <Segmented<EditRecurrence>
-            label="Repeat"
-            value={recurrence}
-            onChange={setRecurrence}
-            options={[
-              ...(Object.keys(RECURRENCE_LABEL) as Recurrence[]).map((key) => ({ value: key, label: RECURRENCE_LABEL[key] })),
-              ...(initialRecurrence === "custom" ? [{ value: "custom" as const, label: recurrenceLabel("custom") }] : []),
-            ]}
-          />
-        </Field>
-        <ErrorNote error={error} />
-      </form>
-    </DetailSheet>
+    <PageForm onSubmit={submit}>
+      <Field label="Message to send">
+        <Textarea value={text} onChange={(event) => setText(event.target.value)} rows={3} />
+      </Field>
+      <Field label="Next run">
+        <Input type="datetime-local" value={at} onChange={(event) => setAt(event.target.value)} />
+      </Field>
+      <Field label="Repeat">
+        <Segmented<EditRecurrence>
+          label="Repeat"
+          value={recurrence}
+          onChange={setRecurrence}
+          options={[
+            ...(Object.keys(RECURRENCE_LABEL) as Recurrence[]).map((key) => ({ value: key, label: RECURRENCE_LABEL[key] })),
+            ...(initialRecurrence === "custom" ? [{ value: "custom" as const, label: recurrenceLabel("custom") }] : []),
+          ]}
+        />
+      </Field>
+      <ErrorNote error={error} />
+      <footer className="flex flex-col-reverse gap-2 border-t pt-4 @panel-sm:flex-row @panel-sm:justify-end">
+        <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit" className="h-11 @panel-sm:h-9" disabled={busy || !valid}>
+          {busy ? "Saving…" : "Save"}
+        </Button>
+      </footer>
+    </PageForm>
   )
 }
 

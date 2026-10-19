@@ -1,0 +1,83 @@
+/* ── One kind's rows under an answer ──
+   The model's closing fence for a kind (`lib/suggestions`), drawn in the same
+   footer slot Sources and the token figure use: a `LABEL` caption over a group
+   of rows, the app's one shape for "here is a named set of things the turn
+   produced". Every kind is this one component — what differs is the entry in
+   `SUGGEST_KINDS` (mark, caption, shell dress, the words a pick fills), so a
+   new kind draws with no component of its own.
+
+   Rows, not a rail of chips: a stacked list shows every suggestion at once,
+   reads top to bottom like the rest of the transcript, and costs one line each.
+   Prose kinds clamp to two lines (a follow-up is a sentence being offered, and
+   half of one with the verb cut off cannot be chosen between); shell kinds
+   truncate to one, in monospace on the recessed ground a shell surface wears,
+   because a command broken across two lines is harder to read back than one
+   cut off.
+
+   A click fills the composer, the way a history recall does: replaced, unsent,
+   editable, caret at the end. Nothing is run or sent by the click. */
+import { LABEL } from "@/components/tool-parts"
+import type { SuggestGroup } from "@/lib/suggestions"
+import { cn } from "@/lib/utils"
+
+export function SuggestionGroup({
+  group,
+  onPick,
+  className,
+}: {
+  group: SuggestGroup
+  /** Fill the composer with the picked row's words. Replaces, like a history recall. */
+  onPick: (text: string) => void
+  className?: string
+}) {
+  const { kind, lines } = group
+  if (lines.length === 0) return null
+  const Icon = kind.icon
+
+  return (
+    <div
+      data-slot="suggestion-group"
+      data-kind={kind.id}
+      className={cn(
+        "mt-1 mb-2 flex min-w-0 flex-col gap-1",
+        "animate-in fade-in-0 slide-in-from-bottom-1 duration-200 ease-out",
+        className
+      )}
+    >
+      <span className={cn(LABEL, "mb-0.5")}>{kind.caption}</span>
+      {lines.map((line) => {
+        const text = kind.show ? kind.show(line) : line
+        return (
+          <button
+            key={line}
+            type="button"
+            onClick={() => onPick(kind.fill(line))}
+            title={kind.fill(line)}
+            className={cn(
+              // The source chip's frame (`SourceChip` in tool-parts), stretched
+              // to the width: same radius, same hairline, same hover promotion.
+              "group/suggestion flex w-full min-w-0 gap-2 rounded-md border border-border/60 px-2 py-1 text-start",
+              kind.mono ? "items-center bg-muted/40" : "items-start bg-transparent",
+              "transition-colors hover:border-border hover:bg-accent hover:text-accent-foreground",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            )}
+          >
+            {/* h-5 grid, not a bare icon: it pins the mark to the first line
+                box, so a two-line row keeps its mark beside the first line. */}
+            <span aria-hidden className="grid h-5 shrink-0 place-items-center">
+              <Icon className="size-3.5 text-muted-foreground/60 transition-colors group-hover/suggestion:text-current" />
+            </span>
+            <span
+              className={cn(
+                "min-w-0 flex-1 text-xs leading-5 text-muted-foreground transition-colors group-hover/suggestion:text-current",
+                kind.mono ? "truncate font-mono" : "line-clamp-2"
+              )}
+            >
+              {text}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}

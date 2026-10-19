@@ -48,6 +48,7 @@ import { ReportBlock } from "@/components/tool-views/report"
 import { HarnessPreview, harnessMark as harnessMarkOf } from "@/components/tool-views/harness"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import {
+  AskAgentChip,
   BriefSection,
   SubagentBrief,
   SubagentReport,
@@ -121,7 +122,7 @@ import type { Row, SubagentGroup, ToolGroup, ToolRunGroup, WorkFold } from "@/li
 import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
-import { toolVariantOf, useViewOptionsContext } from "@/lib/view-options"
+import { toolVariantOf, useLayoutOptionsContext } from "@/lib/layout-options"
 import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import type { SubagentCall } from "@/lib/tools"
 import { threadPath } from "@/lib/router"
@@ -156,7 +157,7 @@ export const ToolRun = React.memo(function ToolRun({
   const dir = textDir(tools[0]?.title)
   const displayItems: Array<ToolItem | TextItem | ToolRunGroup> = nestedRows ?? items
   const displayLength = displayItems.length
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
   const reduceMotion = view.calmMotion || systemReducedMotion
   /* Open while it runs, folded once it has. A group is a sequence of tool calls
@@ -437,7 +438,7 @@ function surfaceTools(rows: Row[]): ToolItem[] {
 
 /**
  * The work between two things said, folded into one line (`answersOnly`,
- * view-options). Collapsed by default and only ever opened by hand — this is
+ * layout-options). Collapsed by default and only ever opened by hand — this is
  * the one fold whose entire job is to not be read.
  *
  * It draws its rows back through `RowView`, which is what makes opening it
@@ -456,7 +457,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
       counting line speaks while the work is being written. */
   streaming?: boolean
 }) {
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
   const reduceMotion = view.calmMotion || systemReducedMotion
   const [open, setOpen] = React.useState(false)
@@ -564,7 +565,7 @@ export const SubagentStep = React.memo(function SubagentStep({
   variant?: "row" | "body"
 }) {
   const { head, children } = group
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   /* A session head may carry the call that launched it (`group.launch`): the
      call brings the brief, the report and the agent type, the session the
      state. One step either way, whichever runtime announced it. */
@@ -596,7 +597,16 @@ export const SubagentStep = React.memo(function SubagentStep({
      change its name depending on where it is read. */
   const target = stepNameOf(group)
   const runsOn = subagentModelOf(group, call)
-  const captionOf = call?.agentType ?? runsOn.role ?? session?.name
+  /* An ask of another pair: the only worker here that is not this thread's own
+     agent, so its row says who answered (`AskAgentChip`) and wears the app's
+     accent rather than a tool kind's. Everything else about it is the plain
+     subagent it already is — it is a real child thread of the parent's, and a
+     launch call names the pair before the spawn has landed. */
+  const ask = session?.ask
+  const asked = ask !== undefined || call?.ask === true
+  /* The pair is the chip's to say for an ask, so the raw `agent` argument — an
+     id half the time — does not also sit in the caption under the title. */
+  const captionOf = asked ? session?.name : (call?.agentType ?? runsOn.role ?? session?.name)
   /* Who the worker is and what it has done so far share the second line, not
      the trailing column: that column is `shrink-0` (it holds figures that must
      not wrap), and a sentence parked in it took a narrow panel's whole width
@@ -623,12 +633,13 @@ export const SubagentStep = React.memo(function SubagentStep({
   return (
     <StepRow
       icon={BotIcon}
-      iconAccent={KIND_COLORS.other}
-      iconChip={KIND_CHIPS.other}
+      iconAccent={asked ? "text-primary" : KIND_COLORS.other}
+      iconChip={asked ? "bg-primary/10" : KIND_CHIPS.other}
       status={status}
       label={label}
       target={target}
       caption={caption}
+      firstRow={ask ? <AskAgentChip ask={ask} /> : undefined}
       mono={false}
       startedAt={head.startedAt}
       /* Only a tool head has an ending to hand: the call that launched the
@@ -919,7 +930,7 @@ function SubagentTranscript({
 /* Memoized — the transcript's row discriminator, and the thing that makes
    memo work up the tree: `item` is referentially stable for everything the
    reducer did not touch, so a streaming chunk re-renders only the changed rows
-   instead of all n. The `useViewOptionsContext` inside reads the same
+   instead of all n. The `useLayoutOptionsContext` inside reads the same
    context value across a re-render storm, so it does not break memo. */
 export const ThreadItemView = React.memo(function ThreadItemView({
   item,
@@ -955,7 +966,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   /** See RowView. */
   streaming?: boolean
 }) {
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   /* Read here rather than in the one case that prints it: a switch is not a
      place a hook can live. Only a thought uses it — a tool row draws its own
      inside ToolStep, and the other kinds are not steps. */
@@ -1009,10 +1020,10 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               rather than the primary-on-primary-foreground pair, which is the
               loudest thing the theme has and made every prompt shout over the
               answer under it. Width, alignment and the corner tail are as they
-              were — the bubble still hugs the right edge at 80%. */}
-          <Message align="end" className="flex-col items-end gap-0.5 py-2">
+              were — the bubble still hugs the right edge, and may now grow to the full width. */}
+          <Message align="end" className="flex-col items-end gap-0.5 py-2 data-[align=end]:flex-col">
             <MessageContent>
-              <Bubble variant="tinted" align="end">
+              <Bubble variant="tinted" align="end" className="max-w-full">
                 <BubbleContent
                   dir="auto"
                   className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm [&_.chip]:bg-background/70 [&_.chip]:ring-1 [&_.chip]:ring-foreground/10 [&_.chip:hover]:bg-background"
@@ -1271,7 +1282,7 @@ const ToolStep = React.memo(function ToolStep({
       : isSkillTool
         ? SparklesIcon
         : KIND_ICONS[kind] ?? WrenchIcon
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   /* Both of these are `tool-views`' to answer, not this row's: whether an
      expansion would hold anything, and whether it should start open, both
      depend on which layout the call resolved to — and a chevron that opens an

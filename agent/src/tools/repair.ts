@@ -80,7 +80,10 @@ const PARAM_ALIASES: Record<string, string[]> = {
 /** Wrappers a model puts its arguments inside when it over-nests. */
 const WRAPPER_KEYS = ["input", "arguments", "args", "parameters", "params", "tool_input", "toolInput", "properties"];
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** A tool name's identity with its punctuation gone — how `read-file`,
+    `functions.read_file` and `ReadFile` are one name. Shared with the tool
+    search, which resolves a `select:` the same loose way. */
+export const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 interface JsonSchemaish {
   properties?: Record<string, { type?: string | string[]; items?: unknown }>;

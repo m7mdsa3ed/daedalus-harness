@@ -229,14 +229,13 @@ function ThemeEditor({
 
   return (
     <>
-      {/* FormPageHeader has no `flush`; the TabBar below draws the rule. */}
-      <div className="[&>header]:mb-0 [&>header]:border-b-0 [&>header]:pb-4">
-        <FormPageHeader
-          title={`Edit ${theme.name}`}
-          description="Type, shape and colour, for light and dark together. Changes apply immediately and are saved to this server."
-          onBack={onClose}
-        />
-      </div>
+      {/* `flush`: the section track below is the break, not the header's rule. */}
+      <FormPageHeader
+        title={`Edit ${theme.name}`}
+        description="Type, shape and colour, for light and dark together. Changes apply immediately and are saved to this server."
+        onBack={onClose}
+        flush
+      />
 
       <TabBar
         label="Theme sections"
@@ -396,13 +395,14 @@ function ThemeEditor({
             rather than to the side — because a preview that scrolls away is a
             preview you edit blind, which is the single thing this layout
             exists to prevent. It sticks under whatever the app header covers
-            of *this* panel (`--dock-content-overlap`, measured per panel), and
-            it carries its own surface, so the controls scroll under it rather
+            of *this* panel (`--app-header-h`, measured per panel) and nothing
+            else, now that the section track scrolls away with the page, and it
+            carries its own surface, so the controls scroll under it rather
             than through it. */}
         <aside
           className={cn(
-            "order-first sticky top-[calc(var(--app-header-h,0px)+2.75rem)] z-20 min-w-0 rounded-xl border bg-surface/95 p-2 shadow-glass backdrop-blur",
-            "@panel-lg:order-none @panel-lg:top-[calc(var(--app-header-h,0px)+3rem)] @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h,0px)-3.5rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2 @panel-lg:shadow-none @panel-lg:backdrop-blur-none"
+            "order-first sticky top-[calc(var(--app-header-h,0px)+0.5rem)] z-20 min-w-0 rounded-xl border bg-surface/95 p-2 shadow-glass backdrop-blur",
+            "@panel-lg:order-none @panel-lg:top-[calc(var(--app-header-h,0px)+0.75rem)] @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h,0px)-1rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2 @panel-lg:shadow-none @panel-lg:backdrop-blur-none"
           )}
         >
           <PreviewPane theme={theme} worn={worn} />

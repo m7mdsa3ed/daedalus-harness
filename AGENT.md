@@ -243,7 +243,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   pasted in front of the user's message**. Changing it always costs a respawn.
 - **Rules are the layer above personas** (`server/src/rules.ts`): one global block plus one per
   project, composed and folded into every spawn **beneath** the persona through the same doors.
-  Spawn-time like a persona — a change costs a respawn — and backup carries them upsert-per-key.
+  Spawn-time like a persona — a change costs a respawn.
 - **Every agent gets a virtual "Default" profile** (`default:<agentId>`) with no credentials
   and deliberately no models. Never written to `data/`, uneditable.
 - **A draft cannot ask a process that does not exist**: option sets come from a live session
@@ -313,7 +313,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
   `WorkflowRunner.ask`): a **one-step run** whose step names its own profile and agent, so
   the child, the mirroring, the cost and the cancel are the workflow's. Drawn as a plain
-  subagent (no workflow `_meta`). The parent's model and mode ids never cross to another
+  subagent — no workflow `_meta`, a `_meta.daedalus.ask` pair instead, so its row is named by
+  the `description` the caller gave it (else `agent · profile`) and wears the asked agent's
+  own mark and an `AskAgentChip` naming the pair, because it is the one worker in a
+  transcript that is not this thread's agent. The parent's model and mode ids never cross to another
   pair — the child starts on its profile's default model and its runtime's default mode.
   Offered to every runtime, Claude Code included (it rivals nothing), one level, and capped
   apart from workflows. The asked agent sees only the brief.
@@ -362,7 +365,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   to be pushed by our own runtime alone, which told every other one the lane was not for it. Adding a
   component is the library edit and one regeneration. **A generated view reflows on the panel's
   width, not the window's** — the components carry `@panel-sm:` variants (`StatRow` falls two-up,
-  `KeyValue` stacks key over value, the chart's tick gutters shrink), because the one thing the
+  `KeyValue` stacks key over value, the chart's tick gutters shrink, and a **`Table` becomes one
+  block per row** — first column its name, the rest named facts under it — because a five-column
+  grid in a phone panel was a sideways scroller showing two of them), because the one thing the
   model cannot control is how wide the box it lands in is. The lane is written for a thread with a
   **reader**: a subagent's answer is a report to its caller, and an unattended run
   (`holdOnError` off, the workflow-step and scheduled-run case) wants prose it can grep.
@@ -922,7 +927,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the turn-end push gate reads `watchers(session)` — fan-out, idle sweep and peer counts still
   count sockets. It is `freeze`/`resume`, not `visibilitychange`.
 
-## Ops: git, backup, quota → `docs/ops.md`
+## Ops: git, quota → `docs/ops.md`
 
 - **A project is a directory, and a directory is not one git repository.** `server/src/git.ts`
   addresses a `RepoContext`, never "the project's git".
@@ -933,8 +938,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   repository root, ignored via `.git/info/exclude` — **never the user's `.gitignore`**. The
   column never moves; archiving leaves the checkout, removing it is its own route and refuses
   uncommitted work unless forced.
-- **Backup is one JSON document and import is one transaction.** Never exported: the server
-  token/host/port, the probe cache, `history_*` rows.
 - **Subscription quota is read by asking the runtime's own CLI, out of band**, naming the
   plain CLI and never the ACP binary. **"No quota" is an answer, not a failure** — never a
   zeroed bar.
@@ -961,5 +964,5 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 | `docs/client.md` | state ownership, theming, palette, sidebar, tool views, shortcuts, errors, toasts, dock, project page |
 | `docs/pwa-and-notifications.md` | service worker, FCM, notification shape, backgrounded pages |
 | `docs/tasks.md` | boards, keys, columns and categories, the parent tree, activity, sprints, links, custom fields, views |
-| `docs/ops.md` | git, backup/import, agent quota, provider plan usage |
+| `docs/ops.md` | git, agent quota, provider plan usage |
 | `agent/docs/` | the Daedalus Agent runtime: prompting, managing it from the harness, standalone use |

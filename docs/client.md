@@ -511,13 +511,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   What is *not* scoped is what is genuinely the reader's rather than a server's: the
   theme, the keybindings, the view options, the sidebar's sort. (`lib/workspace/buffers.ts`
   is the known exception — unsaved editor buffers are keyed by filesystem path, and a
-  path is the machine's.) `lib/view-options.ts` (timestamps/tool grouping/density) is
+  path is the machine's.) `lib/layout-options.ts` (timestamps/tool grouping/density) is
   device-local too but **global and persisted**: one set of reading settings for
-  every thread, keyed by nothing, so `useViewOptions()`/`setViewOption(key, …)`
+  every thread, keyed by nothing, so `useLayoutOptions()`/`setLayoutOption(key, …)`
   take no session and there is nothing to prune. Per-session was the older rule
   and it meant finding and flipping the same switch again in every thread — how a
   transcript is drawn is a property of the reader, not of the conversation. The
-  pre-global blob (`{ [sessionId]: Partial<ViewOptions> }` under the same
+  pre-global blob (`{ [sessionId]: Partial<LayoutOptions> }` under the same
   `ui.viewOptions` key) is folded into the one set on first read, later threads
   winning, rather than dropped. **The sidebar
   is `components/thread-sidebar.tsx`**, laid out like the Codex and Claude desktop
@@ -577,8 +577,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). There is no plan-usage
   gauge in the sidebar: the plans are listed on Settings › Usage and nowhere else. The
   main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
-  the Threads label carries a sort/filter menu (recent first / by project;
-  all / running / needs you) remembered per device as `ui.sidebarView`. Fold
+  the Threads label carries a sort/filter menu (sort: recent / created / title / by project; show: all / running / needs you / unread; active in: any / 24h / 7d / 30d). **Those, and every other sidebar pick (variant, compact rows, row dress, period headings, the Pinned group, the page rows, empty folders), are `sidebar*` keys of the one layout-options store** (`ui.viewOptions`) — Settings › Appearance › Interface edits the same values the menu does, and its Reset counts only the sidebar scope. `ui.sidebarView` and the variant in `ui.sidebarLayout` were folded in once and removed. Fold
   state is `ui.collapsedProjects`, keyed by project id. **Every row wears one status glyph in its trailing slot**
   (`ThreadStateBadge`): the words "Needs you"/"Error" for the two asks, otherwise a
   pause (held at a failure), a spinner (running) or a primary dot (finished since this
@@ -591,7 +590,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   faintly tinted header so it reads apart from the two-line rows. **The in-sidebar filter**
   (`sidebarFilter`, Alt+T, or the magnifier on the label) matches already-loaded threads
   by title, project or agent id, locally and unstored; the palette stays the deep search.
-  The All / Running / Needs you chips write the same `ui.sidebarView` the menu does.
+  The All / Running / Needs you chips write the same `sidebarFilter` the menu does.
   **A running or waiting thread's Delete is disabled** in the row menu ("Stop the turn
   first"): Delete is Trash, and Trash stops the agent. The shelf above
   the composer is `components/composer-strip.tsx`; app icons regenerate from
@@ -887,22 +886,49 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **A `!` row is never windowed away**: `windowStart` opens the replay at the thread's oldest
   shell command (`firstShell`), because a row that belongs to no turn would otherwise be cut off
   by a turn boundary for good, where an old message is merely behind `load earlier`.
-- **The project's own commands can also be recommended under an answer**
-  (`command-suggestions.tsx`). With a thread's suggestions toggle on, the spawn trailer lists the
-  project's helpers and package.json scripts (`personas.ts` `suggestCommands`, fed from the
-  spawn's own project — never a second `getProject`) and asks the model to close with one or two
-  of them in a `suggest-commands` fence, beside the follow-ups (`lib/suggestions`). **The client
-  draws only the lines that name a command the project defines** (`keepDefinedCommands`), so a
-  hallucinated line is dropped rather than offered as a `!` the user could click and watch fail;
-  the card wears the shell's dress — monospace, a terminal mark, "Project commands" where the
-  follow-ups say "Next" — and a pick fills the box with the `!` line **unsent**, the same
-  read-before-it-runs bargain the `!` completer's pick makes.
-- **Three view options govern the rows** (`lib/view-options.ts`). **Show `!` commands** hides them
+- **What an answer closes with is a set of kinds, one registry entry each** (`lib/suggestions`
+  `SUGGEST_KINDS`, twinned by `personas.ts` `SUGGEST_REGISTRY`): follow-up prompts, project
+  commands, quick replies, files, other agents to ask. A kind is a fence name, a caption and
+  mark, how a pick is worded (`fill`), and optionally `keep` (drop lines that name nothing real)
+  — the parser, the strip that hides the fences, the card (`suggestion-group.tsx`, one component
+  for every kind) and the picker all read the table, so **a new kind is an entry on each side
+  and no branch anywhere**. A kind that must name something real is told it at spawn by a
+  loader (`SUGGEST_LOADERS` in `sessions.ts`, read only while the kind is on): the project's
+  helpers and package.json scripts for commands (the client then draws only lines that name one
+  the project defines, so a hallucinated `!` is dropped rather than offered), the runner's
+  installed other pairs for agents (a pick fills "Ask <agent> to <task>", naming the pair so
+  `ask_agent` runs without asking which). **A pick fills the box unsent**, always — the
+  read-before-it-goes bargain the `!` completer makes. The thread's set is `sessions.suggest_kinds`
+  (project default `projects.default_suggest_kinds`; null on an old row reads the legacy boolean,
+  `suggestKindsOf`), picked in Session settings › Suggestions, a submenu of switches with each
+  kind's description; empty is off, and a changed set costs a respawn like any trailer.
+- **A thread is taught the generated-view components by group, not all at once** (`lib/openui/groups.ts`
+  `UI_GROUPS`: id, label, caption and the component names; `DEFAULT_UI_GROUPS` is every id). The
+  reason is the trailer's size: the whole table is a long block every turn pays for, and a thread
+  that never draws a map does not need `Map` described. `gen-openui.mjs` writes
+  `server/src/openui-prompt.ts` as `OPENUI_FRAME_HEAD`, one `OPENUI_GROUPS` section per group,
+  `OPENUI_FRAME_TAIL` and `OPENUI_GROUP_ORDER`, and `personas.ts` joins head + the chosen groups in
+  order + tail (`openuiInstructions`; `normalizeUiGroups`, `uiGroupsOf` and `sameUiGroups` are the
+  set's reading, and `layout` is forced in because the root is a `Stack`). The set is
+  `sessions.ui_groups` (project default `projects.default_ui_groups`) and it is the **only** switch
+  — empty is off, `layout` is the master row of the "Draw answers as UI" picker (unticking it turns
+  the lane off), and the old `ui_blocks` boolean survives only as a legacy column `uiGroupsOf` reads
+  for a row with no set. A changed set costs a respawn like any
+  trailer, staged on a started thread by the same door as `suggestKinds`. It only narrows the
+  asking: the renderer reads no set, so a fence from a group the thread was not taught still draws.
+  `library.tsx` builds its `componentGroups` from `groups.ts` (names and membership are one
+  place), keeping each group's notes beside the components.
+- **Three view options govern the rows** (`lib/layout-options.ts`). **Show `!` commands** hides them
   outright — the command still ran and the journal still holds it, only the row is silent — and
   **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,
   `groupShellRuns`). **Group parallel tool calls** folds two or more consecutive tool calls, with
   any thoughts between them, into one expandable run (`ToolRunGroup`, `groupToolRuns`); a single
-  call stays as its own step. These are Detail-group rows, and neither shell option is
+  call stays as its own step. **A setting changed between two of those calls rides inside the
+  run too** (`isConfigNotice`): the agent changed nothing about the work it was doing, and drawn
+  as a rule across the transcript the notice split one run into two, each counting half of it.
+  Before the run's first call or after its last it is still a break — trailing, it is the last
+  thing that happened *and* the item the turn's footer anchors on (`turn-footers.ts`), so it is
+  never swept in there. `grouping.check.mjs` holds the cases. These are Detail-group rows, and neither shell option is
   `answersOnly`'s business: a `!` line is the reader's
   own act, not the agent's work, which is why it is the one thing that option does not drop.
   A turn's footer never anchors to one either — the strip belongs under the answer, not under a
@@ -1059,7 +1085,7 @@ landed. Every rule here is gated on `useIsMobile()` (the device), never a panel'
   disagree with what is on screen.
   **And a key that is bound is a key that can be moved** (Settings › Keyboard,
   `components/settings/keyboard.tsx` over `lib/keybindings.ts`): a device-local,
-  global store — the same bargain `view-options` makes — keyed by a **`ShortcutId`
+  global store — the same bargain `layout-options` makes — keyed by a **`ShortcutId`
   on every `SHORTCUTS` row**, so a relabelled shortcut keeps the chord somebody
   chose for it. What is stored is only the difference from the defaults, which is
   what lets a later release move a chord for everyone who never touched that row.
@@ -1589,6 +1615,18 @@ double-click on a divider evens out the views it separates — in the main dock 
   answer), and staged work wins when there is any, since that is what a commit would actually
   contain. The button is drawn only where a profile can actually do it — a disabled wand nobody
   can enable is worse than none.
+- **The Git half is Sublime Merge's shape** (`thread-view/source-control.tsx`): Locations
+  (`scm/locations.tsx` - branches, remotes, tags, stashes) | commit table (`scm/commit-table.tsx`,
+  every branch via `GET …/git/log?all=1`, "Working Directory" as its first row) over a detail
+  pane. Working Directory: files + commit box at the left, **the file's hunks at the right**
+  (`scm/hunk-diff.tsx`) - git's own `GET …/git/diff` output cut by `lib/workspace/diff-patch.ts`,
+  so a hunk or the picked lines of one go back through the one `apply` door (stage `--cached`,
+  unstage `--cached --reverse`, discard `--reverse`; `diff-patch.check.mjs` runs it against git).
+  A commit: message + files at the left, its hunks (read-only) at the right. The log omits
+  `refs/stash` (`--branches --remotes --tags HEAD`, not `--all`), whose synthetic commits would
+  read as history. **Nothing loads whole**: branches, remotes and tags are pages of `GET …/git/refs?kind&offset&limit&q` (`git.refsPage`, newest first, the checked-out branch pinned; a collapsed group asks for nothing) and the commit table pages the log with `skip` - both through an IntersectionObserver sentinel at the foot, so a repository with thousands of refs costs one page. The repository picker is a `ui/Select`, and `GitRepo.worktree` (git dir ≠ common dir, `git.isLinkedWorktree`) draws a WORKTREE badge beside the name. The commit box is Sublime Merge's: a summary line (72-char counter), a description and a full-width Commit button, over the one `message` string. Below `@panel-lg` Locations is an overlay the table's toggle opens. The
+  Locations rows carry a right-click (long-press) menu - check out, merge into HEAD, rebase HEAD onto (a conflicting rebase is *aborted* server-side: the panel has no continue/abort, a conflicting merge is left for the conflict group), rename, delete; stash rows apply/pop/drop; tags delete (`git.refOp`). **The four panes are a dockview of their own** (`scm/scm-dock.tsx`, the thread dock's recipe one level in: `.dock-nested`, a closed world, `--dock-header-overlap` zeroed because a custom property inherits): Locations, History, Files and Diff are panels the reader can hide (the tab's close or the Panels menu), drag into each other's strip, split and resize; the arrangement is device-local (`lib/workspace/scm-dock.ts`). `GitWorkspace` builds each pane as a node and hands them down through a context, because every pane reads the one selection. A panel narrower than `@panel-sm` stacks them as one group's tabs and never saves that layout. Opening Source Control from the thread dock gives it 70% of the dock's width (`place` in `thread-dock.tsx`). The Monaco side-by-side diff is still one click away ("Full diff"). `HistorySection` and
+  `CommitGraph` (the old sidebar history) are no longer drawn.
 - **The working set is grouped rows, not a tree** (`thread-view/source-control.tsx`): each row
   is the file's name, its folder dimmed beside it, and its `+/−` lines (`git diff --numstat`,
   read with the status), under a group header that carries the group's own lines and bulk
@@ -1702,7 +1740,7 @@ double-click on a divider evens out the views it separates — in the main dock 
   alone lets the small pieces in and then *warns* about `ts.worker` — and vite-plugin-pwa
   treats that warning as a failed build. Offline, the IDE is the one surface that does not
   open.
-- **Reviewing a turn is the Source Control panel's Review half**, not source control narrowed
+- **(Removed: the Review half.)** The Source Control panel no longer reviews turns; the text below is history. It was not source control narrowed
   to a filter: the old `ScmView` + `lib/ide/scm-filter.ts` pair could only show what was still
   uncommitted, and both are gone (see "Why not source control any more" below).
   **Whether the "N files changed" chip is drawn at all is the transcript's one contribution to a measurement that is
@@ -1993,7 +2031,7 @@ goes to it.
   composer stops at its edge. Below that it is the same column laid over the transcript
   with a scrim.
 - **What is stored is the device's** (`lib/inspector.ts`: open, width, tab — global, like
-  `view-options`). **The sheet's open state is not stored**: it is `ThreadView`'s own state,
+  `layout-options`). **The sheet's open state is not stored**: it is `ThreadView`'s own state,
   because a restored overlay would cover every narrow transcript on a phone.
 - The footer readings stay the readings; their popovers end in **Open in inspector**
   (`OpenInInspector` in `composer/indicator.tsx`), which reaches the column through

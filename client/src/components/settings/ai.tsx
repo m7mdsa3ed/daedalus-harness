@@ -15,10 +15,12 @@
  *
  * Layout: ONE DataTable of helpers. Desktop: helper | Profile | Model | Status,
  * the two pickers inline in the row. A narrow panel: a row per helper (mark,
- * name, "Runs on X · Y", chevron) whose tap opens a bottom sheet holding the
- * same two pickers — a select in a 320px row has no room to be a target.
+ * name, "Runs on X · Y", chevron) whose tap opens the helper's own page
+ * (`AiHelperPage`) holding the same two pickers — a select in a 320px row has
+ * no room to be a target.
  */
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { ChevronRight, FileJson2, GitBranchIcon, Sparkles, type LucideIcon } from "lucide-react"
 
 import { ProfileIcon } from "@/components/entity-icon"
@@ -30,12 +32,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { DataTable, TitleCell } from "@/components/ui/data-table"
+import { useTableFilter } from "@/lib/use-table-filter"
 import { Notice } from "@/components/notice"
 import { aiCapable, enhancePick, formBuilderPick, gitPick, modelPickLabel, type AiPick } from "@/lib/ai-picks"
 import { useProfiles } from "@/lib/queries/catalog"
 import type { ColumnDef } from "@/lib/table"
 import { cn } from "@/lib/utils"
-import { DetailSheet, PageHeader, StatusBadge } from "./primitives"
+import { settingsFormPath, settingsPath } from "@/lib/router"
+import { Field, FormActions, FormPageHeader, FormSection, PageForm, PageHeader, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** One helper: where it shows up, what it does, and the pick that decides what
@@ -200,19 +204,14 @@ export function AiPage() {
   const meta = sectionMeta("ai")
   const profiles = useProfiles()
   const capable = aiCapable(profiles)
-  /* `editing` outlives `open` so the sheet keeps its words while it slides away. */
-  const [editing, setEditing] = React.useState<Helper | null>(null)
-  const [open, setOpen] = React.useState(false)
+  const navigate = useNavigate()
 
   const mobile = React.useMemo(
     () => ({
       renderRow: (helper: Helper) => (
         <button
           type="button"
-          onClick={() => {
-            setEditing(helper)
-            setOpen(true)
-          }}
+          onClick={() => void navigate(settingsFormPath("ai", helper.id))}
           className="flex min-h-16 w-full min-w-0 items-center gap-3 text-start"
           aria-label={`Change what ${helper.name.toLowerCase()} runs on`}
         >
@@ -229,8 +228,14 @@ export function AiPage() {
         </button>
       ),
     }),
-    [],
+    [navigate],
   )
+
+  const f = useTableFilter(HELPERS, {
+    text: (h) => `${h.name} ${h.label} ${h.subtitle}`,
+    placeholder: "Search helpers…",
+    fields: [{ id: "area", label: "Area", of: (h) => h.label }],
+  })
 
   return (
     <>
@@ -247,46 +252,47 @@ export function AiPage() {
         <>
           <DataTable
             columns={COLUMNS}
-            data={HELPERS}
+            data={f.rows}
             getRowId={(helper) => helper.id}
             mark={mark}
             mobile={mobile}
-            viewToggle={false}
             pageSize={25}
             emptyIcon={<meta.icon />}
+            emptyMessage="No helper matches."
+            filtering={f.filtering}
           />
           <p className="mt-3 text-xs/relaxed text-muted-foreground">
             Picks are remembered on this device. The API key never leaves the server.
           </p>
-          <DetailSheet
-            open={open}
-            onOpenChange={setOpen}
-            title={editing?.name}
-            description={editing?.subtitle}
-          >
-            {editing && (
-              <>
-                <PickField label="Profile">
-                  <ProfileSelect helper={editing} className="h-11" />
-                </PickField>
-                <PickField label="Model" hint="Or the profile's own default when nothing is picked.">
-                  <ModelSelect helper={editing} className="h-11" />
-                </PickField>
-              </>
-            )}
-          </DetailSheet>
         </>
       )}
     </>
   )
 }
 
-function PickField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+/** One helper's pickers on a page of its own — the narrow row's destination. */
+export function AiHelperPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const helper = HELPERS.find((h) => h.id === entryId)
+  if (!helper) return <Navigate to={settingsPath("ai")} replace />
+  const back = () => void navigate(settingsPath("ai"))
+  /* The picks are written as they are chosen (device-local stores), so there is
+     nothing to submit: the form's only exit is back. */
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium">{label}</span>
-      {children}
-      {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
-    </div>
+    <>
+      <FormPageHeader title={helper.name} description={helper.subtitle} onBack={back} />
+      <PageForm onSubmit={(e) => { e.preventDefault(); back() }}>
+        <FormSection id="runs-on" label="Runs on" hint="Picks are remembered on this device. The API key never leaves the server.">
+          <Field label="Profile">
+            <ProfileSelect helper={helper} className="h-11 @panel-sm:h-9" />
+          </Field>
+          <Field label="Model" hint="Or the profile's own default when nothing is picked.">
+            <ModelSelect helper={helper} className="h-11 @panel-sm:h-9" />
+          </Field>
+        </FormSection>
+        <FormActions busy={false} />
+      </PageForm>
+    </>
   )
 }

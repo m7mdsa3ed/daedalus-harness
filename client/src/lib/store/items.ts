@@ -4,8 +4,9 @@ import type {
   AttachmentRef,
   SubagentState,
   WorkflowProgressEntry,
+  RequestFrom,
 } from "@daedalus/protocol"
-import type { TerminalState, WorkflowStepInfo } from "../tools"
+import type { AskInfo, TerminalState, WorkflowStepInfo } from "../tools"
 
 // ---- thread item model ----
 
@@ -140,6 +141,11 @@ export interface SubagentItem {
       spawn's `_meta.daedalus.workflow`, read by `lib/tools.workflowInfoOf`.
       What lets `transcript-rows` fold a run's steps into one `WorkflowGroup`. */
   workflow?: WorkflowStepInfo
+  /** Set when this session is an `ask` of another (profile, agent) pair — the
+      spawn's `_meta.daedalus.ask`, `lib/tools.askInfoOf`. A plain subagent
+      otherwise, drawn with the pair named on it: its child is the one worker in
+      a transcript that is not the thread's own agent. */
+  ask?: AskInfo
   /** What this child's turns cost, accumulated — one `_daedalus/subagent_usage`
       per settled turn, so a step that took a repair turn adds up. Absent for a
       child whose runtime never reported any: an agent that does not meter is
@@ -437,6 +443,8 @@ export interface PendingPermission {
       matched exactly instead of guessed at from the tool call it belongs to. */
   requestId: string
   request: acp.RequestPermissionRequest
+  /** A child thread's request (an ask, a workflow step), answered from here. */
+  from?: RequestFrom
   resolve: (response: acp.RequestPermissionResponse) => void
 }
 
@@ -446,6 +454,8 @@ export interface PendingPermission {
 export interface PendingElicitation {
   requestId: string
   request: acp.CreateElicitationRequest
+  /** A child thread's question (an ask, a workflow step), answered from here. */
+  from?: RequestFrom
   resolve: (response: acp.CreateElicitationResponse) => void
 }
 

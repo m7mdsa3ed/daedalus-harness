@@ -25,8 +25,9 @@ import { flattenSelectOptions } from "./session-options"
    the moment a session answers. */
 
 /* v4: sets remembered before the AIR `recommendedValue` upgrade carry Claude
-   Code's `default` model and effort rows, which a live agent no longer offers. */
-const STORAGE_KEY = "ui.agentOptions.v4"
+   Code's `default` model and effort rows, which a live agent no longer offers.
+   v5: sets remembered before the probe carried `commands` would never be re-asked. */
+const STORAGE_KEY = "ui.agentOptions.v5"
 
 /** The store's key for one (profile, agent) pair. Every reader and writer
     below takes this rather than a bare profile id. */
@@ -49,6 +50,10 @@ export interface AgentOptionSet {
       model as an image or as a path *before* the first send. Filled by the
       option probe and re-filled by any live session's `session_config`. */
   promptCapabilities?: acp.PromptCapabilities
+  /** The slash commands the probe's session advertised, so a draft's `/` menu
+      lists what the thread will have rather than only the library picks. The
+      live thread's `available_commands_update` replaces them. */
+  commands?: acp.AvailableCommand[]
   /** The agent's permission modes, when it advertises them on the `modes`
       channel rather than as a config option — daedalus does exactly that, and
       an agent that does is invisible in the mode menu this store feeds. Same
@@ -138,6 +143,7 @@ export function saveAgentOptions(
       byModel: model ? { ...known.byModel, [model]: base } : known.byModel,
       ...(modes ? { modes } : {}),
       ...(known.promptCapabilities ? { promptCapabilities: known.promptCapabilities } : {}),
+      ...(known.commands ? { commands: known.commands } : {}),
       // A live session restates the set, not its age: the probe's clock stands.
       ...(known.expiresAt !== undefined ? { expiresAt: known.expiresAt } : {}),
     },
@@ -157,6 +163,7 @@ export function saveProbedOptions(key: string, probed: AgentOptionSet, replace =
       byModel: { ...known.byModel, ...probed.byModel },
       ...(probed.modes ? { modes: probed.modes } : {}),
       ...(probed.promptCapabilities ? { promptCapabilities: probed.promptCapabilities } : {}),
+      ...(probed.commands ? { commands: probed.commands } : {}),
       expiresAt: probed.expiresAt ?? null,
     },
   })
@@ -228,6 +235,21 @@ export function usePromptCapabilities(
   }
   return undefined
 }
+
+/** The probed slash commands, with the same sibling fallback as the rest: the
+    catalog is the binary's and the user's disk, not the profile's. */
+export function useAgentCommands(
+  key: string,
+  fallbackKeys: readonly string[] = []
+): acp.AvailableCommand[] {
+  const known = store.use()
+  for (const candidate of [key, ...fallbackKeys]) {
+    const entry = known[candidate]
+    if (isSet(entry) && entry.commands) return entry.commands
+  }
+  return NO_COMMANDS
+}
+const NO_COMMANDS: acp.AvailableCommand[] = []
 
 /** Has this pair already been asked (or is being asked) this page-load? */
 export const alreadyAsked = (key: string): boolean => probes.get()[key] !== undefined

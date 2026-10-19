@@ -1,11 +1,12 @@
 import * as React from "react"
+import { useLocation } from "react-router"
 import { MessagesSquare, Monitor, Moon, Palette, RotateCcw, SlidersHorizontal, Sun, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { ThemeGallery } from "@/components/theme-builder/gallery"
 import { Switch } from "@/components/ui/switch"
 import { getWindowMaterial, getWindowTranslucent, setWindowMaterial, setWindowTranslucent, type WindowMaterial } from "@/lib/desktop"
-import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
+import { setLayoutOption, useLayoutOptions } from "@/lib/layout-options"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import {
@@ -19,7 +20,7 @@ import {
   useScale,
   useTheme,
 } from "@/lib/theme"
-import { ViewSettings } from "@/components/session-settings"
+import { LayoutSettings } from "@/components/layout-settings"
 import { ChoiceTiles, Group, PageHeader, Row, Segmented, TabBar } from "./primitives"
 import { sectionMeta } from "./sections"
 
@@ -242,15 +243,18 @@ export function AppearancePage() {
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useFontSize()
   const [scale, setScale] = useScale()
-  const { variant } = useSidebarLayout()
-  const [tab, setTab] = React.useState<(typeof TABS)[number]["id"]>("theme")
+  const { sidebarVariant: variant } = useLayoutOptions()
+  /* "Sidebar settings…" in the thread list's menu lands on the Interface tab. */
+  const [tab, setTab] = React.useState<(typeof TABS)[number]["id"]>(
+    useLocation().hash === "#interface" ? "interface" : "theme"
+  )
 
   return (
     <>
       <PageHeader meta={meta} flush />
       <TabBar
         label="Appearance sections"
-        items={TABS.map(({ id, label, icon }) => ({ id, label, icon }))}
+        items={TABS.map(({ id, label, hint, icon }) => ({ id, label, hint, icon }))}
         value={tab}
         onChange={(id) => setTab(id as (typeof TABS)[number]["id"])}
       />
@@ -275,9 +279,10 @@ export function AppearancePage() {
                   label="Sidebar layout"
                   value={variant}
                   choices={LAYOUTS}
-                  onChange={(next) => setSidebarLayout("variant", next)}
+                  onChange={(next) => setLayoutOption("sidebarVariant", next)}
                 />
               </Group>
+              <LayoutSettings scope="sidebar" />
               <Group label="Text and spacing" hint="Scale the whole app on this device.">
                 <SliderRow
                   title="Font size"
@@ -305,7 +310,7 @@ export function AppearancePage() {
             </>
           )}
 
-          {tab === "transcript" && <ViewSettings />}
+          {tab === "transcript" && <LayoutSettings />}
       </div>
     </>
   )

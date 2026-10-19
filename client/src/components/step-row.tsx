@@ -10,7 +10,7 @@ import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import { FileBadge } from "@/components/tool-parts"
 import type { FileRange } from "@/lib/tools"
-import { toolVariantOf, useViewOptionsContext, type ToolLayout, type ToolVariant } from "@/lib/view-options"
+import { toolVariantOf, useLayoutOptionsContext, type ToolLayout, type ToolVariant } from "@/lib/layout-options"
 import { cn } from "@/lib/utils"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
@@ -289,7 +289,7 @@ export const StepRow = React.memo(function StepRow({
     setChosen(null)
   }, [openSetting])
   const expandable = detail !== undefined && detail !== null && detail !== false
-  const { calmMotion } = useViewOptionsContext()
+  const { calmMotion } = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
   const reduceMotion = calmMotion || systemReducedMotion
   const detailClipRef = React.useRef<HTMLDivElement>(null)

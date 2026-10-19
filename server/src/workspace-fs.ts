@@ -878,8 +878,8 @@ const IMAGE_TYPES: Record<string, string> = {
   svg: "image/svg+xml",
 };
 
-/** Video for the Preview panel's player. Its own ceiling: a product-video draft
-    aims under 24 MB (docs/video.md), far past the 2 MB a text read allows. */
+/** Video for the Preview panel's player. Its own ceiling, far past the 2 MB a
+    text read allows. */
 const VIDEO_TYPES: Record<string, string> = {
   mp4: "video/mp4",
   m4v: "video/mp4",

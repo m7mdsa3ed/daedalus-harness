@@ -30,6 +30,11 @@ export interface SubagentCall {
   /** Codex (legacy) collaboration rows: which of the multi-agent tools —
       `spawnAgent`, `sendInput`, `closeAgent`, … */
   tool?: string
+  /** This is an `ask` of another (profile, agent) pair — the harness's own
+      `agents` server, whose child is the one worker in a transcript that is not
+      the thread's own agent. Drawn as a plain subagent either way; this is what
+      tells its row to say who answered. */
+  ask?: boolean
   receiverThreadIds?: string[]
   /** Codex (legacy): this row is the child's start — the anchor the other
       rows about the same thread group under. */
@@ -60,8 +65,34 @@ export function isSubagentLaunch(item: Pick<ToolItem, "title" | "meta" | "rawInp
   const call = extractSubagent(item)
   if (!call) return false
   if (call.activity !== undefined) return call.started === true
-  if (call.tool !== undefined) return call.tool === "spawnAgent"
+  if (call.tool !== undefined) return call.tool === "spawnAgent" || call.tool === ASK_AGENT
   return true
+}
+
+/** The `agents` server's launch tool (`server/src/agents-mcp.ts`). */
+export const ASK_AGENT = "ask_agent"
+
+/** An MCP tool's JSON answer, from wherever the runtime put the text: the
+    content blocks, a `{content: [...]}` rawOutput, or a bare string. */
+function jsonAnswer(item: Pick<ToolItem, "rawOutput"> & { content?: ToolItem["content"] }): Record<string, unknown> | null {
+  const raw = item.rawOutput
+  const blocks = asRecord(raw)?.content
+  const texts = [
+    ...(item.content ?? []).map((b) => (b.type === "content" && b.content.type === "text" ? b.content.text : "")),
+    ...(Array.isArray(blocks) ? blocks.map((b) => str(asRecord(b)?.text) ?? "") : []),
+    typeof raw === "string" ? raw : "",
+  ]
+  for (const text of texts) {
+    const start = text.indexOf("{")
+    if (start < 0) continue
+    try {
+      const parsed = asRecord(JSON.parse(text.slice(start)))
+      if (parsed) return parsed
+    } catch {
+      /* not this one */
+    }
+  }
+  return null
 }
 
 export function extractSubagent(
@@ -110,6 +141,27 @@ export function extractSubagent(
       receiverThreadIds: Array.isArray(receivers)
         ? receivers.filter((id): id is string => typeof id === "string")
         : undefined,
+    }
+  }
+  /* The harness's own `agents` server: an ask is a launch whose child is a
+     real thread, mirrored in as a subagent. Its JSON answer names that thread
+     (`threadId`) from the first reply on; until then it is matched as the
+     next session to start (`sessionLaunches`). The answer also carries the
+     child's whole reply, which is the report — the envelope around it (ask id,
+     status, thread id) is bookkeeping nobody reads, so the row shows the words
+     the asked agent answered with. */
+  if (isOneOf(item, [ASK_AGENT])) {
+    const answer = jsonAnswer(item)
+    return {
+      tool: ASK_AGENT,
+      ask: true,
+      agentType: str(input?.agent) ?? undefined,
+      description: str(input?.description) ?? undefined,
+      prompt: str(input?.prompt) ?? undefined,
+      model: str(input?.model) ?? undefined,
+      sessionId: str(answer?.threadId) ?? undefined,
+      state: str(answer?.status) ?? undefined,
+      result: str(answer?.output) ?? undefined,
     }
   }
   const claude = vendorMeta(item.meta, "claudeCode")
@@ -344,6 +396,38 @@ export function workflowInfoOf(meta: unknown): WorkflowStepInfo | undefined {
       phaseName && typeof phase?.index === "number" ? { index: phase.index, name: phaseName } : undefined,
     plan: parsePlan(wf?.plan),
   }
+}
+
+/**
+ * Who an ask went to — the spawn's `_meta.daedalus.ask`, stamped by the server
+ * for an ask and for nothing else (a workflow step carries `workflow` instead).
+ * An ask's child is a thread of *another* pair, which is the one thing its row
+ * cannot show from the shape it shares with every subagent: the name is the
+ * errand, and this is who ran it.
+ *
+ * The names are the ones the person saw when they chose, kept in the journal
+ * beside the ids, so a replayed transcript still names the profile that
+ * answered after that profile has been renamed or deleted.
+ */
+export interface AskInfo {
+  agent?: string
+  profile?: string
+  /** The ids the child was spawned on, for the mark the server puts on that
+      agent's row — the client holds no table of which runtimes exist. */
+  agentId?: string
+  profileId?: string
+}
+
+export function askInfoOf(meta: unknown): AskInfo | undefined {
+  const ask = asRecord(vendorMeta(meta, "daedalus")?.ask)
+  if (!ask) return undefined
+  const info: AskInfo = {
+    agent: str(ask.agent) ?? undefined,
+    profile: str(ask.profile) ?? undefined,
+    agentId: str(ask.agentId) ?? undefined,
+    profileId: str(ask.profileId) ?? undefined,
+  }
+  return info.agent || info.profile || info.agentId ? info : undefined
 }
 
 /** The outline, defensively: an older server sends none, and a step drawn from

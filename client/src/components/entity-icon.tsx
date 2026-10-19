@@ -25,7 +25,6 @@ import {
   GlobeIcon,
   TerminalIcon,
   UsersIcon,
-  VideoIcon,
   WorkflowIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -139,7 +138,6 @@ const BUILTIN_MCP_MARKS = {
   agents: UsersIcon,
   harness: WrenchIcon,
   browser: AppWindowIcon,
-  video: VideoIcon,
 } as const
 
 /** A server's own image when supplied, otherwise the one the harness fetched
@@ -152,7 +150,7 @@ export function McpIcon({ server, className }: { server?: McpServerDef | null; c
      own), and nothing else: the favicon is fetched by the server now. */
   const catalog = useMcpCatalog(server?.id ?? "", !!server && server.type !== "builtin").data
   const Icon = server?.type === "builtin"
-    ? BUILTIN_MCP_MARKS[server.builtin]
+    ? BUILTIN_MCP_MARKS[server.builtin] ?? WrenchIcon // a built-in the server still sends but this build dropped (video) has no mark
     : server?.type === "http"
       ? GlobeIcon
       : TerminalIcon

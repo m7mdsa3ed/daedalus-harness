@@ -39,7 +39,6 @@ import {
   type SettingsSectionId,
 } from "@/components/settings/sections"
 import { settingsPath, settingsRootPath } from "@/lib/router"
-import { focusOpenChat, lastActiveChatId, leavePage, useOpenThreads } from "@/lib/workspace/open-threads"
 import { cn } from "@/lib/utils"
 import { GROUP, GROUP_LABEL, MENU, ROW, TIER } from "./scale"
 
@@ -53,16 +52,11 @@ export const inSettingsPanel = (pathname: string) => pathname.startsWith("/setti
 export const settingsSectionFor = (pathname: string) =>
   sectionOf(pathname.split("/")[2] ?? "")
 
-export function SettingsNav() {
+export function SettingsNav({ onBack }: { onBack: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   const section = settingsSectionFor(location.pathname)
-  /* Leaving settings goes back to the thread you were last reading, else the
-     landing console — the same "/" the dock lands on when the last tab closes.
-     A Back row rather than closing the tab: the sidebar cannot close a panel
-     it is not inside, and on a phone there is no tab strip to close it from. */
-  const lastThread = useOpenThreads().at(-1)
 
   const go = (path: string) => {
     if (isMobile) setOpenMobile(false)
@@ -98,20 +92,7 @@ export function SettingsNav() {
                 size="sm"
                 className={cn(ROW, "text-muted-foreground")}
                 tooltip="Back to threads"
-                onClick={() => {
-                  /* This tab goes back to what it was showing before settings
-                     took its place. Failing that, the tab that already holds
-                     the thread you were last reading comes to the front, else the
-                     last one opened; with none open this tab
-                     goes back to the New tab page. Navigating instead would
-                     turn this settings tab into a second copy of the thread. */
-                  if (isMobile) setOpenMobile(false)
-                  if (leavePage()) return
-                  const reading = lastActiveChatId()
-                  if (reading && focusOpenChat(reading)) return
-                  if (lastThread && focusOpenChat(lastThread)) return
-                  void navigate("/")
-                }}
+                onClick={onBack}
               >
                 <ArrowLeft />
                 <span>Back to threads</span>

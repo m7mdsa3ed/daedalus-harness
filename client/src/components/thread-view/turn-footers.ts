@@ -15,7 +15,7 @@ import type * as acp from "@daedalus/acp"
 import { couldTouchFiles } from "@/lib/tools"
 import { extractEdits, type EditInputDiff } from "@/lib/tools/edits"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
-import { turnSuggestions } from "@/lib/suggestions"
+import { turnSuggestions, type SuggestCtx, type SuggestGroup } from "@/lib/suggestions"
 import type { ThreadItem } from "@/lib/store"
 import type { TurnChanges } from "@/lib/workspace/git-api"
 
@@ -294,19 +294,19 @@ export function changesTimeline(
 /** Each finished turn's suggestion card, keyed by the id of the answer that
     carries it — the same walk and the same finished-turn gating as the footers
     above: the last turn only qualifies once it has ended, so a card never
-    grows under the cursor mid-answer. Off when the thread's suggestions toggle
-    is off (`meta.suggestFollowups`) — the toggle is the thread's ask, and the
-    model's willingness to deliver the fence is read per answer by
-    `turnSuggestions`. */
+    grows under the cursor mid-answer. Only the kinds the thread has on are
+    drawn (`meta.suggestKinds`) — the set is the thread's ask, and the model's
+    willingness to deliver each fence is read per answer by `turnSuggestions`. */
 export function withTurnSuggestions(
   items: ThreadItem[],
   turnActive: boolean,
-  enabled: boolean
-): Map<string, { itemId: string; prompts: string[]; commands: string[] }> {
-  const after = new Map<string, { itemId: string; prompts: string[]; commands: string[] }>()
-  if (!enabled) return after
+  enabled: readonly string[],
+  ctx: SuggestCtx
+): Map<string, { itemId: string; groups: SuggestGroup[] }> {
+  const after = new Map<string, { itemId: string; groups: SuggestGroup[] }>()
+  if (enabled.length === 0) return after
   for (const { turn } of finishedTurns(items, turnActive)) {
-    const entry = turnSuggestions(turn)
+    const entry = turnSuggestions(turn, enabled, ctx)
     if (entry) after.set(entry.itemId, entry)
   }
   return after

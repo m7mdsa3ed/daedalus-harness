@@ -46,48 +46,6 @@ export function sessionChanges(settings: ServerSettings, sessionId: string, sign
   return api<{ turns: TurnChanges[] }>(settings, session(sessionId), { signal })
 }
 
-/** The files a scope covers now. `unavailable` is a sentence, not a failure. */
-export function scopeFiles(settings: ServerSettings, sessionId: string, scope: string, signal?: AbortSignal) {
-  return api<{ files: ChangedFile[]; unavailable?: string }>(
-    settings,
-    `${session(sessionId)}/files?${new URLSearchParams({ scope }).toString()}`,
-    { signal }
-  )
-}
-
-/** One side of one file under a scope, whole. `path` is thread-relative. */
-export function scopeFileSide(sessionId: string, scope: string, path: string, side: "before" | "after") {
-  return api<{ content: string; missing: boolean; unavailable?: string }>(
-    server(),
-    `${session(sessionId)}/file?${new URLSearchParams({ scope, path, side }).toString()}`
-  )
-}
-
-/** Put one ended turn's files back as they were before it, in the working
-    tree only. A 409 whose body carries `conflicts` is a refusal: those paths
-    changed since the turn ended, and `force` reverts over them. `partial`
-    names files a peer thread also wrote: this thread's edits are taken back
-    out of them, not the whole file restored. */
-export function revertTurn(
-  settings: ServerSettings,
-  sessionId: string,
-  turnId: string,
-  force = false,
-  partial: Record<string, { oldText: string; newText: string }[]> = {}
-) {
-  return api<{ reverted: string[]; conflicts: string[] }>(
-    settings,
-    `/api/sessions/${encodeURIComponent(sessionId)}/turn-changes/${encodeURIComponent(turnId)}/revert`,
-    { method: "POST", body: JSON.stringify({ force, partial }) }
-  )
-}
-
-/** The paths a refused revert names, or null when the error is anything else. */
-export function revertConflicts(err: unknown): string[] | null {
-  const body = err instanceof ApiError && err.status === 409 ? (err.body as { conflicts?: unknown } | null) : null
-  return Array.isArray(body?.conflicts) ? body.conflicts.filter((p): p is string => typeof p === "string") : null
-}
-
 export interface GitFileState {
   path: string
   from?: string
@@ -132,6 +90,8 @@ export interface GitRepo {
   /** What to call it — the directory's own name, or "Project" at the root. */
   name: string
   branch: string | null
+  /** A linked worktree (`git worktree add`), not a main checkout. */
+  worktree: boolean
 }
 
 /** Every repository this project can see, the project's own first. */
@@ -162,6 +122,7 @@ export interface BranchList {
   /** Remote-tracking refs, `origin/main` shaped (`origin/HEAD` excluded).
       Checking one out is a create-with-tracking — see `track` below. */
   remotes: string[]
+  tags: string[]
 }
 
 export function gitBranches(
@@ -173,6 +134,22 @@ export function gitBranches(
   const search = new URLSearchParams()
   if (repo) search.set("repo", repo)
   return api<BranchList>(settings, `${base(projectId)}/branches?${search.toString()}`, { signal })
+}
+
+export type RefKind = "local" | "remote" | "tag"
+
+/** One page of branches or tags, newest first, for a list that loads as it
+    scrolls. `total` counts what matches `q`, not what was returned. */
+export function gitRefs(
+  settings: ServerSettings,
+  projectId: string,
+  options: { kind: RefKind; offset: number; limit: number; q?: string; repo?: string },
+  signal?: AbortSignal
+) {
+  const search = new URLSearchParams({ kind: options.kind, offset: String(options.offset), limit: String(options.limit) })
+  if (options.q) search.set("q", options.q)
+  if (options.repo) search.set("repo", options.repo)
+  return api<{ items: string[]; total: number }>(settings, `${base(projectId)}/refs?${search.toString()}`, { signal })
 }
 
 export interface GitCommit {
@@ -194,13 +171,38 @@ export interface GitCommit {
 export function gitLog(
   settings: ServerSettings,
   projectId: string,
-  options: { limit?: number; repo?: string } = {},
+  options: { limit?: number; repo?: string; all?: boolean; skip?: number } = {},
   signal?: AbortSignal
 ) {
   const search = new URLSearchParams()
   if (options.limit) search.set("limit", String(options.limit))
+  if (options.all) search.set("all", "1")
+  if (options.skip) search.set("skip", String(options.skip))
   if (options.repo) search.set("repo", options.repo)
   return api<GitCommit[]>(settings, `${base(projectId)}/log?${search.toString()}`, { signal })
+}
+
+/** One file's unified diff - the worktree against the index, the index against
+    HEAD, or a commit against its first parent. Paths are repository-relative. */
+export function gitDiff(
+  settings: ServerSettings,
+  projectId: string,
+  options: {
+    path: string
+    from?: string
+    comparison: "worktree" | "staged" | { rev: string }
+    untracked?: boolean
+    repo?: string
+  },
+  signal?: AbortSignal
+) {
+  const search = new URLSearchParams({ path: options.path })
+  if (typeof options.comparison === "string") search.set("comparison", options.comparison)
+  else search.set("rev", options.comparison.rev)
+  if (options.from) search.set("from", options.from)
+  if (options.untracked) search.set("untracked", "1")
+  if (options.repo) search.set("repo", options.repo)
+  return api<{ patch: string }>(settings, `${base(projectId)}/diff?${search.toString()}`, { signal })
 }
 
 export interface CommitFile {
@@ -306,6 +308,11 @@ export type GitAction =
   /** The remote. A pull is `--ff-only` and a push publishes an unpublished
       branch to `origin`; both answer what the remote said in `output`. */
   | { action: "pull" | "push" | "fetch" }
+  /** The branch menu: `branch` names the ref acted on (a branch, a remote ref
+      or a tag). Merge it into HEAD, rebase HEAD onto it (aborted if it
+      conflicts), rename a local branch to `to`, or delete a branch or tag. */
+  | { action: "merge" | "rebase" | "delete-branch" | "delete-tag"; branch: string }
+  | { action: "rename-branch"; branch: string; to: string }
   /** Soft-reset the last commit; `output` is the message it had. */
   | { action: "undo" }
 

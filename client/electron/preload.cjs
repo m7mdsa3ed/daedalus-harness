@@ -48,22 +48,6 @@ contextBridge.exposeInMainWorld("desktop", {
   /** Close only the BrowserWindow that owns this renderer. */
   closeWindow: () => ipcRenderer.invoke("close-window"),
   signalWorkspaceReady: () => ipcRenderer.send("workspace-ready"),
-  /** Drive: a CDP connection to one of this window's `<webview>` guests,
-      answered by main as a browser of one page (cdp-shim.cjs). */
-  cdp: {
-    reset: (guestId) => ipcRenderer.send("cdp-reset", guestId),
-    send: (guestId, data) => ipcRenderer.send("cdp-send", guestId, data),
-    onMessage: (handler) => {
-      const listener = (_event, guestId, data) => handler(guestId, data)
-      ipcRenderer.on("cdp-message", listener)
-      return () => ipcRenderer.off("cdp-message", listener)
-    },
-    onClosed: (handler) => {
-      const listener = (_event, guestId, reason) => handler(guestId, reason)
-      ipcRenderer.on("cdp-closed", listener)
-      return () => ipcRenderer.off("cdp-closed", listener)
-    },
-  },
   /** The Preview's page console: the backlog for a guest, and the live stream
       (`{type: "entry"|"clear"|"gone"}`), keyed by the guest's webContents id. */
   guestConsole: {

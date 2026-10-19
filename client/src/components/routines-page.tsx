@@ -75,7 +75,7 @@ import {
   toInput,
   type RoutineDraft,
 } from "@/components/routines/routine-form"
-import { RunList } from "@/components/routines/runs"
+import { RunList, RunPage } from "@/components/routines/runs"
 import { RUN_STATUS, SOURCE_LABEL, runStatus } from "@/components/routines/status"
 import { TriggersPanel } from "@/components/routines/triggers"
 import { nextFireOf, TRIGGER_KIND, triggerTerms, untilLabel } from "@/components/routines/trigger-summary"
@@ -103,6 +103,8 @@ export function RoutinesPage({ actions }: { actions: Actions }) {
   const location = useLocation()
   const params = useParams()
   if (location.pathname.endsWith("/new")) return <NewRoutinePage actions={actions} />
+  if (params.routineId && params.runId)
+    return <RoutineRunPage key={params.runId} routineId={params.routineId} runId={params.runId} />
   if (params.routineId)
     return <RoutineDetailPage key={params.routineId} routineId={params.routineId} actions={actions} />
   return <RoutinesListPage />
@@ -413,6 +415,11 @@ function RoutinesListPage() {
             loading={pending}
             actions={actions}
             onRowClick={open}
+            mark={(r) => <ZapIcon className={r.enabled ? "size-4 text-primary" : "size-4 text-muted-foreground"} />}
+            fields={[
+              { id: "state", label: "State", of: (r) => (r.enabled ? "Enabled" : "Disabled") },
+              { id: "project", label: "Project", of: (r) => projects.find((p) => p.id === r.projectId)?.name },
+            ]}
             search={{
               placeholder: "Filter by name, description or project",
               matches: (r, needle) =>
@@ -529,6 +536,47 @@ function NewRoutinePage({ actions }: { actions: Actions }) {
         busy={busy}
         error={error}
         submitLabel="Create routine"
+      />
+    </>
+  )
+}
+
+/* ── One run ── */
+
+function RoutineRunPage({ routineId, runId }: { routineId: string; runId: string }) {
+  const routine = useRoutines().data?.find((r) => r.id === routineId)
+  const runsQuery = useRoutineRuns(routineId)
+  const cancelRoutineRun = useCancelRoutineRun()
+  const navigate = useNavigate()
+  const back = () => void navigate(routinePath(routineId))
+  const run = runsQuery.data?.find((r) => r.id === runId)
+  const error = runsQuery.error ? captureError(runsQuery.error, "Couldn't read this routine's runs") : null
+
+  if (!run) {
+    return (
+      <>
+        <FormPageHeader title="Run" onBack={back} />
+        {error ? (
+          <ErrorNote error={error} onRetry={() => void runsQuery.refetch()} />
+        ) : runsQuery.data === undefined ? (
+          <Skeleton className="h-32 w-full" />
+        ) : (
+          <EmptyCard icon={HistoryIcon} text="This run no longer exists." />
+        )}
+      </>
+    )
+  }
+  return (
+    <>
+      <FormPageHeader
+        title="Run"
+        description={`${new Date(run.startedAt).toLocaleString()}${run.tokens !== null ? ` \u00b7 ${run.tokens.toLocaleString()} tokens` : ""}`}
+        onBack={back}
+      />
+      <RunPage
+        run={run}
+        hasOutputSchema={routine?.output != null}
+        onCancel={(id) => cancelRoutineRun.mutateAsync({ routineId, runId: id }).then(() => undefined)}
       />
     </>
   )
@@ -850,6 +898,7 @@ function RoutineDetailPage({
               <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
               {runsError ? null : (
                 <RunList
+                  routineId={routine.id}
                   runs={runs?.slice(0, 5)}
                   hasOutputSchema={routine.output !== null}
                   onCancel={cancelRun}
@@ -974,7 +1023,7 @@ function RoutineDetailPage({
           >
             <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
             {runsError ? null : (
-              <RunList runs={runs} hasOutputSchema={routine.output !== null} onCancel={cancelRun} />
+              <RunList routineId={routine.id} runs={runs} hasOutputSchema={routine.output !== null} onCancel={cancelRun} />
             )}
           </Section>
         )}

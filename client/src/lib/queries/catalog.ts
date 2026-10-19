@@ -1,5 +1,5 @@
-/* The catalog query family — profiles, agents, projects, the tool libraries
-   and saved prompts. These were reducer slices refilled by `bootstrap` and by
+/* The catalog query family — profiles, agents, projects, the tool libraries.
+   These were reducer slices refilled by `bootstrap` and by
    `refreshX` after every mutation; the cache owns them now, one read per
    slice, invalidated (never mirrored back) by the writes.
 
@@ -18,7 +18,6 @@ import {
   type ThreadMcpServer,
   type McpServerDef,
   type ModelPrompt,
-  type SavedPrompt,
   type Profile,
   type ProfilePreset,
   type Project,
@@ -36,7 +35,6 @@ import {
   threadMcpKey,
   mcpServersKey,
   modelPromptsKey,
-  promptsKey,
   profilePresetsKey,
   profilesKey,
   projectsKey,
@@ -213,7 +211,8 @@ export function useUpdateSpace() {
 
 export function useDeleteSpace() {
   const settings = useServer()
-  return useApiMutation<{ id: string }, { ok: boolean }>([spacesKey(settings)], (s, { id }) =>
+  return useApiMutation<{ id: string }, { ok: boolean }>([spacesKey(settings), projectsKey(settings)], (s, { id }) =>
+    /* Projects too: a project also filed elsewhere loses this membership. */
     api<{ ok: boolean }>(s, `/api/spaces/${encodeURIComponent(id)}`, { method: "DELETE" })
   )
 }
@@ -285,13 +284,6 @@ export function useSkillContent(sessionId: string, name: string, enabled: boolea
 export function useCommands(): CommandDef[] {
   const settings = useServer()
   return list<CommandDef>(useApiQuery<CommandDef[]>(commandsKey(settings), "/api/commands", {
-    staleTime: CATALOG_STALE_MS,
-  }).data)
-}
-
-export function usePrompts(): SavedPrompt[] {
-  const settings = useServer()
-  return list<SavedPrompt>(useApiQuery<SavedPrompt[]>(promptsKey(settings), "/api/prompts", {
     staleTime: CATALOG_STALE_MS,
   }).data)
 }
@@ -388,7 +380,6 @@ export type CatalogSlice =
   | "mcp-servers"
   | "skills"
   | "commands"
-  | "prompts"
   | "model-prompts"
 
 /** Invalidate catalog slices after an out-of-band write — the same job the

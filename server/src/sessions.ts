@@ -2,7 +2,7 @@ import { durable, type Handle } from "./sandbox/index.js";
 import { killSessionTerminals } from "./terminals.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import type { WebSocket } from "ws";
@@ -13,8 +13,18 @@ import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace, swee
 import { commands as commandLibrary, mcpServers as mcpLibrary, skills as skillLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
-import { resolvePersonaSpawn } from "./personas.js";
-import type { SuggestableCommand } from "./personas.js";
+import {
+  DEFAULT_SUGGEST_KINDS,
+  normalizeSuggestKinds,
+  normalizeUiGroups,
+  resolvePersonaSpawn,
+  sameSuggestKinds,
+  sameUiGroups,
+  suggestKindsOf,
+  UI_GROUP_IDS,
+  uiGroupsOf,
+} from "./personas.js";
+import type { SuggestKind, SuggestableCommand } from "./personas.js";
 import { listHelpers } from "./project-helpers.js";
 import { listScriptsUnder } from "./project-scripts.js";
 import { noteThreadLinked, noteTurnStarted, taskBrief } from "./task-threads.js";
@@ -41,7 +51,7 @@ import { enrichError, pushStderr, resetStderr, spliceStderr } from "./stderr-rin
 import { checkInstalled } from "./agent-status.js";
 import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { AGENTS_SERVER_NAME, BROWSER_SERVER_NAME, HARNESS_SERVER_NAME, VIDEO_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
+import { AGENTS_SERVER_NAME, HARNESS_SERVER_NAME, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
@@ -49,6 +59,8 @@ import { SessionJournal } from "./session-journal.js";
 import { TurnChangesRecorder } from "./turn-changes.js";
 import { SessionSocket } from "./session-socket.js";
 import {
+  childRequest,
+  childRequestId,
   JOURNALED_EVENTS,
   type AttachmentRef,
   type HistoryLost,
@@ -95,6 +107,21 @@ async function recommendableCommands(projectId: string, cwd: string): Promise<Su
     ...scripts.map((script) => ({ name: script.name, command: script.command })),
   ];
 }
+
+/** What a suggestion kind has to read before its trailer can be written — the
+    other half of an entry in `personas.ts`'s registry. A kind with no entry here
+    needs nothing but its own fixed text. */
+const SUGGEST_LOADERS: Partial<
+  Record<SuggestKind, (from: { runner: WorkflowUrlSource | null; session: Session; project: Project }) => Promise<unknown>>
+> = {
+  commands: ({ project }) => recommendableCommands(project.id, project.cwd),
+  /* The runner's own list, minus the thread's pair and any that cannot run. A
+     child cannot ask, so it is offered none. */
+  agents: async ({ runner, session }) =>
+    runner && !session.parentSessionId
+      ? (await runner.pairs(session)).filter((pair) => pair.installed && !pair.current)
+      : [],
+};
 
 /** One attached client. Several may share a session; they are subscribers to
     one server-side ACP client, not ACP clients themselves — which is why a peer
@@ -155,6 +182,9 @@ export function sendToPeer(peer: Peer, line: string): void {
   peer.ws.send(line);
 }
 
+/** The profile a thread's `ask_agent` uses for each agent, by agent id. */
+export type AskProfiles = Record<string, { profileId: string; model?: string }>;
+
 export interface Session {
   id: string;
   profileId: string;
@@ -184,16 +214,18 @@ export interface Session {
       `DAEDALUS_AGENT_MODEL_ROLES` and the materialised subagent files at spawn,
       so changing it costs a respawn. The column's order is the assignment. */
   helperModels: { role: string; model: string }[];
-  /** Whether the agent closes each answer with follow-up prompt suggestions
-      in a `suggest-prompts` fenced block (`personas.ts`). Same spawn-input
-      bargain: read only at session creation/load, so toggling
-      it costs a respawn. */
-  suggestFollowups: boolean;
-  /** Whether the agent may answer with a fenced `openui-lang` block, which the
-      client draws as real UI (`client/src/lib/openui/`). Same spawn-input
-      bargain as the suggestions trailer: it is system-prompt text, so toggling
-      it costs a respawn. */
-  uiBlocks: boolean;
+  /** Which closing blocks the agent is asked for — follow-ups, commands,
+      replies, files, agents (`SUGGEST_KINDS`, `personas.ts`); empty = none.
+      Same spawn-input bargain: read only at session creation/load, so
+      changing it costs a respawn. */
+  suggestKinds: SuggestKind[];
+  /** Which component groups the drawn-answers trailer teaches (`UI_GROUP_IDS`,
+      `personas.ts`): the one setting for whether the agent may answer with a
+      fenced `openui-lang` block, which the client draws as real UI
+      (`client/src/lib/openui/`). Empty = off; non-empty always includes
+      "layout". Same spawn-input bargain as the suggestions trailer: it is
+      system-prompt text, so a change costs a respawn. */
+  uiGroups: string[];
   title: string;
   /** The current title came from the first-prompt fallback, so an ACP
       `session_info_update` may replace it with the agent's better title. */
@@ -276,6 +308,8 @@ export interface Session {
   /** Epoch ms this thread was pinned; null = not pinned. Server-side, so a pin
       made on one device is a pin on every device. */
   pinnedAt: number | null;
+  /** The profile `ask_agent` uses per agent id; an agent not in it is asked about. */
+  askProfiles: AskProfiles;
   exited: boolean;
   /** Tail of this session's in-flight respawn chain, null when idle. A second
       respawn — a double-click, two tabs, model then effort changed in quick
@@ -433,10 +467,6 @@ export async function mcpServersFor(
   /** The `harness` server — the agent managing this harness. Top-level threads
       only, like `agents`. */
   harness: StdioMcpServer | null = null,
-  /** The `builtin:browser` row — chrome-devtools-mcp on the thread's preview. */
-  browser: StdioMcpServer | null = null,
-  /** The `builtin:video` row — video-mcp, over the thread's harness loopback. */
-  video: StdioMcpServer | null = null,
 ): Promise<{ servers: acp.McpServer[]; skipped: string[] }> {
   const linked = new Set(links.mcpServerIds);
   const servers: acp.McpServer[] = [];
@@ -457,11 +487,7 @@ export async function mcpServersFor(
               ? agents
               : s.builtin === "workflow"
                 ? workflow
-                : s.builtin === "browser"
-                  ? browser
-                  : s.builtin === "video"
-                    ? video
-                    : harness;
+                : harness;
       if (built) servers.push(built);
     } else if (s.type === "http") {
       /* An OAuth row is handed to the agent as the shim's loopback URL, never
@@ -570,87 +596,6 @@ export function harnessServer(session: Pick<Session, "id">, source: HarnessUrlSo
   return harnessMcpServer(HARNESS_SERVER_NAME, "harness-mcp", [{ name: "HARNESS_URL", value: source.harnessUrlFor(session) }]);
 }
 
-/** The `builtin:browser` row: `chrome-devtools-mcp` connected to the thread's
-    Preview in the desktop app, through the `/cdp` pipe (browser-hosts.ts) —
-    never a browser of its own. Spawned by its global binary, like an agent,
-    and not advertised when it is not installed. Advertised whenever it is
-    linked, not only while a preview is driving: Drive comes and goes long
-    after `session/new` fixed the tool list, and the MCP connects on its first
-    call and again after a drop. CrUX and usage statistics are off — the URLs
-    here are someone's dev server. */
-export function browserServer(session: Pick<Session, "id">, source: BrowserUrlSource): StdioMcpServer | null {
-  const command = onPath("chrome-devtools-mcp");
-  if (!command) {
-    console.log("[mcp] builtin:browser is linked but chrome-devtools-mcp is not installed (npm i -g chrome-devtools-mcp)");
-    return null;
-  }
-  return {
-    name: BROWSER_SERVER_NAME,
-    command,
-    args: ["--wsEndpoint", source.cdpUrlFor(session), "--no-usage-statistics", "--no-performance-crux"],
-    env: [],
-  };
-}
-
-/** video-mcp's entry, beside the server package. `src/` and `dist/` are both
-    one level under it, so the same climb finds it from tsx and from the build. */
-const VIDEO_MCP_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "video-mcp", "dist", "index.js");
-
-/** The `builtin:video` row: video-mcp as a stdio child. Its upload door is the
-    thread's `/hm` loopback (`HARNESS_URL`), the same one the harness MCP
-    drives; the provider settings (`VIDEO_*`, `ELEVENLABS_*`) are the server
-    process's own env, passed through so the MCP is configured where the server
-    is. Not advertised without ffmpeg or the built entry: a tool that cannot
-    answer is worse than an absent one. */
-export function videoServer(
-  session: Pick<Session, "id">,
-  source: HarnessUrlSource,
-  entry = VIDEO_MCP_ENTRY,
-): StdioMcpServer | null {
-  const missing = videoMissing(entry);
-  if (missing) {
-    if (!videoLogged.has(missing)) {
-      videoLogged.add(missing);
-      console.log(`[mcp] builtin:video is linked but ${missing}`);
-    }
-    return null;
-  }
-  const passthrough = Object.entries(process.env)
-    .filter((e): e is [string, string] => e[1] !== undefined && /^(VIDEO_|ELEVENLABS_)/.test(e[0]))
-    .map(([name, value]) => ({ name, value }));
-  return {
-    name: VIDEO_SERVER_NAME,
-    command: process.execPath,
-    args: [entry],
-    env: [{ name: "HARNESS_URL", value: source.harnessUrlFor(session) }, ...passthrough],
-  };
-}
-
-/** Why `builtin:video` cannot run, or null. The entry is a stat; the PATH scan
-    is the cost, so ffmpeg's answer is kept for 30s (and dropped when PATH
-    changes), which also lets a later `apt install ffmpeg` be noticed without a
-    restart. Each reason is logged once per process (`videoLogged`). */
-export function videoMissing(entry = VIDEO_MCP_ENTRY): string | null {
-  const path = process.env.PATH ?? "";
-  if (ffmpegProbe?.path !== path || Date.now() - ffmpegProbe.at > 30_000) {
-    ffmpegProbe = { path, at: Date.now(), found: !!onPath("ffmpeg") };
-  }
-  if (!ffmpegProbe.found) return "ffmpeg is not on PATH (install ffmpeg)";
-  if (!existsSync(entry)) return `${entry} is missing (pnpm build in video-mcp/)`;
-  return null;
-}
-let ffmpegProbe: { path: string; at: number; found: boolean } | undefined;
-const videoLogged = new Set<string>();
-
-// ponytail: a PATH scan per spawn; browser's check still scans per spawn
-function onPath(name: string): string | null {
-  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
-    const candidate = join(dir, name);
-    if (dir && existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
 export interface SessionEvents {
   /** Fired only while no client is attached — used for push notifications. */
   onPermissionRequest?: (session: Session) => void;
@@ -673,6 +618,8 @@ export interface SessionEvents {
     other — the runner is injected at boot (`setWorkflowRunner`). */
 export interface WorkflowUrlSource {
   urlFor(session: Pick<Session, "id">): string;
+  /** The (profile, agent) pairs an ask can reach — the agents suggestion's list. */
+  pairs(parent: Session): Promise<{ profileId: string; profile: string; agentId: string; agent: string; installed: boolean; models: string[]; current: boolean }[]>;
 }
 
 /** What the manager needs from the workflow runner to hand a thread the
@@ -681,11 +628,6 @@ export interface WorkflowUrlSource {
     rather than minting a second. */
 export interface HarnessUrlSource {
   harnessUrlFor(session: Pick<Session, "id">): string;
-}
-
-/** The same key and port again, under `/cdp`, for the `builtin:browser` row. */
-export interface BrowserUrlSource {
-  cdpUrlFor(session: Pick<Session, "id">): string;
 }
 
 /** A turn's outcome as `whenTurnSettled` reports it. */
@@ -722,7 +664,7 @@ export class SessionManager {
   /** One-shot waiters for a turn to settle, by session — see `whenTurnSettled`. */
   private turnWaiters = new Map<string, { turnId: string; settle: (outcome: TurnOutcome) => void; fail: (error: Error) => void }[]>();
   /** Injected at boot; null means no thread is handed the workflow server. */
-  private workflowRunner: (WorkflowUrlSource & HarnessUrlSource & BrowserUrlSource) | null = null;
+  private workflowRunner: (WorkflowUrlSource & HarnessUrlSource) | null = null;
   /** The event-journal concern — the buffered writes, the reads that flush
       first, the turn-boundary math and the replay framing — extracted to
       session-journal.ts. The manager decides when; the journal knows the table. */
@@ -871,12 +813,12 @@ export class SessionManager {
         // A thread that names no helper reads as the empty map — the same thing
         // a row written before the column existed was.
         helperModels: row.helperModels ?? [],
-        // Absent on rows written before the toggle existed — which never asked
-        // either way — so missing reads as the default: on.
-        suggestFollowups: row.suggestFollowups ?? true,
-        // The same default-on bargain: a row written before the switch existed
-        // never asked, and asking is the default.
-        uiBlocks: row.uiBlocks ?? true,
+        // Null on a row from before the set existed: the old boolean decides,
+        // and a row older than that never asked either way, which is on.
+        suggestKinds: suggestKindsOf(row.suggestKinds, row.suggestFollowups),
+        // Null on a row from before the set existed: the legacy switch decides.
+        uiGroups: uiGroupsOf(row.uiGroups, row.uiBlocks),
+        askProfiles: row.askProfiles ?? {},
         titleFromPrompt: null,
         profile: null,
         project: null,
@@ -1327,6 +1269,15 @@ export class SessionManager {
        land a microtask later — after a purge has already deleted the row the
        event rows point at. Nothing is listening for them either way. */
     if (!this.sessions.has(session.id)) return;
+    /* A child thread's questions are its parent's to answer too: an ask or a
+       workflow step has nobody reading it, and a question parked there was a
+       turn stuck where no one would look. Repeated live on the parent — never
+       journaled, like the originals — under a namespaced id the parent's
+       socket routes back; the handover on attach is `childPendingEvents`. */
+    if (session.parentSessionId && (event.ev === "permission" || event.ev === "elicitation" || event.ev === "request_answered")) {
+      const parent = this.sessions.get(session.parentSessionId);
+      if (parent) this.emit(parent, forwardedRequest(session, event));
+    }
     /* A respawn that kept the journal is being handed the conversation back by
        `session/load`, and every word of it is already a row in that journal.
        Dropped here rather than by clearing the log first, because the clear is
@@ -1548,12 +1499,44 @@ export class SessionManager {
     });
   }
 
-  /** The live children of a thread — its workflow steps. */
+    /** The spawn-time facts for each suggestion kind the thread has on: one loader
+      per kind that needs any (`SUGGEST_LOADERS`), so a new kind that must name
+      something real is a loader here and nothing in the spawn path. */
+  private async loadSuggestData(session: Session, project: Project): Promise<Partial<Record<SuggestKind, unknown>>> {
+    const data: Partial<Record<SuggestKind, unknown>> = {};
+    await Promise.all(
+      session.suggestKinds.map(async (kind) => {
+        const load = SUGGEST_LOADERS[kind];
+        if (load) data[kind] = await load({ runner: this.workflowRunner, session, project });
+      }),
+    );
+    return data;
+  }
+
+/** The live children of a thread — its workflow steps. */
+  /** The questions a thread's live children are blocked on, as the events its
+      own peers get for them — the attach handover's half of the forwarding in
+      `emit`. */
+  childPendingEvents(id: string): ThreadEvent[] {
+    return this.childrenOf(id).flatMap((child) =>
+      (child.bridge?.pendingEvents() ?? []).map((event) => forwardedRequest(child, event as ThreadEvent & { requestId: string })),
+    );
+  }
+
+  /** Answer a child's question from its parent's socket. Null when the id is
+      not a child's, or the request is gone (a slower answerer). */
+  answerChild(parentId: string, id: string, response: unknown): { toolCallId?: string } | null {
+    const at = childRequest(id);
+    const child = at ? this.sessions.get(at.childId) : undefined;
+    if (!at || !child || child.parentSessionId !== parentId) return null;
+    return child.bridge?.answer(at.requestId, response) ?? null;
+  }
+
   childrenOf(id: string): Session[] {
     return [...this.sessions.values()].filter((s) => s.parentSessionId === id);
   }
 
-  setWorkflowRunner(runner: WorkflowUrlSource & HarnessUrlSource & BrowserUrlSource): void {
+  setWorkflowRunner(runner: WorkflowUrlSource & HarnessUrlSource): void {
     this.workflowRunner = runner;
   }
 
@@ -1710,10 +1693,13 @@ export class SessionManager {
       /** Whether the agent should close answers with follow-up suggestions —
           picked on the draft, and free there: nothing is
           running yet, so there is no respawn to pay for. */
-      suggestFollowups?: boolean;
+      suggestKinds?: string[];
       /** Whether answers may carry a drawn view — the same draft-picked,
           spawn-input bargain as the suggestions toggle. */
-      uiBlocks?: boolean;
+      /** Which component groups the drawn-answers lane teaches; absent = all. */
+      uiGroups?: string[];
+      /** Profile per agent id for `ask_agent`, picked on the draft; absent = ask. */
+      askProfiles?: AskProfiles;
       /** The thread's role → model assignment, picked on the draft
           (`docs/model-roles.md`) — a spawn input like model and effort: written
           on the row and read at spawn, so a later change costs a respawn.
@@ -1768,8 +1754,9 @@ export class SessionManager {
         model,
         effort,
         modeId: opts.modeId,
-        suggestFollowups: opts.suggestFollowups,
-        uiBlocks: opts.uiBlocks,
+        suggestKinds: opts.suggestKinds,
+        uiGroups: opts.uiGroups,
+        askProfiles: opts.askProfiles,
         helperModels: opts.helperModels,
         title: opts.title,
         parentSessionId: opts.parentSessionId,
@@ -1883,8 +1870,10 @@ export class SessionManager {
       model?: string;
       effort?: string;
       modeId?: string | null;
-      suggestFollowups?: boolean;
-      uiBlocks?: boolean;
+      suggestKinds?: string[];
+      uiGroups?: string[];
+      /** Profile per agent id for `ask_agent`, picked on the draft; absent = ask. */
+      askProfiles?: AskProfiles;
       helperModels?: { role: string; model: string }[];
       title?: string;
       parentSessionId?: string;
@@ -1926,8 +1915,8 @@ export class SessionManager {
          effort (not a selector the agent confirms), so it is written here
          rather than left for `onSpawnStateChange`. */
       helperModels: opts.helperModels ?? [],
-      suggestFollowups: opts.suggestFollowups ?? true,
-      uiBlocks: opts.uiBlocks ?? true,
+      suggestKinds: opts.suggestKinds ? normalizeSuggestKinds(opts.suggestKinds) : [...DEFAULT_SUGGEST_KINDS],
+      uiGroups: opts.uiGroups ? normalizeUiGroups(opts.uiGroups) : [...UI_GROUP_IDS],
       title: opts.title ?? "New thread",
       titleFromPrompt: null,
       acpSessionProvisional: false,
@@ -1948,6 +1937,7 @@ export class SessionManager {
       detachedAt: now,
       deletedAt: null,
       pinnedAt: null,
+      askProfiles: opts.askProfiles ?? {},
       exited: false,
       respawnChain: null,
       quietLoad: false,
@@ -2082,16 +2072,14 @@ export class SessionManager {
       session.id,
       agent,
       {
-        suggestFollowups: session.suggestFollowups,
+        suggestKinds: session.suggestKinds,
         /* A drawn view is read by a person; an unattended run's output goes to
            a log and wants prose it can grep. */
-        uiBlocks: session.uiBlocks && !unattended,
-        /* The project's own commands, for the recommendations trailer beside
-           the follow-ups. Only read when the thread is asking for suggestions at
-           all — a thread that is not pays neither the query nor the disk walk. */
-        commands: session.suggestFollowups
-          ? await recommendableCommands(project.id, project.cwd)
-          : undefined,
+        uiGroups: unattended ? [] : session.uiGroups,
+        /* What each enabled suggestion kind needs to know to be asked well,
+           read now so a respawn sees today's commands and agents. Only the kinds
+           the thread asked for are loaded — one that is off pays no query. */
+        suggestData: await this.loadSuggestData(session, project),
         /* Read now, not remembered: a respawn tells the agent where the card is
            and what it is called today. A workflow step has no harness MCP to
            act on it with, so it is told nothing. */
@@ -2229,15 +2217,7 @@ export class SessionManager {
     /* Managing the harness is one level too: a workflow step or a subagent is
        not the actor a person handed the harness to. */
     const harness = this.workflowRunner && !session.parentSessionId ? harnessServer(session, this.workflowRunner) : null;
-    /* The preview a person is watching belongs to a top-level thread's dock;
-       a workflow step or a subagent has nobody driving one. */
-    const browser = this.workflowRunner && !session.parentSessionId ? browserServer(session, this.workflowRunner) : null;
-    /* Only a thread that links the row is probed (and logged about). */
     const links = this.effectiveLinks(session, profile);
-    const video =
-      this.workflowRunner && !session.parentSessionId && links.mcpServerIds.includes("builtin:video")
-        ? videoServer(session, this.workflowRunner)
-        : null;
     const { servers: mcpServers, skipped } = await mcpServersFor(
       links,
       project,
@@ -2245,8 +2225,6 @@ export class SessionManager {
       workflow,
       agents,
       harness,
-      browser,
-      video,
     );
     if (skipped.length) {
       console.log(
@@ -2368,8 +2346,8 @@ export class SessionManager {
       project: Project;
       model?: string;
       effort?: string;
-      suggestFollowups?: boolean;
-      uiBlocks?: boolean;
+      suggestKinds?: string[];
+      uiGroups?: string[];
       helperModels?: { role: string; model: string }[];
     },
     opts: { defer?: boolean; follow?: boolean } = {},
@@ -2419,8 +2397,8 @@ export class SessionManager {
        `start` reads them off the session (it has to, since a revive with no
        caller spawns from the row alone). Written here so the process that
        comes back is the one the user asked for. */
-    if (next.suggestFollowups !== undefined) session.suggestFollowups = next.suggestFollowups;
-    if (next.uiBlocks !== undefined) session.uiBlocks = next.uiBlocks;
+    if (next.suggestKinds !== undefined) session.suggestKinds = normalizeSuggestKinds(next.suggestKinds);
+    if (next.uiGroups !== undefined) session.uiGroups = normalizeUiGroups(next.uiGroups);
     /* The role → model map is spawn-time like the toggles above: written here so
        the process that comes back reads it off the session at spawn. */
     if (next.helperModels !== undefined) session.helperModels = next.helperModels;
@@ -2519,8 +2497,8 @@ export class SessionManager {
       profileId: session.profileId,
       model: session.model,
       effort: session.effort,
-      suggestFollowups: session.suggestFollowups,
-      uiBlocks: session.uiBlocks,
+      suggestKinds: session.suggestKinds,
+      uiGroups: session.uiGroups,
       helperModels: session.helperModels,
     });
     /* The load came back without the conversation, so the journal is no longer
@@ -2554,8 +2532,8 @@ export class SessionManager {
       profile: Profile;
       model?: string;
       effort?: string;
-      suggestFollowups?: boolean;
-      uiBlocks?: boolean;
+      suggestKinds?: string[];
+      uiGroups?: string[];
       helperModels?: { role: string; model: string }[];
     },
   ): StagedConfig {
@@ -2564,8 +2542,8 @@ export class SessionManager {
       profileId: next.profile.id,
       ...(next.model !== undefined ? { model: next.model } : {}),
       ...(next.effort !== undefined ? { effort: next.effort } : {}),
-      ...(next.suggestFollowups !== undefined ? { suggestFollowups: next.suggestFollowups } : {}),
-      ...(next.uiBlocks !== undefined ? { uiBlocks: next.uiBlocks } : {}),
+      ...(next.suggestKinds !== undefined ? { suggestKinds: next.suggestKinds } : {}),
+      ...(next.uiGroups !== undefined ? { uiGroups: normalizeUiGroups(next.uiGroups) } : {}),
       ...(next.helperModels !== undefined ? { helperModels: next.helperModels } : {}),
     };
     this.setStaged(session, staged);
@@ -2690,8 +2668,8 @@ export class SessionManager {
           project,
           model,
           effort,
-          ...(staged.suggestFollowups !== undefined ? { suggestFollowups: staged.suggestFollowups } : {}),
-          ...(staged.uiBlocks !== undefined ? { uiBlocks: staged.uiBlocks } : {}),
+          ...(staged.suggestKinds !== undefined ? { suggestKinds: staged.suggestKinds } : {}),
+          ...(staged.uiGroups !== undefined ? { uiGroups: staged.uiGroups } : {}),
           ...(staged.helperModels !== undefined ? { helperModels: staged.helperModels } : {}),
         },
         { defer: false },
@@ -2829,8 +2807,12 @@ export class SessionManager {
       Agent: agent?.name ?? session.agentId,
       Model: model?.label || session.model || "Default",
       Effort: session.effort || "Default",
-      "Follow-ups": session.suggestFollowups ? "On" : "Off",
-      "Drawn UI": session.uiBlocks ? "On" : "Off",
+      "Follow-ups": session.suggestKinds.length ? session.suggestKinds.join(", ") : "Off",
+      "Drawn UI": !session.uiGroups.length
+        ? "Off"
+        : session.uiGroups.length < UI_GROUP_IDS.length
+          ? `${session.uiGroups.length} of ${UI_GROUP_IDS.length} groups`
+          : "All",
       // Never diffed here: the mode travels its own door and writes its own row
       // (`AcpBridge.setMode`). Present so the record is total.
       Mode: session.modeId ?? "",
@@ -2882,8 +2864,8 @@ export class SessionManager {
       project: Project;
       model?: string;
       effort?: string;
-      suggestFollowups?: boolean;
-      uiBlocks?: boolean;
+      suggestKinds?: string[];
+      uiGroups?: string[];
       helperModels?: { role: string; model: string }[];
     },
   ): Promise<boolean> {
@@ -2897,9 +2879,9 @@ export class SessionManager {
     /* Nothing to be clever about: `_meta` is read at `session/new`/`session/load`
        and codex's config is read at spawn. The suggestions trailer is spawn text, so a
        thread that flips it needs the new process rather than a live patch. */
-    if (next.suggestFollowups !== undefined && next.suggestFollowups !== session.suggestFollowups) return false;
+    if (next.suggestKinds !== undefined && !sameSuggestKinds(next.suggestKinds, session.suggestKinds)) return false;
     /* As are the drawn-UI lane's instructions, for the same reason. */
-    if (next.uiBlocks !== undefined && next.uiBlocks !== session.uiBlocks) return false;
+    if (next.uiGroups !== undefined && !sameUiGroups(next.uiGroups, session.uiGroups)) return false;
     // Mid-respawn, mid-revive, or no process: whatever is about to exist is
     // going to be spawned with these settings anyway.
     if (session.respawnChain || !session.bridge || session.exited) return false;
@@ -2970,8 +2952,8 @@ export class SessionManager {
       profileId: session.profileId,
       model,
       effort,
-      suggestFollowups: session.suggestFollowups,
-      uiBlocks: session.uiBlocks,
+      suggestKinds: session.suggestKinds,
+      uiGroups: session.uiGroups,
       helperModels: session.helperModels,
     });
     /* What moved is said by `applyConfig`, which owns both outcomes and can
@@ -3126,8 +3108,8 @@ export class SessionManager {
       /* The row moves before the spawn rather than being passed to it: the
          toggles are not spawn arguments the way model and effort are, `start`
          reads them off the session. Same bargain as `applyConfig`'s. */
-      if (staged.suggestFollowups !== undefined) session.suggestFollowups = staged.suggestFollowups;
-      if (staged.uiBlocks !== undefined) session.uiBlocks = staged.uiBlocks;
+      if (staged.suggestKinds !== undefined) session.suggestKinds = normalizeSuggestKinds(staged.suggestKinds);
+      if (staged.uiGroups !== undefined) session.uiGroups = normalizeUiGroups(staged.uiGroups);
       if (staged.helperModels !== undefined) session.helperModels = staged.helperModels;
       await this.applyStagedLinks(session, staged);
     }
@@ -3256,8 +3238,8 @@ export class SessionManager {
         profileId: session.profileId,
         model: session.model,
         effort: session.effort,
-          suggestFollowups: session.suggestFollowups,
-        uiBlocks: session.uiBlocks,
+        suggestKinds: session.suggestKinds,
+        uiGroups: session.uiGroups,
         helperModels: session.helperModels,
       });
     }
@@ -3460,8 +3442,8 @@ export class SessionManager {
       model: session.model || undefined,
       effort: session.effort || undefined,
       modeId: session.modeId,
-      suggestFollowups: session.suggestFollowups,
-      uiBlocks: session.uiBlocks,
+      suggestKinds: session.suggestKinds,
+      uiGroups: session.uiGroups,
       /* A name the user did not type is still a name the sniff must not
          replace — which is why it is set here rather than left to the
          "New thread" default. */
@@ -3872,8 +3854,8 @@ export class SessionManager {
       effort: s.effort,
       modeId: s.modeId,
       helperModels: s.helperModels,
-      suggestFollowups: s.suggestFollowups,
-      uiBlocks: s.uiBlocks,
+      suggestKinds: s.suggestKinds,
+      uiGroups: s.uiGroups,
       title: s.title,
       ...s.links,
       /* The session anything asking today would mean: a task transcript's
@@ -3886,6 +3868,7 @@ export class SessionManager {
       lastTurnError: s.lastTurnError,
       deletedAt: s.deletedAt,
       pinnedAt: s.pinnedAt,
+      askProfiles: s.askProfiles,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,
       /* A collapsed process keeps its bridge object (the generation token),
@@ -3955,6 +3938,25 @@ export class SessionManager {
     session.pinnedAt = pinned ? Date.now() : null;
     this.persist(session);
     return session.pinnedAt;
+  }
+
+  /**
+   * Replace which profile `ask_agent` uses for each agent on this thread. Only
+   * a pair `ask` could reach is accepted — the list the asker sees — so a
+   * stale id can never be stored.
+   */
+  async setAskProfiles(id: string, askProfiles: AskProfiles): Promise<AskProfiles | undefined> {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+    const known = (await this.workflowRunner?.pairs(session)) ?? [];
+    for (const [agentId, { profileId, model }] of Object.entries(askProfiles)) {
+      const hit = known.find((p) => p.profileId === profileId && p.agentId === agentId);
+      if (!hit) throw new HttpError(`profile "${profileId}" cannot run agent "${agentId}"`, 400);
+      if (model && !hit.models.includes(model)) throw new HttpError(`${hit.profile} has no model "${model}"`, 400);
+    }
+    session.askProfiles = { ...askProfiles };
+    this.persist(session);
+    return session.askProfiles;
   }
 
   /**
@@ -4044,8 +4046,8 @@ export class SessionManager {
         profileId: session.profileId,
         model: "",
         effort: "",
-        suggestFollowups: session.suggestFollowups,
-        uiBlocks: session.uiBlocks,
+        suggestKinds: session.suggestKinds,
+        uiGroups: session.uiGroups,
         helperModels: [],
       });
       moved.push(session.id);
@@ -4100,6 +4102,8 @@ export class SessionManager {
       session-socket.ts, behind a port of exactly the methods it needs. */
   private socket = new SessionSocket({
     getSession: (id) => this.sessions.get(id),
+    childPendingEvents: (id) => this.childPendingEvents(id),
+    answerChild: (parentId, requestId, response) => this.answerChild(parentId, requestId, response),
     whenAdopted: (id) => this.whenAdopted(id),
     journal: this.log,
     prompt: async (id, text, peer, opts) => await this.prompt(id, text, peer, opts),
@@ -4193,8 +4197,8 @@ function hasSpawnFields(staged: StagedConfig): boolean {
     staged.profileId !== undefined ||
     staged.model !== undefined ||
     staged.effort !== undefined ||
-    staged.suggestFollowups !== undefined ||
-    staged.uiBlocks !== undefined ||
+    staged.suggestKinds !== undefined ||
+    staged.uiGroups !== undefined ||
     staged.helperModels !== undefined
   );
 }
@@ -4214,6 +4218,14 @@ function modelFor(session: Session, profile: Profile, model: string | undefined)
   return profile.id === session.profileId ? model : "";
 }
 
+/** A child's request event as its parent's peers get it. */
+function forwardedRequest(child: Session, event: ThreadEvent & { requestId: string }): ThreadEvent {
+  const requestId = childRequestId(child.id, event.requestId);
+  return event.ev === "request_answered"
+    ? { ...event, requestId }
+    : ({ ...event, requestId, from: { sessionId: child.id, title: child.title } } as ThreadEvent);
+}
+
 /** The durable half of a session, as the row shape. */
 /** Where a thread's agent runs: its worktree, or the project's own cwd. */
 export function threadCwd(session: Pick<Session, "worktree">, project: Pick<Project, "cwd">): string {
@@ -4231,8 +4243,8 @@ function rowValues(s: Session) {
     modeId: s.modeId,
     configChoices: s.configChoices,
     helperModels: s.helperModels,
-    suggestFollowups: s.suggestFollowups,
-    uiBlocks: s.uiBlocks,
+    suggestKinds: s.suggestKinds,
+    uiGroups: normalizeUiGroups(s.uiGroups),
     title: s.title,
     worktree: s.worktree,
     acpSessionId: s.acpSessionId ?? null,
@@ -4244,6 +4256,7 @@ function rowValues(s: Session) {
     tps: s.tps,
     deletedAt: s.deletedAt,
     pinnedAt: s.pinnedAt,
+    askProfiles: s.askProfiles,
     parentSessionId: s.parentSessionId,
     forkedFromSessionId: s.forkedFromSessionId,
     forkedFromTurnId: s.forkedFromTurnId,

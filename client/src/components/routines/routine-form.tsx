@@ -36,7 +36,8 @@
      between changing a permission and committing it is zero wherever you are.
 
    `sectionBar={false}` is for the routine page's Settings tab, which already
-   sits under that page's own `TabBar`: two sticky bars at one offset overlap.
+   sits under that page's own `TabBar`: two tracks one under the other are two
+   navigations for one page, and the outer one is the one the page is about.
    Every section is always mounted: `DraftScopeRow` probes the agent's option
    set on mount, and a half-typed JSON schema keeps its cursor. */
 import * as React from "react"

@@ -35,6 +35,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
 import { describeError } from "@/lib/errors"
+import { usePinnedBranches } from "@/lib/pinned-branches"
 import { useProfiles } from "@/lib/queries/catalog"
 import { useGitBranches } from "@/lib/queries/surfaces"
 import { useServer } from "@/lib/server-context"
@@ -82,14 +83,16 @@ export function BranchPicker({
      hold a status, and neither should be paying for a ref walk to print one
      name. */
   const { data } = useGitBranches(projectId, repo, open)
+  const pinned = usePinnedBranches(projectId, repo)
 
   /* Sets, built once per fetch: with thousands of refs the old
      `locals.includes` inside a filter over the remotes was quadratic, and it
      ran again on every keystroke. */
   const { locals, remotes, known } = React.useMemo(() => {
     const all = data?.branches ?? []
-    // The checked-out branch first, so the cap below never hides its tick.
-    const locals = branch && all.includes(branch) ? [branch, ...all.filter((b) => b !== branch)] : all
+    // The checked-out branch, then the pinned ones, first, so the cap below never hides them.
+    const front = [branch, ...pinned.filter((b) => b !== branch)].filter((b): b is string => !!b && all.includes(b))
+    const locals = front.length ? [...front, ...all.filter((b) => !front.includes(b))] : all
     const localSet = new Set(locals)
     const known = new Set(locals)
     /* A remote whose local branch already exists is not an offer — switching to
@@ -101,7 +104,7 @@ export function BranchPicker({
       return !localSet.has(local)
     })
     return { locals, remotes, known }
-  }, [data, branch])
+  }, [data, branch, pinned])
 
   const needle = typed.trim().toLowerCase()
   const match = (name: string) => !needle || name.toLowerCase().includes(needle)

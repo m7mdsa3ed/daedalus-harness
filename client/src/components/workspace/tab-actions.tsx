@@ -30,10 +30,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Dialog, DialogClose, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useStoreSelect } from "@/lib/store"
 import { useIsMobile } from "@/hooks/use-device"
@@ -66,66 +71,10 @@ export const TAB_GRID_EVENT = "daedalus:tab-grid"
    at 16px. One recipe, so the toggle, the + and the switcher cannot drift. */
 const STRIP_CONTROL = HEADER_CHIP
 
-function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
-  const kind = panel.api.component
-  const Icon = isPanelKind(kind) ? PANEL_ICONS[kind] : null
-  const title = panel.title ?? (isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : "Panel")
-  const status = usePanelStatus(panel.id)
-  const pinned = usePanelPinned(panel.id)
-  const active = panel.api.isActive
-
-  return (
-    <DropdownMenuItem
-      onClick={() => panel.api.setActive()}
-      /* What the ✕ beside the row does, for the reader who arrowed here rather
-         than pointed at it — the same key the tab strip itself answers to. */
-      onKeyDown={(event) => {
-        if (pinned || event.key !== "Delete") return
-        event.preventDefault()
-        onClose()
-      }}
-      /* The row for the tab you are already on. `aria-current` and not
-         `aria-selected`: this is a menu, and a menu row that says "selected"
-         claims a state a `menuitem` does not have. The tint is the same fact
-         for a reader who is looking rather than listening. */
-      aria-current={active ? "true" : undefined}
-      className={cn("gap-2 max-md:min-h-11", active && "bg-accent/60")}
-    >
-      {Icon && <Icon className="text-muted-foreground" />}
-      <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>{title}</span>
-      {pinned && <PinIcon aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
-      <PanelStatusDot status={status} />
-      {/* Closing from the list, so a tab that has scrolled out of the strip can
-          be got rid of without being brought back into it first. Pinned rows
-          keep the pin instead — the same trade the tab itself makes.
-
-          `tabIndex={-1}` for the reason the tab's own controls carry it: a
-          focusable child of a `menuitem` is a second stop inside a widget whose
-          arrow keys own the movement. It keeps its name, so it is still read
-          out as part of the row and still reachable in a screen reader's browse
-          mode; the `Delete` above is the way to it from the arrow keys. */}
-      {!pinned && (
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          tabIndex={-1}
-          aria-label={`Close ${title}`}
-          className="-mr-1 size-5 opacity-60 hover:opacity-100"
-          onClick={(event) => {
-            event.stopPropagation()
-            event.preventDefault()
-            onClose()
-          }}
-        >
-          <XIcon className="size-3" />
-        </Button>
-      )}
-    </DropdownMenuItem>
-  )
-}
-
-/* The phone's switcher, Chrome Android's: the strip's button is a rounded square
-   holding the tab count, and it opens a full panel of rows. */
+/* The switcher, on every width: a `ResponsiveDialog`, so it is a bottom sheet on
+   a phone (Chrome Android's: the strip's button is the tab count) and a centred
+   dialog beside the chevron on a desktop. One list of rows for both - the
+   dropdown this replaced drew its own copy of them. */
 function TabGrid({
   panels,
   onClose,
@@ -158,36 +107,33 @@ function TabGrid({
     window.addEventListener(TAB_GRID_EVENT, show)
     return () => window.removeEventListener(TAB_GRID_EVENT, show)
   }, [])
+  const isMobile = useIsMobile()
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title={`Switch tabs (${panels.length})`}
-            aria-label={`Switch tabs, ${panels.length} open`}
-            className={STRIP_CONTROL}
-          />
-        }
+    <>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title={`Switch tabs (${panels.length})`}
+        aria-label={`Switch tabs, ${panels.length} open`}
+        className={STRIP_CONTROL}
+        onClick={() => setOpen(true)}
       >
-        {/* The count is the glyph: bare, like the toggle's icon, never a tile. */}
-        <span className="text-[13px] leading-none font-semibold tabular-nums">{panels.length}</span>
-      </DialogTrigger>
-      <DialogContent
-        showCloseButton={false}
-        className="flex h-[calc(var(--float-h)-1rem)] w-[calc(var(--float-w)-1rem)] max-w-none flex-col gap-0 overflow-hidden p-0"
-      >
-        <header className="flex shrink-0 items-center gap-2 border-b border-border/60 py-2.5 pr-2 pl-4">
-          <DialogTitle className="text-base font-semibold tracking-tight">Tabs</DialogTitle>
-          <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[11px] leading-none font-semibold text-muted-foreground tabular-nums">
-            {panels.length}
-          </span>
-          <div className="ml-auto flex items-center gap-0.5">
-            {/* The same tidy-up the desktop list carries, for the strip a phone
-                folds to one tab: the grid is the only place the others are, so it
-                is the only place the group can be closed from. Closing the grid
-                first keeps the panel from standing over a dock that is now empty. */}
+        {/* On a phone the count is the glyph: bare, like the toggle's icon. */}
+        {isMobile ? (
+          <span className="text-[13px] leading-none font-semibold tabular-nums">{panels.length}</span>
+        ) : (
+          <ChevronDownIcon className="size-4" />
+        )}
+      </Button>
+      <ResponsiveDialog open={open} onOpenChange={setOpen}>
+        <ResponsiveDialogContent bodyClassName="gap-0.5 px-2 py-2" className="sm:max-w-md">
+          <ResponsiveDialogHeader className="flex-row items-center gap-2 py-3">
+            <ResponsiveDialogTitle className="text-base font-semibold tracking-tight">Tabs</ResponsiveDialogTitle>
+            <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[11px] leading-none font-semibold text-muted-foreground tabular-nums">
+              {panels.length}
+            </span>
+            {/* The group's own tidy-up. Closing the panel first keeps it from
+                standing over a dock that is now empty. */}
             {panels.length > 1 && (
               <button
                 type="button"
@@ -195,27 +141,12 @@ function TabGrid({
                   setOpen(false)
                   onCloseAll()
                 }}
-                className="rounded-full px-3 py-1.5 text-[13px] font-medium text-muted-foreground active:bg-foreground/10"
+                className="ml-auto rounded-full px-3 py-1.5 text-[13px] font-medium text-muted-foreground hover:bg-foreground/5 active:bg-foreground/10"
               >
                 Close all
               </button>
             )}
-            <DialogClose
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Close tabs"
-                  className="text-muted-foreground"
-                />
-              }
-            >
-              <XIcon className="size-4" />
-            </DialogClose>
-          </div>
-        </header>
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 py-2">
+          </ResponsiveDialogHeader>
           {panels.map((panel) => (
             <TabCard key={panel.id} panel={panel} onPick={() => setOpen(false)} onClose={() => onClose(panel.id)} />
           ))}
@@ -233,7 +164,7 @@ function TabGrid({
                     setOpen(false)
                     onOpenThread(s.id)
                   }}
-                  className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left active:bg-foreground/5"
+                  className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left hover:bg-foreground/5 active:bg-foreground/5"
                 >
                   <span className="min-w-0 flex-1 truncate text-[13px]">{s.title || "Untitled thread"}</span>
                   <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -243,24 +174,24 @@ function TabGrid({
               ))}
             </>
           )}
-        </div>
-        {onNew && (
-          <footer className="shrink-0 border-t border-border/60 p-2">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false)
-                onNew()
-              }}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground/5 text-sm font-medium text-foreground active:bg-foreground/10"
-            >
-              <PlusIcon className="size-4" />
-              New tab
-            </button>
-          </footer>
-        )}
-      </DialogContent>
-    </Dialog>
+          {onNew && (
+            <ResponsiveDialogFooter className="flex-col justify-stretch px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  onNew()
+                }}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground/5 text-sm font-medium text-foreground hover:bg-foreground/10 active:bg-foreground/10"
+              >
+                <PlusIcon className="size-4" />
+                New tab
+              </button>
+            </ResponsiveDialogFooter>
+          )}
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
+    </>
   )
 }
 
@@ -280,7 +211,7 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
     <div
       className={cn(
         "flex min-h-12 items-center rounded-xl transition-colors",
-        active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "active:bg-foreground/5"
+        active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-foreground/5 active:bg-foreground/5"
       )}
     >
       <button
@@ -410,7 +341,7 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
           and nothing else, so the list is the switcher from two tabs up: it is
           the only place the other one is, by name. The + stays either way, which
           is the whole reason this row no longer returns null. */}
-      {isMobile && (
+      {(isMobile || panels.length >= LIST_FROM) && (
         <TabGrid
           panels={panels}
           onClose={(id) => void dock.closePanel(id)}
@@ -424,54 +355,6 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
             })
           }
         />
-      )}
-      {!isMobile && panels.length >= LIST_FROM && (
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label="All tabs in this group"
-                    className={STRIP_CONTROL}
-                  >
-                    <ChevronDownIcon className="size-4" />
-                  </Button>
-                }
-              />
-            }
-          />
-          <TooltipContent side="bottom">{panels.length} tabs</TooltipContent>
-        </Tooltip>
-        {/* Sized to its rows, not to the 24px button it hangs off — the same
-            fix `workspace/panel-items` needed for the same reason. */}
-        <DropdownMenuContent
-          align="end"
-          className="w-auto max-w-[min(22rem,calc(var(--float-w)-1.5rem))] min-w-56"
-        >
-          {panels.map((panel) => (
-            <TabRow key={panel.id} panel={panel} onClose={() => void dock.closePanel(panel.id)} />
-          ))}
-          {/* The group's own close-all, at the foot of its list. The per-tab ⋮
-              carries the same row; a reader tidying a strip should not have to
-              open one tab's menu to close the rest of them. It closes the tabs
-              of *this* strip — the +'s own group — and steps over pinned tabs,
-              exactly as the row in the tab menu does. Named for a lone tab it
-              is meaningless, so it is disabled rather than hidden: a list whose
-              actions move as tabs close is worse than a row that says "not yet". */}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            disabled={panels.length < 2}
-            onClick={() => panels[0] && void dock.closeGroup(panels[0].id)}
-            className={MENU_ROW}
-          >
-            <MenuRow icon={<XIcon />} label="Close all" />
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
       )}
     </div>
   )

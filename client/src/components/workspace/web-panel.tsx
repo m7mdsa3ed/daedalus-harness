@@ -30,7 +30,6 @@ import {
   CrosshairIcon,
   EraserIcon,
   ExternalLinkIcon,
-  MousePointerClickIcon,
   MonitorIcon,
   RefreshCwIcon,
   SmartphoneIcon,
@@ -56,7 +55,6 @@ import { FilePreview } from "@/components/workspace/file-preview"
 import type { WebDiff } from "@/lib/workspace/panels"
 import { DiffTab } from "@/components/workspace/diff-tab"
 import { useThreadDockHandle, useThreadDockSession } from "@/components/workspace/thread-dock"
-import { hostBrowser } from "@/lib/browser-host"
 import {
   elementPrompt,
   useGuestConsole,
@@ -154,7 +152,7 @@ function GuestView({
   viewRef: React.RefObject<WebviewElement | null>
   onLoaded: () => void
   onNavigated: (nav: GuestNav) => void
-  /** The guest's webContents id once it is attached — what Drive addresses —
+  /** The guest's webContents id once it is attached — what the picker and console address —
       and null when it goes. */
   onGuest: (id: number | null) => void
 }) {
@@ -265,19 +263,8 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const viewRef = React.useRef<WebviewElement | null>(null)
   const [nav, setNav] = React.useState<GuestNav | null>(null)
 
-  /* ── Drive ──
-     The agent's `chrome-devtools-mcp` (the `builtin:browser` row) connects to
-     *this* page while Drive is on: the thread's own Preview, in the desktop
-     shell, at project trust. Off by default and per panel — it is a hand on
-     the page the person is looking at, given each time. */
   const threadId = useThreadDockSession()
   const [guestId, setGuestId] = React.useState<number | null>(null)
-  const [drive, setDrive] = React.useState(false)
-  const canDrive = GUEST && !!window.desktop?.cdp && !!threadId && trust === "project"
-  React.useEffect(() => {
-    if (!drive || !canDrive || !threadId || guestId === null) return
-    return hostBrowser(settings, threadId, guestId, () => setDrive(false))
-  }, [drive, canDrive, threadId, guestId, settings])
 
   /* ── Pick element ──
      The person points at something on the page, and the panel turns the click
@@ -626,20 +613,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             <entry.icon className="size-3.5" />
           </Button>
         ))}
-
-        {canDrive && (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Let the agent drive this preview"
-            aria-pressed={drive}
-            title={drive ? "The agent can drive this preview — click to stop" : "Let the agent drive this preview (Preview browser tools)"}
-            className={cn("size-6", drive && "text-primary")}
-            onClick={() => setDrive((on) => !on)}
-          >
-            <MousePointerClickIcon className="size-3.5" />
-          </Button>
-        )}
 
         {canInspect && (
           <Button

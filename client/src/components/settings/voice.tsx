@@ -312,7 +312,8 @@ export function VoicePage() {
             onRowClick={({ preset }) => configure(preset.id)}
             emptyIcon={AudioLines}
             emptyText="No voice backends."
-            viewToggle={false}
+            search={{ placeholder: "Search backends…", matches: ({ preset, row }, n) => `${preset.label} ${row?.model ?? preset.model} ${row?.voice || preset.voice}`.toLowerCase().includes(n) }}
+            fields={[{ id: "status", label: "Status", of: ({ row }) => (row?.hasKey ? "Key stored" : "No key") }]}
           />
         </div>
       )}

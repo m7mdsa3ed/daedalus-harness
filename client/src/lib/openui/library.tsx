@@ -29,8 +29,8 @@
    ACP call. `bindings` and `toolCalls` are off in the prompt for that reason
    (`scripts/gen-openui.mjs`). */
 import { z } from "zod/v4"
-import { createContext, useContext, useId, useState, type CSSProperties, type ReactNode } from "react"
-import { Check, ChevronRight, Maximize2, Minus, Plus, X } from "lucide-react"
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import { Check, ChevronDown, ChevronRight, Image as ImageIcon, Maximize2, MapPin, Minus, Navigation, Plus, Star, X } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -61,65 +61,19 @@ import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components
 import { Notice } from "@/components/notice"
 import { TodoChecklist } from "@/components/todo-checklist"
 import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
+import { usePlacePhoto, type PlacePhoto } from "@/lib/openui/place-photo"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
+import { BODY, Box, BoxHeader, CHIP, chartColor, FLOW, HAIRLINE, INSET, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT } from "@/lib/openui/kit"
+import { UI_GROUPS } from "@/lib/openui/groups"
+import { FileTree } from "@/lib/openui/components/FileTree"
+import { Quadrant } from "@/lib/openui/components/Quadrant"
+import { Quote } from "@/lib/openui/components/Quote"
+import { Sequence } from "@/lib/openui/components/Sequence"
+import { Steps } from "@/lib/openui/components/Steps"
+import { Terminal } from "@/lib/openui/components/Terminal"
 
-/* ── The system ── */
-
-const TITLE = "break-words text-[13.5px] leading-snug font-semibold tracking-tight text-foreground"
-const BODY = "break-words text-[13px] leading-relaxed text-foreground/90"
-const META = "break-words text-xs leading-snug text-muted-foreground"
-const LABEL = "break-words text-[10.5px] leading-tight font-medium tracking-[0.06em] uppercase text-muted-foreground"
-const PAD = "px-3 py-2.5 @panel-sm:px-3.5 @panel-sm:py-3"
-const PAD_ROW = "px-3 py-2 @panel-sm:px-3.5"
-/** Between siblings, everywhere: a stack, a card's body, a tab's panel. */
-const FLOW = "flex w-full min-w-0 flex-col gap-2.5 @panel-sm:gap-3"
-const HAIRLINE = "border-border/60"
-
-const FRAME = "rounded-xl border border-border/70 bg-card shadow-xs"
-const INSET = "rounded-lg border border-border/40 bg-muted/40"
-
-type Surface = "page" | "frame" | "cell"
-const SurfaceContext = createContext<Surface>("page")
-
-/** The one framed thing. What it looks like is where it is, never the caller's
-    choice — which is the whole of "styled the same". Its children are inside a
-    frame, so anything framed among them draws as a well. */
-function Box({ className, children, style }: { className?: string; children: ReactNode; style?: CSSProperties }) {
-  const surface = useContext(SurfaceContext)
-  return (
-    <SurfaceContext.Provider value="frame">
-      <div
-        className={cn(
-          "w-full min-w-0 overflow-hidden",
-          surface === "page" ? FRAME : surface === "frame" ? INSET : "bg-card",
-          className
-        )}
-        style={style}
-      >
-        {children}
-      </div>
-    </SurfaceContext.Provider>
-  )
-}
-
-/** A frame's top band: a name and what qualifies it, over a hairline. */
-function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode }) {
-  return (
-    <header className={cn("min-w-0 space-y-0.5 border-b", HAIRLINE, PAD_ROW, "py-2.5")}>
-      <div className={TITLE}>{title}</div>
-      {meta && <div className={cn(META, "text-pretty")}>{meta}</div>}
-    </header>
-  )
-}
-
-const TONE_DOT = {
-  neutral: "bg-muted-foreground/50",
-  info: "bg-chart-2",
-  success: "bg-primary",
-  warn: "bg-chart-3",
-  error: "bg-destructive",
-} as const
+/* ── The system ── (lives in kit.tsx) */
 
 /* ── Layout ── */
 
@@ -337,9 +291,17 @@ function numericColumns(columns: string[], rows: string[][]) {
  * has to declare a column set *and* keep its rows in that order gets the pairing
  * wrong far more often than it gets one array of strings wrong.
  *
- * The frame is the scroll container, so a table wider than a phone panel
- * scrolls inside the turn rather than widening it. `tone`: `muted` greys the
- * cells; otherwise the first column is the row's name and wears it.
+ * Two shapes, one data, and three columns is the line between them: past
+ * `@panel-sm` it is always the grid, and below it a row of three or more is a
+ * block — the first column is the block's name and every other column is a named
+ * fact under it. A five-column table squeezed into a phone panel was a sideways
+ * scroller that showed two columns and hid the rest; a list shows all of them at
+ * the width it has. Two columns fit at any width, so they stay a table. Only one
+ * shape is ever drawn (`display:none`, never merely off-screen), so a screen
+ * reader hears the data once.
+ *
+ * `tone`: `muted` greys the cells; otherwise the first column is the row's name
+ * and wears it.
  */
 const Table = defineComponent({
   name: "Table",
@@ -352,10 +314,62 @@ const Table = defineComponent({
   }),
   component: ({ props }) => {
     const numeric = numericColumns(props.columns, props.rows)
+    const muted = props.tone === "muted"
+    // Two columns (a name and its value) still fit a phone panel, and stacking
+    // them would put a column label above every row for nothing.
+    const stacked = props.columns.length > 2
     const cell = "px-3 py-2 align-top first:ps-3 last:pe-3 @panel-sm:first:ps-3.5 @panel-sm:last:pe-3.5"
     return (
       <Box>
-        <div className="w-full overflow-x-auto">
+        {/* Narrow: one block per row. The name is the block's head, and a column
+            with nothing in that row is left out rather than drawn as a label
+            with a blank beside it. */}
+        {stacked && (
+          <ul className="w-full min-w-0 list-none @panel-sm:hidden">
+            {props.rows.map((row, rowIndex) => {
+              const facts = props.columns
+                .map((column, index) => ({ column, value: (row[index] ?? "").trim(), index }))
+                .slice(1)
+                .filter((fact) => fact.value !== "")
+              return (
+                <li
+                  key={rowIndex}
+                  className={cn("min-w-0 border-b last:border-b-0", HAIRLINE, PAD_ROW, "space-y-1 py-2.5")}
+                >
+                  <p
+                    className={cn(
+                      "min-w-0 text-[13px] leading-snug font-medium",
+                      muted ? "text-muted-foreground" : "text-foreground"
+                    )}
+                  >
+                    {(row[0] ?? "").trim() || "—"}
+                  </p>
+                  {facts.length > 0 && (
+                    <dl className="min-w-0 space-y-0.5">
+                      {facts.map((fact) => (
+                        <div key={fact.index} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
+                          <dt className={cn(LABEL, "min-w-0 text-[9.5px]")}>{fact.column}</dt>
+                          <dd
+                            className={cn(
+                              "ms-auto min-w-0 text-end text-[12.5px] break-words",
+                              muted ? "text-muted-foreground" : "text-foreground/90",
+                              numeric[fact.index] && "tabular-nums"
+                            )}
+                          >
+                            {fact.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {/* Wide: the grid. The frame is the scroll container, so a table still
+            wider than the panel scrolls inside the turn rather than widening it. */}
+        <div className={cn("w-full min-w-0 overflow-x-auto", stacked && "hidden @panel-sm:block")}>
           <table className="w-full border-collapse text-[13px]">
             {props.header !== false && (
               <thead className="bg-muted/40">
@@ -378,8 +392,8 @@ const Table = defineComponent({
                         cell,
                         "min-w-24 break-words text-foreground/90",
                         numeric[cellIndex] && "min-w-0 text-end whitespace-nowrap tabular-nums",
-                        props.tone === "muted" && "text-muted-foreground",
-                        cellIndex === 0 && props.tone !== "muted" && "font-medium text-foreground"
+                        muted && "text-muted-foreground",
+                        cellIndex === 0 && !muted && "font-medium text-foreground"
                       )}
                     >
                       {row[cellIndex] ?? ""}
@@ -506,7 +520,8 @@ const Image = defineComponent({
   component: ({ props }) => <GeneratedImage {...props} />,
 })
 
-function GeneratedImage({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
+/** What an `src` is: a `data:` image (drawn at once) or an http(s) host (drawn on a click). */
+function imageSource(src: string) {
   const inline = /^data:image\/(png|jpe?g|gif|webp);/i.test(src)
   let host: string | null = null
   try {
@@ -515,6 +530,11 @@ function GeneratedImage({ src, alt, caption }: { src: string; alt: string; capti
   } catch {
     /* not a URL — drawn as the alt text below */
   }
+  return { inline, host }
+}
+
+function GeneratedImage({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
+  const { inline, host } = imageSource(src)
   const [shown, setShown] = useState(inline)
   const [failed, setFailed] = useState(false)
   if (failed || (!shown && !host)) {
@@ -567,7 +587,7 @@ const Badges = defineComponent({
       {props.items.map((item, index) => (
         <span
           key={index}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-0.5 text-xs font-medium text-foreground/90 shadow-xs"
+          className={CHIP}
         >
           <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[item.tone ?? "neutral"])} />
           <span className="min-w-0 break-words">{item.text}</span>
@@ -771,6 +791,237 @@ const Gallery = defineComponent({
   ),
 })
 
+/** Places, products, options. A card is a banner (the photo, else a colour wash with
+    the name's initial), a number, a meta chip, text and tags. A photo keeps
+    `Image`'s rule: a remote one loads on a click naming its host. A card with
+    coordinates has a "Show on map" button, and the map is ONE panel under the whole
+    grid, never inside a card - picking another card re-points it, and it is not
+    mounted (a billed load) until the first pick. */
+const CardGrid = defineComponent({
+  name: "CardGrid",
+  description:
+    "A grid of rich cards, each with a title, optional photo (https or data: URL) with alt, short text, meta line (distance or time), tags, a 0-5 rating, a price line, up to four facts (label and value, e.g. Best time, Stay) and optional latitude/longitude that adds a Show on map button. The map opens in one panel at the bottom of the grid, only when a card is picked. Optional origin (label, latitude, longitude) adds driving directions from there to the picked card. Set carousel to true to swipe through the cards in a row instead of a grid (for more than four). Good for places, hotels or products.",
+  props: z.object({
+    items: z.array(
+      z.object({
+        title: z.string(),
+        text: z.string().optional(),
+        meta: z.string().optional(),
+        image: z.string().optional(),
+        alt: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        rating: z.number().min(0).max(5).optional(),
+        price: z.string().optional(),
+        facts: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
+        latitude: z.number().min(-90).max(90).optional(),
+        longitude: z.number().min(-180).max(180).optional(),
+      })
+    ),
+    origin: z.object({ label: z.string(), latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180) }).optional(),
+    carousel: z.boolean().optional(),
+  }),
+  component: ({ props }) => <CardGridView {...props} />,
+})
+
+type GridOrigin = { label: string; latitude: number; longitude: number }
+type GridItem = {
+  title: string; text?: string; meta?: string; image?: string; alt?: string; tags?: string[]
+  rating?: number; price?: string; facts?: { label: string; value: string }[]
+  latitude?: number; longitude?: number
+}
+
+function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?: GridOrigin; carousel?: boolean }) {
+  const [picked, setPicked] = useState<number | null>(null)
+  // One consent for every photo in the set: the hosts it names, and the server looking places up.
+  const [photos, setPhotos] = useState(false)
+  const panel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (picked !== null) panel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+  }, [picked])
+  // The parser hands back fresh arrays while a fence streams; keep the map's inputs stable.
+  const key = JSON.stringify([items.map((i) => [i.title, i.latitude, i.longitude]), origin])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const places = useMemo(() => items.map((item, index) => ({ item, index })).filter(({ item }) => item.latitude !== undefined && item.longitude !== undefined), [key])
+  const locations = useMemo(
+    () => [
+      ...(origin ? [{ label: origin.label, latitude: origin.latitude, longitude: origin.longitude }] : []),
+      ...places.map(({ item }) => ({ label: item.title, latitude: item.latitude!, longitude: item.longitude! })),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key]
+  )
+  const hosts = [...new Set(items.map((i) => imageSource(i.image ?? "").host).filter((h): h is string => Boolean(h)))]
+  const lookups = items.some((i) => !i.image && i.latitude !== undefined && i.longitude !== undefined)
+  const photoSources = [...hosts, ...(lookups ? ["Google Places"] : [])]
+  const pick = picked === null ? null : items[picked]
+  const routes = useMemo(
+    () => (pick && origin ? [{ name: `${origin.label} to ${pick.title}`, stops: [origin.label, pick.title], mode: "drive" as const }] : []),
+    [pick, origin]
+  )
+  const focus = pick ? locations.findIndex((l) => l.label === pick.title) : -1
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-2.5 @panel-sm:gap-3">
+      {!photos && photoSources.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setPhotos(true)}
+          className={cn("flex w-full min-w-0 items-center gap-2 rounded-lg border border-dashed border-border bg-card text-start hover:bg-muted/40", PAD_ROW)}
+        >
+          <ImageIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className={cn(BODY, "block font-medium")}>Show photos</span>
+            <span className={cn(META, "block truncate")}>Loads from {photoSources.join(", ")}</span>
+          </span>
+          <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      )}
+      {carousel ? (
+        <Carousel opts={{ align: "start" }} className="w-full min-w-0">
+          <CarouselContent>
+            {items.map((item, index) => (
+              <CarouselItem key={index} className="basis-[92%] @panel-sm:basis-[62%] @panel-md:basis-[48%]">
+                <GridCard index={index} item={item} photos={photos} selected={picked === index} onPick={() => setPicked(picked === index ? null : index)} />
+              </CarouselItem>
+            ))}
+          </CarouselContent>
+          {items.length > 1 && (
+            <>
+              <CarouselPrevious className="left-2" />
+              <CarouselNext className="right-2" />
+            </>
+          )}
+        </Carousel>
+      ) : (
+        <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 @panel-sm:grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] @panel-sm:gap-3">
+          {items.map((item, index) => (
+            <GridCard key={index} index={index} item={item} photos={photos} selected={picked === index} onPick={() => setPicked(picked === index ? null : index)} />
+          ))}
+        </div>
+      )}
+      {pick && (
+        <div ref={panel} className="scroll-mb-4">
+          <Box>
+            <div className={cn("flex items-center gap-3 border-b", HAIRLINE, PAD)}>
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+                <MapPin aria-hidden className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn(TITLE, "block")}>{pick.title}</span>
+                <span className={META}>{origin ? `Driving from ${origin.label}` : "On the map"}</span>
+              </span>
+              <button
+                type="button"
+                title="Hide map"
+                onClick={() => setPicked(null)}
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X aria-hidden className="size-4" />
+              </button>
+            </div>
+            <Suspense fallback={<div className={cn(META, PAD)}>Loading map...</div>}>
+              <GoogleMap locations={locations} routes={routes} colors={MAP_COLORS} focus={focus >= 0 ? focus : null} onFocus={noop} label={pick.title} />
+            </Suspense>
+          </Box>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GridCard({ index, item, photos, selected, onPick }: { index: number; item: GridItem; photos: boolean; selected: boolean; onPick: () => void }) {
+  const { title, text, meta, image, alt, tags } = item
+  const { inline, host } = imageSource(image ?? "")
+  const [failed, setFailed] = useState(false)
+  const hasPlace = item.latitude !== undefined && item.longitude !== undefined
+  // A given URL wins; with none, a place is looked up by name once the reader has asked for photos.
+  const looked = usePlacePhoto(photos && !image && hasPlace ? title : null, hasPlace ? [item.latitude!, item.longitude!] : undefined)
+  const photo: PlacePhoto | null = !failed && (inline || (photos && host)) && image ? { url: image } : (looked ?? null)
+  // The card is its own container: stacked (photo on top) while narrow, photo on the side once it has room.
+  // Text is clamped and the footer pinned, so a row of cards is one height at any width.
+  return (
+    <Box className={cn("@container flex h-full flex-col @min-[26rem]:flex-row", selected && "ring-2 ring-primary")}>
+      <div className="relative h-36 w-full shrink-0 overflow-hidden border-b border-border/60 bg-muted @min-[26rem]:h-auto @min-[26rem]:w-36 @min-[26rem]:self-stretch @min-[26rem]:border-e @min-[26rem]:border-b-0">
+        {photo ? (
+          <img
+            src={photo.url}
+            alt={alt ?? title}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+            className="absolute inset-0 size-full object-cover"
+          />
+        ) : (
+          <MapPin aria-hidden className="absolute top-1/2 left-1/2 size-8 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/40" />
+        )}
+        {photo?.attribution && (
+          <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-0.5 text-[10px] text-white/90">Photo: {photo.attribution}</span>
+        )}
+      </div>
+      <div className={cn("flex min-w-0 flex-1 flex-col gap-2", PAD)}>
+        <div className="space-y-0.5">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className={TITLE}>
+              <span className="text-muted-foreground tabular-nums">{index + 1}. </span>
+              {title}
+            </div>
+            {item.rating !== undefined && (
+              <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium tabular-nums">
+                <Star aria-hidden className="size-3.5 fill-chart-3 text-chart-3" />
+                {item.rating.toFixed(1)}
+              </span>
+            )}
+          </div>
+          {meta && (
+            <div className={cn(META, "flex items-center gap-1")}>
+              <Navigation aria-hidden className="size-3 shrink-0" />
+              <span className="min-w-0 truncate">{meta}</span>
+            </div>
+          )}
+        </div>
+        {text && <p className={cn(BODY, "line-clamp-2 text-pretty")}>{text}</p>}
+        {item.facts && item.facts.length > 0 && (
+          <dl className="divide-y divide-border/50 border-y border-border/50">
+            {item.facts.slice(0, 4).map((fact, i) => (
+              <div key={i} className="flex min-w-0 items-baseline justify-between gap-3 py-1">
+                <dt className="min-w-0 text-xs text-muted-foreground">{fact.label}</dt>
+                <dd className="min-w-0 text-end text-xs font-medium break-words text-foreground">{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {tags && tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {tags.slice(0, 3).map((tag, i) => (
+              <span key={i} className={CHIP}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-1">
+          {item.price ? <span className={cn(TITLE, "min-w-0 tabular-nums")}>{item.price}</span> : <span />}
+          {hasPlace && (
+            <button
+              type="button"
+              aria-pressed={selected}
+              onClick={onPick}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-muted"
+              )}
+            >
+              {selected ? <ChevronDown aria-hidden className="size-3.5" /> : <MapPin aria-hidden className="size-3.5" />}
+              {selected ? "On map" : "Show on map"}
+            </button>
+          )}
+        </div>
+      </div>
+    </Box>
+  )
+}
+
+const noop = () => {}
+
 /* ── Flowcharts ── */
 
 
@@ -908,7 +1159,7 @@ const Progress = defineComponent({
   component: ({ props }) => (
     <div className="w-full min-w-0 space-y-1.5">
       <div className="flex min-w-0 items-baseline justify-between gap-x-3">
-        <span className={cn(BODY, "min-w-0 truncate")}>{props.label}</span>
+        <span className={cn(BODY, "min-w-0")}>{props.label}</span>
         <span className="shrink-0 text-xs font-medium text-foreground tabular-nums">
           {props.hint ?? `${Math.round(props.value)}%`}
         </span>
@@ -926,7 +1177,6 @@ const Progress = defineComponent({
 /** A chart: `labels` x-axis, `series` one mark each, the value at index `i`
     belonging to `labels[i]`. Colours are the app's `--chart-*` tokens.
     `pie`/`donut` read the first series only — a slice per label. */
-const chartColor = (index: number) => `var(--chart-${(index % 5) + 1})`
 
 const Chart = defineComponent({
   name: "Chart",
@@ -1183,15 +1433,33 @@ const Heatmap = defineComponent({
     return (
       <Box className="w-full">
         {props.title && <BoxHeader title={props.title} />}
+        {/* The grid finds the panel's width by itself: the tracks have floors in
+            rem, so a narrow panel shrinks the label column and the cells rather
+            than opening a scroller under a table nobody can see the end of. A
+            grid too wide even for that still scrolls inside the frame. */}
         <div className={cn("overflow-x-auto", PAD)}>
-          <div className="grid min-w-[22rem] gap-1.5" style={{ gridTemplateColumns: `minmax(3.5rem, 0.8fr) repeat(${columns}, minmax(1.35rem, 1fr))` }}>
+          <div
+            className="grid w-full min-w-0 gap-1 @panel-sm:gap-1.5"
+            style={{ gridTemplateColumns: `minmax(2.75rem, 0.7fr) repeat(${columns}, minmax(1.05rem, 1fr))` }}
+          >
             <span aria-hidden="true" />
             {props.columns.map((column, index) => (
-              <span key={`${column}-${index}`} className={cn(LABEL, "truncate text-center text-[9px]")} title={column}>{column}</span>
+              <span
+                key={`${column}-${index}`}
+                className={cn(LABEL, "text-center text-[9px] [overflow-wrap:anywhere] @panel-sm:truncate")}
+                title={column}
+              >
+                {column}
+              </span>
             ))}
             {props.rows.map((row, rowIndex) => (
               <div key={`${row.label}-${rowIndex}`} className="contents">
-                <span className={cn(BODY, "truncate self-center text-xs")} title={row.label}>{row.label}</span>
+                <span
+                  className={cn(BODY, "self-center text-[11px] leading-tight [overflow-wrap:anywhere] @panel-sm:truncate @panel-sm:text-xs")}
+                  title={row.label}
+                >
+                  {row.label}
+                </span>
                 {props.columns.map((column, columnIndex) => {
                   const value = row.values[columnIndex]
                   const intensity = Number.isFinite(value) ? Math.round(14 + ((value - min) / range) * 86) : 0
@@ -1219,7 +1487,7 @@ const Heatmap = defineComponent({
 const Map = defineComponent({
   name: "Map",
   description:
-    "An offline world map with labeled markers. Give each location a label, latitude and longitude in degrees, and an optional detail; no tiles or network data are loaded.",
+    "A world map with labeled markers and optional routes between them. Give each location a label, latitude and longitude in degrees, and an optional detail. A route names its stops by location label: mode drive, bike or walk is routed on real roads that the reader can re-plan; line (the default) is a straight dashed line.",
   props: z.object({
     locations: z.array(
       z.object({
@@ -1230,66 +1498,133 @@ const Map = defineComponent({
       })
     ),
     title: z.string().optional(),
+    routes: z
+      .array(z.object({ name: z.string(), stops: z.array(z.string()), mode: z.enum(["drive", "bike", "walk", "line"]).optional() }))
+      .optional(),
   }),
-  component: ({ props }) => (
-    <Box className="w-full overflow-hidden">
-      {props.title && <BoxHeader title={props.title} />}
-      <div className="bg-[linear-gradient(180deg,color-mix(in_oklch,var(--chart-2)_8%,var(--card)),var(--card))] px-2 py-3 @panel-sm:px-4">
-        <svg
-          className="block h-auto w-full"
-          viewBox="0 0 1000 500"
-          preserveAspectRatio="xMidYMid meet"
-          aria-hidden="true"
-        >
-          <g fill="none" stroke="var(--border)" strokeOpacity="0.55" strokeWidth="1" strokeDasharray="3 7">
-            <path d="M0 125H1000M0 250H1000M0 375H1000" />
-            <path d="M250 0V500M500 0V500M750 0V500" />
-          </g>
-          <g fill="color-mix(in oklch, var(--chart-2) 24%, var(--muted))" stroke="color-mix(in oklch, var(--chart-2) 40%, var(--border))" strokeWidth="2" strokeLinejoin="round">
-            <path d="M76 112 91 91 122 75 154 67 182 78 201 70 220 90 247 94 263 113 252 136 231 148 220 168 200 178 188 205 169 225 154 219 144 195 124 180 113 157 93 151 85 132 72 125Z" />
-            <path d="m227 197 16 7 15 17 22 5 12 20 19 13-8 28-14 26-7 33-16 31-7 33-15 23-12-14-4-34-12-26-5-37-13-24 6-27-8-19 10-24Z" />
-            <path d="m287 104 11-16 17-7 13 12-5 19-16 7Z" />
-            <path d="m339 88 10-20 22-12 20 7 8 19-15 17-25 2Z" />
-            <path d="m434 123 16-17 25 3 14 15-9 19-26 3-16-9Z" />
-            <path d="m450 155 22-12 31 8 20 24-5 36-17 25-8 36-16 36-9 37-19 27-13-20-3-40-13-31 3-42-10-34 8-36Z" />
-            <path d="m499 104 24-21 43-9 23 12 35-6 34 14 39-1 31 14 48-4 35 20 57-6 31 16-8 21-43 5-25 18-38-5-24 19-35-5-19 20-34-6-24-19-34 6-16-20-33 4-23-18-35 2-19-18-32 2-15-17Z" />
-            <path d="m751 256 24-14 34 4 15 17-12 19-34 4-23-12Z" />
-            <path d="m790 337 25-15 37 7 28 21-6 26-26 14-38-7-24-20Z" />
-            <path d="M421 463 454 451 493 456 531 450 568 459 604 454 641 464 678 457 717 466 756 461 794 469 827 464 865 472 901 467 938 476 956 493 917 499 866 495 816 501 766 495 716 500 668 494 619 499 568 493 519 498 471 492 432 499 403 486Z" />
-          </g>
-          {props.locations.map((location, index) => {
-            const x = ((location.longitude + 180) / 360) * 1000
-            const y = ((90 - location.latitude) / 180) * 500
-            const color = chartColor(index)
-            return (
-              <g key={`${location.label}-${index}`}>
-                <circle cx={x} cy={y} r="12" fill={color} fillOpacity="0.18" />
-                <circle cx={x} cy={y} r="5.5" fill={color} stroke="var(--card)" strokeWidth="2.5">
-                  <title>{`${location.label}: ${location.latitude.toFixed(2)}, ${location.longitude.toFixed(2)}${location.detail ? ` - ${location.detail}` : ""}`}</title>
-                </circle>
-              </g>
-            )
-          })}
-        </svg>
-      </div>
-      {props.locations.length > 0 ? (
-        <ul className={cn("grid grid-cols-1 divide-y divide-border/50 @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
-          {props.locations.map((location, index) => (
-            <li key={`${location.label}-${index}`} className="flex min-w-0 items-start gap-2.5 py-2 @panel-sm:[&:nth-child(n+3)]:border-t @panel-sm:[&:nth-child(n+3)]:border-border/50">
+  component: ({ props }) => <MapView {...props} />,
+})
+
+const GoogleMap = lazy(() => import("./google-map"))
+const MAP_COLORS = [0, 1, 2, 3, 4].map(chartColor)
+
+/** An offline sketch of the map: points and routes on a dotted ground, so the closed
+    state says where things are without a map load. */
+function MapSketch({ locations, routes }: { locations: { label: string; latitude: number; longitude: number }[]; routes: { stops: string[] }[] }) {
+  if (locations.length === 0) return null
+  const W = 100
+  const H = 36
+  const lats = locations.map((l) => l.latitude)
+  const lons = locations.map((l) => l.longitude)
+  const cLat = (Math.min(...lats) + Math.max(...lats)) / 2
+  const cLon = (Math.min(...lons) + Math.max(...lons)) / 2
+  const k = Math.cos((cLat * Math.PI) / 180)
+  const spanX = Math.max((Math.max(...lons) - Math.min(...lons)) * k, 1e-6)
+  const spanY = Math.max(Math.max(...lats) - Math.min(...lats), 1e-6)
+  const scale = Math.min((W - 16) / spanX, (H - 10) / spanY)
+  const at = (l: { latitude: number; longitude: number }) => ({
+    x: W / 2 + (l.longitude - cLon) * k * scale,
+    y: H / 2 - (l.latitude - cLat) * scale,
+  })
+  const pos = new globalThis.Map(locations.map((l) => [l.label, at(l)]))
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} aria-hidden preserveAspectRatio="xMidYMid slice" className="block h-24 w-full bg-muted/40 text-muted-foreground/40">
+      <defs>
+        <pattern id="map-dots" width="4" height="4" patternUnits="userSpaceOnUse">
+          <circle cx="1" cy="1" r="0.25" fill="currentColor" />
+        </pattern>
+      </defs>
+      <rect width={W} height={H} fill="url(#map-dots)" />
+      {routes.flatMap((r, ri) =>
+        r.stops.slice(1).map((stop, i) => {
+          const a = pos.get(r.stops[i])
+          const b = pos.get(stop)
+          return a && b ? (
+            <line key={`${ri}-${i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={chartColor(ri)} strokeWidth="0.5" strokeDasharray="1.5 1" opacity="0.8" />
+          ) : null
+        })
+      )}
+      {locations.map((l, i) => {
+        const p = at(l)
+        return <circle key={i} cx={p.x} cy={p.y} r="1.6" fill={chartColor(i)} stroke="var(--card)" strokeWidth="0.6" />
+      })}
+    </svg>
+  )
+}
+
+function MapView(props: {
+  locations: { label: string; latitude: number; longitude: number; detail?: string }[]
+  title?: string
+  routes?: { name: string; stops: string[]; mode?: "drive" | "bike" | "walk" | "line" }[]
+}) {
+  const [focus, setFocus] = useState<number | null>(null)
+  // The parser hands back fresh arrays while a fence streams; a map rebuilt per chunk would lose its zoom.
+  const key = JSON.stringify([props.locations, props.routes])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const locations = useMemo(() => props.locations, [key])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const routes = useMemo(() => props.routes ?? [], [key])
+  const onFocus = useCallback((index: number) => setFocus(index), [])
+  // A rendered Google map is a billed load, so it waits behind a click.
+  const [open, setOpen] = useState(false)
+  const list =
+    props.locations.length > 0 ? (
+      <ul className={cn("grid grid-cols-1 divide-y divide-border/50 @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
+        {props.locations.map((location, index) => (
+          <li key={`${location.label}-${index}`} className="min-w-0 @panel-sm:[&:nth-child(n+3)]:border-t @panel-sm:[&:nth-child(n+3)]:border-border/50">
+            <button
+              type="button"
+              onClick={() => {
+                setFocus(index)
+                setOpen(true)
+              }}
+              className="flex w-full min-w-0 items-start gap-2.5 py-2 text-start hover:bg-muted/40"
+            >
               <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: chartColor(index) }} />
               <span className="min-w-0 flex-1">
                 <span className={cn(BODY, "block font-medium")}>{location.label}</span>
                 <span className={META}>{location.latitude.toFixed(2)}, {location.longitude.toFixed(2)}{location.detail ? ` · ${location.detail}` : ""}</span>
               </span>
-            </li>
-          ))}
-        </ul>
+            </button>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <div className={cn(META, PAD)}>No locations to plot.</div>
+    )
+  return (
+    <Box className="w-full overflow-hidden">
+      {open ? (
+        <Suspense fallback={<div className={cn(META, PAD)}>Loading map...</div>}>
+          <GoogleMap locations={locations} routes={routes} colors={MAP_COLORS} focus={focus} onFocus={onFocus} label={props.title}>
+            {list}
+          </GoogleMap>
+        </Suspense>
       ) : (
-        <div className={cn(META, PAD)}>No locations to plot.</div>
+        <>
+          <button type="button" onClick={() => setOpen(true)} className={cn("group block w-full border-b text-start", HAIRLINE)}>
+            <MapSketch locations={props.locations} routes={routes} />
+            <span className={cn("flex items-center gap-3", PAD)}>
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <MapPin aria-hidden className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn(TITLE, "block")}>{props.title ?? "Map"}</span>
+                <span className={META}>
+                  {props.locations.length} places{routes.length > 0 ? ` · ${routes.length} routes with directions` : ""}
+                </span>
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground shadow-xs transition-opacity group-hover:opacity-90">
+                Show map <ChevronRight aria-hidden className="size-3.5" />
+              </span>
+            </span>
+          </button>
+          {list}
+        </>
       )}
     </Box>
-  ),
-})
+  )
+}
 
 const Funnel = defineComponent({
   name: "Funnel",
@@ -1311,7 +1646,7 @@ const Funnel = defineComponent({
             return (
               <div key={`${stage.label}-${index}`} className="min-w-0 space-y-1.5">
                 <div className="flex min-w-0 items-baseline justify-between gap-3">
-                  <span className={cn(BODY, "min-w-0 truncate font-medium")} title={stage.label}>{stage.label}</span>
+                  <span className={cn(BODY, "min-w-0 font-medium")} title={stage.label}>{stage.label}</span>
                   <span className={cn(META, "shrink-0 tabular-nums")}>{new Intl.NumberFormat().format(value)}{index > 0 && first > 0 ? ` · ${retained}%` : ""}</span>
                 </div>
                 <div className="h-3 overflow-hidden rounded-pill bg-muted/80">
@@ -1347,7 +1682,9 @@ const Waterfall = defineComponent({
     const range = max - min || 1
     const chartTop = 16
     const chartBottom = 176
-    const chartWidth = Math.max(416, props.items.length * 64)
+    // The floor is a phone panel's content width, so a waterfall does not open a
+    // scroller the reader has to drag to see the total at the end of it.
+    const chartWidth = Math.max(320, props.items.length * 56)
     const y = (value: number) => chartTop + ((max - value) / range) * (chartBottom - chartTop)
     const step = props.items.length ? chartWidth / props.items.length : chartWidth
     const barWidth = Math.min(42, step * 0.56)
@@ -1427,6 +1764,67 @@ const Plan = defineComponent({
   },
 })
 
+/** What each group's section tells the model beyond its signatures. The names
+    and membership are \`groups.ts\`'s; a note must only mention components of its
+    own group, because a narrowed prompt drops every other section. */
+const GROUP_NOTES: Record<string, string[]> = {
+  layout: [
+    "- `root = Stack([...])` is the entry point: every program must define it.",
+    '- Use direction "row" for a cluster of cards; never nest a Stack in a Stack for spacing alone.',
+    "- Tabs for alternatives the reader picks between (per OS, before/after); Accordion for FAQs; Details for one optional fold.",
+  ],
+  text: [
+    "- Write each table row as its own array of strings, in the SAME order as `columns`.",
+    "- A short answer is prose; reach for these when the answer is a structure.",
+    "- Compare for weighing options, Badges for short statuses, People for who is involved.",
+    "- Use for a pulled quotation or cited excerpt (a line from a document, a person, a spec) that should stand apart from your own prose; not for your own summaries or emphasis.",
+    "- text and source are plain strings only: no markdown, no links or URLs as links. Put author, document and section together in source, e.g. \"Jane Doe, Annual Report, section 3\".",
+    "- Omit source when there is no attribution. Quote the words verbatim and without surrounding quotation marks; the component marks it as a quote.",
+  ],
+  process: [
+    "- Timeline for ordered steps or history, Plan for a proposed or in-progress task checklist.",
+    "- Steps for instructions the reader follows in order (install, setup, a how-to); Timeline for events over time, Plan for a task checklist with status.",
+    "- Each step needs a short imperative title; put the command or snippet in `code` (raw, no fences or prompt characters) and the why in `text`.",
+  ],
+  dev: [
+    "- Diff for a before/after of text, Keys for shortcuts, Code for a snippet.",
+    "- Use FileTree to show a project layout or the set of files a change touches; give flat slash-separated paths (e.g. \"src/lib/a.ts\") and the component nests them, so never write folders as separate entries.",
+    "- Give only files, one object per file; set change to added/modified/deleted only when the answer is about a change, and keep note to a few words about what the file is or what changed.",
+    "- Use Terminal when the answer is a shell session (a command and what it printed); use Code for a plain snippet or log with no command.",
+    "- Terminal command is the bare line without a leading \"$ \" (the prompt is drawn for you); output is the verbatim stdout/stderr, never summarised or invented.",
+    "- Terminal exitCode is the number the command returned (0 = success, shown with a red badge otherwise); cwd is a path label. Omit both rather than guessing. Nothing is executed.",
+  ],
+  diagrams: [
+    "- Flowchart is for branching logic. Give nodes and edges; every edge's `from` and `to` must match node ids.",
+    "- Flowcharts are locally interactive: readers can move nodes, connect handles, select elements and delete them. Edits are temporary and do not change the generated answer or run tools.",
+    '- Keep a flowchart under ~12 nodes. Its layout responds to the available panel width: rightward pipelines automatically become vertical in narrow panels, and wide sibling layers wrap to fit.',
+    "- Use Sequence for who-calls-whom over time (request flows, auth handshakes, protocol exchanges); use a Flowchart for branching logic.",
+    "- Sequence: list every actor once in actors, in left-to-right order; each message's from and to must match an actor name exactly (a message naming an unlisted actor is dropped). Messages are listed top to bottom in time order.",
+    "- Sequence kind defaults to \"call\" (solid arrow from to); \"reply\" is a dashed return arrow; \"note\" is a boxed remark over from (and to, if different). Keep text short, a few words, and keep to about 6 actors or fewer.",
+    "- Use Quadrant to prioritise or position a handful of items on two judgements (impact/effort, risk/likelihood, build/buy).",
+    "- Quadrant: give x and y as 0-100 where 100 is the high end of the labelled axis (x runs left to right, y bottom to top); keep to about 4-12 points with short labels.",
+    "- Quadrant corners, if given, is exactly four short captions in the order top-left, top-right, bottom-left, bottom-right (e.g. \"Quick wins\", \"Big bets\", \"Fill-ins\", \"Money pits\").",
+  ],
+  numbers: [
+    "- `values` must be the same length as `labels` for Chart; Heatmap rows should match the column count.",
+    "- Prefer StatRow for a handful of figures, Sparkline for a compact metric trend, and Chart for a full trend or comparison.",
+    "- Heatmap shows values across two dimensions; Funnel shows stage retention; Waterfall shows additive increases/decreases and explicit totals.",
+    "- Chart kind: line/area for trends, bar for comparisons (stacked for parts of a total), pie/donut for shares of one whole (few slices), radar for scoring options on several axes.",
+  ],
+  media: [
+    "- Image only with a URL you were actually given; never invent one. Remote images are loaded only when the reader clicks.",
+    "- Gallery for several images.",
+  ],
+  places: [
+    "- Map coordinates are latitude and longitude in degrees; latitude is -90 to 90 and longitude is -180 to 180.",
+    "- Map is an interactive Google map the reader can pan, zoom, plan routes on and search for gas, hotels and food along; it does not resolve place names, so always give coordinates.",
+    "- Map routes list stops by location label (at least two). Use drive, bike or walk for directions and line for flights or sea legs; the reader can also plan their own route on the map.",
+    "- CardGrid for places, hotels or products: a title, short text, a meta line (e.g. distance), tags, a 0-5 rating, a price line, up to four facts (e.g. Best time, Stay, Cost) and an optional photo. Fill in the facts and price you actually know; leave out what you do not, and never invent a rating. Give `image` only a URL you were actually given; without one the card gets a colour banner.",
+    "- On a CardGrid item, latitude and longitude add a Show on map button; one map opens at the bottom of the grid, only when a card is picked; pass `carousel` true to lay the cards out as a swipeable row. Set the grid's `origin` (label, latitude, longitude) to add driving directions from the traveller's start. Prefer this over a separate Map for a trip.",
+    "- Cards need no image: one \"Show photos\" click per set loads the URLs you gave and, for any card with latitude and longitude, a photo of that place by name. Only give `image` a URL you were actually given.",
+  ],
+}
+
 export const openuiLibrary = createLibrary({
   root: "Stack",
   components: [
@@ -1461,55 +1859,14 @@ export const openuiLibrary = createLibrary({
     Keys,
     People,
     Gallery,
+    CardGrid,
     Flowchart,
+    Quote,
+    Steps,
+    FileTree,
+    Terminal,
+    Sequence,
+    Quadrant,
   ],
-  componentGroups: [
-    {
-      name: "Layout",
-      components: ["Stack", "Card", "Section", "Divider", "Details", "Tabs", "Accordion"],
-      notes: [
-        "- `root = Stack([...])` is the entry point: every program must define it.",
-        '- Use direction "row" for a cluster of cards; never nest a Stack in a Stack for spacing alone.',
-        "- Tabs for alternatives the reader picks between (per OS, before/after); Accordion for FAQs; Details for one optional fold.",
-      ],
-    },
-    {
-      name: "Content",
-      components: ["List", "Table", "Callout", "Code", "KeyValue", "EmptyState", "Image", "Badges", "Timeline", "Plan", "Compare", "Diff", "Keys", "People", "Gallery"],
-      notes: [
-        "- Write each table row as its own array of strings, in the SAME order as `columns`.",
-        "- A short answer is prose; reach for these when the answer is a structure.",
-        "- Image only with a URL you were actually given; never invent one. Remote images are loaded only when the reader clicks.",
-        "- Diff for a before/after of text, Keys for shortcuts, People for who is involved, Gallery for several images.",
-        "- Compare for weighing options, Timeline for ordered steps or history, Plan for a proposed or in-progress task checklist, Badges for short statuses.",
-      ],
-    },
-    {
-      name: "Flowcharts",
-      components: ["Flowchart"],
-      notes: [
-        "- Flowchart is the only diagram component. Give nodes and edges; every edge's `from` and `to` must match node ids.",
-        "- Flowcharts are locally interactive: readers can move nodes, connect handles, select elements and delete them. Edits are temporary and do not change the generated answer or run tools.",
-        '- Keep a flowchart under ~12 nodes. Its layout responds to the available panel width: rightward pipelines automatically become vertical in narrow panels, and wide sibling layers wrap to fit.',
-      ],
-    },
-    {
-      name: "Maps",
-      components: ["Map"],
-      notes: [
-        "- Map coordinates are latitude and longitude in degrees; latitude is -90 to 90 and longitude is -180 to 180.",
-        "- Map draws an offline world outline and the supplied labeled markers only; it does not fetch tiles or resolve place names.",
-      ],
-    },
-    {
-      name: "Numbers",
-      components: ["StatRow", "Stat", "Sparkline", "Chart", "Heatmap", "Funnel", "Waterfall", "Progress"],
-      notes: [
-        "- `values` must be the same length as `labels` for Chart; Heatmap rows should match the column count.",
-        "- Prefer StatRow for a handful of figures, Sparkline for a compact metric trend, and Chart for a full trend or comparison.",
-        "- Heatmap shows values across two dimensions; Funnel shows stage retention; Waterfall shows additive increases/decreases and explicit totals.",
-        "- Chart kind: line/area for trends, bar for comparisons (stacked for parts of a total), pie/donut for shares of one whole (few slices), radar for scoring options on several axes.",
-      ],
-    },
-  ],
+  componentGroups: UI_GROUPS.map((group) => ({ name: group.label, components: group.components, notes: GROUP_NOTES[group.id] ?? [] })),
 })

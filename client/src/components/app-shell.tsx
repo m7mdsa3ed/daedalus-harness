@@ -31,7 +31,7 @@ import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { NotificationIconButton } from "@/components/notifications/bell"
 import { pageRoutes, usePageHeading } from "@/components/routes"
-import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
+import { type SettingsSectionId } from "@/components/settings/sections"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { useSidebarWidth } from "@/components/sidebar/resizer"
 import { ServerIconButton } from "@/components/sidebar/server-menu"
@@ -62,8 +62,9 @@ import {
   settingsRootPath,
   threadPath,
 } from "@/lib/router"
-import type { ServerSettings, SessionMeta } from "@/lib/settings"
-import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
+import { homeSpace, type ServerSettings, type SessionMeta } from "@/lib/settings"
+import { setSidebarOpen, useSidebarOpen } from "@/lib/sidebar-layout"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { formatChord } from "@/lib/shortcuts"
 import { useStoreHandle, useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -72,7 +73,7 @@ import { threadDock } from "@/lib/workspace/thread-docks"
 import { HOME_PROJECT_ID, panelId, type PanelKind } from "@/lib/workspace/panels"
 import { loadActiveSpace } from "@/lib/spaces"
 import { IS_POPOUT } from "@/lib/popout"
-import { setNewTabHandler, useActiveChat, useRouteless } from "@/lib/workspace/open-threads"
+import { setNewTabHandler, useActiveChat } from "@/lib/workspace/open-threads"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -136,10 +137,18 @@ export function AppShell({
   /* The sidebar layout is the device's (Settings › Appearance): the component
      takes the variant, and the stylesheet keys the card, the gutters and the
      ground off the same fact on <html>. index.html writes it before first paint. */
-  const layout = useSidebarLayout()
+  const { sidebarVariant: variant, sidebarCompact, showTabDetails } = useLayoutOptions()
   React.useEffect(() => {
-    document.documentElement.dataset.sidebarLayout = layout.variant
-  }, [layout.variant])
+    document.documentElement.dataset.sidebarLayout = variant
+  }, [variant])
+  /* Shorter thread rows (`html[data-sidebar-density]`, index.css). */
+  React.useEffect(() => {
+    document.documentElement.dataset.sidebarDensity = sidebarCompact ? "compact" : "comfortable"
+  }, [sidebarCompact])
+  /* One row or two on every dock tab (`--dock-tab-h`, index.css). */
+  React.useEffect(() => {
+    document.documentElement.dataset.tabRows = showTabDetails ? "2" : "1"
+  }, [showTabDetails])
   const palette = useCommandPalette()
   // Whatever this is bound to on this device — the tooltip has to say the
   // key that actually works, not the one the release shipped.
@@ -151,13 +160,13 @@ export function AppShell({
   const dock = useWorkspaceDock()
   const isMobile = useIsMobile()
   const activeChat = useActiveChat()
-  const routeless = useRouteless()
   const headingFor = usePageHeading()
 
-  /* A terminal or web tab in front has no route, so the URL is still the last
-     page's: settings sections are the sidebar only when settings is in front. */
-  const inSettings = location.pathname.startsWith("/settings") && !routeless
-  const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
+  /* The sidebar's content is the reader's choice, not a reading of the route:
+     the gear swaps the thread list for the settings sections and "Back to
+     threads" swaps it back, neither navigating anywhere. A section row is what
+     opens a page (in the tab in front, `navigateActive`). */
+  const [settingsNav, setSettingsNav] = React.useState(false)
   const sessionId = routedThreadId(location.pathname, location.search)
   const active = sessions.find((s) => s.id === sessionId)
   /* Where the thread in front of us was branched from, if anywhere — drawn as
@@ -267,7 +276,7 @@ export function AppShell({
     /* A thread from another space (search, a notification, a pasted link)
        takes you to its space rather than landing in this one's dock; the
        switch effect opens it once that space's tabs are in. */
-    const owner = projects.find((project) => project.id === routed?.projectId)?.spaceId
+    const owner = homeSpace(projects.find((project) => project.id === routed?.projectId), activeSpaceId)
     if (owner && activeSpaceId && owner !== activeSpaceId) {
       keepRef.current = sessionId
       setActiveSpace(owner)
@@ -306,7 +315,8 @@ export function AppShell({
      the space in front of you are exactly those — anything else in the dock is
      a tab that landed in the wrong space (or was filed there when spaces
      arrived) and is *filed under its own space*, not closed — a project moved
-     to another space takes its tabs with it, and they open when that space is
+     to another space takes its tabs with it (a project filed in several keeps
+     its tabs in whichever of them is in front, `homeSpace`), and they open when that space is
      next in front (`switchSpace`). A thread or project with no space is everyone's,
      as in the sidebar. `spaceRef` is the space the *dock* holds: moved only by
      the switch effect, never by the click, so a prune between the click and
@@ -321,7 +331,7 @@ export function AppShell({
     /* The space a tab's project is filed under when it is not this one — the
        dock files the tab there rather than closing it (`prunePanels`). */
     const elsewhere = (projectId?: string) => {
-      const owner = projects.find((project) => project.id === projectId)?.spaceId
+      const owner = homeSpace(projects.find((project) => project.id === projectId), space)
       return space && owner && owner !== space ? owner : null
     }
     dock.prunePanels(
@@ -540,7 +550,7 @@ export function AppShell({
           outer gutters. `offcanvas`, not `icon`: a 3rem column of glyphs is
           still a column, and the toggle that brings it back lives in the app
           header, which is on every route. */}
-      <Sidebar collapsible="offcanvas" variant={layout.variant} className={layout.variant === "inset" ? "p-0" : undefined}>
+      <Sidebar collapsible="offcanvas" variant={variant} className={variant === "inset" ? "p-0" : undefined}>
         {/* The brand row is the app header's own row: the same top offset (the
             status-bar inset, then the frame gap the column keeps above its
             header) and the same height (`--app-header-row-h`), so the brand
@@ -586,8 +596,8 @@ export function AppShell({
             therefore carries no second sidebar of its own; see
             `sidebar/settings-nav.tsx`. */}
         <SidebarContent className="gap-0 pt-2">
-          {inSettings ? (
-            <SettingsNav />
+          {settingsNav ? (
+            <SettingsNav onBack={() => setSettingsNav(false)} />
           ) : (
             <>
               {/* The nav rows sit above the list, the way the Claude desktop
@@ -620,12 +630,10 @@ export function AppShell({
               size="icon-sm"
               title="Settings"
               aria-label="Settings"
-              onClick={() => openSettings()}
+              onClick={() => setSettingsNav((on) => !on)}
               className={cn(
                 FOOTER_ICON,
-                /* The row that opens the section you are in says so, exactly as
-                   the labelled rows did. */
-                inSettings && "bg-sidebar-accent text-sidebar-accent-foreground",
+                settingsNav && "bg-sidebar-accent text-sidebar-accent-foreground",
                 "ml-auto group-data-[collapsible=icon]:ml-0"
               )}
             >
@@ -684,7 +692,7 @@ export function AppShell({
             position="top"
             height="calc(100% + 1rem)"
             blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
-            className={cn("absolute inset-x-0 top-0 -z-10", layout.variant === "inset" && "hidden")}
+            className={cn("absolute inset-x-0 top-0 -z-10", variant === "inset" && "hidden")}
           />
           {/* The two device-level controls. No title and no crumb — every
               route is a tab, and the tab says the name; a thread keeps only
@@ -793,8 +801,7 @@ export function AppShell({
 function PersistedSidebarProvider(
   props: Omit<React.ComponentProps<typeof SidebarProvider>, "open" | "onOpenChange">
 ) {
-  const { open } = useSidebarLayout()
+  const open = useSidebarOpen()
   return <SidebarProvider {...props} open={open} onOpenChange={setSidebarOpen} />
 }
 
-const setSidebarOpen = (open: boolean) => setSidebarLayout("open", open)

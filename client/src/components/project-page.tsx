@@ -483,7 +483,7 @@ function ProjectHeader({
         <>
           {/* Wide panel: every action in the row. */}
           <div className="hidden items-center gap-2 @panel-sm:flex">
-            <Button variant="ghost" size="icon" title="Refresh" onClick={onRefresh}>
+            <Button variant="ghost" size="icon" title="Refresh" loading={refreshing} onClick={onRefresh}>
               <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
               <span className="sr-only">Refresh</span>
             </Button>

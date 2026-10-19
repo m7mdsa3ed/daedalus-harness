@@ -4,7 +4,7 @@
    routes let it reach. Drawn by extension (`previewKind`):
 
    - an image is an <img>, which renders even an SVG inertly;
-   - a video is the browser's own player on a blob (a product-video draft);
+   - a video is the browser's own player on a blob;
    - a PDF is the browser's own viewer on a blob — not sandboxed, because
      Chrome refuses to draw a PDF in a sandboxed frame, and a PDF runs no page
      script;

@@ -20,6 +20,7 @@ const {
   updateHelper,
 } = await import("../src/project-helpers.js");
 const { containedPath } = await import("../src/workspace-fs.js");
+const { UI_GROUP_IDS } = await import("../src/personas.js");
 const { listProjectScripts } = await import("../src/project-scripts.js");
 const { listShellHistory, recordShellRun } = await import("../src/shell-history.js");
 
@@ -186,8 +187,9 @@ try {
     mcpServerIds: [],
     skillIds: [],
     commandIds: [],
-    suggestFollowups: true,
-    uiBlocks: true,
+    suggestKinds: ["prompts", "commands"],
+    uiGroups: [...UI_GROUP_IDS],
+    voiceProvider: "",
   });
   assert.equal("defaultProfileId" in fresh, false, "the wire folds the columns, not raw");
 
@@ -201,10 +203,10 @@ try {
   assert.equal((await getProject(p2.id))!.defaults?.profileId, "");
 
   // A second patch moves one field and leaves the rest where they are.
-  await setProjectDefaults(p1.id, { effort: "high", uiBlocks: false });
+  await setProjectDefaults(p1.id, { effort: "high", uiGroups: [] });
   const again = (await getProject(p1.id))!;
   assert.equal(again.defaults?.effort, "high");
-  assert.equal(again.defaults?.uiBlocks, false);
+  assert.deepEqual(again.defaults?.uiGroups, []);
   assert.equal(again.defaults?.profileId, "prof-1", "an unnamed field keeps its value");
   assert.equal(again.defaults?.model, "m-1");
 

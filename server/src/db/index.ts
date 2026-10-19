@@ -155,7 +155,6 @@ async function ensureSchema(): Promise<void> {
   await db.execute(sql`
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS suggest_followups BOOLEAN NOT NULL DEFAULT TRUE
   `);
-  await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS rules TEXT`);
   /* A thread's git worktree (worktree.ts). */
   await db.execute(sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS worktree TEXT`);
   /* Adoptable agent processes (adopt-state.ts). */
@@ -204,6 +203,34 @@ async function ensureSchema(): Promise<void> {
     `);
     await db.execute(sql`DELETE FROM app_settings WHERE key = 'rules'`);
   }
+  /* Migrate the legacy per-project rules blob (projects.rules) into the rules
+     table, once, then drop the column so drizzle-kit push stops trying to
+     remove it (and so the dead column does not linger). Idempotent: the
+     column is gone after the first run. */
+  const hasRulesColumn = await db.execute<{ exists: boolean }>(sql`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'rules'
+    ) AS exists
+  `);
+  if (hasRulesColumn.rows[0]?.exists) {
+    const legacyProjectRules = await db.execute<{ id: string; rules: string }>(sql`
+      SELECT id, rules FROM projects WHERE rules IS NOT NULL AND rules <> ''
+    `);
+    for (const row of legacyProjectRules.rows) {
+      const dup = await db.execute<{ one: number }>(sql`
+        SELECT 1 AS one FROM rules WHERE project_id = ${row.id} AND content = ${row.rules} LIMIT 1
+      `);
+      if (dup.rows.length === 0) {
+        const t = Date.now();
+        await db.execute(sql`
+          INSERT INTO rules (id, project_id, title, content, sort_order, created_at, updated_at)
+          VALUES (${randomUUID()}, ${row.id}, 'Project rules', ${row.rules}, 0, ${t}, ${t})
+        `);
+      }
+    }
+    await db.execute(sql`ALTER TABLE projects DROP COLUMN IF EXISTS rules`);
+  }
   /* A thread's OpenTelemetry spans (tracing.ts). */
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS trace_spans (
@@ -233,21 +260,38 @@ async function ensureSchema(): Promise<void> {
     )
   `);
   await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS space_id TEXT`);
-  /* Every install has at least one space, and every project belongs to one. A
-     project from before spaces existed lands in the first space, which is what
-     lets "is this project in the active space" be a plain equality downstream
-     rather than a null-is-the-default special case in every reader. Idempotent:
-     the insert is guarded on the table being empty, and the update only ever
-     touches nulls. */
+  /* Every install has at least one space. Idempotent: guarded on the table
+     being empty. */
   await db.execute(sql`
     INSERT INTO spaces (id, name, sort_order, created_at)
     SELECT ${randomUUID()}, 'Personal', 0, ${Date.now()}
     WHERE NOT EXISTS (SELECT 1 FROM spaces)
   `);
+  /* A project may live in several spaces (project_spaces). Created here for
+     the same reason as the rest of this block: a server booting under a process
+     manager must not come up broken for a missing `pnpm db:push`. */
   await db.execute(sql`
-    UPDATE projects
-    SET space_id = (SELECT id FROM spaces ORDER BY sort_order, created_at LIMIT 1)
-    WHERE space_id IS NULL
+    CREATE TABLE IF NOT EXISTS project_spaces (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, space_id)
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS project_spaces_space ON project_spaces(space_id)`);
+  /* Every project belongs to at least one space. One with no membership yet
+     (it predates the join table, or predates spaces) is filed under the space
+     the old single column named, else the first space. Only ever touches
+     projects with no rows, so a membership a person removed is not restored by
+     the deprecated column on the next boot. */
+  await db.execute(sql`
+    INSERT INTO project_spaces (project_id, space_id)
+    SELECT p.id,
+           COALESCE(
+             (SELECT s.id FROM spaces s WHERE s.id = p.space_id),
+             (SELECT id FROM spaces ORDER BY sort_order, created_at LIMIT 1)
+           )
+    FROM projects p
+    WHERE NOT EXISTS (SELECT 1 FROM project_spaces ps WHERE ps.project_id = p.id)
   `);
   await ensureSearchIndex();
 }

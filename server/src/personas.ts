@@ -1,14 +1,14 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.js";
-import { OPENUI_PROMPT } from "./openui-prompt.js";
+import { OPENUI_FRAME_HEAD, OPENUI_FRAME_TAIL, OPENUI_GROUP_ORDER, OPENUI_GROUPS } from "./openui-prompt.js";
 import { usesPersonaFile, type AgentDef } from "./registry.js";
 import { globalRules, projectRules, type Rule } from "./rules.js";
 import type { TaskBrief } from "./task-threads.js";
 
 /**
- * The spawn-instruction doors. Personas are gone (saved prompts replaced them,
- * `saved-prompts.ts`), but the machinery that carried a persona into each
+ * The spawn-instruction doors. Personas are gone (they became slash commands,
+ * `legacy-prompts.ts`), but the machinery that carried a persona into each
  * runtime still carries the standing rules (rules.ts) and the thread's trailers
  * below — hence the historical `persona` names (`AgentDef.personaVia`,
  * `{personaPrompt}`, `{personaFile}`, `PersonaSpawn`), kept so no column,
@@ -104,6 +104,78 @@ export const SUGGEST_FOLLOWUPS_INSTRUCTIONS = `After your final answer, suggest 
 
 Every prompt is a message the USER would type next, written so it can be sent as-is — a command or a question the user asks of you ("Show me the diff", "Merge the two servers via backup import", "What happens if two servers' projects conflict?"). Write them in the user's voice, never in yours. In particular, do not put your own questions to the user in the block: if you need their input to proceed, ask it in your answer's prose. Omit the block when no follow-up makes sense — for example when your answer has already asked the user what it needs to know, or nothing natural remains to suggest. Never put anything but follow-up prompts in it.`;
 
+/* ── Quick replies ──
+ *
+ * The answer to a question the agent just asked, as a chip that sends in a
+ * word or two ("Yes", "Option B"). Distinct from a follow-up, which is the
+ * user's *next request*: a reply settles the answer in front of it. */
+
+export const SUGGEST_REPLIES_FENCE = "suggest-replies";
+
+export const SUGGEST_REPLIES_INSTRUCTIONS = `If your answer ends by asking the user a question they can settle in a few words — a yes/no, or a choice between options you listed — offer 2-4 ready answers in one fenced block named \`${SUGGEST_REPLIES_FENCE}\`, one reply per line, each as the user would type it (under 60 characters), with no other text inside the fence:
+
+\`\`\`${SUGGEST_REPLIES_FENCE}
+<first reply>
+<second reply>
+\`\`\`
+
+Omit the block entirely when you asked nothing, or when the answer needs more than a few words.`;
+
+/* ── Files worth opening ──
+ *
+ * Paths the user will want to look at next: the files the answer is about.
+ * The client draws each as a chip that drops an `@path` mention into the box,
+ * and the send path resolves a mention that exists (the same door as typing
+ * one), so a line naming a file that is not there costs nothing worse than a
+ * mention that attaches nothing. */
+
+export const SUGGEST_FILES_FENCE = "suggest-files";
+
+export const SUGGEST_FILES_INSTRUCTIONS = `If your answer is about particular files, list up to 3 of them that the user would most likely want to open next in one fenced block named \`${SUGGEST_FILES_FENCE}\`, one path per line, relative to the project root, with no other text inside the fence:
+
+\`\`\`${SUGGEST_FILES_FENCE}
+<path of the first file>
+<path of the second file>
+\`\`\`
+
+Name only files that exist and that you have seen. Omit the block when your answer is not about specific files.`;
+
+/* ── Other agents to ask ──
+ *
+ * A second opinion from another (profile, agent) pair — `builtin:agents`. The
+ * trailer lists the pairs that exist today (`WorkflowRunner.pairs`, minus the
+ * thread's own and any not installed) for the same reason the commands trailer
+ * lists commands: a model left to invent a name offers one that fails. The
+ * client turns a pick into a message that *names* the pair, which is what
+ * `ask_agent` asks for before it will run without checking with the user. */
+
+export const SUGGEST_AGENTS_FENCE = "suggest-agents";
+
+/** One pair the model may suggest asking: how a person reads it ("Codex /
+    OpenAI") and nothing else — the client writes the message from that. */
+export interface SuggestableAgent {
+  profile: string;
+  agent: string;
+}
+
+export const suggestAgentName = (pair: SuggestableAgent) => `${pair.agent} / ${pair.profile}`;
+
+export function suggestAgents(pairs: readonly SuggestableAgent[]): string {
+  const list = pairs.map((pair) => `- ${suggestAgentName(pair)}`).join("\n");
+  return `## Other agents
+These other agents can be asked to take a task, each in a new thread of this project:
+
+${list}
+
+After your final answer, if a second opinion or a separate pass (a review, a test run, a different approach) would genuinely help, suggest at most one ask in one fenced block named \`${SUGGEST_AGENTS_FENCE}\`, one line, written as the agent's name exactly as listed above, then " | ", then the task as a phrase that follows "Ask <agent> to" (under 120 characters, e.g. "review this diff for race conditions") — and no other text inside the fence:
+
+\`\`\`${SUGGEST_AGENTS_FENCE}
+<agent exactly as listed> | <the task>
+\`\`\`
+
+Only ever name an agent from the list above. These are suggestions for the user to send — do not ask them yourself. Omit the block entirely when none would help.`;
+}
+
 /* ── Recommended project commands ──
  *
  * The same ask as the follow-ups above — "what next?" — answered with a line to
@@ -149,6 +221,63 @@ After your final answer, if one or two of them would genuinely help the user's n
 Only ever name a command from the list above; never invent one, and never recommend one the work does not call for. Omit the block entirely when none of them fit. These run in the project's shell, so the user sends the line — do not run them yourself.`;
 }
 
+/* ── The registry ──
+ *
+ * What a thread may close an answer with is a *set*, not a switch: each kind is
+ * one fenced block, and the thread (or its project's defaults) names which it
+ * wants. This table is the whole server half of a kind, so adding one is an
+ * entry here and nothing else on this side:
+ *   trailer(data) — the instruction text, or undefined when there is nothing
+ *                   worth asking for (no commands defined, no other agent);
+ *   a loader      — optional, in `sessions.ts` (`SUGGEST_LOADERS`): the spawn-time
+ *                   facts `trailer` needs, read only while the kind is on.
+ * The client's half is the same id in `lib/suggestions.ts`. Order is the
+ * picker's; trailers go out in reverse so the first kind is the very last
+ * thing in the instructions, as the follow-up block always was. An empty set
+ * is "off". */
+const SUGGEST_REGISTRY = {
+  prompts: { trailer: (): string | undefined => SUGGEST_FOLLOWUPS_INSTRUCTIONS },
+  commands: {
+    trailer: (data: unknown) => {
+      const commands = data as readonly SuggestableCommand[] | undefined;
+      return commands?.length ? suggestCommands(commands) : undefined;
+    },
+  },
+  replies: { trailer: (): string | undefined => SUGGEST_REPLIES_INSTRUCTIONS },
+  files: { trailer: (): string | undefined => SUGGEST_FILES_INSTRUCTIONS },
+  agents: {
+    trailer: (data: unknown) => {
+      const pairs = data as readonly SuggestableAgent[] | undefined;
+      return pairs?.length ? suggestAgents(pairs) : undefined;
+    },
+  },
+} satisfies Record<string, { trailer: (data: unknown) => string | undefined }>;
+
+export type SuggestKind = keyof typeof SUGGEST_REGISTRY;
+export const SUGGEST_KINDS = Object.keys(SUGGEST_REGISTRY) as SuggestKind[];
+
+/** What a thread that has never picked asks for — exactly what the old boolean's
+    "on" meant, so nothing changes until someone opens the picker. */
+export const DEFAULT_SUGGEST_KINDS: readonly SuggestKind[] = ["prompts", "commands"];
+
+/** `value` cut to known ids, deduped, in registry order — the one reading of a
+    stored or posted set, so an id a later build dropped never reaches a trailer. */
+export function normalizeSuggestKinds(value: unknown): SuggestKind[] {
+  const asked = new Set(Array.isArray(value) ? value : []);
+  return SUGGEST_KINDS.filter((kind) => asked.has(kind));
+}
+
+/** A row's set: its own when it has one, else what the legacy boolean said. */
+export function suggestKindsOf(kinds: unknown, legacy?: boolean | null): SuggestKind[] {
+  if (Array.isArray(kinds)) return normalizeSuggestKinds(kinds);
+  return legacy === false ? [] : [...DEFAULT_SUGGEST_KINDS];
+}
+
+/** Whether two sets are the same set, whatever order they were picked in. */
+export function sameSuggestKinds(a: unknown, b: unknown): boolean {
+  return normalizeSuggestKinds(a).join() === normalizeSuggestKinds(b).join();
+}
+
 /* ── Drawn answers ──
  *
  * The other thread-level behaviour folded in at this seam, and it is the same
@@ -165,8 +294,9 @@ Only ever name a command from the list above; never invent one, and never recomm
  * drawn answers" costs no per-runtime code and works everywhere.
  *
  * Two things stay where they were, deliberately:
- *   — `sessions.ui_blocks` remains a column, because it is also what the switch
- *     is drawn from;
+ *   — there is no separate switch: `uiGroups` is the one setting, and an empty
+ *     set is "off" exactly as an empty `suggestKinds` is (`sessions.ui_blocks`
+ *     is a legacy column, read only by `uiGroupsOf`);
  *   — the *rendering* is untouched by any of it. The client draws a fence
  *     whatever this says (see `ProseWithOpenui`), so a thread that never enabled
  *     the lane still renders one it is handed. */
@@ -177,12 +307,16 @@ export const OPENUI_FENCE = "openui-lang";
 
 /** What a thread's behaviour toggles and task fold into its instructions. */
 export interface ThreadBehaviour {
-  suggestFollowups?: boolean | null;
-  uiBlocks?: boolean | null;
-  /** The project's own commands (saved helpers + package.json scripts), read at
-      spawn so the recommendations trailer can list exactly the lines that exist
-      and the model recommends only from them. */
-  commands?: readonly SuggestableCommand[] | null;
+  /** Which closing blocks to ask for (`SUGGEST_KINDS`); empty or absent = none. */
+  suggestKinds?: readonly string[] | null;
+  /** Which component groups to teach (`UI_GROUP_IDS`); empty or absent = the
+      lane is not offered. A non-empty set always includes "layout". */
+  uiGroups?: readonly string[] | null;
+  /** What each enabled kind's loader read at spawn (`SUGGEST_LOADERS`, in
+      `sessions.ts`), keyed by kind id — e.g. the project's own commands, so the
+      trailer lists exactly the lines that exist and the model recommends only
+      from them. */
+  suggestData?: Partial<Record<SuggestKind, unknown>> | null;
   /** The task the thread was started on, resolved at spawn so a respawn sees
       the card as it is now. */
   task?: TaskBrief | null;
@@ -203,6 +337,38 @@ This thread is working on task ${task.key}, "${task.title}" (id ${task.id}), now
 Keep to this task. File a new one with tasks_create only for work you found that it does not cover.`;
 }
 
+/** The component groups a thread may be taught, in the order the prompt lists
+    them (layout first — the root `Stack` lives there). The generated registry's
+    own order, so a group added in the client library arrives here with a
+    regeneration and nothing else. */
+export const UI_GROUP_IDS: readonly string[] = OPENUI_GROUP_ORDER;
+
+/** The group every program needs: `root = Stack(...)` is defined in it. */
+const UI_GROUP_REQUIRED = "layout";
+
+/** `value` cut to known ids, deduped, in registry order. Empty stays empty
+    (drawn answers off); anything else gets layout forced in — the one reading
+    of a posted or stored set, so a program is never taught without the
+    container it has to start from. */
+export function normalizeUiGroups(value: unknown): string[] {
+  const asked = new Set(Array.isArray(value) ? value : []);
+  if (asked.size === 0) return [];
+  asked.add(UI_GROUP_REQUIRED);
+  return UI_GROUP_IDS.filter((id) => asked.has(id));
+}
+
+/** A row's set: its own when it has one, else what the legacy `ui_blocks`
+    switch said (off = none, on or never set = every group). */
+export function uiGroupsOf(stored: unknown, legacyUiBlocks?: boolean | null): string[] {
+  if (Array.isArray(stored)) return normalizeUiGroups(stored);
+  return legacyUiBlocks === false ? [] : [...UI_GROUP_IDS];
+}
+
+/** Whether two sets are the same set. */
+export function sameUiGroups(a: unknown, b: unknown): boolean {
+  return normalizeUiGroups(a).join() === normalizeUiGroups(b).join();
+}
+
 /**
  * Trailer appended to the spawn instructions while a thread wants drawn answers.
  *
@@ -211,12 +377,23 @@ Keep to this task. File a new one with tasks_create only for work you found that
  * self-contained exactly like the suggestions one, and every runtime on a
  * profile is told the same components the reader's app will draw. It used to
  * be a pointer, with the table pushed by our own runtime into its system prompt
- * — which meant every other runtime was told "this lane is not for you". */
-export const OPENUI_INSTRUCTIONS = `## Drawing an answer
+ * — which meant every other runtime was told "this lane is not for you".
+ *
+ * `groups` narrows which component groups the table teaches (absent = all): a
+ * thread that only ever wants tables and charts need not pay for maps in every
+ * turn's context. The frame around them is the generator's, so the syntax
+ * rules and examples are identical whatever is selected. */
+export function openuiInstructions(groups?: readonly string[] | null): string {
+  const picked = groups == null ? UI_GROUP_IDS : normalizeUiGroups(groups);
+  return `## Drawing an answer
 
 The client draws a fenced \`${OPENUI_FENCE}\` block as real UI, inline where the fence stood. It is a presentation lane and nothing else: nothing in it can read a file, run a command or reach the network — every tool call stays a normal tool call.
 
-${OPENUI_PROMPT}`;
+${OPENUI_FRAME_HEAD}${picked.map((id) => OPENUI_GROUPS[id]).join("")}${OPENUI_FRAME_TAIL}`;
+}
+
+/** The lane with every group, as it was before groups could be narrowed. */
+export const OPENUI_INSTRUCTIONS = openuiInstructions();
 
 /**
  * The spawn instructions for a thread: its persona, plus a trailer for each
@@ -235,14 +412,10 @@ export function withInstructionTrailers(
 ): PersonaSpawn | undefined {
   const trailers: { id: string; text: string }[] = [];
   if (behaviour.task) trailers.push({ id: "task", text: taskInstructions(behaviour.task) });
-  if (behaviour.uiBlocks) trailers.push({ id: "openui", text: OPENUI_INSTRUCTIONS });
-  if (behaviour.suggestFollowups) {
-    /* The project's own commands ride the suggestions ask rather than a toggle
-       of their own: "what next?" answered with a line to run instead of a
-       sentence to send. Only where the project defines something to name. */
-    if (behaviour.commands?.length)
-      trailers.push({ id: "commands", text: suggestCommands(behaviour.commands) });
-    trailers.push({ id: "suggestions", text: SUGGEST_FOLLOWUPS_INSTRUCTIONS });
+  if (normalizeUiGroups(behaviour.uiGroups).length > 0) trailers.push({ id: "openui", text: openuiInstructions(behaviour.uiGroups) });
+  for (const kind of normalizeSuggestKinds(behaviour.suggestKinds).reverse()) {
+    const text = SUGGEST_REGISTRY[kind].trailer(behaviour.suggestData?.[kind]);
+    if (text) trailers.push({ id: kind === "prompts" ? "suggestions" : kind, text });
   }
   if (trailers.length === 0) return persona;
 

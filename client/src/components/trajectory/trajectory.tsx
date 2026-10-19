@@ -160,7 +160,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
           size="icon-sm"
           title="Refresh"
           aria-label="Refresh"
-          disabled={query.isFetching && !live}
+          loading={query.isFetching && !live}
           onClick={() => void query.refetch()}
         >
           <RefreshCwIcon className={cn(query.isFetching && !live && "animate-spin")} />

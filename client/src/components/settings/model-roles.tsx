@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { Plus, Tag, Trash2 } from "lucide-react"
 import {
   useModelRoles,
@@ -15,8 +16,10 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { DataTable, type TableAction } from "@/components/ui/data-table"
+import { useTableFilter } from "@/lib/use-table-filter"
 import { ErrorNote } from "@/components/error-note"
-import { DetailSheet, Field, PageHeader, Section, StatusBadge } from "./primitives"
+import { settingsFormPath, settingsPath } from "@/lib/router"
+import { Field, FormPageHeader, FormSection, PageHeader, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /* ── Model roles ──
@@ -35,57 +38,25 @@ import { sectionMeta } from "./sections"
    Layout: header, then one DataTable — Role (label edited in place, id under
    it) | Description (edited in place) | Status (a warn StatusBadge on a role
    with no description). "New role" is the page header's action and opens the
-   same DetailSheet a phone row opens to edit: a right sheet on a wide panel,
-   a bottom sheet on a phone, where the inline inputs would be too small to aim at.
-   Label and description save on change, as they always did. */
+   the same page (`ModelRoleFormPage`, /settings/model-roles/:entryId, "new" =
+   add) a phone row opens to edit, where the inline inputs would be too small to
+   aim at. Label and description save on change, as they always did. */
 
 const INPUT = "text-xs pointer-coarse:h-11"
 const UNSET = "border-dashed"
 
-/** The dialog is either adding a role or editing the one it names. */
-type Sheet = { kind: "add" } | { kind: "edit"; id: string } | null
-
 export function ModelRolesPage() {
   const meta = sectionMeta("model-roles")
   const roles = useModelRoles()
-  const createRole = useCreateModelRole()
   const updateRole = useUpdateModelRole()
   const deleteRole = useDeleteModelRole()
   const [error, setError] = React.useState<InlineError | null>(null)
-  const [sheet, setSheet] = React.useState<Sheet>(null)
-  const [query, setQuery] = React.useState("")
+  const navigate = useNavigate()
 
   /* The panel's width picks the rows (inline inputs / tap-to-edit), the same
      measurement the table uses to choose between its two layouts. */
   const rootRef = React.useRef<HTMLDivElement>(null)
   const narrow = useIsNarrow(rootRef)
-
-  /* The "add" form's fields. `id` is optional: the server mints a stable one
-     when it is left empty. */
-  const [draftId, setDraftId] = React.useState("")
-  const [draftLabel, setDraftLabel] = React.useState("")
-  const [draftDescription, setDraftDescription] = React.useState("")
-
-  const addRole = () => {
-    const label = draftLabel.trim()
-    if (!label) return
-    createRole.mutate(
-      {
-        ...(draftId.trim() ? { id: draftId.trim() } : {}),
-        label,
-        description: draftDescription.trim(),
-      },
-      {
-        onSuccess: () => {
-          setDraftId("")
-          setDraftLabel("")
-          setDraftDescription("")
-          setSheet(null)
-        },
-        onError: (err) => setError(captureError(err, "Couldn't add the role")),
-      },
-    )
-  }
 
   const { mutate: updateMutate } = updateRole
   const { mutate: deleteMutate } = deleteRole
@@ -108,22 +79,11 @@ export function ModelRolesPage() {
     [deleteMutate],
   )
 
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? roles.filter((r) =>
-            `${r.id} ${r.label} ${r.description}`.toLowerCase().includes(needle),
-          )
-        : roles,
-    [roles, needle],
-  )
-  const editingId = sheet?.kind === "edit" ? sheet.id : null
-  const editing = editingId ? roles.find((r) => r.id === editingId) : undefined
-  /* The role was deleted from under the sheet (another device): close it. */
-  React.useEffect(() => {
-    if (editingId && !editing) setSheet(null)
-  }, [editingId, editing])
+  const f = useTableFilter(roles, {
+    text: (r) => `${r.id} ${r.label} ${r.description}`,
+    placeholder: "Search roles…",
+    fields: [{ id: "description", label: "Description", of: (r) => (r.description.trim() ? "Described" : "No description") }],
+  })
   const unset = roles.filter((r) => !r.description.trim()).length
 
   /* Desktop: label and description edit in the cells. The table memoises a row
@@ -192,7 +152,7 @@ export function ModelRolesPage() {
   )
 
   const addButton = (
-    <Button type="button" className="h-11 @panel-sm:h-9" onClick={() => setSheet({ kind: "add" })}>
+    <Button type="button" className="h-11 @panel-sm:h-9" onClick={() => void navigate(settingsFormPath("model-roles"))}>
       <Plus className="size-4" /> New role
     </Button>
   )
@@ -208,143 +168,174 @@ export function ModelRolesPage() {
       >
         <DataTable
           columns={columns}
-          data={shown}
+          data={f.rows}
           getRowId={(r) => r.id}
           pageSize={25}
           actions={actions}
           mark={() => <Tag />}
-          viewToggle={false}
-          filtering={{
-            search: { value: query, onChange: setQuery, placeholder: "Search roles…" },
-            totalCount: roles.length,
-          }}
+          filtering={f.filtering}
           emptyIcon={<Tag />}
-          emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "No roles yet."}
-          emptyAction={needle ? undefined : addButton}
-          onRowClick={narrow ? (r) => setSheet({ kind: "edit", id: r.id }) : undefined}
+          emptyMessage={f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No roles yet."}
+          emptyAction={f.narrowed ? undefined : addButton}
+          onRowClick={narrow ? (r) => void navigate(settingsFormPath("model-roles", r.id)) : undefined}
           mobile={{ renderRow: (role) => <RoleRow role={role} /> }}
         />
       </Section>
 
-      <DetailSheet
-        open={sheet !== null}
-        onOpenChange={(o) => !o && setSheet(null)}
-        title={sheet?.kind === "add" ? "Add a role" : "Edit role"}
+    </div>
+  )
+}
+
+/** Add a role ("new") or edit the one the route names. */
+export function ModelRoleFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const roles = useModelRoles()
+  const createRole = useCreateModelRole()
+  const updateRole = useUpdateModelRole()
+  const deleteRole = useDeleteModelRole()
+  const [error, setError] = React.useState<InlineError | null>(null)
+  /* The "add" form's fields. `id` is optional: the server mints a stable one
+     when it is left empty. */
+  const [draftId, setDraftId] = React.useState("")
+  const [draftLabel, setDraftLabel] = React.useState("")
+  const [draftDescription, setDraftDescription] = React.useState("")
+  const adding = entryId === "new"
+  const editing = adding ? undefined : roles.find((r) => r.id === entryId)
+  /* An unknown id, or a role deleted from under the page (another device). */
+  if (!adding && !editing) return <Navigate to={settingsPath("model-roles")} replace />
+  const back = () => void navigate(settingsPath("model-roles"))
+
+  const addRole = () => {
+    const label = draftLabel.trim()
+    if (!label) return
+    createRole.mutate(
+      {
+        ...(draftId.trim() ? { id: draftId.trim() } : {}),
+        label,
+        description: draftDescription.trim(),
+      },
+      {
+        onSuccess: back,
+        onError: (err) => setError(captureError(err, "Couldn't add the role")),
+      },
+    )
+  }
+  const save = (id: string, field: "label" | "description", value: string) =>
+    updateRole.mutate({ id, [field]: value }, {
+      onError: (err) => setError(captureError(err, "Couldn't update the role")),
+    })
+
+  return (
+    <>
+      <FormPageHeader
+        title={editing ? "Edit role" : "Add a role"}
         description={
-          sheet?.kind === "add"
-            ? "Id is optional and cannot change once the role exists; leave it empty and the server mints one."
-            : editing && (
-                <>
-                  <Badge variant="secondary" className="max-w-full truncate font-mono text-[11px]">
-                    {editing.id}
-                  </Badge>{" "}
-                  cannot be renamed; label and description save as you type.
-                </>
-              )
+          editing
+            ? `${editing.id} cannot be renamed; label and description save as you type.`
+            : "Id is optional and cannot change once the role exists; leave it empty and the server mints one."
         }
-        footer={
-          sheet?.kind === "add" ? (
-            <>
-              <Button variant="outline" type="button" onClick={() => setSheet(null)}>
-                Cancel
-              </Button>
+        onBack={back}
+      />
+      <div className="space-y-6">
+        <ErrorNote error={error} />
+        {editing ? (
+          <>
+            <FormSection label="Role">
+              <Field label="Label">
+                <SavedInput
+                  value={editing.label}
+                  onSave={(v) => save(editing.id, "label", v)}
+                  placeholder="Role label"
+                  aria-label={`Label for ${editing.id}`}
+                  className={cn(INPUT, "font-medium")}
+                />
+              </Field>
+              <Field label="Description">
+                <SavedInput
+                  value={editing.description}
+                  onSave={(v) => save(editing.id, "description", v)}
+                  placeholder="One line for the agent — e.g. Cheap side-jobs"
+                  aria-label={`Description for ${editing.id}`}
+                  className={cn(INPUT, !editing.description.trim() && UNSET)}
+                />
+              </Field>
+            </FormSection>
+            <div className="flex items-center justify-between gap-2">
               <Button
-                type="submit"
-                form="add-role"
-                disabled={createRole.isPending || !draftLabel.trim()}
-                title="Add role"
+                variant="outline"
+                type="button"
+                className="text-destructive"
+                onClick={() =>
+                  deleteRole.mutate(
+                    { id: editing.id },
+                    {
+                      onSuccess: back,
+                      onError: (err) => setError(captureError(err, "Couldn't delete the role")),
+                    },
+                  )
+                }
+                aria-label={`Delete role ${editing.id}`}
               >
-                <Plus className="size-4" />
-                Add role
+                <Trash2 className="size-4" />
+                Delete role
               </Button>
-            </>
-          ) : (
-            editing && (
-              <>
-                <Button
-                  variant="outline"
-                  type="button"
-                  className="text-destructive"
-                  onClick={() => {
-                    removeRole(editing.id)
-                    setSheet(null)
-                  }}
-                  aria-label={`Delete role ${editing.id}`}
-                >
-                  <Trash2 className="size-4" />
-                  Delete role
-                </Button>
-                <Button type="button" onClick={() => setSheet(null)}>
-                  Done
-                </Button>
-              </>
-            )
-          )
-        }
-      >
-        {sheet?.kind === "add" && (
+              <Button type="button" onClick={back}>
+                Done
+              </Button>
+            </div>
+          </>
+        ) : (
           <form
-            id="add-role"
-            className="space-y-3"
+            className="space-y-6"
             onSubmit={(e) => {
               e.preventDefault()
               addRole()
             }}
           >
-            <Field label="Id">
-              <Input
-                value={draftId}
-                onChange={(e) => setDraftId(e.target.value)}
-                placeholder="Id (optional) — small"
-                title="Optional. What a model's assignment points at; it cannot be changed once the role exists. Leave empty and the server mints one."
-                aria-label="Id"
-                className={cn(INPUT, "font-mono")}
-              />
-            </Field>
-            <Field label="Label">
-              <Input
-                value={draftLabel}
-                onChange={(e) => setDraftLabel(e.target.value)}
-                placeholder="Label — Small"
-                aria-label="Label"
-                className={INPUT}
-              />
-            </Field>
-            <Field label="Description">
-              <Input
-                value={draftDescription}
-                onChange={(e) => setDraftDescription(e.target.value)}
-                placeholder="Description — Cheap side-jobs"
-                aria-label="Description"
-                className={INPUT}
-              />
-            </Field>
+            <FormSection label="Role">
+              <Field label="Id">
+                <Input
+                  value={draftId}
+                  onChange={(e) => setDraftId(e.target.value)}
+                  placeholder="Id (optional) — small"
+                  title="Optional. What a model's assignment points at; it cannot be changed once the role exists. Leave empty and the server mints one."
+                  aria-label="Id"
+                  className={cn(INPUT, "font-mono")}
+                />
+              </Field>
+              <Field label="Label">
+                <Input
+                  value={draftLabel}
+                  onChange={(e) => setDraftLabel(e.target.value)}
+                  placeholder="Label — Small"
+                  aria-label="Label"
+                  className={INPUT}
+                />
+              </Field>
+              <Field label="Description">
+                <Input
+                  value={draftDescription}
+                  onChange={(e) => setDraftDescription(e.target.value)}
+                  placeholder="Description — Cheap side-jobs"
+                  aria-label="Description"
+                  className={INPUT}
+                />
+              </Field>
+            </FormSection>
+            <div className="flex flex-col-reverse gap-2 @panel-sm:flex-row @panel-sm:justify-end">
+              <Button variant="outline" type="button" onClick={back}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createRole.isPending || !draftLabel.trim()} title="Add role">
+                <Plus className="size-4" />
+                Add role
+              </Button>
+            </div>
           </form>
         )}
-        {sheet?.kind === "edit" && editing && (
-          <>
-            <Field label="Label">
-              <SavedInput
-                value={editing.label}
-                onSave={(v) => updateField(editing.id, "label", v)}
-                placeholder="Role label"
-                aria-label={`Label for ${editing.id}`}
-                className={cn(INPUT, "font-medium")}
-              />
-            </Field>
-            <Field label="Description">
-              <SavedInput
-                value={editing.description}
-                onSave={(v) => updateField(editing.id, "description", v)}
-                placeholder="One line for the agent — e.g. Cheap side-jobs"
-                aria-label={`Description for ${editing.id}`}
-                className={cn(INPUT, !editing.description.trim() && UNSET)}
-              />
-            </Field>
-          </>
-        )}
-      </DetailSheet>
-    </div>
+      </div>
+    </>
   )
 }
 

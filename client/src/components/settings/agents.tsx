@@ -21,9 +21,11 @@
    installs it. Versions are what the agent reports over ACP (`agentInfo`),
    not a `--version` flag parsed per CLI, so every runtime reads the same. */
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { CopyIcon, Cpu, DownloadIcon, EraserIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
+import { useTableFilter } from "@/lib/use-table-filter"
 import { DataTable, TitleCell, type DataTableExpand, type DataTableMobile, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { Input } from "@/components/ui/input"
@@ -38,7 +40,18 @@ import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/set
 import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { writeClipboard } from "@/lib/clipboard"
-import { PageHeader, StatStrip, StatusBadge, DetailSheet, Field, lines } from "./primitives"
+import { settingsFormPath, settingsPath } from "@/lib/router"
+import {
+  Field,
+  FormActions,
+  FormPageHeader,
+  FormSection,
+  PageForm,
+  PageHeader,
+  StatStrip,
+  StatusBadge,
+  lines,
+} from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -88,10 +101,9 @@ export function AgentsPage() {
   const profiles = useProfiles()
   const agents = useAgents()
   const { status, loading, error, refresh } = useAgentsStatus()
-  const [editing, setEditing] = React.useState<AgentDef | null>(null)
+  const navigate = useNavigate()
   const [checking, setChecking] = React.useState(false)
   const [installing, setInstalling] = React.useState<ReadonlySet<string>>(() => new Set())
-  const [query, setQuery] = React.useState("")
   const byAgent = React.useMemo(
     () => new Map((status?.agents ?? []).map((s) => [s.agentId, s])),
     [status],
@@ -147,22 +159,25 @@ export function AgentsPage() {
 
   /* The handlers read the latest of the page through one ref, so the table's
      memoised actions are rebuilt only when a reading changes. */
-  const live = React.useRef({ install, setEditing })
+  const live = React.useRef({ install, navigate })
   React.useLayoutEffect(() => {
-    live.current = { install, setEditing }
+    live.current = { install, navigate }
   })
 
-  const searchable = agents.length > 8
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      searchable && needle
-        ? agents.filter((agent) =>
-            `${agent.name} ${agent.id} ${agent.command ?? ""}`.toLowerCase().includes(needle),
-          )
-        : agents,
-    [agents, searchable, needle],
-  )
+  const f = useTableFilter(agents, {
+    text: (agent) => `${agent.name} ${agent.id} ${agent.command ?? ""}`,
+    placeholder: "Search runtimes…",
+    fields: [
+      {
+        id: "state",
+        label: "Status",
+        of: (agent) => {
+          const s = byAgent.get(agent.id)
+          return !s ? undefined : s.installed && !s.error ? "Installed" : s.installed ? "Not responding" : "Not installed"
+        },
+      },
+    ],
+  })
 
   const pending = loading || checking
   const columns = React.useMemo<ColumnDef<AgentDef, unknown>[]>(
@@ -248,7 +263,7 @@ export function AgentsPage() {
         },
         onClick: (a) => void live.current.install(a, true),
       },
-      { id: "edit", label: "Edit", icon: <PencilIcon />, onClick: (a) => live.current.setEditing(a) },
+      { id: "edit", label: "Edit", icon: <PencilIcon />, onClick: (a) => void live.current.navigate(settingsFormPath("agents", a.id)) },
     ],
     [byAgent],
   )
@@ -313,7 +328,7 @@ export function AgentsPage() {
               <EraserIcon className="size-4" />
               Clear cached options
             </Button>
-            <Button variant="outline" className="h-11 @panel-sm:h-9" disabled={checking} onClick={() => void recheck()}>
+            <Button variant="outline" className="h-11 @panel-sm:h-9" loading={checking} onClick={() => void recheck()}>
               <RefreshCwIcon className={`size-4 ${checking ? "animate-spin" : ""}`} />
               {checking ? "Checking…" : "Check again"}
             </Button>
@@ -347,7 +362,7 @@ export function AgentsPage() {
       ) : (
         <DataTable
           columns={columns}
-          data={shown}
+          data={f.rows}
           getRowId={(a) => a.id}
           isLoading={agents.length === 0 && loading}
           pageSize={50}
@@ -356,18 +371,10 @@ export function AgentsPage() {
           expand={expand}
           mobile={mobile}
           emptyIcon={<Cpu />}
-          emptyMessage={`Nothing matches “${query.trim()}”.`}
-          filtering={
-            searchable
-              ? {
-                  search: { value: query, onChange: setQuery, placeholder: "Search runtimes…" },
-                  totalCount: agents.length,
-                }
-              : undefined
-          }
+          emptyMessage={f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No runtimes."}
+          filtering={f.filtering}
         />
       )}
-      {editing && <AgentDialog agent={editing} onClose={() => setEditing(null)} />}
     </>
   )
 }
@@ -516,7 +523,16 @@ function AgentDetail({
   )
 }
 
-function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void }) {
+export function AgentFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const agents = useAgents()
+  const agent = agents.find((a) => a.id === entryId)
+  if (!agent) return <Navigate to={settingsPath("agents")} replace />
+  return <AgentForm agent={agent} onClose={() => void navigate(settingsPath("agents"))} />
+}
+
+function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void }) {
   const { settings } = useSettingsPage()
   const invalidateProfile = useInvalidateProfileCatalog()
   const [form, setForm] = React.useState({
@@ -582,99 +598,84 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
   }
 
   return (
-    <DetailSheet
-      open
-      onOpenChange={(open) => !open && onClose()}
-      title={`Edit ${agent.name}`}
-      description={
-        <>
-          How the server launches <span className="font-mono">{agent.id}</span>. Threads already running keep the
-          process they have; the change applies the next time one spawns.
-        </>
-      }
-      footer={
-        <div className="flex w-full flex-wrap items-center gap-2">
-          {agent.builtIn && (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => void reset()}
-              title="Put this agent back the way it ships"
-            >
-              <RotateCcwIcon className="size-4" /> Reset to default
-            </Button>
-          )}
-          <div className="ml-auto flex gap-2">
-            <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" form="agent-edit-form" disabled={busy}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <form id="agent-edit-form" onSubmit={save} className="space-y-4">
-        <Field label="Name" hint="What the pickers call it.">
-          <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
-        </Field>
-        <Field label="Command" hint="A binary on PATH, or an absolute path.">
-          <Input
-            value={form.command}
-            onChange={(e) => set({ command: e.target.value })}
-            className="font-mono text-xs"
-            required
-          />
-        </Field>
-
-        <Field label="Arguments" hint="One per line. {placeholders} are filled at spawn.">
-          <Textarea
-            value={form.args}
-            onChange={(e) => set({ args: e.target.value })}
-            rows={2}
-            className="font-mono text-xs"
-          />
-        </Field>
-
-        <Field
-          label="Environment"
-          hint="One per line: NAME=value. {apiKey} {baseUrl} {gatewayUrl} {model} {smallModel} {effort} {contextWindow} {maxOutputTokens} {cwd} {personaFile} {personaPrompt} — a key whose placeholders resolve empty is dropped."
-        >
-          <Textarea
-            value={form.env}
-            onChange={(e) => set({ env: e.target.value })}
-            rows={8}
-            className="font-mono text-xs"
-            spellCheck={false}
-          />
-        </Field>
-
+    <>
+      <FormPageHeader
+        title={`Edit ${agent.name}`}
+        description={`How the server launches ${agent.id}. Threads already running keep the process they have; the change applies the next time one spawns.`}
+        onBack={onClose}
+      />
+      <PageForm onSubmit={save}>
+        <FormSection id="launch" label="Launch" hint="The command the server spawns, and the environment it gets.">
+          <Field label="Name" hint="What the pickers call it.">
+            <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
+          </Field>
+          <Field label="Command" hint="A binary on PATH, or an absolute path.">
+            <Input
+              value={form.command}
+              onChange={(e) => set({ command: e.target.value })}
+              className="font-mono text-xs"
+              required
+            />
+          </Field>
+          <Field label="Arguments" hint="One per line. {placeholders} are filled at spawn.">
+            <Textarea
+              value={form.args}
+              onChange={(e) => set({ args: e.target.value })}
+              rows={2}
+              className="font-mono text-xs"
+            />
+          </Field>
+          <Field
+            label="Environment"
+            hint="One per line: NAME=value. {apiKey} {baseUrl} {gatewayUrl} {model} {smallModel} {effort} {contextWindow} {maxOutputTokens} {cwd} {personaFile} {personaPrompt} — a key whose placeholders resolve empty is dropped."
+          >
+            <Textarea
+              value={form.env}
+              onChange={(e) => set({ env: e.target.value })}
+              rows={8}
+              className="font-mono text-xs"
+              spellCheck={false}
+            />
+          </Field>
+        </FormSection>
         {/* Descriptive, not protocol — which is why these two are editable
             at all and the declarative fields beside them are not. An agent
             somebody added has no seed to inherit either from: without them a
             row measured as missing showed no way to fix it, and every
             non-built-in wore the same neutral glyph. */}
-        <Field label="Install command" hint="Shown when the binary is not on the server's PATH.">
-          <Input
-            value={form.install}
-            onChange={(e) => set({ install: e.target.value })}
-            className="font-mono text-xs"
-            placeholder="npm install -g …"
-          />
-        </Field>
-        <Field label="Icon" hint="An image URL or data: URI. app = the harness's own mark.">
-          <Input
-            value={form.icon}
-            onChange={(e) => set({ icon: e.target.value })}
-            className="font-mono text-xs"
-            placeholder="https://… or data:image/png;base64,…"
-          />
-        </Field>
-
-        <ErrorNote error={error} />
-      </form>
-    </DetailSheet>
+        <FormSection id="appearance" label="Install and icon" hint="Descriptive only; the protocol never reads them.">
+          <Field label="Install command" hint="Shown when the binary is not on the server's PATH.">
+            <Input
+              value={form.install}
+              onChange={(e) => set({ install: e.target.value })}
+              className="font-mono text-xs"
+              placeholder="npm install -g …"
+            />
+          </Field>
+          <Field label="Icon" hint="An image URL or data: URI. app = the harness's own mark.">
+            <Input
+              value={form.icon}
+              onChange={(e) => set({ icon: e.target.value })}
+              className="font-mono text-xs"
+              placeholder="https://… or data:image/png;base64,…"
+            />
+          </Field>
+        </FormSection>
+        {agent.builtIn && (
+          <FormSection id="reset" label="Defaults" hint="Put this agent back the way it ships.">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 @panel-sm:h-9"
+              disabled={busy}
+              onClick={() => void reset()}
+            >
+              <RotateCcwIcon className="size-4" /> Reset to default
+            </Button>
+          </FormSection>
+        )}
+        <FormActions busy={busy} onCancel={onClose} error={error} />
+      </PageForm>
+    </>
   )
 }

@@ -29,6 +29,7 @@ import { useAppMeta } from "@/lib/queries"
 import { ChangelogDialog } from "@/components/changelog-dialog"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
+import { useTableFilter } from "@/lib/use-table-filter"
 
 /* ── General ──
    The servers this device knows (lib/settings stores several side by side),
@@ -168,6 +169,12 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
   ], [active, confirm])
   /* eslint-enable react-hooks/exhaustive-deps */
 
+  const f = useTableFilter(servers, {
+    text: (s) => `${s.name} ${s.url}`,
+    placeholder: "Search servers…",
+    fields: [{ id: "status", label: "Status", of: (s) => (s.id === active.id ? "Connected" : "Saved") }],
+  })
+
   return (
     <>
       <Section
@@ -176,13 +183,14 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
       >
         <DataTable
           columns={columns}
-          data={servers}
+          data={f.rows}
+          filtering={f.filtering}
           getRowId={(s) => s.id}
           mark={() => <Server />}
           actions={actions}
           rowClassName={(s) => (s.id === active.id ? "bg-primary/5 [&>td:first-child]:bg-[color-mix(in_oklab,var(--card),var(--primary)_5%)]" : undefined)}
           emptyIcon={<Server />}
-          emptyMessage="No servers stored on this device."
+          emptyMessage={f.narrowed ? "No servers match." : "No servers stored on this device."}
           emptyAction={
             <Button className="pointer-coarse:h-11" onClick={onAdd}>
               <Plus className="size-4" /> Add server

@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { asc, eq, max, sql } from "drizzle-orm";
+import { asc, eq, inArray, max, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, projects as projectsTable } from "./db/index.js";
+import { db, projectSpaces, projects as projectsTable, spaces as spacesTable } from "./db/index.js";
 import { helpersByProject, listHelpers, type HelperCommand } from "./project-helpers.js";
+import { DEFAULT_SUGGEST_KINDS, normalizeSuggestKinds, normalizeUiGroups, suggestKindsOf, UI_GROUP_IDS, uiGroupsOf } from "./personas.js";
 import { defaultSpaceId } from "./spaces.js";
 
 // A project is the WORKSPACE a session runs in — a directory and a name. What
@@ -16,9 +17,13 @@ import { defaultSpaceId } from "./spaces.js";
 export const ProjectInputSchema = z.object({
   name: z.string().min(1),
   cwd: z.string().min(1),
-  /** The space this project belongs to. Optional: a create that names none
-      lands in the default space (`defaultSpaceId`), and an update that omits it
-      leaves the project's space alone rather than clearing it. */
+  /** The spaces this project is filed under (at least one). Optional: a create
+      that names none lands in the default space (`defaultSpaceId`), and an
+      update that omits it leaves the project's spaces alone rather than
+      clearing them. */
+  spaceIds: z.array(z.string().min(1)).min(1).optional(),
+  /** Legacy single-space spelling, kept so older callers (the harness tool, an
+      old client) keep working; `spaceIds` wins when both are sent. */
   spaceId: z.string().optional(),
   description: z.string().nullable().default(null),
   /** Optional — a URL. Empty means "no logo of its own"; the client draws
@@ -39,12 +44,6 @@ export type ProjectInput = z.input<typeof ProjectInputSchema>;
     are stored in the `rules` table (rules.ts), not as a column here. */
 export type Project = ProjectInput & {
   id: string;
-  /** The space this project is filed under. Optional in the type for the same
-      reason `helpers` and `defaults` are: internal stubs (a quota probe's cwd,
-      the status handshake's) carry a directory and nothing else, while every
-      row the API answers names it — `rowToProject` folds the column in, and the
-      boot backfill (`ensureSchema`) has assigned every project one. */
-  spaceId?: string;
   helpers?: HelperCommand[];
   /** How a thread started in this project opens. Optional in the type for the
       same reason `helpers` is — internal stubs (a quota probe's cwd, the
@@ -77,10 +76,14 @@ export interface ProjectDefaults {
   mcpServerIds: string[];
   skillIds: string[];
   commandIds: string[];
-  suggestFollowups: boolean;
-  uiBlocks: boolean;
+  suggestKinds: string[];
+  /** The component groups drawn answers teach (`UI_GROUP_IDS`); empty = drawn
+      answers off, otherwise "layout" is always in. */
+  uiGroups: string[];
   /** "" = no say: the thread's profile, then the global default, picks. */
   voiceProvider: string;
+  /** Profile per agent id a new thread's `ask_agent` starts with. */
+  askProfiles: Record<string, { profileId: string; model?: string }>;
 }
 
 /** An empty set of defaults — a project nobody has worked in yet. Every field
@@ -95,9 +98,10 @@ export const emptyDefaults = (): ProjectDefaults => ({
   mcpServerIds: [],
   skillIds: [],
   commandIds: [],
-  suggestFollowups: true,
-  uiBlocks: true,
+  suggestKinds: [...DEFAULT_SUGGEST_KINDS],
+  uiGroups: [...UI_GROUP_IDS],
   voiceProvider: "",
+  askProfiles: {},
 });
 
 /**
@@ -117,9 +121,10 @@ export const ProjectDefaultsPatchSchema = z.object({
   mcpServerIds: z.array(z.string()).optional(),
   skillIds: z.array(z.string()).optional(),
   commandIds: z.array(z.string()).optional(),
-  suggestFollowups: z.boolean().optional(),
-  uiBlocks: z.boolean().optional(),
+  suggestKinds: z.array(z.string()).optional(),
+  uiGroups: z.array(z.string()).optional(),
   voiceProvider: z.string().optional(),
+  askProfiles: z.record(z.string(), z.object({ profileId: z.string(), model: z.string().optional() })).optional(),
 });
 
 export type ProjectDefaultsPatch = z.infer<typeof ProjectDefaultsPatchSchema>;
@@ -139,9 +144,10 @@ export function projectDefaultsColumns(patch: ProjectDefaultsPatch) {
   if (patch.mcpServerIds !== undefined) out.defaultMcpServerIds = patch.mcpServerIds;
   if (patch.skillIds !== undefined) out.defaultSkillIds = patch.skillIds;
   if (patch.commandIds !== undefined) out.defaultCommandIds = patch.commandIds;
-  if (patch.suggestFollowups !== undefined) out.defaultSuggestFollowups = patch.suggestFollowups;
-  if (patch.uiBlocks !== undefined) out.defaultUiBlocks = patch.uiBlocks;
+  if (patch.suggestKinds !== undefined) out.defaultSuggestKinds = normalizeSuggestKinds(patch.suggestKinds);
+  if (patch.uiGroups !== undefined) out.defaultUiGroups = normalizeUiGroups(patch.uiGroups);
   if (patch.voiceProvider !== undefined) out.defaultVoiceProvider = patch.voiceProvider || null;
+  if (patch.askProfiles !== undefined) out.defaultAskProfiles = Object.keys(patch.askProfiles).length ? patch.askProfiles : null;
   return out;
 }
 
@@ -158,9 +164,10 @@ export const projectDefaultsOf = (row: typeof projectsTable.$inferSelect): Proje
   mcpServerIds: row.defaultMcpServerIds ?? [],
   skillIds: row.defaultSkillIds ?? [],
   commandIds: row.defaultCommandIds ?? [],
-  suggestFollowups: row.defaultSuggestFollowups ?? true,
-  uiBlocks: row.defaultUiBlocks ?? true,
+  suggestKinds: suggestKindsOf(row.defaultSuggestKinds, row.defaultSuggestFollowups),
+  uiGroups: uiGroupsOf(row.defaultUiGroups, row.defaultUiBlocks),
   voiceProvider: row.defaultVoiceProvider ?? "",
+  askProfiles: row.defaultAskProfiles ?? {},
 });
 
 /** A project row with the start-default columns taken off it.
@@ -183,8 +190,11 @@ export function withoutDefaults(row: typeof projectsTable.$inferSelect) {
     defaultSkillIds: _skills,
     defaultCommandIds: _commands,
     defaultSuggestFollowups: _sf,
+    defaultSuggestKinds: _sk,
     defaultUiBlocks: _ui,
+    defaultUiGroups: _ug,
     defaultVoiceProvider: _vp,
+    spaceId: _space,
     ...rest
   } = row;
   return rest;
@@ -195,9 +205,10 @@ export function withoutDefaults(row: typeof projectsTable.$inferSelect) {
 const rowToProject = (
   row: typeof projectsTable.$inferSelect,
   helpers: HelperCommand[],
+  spaceIds: string[],
 ): Project => ({
   ...withoutDefaults(row),
-  spaceId: row.spaceId ?? "",
+  spaceIds,
   logoUrl: row.logoUrl ?? "",
   previewUrl: row.previewUrl ?? "",
   helpers,
@@ -212,27 +223,68 @@ const rowToProject = (
 const columns = (input: ProjectInput) => ({
   name: input.name,
   cwd: input.cwd,
-  spaceId: input.spaceId,
   description: input.description ?? null,
   logoUrl: input.logoUrl ?? "",
   previewUrl: input.previewUrl ?? "",
 });
 
+/** Each project's spaces, in the switcher's order, so "the first space" is the
+    same one everywhere a client has to pick. */
+async function spaceIdsByProject(ids: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select({ projectId: projectSpaces.projectId, spaceId: projectSpaces.spaceId })
+    .from(projectSpaces)
+    .innerJoin(spacesTable, eq(spacesTable.id, projectSpaces.spaceId))
+    .where(inArray(projectSpaces.projectId, ids))
+    .orderBy(asc(spacesTable.sortOrder), asc(spacesTable.name));
+  for (const row of rows) out.set(row.projectId, [...(out.get(row.projectId) ?? []), row.spaceId]);
+  return out;
+}
+
+/** Replace a project's spaces with exactly these. Unknown ids are an error, not
+    a silent skip: the caller asked for a place that does not exist. */
+async function setProjectSpaces(projectId: string, spaceIds: string[]): Promise<void> {
+  const ids = [...new Set(spaceIds)];
+  const known = await db.select({ id: spacesTable.id }).from(spacesTable).where(inArray(spacesTable.id, ids));
+  if (known.length !== ids.length) throw new Error("Unknown space.");
+  await db.transaction(async (tx) => {
+    await tx.delete(projectSpaces).where(eq(projectSpaces.projectId, projectId));
+    await tx.insert(projectSpaces).values(ids.map((spaceId) => ({ projectId, spaceId })));
+  });
+}
+
+/** The ids an input names, spelling either way. */
+const inputSpaceIds = (input: ProjectInput): string[] | undefined =>
+  input.spaceIds ?? (input.spaceId ? [input.spaceId] : undefined);
+
 /** Every project, or only one space's — the sidebar and the pickers that are
-    scoped to the space in front of you ask for the second. */
+    scoped to the space in front of you ask for the second. A project in several
+    spaces is in each one's list. */
 export async function listProjects(spaceId?: string): Promise<Project[]> {
   const rows = await db
     .select()
     .from(projectsTable)
-    .where(spaceId ? eq(projectsTable.spaceId, spaceId) : undefined)
+    .where(
+      spaceId
+        ? inArray(
+            projectsTable.id,
+            db.select({ id: projectSpaces.projectId }).from(projectSpaces).where(eq(projectSpaces.spaceId, spaceId)),
+          )
+        : undefined,
+    )
     .orderBy(asc(projectsTable.sortOrder), asc(projectsTable.name));
-  const helpers = await helpersByProject(rows.map((r) => r.id));
-  return rows.map((row) => rowToProject(row, helpers.get(row.id) ?? []));
+  const ids = rows.map((r) => r.id);
+  const [helpers, spaces] = await Promise.all([helpersByProject(ids), spaceIdsByProject(ids)]);
+  return rows.map((row) => rowToProject(row, helpers.get(row.id) ?? [], spaces.get(row.id) ?? []));
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
   const row = (await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1))[0];
-  return row ? rowToProject(row, await listHelpers(id)) : undefined;
+  return row
+    ? rowToProject(row, await listHelpers(id), (await spaceIdsByProject([id])).get(id) ?? [])
+    : undefined;
 }
 
 export async function createProject(input: ProjectInput): Promise<Project> {
@@ -244,11 +296,16 @@ export async function createProject(input: ProjectInput): Promise<Project> {
   // A new project lands at the end of the list, not in the middle of an order
   // somebody arranged by hand.
   const last = (await db.select({ max: max(projectsTable.sortOrder) }).from(projectsTable))[0]?.max ?? 0;
-  /* A create that names no space gets the default one — a project with a null
-     space would be invisible in every space, since the filter is an equality. */
-  const spaceId = input.spaceId || (await defaultSpaceId());
-  await db.insert(projectsTable)
-    .values({ id, ...columns({ ...input, spaceId }), sortOrder: last + 1 });
+  /* A create that names no space gets the default one — a project in no space
+     would be invisible in every one. */
+  const spaceIds = inputSpaceIds(input) ?? [await defaultSpaceId()];
+  await db.insert(projectsTable).values({ id, ...columns(input), sortOrder: last + 1 });
+  try {
+    await setProjectSpaces(id, spaceIds);
+  } catch (error) {
+    await db.delete(projectsTable).where(eq(projectsTable.id, id));
+    throw error;
+  }
   return (await getProject(id))!;
 }
 
@@ -276,7 +333,10 @@ export async function updateProject(id: string, input: ProjectInput): Promise<Pr
     .set(columns(input))
     .where(eq(projectsTable.id, id))
     ).rowCount ?? 0);
-  return changed > 0 ? await getProject(id) : undefined;
+  if (changed === 0) return undefined;
+  const spaceIds = inputSpaceIds(input);
+  if (spaceIds) await setProjectSpaces(id, spaceIds);
+  return await getProject(id);
 }
 
 /**

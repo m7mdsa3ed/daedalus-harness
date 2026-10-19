@@ -4,7 +4,7 @@
    Split out of the one 1500-line `useActions` memo; see `lib/actions.ts`. */
 
 import { uuid } from "../uuid"
-import { api } from "../settings"
+import { api, type AskProfiles } from "../settings"
 import { forgetDraft, patchDraft } from "../draft-sessions"
 import { postJson, type ActionsCore } from "./core"
 
@@ -55,6 +55,19 @@ export function lifecycleActions(core: ActionsCore) {
         { method: "PATCH", body: JSON.stringify({ pinned: !session.pinnedAt }) }
       )
       dispatch({ type: "pin-session", id: sessionId, pinnedAt })
+    },
+
+    /** Choose which profile and model this thread's `ask_agent` uses per
+     * agent. Read by the server at ask time, so it is not a spawn input and
+     * never stages: the answer moves the store, the way a pin does. */
+    async setAskProfiles(sessionId: string, askProfiles: AskProfiles) {
+      const session = getState().sessions.find((s) => s.id === sessionId)
+      if (!session || session.draft) return
+      const res = await api<{ askProfiles: AskProfiles }>(settings, `/api/sessions/${sessionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ askProfiles }),
+      })
+      dispatch({ type: "ask-profiles-session", id: sessionId, askProfiles: res.askProfiles })
     },
 
     /** Remove an isolated thread's git worktree (the branch is kept). The

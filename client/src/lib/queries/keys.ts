@@ -47,7 +47,6 @@ export const mcpCatalogKey = (s: ServerSettings, id: string) => mcpServersKey(s)
 export const threadMcpKey = (s: ServerSettings, sessionId: string) => mcpServersKey(s).concat(["thread", sessionId])
 export const skillsKey = (s: ServerSettings) => scope(s).concat(["skills"])
 export const commandsKey = (s: ServerSettings) => scope(s).concat(["commands"])
-export const promptsKey = (s: ServerSettings) => scope(s).concat(["prompts"])
 export const modelPromptsKey = (s: ServerSettings) => scope(s).concat(["model-prompts"])
 /** The rules list (`GET /api/rules`) and individual rule CRUD. */
 export const rulesKey = (s: ServerSettings) => scope(s).concat(["rules"])
@@ -90,6 +89,8 @@ export const projectGitLogKey = (s: ServerSettings, projectId: string, repo: str
   scope(s).concat(["project-git-log", projectId, repo])
 export const projectGitBranchesKey = (s: ServerSettings, projectId: string, repo: string) =>
   scope(s).concat(["project-git-branches", projectId, repo])
+export const projectGitRefsKey = (s: ServerSettings, projectId: string, repo: string) =>
+  scope(s).concat(["project-git-refs", projectId, repo])
 export const allQuotaKey = (s: ServerSettings) => scope(s).concat(["quota", "all"])
 export const agentQuotaKey = (s: ServerSettings, agentId: string, profileId?: string) =>
   scope(s).concat(["quota", agentId, profileId ?? ""])
@@ -122,12 +123,6 @@ export const threadSpansKey = (s: ServerSettings, sessionId: string) =>
   scope(s).concat(["thread-spans", sessionId])
 export const spanDetailKey = (s: ServerSettings, sessionId: string, spanId: string) =>
   threadSpansKey(s, sessionId).concat(["span", spanId])
-/** What a thread's changes scope covers (`GET …/changes/files?scope=`), one
-    key per scope under the thread's — a revert invalidates the prefix. */
-export const sessionChangesKey = (s: ServerSettings, sessionId: string, changeScope?: string) =>
-  scope(s).concat(["session-changes", sessionId], changeScope === undefined ? [] : [changeScope])
-
-
 /** A folder of the file library (`GET /api/files?parent=`); `null` is the root.
     One family, so a write invalidates every open level of the tree at once. */
 export const filesKey = (s: ServerSettings, parentId?: string | null) =>

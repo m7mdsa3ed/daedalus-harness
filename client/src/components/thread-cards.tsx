@@ -46,7 +46,7 @@ import { Message, MessageContent } from "@/components/ui/message"
 import { copyText, formatElapsed, StepMeta, StepRow, yieldToTextSelection } from "@/components/step-row"
 import { useStreamedText } from "@/hooks/use-streamed-text"
 import type { StreamEffect } from "@/lib/stream-words"
-import { resolveStreamEffect, useViewOptionsContext } from "@/lib/view-options"
+import { resolveStreamEffect, useLayoutOptionsContext } from "@/lib/layout-options"
 import { shortPath, toolHeading, type TaskNotification, type TodoEntry } from "@/lib/tools"
 import type { TurnSources } from "@/lib/sources"
 import { stripPromptSuggestions } from "@/lib/suggestions"
@@ -169,7 +169,7 @@ function useStreamIdle(painted: string, streaming: boolean): boolean {
 /** The effect this row should draw with, or nothing when it is not the row
  *  being written. Calm motion has already been folded in. */
 function useStreamEffect(streaming: boolean): StreamEffect | undefined {
-  const options = useViewOptionsContext()
+  const options = useLayoutOptionsContext()
   return streaming ? resolveStreamEffect(options) : undefined
 }
 
@@ -217,7 +217,7 @@ export function AgentText({
   streaming?: boolean
 }) {
   /* The suggestions fence never paints: its prompts live on the suggestion
-     card under the answer (`prompt-suggestions.tsx`), and a raw fence in the
+     card under the answer (`suggestion-group.tsx`), and a raw fence in the
      painted answer is the machinery showing. Stripped for paint only —
      `item.text` is still whole everywhere it is read (copy, search, the
      journal). */
@@ -751,7 +751,7 @@ export const ShellStep = React.memo(function ShellStep({
   item: ShellItem
   showTimestamp?: boolean
 }) {
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   const running = item.status === "running"
   const failed = !running && item.exitCode !== null && item.exitCode !== 0
   /* The heading an *agent's* Bash call for this same line would get, from the

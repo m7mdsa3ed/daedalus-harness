@@ -50,25 +50,13 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     id: "builtin:harness",
     name: "Harness",
     description:
-      "Manage this harness from the agent — projects, spaces, profiles and agents, the task board, the library (MCP servers, skills, commands, saved prompts, model prompts), rules, themes, knowledge, routines, schedules and threads, on the same routes the app itself calls.",
-  },
-  browser: {
-    id: "builtin:browser",
-    name: "Preview browser",
-    description:
-      "Google's chrome-devtools-mcp, connected to the thread's Preview in the desktop app instead of a browser of its own — snapshot, click, fill, navigate, screenshot, console, network, performance. Answers while that panel's Drive toggle is on. Needs `npm i -g chrome-devtools-mcp` on the server.",
-  },
-  video: {
-    id: "builtin:video",
-    name: "Product videos",
-    description:
-      "Author a product-demo video as a storyboard.json the agent and user keep editing: narration, browser capture, a live Remotion Studio preview, draft and final exports, a contact sheet to review, and publishing to the Files library. Needs ffmpeg on the server, Remotion installed under .daedalus/videos, and video-mcp built (pnpm build in video-mcp/).",
+      "Manage this harness from the agent — projects, spaces, profiles and agents, the task board, the library (MCP servers, skills, commands, model prompts), rules, themes, knowledge, routines, schedules and threads, on the same routes the app itself calls.",
   },
 };
 
 /**
  * The built-ins whose stdio server is synthesized from a *thread*: its env
- * names the calling session's own loopback URL (`workflow`, `agents`, `harness`, `video`)
+ * names the calling session's own loopback URL (`workflow`, `agents`, `harness`)
  * or the desktop preview that thread is driving (`browser`). There is no such
  * server without a thread, so a settings screen — or any caller with no session
  * behind it — can neither connect to one nor list its tools. The two that
@@ -76,7 +64,7 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
  * `knowledge` (on the project). Kept here, beside `BUILTIN_MCP`, in the module
  * that owns the built-in kinds and low enough that nothing imports it upward.
  */
-const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["workflow", "agents", "harness", "browser", "video"]);
+const THREAD_SCOPED_BUILTINS = new Set<BuiltinMcp>(["workflow", "agents", "harness"]);
 
 /** Whether a built-in only exists as a thread's own server — see above. */
 export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
@@ -89,6 +77,10 @@ export function isThreadScopedBuiltin(kind: BuiltinMcp): boolean {
  * chose is theirs. Cheap enough to run on every boot.
  */
 export async function retitleBuiltinMcp(): Promise<void> {
+  // `builtin:browser` was removed (chrome-devtools-mcp is a plain stdio row now); its links cascade.
+  await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:browser"));
+  // `builtin:video` (video-mcp) was removed too; its links cascade.
+  await db.delete(mcpServersTable).where(eq(mcpServersTable.id, "builtin:video"));
   for (const [kind, { id, name }] of Object.entries(BUILTIN_MCP)) {
     await db.update(mcpServersTable).set({ name })
       .where(and(eq(mcpServersTable.id, id), eq(mcpServersTable.name, kind)));
@@ -103,7 +95,7 @@ export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness", "browser", "video"]),
+    builtin: z.enum(["web-search", "knowledge", "workflow", "agents", "harness"]),
   }),
   z.object({
     type: z.literal("http"),

@@ -136,6 +136,7 @@ export function EnhanceButton({
       className={cn("shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground", className)}
       onClick={enhance}
       disabled={disabled || gated || !hasContent}
+      loading={enhancing}
       title={
         enhancing
           ? "Enhancing…"

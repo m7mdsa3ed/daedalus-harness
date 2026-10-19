@@ -50,7 +50,7 @@ import {
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 import { writeClipboard } from "@/lib/clipboard"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { recoverUnfencedOpenui } from "@/lib/openui/recover-unfenced"
@@ -1411,7 +1411,7 @@ export function ToolCallContent({ content }: { content: acp.ToolCallContent[] })
 }
 
 export function ToolContentView({ content }: { content: acp.ToolCallContent }) {
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   if (content.type === "diff") {
     return (
       <DiffView

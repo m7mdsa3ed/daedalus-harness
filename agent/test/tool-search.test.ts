@@ -14,10 +14,13 @@ const stub = (description: string) =>
 
 const make = (): ToolSet => ({
   read_file: stub("Read a file."),
-  mcp__gh__create_issue: stub("Create a GitHub issue."),
-  mcp__gh__list_prs: stub("List pull requests."),
+  mcp__github__create_issue: stub("Create a GitHub issue."),
+  mcp__github__list_issues: stub("List issues in a repository, newest first."),
+  mcp__github__list_prs: stub("List pull requests."),
   mcp__web__fetch: stub("Fetch a URL."),
 });
+
+const catalog = (tools: ToolSet) => Object.entries(tools).map(([name, tool]) => ({ name, description: tool.description }));
 
 /** Runs one generation over `scripts`, returning the tool names each step sent. */
 async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageModelV4StreamPart[][]) {
@@ -40,29 +43,29 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
   assert.ok(!(SEARCH_TOOL in tools));
 }
 
-// --- a single small server is deferred all the same; a search loads a match on the next step, and the next turn keeps it ---
+// --- the catalogue groups every tool under its server, and a summary can be read without searching ---
 {
   const tools = make();
   const deferral = deferMcpTools(tools, [])!;
-  assert.ok(deferral);
-  assert.match(String(tools[SEARCH_TOOL].description), /mcp__gh__list_prs/, "the search tool names what it can find");
-  assert.match(String(tools[SEARCH_TOOL].description), /^mcp__gh__list_prs: List pull requests\.$/m, "each name carries its summary, so a model can select without searching");
+  const description = String(tools[SEARCH_TOOL].description);
+  assert.match(description, /^github \(3 tools\)$/m, "a server's tools are one group, with the count");
+  assert.match(description, /^ {2}create_issue: Create a GitHub issue\.$/m, "a name carries its summary, so a model can select without searching");
+  assert.match(description, /^web \(1 tool\)$/m, "one tool is not 'tools'");
+  assert.match(description, /up to 25/, "the whole-server cap is stated, not silent");
+  assert.match(description, /select:<name>/, "the query forms are listed");
 
   const history: ModelMessage[] = [{ role: "user", content: "file an issue" }];
-  const { sent, response } = await run(tools, history, [
-    toolCallScript(SEARCH_TOOL, { query: "github issue" }),
-    textScript("done"),
-  ]);
+  const { sent, response } = await run(tools, history, [toolCallScript(SEARCH_TOOL, { query: "github issue" }), textScript("done")]);
   assert.deepEqual(sent[0], ["read_file", SEARCH_TOOL]);
-  assert.ok(sent[1].includes("mcp__gh__create_issue"), "the match is sent on the next step");
+  assert.ok(sent[1].includes("mcp__github__create_issue"), "the match is sent on the next step");
   assert.ok(!sent[1].includes("mcp__web__fetch"), "a tool nobody searched for stays out");
-  assert.ok(deferral.activeFor([...history, ...response]).includes("mcp__gh__create_issue"), "the breakdown mirrors the SDK");
+  assert.ok(deferral.activeFor([...history, ...response]).includes("mcp__github__create_issue"), "the breakdown mirrors the SDK");
 
   // the next turn, rebuilt from the history: the loaded tool is sent from step one
   const next = make();
   deferMcpTools(next, [...history, ...response]);
   const again = await run(next, [...history, ...response, { role: "user", content: "another" }], [textScript("ok")]);
-  assert.ok(again.sent[0].includes("mcp__gh__create_issue"));
+  assert.ok(again.sent[0].includes("mcp__github__create_issue"));
   assert.ok(!again.sent[0].includes("mcp__web__fetch"));
 }
 
@@ -74,36 +77,68 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
   ];
   const deferral = deferMcpTools(tools, history)!;
   assert.ok(!tools.mcp__web__fetch.deferLoading);
-  assert.ok(tools.mcp__gh__list_prs.deferLoading);
+  assert.ok(tools.mcp__github__list_prs.deferLoading);
   assert.ok(deferral.activeFor(history).includes("mcp__web__fetch"));
 }
 
-// --- select: loads exact names, Claude Code's way, beyond the keyword cap ---
+// --- select: resolves the forms the description promises, not just the whole name ---
 {
-  const tools = make();
-  deferMcpTools(tools, []);
-  const { sent } = await run(tools, [{ role: "user", content: "go" }], [
-    toolCallScript(SEARCH_TOOL, { query: "select:mcp__gh__list_prs, mcp__web__fetch" }),
-    textScript("done"),
-  ]);
-  assert.ok(sent[1].includes("mcp__gh__list_prs") && sent[1].includes("mcp__web__fetch"));
-  assert.ok(!sent[1].includes("mcp__gh__create_issue"), "a select loads only what it names");
+  const tools = catalog(make());
+  assert.deepEqual(searchDeferred({ query: "select:mcp__github__list_prs", tools }), ["mcp__github__list_prs"]);
+  assert.deepEqual(searchDeferred({ query: "select:MCP__GITHUB__LIST_PRS", tools }), ["mcp__github__list_prs"], "punctuation and case are forgiven");
+  assert.deepEqual(searchDeferred({ query: "select:list_prs", tools }), ["mcp__github__list_prs"], "a bare tool name is enough when it is unambiguous");
+  assert.deepEqual(searchDeferred({ query: "select:github/list_prs", tools }), ["mcp__github__list_prs"], "server/tool path");
+  assert.deepEqual(searchDeferred({ query: "select:github/*", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"]);
+  assert.deepEqual(searchDeferred({ query: "select:create_issue, list_prs", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_prs"], "a list of names");
+  assert.deepEqual(searchDeferred({ query: "select:github/nope", tools }), [], "a miss stays a miss, so the empty answer teaches");
+  assert.deepEqual(searchDeferred({ query: "select:nope", tools }), []);
 
-  const many = Array.from({ length: 8 }, (_, i) => ({ name: `mcp__s__t${i}` }));
-  assert.equal(searchDeferred({ query: `select:${many.map((t) => t.name).join(",")}`, tools: many }).length, 8);
+  // a leaf two servers both ship cannot be resolved by the leaf alone
+  const shared = [{ name: "mcp__a__search" }, { name: "mcp__b__search" }];
+  assert.deepEqual(searchDeferred({ query: "select:search", tools: shared }), []);
+  assert.deepEqual(searchDeferred({ query: "select:b/*", tools: shared }), ["mcp__b__search"], "the server path disambiguates");
 }
 
-// --- keywords rank name over description; +server narrows to that server ---
+// --- a selection of named tools is never cut short ---
 {
-  const catalog = [
-    { name: "mcp__gh__create_issue", description: "Create a GitHub issue." },
-    { name: "mcp__jira__create_issue", description: "Create a Jira issue." },
-    { name: "mcp__gh__list_prs", description: "List pull requests, issue links included." },
-  ];
-  assert.deepEqual(searchDeferred({ query: "create issue", tools: catalog }).slice(0, 2).sort(), ["mcp__gh__create_issue", "mcp__jira__create_issue"]);
-  assert.deepEqual(searchDeferred({ query: "+jira issue", tools: catalog }), ["mcp__jira__create_issue"]);
-  assert.deepEqual(searchDeferred({ query: "+gh", tools: catalog }).sort(), ["mcp__gh__create_issue", "mcp__gh__list_prs"]);
-  assert.deepEqual(searchDeferred({ query: "nothing here", tools: catalog }), []);
+  const tools: ToolSet = { read_file: stub("Read a file.") };
+  const names = Array.from({ length: 30 }, (_, i) => `mcp__bulk__t${i}`);
+  for (const name of names) tools[name] = stub(`Bulk tool ${name}.`);
+  deferMcpTools(tools, []);
+  const { sent } = await run(tools, [{ role: "user", content: "go" }], [
+    toolCallScript(SEARCH_TOOL, { query: `select:${names.join(",")}` }),
+    textScript("done"),
+  ]);
+  assert.equal(sent[1].filter((name) => name.startsWith("mcp__")).length, 30, "all thirty are sent, not the SDK's default cap");
+}
+
+// --- keywords rank name over description and find a plural ---
+{
+  const tools = catalog(make());
+  assert.deepEqual(searchDeferred({ query: "issue", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues"], "'issue' finds 'list_issues'");
+  assert.deepEqual(searchDeferred({ query: "pull request", tools }), ["mcp__github__list_prs"], "a two-word name is two name hits");
+  assert.deepEqual(searchDeferred({ query: "nothing here", tools }), []);
+}
+
+// --- +server resolves by prefix and alone loads the whole cluster ---
+{
+  const tools = catalog(make());
+  assert.deepEqual(searchDeferred({ query: "+gh", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"], "'+gh' is 'github'");
+  assert.deepEqual(searchDeferred({ query: "git", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"], "a server is selectable by its stem");
+  assert.deepEqual(searchDeferred({ query: "+gh issue", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues"], "keywords rank inside the server");
+  assert.deepEqual(searchDeferred({ query: "+web", tools }), ["mcp__web__fetch"], "a one-tool server is not a keyword search");
+  assert.deepEqual(searchDeferred({ query: "+issue", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues"], "a + term naming no server still has to appear in the name");
+
+  // the whole-server cap is real, stated, and reachable again by keywords
+  const bulk = Array.from({ length: 30 }, (_, i) => ({ name: `mcp__bulk__t${i}`, description: `Bulk tool ${i}.` }));
+  assert.equal(searchDeferred({ query: "+bulk", tools: bulk }).length, 25);
+}
+
+// --- a near miss on the name loads rather than costing the step ---
+{
+  const tools = catalog(make());
+  assert.deepEqual(searchDeferred({ query: "creat", tools }), ["mcp__github__create_issue"], "a prefix of the name is a hit");
+  assert.deepEqual(searchDeferred({ query: "repositor", tools }), [], "a description-only word is not a hit — that is how a search loads strangers");
 }
 
 // --- the description lists every MCP tool, so a load does not change it ---
@@ -115,7 +150,7 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
     { role: "assistant", content: [{ type: "tool-call", toolCallId: "1", toolName: "mcp__web__fetch", input: {} }] },
   ]);
   assert.equal(after[SEARCH_TOOL].description, before[SEARCH_TOOL].description);
-  assert.match(String(before[SEARCH_TOOL].description), /select:name1,name2/);
+  assert.match(String(before[SEARCH_TOOL].description), /select:<name>/);
 }
 
 // --- the names the system prompt lists do not move when a tool loads ---

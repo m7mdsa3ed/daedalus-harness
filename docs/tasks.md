@@ -64,8 +64,7 @@ the routine `task` action, and a thread started on a task (below).
 - **No foreign keys, on purpose.** Every cascade is written out by hand in one
   transaction (`deleteBoard`, `deleteStatus`, `deleteSprint`, `deleteTask`,
   `deleteList`), because a column delete is a question ("where do its tasks
-  go?") and a task delete must not take its children. `reconcileTaskStatuses`
-  repairs what a backup import can leave dangling (column, sprint, parent, list).
+  go?") and a task delete must not take its children. `reconcileTaskStatuses`.
 
 ## Agents and tasks
 

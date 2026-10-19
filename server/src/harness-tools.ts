@@ -40,7 +40,7 @@ export interface HarnessTool {
 }
 
 /** The library's five reusable-row resources, addressed by one set of tools. */
-export const LIBRARY_RESOURCES = ["mcp-servers", "skills", "commands", "prompts", "model-prompts"] as const;
+export const LIBRARY_RESOURCES = ["mcp-servers", "skills", "commands", "model-prompts"] as const;
 
 const id = { id: z.string().min(1).describe("The row's id.") };
 const projectId = { projectId: z.string().min(1).describe("The project's id.") };
@@ -189,7 +189,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "projects_create",
     title: "Create a project",
-    description: "Add a project. Fields: name, cwd (an absolute path), spaceId?, description?, logoUrl?, previewUrl?.",
+    description: "Add a project. Fields: name, cwd (an absolute path), spaceIds? (one or more space ids), description?, logoUrl?, previewUrl?.",
     method: "POST",
     path: "/api/projects",
     data: true,
@@ -291,13 +291,13 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "spaces_delete",
     title: "Delete a space",
-    description: "Delete a space (its projects are rehomed, not deleted).",
+    description: "Delete a space. Refused while a project lives only in it; projects also in another space just leave this one.",
     method: "DELETE",
     path: "/api/spaces/:id",
     params: id,
   },
 
-  /* ── The library: MCP servers, skills, commands, saved prompts, model prompts ── */
+  /* ── The library: MCP servers, skills, commands, model prompts ── */
   {
     name: "library_list",
     title: "List a library kind",
@@ -310,7 +310,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     name: "library_create",
     title: "Add a library row",
     description:
-      "Create a row: an MCP server ({type:\"stdio\"|\"http\"|\"builtin\", name, ...}), a skill ({name, path}), a command ({name, description, content, argumentHint?}), a saved prompt ({name: the @handle, description?, prompt}), or a model prompt.",
+      "Create a row: an MCP server ({type:\"stdio\"|\"http\"|\"builtin\", name, ...}), a skill ({name, path}), a command ({name, description, content, argumentHint?}), or a model prompt.",
     method: "POST",
     path: "/api/:resource",
     params: resource,

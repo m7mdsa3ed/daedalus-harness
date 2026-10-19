@@ -49,7 +49,6 @@ import {
   ReadingFace,
 } from "@/components/composer/indicator"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
-import { setScmPanelView } from "@/lib/changes-marks"
 import { errorText } from "@/lib/errors"
 import { useProfiles } from "@/lib/queries/catalog"
 import {
@@ -104,15 +103,11 @@ export function RepoIndicator({ meta }: { meta: SessionMeta }) {
         {/* Mounted with the popover, so a thread nobody opens this on never asks
             the server for a status. */}
         <RepoPanel meta={meta} repos={repos} />
-        {/* The panel this popover is the glance of — opened at its Git half,
-            since what brought you here was the repository, not a turn. */}
+        {/* The panel this popover is the glance of. */}
         <OpenInInspector
           tab="changes"
           label="Open Source Control"
-          onOpen={() => {
-            setOpen(false)
-            setScmPanelView(meta.id, "git")
-          }}
+          onOpen={() => setOpen(false)}
         />
       </PopoverContent>
     </Popover>
@@ -313,6 +308,7 @@ function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
           variant="outline"
           className="flex-1"
           disabled={Boolean(busy)}
+          loading={spin("pull")}
           onClick={() => void write("pull")}
         >
           {spin("pull") ? <Spinner /> : <ArrowDownToLineIcon className="size-3.5" />}
@@ -323,6 +319,7 @@ function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
           variant="outline"
           className="flex-1"
           disabled={Boolean(busy)}
+          loading={spin("push")}
           onClick={() => void write("push")}
         >
           {spin("push") ? <Spinner /> : <ArrowUpFromLineIcon className="size-3.5" />}
@@ -348,6 +345,7 @@ function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
               variant="outline"
               className="flex-1"
               disabled={Boolean(busy) || dirty === 0}
+              loading={spin("draft")}
               onClick={() => void draft("commit")}
               title="Write a message from this repository's diff"
             >
@@ -359,6 +357,7 @@ function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
             size="xs"
             className="flex-1"
             disabled={Boolean(busy) || dirty === 0 || !message.trim()}
+            loading={spin("commit")}
             onClick={() => void commit()}
           >
             {spin("commit") ? <Spinner /> : <GitCommitHorizontalIcon className="size-3.5" />}
@@ -369,6 +368,7 @@ function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
               size="icon-xs"
               variant="outline"
               disabled={Boolean(busy) || dirty === 0}
+              loading={spin("name")}
               onClick={() => void draft("branch")}
               title="Name a branch from this repository's diff"
               aria-label="Suggest a branch name"
@@ -392,6 +392,7 @@ function RepoPanel({ meta, repos }: { meta: SessionMeta; repos: GitRepo[] }) {
           <Button
             size="xs"
             disabled={Boolean(busy) || !branch.trim()}
+            loading={spin(`switch:${repo.path}`)}
             onClick={() => void checkout(repo.path, { branch: branch.trim(), create: true })}
           >
             {spin(`switch:${repo.path}`) ? <Spinner /> : null}

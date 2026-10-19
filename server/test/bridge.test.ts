@@ -1399,8 +1399,8 @@ const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
 // trailer rather than the absence of a persona.
 const beforePlain = metaLog().length;
 const plain = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
-  suggestFollowups: false,
-  uiBlocks: false,
+  suggestKinds: [],
+  uiGroups: [],
 });
 await plain.bridge!.ready;
 const plainMeta = metaLog().slice(beforePlain).find((e) => e.method === "session/new");
@@ -1419,7 +1419,7 @@ const styled = await manager.create(
   undefined,
   undefined,
   { mcpServerIds: [], skillIds: [], commandIds: [] },
-  { suggestFollowups: true, uiBlocks: false },
+  { suggestKinds: ["prompts"], uiGroups: [] },
 );
 await styled.bridge!.ready;
 const newMeta = metaLog().slice(mark).find((e) => e.method === "session/new");
@@ -1458,10 +1458,10 @@ const dropped = metaLog().length;
 // taken by the next spawn — and this asserts on the spawn itself.
 await manager.applyConfig(
   styled.id,
-  { profile, agentId: "fake", project, suggestFollowups: false, uiBlocks: false },
+  { profile, agentId: "fake", project, suggestKinds: [], uiGroups: [] },
   { defer: false },
 );
-assert.equal(styled.suggestFollowups, false, "the row records the toggle is off now");
+assert.deepEqual(styled.suggestKinds, [], "the row records the set is empty now");
 const droppedMeta = metaLog().slice(dropped).find((e) => e.meta);
 assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told nothing about one");
 
@@ -1474,8 +1474,8 @@ const { db, agents: agentsTable } = await import("../src/db/index.js");
 await db.update(agentsTable).set({ personaVia: "air-meta" }).where(eq(agentsTable.id, "fake"));
 const beforeAir = metaLog().length;
 const air = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
-  suggestFollowups: true,
-  uiBlocks: false,
+  suggestKinds: ["prompts"],
+  uiGroups: [],
 });
 await air.bridge!.ready;
 const airMeta = metaLog().slice(beforeAir).find((e) => e.method === "session/new");

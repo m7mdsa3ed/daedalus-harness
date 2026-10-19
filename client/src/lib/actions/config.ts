@@ -11,6 +11,8 @@ import { api, type Profile, type ProjectDefaults, type SessionMeta } from "../se
 import { currentChoiceLabel } from "../session-options"
 import type { ThreadState } from "../store"
 import type { ActionsCore } from "./core"
+import { DEFAULT_SUGGEST_KINDS, SUGGEST_KINDS } from "../suggestions"
+import { DEFAULT_UI_GROUPS, UI_GROUPS } from "../openui/groups"
 
 /* ── Thread settings: what one pick is, and how several become one request ──
    The menu writes into a per-thread buffer instead of POSTing; the buffer is
@@ -37,8 +39,10 @@ export type ConfigPatch = {
   profileId?: string
   model?: string
   effort?: string
-  suggestFollowups?: boolean
-  uiBlocks?: boolean
+  suggestKinds?: string[]
+  /** Which component groups the drawn-view lane teaches; a set travels whole,
+      and empty is drawn answers off. */
+  uiGroups?: string[]
   /** The thread's role→model helper map (docs/model-roles.md) — a spawn input
       like `model`/`effort`, so a change costs a respawn and the server stages
       it against the running turn's boundary. */
@@ -80,10 +84,10 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
     ...(patch.profileId !== undefined ? { profileId: meta.profileId } : {}),
     ...(patch.model !== undefined ? { model: meta.model ?? "" } : {}),
     ...(patch.effort !== undefined ? { effort: meta.effort ?? "" } : {}),
-    ...(patch.suggestFollowups !== undefined
-      ? { suggestFollowups: meta.suggestFollowups === true }
+    ...(patch.suggestKinds !== undefined
+      ? { suggestKinds: meta.suggestKinds ?? [...DEFAULT_SUGGEST_KINDS] }
       : {}),
-    ...(patch.uiBlocks !== undefined ? { uiBlocks: meta.uiBlocks !== false } : {}),
+    ...(patch.uiGroups !== undefined ? { uiGroups: meta.uiGroups ?? [...DEFAULT_UI_GROUPS] } : {}),
     ...(patch.helperModels !== undefined ? { helperModels: meta.helperModels ?? [] } : {}),
   }
 }
@@ -109,11 +113,16 @@ export function describeConfig(
     parts.push(`Model: ${label ?? (patch.model || "profile default")}`)
   }
   if (patch.effort !== undefined) parts.push(`Effort: ${patch.effort || "default"}`)
-  if (patch.suggestFollowups !== undefined) {
-    parts.push(patch.suggestFollowups ? "Follow-ups on" : "Follow-ups off")
+  if (patch.suggestKinds !== undefined) {
+    const labels = SUGGEST_KINDS.filter((kind) => patch.suggestKinds?.includes(kind.id)).map((kind) => kind.label)
+    parts.push(labels.length > 0 ? `Suggestions: ${labels.join(", ")}` : "Suggestions off")
   }
-  if (patch.uiBlocks !== undefined) {
-    parts.push(patch.uiBlocks ? "Drawn UI on" : "Drawn UI off")
+  if (patch.uiGroups !== undefined) {
+    parts.push(
+      patch.uiGroups.length === 0
+        ? "Drawn UI off"
+        : `Drawn UI: ${patch.uiGroups.length} of ${UI_GROUPS.length} groups`
+    )
   }
   if (patch.helperModels !== undefined) {
     const named = patch.helperModels.map((h) => h.role).join(", ")
@@ -160,8 +169,8 @@ export function configActions(core: ActionsCore) {
     if (next.profileId !== undefined) patch.profileId = next.profileId
     if (next.model !== undefined) patch.model = next.model
     if (next.effort !== undefined) patch.effort = next.effort
-    if (next.suggestFollowups !== undefined) patch.suggestFollowups = next.suggestFollowups
-    if (next.uiBlocks !== undefined) patch.uiBlocks = next.uiBlocks
+    if (next.suggestKinds !== undefined) patch.suggestKinds = next.suggestKinds
+    if (next.uiGroups !== undefined) patch.uiGroups = next.uiGroups
     if (next.helperModels !== undefined) patch.helperModels = next.helperModels
     if (Object.keys(patch).length > 0) {
       saveProjectDefaults(settings, queryClient, meta.projectId, patch)
@@ -210,13 +219,11 @@ export function configActions(core: ActionsCore) {
           agentId: meta.agentId,
           model: next.model ?? meta.model ?? undefined,
           effort: next.effort ?? meta.effort ?? undefined,
-          /* A boolean has no "unchanged" sentinel of its own — so only a
-             real flip travels, and the server's respawn answers for every
-             peer. */
-          suggestFollowups: next.suggestFollowups,
-          // Same as the trailer above: a boolean has no "unchanged" sentinel,
-          // so only a real flip travels.
-          uiBlocks: next.uiBlocks,
+          /* Absent is "unchanged"; a set travels whole, and the server's
+             respawn answers for every peer. */
+          suggestKinds: next.suggestKinds,
+          // A set travels whole, like the suggestions: absent is unchanged.
+          uiGroups: next.uiGroups,
           /* The role→model helper map (docs/model-roles.md). A spawn input:
              only a real pick travels (`undefined` is dropped by
              `JSON.stringify`), and the server stages it like the rest. */
@@ -477,28 +484,29 @@ export function configActions(core: ActionsCore) {
     },
 
     /**
-     * Flip whether answers close with follow-up prompt suggestions.
+     * Set which closing blocks answers carry (follow-ups, commands, replies,
+     * files, agents — an empty set is off).
      *
      * Spawn-text bargain, and staging: the
      * trailer is read at `session/new`/`session/load` and nowhere else.
      */
-    changeThreadSuggestions(meta: SessionMeta, suggestFollowups: boolean): void {
+    changeThreadSuggestions(meta: SessionMeta, suggestKinds: string[]): void {
       changeThreadConfig(
         meta,
-        { suggestFollowups },
+        { suggestKinds },
         "Couldn't change this thread's suggestions"
       )
     },
 
     /**
-     * Flip whether answers may carry a drawn view (`openui-lang`).
-     *
-     * The identical bargain to the suggestions trailer above: the lane is
-     * system-prompt text, read at `session/new`/`session/load` and nowhere
-     * else, so this costs a respawn and the server stages it.
+     * Set which component groups the drawn-view lane teaches; empty turns drawn
+     * answers off. The lane is system-prompt text, read at `session/new`/
+     * `session/load` and nowhere else, so this costs a respawn and the server
+     * stages it; the set travels whole and the server ignores one that is the
+     * same.
      */
-    changeThreadUiBlocks(meta: SessionMeta, uiBlocks: boolean): void {
-      changeThreadConfig(meta, { uiBlocks }, "Couldn't change this thread's drawn UI")
+    changeThreadUiGroups(meta: SessionMeta, uiGroups: string[]): void {
+      changeThreadConfig(meta, { uiGroups }, "Couldn't change this thread's drawn UI")
     },
 
     /** Drop the staged change. The server answers every peer with

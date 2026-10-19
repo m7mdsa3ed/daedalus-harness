@@ -119,7 +119,13 @@ export function usePageHeading(): (path: string) => PageHeading | null {
     if (first === "schedules")
       return {
         crumb: seg ? "Schedules" : undefined,
-        title: pathname.endsWith("/new") ? "New schedule" : seg ? "Schedule" : "All schedules",
+        title: pathname.endsWith("/new")
+          ? "New schedule"
+          : pathname.endsWith("/edit")
+            ? "Edit schedule"
+            : seg
+              ? "Schedule"
+              : "All schedules",
       }
     if (first === "routines")
       return {
@@ -127,7 +133,9 @@ export function usePageHeading(): (path: string) => PageHeading | null {
         title: pathname.endsWith("/new")
           ? "New routine"
           : seg
-            ? (routines.find((r) => r.id === seg)?.name ?? "Routine")
+            ? pathname.includes("/runs/")
+              ? `${routines.find((r) => r.id === seg)?.name ?? "Routine"} run`
+              : (routines.find((r) => r.id === seg)?.name ?? "Routine")
             : "All routines",
       }
     if (first === "board") return { crumb: "Workspace", title: "Tasks" }
@@ -188,7 +196,7 @@ export function pageRoutes({
           SchedulePage). The form keeps a form's measure; the list and the
           detail page carry tiles and two columns, so they get the width
           the project page has. */}
-      {["/schedules", "/schedules/new", "/schedules/:scheduleId"].map((path) => (
+      {["/schedules", "/schedules/new", "/schedules/:scheduleId", "/schedules/:scheduleId/edit"].map((path) => (
         <Route
           key={path}
           path={path}
@@ -204,7 +212,7 @@ export function pageRoutes({
           one of them is `wide`, the form included: the autonomy control is
           ten labelled rows each with a three-way choice trailing it, and at
           a form's measure the label wraps under the control it belongs to. */}
-      {["/routines", "/routines/new", "/routines/:routineId"].map((path) => (
+      {["/routines", "/routines/new", "/routines/:routineId", "/routines/:routineId/runs/:runId"].map((path) => (
         <Route
           key={path}
           path={path}

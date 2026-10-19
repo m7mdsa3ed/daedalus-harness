@@ -43,7 +43,6 @@ import { Label } from "@/components/ui/label"
 import type { InlineError } from "@/lib/errors"
 import { KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { cn } from "@/lib/utils"
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useIsMobile } from "@/hooks/use-device"
 import { type PageMeta } from "./sections"
 import { AiFormBuilder } from "./ai-form-builder"
@@ -66,7 +65,8 @@ export function PageHeader({
       `PageMeta` simply gets no mark. */
   meta: PageMeta & { icon?: LucideIcon }
   action?: React.ReactNode
-  /** A `TabBar` follows: it draws the rule, so the header does not. */
+  /** A `TabBar` follows: the track is what separates the header from the page
+      below it, so the header draws no rule of its own. */
   flush?: boolean
 }) {
   const Icon = meta.icon
@@ -291,12 +291,12 @@ export function FormPageHeader({
   title: string
   description?: string
   onBack: () => void
-  /** A `TabBar` / `FormShell` bar follows: it draws the rule, not the header. */
+  /** A `TabBar` / `FormShell` bar follows: the track takes the rule's place. */
   flush?: boolean
 }) {
   return (
-    /* A `FormShell` bar right after the header draws the rule itself (`:has`), so
-        no form has to remember `flush` and none can show two rules. */
+    /* A `FormShell` bar right after the header takes the rule's place (`:has`), so
+        no form has to remember `flush` and none can stack a rule over a track. */
     <header
       className={cn(
         flush ? "mb-4" : "mb-8 border-b pb-6",
@@ -334,12 +334,13 @@ export function FormPageHeader({
 
      Go somewhere else        the app sidebar; on a phone, the overview list
                               and the page's "Settings" back link (no dropdown)
-     Switch this page's view  TabBar - underline tabs under the header
+     Switch this page's view  TabBar - a track of tabs under the header, scrolled
+                              away with the page (never a sticky bar)
      Jump within a long form  FormShell - the same TabBar as anchors, scroll-spied
      Pick a value             Segmented (2-4 short words) | Select (more) |
                               ChoiceTiles (options you must SEE: mode, layout)
      Filter a list            the DataTable's toolbar: search + Segmented
-     Open an item             a DataTable row -> DetailSheet (never a side rail)
+     Open an item             a DataTable row -> its own page (never a sheet or side rail)
      Create / destructive     the header's action / the row's actions
      Say a state              StatusBadge (ok / warn / bad / info / neutral)
 
@@ -548,15 +549,27 @@ export interface TabItem {
   /** A count or a status dot beside the label. */
   count?: number
   dot?: boolean
+  /** The label in a sentence, read on hover: one word is not always enough to
+      say which page you are switching to ("Transcript" is how threads read,
+      not a transcript you open). */
+  hint?: string
 }
 
-/** The one in-page switch: underline tabs directly under the page header,
-    sticky below the app header, on every page and at every width. Overflow
-    scrolls sideways under edge fades rather than wrapping or turning into a
-    dropdown - a phone shows the same tabs the desktop does. `nav` mode is
-    for anchors (`FormShell`): same look, `aria-current` instead of
-    `role=tab`, because jumping to a section is not switching a panel.
-    Pair with `PageHeader flush` so the header does not draw a second rule. */
+/** The one in-page switch: a track of tabs under the page header, on every page
+    and at every width. A recessed ground with the current tab raised out of it,
+    the same thumb `Segmented` wears - both answer "which one of these", and the
+    icons and counts are the part a *page* needs that a value picker does not.
+
+    It is **not sticky**. A page's tabs belong to the top of the page and scroll
+    away with it: nothing floats over the rows somebody is reading, and the app
+    header never has a second bar parked under it. Navigation that follows you
+    is the sidebar's job, and it is the only thing that does.
+
+    Overflow scrolls sideways rather than wrapping or turning into a dropdown - a
+    phone shows the same tabs the desktop does. `nav` mode is for anchors
+    (`FormShell`): same look, `aria-current` instead of `role=tab`, because
+    jumping to a section is not switching a panel. Pair with `PageHeader flush`,
+    which drops the header's rule: the track is the break. */
 export function TabBar({
   items,
   value,
@@ -572,24 +585,39 @@ export function TabBar({
   nav?: boolean
   className?: string
 }) {
+  const barRef = React.useRef<HTMLElement | null>(null)
   const refs = React.useRef<(HTMLButtonElement | null)[]>([])
   const current = Math.max(0, items.findIndex((item) => item.id === value))
   const onKeyDown = useRovingKeys(items.length, current, (index) => {
     onChange(items[index].id)
     refs.current[index]?.focus()
   })
-  // The active tab scrolls into view on a narrow bar - it may start off-screen.
+  /* The active tab is scrolled into view *within the track*, sideways - it may
+     start off-screen on a narrow panel. The page is left where it is:
+     `scrollIntoView` was right while this bar was sticky, but now that the bar
+     scrolls away with the page it would drag the document back up to it, which
+     a scroll-spied `FormShell` would do on every section change. */
   React.useEffect(() => {
-    refs.current[current]?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    const bar = barRef.current
+    const node = refs.current[current]
+    if (!bar || !node) return
+    const box = bar.getBoundingClientRect()
+    const rect = node.getBoundingClientRect()
+    const start = rect.left - box.left + bar.scrollLeft
+    const end = start + rect.width
+    if (start < bar.scrollLeft) bar.scrollTo({ left: start - 4 })
+    else if (end > bar.scrollLeft + bar.clientWidth) bar.scrollTo({ left: end - bar.clientWidth + 4 })
   }, [current])
   const Root = nav ? "nav" : "div"
   return (
     <Root
+      ref={(node: HTMLElement | null) => {
+        barRef.current = node
+      }}
       {...(nav ? { "aria-label": label } : { role: "tablist", "aria-label": label })}
       onKeyDown={nav ? undefined : onKeyDown}
       className={cn(
-        "sticky top-[var(--app-header-h)] z-10 -mx-4 mb-8 flex gap-1 overflow-x-auto border-b bg-background/85 px-4 backdrop-blur [scrollbar-width:none] @panel-sm:-mx-8 @panel-sm:px-8 [&::-webkit-scrollbar]:hidden",
-        "[mask-image:linear-gradient(to_right,transparent,#000_1rem,#000_calc(100%-1rem),transparent)] @panel-sm:[mask-image:none]",
+        "mb-8 flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-border/60 bg-muted/50 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         className
       )}
     >
@@ -607,17 +635,28 @@ export function TabBar({
               ? { "aria-current": active ? ("true" as const) : undefined }
               : { role: "tab", "aria-selected": active, tabIndex: active ? 0 : -1 })}
             onClick={() => onChange(item.id)}
+            title={item.hint}
             className={cn(
-              "relative inline-flex h-11 shrink-0 items-center gap-2 px-3 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset @panel-sm:h-10",
-              active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-              "after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary after:opacity-0 after:transition-opacity",
-              active && "after:opacity-100"
+              "relative inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring @panel-sm:h-9",
+              /* The thumb is the card's own ground with a hairline around it:
+                 `--card` and `--muted` are two per cent apart in a dark palette,
+                 so a fill alone leaves the current tab unfindable there. */
+              active
+                ? "border-border bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
             )}
           >
-            {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
+            {Icon && (
+              <Icon
+                className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground/70")}
+                aria-hidden
+              />
+            )}
             {item.label}
             {item.count !== undefined && (
-              <span className="rounded-full bg-muted px-1.5 text-[11px] tabular-nums text-muted-foreground">{item.count}</span>
+              <span className="min-w-4 rounded-full bg-foreground/10 px-1.5 text-center text-[11px] font-medium tabular-nums">
+                {item.count}
+              </span>
             )}
             {item.dot && <span aria-hidden className="size-1.5 rounded-full bg-destructive" />}
           </button>
@@ -780,44 +819,6 @@ export function ChoiceTiles<T extends string>({
         )
       })}
     </div>
-  )
-}
-
-/** The one place an item opens: a right-hand sheet on a wide panel, a bottom
-    sheet on a narrow one. A DataTable row's detail, an editor beside a list,
-    a picker with more than a menu's worth of fields - never a side rail. The
-    body scrolls, the footer (Save / Discard) stays; `KEYBOARD_*` is the
-    sheet's own, since it is an edge surface. */
-export function DetailSheet({
-  open,
-  onOpenChange,
-  title,
-  description,
-  footer,
-  children,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  title: React.ReactNode
-  description?: React.ReactNode
-  footer?: React.ReactNode
-  children: React.ReactNode
-}) {
-  const coarseOrNarrow = useIsMobile()
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side={coarseOrNarrow ? "bottom" : "right"}
-        className={cn(coarseOrNarrow ? "max-h-[88svh] rounded-t-2xl" : "w-full data-[side=right]:sm:max-w-lg")}
-      >
-        <SheetHeader className="border-b">
-          <SheetTitle>{title}</SheetTitle>
-          {description && <SheetDescription>{description}</SheetDescription>}
-        </SheetHeader>
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">{children}</div>
-        {footer && <SheetFooter className="border-t sm:flex-row sm:justify-end">{footer}</SheetFooter>}
-      </SheetContent>
-    </Sheet>
   )
 }
 

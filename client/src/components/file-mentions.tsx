@@ -1,11 +1,11 @@
 import * as React from "react"
 import type { TextSurface } from "@/components/composer/composer-editor"
-import { AtSign, Bot, Boxes, FileText, Folder, Plug, SquareCheck } from "lucide-react"
+import { AtSign, Boxes, FileText, Folder, Plug, SquareCheck } from "lucide-react"
 import { reportError } from "@/lib/errors"
 import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
-import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type SavedPrompt, type ThreadMcpServer } from "@/lib/settings"
-import { useMcpServers, usePrompts, useProjects } from "@/lib/queries/catalog"
+import { mcpNeedsAuth, mcpSubtitle, type McpServerDef, type ThreadMcpServer } from "@/lib/settings"
+import { useMcpServers, useProjects } from "@/lib/queries/catalog"
 import { useBoardsEnabled, useTasksQuery } from "@/lib/queries/boards"
 import { taskKey } from "@/lib/tasks-board"
 import { HARNESS_MCP_ID, TASK_MENTION_RE } from "@/lib/task-mentions"
@@ -60,11 +60,6 @@ export interface McpServerMatch {
   server: McpServerDef
 }
 
-export interface PromptMatch {
-  type: "prompt"
-  prompt: SavedPrompt
-}
-
 /** Another project. Picking one inserts its cwd as an absolute `@path`, so it is
     an ordinary mention from there on — `mentions.ts` links any path that exists. */
 export interface ProjectMatch {
@@ -85,7 +80,7 @@ export interface TaskMatch {
   status?: string
 }
 
-export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | PromptMatch | ProjectMatch | TaskMatch
+export type MentionMatch = WorkspaceEntry | McpResourceMatch | McpServerMatch | ProjectMatch | TaskMatch
 
 
 /** How many entries of each catalog join the file matches. */
@@ -150,7 +145,6 @@ export function useFileMentions(opts: {
     onMcpServer,
   } = opts
   const libraryServers = useMcpServers()
-  const prompts = usePrompts()
   const linked = React.useMemo(() => new Set(linkedMcpServerIds), [linkedMcpServerIds])
   const [caret, setCaret] = React.useState(0)
   const [selected, setSelected] = React.useState(0)
@@ -225,13 +219,6 @@ export function useFileMentions(opts: {
       .slice(0, CATALOG_LIMIT)
   }, [offerTasks, boards, statuses, tasksQuery.data, queryText])
   const taskWithoutHarness = !harness && TASK_MENTION_RE.test(text)
-  const promptMatches = React.useMemo((): PromptMatch[] => {
-    if (query === null) return []
-    return prompts
-      .filter((prompt) => `${prompt.name} ${prompt.title} ${prompt.description}`.toLowerCase().includes(queryText))
-      .slice(0, CATALOG_LIMIT)
-      .map((prompt) => ({ type: "prompt", prompt }))
-  }, [prompts, query, queryText])
 
   React.useEffect(() => {
     if (!projectId || query === null) {
@@ -302,8 +289,8 @@ export function useFileMentions(opts: {
       .map((p) => ({ type: "project" as const, id: p.id, name: p.name, cwd: p.cwd, logoUrl: p.logoUrl }))
   }, [query, projects, projectId])
   const matches = React.useMemo<MentionMatch[]>(
-    () => [...promptMatches, ...taskMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
-    [promptMatches, taskMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
+    () => [...taskMatches, ...serverMatches, ...projectMatches, ...fileMatches, ...resourceMatches],
+    [taskMatches, serverMatches, projectMatches, fileMatches, resourceMatches],
   )
 
   // Clamp rather than reset, so narrowing the query keeps the highlight stable.
@@ -330,11 +317,9 @@ export function useFileMentions(opts: {
     const insert =
       entry.type === "project"
         ? `@${entry.cwd} `
-        : entry.type === "prompt"
-          ? `@${entry.prompt.name} `
-          : entry.type === "task"
-            ? `@${entry.key} `
-            : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
+        : entry.type === "task"
+          ? `@${entry.key} `
+          : `@${entry.path}${entry.type === "dir" ? "/" : " "}`
     pendingCaret.current = token.start + insert.length
     setText(text.slice(0, token.start) + insert + text.slice(caret))
     setSelected(0)
@@ -441,20 +426,6 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
   return (
     <CompleterList selected={state.selected} count={state.matches.length} hint={scope}>
       {state.matches.map((entry, i) => {
-        if (entry.type === "prompt") {
-          return (
-            <CompleterRow
-              key={`prompt:${entry.prompt.id}`}
-              icon={Bot}
-              label={entry.prompt.title || entry.prompt.name}
-              description={entry.prompt.description || undefined}
-              badge="prompt"
-              selected={i === state.selected}
-              onPick={() => state.pick(entry)}
-              onHover={() => state.setSelected(i)}
-            />
-          )
-        }
         if (entry.type === "task") {
           return (
             <CompleterRow

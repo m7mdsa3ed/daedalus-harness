@@ -629,9 +629,27 @@ await test("ask runs another pair as a plain subagent child and answers its repl
   assert.equal(child.agentId, "fake2", "the child runs the named agent");
   assert.equal(child.profileId, "p2", "on the named profile");
   assert.equal(child.model, "m2", "on that profile's default model, not the parent's");
-  const spawn = updatesOf(ws, "subagent_spawned").slice(before)[0]!.update as { name: string; _meta?: unknown };
-  assert.equal(spawn.name, "Fake Two · Other");
-  assert.equal(spawn._meta, undefined, "no workflow meta: it draws as a plain subagent");
+  const spawn = updatesOf(ws, "subagent_spawned").slice(before)[0]!.update as {
+    name: string;
+    _meta?: { daedalus?: { ask?: unknown; workflow?: unknown } };
+  };
+  assert.equal(spawn.name, "Fake Two · Other", "with no description the pair names the row");
+  assert.equal(spawn._meta?.daedalus?.workflow, undefined, "no workflow meta: it draws as a plain subagent");
+  assert.deepEqual(
+    spawn._meta?.daedalus?.ask,
+    { agent: "Fake Two", profile: "Other", agentId: "fake2", profileId: "p2" },
+    "the row is told which pair answered",
+  );
+});
+
+await test("an ask's description names the child thread and its row", async () => {
+  const before = updatesOf(ws, "subagent_spawned").length;
+  const view = await runner.ask(parent, { profile: "p2", agent: "fake2", prompt: "echo:hi", description: "  Audit the auth flow  " });
+  const done = await runner.wait(view.id, 20_000);
+  assert.equal(done?.status, "completed", done?.error ?? "");
+  assert.equal(manager.get(done!.steps[0].sessionId!)!.title, "Ask · Audit the auth flow", "the child is titled by the errand");
+  const spawn = updatesOf(ws, "subagent_spawned").slice(before)[0]!.update as { name: string };
+  assert.equal(spawn.name, "Audit the auth flow", "and so is the row it draws as");
 });
 
 await test("ask refuses an unknown pair, and a child may not ask", async () => {
@@ -642,11 +660,45 @@ await test("ask refuses an unknown pair, and a child may not ask", async () => {
   manager.retire(child);
 });
 
+await test("ask needs a profile, and the thread's choice per agent outranks the model's", async () => {
+  await assert.rejects(async () => runner.ask(parent, { prompt: "x" }), (e: unknown) => e instanceof WorkflowError && e.status === 409);
+  await assert.rejects(async () => manager.setAskProfiles(parent.id, { fake2: { profileId: "nope" } }), /cannot run/);
+  await assert.rejects(async () => manager.setAskProfiles(parent.id, { fake2: { profileId: "p2", model: "nope" } }), /no model/);
+  const pair = (await runner.pairs(parent)).find((p) => p.profileId === "p2" && p.agentId === "fake2")!;
+  const model = pair.models[0]!;
+  await manager.setAskProfiles(parent.id, { [pair.agentId]: { profileId: pair.profileId, model } });
+  // Naming the agent, naming nothing, and naming another profile all land on the person's choice.
+  for (const input of [{ agent: "fake2", prompt: "echo:HI" }, { prompt: "echo:HI" }, { profile: "p1", agent: "fake2", prompt: "echo:HI" }]) {
+    const done = await runner.wait((await runner.ask(parent, input)).id, 20_000);
+    const child = manager.get(done!.steps[0].sessionId!)!;
+    assert.deepEqual([child.profileId, child.agentId, child.model], [pair.profileId, pair.agentId, model]);
+  }
+  assert.deepEqual(await manager.setAskProfiles(parent.id, {}), {});
+});
+
 await test("asks are capped apart from workflows", async () => {
   const asks = await Promise.all([0, 1].map(() => runner.ask(parent, { profile: "p2", agent: "fake2", prompt: "needs permission" })));
   const wf = await runner.start(parent, { name: "beside", steps: [{ name: "a", prompt: "echo:A" }] });
   assert.equal((await runner.wait(wf.id, 20_000))?.status, "completed", "a workflow still starts beside two asks");
   for (const a of asks) runner.cancel(a.id);
+});
+
+await test("an ask's child has its permissions granted, and a question it parks is the parent's", async () => {
+  const done = await runner.wait((await runner.ask(parent, { profile: "p2", agent: "fake2", prompt: "needs permission" })).id, 20_000);
+  assert.equal(done?.status, "completed", "no one had to approve the asked agent's tool call");
+  // What no policy can answer parks on the child and is drawn on the parent.
+  const view = await runner.ask(parent, { profile: "p2", agent: "fake2", prompt: "perm-noallow" });
+  await waitFor(async () => (await runner.status(view.id))?.steps[0].sessionId != null, "the ask's child");
+  const childId = (await runner.status(view.id))!.steps[0].sessionId!;
+  await waitFor(() => ws.of("permission").some((e) => e.from?.sessionId === childId), "the child's request on the parent");
+  const asked = ws.of("permission").find((e) => e.from?.sessionId === childId)!;
+  assert.ok(asked.requestId.startsWith(`${childId}:`), "a namespaced id the parent's socket can route");
+  assert.ok(manager.childPendingEvents(parent.id).some((e) => "requestId" in e && e.requestId === asked.requestId), "and handed to a peer that attaches now");
+  assert.ok(manager.answerChild(parent.id, asked.requestId, { outcome: { outcome: "selected", optionId: "reject" } }));
+  await waitFor(() => ws.of("request_answered").some((e) => e.requestId === asked.requestId), "the answer said on the parent");
+  assert.ok(!manager.childPendingEvents(parent.id).some((e) => "requestId" in e && e.requestId === asked.requestId));
+  assert.equal(manager.answerChild(parent.id, asked.requestId, {}), null, "a second answer loses");
+  runner.cancel(view.id);
 });
 
 await test("the agents builtin resolves to the agents server, and to nothing for a child", async () => {

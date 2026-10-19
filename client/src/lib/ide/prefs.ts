@@ -1,7 +1,7 @@
 /* ── How the IDE is read ──
    Device-local, global, and deliberately not on the panel's descriptor: how the
    commit history is drawn is a property of the reader,
-   the same way the transcript's density is (`lib/view-options.ts`). Putting it
+   the same way the transcript's density is (`lib/layout-options.ts`). Putting it
    in the dock's params would make it a property of one panel in one layout, so
    the same reader would have to set it again in the next project — and it would
    be serialized into a stored layout, where it would outlive any decision to

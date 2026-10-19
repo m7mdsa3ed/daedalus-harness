@@ -29,16 +29,15 @@ import type * as Monaco from "monaco-editor"
 
 import { Notice } from "@/components/notice"
 import { CopyButton } from "@/components/ui/copy-button"
-import { DiffEditor, type DiffReview } from "@/components/workspace/diff-editor"
+import { DiffEditor } from "@/components/workspace/diff-editor"
 import { DiffRowsSkeleton } from "@/components/ui/skeletons"
 import { PanelToolbar } from "@/components/workspace/primitives"
 import { describeError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { isConflict, readFile, writeFile } from "@/lib/workspace/fs-api"
-import { gitFileAt, gitWrite, scopeFileSide, type Comparison } from "@/lib/workspace/git-api"
+import { gitFileAt, gitWrite, type Comparison } from "@/lib/workspace/git-api"
 import { hunkPatch, revertHunk, type LineChange } from "@/lib/workspace/hunks"
 import { watchProject } from "@/lib/workspace/watch"
-import { cn } from "@/lib/utils"
 
 type MonacoDiff = Monaco.editor.IStandaloneDiffEditor
 
@@ -48,38 +47,22 @@ const SIDE_LABEL: Record<Comparison, string> = {
   worktree: "Working tree",
 }
 
-/** A side read out of a thread's changes scope (`turn:<id>`, `thread`,
-    `branch`, …) — a tree the server snapshotted, not a revision git names.
-    `path` is thread-relative, which is what the scope's routes speak. */
-export interface TreeSide {
-  sessionId: string
-  scope: string
-  side: "before" | "after"
-  path: string
-}
-
 /** A file as a commit has it — the history's diff. An empty `rev` is the side
     a root commit's parent would be: nothing. */
 export interface RevSide {
   rev: string
 }
 
-export type DiffSide = Comparison | TreeSide | RevSide
+export type DiffSide = Comparison | RevSide
 
 const sideLabel = (side: DiffSide) =>
   typeof side === "string"
     ? SIDE_LABEL[side]
-    : "rev" in side
-      ? side.rev.slice(0, 7) || "Nothing"
-      : side.side === "before"
-        ? "Before"
-        : "After"
+    : side.rev.slice(0, 7) || "Nothing"
 const sideKey = (side: DiffSide | null) =>
   side === null || typeof side === "string"
     ? side
-    : "rev" in side
-      ? `rev\0${side.rev}`
-      : `${side.sessionId}\0${side.scope}\0${side.side}\0${side.path}`
+    : `rev\0${side.rev}`
 
 /** One side of the comparison, whole. `generation` is how a caller says
     "read it again" — bumped by the watch stream and by Refresh. A null side
@@ -118,16 +101,6 @@ function useSide(
           .catch((err: unknown) => {
             if (!controller.signal.aborted) setError(describeError(err).title)
           })
-    } else if (typeof side === "object") {
-      void scopeFileSide(side.sessionId, side.scope, side.path, side.side)
-        .then((result) => {
-          /* A pruned snapshot is a sentence, said where the diff would be. */
-          if (result.unavailable) throw new Error(result.unavailable)
-          settle(result.missing ? "" : result.content)
-        })
-        .catch((err: unknown) => {
-          if (!controller.signal.aborted) setError(describeError(err).title)
-        })
     } else {
       void gitFileAt(projectId, path, side)
         .then((result) => settle(result.missing ? "" : result.content))
@@ -149,9 +122,6 @@ export function DiffTab({
   right,
   active,
   repo,
-  review,
-  inline,
-  fit,
 }: {
   projectId: string
   path: string
@@ -167,29 +137,17 @@ export function DiffTab({
       whose left is the index or a scope's tree, it turns on the per-hunk
       Stage and Revert; without it there is no repository to stage into. */
   repo?: string
-  /** Line comments — see `DiffEditor`. */
-  review?: DiffReview
-  /** One stacked diff with no toolbar, for a caller that already names the
-      file (the inspector's inline rows). */
-  inline?: boolean
-  /** Size to the diff, up to this many px — see `DiffEditor`. */
-  fit?: number
 }) {
   const [generation, setGeneration] = React.useState(0)
   const original = useSide(projectId, path, left, generation)
   const modified = useSide(projectId, path, right, generation)
   const [changes, setChanges] = React.useState<LineChange[]>([])
   const editorRef = React.useRef<MonacoDiff | null>(null)
-  /* A scope's "after" tree that still reads as the disk does is the disk for
-     the hunk verbs — the newest turn, reviewed before anything else wrote. */
-  const afterTree = typeof right === "object" && "side" in right && right.side === "after"
-  const disk = useSide(projectId, path, afterTree && repo !== undefined ? "worktree" : null, generation)
-  const onDisk = right === "worktree" || (afterTree && disk.text !== null && disk.text === modified.text)
-  const hunks = repo !== undefined && (left === "staged" || typeof left === "object") && onDisk
+  const hunks = repo !== undefined && (left === "staged" || typeof left === "object") && right === "worktree"
 
   /* Only worth listening for when one of the sides is the file on disk — two
      revisions do not move because someone saved. */
-  const live = left === "worktree" || right === "worktree" || afterTree
+  const live = left === "worktree" || right === "worktree"
   React.useEffect(() => {
     if (!live) return
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -214,8 +172,8 @@ export function DiffTab({
     )
 
   return (
-    <div className={cn("flex min-h-0 flex-col", !fit && "h-full")}>
-      {!inline && <PanelToolbar>
+    <div className="flex h-full min-h-0 flex-col">
+      <PanelToolbar>
         <span
           className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
           title={path}
@@ -241,7 +199,7 @@ export function DiffTab({
           />
           <TooltipContent>Read both sides again</TooltipContent>
         </Tooltip>
-      </PanelToolbar>}
+      </PanelToolbar>
       {hunks && original.text !== null && modified.text !== null && changes.length > 0 && (
         <HunkBar
           projectId={projectId}
@@ -249,26 +207,23 @@ export function DiffTab({
           repo={repo!}
           original={original.text}
           modified={modified.text}
-          version={right === "worktree" ? modified.version : disk.version}
+          version={modified.version}
           changes={changes}
           editorRef={editorRef}
           onDone={() => setGeneration((current) => current + 1)}
         />
       )}
-      <div className={cn("min-h-0 overflow-hidden", !fit && "flex-1")}>
+      <div className="min-h-0 flex-1 overflow-hidden">
         {original.text === null || modified.text === null ? (
-          <DiffRowsSkeleton hunks={fit ? 1 : 3} className={cn(!fit && "h-full overflow-y-auto")} />
+          <DiffRowsSkeleton hunks={3} className="h-full overflow-y-auto" />
         ) : (
           active && (
             <DiffEditor
               original={original.text}
               modified={modified.text}
               filename={path}
-              review={review}
-              inline={inline}
               onLineChanges={hunks ? setChanges : undefined}
               editorRef={editorRef}
-              fit={fit}
             />
           )
         )}

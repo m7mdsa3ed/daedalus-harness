@@ -19,8 +19,10 @@
    untrusted path, as ever: a renamed field or a hand-edited key arrives
    looking like a thread, so every field is checked and a row that fails is
    dropped rather than trusted. */
-import type { SessionMeta } from "./settings"
+import type { AskProfiles, SessionMeta } from "./settings"
 import { IS_POPOUT, POPOUT_WINDOW_ID } from "./popout"
+import { normalizeSuggestKinds } from "./suggestions"
+import { normalizeUiGroups } from "./openui/groups"
 
 const PREFIX = "daedalus.draftSessions.v1"
 /** Enough for any real set of open tabs; the oldest fall off the end. */
@@ -101,8 +103,9 @@ function parseRow(value: unknown): SessionMeta | null {
     promptActive: false,
     cursor: 0,
     draft: true,
-    ...(typeof row.suggestFollowups === "boolean" ? { suggestFollowups: row.suggestFollowups } : {}),
-    ...(typeof row.uiBlocks === "boolean" ? { uiBlocks: row.uiBlocks } : {}),
+    ...(Array.isArray(row.suggestKinds) ? { suggestKinds: normalizeSuggestKinds(row.suggestKinds) } : {}),
+    ...(Array.isArray(row.uiGroups) ? { uiGroups: normalizeUiGroups(row.uiGroups) } : {}),
+    ...(row.askProfiles && typeof row.askProfiles === "object" ? { askProfiles: row.askProfiles as AskProfiles } : {}),
     ...(row.isolate === true ? { isolate: true } : {}),
     ...(str(row.taskId) ? { taskId: str(row.taskId) } : {}),
     ...(str(row.modeId) ? { modeId: str(row.modeId) } : {}),

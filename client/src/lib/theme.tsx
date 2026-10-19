@@ -307,13 +307,6 @@ declare global {
       closeWindow?: () => Promise<boolean>
       /** Notify the main process after the full app workspace mounts. */
       signalWorkspaceReady?: () => void
-      /** Drive: a CDP connection to a `<webview>` guest of this window (lib/browser-host.ts). */
-      cdp?: {
-        reset: (guestId: number) => void
-        send: (guestId: number, data: string) => void
-        onMessage: (handler: (guestId: number, data: string) => void) => () => void
-        onClosed: (handler: (guestId: number, reason: string) => void) => () => void
-      }
       /** The Preview's page console (lib/browser-preview.ts). */
       guestConsole?: {
         read: (guestId: number) => Promise<ConsoleEntry[]>

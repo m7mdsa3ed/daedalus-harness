@@ -1,6 +1,6 @@
 /* ── Library sections ──
    The generic list+import scaffolding the library pages (MCP servers, skills,
-   commands, saved prompts) share. Not a route of its own.
+   commands) share. Not a route of its own.
 
    Layout: one DataTable. Name (mark, name over its mono handle) | the
    description | small facts (source, argument hint, built-in) | Edit/Delete as
@@ -14,6 +14,7 @@ import { ErrorNote } from "@/components/error-note"
 import { captureError, reportError, reportPromise, type InlineError } from "@/lib/errors"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { useTableFilter, type TableFilterField } from "@/lib/use-table-filter"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -55,6 +56,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   editable = () => true,
   importable = true,
   renderRows,
+  filterFields,
 }: {
   meta: SectionMeta
   items: T[]
@@ -76,7 +78,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   rowDetail?: (item: T) => React.ReactNode
   /** Small facts about a row (its source, its argument hint) as a badge column. */
   rowBadges?: (item: T) => React.ReactNode
-  /** The mono line under the name: `/name`, `@handle`. */
+  /** The mono line under the name: `/name`. */
   rowHandle?: (item: T) => React.ReactNode
   /** Column headings, where "Description" / "Details" are not the words. */
   detailLabel?: string
@@ -84,8 +86,10 @@ export function LibrarySection<T extends { id: string; name: string }>({
   /** Whether a row gets an Edit button. Every row can still be deleted. */
   editable?: (item: T) => boolean
   /** Whether there is anything to import from. False for a library the agents'
-      own configs know nothing about (saved prompts). */
+      own configs know nothing about. */
   importable?: boolean
+  /** Category filters beside the search box (a row's kind, source, scope…). */
+  filterFields?: TableFilterField<T>[]
   /** Replaces the table for a library whose rows want a shape of their own
       (MCP's expandable cards). Header, actions, the empty state and the delete
       confirmation stay this component's. */
@@ -124,15 +128,11 @@ export function LibrarySection<T extends { id: string; name: string }>({
   const live = React.useRef({ subtitle, rowExtra, rowIcon, rowDetail, rowBadges, rowHandle, editable, edit, remove })
   live.current = { subtitle, rowExtra, rowIcon, rowDetail, rowBadges, rowHandle, editable, edit, remove }
 
-  const [query, setQuery] = React.useState("")
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? items.filter((item) => `${item.name} ${live.current.subtitle(item)}`.toLowerCase().includes(needle))
-        : items,
-    [items, needle]
-  )
+  const f = useTableFilter(items, {
+    text: (item) => `${item.name} ${live.current.subtitle(item)}`,
+    placeholder: `Search ${noun}s…`,
+    fields: filterFields,
+  })
 
   const hasBadges = Boolean(rowBadges)
   const hasExtra = Boolean(rowExtra)
@@ -271,7 +271,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
       <PageHeader meta={meta} action={newButton} />
       <DataTable
         columns={columns}
-        data={shown}
+        data={f.rows}
         getRowId={(item) => item.id}
         pageSize={25}
         mark={mark}
@@ -279,14 +279,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
         onRowClick={(item) => {
           if (editable(item)) edit(item)
         }}
-        filtering={
-          items.length > 0
-            ? {
-                search: { value: query, onChange: setQuery, placeholder: `Search ${noun}s…` },
-                totalCount: items.length,
-              }
-            : undefined
-        }
+        filtering={items.length > 0 ? f.filtering : undefined}
         toolbar={
           items.length > 0 ? (
             <>
@@ -296,7 +289,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
           ) : undefined
         }
         emptyIcon={React.createElement(meta.icon)}
-        emptyMessage={items.length === 0 ? emptyText : `Nothing matches “${query.trim()}”.`}
+        emptyMessage={items.length === 0 ? emptyText : `Nothing matches “${f.query.trim()}”.`}
         emptyAction={
           items.length === 0 ? (
             <div className="flex flex-wrap justify-center gap-2">
@@ -415,15 +408,11 @@ export function LibraryImportPage({
     ],
     []
   )
-  const [query, setQuery] = React.useState("")
-  const needle = query.trim().toLowerCase()
-  const shown = React.useMemo(
-    () =>
-      found && needle
-        ? found.filter((f) => `${f.name} ${f.source} ${String(f.url ?? f.path ?? f.command ?? f.description ?? "")}`.toLowerCase().includes(needle))
-        : (found ?? []),
-    [found, needle]
-  )
+  const f = useTableFilter(found ?? [], {
+    text: (i) => `${i.name} ${i.source} ${String(i.url ?? i.path ?? i.command ?? i.description ?? "")}`,
+    placeholder: `Search ${noun}s…`,
+    fields: [{ id: "source", label: "Found in", of: (i) => i.source }],
+  })
 
   return (
     <>
@@ -459,25 +448,17 @@ export function LibraryImportPage({
             ) : (
               <DataTable
                 columns={columns}
-                data={shown}
+                data={f.rows}
                 getRowId={(item) => item.id}
                 pageSize={50}
                 maxHeight="32rem"
                 mark={() => React.createElement(meta.icon)}
-                viewToggle={false}
                 selection={{
                   ids: selectedIds,
                   onChange: (ids) => setSelected([...ids]),
                   renderToolbar: () => null,
                 }}
-                filtering={
-                  found.length > 0
-                    ? {
-                        search: { value: query, onChange: setQuery, placeholder: `Search ${noun}s…` },
-                        totalCount: found.length,
-                      }
-                    : undefined
-                }
+                filtering={found.length > 0 ? f.filtering : undefined}
                 toolbar={
                   found.length > 0 ? (
                     <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
@@ -489,7 +470,7 @@ export function LibraryImportPage({
                 emptyMessage={
                   found.length === 0
                     ? `Nothing left to import — the library already has every ${noun} found on the server.`
-                    : `Nothing matches “${query.trim()}”.`
+                    : `Nothing matches “${f.query.trim()}”.`
                 }
               />
             )}

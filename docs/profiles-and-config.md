@@ -1,4 +1,4 @@
-# Profiles, models, config & saved prompts
+# Profiles, models & config
 
 _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
@@ -432,22 +432,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   simply does not serve the draft's agent. `resolveProfileAgent`'s strict reading is the
   spawn paths' alone.
 
-## Saved prompts
+## Personas and saved prompts (gone)
 
-- **A saved prompt is reusable text, mentioned with `@handle`.** It replaced personas, which
-  were chosen at thread start and appended to the system prompt. `saved_prompts`
-  (`server/src/saved-prompts.ts`, Settings › Saved prompts) holds `name` (the unique handle,
-  `/^[a-z0-9][a-z0-9_-]*$/`), `description` and `prompt`; built-ins are seeded with the same
-  `since`/`introduced` bookkeeping `DEFAULT_AGENTS` use, so a deleted one stays deleted.
-  The `@` completer lists them (badge "prompt") and inserts the literal `@handle`.
-  **Expansion is at send, server-side, into `outgoing` only** (`expandPrompts`, acp-bridge):
-  the journaled text is what the user typed, and a token that named a prompt is not also a
-  file `resource_link`. Unknown tokens, `a@b.com` and an unmatched handle are left alone.
+- **Reusable text is a library slash command.** Personas (chosen at thread start, appended to
+  the system prompt) became saved prompts, and saved prompts became `commands` rows — the
+  library's slash commands (`server/src/legacy-prompts.ts`, once at boot, marker
+  `savedPromptsToCommands`; a row keeps its id and loses its title, a name another command
+  holds is suffixed, a blank description falls back to the title or name). Nothing is
+  linked by the migration: a command is a per-thread (or project-default) link, materialised
+  for runtimes that declare a `workspaceLayout` and absent on codex.
+- **The legacy tables stay declared** (`personas`, `saved_prompts`) so `db:push` does not drop
+  them before the migration has run.
 - **There is no persona on a thread** — no picker, `persona_id`, project/routine default,
-  thinking budget or effort. Picking one used to cost a respawn; mentioning one costs nothing.
-- **Migration:** the old `personas` table is still declared (legacy) so `db:push` does not
-  drop it; `migrateLegacyPersonas` copies it once (marker `savedPromptsMigrated`), slugging
-  names. Backup exports `prompts` and still imports a legacy `personas` key.
+  thinking budget or effort.
 - **The spawn-instruction doors remain** (`personaVia`, `{personaPrompt}`, `{personaFile}`,
   `resolvePersonaSpawn`) — historical names — because Rules and the spawn trailers ride them.
 
@@ -464,8 +461,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **Spawn-time**: live threads pick a change up on their next respawn, which
   `session/resume`/`session/load` make cheap — both carry the `_meta` again. The bridge
   checks the runtime advertised `customInstructions` at `initialize` and logs when an
-  `"air-meta"` row's runtime did not. Backup carries the table **upsert per key, never a
-  delete**.
+  `"air-meta"` row's runtime did not.
 - **The AIR key is not a door for codex, though codex-acp reads it.** It passes
   `customInstructions` to `thread/start` alone — `session/resume`, `session/load` and fork
   carry none — so a rules change would reach a new Codex thread and never a revived one,

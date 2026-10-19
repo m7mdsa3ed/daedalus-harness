@@ -529,7 +529,8 @@ export function ImportThreadsDialog({
             </Select>
             <Button
               className="max-sm:w-full"
-              disabled={scanning || !profileId || !scanProject}
+              disabled={!profileId || !scanProject}
+              loading={scanning}
               onClick={() => void scan()}
             >
               {scanning ? <Loader2 className="animate-spin" /> : <RefreshCwIcon />}
@@ -676,7 +677,7 @@ export function ImportThreadsDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={picked.size === 0 || importing} onClick={() => void run()}>
+          <Button disabled={picked.size === 0} loading={importing} onClick={() => void run()}>
             {importing && <Loader2 className="animate-spin" />}
             {picked.size ? `Import ${picked.size}` : "Import"}
           </Button>

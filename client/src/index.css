@@ -1327,12 +1327,12 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    out — padding it pushed New thread and Search off the row's end. */
 html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-region]:not([data-sidebar="header"] *) {
   /* The overlay's measured width (Electron publishes `env(titlebar-area-*)` for
-     a `titleBarOverlay`) plus 12px of air, so the last tab and the + stop short
+     a `titleBarOverlay`) plus 28px of air, so the last tab and the + stop short
      of the buttons instead of touching them; 148px is the fallback for a build
      that does not publish it. */
   padding-right: max(
     1rem,
-    calc(100vw - env(titlebar-area-width, calc(100vw - 136px)) - env(titlebar-area-x, 0px) + 12px)
+    calc(100vw - env(titlebar-area-width, calc(100vw - 136px)) - env(titlebar-area-x, 0px) + 28px)
   );
 }
 /* macOS: the traffic lights stand over the sidebar's corner, and when the
@@ -1342,11 +1342,11 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
 html[data-desktop="true"][data-desktop-platform="darwin"]
   [data-slot="sidebar-wrapper"]:has([data-slot="sidebar"][data-state="collapsed"])
   [data-app-header] {
-  padding-left: 80px;
+  padding-left: 96px;
 }
 @media (max-width: 767px) {
   html[data-desktop="true"][data-desktop-platform="darwin"] [data-app-header] {
-    padding-left: 80px;
+    padding-left: 96px;
   }
 }
 /* The PWA's overlay mode, same corner but the browser tells us exactly how
@@ -1525,40 +1525,6 @@ html[data-window-controls-overlay="true"] {
 }
 .dark .prose :where(.hljs-type, .hljs-built_in, .hljs-class .hljs-title) {
   color: oklch(0.8 0.1 325);
-}
-
-/* ── Review comments in a diff (`diff-editor.tsx`) ──
-   The "+" rides the gutter of the line under the pointer, the way a code
-   host's does; a commented line wears a wash of the primary and a dot. */
-.review-glyph-add {
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-.review-glyph-add::before {
-  content: "+";
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  border-radius: calc(var(--radius) * 0.5);
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font: 600 12px/1 var(--font-sans, system-ui);
-}
-.review-glyph-mark {
-  display: grid;
-  place-items: center;
-}
-.review-glyph-mark::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--primary);
-}
-.review-line-mark {
-  background: color-mix(in oklch, var(--primary) 10%, transparent);
 }
 
 /* ── The editor's palette ──
@@ -1971,7 +1937,7 @@ html[data-window-controls-overlay="true"] {
   overflow-wrap: anywhere;
 }
 
-.prose :where(a) {
+.prose :where(a):not(:where(.not-prose, .not-prose *)) {
   @apply underline decoration-border underline-offset-2 transition-colors hover:decoration-foreground;
 }
 
@@ -2039,7 +2005,7 @@ html[data-window-controls-overlay="true"] {
 
 /* An image is untrusted remote content in a chat column: bound it, and give it
    the same frame as a code block so a broken one still reads as a slot. */
-.prose :where(img) {
+.prose :where(img):not(:where(.not-prose *)) {
   @apply my-[1em] max-w-full rounded-md border border-border/60;
 }
 
@@ -2361,6 +2327,15 @@ html .dock-nested {
   background-color: var(--background);
 }
 
+/* Dockview writes `visibility` on every overlay itself (hidden / visible), so a
+   nested dock's overlay in a tab that is not in front still says "visible" and
+   paints through its hidden parent - over whichever panel was added or opened
+   beside it. A hidden overlay hides everything nested in it. */
+html .dv-render-overlay[style*="visibility: hidden"] .dv-render-overlay {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 html .dock-nested .dv-groupview {
   --dock-header-overlap: 0px;
   --dock-band-left: 0px;
@@ -2368,7 +2343,9 @@ html .dock-nested .dv-groupview {
 }
 
 html .dock-nested .dv-groupview > .dv-tabs-and-actions-container {
-  margin-top: 0;
+  /* What the app header covers of this group, measured by thread-dock.tsx
+     (`clearHeader`) - nonzero only where the outer group is an overlay (flush). */
+  margin-top: var(--dock-header-overlap, 0px);
   padding: 0 4px;
   background-color: color-mix(in oklch, var(--foreground) 3%, var(--background));
   border-bottom: 1px solid var(--border);
@@ -2447,10 +2424,12 @@ html .dv-tab {
      at 18rem, wide enough for the paired agent and project marks plus a useful
      slice of the title, without making the strip scroll sooner than needed.
 
-     The floor is what keeps this from being the opposite problem: past about
-     nine tabs, shrinking without one leaves slivers rather than a strip that
-     scrolls. Below it the container scrolls as it always did, and the tab list
-     at the strip's end is the way back to what scrolled off.
+     **Tabs share the strip down to a floor, then it scrolls.** Up to 18rem
+     each, every tab shrinks evenly to fit; at 9rem (enough of a title to tell
+     two threads apart) they stop, and the container scrolls sideways
+     (`.dv-tabs-container` is `overflow: auto`) with a fade at the edge that
+     has more past it. The tab list at the strip's end is the way back to what
+     scrolled off.
 
      **The size is a `width`, not a flex-basis**, and that is not a preference:
      dockview's reorder collapses the tab being dragged with
@@ -2460,10 +2439,10 @@ html .dv-tab {
      basis: auto` defers to the width, which makes the two agree — same
      grow-to-a-ceiling, shrink-to-a-floor behaviour, one that dockview can
      animate. */
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   width: 18rem;
   max-width: 18rem;
-  min-width: 6.5rem;
+  min-width: 9rem;
   /* Dockview times its own reorder off this (it defaults to 200ms, and sets
      70ms on every `.dv-drop-target` — which a tab is, so the collapse and the
      slide ran at a third of the strip's own speed). One duration for the whole
@@ -2471,11 +2450,62 @@ html .dv-tab {
   --dv-transition-duration: var(--dock-tab-duration);
 }
 
+/* A fade at whichever edge has more tabs past it. Scroll-driven, so no
+   listener: the strip's own scroll position animates two registered lengths
+   over the last/first 1.5rem of travel, and a strip that does not overflow has
+   no scroll timeline, so both stay at their initial 0 and nothing is masked.
+   Wide strips only - the phone's strip is `overflow: visible` and a mask would
+   clip the tab's shadow. */
+@property --tabs-fade-l {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tabs-fade-r {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes tabs-fade-l {
+  to { --tabs-fade-l: 1.5rem; }
+}
+@keyframes tabs-fade-r {
+  from { --tabs-fade-r: 1.5rem; }
+  to { --tabs-fade-r: 0px; }
+}
+@media (width >= 48rem) {
+  html .dv-tabs-container {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--tabs-fade-l),
+      #000 calc(100% - var(--tabs-fade-r)),
+      transparent
+    );
+    /* Longhands, never the `animation` shorthand: the CSS pipeline folds a
+       shorthand plus `animation-timeline` into one `animation: ... scroll()`
+       declaration, which Chromium drops (see the scroll-fade note below). */
+    animation-name: tabs-fade-l, tabs-fade-r;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(self inline), scroll(self inline);
+    animation-range-start: 0, calc(100% - 1.5rem);
+    animation-range-end: 1.5rem, 100%;
+  }
+}
+
+/* No scrollbar on the strip: dockview draws its own thumb (`.dv-scrollbar`)
+   over the tabs. The wheel, a touchpad and the tab list still scroll/jump. */
+html .dv-tabs-and-actions-container .dv-scrollbar {
+  display: none;
+}
+
 /* The tab in the hand: dockview collapses it to nothing so the strip closes
    over it. Its `width: 0` needs the grow taken off too, or the tab shrinks to
    zero and then immediately grows back into whatever slack the strip has. */
 html .dv-tab.dv-tab--dragging {
   flex-grow: 0;
+  min-width: 0;
 }
 
 /* How long the strip takes when dockview reorders it — the one motion a tab
@@ -2540,6 +2570,10 @@ html {
     width: auto;
     max-width: none;
     flex-grow: 1;
+    /* The wide strip's `min-width` floor used to be what stopped a long title
+       from sizing the tab; without it `auto` is the title's own width. 0 lets
+       the tab shrink to the strip so the title truncates. */
+    min-width: 0;
   }
 
   /* And the box it grows inside has to grow too. Dockview's tabs container is
@@ -3495,4 +3529,23 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
 }
 @media (prefers-reduced-motion: reduce) {
   .voice-bar { animation: none !important; }
+}
+
+/* "Second row on tabs" off (View options): the tab is one line, so it is the
+   header chip's height — the same slab as the sidebar toggle beside it. Written
+   on <html> by the shell. */
+html[data-tab-rows="1"] {
+  --dock-tab-h: var(--dock-chip-h);
+}
+
+/* "Compact rows" on (Settings › Appearance › Sidebar): thread rows drop from
+   h-8 to h-6, and their hover controls re-centre in the shorter row (ACTION
+   places them for h-8). Keyed on the thread row's own `data-thread-id` so the
+   nav, the folders and the footer keep their size. Written on <html> by the
+   shell. */
+html[data-sidebar-density="compact"] [data-sidebar="menu-button"][data-thread-id] {
+  height: calc(var(--spacing) * 6);
+}
+html[data-sidebar-density="compact"] [data-sidebar="menu-item"]:has(> [data-thread-id]) > [data-sidebar="menu-action"] {
+  top: calc(var(--spacing) * 0.5) !important;
 }

@@ -5,7 +5,7 @@ import { toWireError } from "./acp-bridge.js";
 import { queueItems } from "./session-queue.js";
 import type { SessionJournal } from "./session-journal.js";
 import type { Peer, Session } from "./sessions.js";
-import { REPLAY_WINDOW_BYTES } from "./protocol.js";
+import { childRequest, REPLAY_WINDOW_BYTES } from "./protocol.js";
 
 /* The hold, in the one shape the `paused` event carries it (`AcpBridge.hold`),
    so an attaching peer and a live one can never disagree about why a turn is
@@ -54,6 +54,10 @@ function tpsFields(session: Session): { tps?: TpsStats } {
  */
 export interface SocketHost {
   getSession(id: string): Session | undefined;
+  /** What this thread's live children are blocked on, repeated for its peers. */
+  childPendingEvents(id: string): ThreadEvent[];
+  /** Answer a child's question from this thread's socket; null if not one, or gone. */
+  answerChild(parentId: string, requestId: string, response: unknown): { toolCallId?: string } | null;
   /** Resolves once a thread held for boot adoption is bound (bounded); instant otherwise. */
   whenAdopted(id: string): Promise<void>;
   journal: SessionJournal;
@@ -268,6 +272,7 @@ export class SessionSocket {
        blocked — so without this it would show nothing to answer with. There is
        no filtering to do: an answered request is not in the map. */
     for (const event of session.bridge?.pendingEvents() ?? []) this.send(peer, event);
+    for (const event of this.host.childPendingEvents(session.id)) this.send(peer, event);
     return null;
   }
 
@@ -435,6 +440,14 @@ export class SessionSocket {
           return {};
         });
         return;
+    }
+    /* A child's question repeated here (`<childId>:<requestId>`) is answered
+       on the child's bridge — before the checks below, because the child is
+       the one waiting: this thread may have no process of its own right now. */
+    if ((command.cmd === "answer_permission" || command.cmd === "answer_elicitation") && childRequest(command.requestId)) {
+      const answered = this.host.answerChild(session.id, command.requestId, command.response);
+      if (!answered) this.send(peer, { ev: "request_answered", requestId: command.requestId });
+      return;
     }
     /* A respawn in flight has nulled the bridge on purpose; the command is
        for the process coming up, so it waits for it rather than being told

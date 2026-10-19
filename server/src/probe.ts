@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import * as acp from "./acp.js";
 import { createHash } from "node:crypto";
 import { agentOptions as agentOptionsTable, db } from "./db/index.js";
-import { AcpBridge, CLIENT_CAPABILITIES, agentStream, resolveAgentSpawn, spawnAgent, spawnProcess } from "./acp-bridge.js";
+import { AcpBridge, CLIENT_CAPABILITIES, type SessionNotification, agentStream, resolveAgentSpawn, spawnAgent, spawnProcess } from "./acp-bridge.js";
 import { AcpPool, SINK, pool } from "./acp-connection.js";
 import { emptyLinks } from "./db/links.js";
 import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
@@ -58,6 +58,42 @@ export interface AgentOptions {
    * object already travels in.
    */
   promptCapabilities?: acp.PromptCapabilities;
+  /**
+   * The slash commands the fresh session advertised (`available_commands_update`)
+   * — built-ins, user and project skills, plugins. A draft has no process to
+   * advertise them, so without this its `/` menu could only list the library
+   * commands picked for it. A snapshot: the live thread's list replaces it.
+   */
+  commands?: acp.AvailableCommand[];
+}
+
+/** How long to wait, after `session/new`, for the command list to arrive. The
+    adapters send it as a notification just behind the response (claude-agent-acp
+    after the setup), and a runtime that never does costs exactly this. */
+const COMMANDS_WAIT_MS = 1500;
+
+/** Catches the first `available_commands_update` of a probe session. */
+function commandsWatcher() {
+  let commands: acp.AvailableCommand[] | undefined;
+  let wake: (() => void) | undefined;
+  return {
+    onUpdate(notification: { update?: { sessionUpdate?: string; availableCommands?: acp.AvailableCommand[] } }) {
+      const update = notification.update;
+      if (update?.sessionUpdate !== "available_commands_update") return;
+      commands = update.availableCommands ?? [];
+      wake?.();
+    },
+    /** What arrived, waiting up to `ms` for it. */
+    async get(ms: number) {
+      if (commands === undefined) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          setTimeout(resolve, ms).unref();
+        });
+      }
+      return commands;
+    },
+  };
 }
 
 /** Select options may arrive grouped; the sweep wants one flat list. */
@@ -75,7 +111,7 @@ const inflight = new Map<string, Promise<ProbedOptions>>();
    `recommendedValue` still hold Claude Code's `default` model/effort rows,
    which a live thread is no longer offered. Bump it when the declared
    capabilities change what an agent advertises. */
-const PROBE_SHAPE = "air-recommended-1";
+const PROBE_SHAPE = "air-recommended-2-commands";
 
 /**
  * cwd is in the key because it changes the answer: an agent reports different
@@ -202,7 +238,12 @@ export async function withAgentConnection<T>(
   profile: Profile,
   agentId: string,
   project: Project,
-  opts: { name: string; materialize?: { allowlist: string[] } },
+  opts: {
+    name: string;
+    materialize?: { allowlist: string[] };
+    /** Every `session/update` the agent sends while connected. */
+    onUpdate?: (notification: SessionNotification) => void;
+  },
   fn: (agent: acp.ClientContext, init: acp.InitializeResponse) => Promise<T>,
 ): Promise<T> {
   if (opts.materialize) await prepareWorkspace(agentId, project, opts.materialize.allowlist);
@@ -241,7 +282,14 @@ export async function withAgentConnection<T>(
 
   try {
     return await Promise.race([
-      acp.client({ name: opts.name }).connectWith(agentStream(proc), async (agent) => {
+      (opts.onUpdate
+        ? acp
+            .client({ name: opts.name })
+            .onNotification(acp.methods.client.session.update, (ctx) =>
+              opts.onUpdate!(ctx.params as SessionNotification),
+            )
+        : acp.client({ name: opts.name })
+      ).connectWith(agentStream(proc), async (agent) => {
         const init = await agent.request(acp.methods.agent.initialize, {
           protocolVersion: acp.PROTOCOL_VERSION,
           /* The same claims a thread's process makes, so the probe is
@@ -290,17 +338,18 @@ async function runProbe(
   if ((await getAgent(agentId))?.sharedProcess === "acp-meta") {
     return await probeShared(profile, agentId, project, allowlist);
   }
+  const watcher = commandsWatcher();
   return withAgentConnection(
     profile,
     agentId,
     project,
-    { name: "daedalus-probe", materialize: { allowlist } },
+    { name: "daedalus-probe", materialize: { allowlist }, onUpdate: (n) => watcher.onUpdate(n) },
     async (agent, init) => {
       const created = await agent.request(acp.methods.agent.session.new, {
         cwd: project.cwd,
         mcpServers: [],
       });
-      return await sweep(agent, agentId, init, created);
+      return await sweep(agent, agentId, init, created, watcher);
     },
   );
 }
@@ -326,7 +375,8 @@ async function probeShared(
   spec.env = {};
   const conn = await pool.acquire(agentId, AcpPool.key(spec), () => spawnProcess(spec));
   let sessionId: string | null = null;
-  const sink = { ...SINK, ownsSession: (id: string) => id === sessionId };
+  const watcher = commandsWatcher();
+  const sink = { ...SINK, ownsSession: (id: string) => id === sessionId, onUpdate: (n: SessionNotification) => watcher.onUpdate(n) };
   conn.attach(sink);
   let expire: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, reject) => {
@@ -345,7 +395,7 @@ async function probeShared(
           }),
         );
         sessionId = created.sessionId;
-        return await sweep(conn.rpc.agent, agentId, init, created);
+        return await sweep(conn.rpc.agent, agentId, init, created, watcher);
       })(),
       deadline,
     ]);
@@ -361,6 +411,7 @@ async function sweep(
   agentId: string,
   init: acp.InitializeResponse,
   created: acp.NewSessionResponse,
+  watcher: ReturnType<typeof commandsWatcher>,
 ): Promise<AgentOptions> {
   const configOptions = created.configOptions ?? [];
 
@@ -391,10 +442,14 @@ async function sweep(
       }
     }
   }
+  /* The model sweep above usually outlasts the notification, so this rarely
+     waits at all. */
+  const commands = await watcher.get(COMMANDS_WAIT_MS);
   return {
     modes: created.modes ?? null,
     configOptions,
     byModel,
+    ...(commands ? { commands } : {}),
     ...(init.agentCapabilities?.promptCapabilities
       ? { promptCapabilities: init.agentCapabilities.promptCapabilities }
       : {}),

@@ -15,46 +15,13 @@ import {
   SidebarMenuButton,
 } from "@/components/ui/sidebar"
 import { ProjectIcon } from "@/components/entity-icon"
-import { createLocalStore } from "@/lib/local-store"
 import { projectPath } from "@/lib/router"
-import { useActiveChat } from "@/lib/workspace/open-threads"
 import { type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { ACTION, GROUP, GROUP_LABEL, NEST, PROJECT_PAGE_SIZE, ROW, TIER } from "./scale"
 import { useSidebarEnv } from "./env"
 import { ThreadList } from "./thread-list"
-
-/* Which groups are folded, on this device. One list for every foldable thing —
-   a project folder is keyed by its id, Trash by a name no project can have —
-   so the sidebar has one fold memory rather than one per kind of group. */
-const COLLAPSED_KEY = "ui.collapsedProjects"
-
-const collapsedStore = createLocalStore<string[]>(
-  COLLAPSED_KEY,
-  (raw) => (Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []),
-  []
-)
-
-/* Reactive across every instance (and tab): a fold written here is what each
-   other reader of the key sees, with no re-read of localStorage per toggle. */
-function useFold(key: string, defaultOpen: boolean): [boolean, (open: boolean) => void] {
-  const open = React.useSyncExternalStore(
-    collapsedStore.subscribe,
-    () => collapsedStore.get().includes(key) !== defaultOpen
-  )
-  const setOpen = React.useCallback(
-    (next: boolean) => {
-      /* Only the *departure* from the default is stored, so a group that defaults
-         closed (Trash) does not need a row in the list to stay closed — and one
-         that defaults open does not need one to stay open. */
-      const collapsed = collapsedStore.get().filter((id) => id !== key)
-      if (next !== defaultOpen) collapsed.push(key)
-      collapsedStore.set(collapsed)
-    },
-    [key, defaultOpen]
-  )
-  return [open, setOpen]
-}
+import { useFold } from "./fold"
 
 /** A project as a folder row: chevron, name, thread count; its threads
     indented under it when open, and a + on hover that starts a thread in it.
@@ -90,8 +57,6 @@ export function ProjectFolder({
     else if (state === "waiting" || state === "failed") needsYou++
   }
   const location = useLocation()
-  const activeThreadId = useActiveChat()
-  const holdsActive = sessions.some((session) => session.id === activeThreadId)
   /* The project's own page is *about* this folder, so the folder is where you
      are — open or closed, unlike the thread case below. */
   const onProjectPage = location.pathname === projectPath(id)
@@ -112,10 +77,7 @@ export function ProjectFolder({
             <SidebarMenuButton
               size="sm"
               tooltip={name}
-              /* The folder takes the active tint only while closed over the
-                 routed thread — a pointer to where you are that the row
-                 itself, being hidden, cannot give. */
-              isActive={onProjectPage || (!open && holdsActive)}
+              isActive={onProjectPage}
               /* Two hover controls need twice the gutter the primitive
                  reserves for one — the count sits inside it and would land
                  under the overview button otherwise.

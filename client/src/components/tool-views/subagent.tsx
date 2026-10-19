@@ -5,6 +5,7 @@
    for a runtime whose launcher has no view of its own. */
 import * as React from "react"
 import { BotIcon } from "lucide-react"
+import { AgentIcon } from "@/components/entity-icon"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import {
   DetailSection,
@@ -23,6 +24,7 @@ import {
   extractSubagent,
   taskAgentRows,
   toolOutputText,
+  type AskInfo,
   type BackgroundTask,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
@@ -137,6 +139,33 @@ function BackgroundAgentResult({ value }: { value: unknown }) {
 // ─── Subagents ───────────────────────────────────────────────────────────────
 
 /**
+ * Which pair answered an ask — the one worker in a transcript that is not the
+ * thread's own agent, said on the row rather than left to the brief.
+ *
+ * An ask draws as a plain subagent (its spawn carries no workflow `_meta`), so
+ * it shares a row with every Task a runtime launches: same mark, same brief,
+ * same rail, same report. What it cannot share is the reader's assumption that
+ * the worker is the agent they are talking to — so the row wears the asked
+ * agent's own mark (the server's `AgentDef.icon`, through `AgentIcon`) and the
+ * `agent · profile` pair in the app's accent, while the title stays the errand
+ * the caller described. Replayed, it says the names the pair had when it was
+ * asked: those ride the journal, and the profile may have been renamed since.
+ */
+export function AskAgentChip({ ask }: { ask: AskInfo }) {
+  const pair = [ask.agent, ask.profile].filter(Boolean).join(" · ")
+  if (!pair) return null
+  return (
+    <span
+      title={`Answered by ${ask.agent ?? "another agent"}${ask.profile ? ` on ${ask.profile}` : ""}`}
+      className="harness-part-in inline-flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-1.5 text-[10px] font-medium leading-4 text-primary"
+    >
+      <AgentIcon agentId={ask.agentId} className="size-3 rounded-full" />
+      <span className="min-w-0 truncate">{pair}</span>
+    </span>
+  )
+}
+
+/**
  * Work handed to another agent: who, what it was asked, what it said back.
  *
  * In two halves, because a subagent with a transcript of its own draws that
@@ -158,7 +187,10 @@ export function SubagentBrief({ item }: { item: ToolItem }) {
      line under a title that says the title again is the line a phone can
      least afford. */
   const facts = [
-    call.agentType,
+    /* An ask's own row names the pair above this (`AskAgentChip`), and the raw
+       `agent` argument it carries is an id half the time — the name is already
+       on the line the detail hangs under. */
+    call.ask ? undefined : call.agentType,
     call.model,
     // Codex reports a lifecycle rather than a prompt — the activity IS the
     // content of the call, so it is not optional chrome the way the rest is.

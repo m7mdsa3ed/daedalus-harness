@@ -4,6 +4,7 @@ import type { SessionFailure, SessionUpdate } from "@daedalus/protocol"
 // so there is no runtime cycle.
 import {
   applyTerminalMeta,
+  askInfoOf,
   parentToolIdOf,
   parseTaskNotification,
   subagentItemId,
@@ -455,6 +456,7 @@ export function applySessionUpdate(
         task: update.task,
         capabilities: update.capabilities ?? {},
         workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
+        ask: askInfoOf(metaOf(update)) ?? existing?.ask,
         /* A `session/load` restating the spawn keeps what the first one said. */
         model: spawnModelOf(metaOf(update)).model ?? existing?.model,
         role: spawnModelOf(metaOf(update)).role ?? existing?.role,

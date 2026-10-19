@@ -62,6 +62,7 @@
    one ordering of Enter and the completers), `prompt-history.ts` (the Up
    walk). Nothing about the *connection* is here at all — it is a `Notice` at
    the foot of the transcript (`components/thread-view/thread-status.tsx`). */
+import type * as acp from "@daedalus/acp"
 import * as React from "react"
 import { useLocation, useNavigate } from "react-router"
 import {
@@ -81,6 +82,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { McpPicker } from "@/components/composer/mcp-picker"
+import { optionKey, useAgentCommands } from "@/lib/agent-options"
 import {
   AgentsIndicator,
   ChangesIndicator,
@@ -111,7 +113,7 @@ import { ProjectCommandMenu, shellLineFor, useProjectCommands } from "@/componen
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
 import { useVoice } from "@/hooks/use-voice"
-import { useProfiles } from "@/lib/queries/catalog"
+import { useAgents, useCommands, useProfiles } from "@/lib/queries/catalog"
 import { defaultVoice, useVoiceProviders, voiceFor } from "@/lib/queries/voice"
 import { endVoiceCall, startVoiceCall, useVoiceCallActive } from "@/lib/voice-call"
 import type { Actions } from "@/lib/actions"
@@ -530,8 +532,39 @@ export function Composer({
           ],
     [draft, thread.canCompact, mcpServers],
   )
-  const slash = useSlashCommands(text, thread.availableCommands, setText, harnessCommands)
-  const hasCommands = thread.availableCommands.length > 0 || harnessCommands.length > 0
+  /* A draft has no process to advertise anything, so it is offered what the
+     spawn will materialise (the library commands it has picked, where its
+     runtime reads commands out of the workspace at all) plus the catalog the
+     option probe's throwaway session advertised — built-ins, user skills,
+     plugins. The thread that follows replaces both with its own
+     `available_commands_update`. */
+  const libraryCommands = useCommands()
+  const agents = useAgents()
+  const probedCommands = useAgentCommands(
+    meta ? optionKey(meta.profileId, meta.agentId) : "",
+    meta ? [optionKey(`default:${meta.agentId}`, meta.agentId)] : []
+  )
+  const draftCommands = React.useMemo((): acp.AvailableCommand[] => {
+    if (!draft) return []
+    const agent = agents.find((a) => a.id === meta?.agentId)
+    const picked = new Set(meta?.commandIds ?? [])
+    const own =
+      agent && !agent.workspaceLayout?.commands
+        ? []
+        : libraryCommands
+            .filter((c) => picked.has(c.id))
+            .map((c) => ({
+              name: c.name,
+              description: c.description,
+              ...(c.argumentHint ? { input: { hint: c.argumentHint } } : {}),
+            }))
+    // What the probe's session advertised, minus a name the picks already say.
+    const taken = new Set(own.map((c) => c.name))
+    return [...own, ...probedCommands.filter((c) => !taken.has(c.name))]
+  }, [draft, agents, meta?.agentId, meta?.commandIds, libraryCommands, probedCommands])
+  const agentCommands = draft ? draftCommands : thread.availableCommands
+  const slash = useSlashCommands(text, agentCommands, setText, harnessCommands)
+  const hasCommands = agentCommands.length > 0 || harnessCommands.length > 0
 
   /* `!` suggests the project's saved shell lines and the scripts its
      package.json files declare. A project command is not a prompt: `send`
@@ -581,8 +614,8 @@ export function Composer({
       })
   }
 
-  /* `@` offers paths and thread resources alongside draft MCP servers and
-     saved prompts. It reads the token at the caret — a file is named mid-sentence,
+  /* `@` offers paths and thread resources alongside draft MCP servers.
+     It reads the token at the caret — a file is named mid-sentence,
      unlike a command — so the textarea has to be reachable. It goes after the
      command menu in the key handler: whichever menu is open owns the arrows. */
 

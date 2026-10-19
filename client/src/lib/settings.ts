@@ -4,6 +4,7 @@
 // sidebar), and the active one is what every request in the app talks to.
 
 import { uuid } from "./uuid"
+import { sameUiGroups } from "./openui/groups"
 import { clearPersistedCache } from "./queries/persist"
 import { clearDraftSessions } from "./draft-sessions"
 import { clearActiveSpace } from "./spaces"
@@ -283,6 +284,16 @@ export interface AgentStatus {
   checkedAt: number
 }
 
+/** What `ask_agent` uses for one agent: a profile, and optionally one of its
+    models (absent = the profile's own default). */
+export interface AskChoice {
+  profileId: string
+  model?: string
+}
+
+/** The choice per agent id; an agent with no entry is asked about. */
+export type AskProfiles = Record<string, AskChoice>
+
 export interface AgentsStatus {
   /** The harness's own half: the ACP SDK it is built on and the protocol
       version it opens every handshake with. */
@@ -467,7 +478,7 @@ export interface RegistryEntry {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness" | "browser" | "video"
+  builtin: "web-search" | "knowledge" | "workflow" | "agents" | "harness"
   /** Only ever present on the rows whose server is synthesized from a *thread*
       (`workflow`, `agents`, `harness`, `browser`): its connection is the
       calling thread's own, so no session means nothing to connect to — the
@@ -500,8 +511,6 @@ export function mcpSubtitle(s: McpServerDef): string {
     if (s.builtin === "workflow") return "built-in · workflows"
     if (s.builtin === "agents") return "built-in · ask other agents"
     if (s.builtin === "harness") return "built-in · manage the harness"
-    if (s.builtin === "browser") return "built-in · drive the thread's preview"
-    if (s.builtin === "video") return "built-in · author product videos"
     return "built-in · project knowledge base"
   }
   if (s.type !== "http") return [s.command, ...s.args].join(" ")
@@ -547,20 +556,6 @@ export interface CommandDef {
   content: string
 }
 
-/** A saved prompt: reusable text, mentioned as `@handle` in the composer. The
-    client sends the literal handle; the server expands it at send time. */
-export interface SavedPrompt {
-  id: string
-  /** The handle, without the `@`. */
-  name: string
-  /** Display name, e.g. `QuickFix`; empty falls back to the handle. */
-  title: string
-  description: string
-  prompt: string
-  /** 0 for a prompt the user made; the seed release for a built-in. */
-  seededVersion: number
-  sortOrder: number
-}
 
 /** A model prompt: instruction text assigned to a model by id or glob pattern,
     so a thread running Gemini is told it is Gemini and Qwen is told what Qwen
@@ -761,10 +756,10 @@ export interface Project {
   id: string
   name: string
   cwd: string
-  /** The space this project is filed under (a `Space.id`). Absent only on a
-      stub; every row the server answers names one, so the sidebar's filter is a
-      plain equality. */
-  spaceId?: string
+  /** The spaces this project is filed under (`Space.id`s), in the switcher's
+      order. A project may be in several. Absent only on a stub; every row the
+      server answers names at least one. */
+  spaceIds?: string[]
   /** Optional free-text notes; null on rows created before the field existed. */
   description: string | null
   /** Logo shown wherever the project is named — a URL. Empty means "no logo",
@@ -794,6 +789,20 @@ export interface Project {
   defaults?: ProjectDefaults
 }
 
+/** Whether a project is filed under this space. No space in front (not yet
+    resolved) matches everything, as an unscoped list does. */
+export const inSpace = (project: Pick<Project, "spaceIds">, spaceId: string | null | undefined): boolean =>
+  !spaceId || (project.spaceIds ?? []).includes(spaceId)
+
+/** The space a project's tabs belong to while `active` is in front: `active`
+    when the project is filed there, else its first space; undefined for a
+    project in none. A tab is one place, so a project in two spaces keeps its
+    tabs in whichever one you are looking at. */
+export const homeSpace = (project: Pick<Project, "spaceIds"> | undefined, active: string | null | undefined): string | undefined => {
+  const ids = project?.spaceIds ?? []
+  return active && ids.includes(active) ? active : ids[0]
+}
+
 /**
  * What a thread started in a project opens on (`projects.default_*`).
  *
@@ -815,8 +824,12 @@ export interface ProjectDefaults {
   mcpServerIds: string[]
   skillIds: string[]
   commandIds: string[]
-  suggestFollowups: boolean
-  uiBlocks: boolean
+  /** Which closing blocks a thread started here asks for (`SUGGEST_KINDS`). */
+  suggestKinds: string[]
+  /** Which component groups a drawn view may use (`UI_GROUPS`); always resolved. */
+  uiGroups: string[]
+  /** Which profile and model a thread here asks each agent with (`ask_agent`). */
+  askProfiles: AskProfiles
   /** Voice backend for calls on a thread here; "" or absent = the profile's,
       then the global default. */
   voiceProvider?: string
@@ -858,13 +871,14 @@ export interface SessionMeta {
   agentId: string
   model: string
   effort: string
-  /** Whether the agent closes answers with follow-up prompt suggestions.
-      Absent from a server that predates the toggle, which reads as off. */
-  suggestFollowups?: boolean
-  /** Whether answers may carry a drawn view (a fenced `openui-lang` block the
-      client renders). Absent from a server that predates the switch, which
-      reads as on — the default the row carries. */
-  uiBlocks?: boolean
+  /** Which closing blocks the agent is asked for (`SUGGEST_KINDS` in
+      `lib/suggestions`); empty = none. Absent from a server that predates the
+      set, which reads as the default two. */
+  suggestKinds?: string[]
+  /** Which component groups the drawn-view lane teaches (`UI_GROUPS` in
+      `lib/openui/groups`); empty = drawn answers off, absent reads as all of
+      them. The one setting - there is no separate on/off. */
+  uiGroups?: string[]
   title: string
   acpSessionId?: string
   createdAt: number
@@ -888,6 +902,10 @@ export interface SessionMeta {
       so a pin follows the thread to every device — and the timestamp is also
       the order the pinned group is drawn in (oldest pin first). */
   pinnedAt?: number | null
+  /** Which profile and model this thread's `ask_agent` uses for each agent;
+      an agent not in it is asked about. The server's, and read at ask time,
+      so changing it costs the thread nothing. */
+  askProfiles?: AskProfiles
   attached: boolean
   /** How many clients are attached — several devices may share one thread. */
   peerCount?: number
@@ -969,6 +987,10 @@ export interface SessionPage {
   total: number
   trashed: SessionMeta[]
   pinned: SessionMeta[]
+  /** The live child threads (asks, workflow steps) of the page's and the
+      pins' rows — drawn under their parent, never paged themselves. Absent
+      from a server that predates it. */
+  children?: SessionMeta[]
 }
 
 /** A thread that is nobody's workflow step. Half of `isListed`, which is what
@@ -1033,8 +1055,8 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.agentId === b.agentId &&
     a.model === b.model &&
     a.effort === b.effort &&
-    (a.suggestFollowups ?? false) === (b.suggestFollowups ?? false) &&
-    (a.uiBlocks ?? true) === (b.uiBlocks ?? true) &&
+    (a.suggestKinds ?? []).join() === (b.suggestKinds ?? []).join() &&
+    sameUiGroups(a.uiGroups, b.uiGroups) &&
     a.title === b.title &&
     a.acpSessionId === b.acpSessionId &&
     a.createdAt === b.createdAt &&
@@ -1042,6 +1064,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.lastTurnError === b.lastTurnError &&
     a.deletedAt === b.deletedAt &&
     (a.pinnedAt ?? null) === (b.pinnedAt ?? null) &&
+    JSON.stringify(a.askProfiles ?? {}) === JSON.stringify(b.askProfiles ?? {}) &&
     a.attached === b.attached &&
     a.peerCount === b.peerCount &&
     a.exited === b.exited &&

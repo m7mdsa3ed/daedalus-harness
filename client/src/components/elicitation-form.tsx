@@ -34,6 +34,7 @@ import {
 } from "@/lib/elicitation"
 import type { PendingElicitation } from "@/lib/store"
 import { Prose, ProsePreview } from "./tool-parts"
+import { AskAgentPicker, ASK_PAIR_FIELD } from "./ask-agents"
 import { cn } from "@/lib/utils"
 
 /* The agent asked something, and the turn is stopped until it hears back — so
@@ -297,6 +298,22 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
       >
         Skip
       </Button>
+    )
+  }
+
+  /* The `agents` server's "which profile?" question draws as the config
+     menu's own pickers, not as a questionnaire. Recognised by its field. */
+  const askPairs = fields.find((field) => field.key === ASK_PAIR_FIELD && field.kind === "select")
+  if (askPairs) {
+    return (
+      <AskAgentPicker
+        message={request.message}
+        pairs={askPairs.options.map((o) => {
+          const [profileId = "", agentId = ""] = JSON.parse(o.value) as string[]
+          return { profileId, agentId }
+        })}
+        settle={settle}
+      />
     )
   }
 

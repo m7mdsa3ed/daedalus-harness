@@ -21,12 +21,13 @@
    and hoped: switching repository or closing the panel mid-draft left a
    promise that came back and wrote into a box that had moved on. */
 import * as React from "react"
-import { PencilEdit02Icon, SparklesIcon, Tick02Icon, PlusSignIcon } from "@hugeicons/core-free-icons"
+import { PencilEdit02Icon, SparklesIcon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { ActionIcon, actionClass, type ActionPhase } from "@/components/ui/action-state"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { IconAction } from "@/components/workspace/scm/shared"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
@@ -52,7 +53,6 @@ export function CommitBox({
   canAmend,
   prefill,
   onCommit,
-  onStageAll,
   onError,
 }: {
   projectId: string
@@ -72,7 +72,6 @@ export function CommitBox({
   prefill?: { text: string; id: number } | null
   /** Answers false when the commit did not happen, so the message stays put. */
   onCommit: (message: string, amend: boolean) => Promise<boolean>
-  onStageAll: () => void
   /** A draft that failed belongs beside the box it was meant to fill, not in a
       toast over a panel the reader is already looking at. */
   onError: (message: string | null) => void
@@ -162,7 +161,7 @@ export function CommitBox({
   }, [draftProfile, settings, projectId, repo, typed, onError])
 
   const submit = async () => {
-    if (!typed) return
+    if (!summary.trim()) return
     /* Cleared only on a commit that happened — a refused hook or a conflict
        leaves the words where the author can fix them and try again. */
     if (await onCommit(typed, amend)) {
@@ -171,62 +170,49 @@ export function CommitBox({
     }
   }
 
+  /* One message, two boxes: the summary is the first line and the description
+     is what follows the blank line, joined back with exactly one blank line -
+     git's own convention, and what every other part of this box (the draft, the
+     amend text, the undo prefill) already writes. */
+  const nl = message.indexOf("\n")
+  const summary = nl === -1 ? message : message.slice(0, nl)
+  const description = nl === -1 ? "" : message.slice(nl).replace(/^\n+/, "")
+  const join = (head: string, body: string) => (body ? `${head}\n\n${body}` : head)
+  const descriptionRef = React.useRef<HTMLTextAreaElement>(null)
+
+  const sendOnShortcut = (event: React.KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault()
+      void submit()
+    }
+  }
+
   return (
     <form
-      className="border-b border-border/60 p-2"
+      className="space-y-1.5 border-t border-border/60 p-2"
       onSubmit={(event) => {
         event.preventDefault()
         void submit()
       }}
     >
-      <Textarea
-        value={message}
-        onChange={(event) => setMessage(event.target.value)}
-        placeholder={amend ? "Amended message" : named ? `Commit to ${repoName}` : "Commit message"}
-        rows={2}
-        className="min-h-0 text-xs"
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault()
-            void submit()
-          }
-        }}
-      />
-      {/* The button says what it will commit, because "commit" with nothing
-          staged silently means "stage everything first" and that is not
-          something a button should imply. */}
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <Button
-          type="submit"
-          size="xs"
-          className={cn("min-w-0 flex-1", actionClass(commitPhase))}
-          disabled={busy || !typed || (changeCount === 0 && !amend)}
-          title={`${amend ? "Amend the last commit" : "Commit"} on ${branch} (⌘Enter)`}
-        >
-          <ActionIcon phase={commitPhase}><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" /></ActionIcon>
-          <span className="truncate">
-            {amend
-              ? stagedCount > 0
-                ? `Amend with ${stagedCount}`
-                : "Amend message"
-              : stagedCount > 0
-              ? `Commit ${stagedCount}`
-              : unstagedCount > 0
-                ? `Stage all & commit ${unstagedCount}`
-                : "Commit"}
-          </span>
-        </Button>
-        <IconAction
-          label={`Stage all ${unstagedCount}`}
-          icon={PlusSignIcon}
-          disabled={busy || unstagedCount === 0}
-          onClick={onStageAll}
+      <div className="flex items-center gap-1">
+        <Input
+          value={summary}
+          onChange={(event) => setMessage(join(event.target.value.replace(/\n/g, " "), description))}
+          placeholder={amend ? "Amended summary" : named ? `Commit to ${repoName}` : "Commit summary"}
+          aria-label="Commit summary"
+          className="h-7 min-w-0 flex-1 text-xs"
+          onKeyDown={(event) => {
+            sendOnShortcut(event)
+            if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+              event.preventDefault()
+              descriptionRef.current?.focus()
+            }
+          }}
         />
-        {unstagedCount > 0 && (
-          <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-            {unstagedCount}
-          </span>
-        )}
+        <span className={cn("w-6 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground", summary.length > 72 && "text-amber-600 dark:text-amber-400")} title="Summary length - 72 or fewer reads well in a log">
+          {summary.length}
+        </span>
         {canAmend && (
           <IconAction
             label={amend ? "Stop amending" : "Amend the last commit"}
@@ -239,7 +225,7 @@ export function CommitBox({
         )}
         {/* Offered only where there is a profile that can do it: a disabled
             wand nobody can enable is worse than no wand. The label is the only
-            thing that changes between the two questions — one control, because
+            thing that changes between the two questions - one control, because
             to the reader it is one gesture applied to whatever is in the box. */}
         {draftProfile &&
           (drafting ? (
@@ -262,6 +248,39 @@ export function CommitBox({
             />
           ))}
       </div>
+      <Textarea
+        ref={descriptionRef}
+        value={description}
+        onChange={(event) => setMessage(join(summary, event.target.value))}
+        placeholder="Description"
+        aria-label="Commit description"
+        rows={3}
+        className="min-h-0 resize-y text-xs"
+        onKeyDown={sendOnShortcut}
+      />
+      {/* The button says what it will commit, because "commit" with nothing
+          staged silently means "stage everything first" and that is not
+          something a button should imply. */}
+      <Button
+        type="submit"
+        size="sm"
+        className={cn("w-full", actionClass(commitPhase))}
+        disabled={busy || !summary.trim() || (changeCount === 0 && !amend)}
+        title={`${amend ? "Amend the last commit" : "Commit"} on ${branch} (⌘Enter)`}
+      >
+        <ActionIcon phase={commitPhase}><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" /></ActionIcon>
+        <span className="truncate">
+          {amend
+            ? stagedCount > 0
+              ? `Amend with ${stagedCount} ${stagedCount === 1 ? "file" : "files"}`
+              : "Amend message"
+            : stagedCount > 0
+              ? `Commit ${stagedCount} ${stagedCount === 1 ? "file" : "files"} to ${branch}`
+              : unstagedCount > 0
+                ? `Stage all & commit ${unstagedCount} to ${branch}`
+                : `Commit to ${branch}`}
+        </span>
+      </Button>
     </form>
   )
 }

@@ -40,11 +40,11 @@ export const TRAILING = /[.,;:!?)\]}'"]+$/;
 const MAX_LINKS = 20;
 
 /** Every distinct `@token` in `text`, cleaned of trailing punctuation. */
-export function mentionPaths(text: string, exclude?: ReadonlySet<string>): string[] {
+export function mentionPaths(text: string): string[] {
   const seen = new Set<string>();
   for (const match of text.matchAll(MENTION_RE)) {
     const raw = match[1].replace(TRAILING, "");
-    if (raw !== "" && !exclude?.has(raw)) seen.add(raw);
+    if (raw !== "") seen.add(raw);
   }
   return [...seen];
 }
@@ -61,15 +61,12 @@ function mentionedPath(raw: string, cwd: string): string {
 /**
  * The `resource_link` blocks for a prompt, in the order they were mentioned.
  *
- * `exclude` is the saved-prompt handles that were expanded (saved-prompts.ts):
- * those are text, never a file reference.
- *
  * A token becomes a link when it names a path that **exists**, anywhere on the
  * machine — see the header for why the old cwd-containment rule is gone. A path
  * that does not exist simply is not a link; the text still says what the user
  * typed.
  */
-export function mentionLinks(cwd: string, text: string, exclude?: ReadonlySet<string>): acp.ContentBlock[] {
+export function mentionLinks(cwd: string, text: string): acp.ContentBlock[] {
   let root: string;
   try {
     root = realpathSync(cwd);
@@ -77,7 +74,7 @@ export function mentionLinks(cwd: string, text: string, exclude?: ReadonlySet<st
     root = cwd;
   }
   const links: acp.ContentBlock[] = [];
-  for (const path of mentionPaths(text, exclude)) {
+  for (const path of mentionPaths(text)) {
     if (links.length >= MAX_LINKS) break;
     const absolute = mentionedPath(path, root);
     try {

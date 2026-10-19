@@ -20,6 +20,7 @@ import type {
   ThreadRetry,
   TpsStats,
   WireError,
+  RequestFrom,
 } from "@daedalus/protocol"
 import { api, wsUrl, type ServerSettings } from "./settings"
 
@@ -122,8 +123,9 @@ export interface ThreadCallbacks {
   ) => void
   onSessionTitle: (title: string) => void
   /** The agent is asking something. Answer with `answerPermission`. */
-  onPermission: (requestId: string, request: acp.RequestPermissionRequest) => void
-  onElicitation: (requestId: string, request: acp.CreateElicitationRequest) => void
+  /** `from`: a child thread's question, repeated on this one to be answered here. */
+  onPermission: (requestId: string, request: acp.RequestPermissionRequest, from?: RequestFrom) => void
+  onElicitation: (requestId: string, request: acp.CreateElicitationRequest, from?: RequestFrom) => void
   /** Somebody (another device, or the agent giving up) settled a question this
       device may also be showing. */
   onRequestAnswered: (requestId: string) => void
@@ -152,9 +154,9 @@ export interface ThreadCallbacks {
     profileId: string,
     model: string,
     effort: string,
-    suggestFollowups?: boolean,
-    uiBlocks?: boolean,
-    helperModels?: { role: string; model: string }[]
+    suggestKinds?: string[],
+    helperModels?: { role: string; model: string }[],
+    uiGroups?: string[]
   ) => void
   /** A config change is waiting for the running turn to end, or no longer is
       (`null`). Absolute and from every peer's point of view identical — this
@@ -696,10 +698,10 @@ export class ThreadSocket {
         this.callbacks.onSessionTitle(event.title)
         return
       case "permission":
-        this.callbacks.onPermission(event.requestId, event.request)
+        this.callbacks.onPermission(event.requestId, event.request, event.from)
         return
       case "elicitation":
-        this.callbacks.onElicitation(event.requestId, event.request)
+        this.callbacks.onElicitation(event.requestId, event.request, event.from)
         return
       case "request_answered":
         this.callbacks.onRequestAnswered(event.requestId)
@@ -712,9 +714,9 @@ export class ThreadSocket {
           event.profileId,
           event.model,
           event.effort,
-          event.suggestFollowups,
-          event.uiBlocks,
-          event.helperModels
+          event.suggestKinds,
+          event.helperModels,
+          event.uiGroups
         )
         return
       case "staged_config":

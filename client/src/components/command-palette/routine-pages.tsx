@@ -51,7 +51,7 @@ const RUNS_PER_ROUTINE = 10
 const DIGEST_LIMIT = 30
 
 /** When this device last read the digest. Device-local like every other
-    reading preference (`view-options`, `pins`): "since you last looked" is a
+    reading preference (`layout-options`, `pins`): "since you last looked" is a
     fact about a person at a screen, not about the install. */
 const SEEN_KEY = "ui.routineDigestSeenAt"
 

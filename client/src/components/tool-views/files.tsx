@@ -30,7 +30,7 @@ import {
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { useViewOptionsContext } from "@/lib/view-options"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 
 /**
  * A shell run: the command on a `$` line, its stream underneath behind a
@@ -287,7 +287,7 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
  * inside JSON.
  */
 export function EditDetail({ item, active }: { item: ToolItem; active: boolean }) {
-  const view = useViewOptionsContext()
+  const view = useLayoutOptionsContext()
   const failed = item.status === "failed"
   /* The diff blocks win over the input's pair (they are the final change, and
      under AIR the input carries no text at all); extractEdits reads them

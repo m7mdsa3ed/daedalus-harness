@@ -3,6 +3,7 @@ import { useIsMobile } from "@/hooks/use-device"
 import { ArrowDown, ArrowUp, BotIcon, Download, PlugZap, Plus, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
+import { useTableFilter } from "@/lib/use-table-filter"
 import type { ColumnDef } from "@/lib/table"
 import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
@@ -401,6 +402,12 @@ export function ModelsSection({
     [rows, defaultModel]
   )
 
+  const f = useTableFilter(items, {
+    text: (item) => `${item.row.label} ${item.row.id}`,
+    placeholder: "Search models…",
+    fields: [{ id: "effort", label: "Efforts", of: (item) => (item.row.efforts.trim() ? "Has efforts" : "No efforts") }],
+  })
+
   /* The actions are memoised (the table memoises its rows against them), so the
      callbacks they reach are read through a ref refreshed every render. */
   const live = React.useRef({ rows, onReorder, onRemove })
@@ -466,16 +473,20 @@ export function ModelsSection({
     <>
       <DataTable
         columns={MODEL_COLUMNS}
-        data={items}
+        data={f.rows}
         getRowId={modelRowId}
         actions={actions}
         mobile={MODEL_MOBILE}
         mark={modelItemMark}
-        viewToggle={false}
+        filtering={f.filtering}
         pageSize={25}
         onRowClick={openRow}
         emptyIcon={<BotIcon />}
-        emptyMessage="No models — this profile lets the agent use its own catalog. Add or fetch models to override it."
+        emptyMessage={
+          f.narrowed
+            ? "No model matches."
+            : "No models — this profile lets the agent use its own catalog. Add or fetch models to override it."
+        }
         toolbar={
           <div className="flex items-center gap-2">
             <Button

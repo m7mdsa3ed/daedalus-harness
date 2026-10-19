@@ -20,6 +20,7 @@ import { Shortcut } from "@/components/shortcut"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { boardPath, routinesPath, schedulesPath } from "@/lib/router"
+import { useLayoutOptions } from "@/lib/layout-options"
 import { useRoutines, useScheduled } from "@/lib/queries/routines"
 import { GROUP, MENU, ROW } from "./scale"
 
@@ -55,6 +56,7 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
   const routineCount = useRoutines().data?.length ?? 0
   const scheduledCount = useScheduled().data?.length ?? 0
   const newThreadChord = useChord("newThread") ?? ""
+  const { sidebarShowPlaces } = useLayoutOptions()
 
   const items: NavItem[] = [
     ...(onNewThread
@@ -109,12 +111,15 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
       onClick: () => void navigate(schedulesPath()),
     },
   ]
+  /* The three places are the reader's to hide (Settings › Appearance ›
+     Sidebar): they stay one palette search away. New tab always stays. */
+  const shown = sidebarShowPlaces ? items : items.filter((item) => item.key === "new-thread")
 
   return (
     <SidebarGroup className={GROUP}>
       <SidebarGroupContent>
         <SidebarMenu className={MENU}>
-          {items.map((item) => (
+          {shown.map((item) => (
             <SidebarMenuItem key={item.key}>
               <ItemContextMenu items={item.menu ?? []}>
                 <SidebarMenuButton

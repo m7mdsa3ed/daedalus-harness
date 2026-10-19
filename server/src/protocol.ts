@@ -264,8 +264,10 @@ export interface StagedConfig {
   profileId?: string;
   model?: string;
   effort?: string;
-  suggestFollowups?: boolean;
-  uiBlocks?: boolean;
+  suggestKinds?: string[];
+  /** Which component groups the drawn-answers lane teaches (`UI_GROUP_IDS`);
+      empty = the lane is off. */
+  uiGroups?: string[];
   /** The thread's role → model assignment (`sessions.helper_models`). Spawn-time
       like model and effort: taking it costs a respawn. */
   helperModels?: { role: string; model: string }[];
@@ -658,6 +660,20 @@ export interface AutoAnswer {
  * `POST /api/sessions/:id/pending/:requestId`, which is `bridge.answer` — the
  * same first-answer-wins door the socket's `answer_permission` takes.
  */
+/** Which child thread a question repeated on its parent came from. */
+export interface RequestFrom {
+  sessionId: string;
+  title: string;
+}
+
+/** A child's request id as its parent's sockets carry it, and back. The child
+    id is a UUID and a bridge's own ids are `r<n>`, so the first `:` splits. */
+export const childRequestId = (childId: string, requestId: string) => `${childId}:${requestId}`;
+export function childRequest(id: string): { childId: string; requestId: string } | null {
+  const at = id.indexOf(":");
+  return at > 0 ? { childId: id.slice(0, at), requestId: id.slice(at + 1) } : null;
+}
+
 export type PendingItem = {
   sessionId: string;
   parentSessionId: string | null;
@@ -1205,8 +1221,8 @@ export type ThreadEvent =
       profileId: string;
       model: string;
       effort: string;
-      suggestFollowups?: boolean;
-      uiBlocks?: boolean;
+      suggestKinds?: string[];
+      uiGroups?: string[];
       /** The thread's helper models, absolute — the row's, so a menu draws the
           answer rather than the request. */
       helperModels?: { role: string; model: string }[];
@@ -1305,8 +1321,12 @@ export type ThreadEvent =
      `AcpBridge.pending` for as long as the agent is actually blocked on them,
      and a peer attaching later is sent whatever is still open. An answered
      request simply is not in the map, so there is nothing to filter. */
-  | { ev: "permission"; requestId: string; request: acp.RequestPermissionRequest }
-  | { ev: "elicitation"; requestId: string; request: acp.CreateElicitationRequest }
+  /* `from`: the child thread (an ask, a workflow step) whose question this is,
+     repeated on its parent so it is answered where the person is reading — and
+     its `requestId` is then `<childId>:<requestId>`, which the parent's socket
+     routes back to the child (`childRequest`). Absent on the thread's own. */
+  | { ev: "permission"; requestId: string; request: acp.RequestPermissionRequest; from?: RequestFrom }
+  | { ev: "elicitation"; requestId: string; request: acp.CreateElicitationRequest; from?: RequestFrom }
   | { ev: "request_answered"; requestId: string; toolCallId?: string; auto?: AutoAnswer }
   /** The whole queue, **absolute** — never a delta — to every peer including
       the one whose command changed it: ids are minted server-side, so no peer's

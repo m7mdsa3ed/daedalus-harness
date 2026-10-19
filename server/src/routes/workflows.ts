@@ -11,12 +11,18 @@ const MAX_WAIT_SEC = 55;
 
 const RunInput = z.object({ definition: z.unknown(), inputs: z.unknown().optional() });
 const AskInput = z.object({
-  profile: z.string().min(1),
-  agent: z.string().min(1),
+  profile: z.string().min(1).optional(),
+  agent: z.string().min(1).optional(),
   prompt: z.string().min(1).max(20_000),
+  description: z.string().min(1).max(120).optional(),
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
   timeoutSec: z.number().int().positive().optional(),
+});
+const AskChoiceInput = z.object({
+  agentId: z.string().min(1),
+  profileId: z.string().min(1),
+  model: z.string().min(1).optional(),
 });
 const ScriptInput = z.object({
   script: z.string().min(1).optional(),
@@ -90,6 +96,22 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
     if (!parent) return c.json({ error: "not found" }, 404);
     return c.json({ pairs: await runner.pairs(parent) });
+  });
+
+  /* What the person chose for each agent on this thread, read and (after they
+     answered the picker with "remember") written by the `agents` server. */
+  app.get(`${base}/ask-profiles`, (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    return c.json({ askProfiles: parent.askProfiles });
+  });
+  app.put(`${base}/ask-profiles`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = AskChoiceInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: body.error.issues }, 400);
+    const { agentId, ...choice } = body.data;
+    return c.json({ askProfiles: (await sessions.setAskProfiles(parent.id, { ...parent.askProfiles, [agentId]: choice })) ?? {} });
   });
 
   app.post(`${base}/asks`, async (c) => {

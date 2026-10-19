@@ -40,11 +40,15 @@ export const HEADER_BADGE =
  * sidebar and the box wear — so the toggle, the switcher and the tab are the
  * same surface as both, raised off the blur by the edge and the shadow.
  *
+ * **The edge is a phone's.** Above `md` the buttons wear no ring (`md:ring-0`):
+ * the shell under the strip is already a surface, and a hairline round a bare
+ * glyph reads as a box where the desktop wants a button. The tab keeps its own.
+ *
  * Fully round, as is the tab (`--dock-corner` is the pill). The header's stay
  * round at the chip's height (`--dock-chip-h`): a square-ish corner on a glyph
  * that size reads as a tab that failed to grow. */
 export const STRIP_GROUND =
-  "rounded-pill shadow-glass ring-1 ring-edge max-md:bg-[var(--dock-mobile-tab-ground)]"
+  "rounded-pill shadow-glass ring-1 ring-edge max-md:bg-[var(--dock-mobile-tab-ground)] md:ring-0"
 
 /** The header's icon buttons — the sidebar toggle and the view-settings
     sliders beside it. The same material as every strip item: fully round,

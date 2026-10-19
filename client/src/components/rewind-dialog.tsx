@@ -153,6 +153,7 @@ export function RewindDialog({
             variant="destructive"
             onClick={() => onConfirm(scope)}
             disabled={confirmDisabled}
+            loading={busy}
           >
             {busy ? <Spinner /> : <History className="size-4" />}
             Rewind
