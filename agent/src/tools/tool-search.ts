@@ -96,7 +96,7 @@ A search is a step of its own, so when the catalogue already names what you need
 
 Query forms:
 - "select:<name>" loads the tools named, separated by commas or spaces. A name is the whole \`mcp__<server>__<tool>\`, or \`<server>/<tool>\`, or \`<server>/*\` for that server's tools (up to ${SERVER_RESULTS}), or the bare tool name when only one tool in the catalogue carries it. Naming tools is never cut short.
-- "+<server> <keywords>" searches one server only. "+<server>" alone loads that server's tools.
+- "+<server> <keywords>" searches one server only; the server's name may be abbreviated. "+<server>" alone loads that server's tools.
 - Keywords ("github issue") load the ${KEYWORD_RESULTS} best matches by name, then description.
 
 MCP tools, by server:
@@ -177,7 +177,7 @@ export function searchDeferred({ query, tools }: { query: string; tools: { name:
       /* A `+term` naming no server is still required to appear in the name, even
          with no keywords to rank by — otherwise `+issue` would load the first
          five tools of every server. */
-      if (!loose.every((term) => tokenize(name).includes(term))) return { name, score: 0 };
+      if (!loose.every((term) => hasTerm(tokenize(name), term))) return { name, score: 0 };
       return { name, score: words.length === 0 ? 1 : keywordScore(name, description ?? "", words) };
     })
     .filter((match) => match.score > 0)
@@ -332,6 +332,12 @@ function parts(name: string): { server: string; leaf: string } {
    split, lower-cased, letters and digits only. */
 function tokenize(text: string): string[] {
   return text.replace(/([a-z\d])([A-Z])/g, "$1 $2").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** A name term, allowing for an inflection — `+issue` has to reach
+    `list_issues` as well as `create_issue`. */
+function hasTerm(terms: string[], term: string): boolean {
+  return terms.includes(term) || terms.some((candidate) => stem(candidate) === stem(term));
 }
 
 /* One inflection, not a stemmer: `issues` and `issue` are the same word for a

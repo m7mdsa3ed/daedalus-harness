@@ -157,11 +157,28 @@ sends each match from the next step on. Two things sit on top of the SDK's
 version. Its discoveries last one `streamText` call, so a tool the conversation
 already loaded (a search result or a call in the history) is built undeferred.
 That is read off the messages, never stored: a reload keeps it, and a compaction
-defers it again. And it works like Claude Code's `ToolSearch`: the search tool's description
-lists every MCP tool by name (all of them, so the list does not change when one
-loads), and `select:a,b` loads named tools outright. Keywords, and `+server
-keywords`, are the fallback. Loading a tool changes the tool block, so that one step
-re-sends the prompt uncached.
+defers it again.
+
+And it works like Claude Code's `ToolSearch` — the model already knows the names,
+and the search is how it loads a schema. The description carries the catalogue:
+every MCP tool, grouped under its server with a per-server count and a one-line
+summary (all of them, so the list does not change when one loads, which is what
+keeps the prefix cache). `select:` is the method and keywords are the fallback:
+
+- `select:mcp__github__create_issue`, `<server>/<tool>`, `<server>/*`, a bare
+  server name, or a bare tool name when exactly one tool carries it. Punctuation
+  and case are forgiven. A selection of named tools is never cut short — the SDK's
+  cap is set to the catalogue's own size.
+- `+gh issue` searches one server; the name may be abbreviated (`gh` for
+  `github`, a prefix or a subsequence, and only when it is unambiguous). `+gh`
+  alone loads that server, up to 25 tools.
+- Keywords rank name over description, one inflection deep (`issue` finds
+  `list_issues`), and a query one suffix away from a name falls back to a
+  name-substring match rather than coming back empty. A description-only word
+  never rescues a miss: that is how a search loads strangers.
+
+Loading a tool changes the tool block, so that one step re-sends the prompt
+uncached.
 
 What the agent's MCP client does with each server (`src/mcp.ts`,
 `src/mcp-hooks.ts`, tested by `test/mcp-features.test.ts`):

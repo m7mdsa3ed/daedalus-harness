@@ -20,7 +20,8 @@ const make = (): ToolSet => ({
   mcp__web__fetch: stub("Fetch a URL."),
 });
 
-const catalog = (tools: ToolSet) => Object.entries(tools).map(([name, tool]) => ({ name, description: tool.description }));
+const catalog = (tools: ToolSet) =>
+  Object.entries(tools).map(([name, tool]) => ({ name, description: typeof tool.description === "string" ? tool.description : undefined }));
 
 /** Runs one generation over `scripts`, returning the tool names each step sent. */
 async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageModelV4StreamPart[][]) {
@@ -123,8 +124,8 @@ async function run(tools: ToolSet, messages: ModelMessage[], scripts: LanguageMo
 // --- +server resolves by prefix and alone loads the whole cluster ---
 {
   const tools = catalog(make());
-  assert.deepEqual(searchDeferred({ query: "+gh", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"], "'+gh' is 'github'");
-  assert.deepEqual(searchDeferred({ query: "git", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"], "a server is selectable by its stem");
+  assert.deepEqual(searchDeferred({ query: "+gh", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"], "'+gh' is the 'github' server");
+  assert.deepEqual(searchDeferred({ query: "+git", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues", "mcp__github__list_prs"], "a prefix of the server's name is enough");
   assert.deepEqual(searchDeferred({ query: "+gh issue", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues"], "keywords rank inside the server");
   assert.deepEqual(searchDeferred({ query: "+web", tools }), ["mcp__web__fetch"], "a one-tool server is not a keyword search");
   assert.deepEqual(searchDeferred({ query: "+issue", tools }).sort(), ["mcp__github__create_issue", "mcp__github__list_issues"], "a + term naming no server still has to appear in the name");
