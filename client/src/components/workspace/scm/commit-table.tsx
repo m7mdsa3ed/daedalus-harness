@@ -13,6 +13,7 @@ import { fillOf, strokeOf } from "@/components/workspace/scm/commit-graph"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import type { GitCommit } from "@/lib/workspace/git-api"
 import { graphWidth, laneX, layoutGraph } from "@/lib/workspace/git-graph"
 
@@ -51,6 +52,27 @@ export function CommitTable({
   const width = graphWidth(rows) + 4
   const box = React.useRef<HTMLDivElement>(null)
 
+  /* Index 0 is the Working Directory, i >= 1 is rows[i - 1]. Past 150 lines
+     only the window is drawn - the selected and focused rows are pinned, so the
+     scrollIntoView below and focus never lose their element. */
+  const ol = React.useRef<HTMLOListElement>(null)
+  const [focusIndex, onListFocus] = useFocusedRow(rows.length + 1, (i) => (i ? rows[i - 1].commit.hash : ""))
+  const selectedIndex = React.useMemo(
+    () => (selected === null ? 0 : 1 + rows.findIndex((row) => row.commit.hash === selected)),
+    [rows, selected]
+  )
+  const w = useWindowedRows({
+    count: rows.length + 1,
+    threshold: 150,
+    list: ol,
+    scroller: () => box.current,
+    estimateSize: () => ROW,
+    getItemKey: (i) => (i ? rows[i - 1].commit.hash : ""),
+    overscan: 10,
+    pin: [selectedIndex, focusIndex],
+  })
+  const count = rows.length + 1
+
   React.useEffect(() => {
     box.current?.querySelector(selected ? `[data-hash="${selected}"]` : "[data-hash='']")?.scrollIntoView({ block: "nearest" })
   }, [selected])
@@ -81,8 +103,10 @@ export function CommitTable({
         {/* The working directory hangs off the tip of the first lane. */}
         <line x1={laneX(0)} y1={ROW / 2} x2={laneX(0)} y2={ROW * 1.5} strokeWidth={2} strokeDasharray="3 2" className="stroke-muted-foreground/60" />
         <circle cx={laneX(0)} cy={ROW / 2} r={4} strokeWidth={2} className="fill-background stroke-muted-foreground" />
-        {rows.map((row, i) => {
-          const y = (i + 1) * ROW + ROW / 2
+        {w.rows.map(({ index }) => {
+          if (index === 0) return null
+          const row = rows[index - 1]
+          const y = index * ROW + ROW / 2
           return (
             <g key={row.commit.hash}>
               {row.incoming.map((lane) => (
@@ -101,26 +125,43 @@ export function CommitTable({
         })}
       </svg>
 
-      <ol style={{ paddingLeft: width }}>
-        <li style={{ height: ROW }}>
-          <button type="button" data-hash="" aria-current={selected === null} onClick={() => onSelect(null)} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-sm hover:bg-muted", selected === null && "bg-muted")}>
-            <span className="font-medium italic">Working Directory</span>
-            <span className="text-xs text-muted-foreground">{changes === 0 ? "clean" : `${changes} ${changes === 1 ? "file" : "files"} changed`}</span>
-          </button>
-        </li>
-        {rows.map(({ commit }) => (
-          <li key={commit.hash} style={{ height: ROW }}>
-            <button type="button" data-hash={commit.hash} aria-current={selected === commit.hash} onClick={() => onSelect(commit)} title={`${commit.hash}\n${commit.subject}`} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-sm hover:bg-muted", selected === commit.hash && "bg-muted")}>
-              {commit.refs.map((ref) => (
-                <span key={ref} className={cn("shrink-0 rounded-md border px-1.5 text-xs leading-4", refClass(ref, current))}>{ref.replace(/^tag: /, "")}</span>
-              ))}
-              <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
-              <span className="hidden w-28 shrink-0 truncate text-xs text-muted-foreground @panel-sm:block">{commit.author}</span>
-              <span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground @panel-sm:block">{shortAge(commit.at * 1000)}</span>
-              <span className="hidden w-14 shrink-0 font-mono text-xs text-muted-foreground @panel-md:block">{commit.short}</span>
-            </button>
-          </li>
-        ))}
+      <ol
+        ref={ol}
+        style={{ paddingLeft: width }}
+        onFocus={onListFocus}
+      >
+        {w.rows.map(({ index, key, before }) => {
+          const li = {
+            "data-index": index,
+            style: { height: ROW, marginTop: before || undefined },
+            "aria-setsize": w.windowed ? count : undefined,
+            "aria-posinset": w.windowed ? index + 1 : undefined,
+          }
+          if (index === 0)
+            return (
+              <li key={key} {...li}>
+                <button type="button" data-hash="" aria-current={selected === null} onClick={() => onSelect(null)} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-sm hover:bg-muted", selected === null && "bg-muted")}>
+                  <span className="font-medium italic">Working Directory</span>
+                  <span className="text-xs text-muted-foreground">{changes === 0 ? "clean" : `${changes} ${changes === 1 ? "file" : "files"} changed`}</span>
+                </button>
+              </li>
+            )
+          const { commit } = rows[index - 1]
+          return (
+            <li key={key} {...li}>
+              <button type="button" data-hash={commit.hash} aria-current={selected === commit.hash} onClick={() => onSelect(commit)} title={`${commit.hash}\n${commit.subject}`} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-sm hover:bg-muted", selected === commit.hash && "bg-muted")}>
+                {commit.refs.map((ref) => (
+                  <span key={ref} className={cn("shrink-0 rounded-md border px-1.5 text-xs leading-4", refClass(ref, current))}>{ref.replace(/^tag: /, "")}</span>
+                ))}
+                <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+                <span className="hidden w-28 shrink-0 truncate text-xs text-muted-foreground @panel-sm:block">{commit.author}</span>
+                <span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground @panel-sm:block">{shortAge(commit.at * 1000)}</span>
+                <span className="hidden w-14 shrink-0 font-mono text-xs text-muted-foreground @panel-md:block">{commit.short}</span>
+              </button>
+            </li>
+          )
+        })}
+        {w.after > 0 && <li aria-hidden style={{ height: w.after }} />}
       </ol>
       {onMore && <div ref={foot} className="h-6">{loading && <PanelRowsSkeleton rows={1} className="px-2 py-1.5" />}</div>}
     </div>

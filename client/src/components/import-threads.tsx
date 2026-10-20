@@ -35,6 +35,7 @@ import {
   SearchIcon,
 } from "lucide-react"
 import { toast } from "@/lib/toast"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -744,6 +745,19 @@ function Group({
 }) {
   const rows = group.sessions.filter((s) => stateOf(s) === "new")
   const allPicked = rows.length > 0 && rows.every((s) => picked.has(s.acpSessionId))
+  /* A group past 100 rows is windowed against the dialog's own scroller; the
+     row Tab last landed in stays mounted, or focus would fall to the body. */
+  const ul = React.useRef<HTMLUListElement>(null)
+  const [focus, onFocus] = useFocusedRow(group.sessions.length, (i) => group.sessions[i].acpSessionId)
+  const w = useWindowedRows({
+    count: collapsed ? 0 : group.sessions.length,
+    threshold: 100,
+    list: ul,
+    estimateSize: () => 40,
+    getItemKey: (i) => group.sessions[i].acpSessionId,
+    measured: true,
+    pin: [focus],
+  })
   return (
     <section className="flex flex-col gap-1">
       <header className="flex items-center gap-2 px-1">
@@ -801,10 +815,20 @@ function Group({
               {group.cwd}
             </p>
           )}
-          <ul className="flex flex-col">
-            {group.sessions.map((session) => (
+          <ul
+            ref={ul}
+            className="flex flex-col"
+            onFocus={onFocus}
+          >
+            {w.rows.map(({ index, before }) => {
+              const session = group.sessions[index]
+              return (
               <Row
                 key={session.acpSessionId}
+                index={index}
+                before={before}
+                measure={w.measure}
+                setSize={w.windowed ? group.sessions.length : undefined}
                 session={session}
                 state={stateOf(session)}
                 disabled={!group.project}
@@ -813,7 +837,9 @@ function Group({
                 onRestore={onRestore}
                 onOpen={onOpen}
               />
-            ))}
+              )
+            })}
+            {w.after > 0 && <li aria-hidden style={{ height: w.after }} />}
           </ul>
         </>
       )}
@@ -822,6 +848,10 @@ function Group({
 }
 
 function Row({
+  index,
+  before,
+  measure,
+  setSize,
   session,
   state,
   checked,
@@ -830,6 +860,12 @@ function Row({
   onRestore,
   onOpen,
 }: {
+  index: number
+  /** The windowed rows' gap above this one (0 when adjacent or unwindowed). */
+  before: number
+  measure: (el: Element | null) => void
+  /** The group's length while windowed, else undefined. */
+  setSize: number | undefined
   session: ImportableSession
   state: RowState
   checked: boolean
@@ -843,6 +879,11 @@ function Row({
   const taken = state !== "new" || disabled
   return (
     <li
+      data-index={index}
+      ref={measure}
+      style={{ marginTop: before || undefined }}
+      aria-setsize={setSize}
+      aria-posinset={setSize != null ? index + 1 : undefined}
       className={cn(
         "flex items-center gap-2 rounded-md px-1 py-1.5",
         !taken && "hover:bg-muted/50"

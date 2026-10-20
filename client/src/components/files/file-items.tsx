@@ -23,6 +23,7 @@ import {
   type SortKey,
 } from "@/lib/files"
 import { cn } from "@/lib/utils"
+import { useWindowedRows } from "@/lib/windowed-rows"
 
 export type ListedItem = FileRecord & { path?: PathStep[] }
 
@@ -31,6 +32,8 @@ export interface ItemHandlers {
   focusId: string | null
   cutIds: ReadonlySet<string>
   renamingId: string | null
+  /** The drag source: kept rendered in a windowed listing so its dragend fires. */
+  draggingId: string | null
   isPickable: (item: ListedItem) => boolean
   onPointer: (e: React.MouseEvent, item: ListedItem) => void
   onOpen: (item: ListedItem) => void
@@ -139,6 +142,15 @@ export function Thumb({ item, crop = true, className }: { item: ListedItem; crop
   )
 }
 
+/** Above this many items a view draws only what is near the viewport (plus focus, rename and drag). */
+const WINDOW_AT = 150
+
+/** id → index, for pinning rows by the explorer's ids. */
+function useIndexOf(items: ListedItem[]) {
+  const map = React.useMemo(() => new Map(items.map((item, i) => [item.id, i])), [items])
+  return (id: string | null) => (id == null ? undefined : map.get(id))
+}
+
 const sizeText = (item: ListedItem) =>
   item.kind === "folder" ? `${item.childCount ?? 0} ${item.childCount === 1 ? "item" : "items"}` : formatBytes(item.size)
 
@@ -157,31 +169,84 @@ export function GridView({
   crop: boolean
 }) {
   const roomy = size >= 104
+  /* One root div in both modes, so the width observer survives a switch. */
+  const [wrap, width] = useWidth<HTMLDivElement>()
+  /* Not gated on the width: an unmeasured big folder draws no tiles for the
+     one commit before its width lands, rather than all of them. */
+  const windowed = items.length > WINDOW_AT
+  /* auto-fill minmax(min(tile,100%),1fr) with gap-2, in numbers. */
+  const cols = Math.max(1, Math.floor((width + 8) / (size + 8)))
+  const ix = useIndexOf(items)
+  const rowOf = (id: string | null) => {
+    const i = ix(id)
+    return i == null ? undefined : Math.floor(i / cols)
+  }
+  /* Rows are positional (keyed by row number): tiles stay direct children of
+     the one grid, keyed by id, so an insertion or a column change moves a tile
+     rather than remounting it (and a rename's draft with it). */
+  const w = useWindowedRows({
+    count: windowed && width > 0 ? Math.ceil(items.length / cols) : 0,
+    threshold: 0,
+    list: wrap,
+    estimateSize: () => Math.round(width / cols) + (labels ? 48 : 8),
+    gap: 8,
+    measured: true,
+    pin: [rowOf(h.focusId), rowOf(h.renamingId), rowOf(h.draggingId)],
+  })
+
+  /* Windowed, every tile carries its grid row's index and the row's first
+     tile is measured for it (a stretched grid item is its row's height); a
+     tile that stops being first stays observed and still reports its row. */
+  const tile = (item: ListedItem, index: number, row?: number, first?: boolean) => {
+    const attrs = itemAttrs(item, h)
+    return (
+      <div
+        key={item.id}
+        {...attrs}
+        data-index={row}
+        ref={first ? w.measure : undefined}
+        aria-setsize={windowed ? items.length : undefined}
+        aria-posinset={windowed ? index + 1 : undefined}
+        className={cn(attrs.className, "flex min-w-0 flex-col items-center gap-2", roomy ? "p-2 rounded-2xl" : "p-1 rounded-xl")}
+        title={item.name}
+      >
+        <Thumb item={item} crop={crop} className="aspect-square w-full rounded-lg bg-muted" />
+        {h.renamingId === item.id ? (
+          <RenameInput item={item} onRename={h.onRename} className="w-full text-center" />
+        ) : (
+          labels && <span className="line-clamp-2 w-full text-center text-sm break-all">{item.name}</span>
+        )}
+        {labels && roomy && <span className="-mt-1 text-xs text-muted-foreground tabular-nums">{sizeText(item)}</span>}
+      </div>
+    )
+  }
+  /* A skipped run of rows is one full-width cell. It is a grid row of its
+     own, so it brings one gap of its own: `before` (which already counts the
+     gap above the next row) loses it, `after` does not. */
+  const spacer = (key: string, height: number) => (
+    <div key={key} aria-hidden role="none" style={{ gridColumn: "1 / -1", height }} />
+  )
+
   return (
+    /* The explicit repeat(cols) when windowed is what the explorer's
+       gridColumns() reads off [data-grid]. */
     <div
-      className="grid grid-cols-[repeat(auto-fill,minmax(min(var(--tile),100%),1fr))] gap-2 p-2"
-      style={{ "--tile": `${size}px` } as React.CSSProperties}
+      ref={wrap}
+      className={cn("grid gap-2 p-2", !windowed && "grid-cols-[repeat(auto-fill,minmax(min(var(--tile),100%),1fr))]")}
+      style={
+        windowed
+          ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
+          : ({ "--tile": `${size}px` } as React.CSSProperties)
+      }
       data-grid
     >
-      {items.map((item) => {
-        const attrs = itemAttrs(item, h)
-        return (
-          <div
-            key={item.id}
-            {...attrs}
-            className={cn(attrs.className, "flex min-w-0 flex-col items-center gap-2", roomy ? "p-2 rounded-2xl" : "p-1 rounded-xl")}
-            title={item.name}
-          >
-            <Thumb item={item} crop={crop} className="aspect-square w-full rounded-lg bg-muted" />
-            {h.renamingId === item.id ? (
-              <RenameInput item={item} onRename={h.onRename} className="w-full text-center" />
-            ) : (
-              labels && <span className="line-clamp-2 w-full text-center text-sm break-all">{item.name}</span>
-            )}
-            {labels && roomy && <span className="-mt-1 text-xs text-muted-foreground tabular-nums">{sizeText(item)}</span>}
-          </div>
-        )
-      })}
+      {windowed
+        ? w.rows.flatMap(({ index: r, before }) => [
+            ...(before > 8 ? [spacer(`b${r}`, before - 8)] : []),
+            ...items.slice(r * cols, r * cols + cols).map((item, i) => tile(item, r * cols + i, r, i === 0)),
+          ])
+        : items.map((item, i) => tile(item, i))}
+      {w.after > 0 && spacer("after", w.after)}
     </div>
   )
 }
@@ -235,6 +300,21 @@ export function ListView({
   const w = live ?? widths
   const shown = columns.filter((id) => paneWidth === 0 || paneWidth >= COLUMN_MIN_PANE[id])
   const template = ["minmax(8rem,1fr)", ...shown.map((id) => `${w[id]}px`)].join(" ")
+
+  const rowsRef = React.useRef<HTMLDivElement>(null)
+  const [coarse] = React.useState(() => matchMedia("(pointer: coarse)").matches)
+  const ix = useIndexOf(items)
+  /* The scroller is the explorer's listbox pane; the sticky header above is
+     absorbed by the measured scroll margin. */
+  const win = useWindowedRows({
+    count: items.length,
+    threshold: WINDOW_AT,
+    list: rowsRef,
+    estimateSize: () => (coarse ? 44 : 32),
+    getItemKey: (i) => items[i].id,
+    gap: 1,
+    pin: [ix(h.focusId), ix(h.renamingId), ix(h.draggingId)],
+  })
 
   const startResize = (id: ColumnId) => (e: React.PointerEvent) => {
     e.preventDefault()
@@ -324,16 +404,20 @@ export function ListView({
           </div>
         ))}
       </div>
-      <div className="flex flex-col gap-px p-1.5">
-        {items.map((item) => {
+      <div ref={rowsRef} className="flex flex-col gap-px p-1.5">
+        {win.rows.map(({ index, before }) => {
+          const item = items[index]
           const attrs = itemAttrs(item, h)
           const Icon = mimeIcon(item.mimeType)
           return (
             <div
               key={item.id}
               {...attrs}
+              data-index={index}
+              aria-setsize={win.windowed ? items.length : undefined}
+              aria-posinset={win.windowed ? index + 1 : undefined}
               className={cn(attrs.className, "grid h-8 items-center gap-3 rounded-lg px-2 text-sm pointer-coarse:h-11")}
-              style={{ gridTemplateColumns: template }}
+              style={{ gridTemplateColumns: template, marginTop: before || undefined }}
             >
               <span className="flex min-w-0 items-center gap-2">
                 {thumbs && item.kind === "file" ? (
@@ -361,6 +445,7 @@ export function ListView({
             </div>
           )
         })}
+        {win.after > 0 && <div aria-hidden style={{ height: win.after }} />}
       </div>
     </div>
   )

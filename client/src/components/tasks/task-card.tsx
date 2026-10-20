@@ -4,6 +4,7 @@ import { CSS } from "@dnd-kit/utilities"
 import { ChevronDown, CornerDownRight, ListChecks, ListTree } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Count } from "@/components/settings/primitives"
@@ -300,6 +301,47 @@ export function TaskRow({
           </span>
         )}
       </div>
+    </div>
+  )
+}
+
+/** A run of task rows, divided, windowed past 150 so a board of thousands
+    mounts what is on screen; below that it is plain DOM. The scroller is the
+    view's own (`scrollParent`), and each wrapper is measured, because the
+    second line and the panel-width chips change a row's height. */
+export function TaskRows({ tasks, children }: { tasks: readonly Task[]; children: (task: Task) => React.ReactNode }) {
+  const list = React.useRef<HTMLDivElement>(null)
+  const [focus, onFocus] = useFocusedRow(tasks.length, (i) => tasks[i].id)
+  const w = useWindowedRows({
+    count: tasks.length,
+    threshold: 150,
+    list,
+    estimateSize: () => 45,
+    getItemKey: (i) => tasks[i].id,
+    measured: true,
+    pin: [focus],
+  })
+  // An empty run would still be a child of the card's divide-y: a stray rule.
+  if (tasks.length === 0) return null
+  return (
+    <div ref={list} role="list" className="divide-y" onFocus={onFocus}>
+      {w.rows.map(({ index, before }) => {
+        const task = tasks[index]
+        return (
+          <div
+            key={task.id}
+            role="listitem"
+            data-index={index}
+            ref={w.measure}
+            style={{ marginTop: before || undefined }}
+            aria-setsize={w.windowed ? tasks.length : undefined}
+            aria-posinset={w.windowed ? index + 1 : undefined}
+          >
+            {children(task)}
+          </div>
+        )
+      })}
+      {w.after > 0 && <div aria-hidden style={{ height: w.after }} />}
     </div>
   )
 }

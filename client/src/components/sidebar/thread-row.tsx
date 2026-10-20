@@ -68,6 +68,10 @@ export const ThreadRow = React.memo(function ThreadRow({
   projectLabel,
   handlers,
   fold,
+  index,
+  before,
+  setSize,
+  measure,
 }: {
   session: SessionMeta
   state: ThreadStatus
@@ -87,6 +91,13 @@ export const ThreadRow = React.memo(function ThreadRow({
   /** Set on a thread with sub threads: a chevron at the row's trailing end
       folds them. `toggle` must be stable — the row is memoized. */
   fold?: { open: boolean; count: number; toggle: (open: boolean) => void }
+  /** Its place in a windowed list (`lib/windowed-rows.ts`): the index, the
+      margin standing for the rows skipped above it, the list's size (only when
+      windowed) and the stable `measureElement`. All memo-safe. */
+  index?: number
+  before?: number
+  setSize?: number
+  measure?: (el: Element | null) => void
 }) {
   const { onOpen, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree, onClose } = handlers
   /* One list feeds both the ⋯ menu and the right-click menu. */
@@ -163,7 +174,13 @@ export const ThreadRow = React.memo(function ThreadRow({
   const card = <ThreadInfoCard session={session} state={state} trash={trash} />
 
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem
+      ref={measure}
+      data-index={index}
+      style={before ? { marginTop: before } : undefined}
+      aria-setsize={setSize}
+      aria-posinset={setSize != null && index != null ? index + 1 : undefined}
+    >
       {/* The right-click menu is the row itself — no wrapper DOM — and it is
           the same list as the ⋯ below, so the two cannot drift apart. On a
           phone its trigger is the long press the ⋯ is a finger-reach for. */}

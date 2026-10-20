@@ -44,6 +44,7 @@ import {
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { PageFrame, SurfaceHeader } from "@/components/page-primitives"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { Count, Group, Row, Section, StatStrip, StatusBadge } from "@/components/settings/primitives"
 import { ErrorNote } from "@/components/error-note"
 import { GroupRowsSkeleton } from "@/components/ui/skeletons"
@@ -580,6 +581,19 @@ function ThreadsCard({
     selectAll,
     deleteSelected,
   } = useThreadSelection(threads, shown, actions)
+  /* Only "Show all" can make this long; past 150 rows it is windowed against
+     the page's own scroller, keeping the row focus last landed in mounted. */
+  const ul = React.useRef<HTMLUListElement>(null)
+  const [focus, onFocus] = useFocusedRow(shown.length, (i) => shown[i].id)
+  const w = useWindowedRows({
+    count: shown.length,
+    threshold: 150,
+    list: ul,
+    estimateSize: () => 49,
+    getItemKey: (i) => shown[i].id,
+    measured: true,
+    pin: [focus],
+  })
 
   return (
     <Group
@@ -636,12 +650,24 @@ function ThreadsCard({
           No threads in this project yet. Start a new thread to begin working on this workspace with your AI agents.
         </Empty>
       ) : (
-        <ul className="divide-y">
-          {shown.map((session) => {
+        <ul
+          ref={ul}
+          className="divide-y"
+          onFocus={onFocus}
+        >
+          {w.rows.map(({ index, before }) => {
+            const session = shown[index]
             const status = threadStatus(session, liveThreads[session.id])
             const checked = selected.has(session.id)
             return (
-              <li key={session.id}>
+              <li
+                key={session.id}
+                data-index={index}
+                ref={w.measure}
+                style={{ marginTop: before || undefined }}
+                aria-setsize={w.windowed ? shown.length : undefined}
+                aria-posinset={w.windowed ? index + 1 : undefined}
+              >
                 <div
                   className={cn(
                     "relative -mx-3 flex items-center gap-3 px-3 transition-colors hover:bg-muted/50 @panel-sm:-mx-4 @panel-sm:px-4",
@@ -691,6 +717,7 @@ function ThreadsCard({
               </li>
             )
           })}
+          {w.after > 0 && <li aria-hidden style={{ height: w.after }} />}
         </ul>
       )}
       {(threads.length > THREAD_PAGE || trashed > 0) && (

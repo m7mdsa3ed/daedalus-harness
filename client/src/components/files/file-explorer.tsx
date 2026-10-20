@@ -183,6 +183,8 @@ export function FileExplorer({
   const [anchor, setAnchor] = React.useState<string | null>(null)
   const [focusId, setFocusId] = React.useState<string | null>(null)
   const [renamingId, setRenamingId] = React.useState<string | null>(null)
+  /* The drag source stays rendered in a windowed listing, or its dragend never fires. */
+  const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [clipboard, setClipboard] = React.useState<Clipboard | null>(null)
   const [dropTarget, setDropTarget] = React.useState<string | null>(null)
   const [uploading, setUploading] = React.useState<{ done: number; total: number } | null>(null)
@@ -386,8 +388,12 @@ export function FileExplorer({
       if (!selected.has(item.id)) selectOnly(item.id)
       e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids))
       e.dataTransfer.effectAllowed = "copyMove"
+      setDraggingId(item.id)
     },
-    onDragEnd: () => setDropTarget(null),
+    onDragEnd: () => {
+      setDropTarget(null)
+      setDraggingId(null)
+    },
   })
   const dropFor = (folderId: string | null, key = folderId ?? "@root") => ({
     "data-drop": dropTarget === key || undefined,
@@ -406,6 +412,7 @@ export function FileExplorer({
       e.preventDefault()
       e.stopPropagation()
       setDropTarget(null)
+      setDraggingId(null)
       const moved = e.dataTransfer.getData(DRAG_TYPE)
       if (moved) {
         const ids = (JSON.parse(moved) as string[]).filter((id) => id !== folderId)
@@ -539,6 +546,7 @@ export function FileExplorer({
     focusId,
     cutIds,
     renamingId,
+    draggingId,
     isPickable: (item) => !onPick || item.kind === "folder" || pickable(item),
     onPointer,
     onOpen: (item) => !coarse && open(item),

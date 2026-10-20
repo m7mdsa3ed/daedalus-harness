@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { COLOR_DOT, type BoardColor } from "@/lib/boards"
 import type { TaskInput } from "@/lib/tasks-board"
 import { groupTasks, type GroupBy } from "@/lib/tasks-view"
-import { GroupSection, TaskRow } from "../task-card"
+import { GroupSection, TaskRow, TaskRows } from "../task-card"
 import { QuickAdd } from "../quick-add"
 import { ICON_BTN } from "../fields"
 import { INSET_X } from "../modes"
@@ -82,15 +82,16 @@ export function ListView({ statuses, sprints, tasks, allTasks, view, ctx, onOpen
                 </Button>
               }
             >
-              {group.tasks.map((task) => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  status={groupBy === "status" ? undefined : statusOf(task.statusId)}
-                  ctx={ctx}
-                  onClick={() => onOpen(task)}
-                />
-              ))}
+              <TaskRows tasks={group.tasks}>
+                {(task) => (
+                  <TaskRow
+                    task={task}
+                    status={groupBy === "status" ? undefined : statusOf(task.statusId)}
+                    ctx={ctx}
+                    onClick={() => onOpen(task)}
+                  />
+                )}
+              </TaskRows>
               <div className="p-1.5">
                 <QuickAdd
                   open={adding === group.id}

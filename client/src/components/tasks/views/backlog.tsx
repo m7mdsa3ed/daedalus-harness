@@ -17,7 +17,7 @@ import {
 import type { Sprint } from "@/lib/boards"
 import type { Task } from "@/lib/tasks-board"
 import { sprintProgress } from "@/lib/tasks-view"
-import { GroupSection, TaskRow } from "../task-card"
+import { GroupSection, TaskRow, TaskRows } from "../task-card"
 import { QuickAdd } from "../quick-add"
 import { ICON_BTN, SprintPicker } from "../fields"
 import { INSET_X } from "../modes"
@@ -139,7 +139,6 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
 
   const row = (task: Task) => (
     <TaskRow
-      key={task.id}
       task={task}
       status={statusOf(task.statusId)}
       ctx={ctx}
@@ -178,7 +177,7 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
         action={<SprintActions sprint={sprint} ops={sprintOps} />}
       >
         <SprintFacts sprint={sprint} tasks={allTasks} statuses={statuses} />
-        {list.map(row)}
+        <TaskRows tasks={list}>{row}</TaskRows>
         {list.length === 0 && <Empty className="m-2">Nothing planned yet — move tasks here from the backlog.</Empty>}
         {sprint.state !== "closed" && (
           <div className="p-1.5">
@@ -201,7 +200,7 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
         {active.map((s) => section(s))}
         {planned.map((s) => section(s))}
         <GroupSection title="Backlog" count={backlog.length} points={pointsOf(backlog)}>
-          {backlog.map(row)}
+          <TaskRows tasks={backlog}>{row}</TaskRows>
           {backlog.length === 0 && <Empty className="m-2">The backlog is empty.</Empty>}
           <div className="p-1.5">
             <QuickAdd onCreate={async (title) => void (await onCreate({ title }))} />

@@ -13,39 +13,42 @@ import { cn } from "@/lib/utils"
 import { NEST } from "./scale"
 import { useSidebarEnv } from "./env"
 import { ThreadRow, type ThreadRowHandlers } from "./thread-row"
-import { useFold } from "./fold"
+import { useFold, useFolded } from "./fold"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 
 type ThreadFold = React.ComponentProps<typeof ThreadRow>["fold"]
 
+/** Where a row sits in the (possibly windowed) list — see `lib/windowed-rows.ts`. */
+interface RowSlot {
+  index: number
+  before: number
+  measure: (el: Element | null) => void
+  setSize?: number
+}
+
+type ListItem =
+  | { kind: "heading"; key: string; label: string }
+  | { kind: "row"; key: string; session: SessionMeta; subs?: SessionMeta[] }
+  | { kind: "subs"; key: string; parent: SessionMeta; subs: SessionMeta[] }
+
 /** A thread over its sub threads, foldable by the chevron on its row; the fold
-    is remembered on this device beside the project folders'. Open by default. */
-function ThreadFamily({
+    is remembered on this device beside the project folders'. Open by default.
+    The sub threads themselves are the list's next item (`subs`), so a windowed
+    list can measure and skip them like any other row. */
+function FamilyRow({
   parent,
-  subs,
+  count,
   row,
+  slot,
 }: {
   parent: SessionMeta
-  subs: SessionMeta[]
-  row: (session: SessionMeta, fold?: ThreadFold) => React.ReactNode
+  count: number
+  row: (session: SessionMeta, fold?: ThreadFold, slot?: RowSlot) => React.ReactNode
+  slot: RowSlot
 }) {
   const [open, toggle] = useFold(`thread:${parent.id}`, true)
-  const fold = React.useMemo(() => ({ open, count: subs.length, toggle }), [open, subs.length, toggle])
-  return (
-    <>
-      {row(parent, fold)}
-      {open && (
-        /* The indent is the item's, never the menu's: the menu is `w-full`, so
-           a margin on it pushed the rows (and their ⋯) past the parent's edge. */
-        <li data-slot="sidebar-menu-item" data-sidebar="menu-item" className={NEST}>
-          <SidebarMenu>
-            {subs.map((child) => (
-              <React.Fragment key={child.id}>{row(child)}</React.Fragment>
-            ))}
-          </SidebarMenu>
-        </li>
-      )}
-    </>
-  )
+  const fold = React.useMemo(() => ({ open, count, toggle }), [open, count, toggle])
+  return row(parent, fold, slot)
 }
 
 /* Memoized (the whole list, and each row below): the sidebar re-renders per
@@ -83,13 +86,16 @@ export const ThreadList = React.memo(function ThreadList({
   /* Expansion is deliberately not persisted: the reveal answers "is what I am
      looking for down there?" and the answer resets the next visit. */
   const [expanded, setExpanded] = React.useState(false)
-  const visible = limit && !expanded ? sessions.slice(0, limit) : sessions
+  const visible = React.useMemo(
+    () => (limit && !expanded ? sessions.slice(0, limit) : sessions),
+    [sessions, limit, expanded]
+  )
   const hidden = sessions.length - visible.length
   /* The row's dress is read here and handed down as plain props, so a row stays
      memoized on narrow props instead of subscribing to the store itself. */
   const options = useLayoutOptions()
   const headings = grouped && options.sidebarPeriodHeadings && options.sidebarSort !== "title"
-  const periodAt = options.sidebarSort === "created" ? (session: SessionMeta) => session.createdAt : activityAt
+  const byCreated = options.sidebarSort === "created"
   const navigate = useNavigate()
   const activeThreadId = useActiveChat()
   const { actions, status, pinSet, projectNames, children } = useSidebarEnv()
@@ -144,7 +150,7 @@ export const ThreadList = React.memo(function ThreadList({
     rows[(index + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length]?.focus()
   }
 
-  const row = (session: SessionMeta, fold?: ThreadFold) => (
+  const row = (session: SessionMeta, fold?: ThreadFold, slot?: RowSlot) => (
     <ThreadRow
       session={session}
       state={trash ? "idle" : status(session)}
@@ -157,43 +163,129 @@ export const ThreadList = React.memo(function ThreadList({
       project={projectNames.get(session.projectId) ?? "Other"}
       handlers={handlers}
       fold={fold}
+      index={slot?.index}
+      before={slot?.before}
+      setSize={slot?.setSize}
+      measure={slot?.measure}
     />
   )
 
-  let previousLabel: string | null = null
+  /* The list as flat items — period headings, rows, and each open family's sub
+     threads as one item after its parent — so a windowed slice still knows
+     which heading a row is under and what its neighbours are. */
+  const folded = useFolded()
+  const items = React.useMemo(() => {
+    const out: ListItem[] = []
+    const seen = new Set<string>()
+    let previous: string | null = null
+    for (const session of visible) {
+      if (headings) {
+        const label = periodLabel(byCreated ? session.createdAt : activityAt(session))
+        if (label !== previous) {
+          out.push({ kind: "heading", key: seen.has(label) ? `h:${label}:${session.id}` : `h:${label}`, label })
+          seen.add(label)
+        }
+        previous = label
+      }
+      /* Its sub threads (asks, workflow steps), indented under it. Not in the
+         trash: a deleted parent took its children with it. */
+      const subs = !trash ? children.get(session.id) : undefined
+      out.push({ kind: "row", key: session.id, session, subs })
+      if (subs && !folded.includes(`thread:${session.id}`)) {
+        out.push({ kind: "subs", key: `s:${session.id}`, parent: session, subs })
+      }
+    }
+    return out
+  }, [visible, headings, byCreated, children, folded, trash])
+
+  /* Focus is pinned (with its focusable neighbours, the first and the last
+     row) so the focused row never unmounts under the caret and the DOM walk
+     above always finds the row it moves to, wrap included. A heading holds no
+     button, so the pins step over headings. */
+  const [focus, onListFocus] = useFocusedRow(items.length, (i) => items[i].key)
+  const nearest = (from: number, step: 1 | -1) => {
+    for (let i = from; i >= 0 && i < items.length; i += step) if (items[i].kind !== "heading") return i
+    return undefined
+  }
+  const w = useWindowedRows({
+    count: items.length,
+    threshold: 100,
+    list: listRef,
+    scroller: () => listRef.current?.closest<HTMLElement>('[data-sidebar="content"]') ?? null,
+    estimateSize: (i) => {
+      const item = items[i]
+      /* 36px rows; a sub-thread block is its rows, their 4px gaps and NEST's py-1. */
+      return item.kind === "heading" ? (i ? 40 : 32) : item.kind === "subs" ? item.subs.length * 40 + 4 : 36
+    },
+    getItemKey: (i) => items[i].key,
+    gap: 4,
+    measured: true,
+    pin: [
+      nearest(0, 1),
+      nearest(items.length - 1, -1),
+      focus == null ? undefined : nearest(focus - 1, -1),
+      focus,
+      focus == null ? undefined : nearest(focus + 1, 1),
+    ],
+  })
+  const setSize = w.windowed ? items.length : undefined
+
   return (
-    <SidebarMenu ref={listRef} onKeyDown={onListKeyDown}>
-      {visible.map((session) => {
-        const label = headings ? periodLabel(periodAt(session)) : null
-        const heading = label && label !== previousLabel
-        previousLabel = label
-        return (
-          <React.Fragment key={session.id}>
-            {heading && (
-              /* Not a SidebarGroupLabel: this sits *inside* a menu, between
-                 rows, so it is a list item with no control in it — quieter and
-                 smaller than a tier's title, which is a fold trigger and the
-                 heading of the whole folder. `aria-hidden` would lose the only
-                 thing that says which period a row belongs to, so it stays
-                 readable and simply is not focusable. */
-              <li
-                data-slot="sidebar-menu-item"
-                data-sidebar="menu-item"
-                className="mt-2 flex h-8 items-center px-3 text-xs font-medium text-sidebar-foreground/70 first:mt-0"
-              >
-                <span className="truncate">{label}</span>
-              </li>
-            )}
-            {/* Its sub threads (asks, workflow steps), indented under it. Not
-                in the trash: a deleted parent took its children with it. */}
-            {!trash && children.has(session.id) ? (
-              <ThreadFamily parent={session} subs={children.get(session.id)!} row={row} />
-            ) : (
-              row(session)
-            )}
-          </React.Fragment>
+    <SidebarMenu ref={listRef} onKeyDown={onListKeyDown} onFocus={onListFocus}>
+      {w.rows.map(({ index, key, before }) => {
+        const item = items[index]
+        const place = {
+          ref: w.measure,
+          "data-index": index,
+          style: before ? { marginTop: before } : undefined,
+          "aria-setsize": setSize,
+          "aria-posinset": setSize != null ? index + 1 : undefined,
+        }
+        if (item.kind === "heading") {
+          return (
+            /* Not a SidebarGroupLabel: this sits *inside* a menu, between
+               rows, so it is a list item with no control in it — quieter and
+               smaller than a tier's title, which is a fold trigger and the
+               heading of the whole folder. `aria-hidden` would lose the only
+               thing that says which period a row belongs to, so it stays
+               readable and simply is not focusable. Padding, not a margin, for
+               the air above it: a windowed list measures border boxes, and
+               `first:` would match whichever row the window starts at. */
+            <li
+              key={key}
+              {...place}
+              data-slot="sidebar-menu-item"
+              data-sidebar="menu-item"
+              className={cn(
+                "flex items-center px-3 text-xs font-medium text-sidebar-foreground/70",
+                index === 0 ? "h-8" : "h-10 pt-2"
+              )}
+            >
+              <span className="truncate">{item.label}</span>
+            </li>
+          )
+        }
+        if (item.kind === "subs") {
+          return (
+            /* The indent is the item's, never the menu's: the menu is `w-full`, so
+               a margin on it pushed the rows (and their ⋯) past the parent's edge. */
+            <li key={key} {...place} data-slot="sidebar-menu-item" data-sidebar="menu-item" className={NEST}>
+              <SidebarMenu>
+                {item.subs.map((child) => (
+                  <React.Fragment key={child.id}>{row(child)}</React.Fragment>
+                ))}
+              </SidebarMenu>
+            </li>
+          )
+        }
+        const slot: RowSlot = { index, before, measure: w.measure, setSize }
+        return item.subs ? (
+          <FamilyRow key={key} parent={item.session} count={item.subs.length} row={row} slot={slot} />
+        ) : (
+          <React.Fragment key={key}>{row(item.session, undefined, slot)}</React.Fragment>
         )
       })}
+      {w.after > 0 && <li aria-hidden style={{ height: w.after }} />}
       {/* One toggle row, styled as a quieter thread row rather than a button —
           it expands the index you are already scanning. */}
       {hidden > 0 && (

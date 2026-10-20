@@ -34,3 +34,9 @@ export function useFold(key: string, defaultOpen: boolean): [boolean, (open: boo
   )
   return [open, setOpen]
 }
+
+/** The folded keys themselves — for a list that has to know which of its
+    families are open before it renders them (the windowed thread list). */
+export function useFolded(): readonly string[] {
+  return React.useSyncExternalStore(collapsedStore.subscribe, collapsedStore.get)
+}

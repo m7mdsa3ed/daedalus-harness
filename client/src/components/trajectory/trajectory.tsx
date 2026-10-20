@@ -43,6 +43,7 @@ import {
   type SpanNode,
 } from "@/lib/trajectory"
 import { cn } from "@/lib/utils"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import { KIND, fmtMs, spanBg, spanText } from "./kinds"
 import { SpanDetail } from "./span-detail"
 
@@ -76,6 +77,34 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
   )
   const totals = React.useMemo(() => sumTotals(spans, now), [spans, now])
   const selected = selectedId ? byId.get(selectedId) ?? null : null
+
+  /* Past 200 rows only the window is drawn (and re-rendered per `now` tick);
+     the selected and focused rows are pinned, so reveal() and focus keep their
+     element. A root row past the first is h-7 plus its 4px top margin. */
+  const [focusIndex, onListFocus] = useFocusedRow(rows.length, (i) => rows[i].span.spanId)
+  const selectedIndex = React.useMemo(
+    () => (selectedId ? rows.findIndex((n) => n.span.spanId === selectedId) : -1),
+    [rows, selectedId]
+  )
+  const w = useWindowedRows({
+    count: rows.length,
+    threshold: 200,
+    list: listRef,
+    estimateSize: (i) => (rows[i].depth === 0 && i > 0 ? 32 : 28),
+    getItemKey: (i) => rows[i].span.spanId,
+    pin: [selectedIndex, focusIndex],
+  })
+  /** Each node's place among its tree siblings, for aria-posinset/setsize. */
+  const siblings = React.useMemo(() => {
+    const map = new Map<string, [number, number]>()
+    const walk = (nodes: SpanNode[]) =>
+      nodes.forEach((n, i) => {
+        map.set(n.span.spanId, [i + 1, nodes.length])
+        walk(n.children)
+      })
+    walk(roots)
+    return map
+  }, [roots])
 
   /* Follow: the newest row stays in view while the turn runs. Scrolling up is
      reading, and stops it. */
@@ -243,6 +272,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
               role="tree"
               aria-label="Spans"
               onWheel={(event) => event.deltaY < 0 && setFollow(false)}
+              onFocus={onListFocus}
               className={cn("min-h-0 flex-1 overflow-y-auto py-1", selected && "hidden @panel-md:block")}
             >
               {rows.length === 0 ? (
@@ -250,25 +280,32 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
                   <Empty>No span matches.</Empty>
                 </div>
               ) : (
-                rows.map((node) => (
-                  <Row
-                    key={node.span.spanId}
-                    node={node}
-                    now={now}
-                    turn={turnNo.get(node.span.spanId)}
-                    selected={node.span.spanId === selectedId}
-                    collapsed={collapsed.has(node.span.spanId)}
-                    onSelect={() => setSelectedId(node.span.spanId)}
-                    onToggle={() =>
-                      setCollapsed((prev) => {
-                        const next = new Set(prev)
-                        if (!next.delete(node.span.spanId)) next.add(node.span.spanId)
-                        return next
-                      })
-                    }
-                  />
-                ))
+                w.rows.map(({ index, key, before }) => {
+                  const node = rows[index]
+                  return (
+                    <Row
+                      key={key}
+                      index={index}
+                      before={before}
+                      set={w.windowed ? siblings.get(node.span.spanId) : undefined}
+                      node={node}
+                      now={now}
+                      turn={turnNo.get(node.span.spanId)}
+                      selected={node.span.spanId === selectedId}
+                      collapsed={collapsed.has(node.span.spanId)}
+                      onSelect={() => setSelectedId(node.span.spanId)}
+                      onToggle={() =>
+                        setCollapsed((prev) => {
+                          const next = new Set(prev)
+                          if (!next.delete(node.span.spanId)) next.add(node.span.spanId)
+                          return next
+                        })
+                      }
+                    />
+                  )
+                })
               )}
+              {w.after > 0 && <div aria-hidden style={{ height: w.after }} />}
             </div>
             <div
               className={cn(
@@ -400,6 +437,9 @@ function Overview({
 }
 
 function Row({
+  index,
+  before,
+  set,
   node,
   now,
   turn,
@@ -408,6 +448,11 @@ function Row({
   onSelect,
   onToggle,
 }: {
+  index: number
+  /** Height of the windowed-out rows above this one, 0 when adjacent. */
+  before: number
+  /** [posinset, setsize] among its tree siblings, only while windowed. */
+  set: [number, number] | undefined
   node: SpanNode
   now: number
   turn: number | undefined
@@ -428,7 +473,11 @@ function Row({
       role="treeitem"
       aria-selected={selected}
       aria-expanded={node.children.length ? !collapsed : undefined}
+      aria-level={depth + 1}
+      aria-posinset={set?.[0]}
+      aria-setsize={set?.[1]}
       tabIndex={0}
+      data-index={index}
       data-span-id={span.spanId}
       onClick={onSelect}
       onKeyDown={(event) => {
@@ -440,9 +489,10 @@ function Row({
       className={cn(
         "grid h-7 cursor-pointer grid-cols-[minmax(0,1fr)_minmax(3rem,35%)_3.5rem] items-center gap-2 pr-3 outline-none [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto] focus-visible:bg-muted",
         selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
-        isRoot && "mt-1 border-t font-medium first:mt-0 first:border-t-0"
+        isRoot && "font-medium",
+        isRoot && index > 0 && "border-t"
       )}
-      style={{ paddingLeft: 12 + depth * 20 }}
+      style={{ paddingLeft: 12 + depth * 20, marginTop: before + (isRoot && index > 0 ? 4 : 0) || undefined }}
     >
       <span className="flex min-w-0 items-center gap-1">
         {node.children.length ? (

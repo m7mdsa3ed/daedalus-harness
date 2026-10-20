@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, CalendarIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useIsNarrow } from "@/hooks/use-device"
+import { useFocusedRow, useWindowedRows } from "@/lib/windowed-rows"
 import type { Task } from "@/lib/tasks-board"
 import { PRIORITY_LABEL, TYPE_LABEL, taskKey } from "@/lib/tasks-board"
 import {
@@ -32,7 +33,7 @@ import {
   TypeIcon,
   TypePicker,
 } from "../fields"
-import { TaskRow } from "../task-card"
+import { TaskRow, TaskRows } from "../task-card"
 import { INSET_X } from "../modes"
 import type { ViewProps } from "../types"
 
@@ -94,6 +95,27 @@ export function TableView({ board, statuses, sprints, tasks, view, ctx, facets, 
   const shift = React.useRef(false)
   const root = React.useRef<HTMLDivElement>(null)
   const narrow = useIsNarrow(root)
+  /* The wide form windows its <tbody> past 150 rows. Rows stay in the table's
+     flow — the skipped ones are spacer <tr>s, never transforms — so the sticky
+     header, the frozen columns and `border-separate` are untouched; the
+     scroller is `root`, and the measured margin covers its inset and the head. */
+  const tbody = React.useRef<HTMLTableSectionElement>(null)
+  const [focus, onFocus] = useFocusedRow(narrow ? 0 : tasks.length, (i) => tasks[i].id)
+  const w = useWindowedRows({
+    count: narrow ? 0 : tasks.length,
+    threshold: 150,
+    list: tbody,
+    estimateSize: () => 37,
+    getItemKey: (i) => tasks[i].id,
+    measured: true,
+    pin: [focus],
+  })
+  const span = 3 + columns.length
+  const spacer = (key: string, height: number) => (
+    <tr key={key} aria-hidden>
+      <td colSpan={span} className="border-0 p-0" style={{ height }} />
+    </tr>
+  )
 
   const toggleSort = (sortBy: SortBy) => {
     if (view.sortBy === sortBy) onViewChange({ sortDir: view.sortDir === "asc" ? "desc" : "asc" })
@@ -305,19 +327,21 @@ export function TableView({ board, statuses, sprints, tasks, view, ctx, facets, 
       <div ref={root} className="h-full overflow-y-auto">
         <div className={cn("mx-auto grid w-full max-w-6xl gap-6 py-3 pb-[calc(var(--tasks-foot,0px)+0.75rem)]", INSET_X)}>
           <div className="divide-y overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10">
-            {tasks.map((task) => {
-              const line = extra.map((c) => text(task, c)).filter(Boolean).join(" · ")
-              return (
-                <div key={task.id}>
-                  <TaskRow task={task} status={statusOf(task.statusId) ?? null} ctx={ctx} onClick={() => onOpen(task)} />
-                  {line && (
-                    <p onClick={() => onOpen(task)} className="-mt-1 cursor-pointer truncate px-3 pb-2 ps-18 text-xs text-muted-foreground">
-                      {line}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
+            <TaskRows tasks={tasks}>
+              {(task) => {
+                const line = extra.map((c) => text(task, c)).filter(Boolean).join(" · ")
+                return (
+                  <>
+                    <TaskRow task={task} status={statusOf(task.statusId) ?? null} ctx={ctx} onClick={() => onOpen(task)} />
+                    {line && (
+                      <p onClick={() => onOpen(task)} className="-mt-1 cursor-pointer truncate px-3 pb-2 ps-18 text-xs text-muted-foreground">
+                        {line}
+                      </p>
+                    )}
+                  </>
+                )
+              }}
+            </TaskRows>
           </div>
         </div>
       </div>
@@ -333,7 +357,10 @@ export function TableView({ board, statuses, sprints, tasks, view, ctx, facets, 
           to the scroller's padding edge, so padding there would let rows show
           through above the header and beside the frozen columns. */}
       <div className={cn("w-max min-w-full py-3 pb-[calc(var(--tasks-foot,0px)+0.75rem)]", INSET_X)}>
-      <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+      <table
+        className="w-max min-w-full border-separate border-spacing-0 text-sm"
+        aria-rowcount={w.windowed ? tasks.length + 1 : undefined}
+      >
         <thead className="sticky top-0 z-20">
           <tr className="h-9 text-left text-xs font-medium text-muted-foreground">
             <th className={cn("z-30 border-b bg-background px-2", STUCK, STICK_SELECT)}>
@@ -352,11 +379,19 @@ export function TableView({ board, statuses, sprints, tasks, view, ctx, facets, 
             ))}
           </tr>
         </thead>
-        <tbody>
-          {tasks.map((task) => {
+        <tbody ref={tbody} onFocus={onFocus}>
+          {w.rows.map(({ index, before }) => {
+            const task = tasks[index]
             const selected = ctx.selected.has(task.id)
             return (
-              <tr key={task.id} className={cn("group hover:bg-muted", selected && "bg-muted", task.archived && "opacity-60")}>
+              <React.Fragment key={task.id}>
+              {before > 0 && spacer("before", before)}
+              <tr
+                data-index={index}
+                ref={w.measure}
+                aria-rowindex={w.windowed ? index + 2 : undefined}
+                className={cn("group hover:bg-muted", selected && "bg-muted", task.archived && "opacity-60")}
+              >
                 <td
                   className={cn(
                     "relative z-10 border-b px-2 py-1 before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
@@ -391,12 +426,17 @@ export function TableView({ board, statuses, sprints, tasks, view, ctx, facets, 
                 </td>
                 {columns.map((col) => (
                   <td key={col} className={cn("border-b px-1 py-0.5 whitespace-nowrap", COL_WIDTH[col])}>
-                    {cell(task, col)}
+                    {/* Windowed, a column must not size to whichever rows are
+                        mounted, so its content is capped at the column's width
+                        (less the cell's px-1) and the columns stay still. */}
+                    {w.windowed ? <div className={COL_WIDTH[col] === "w-28" ? "max-w-26" : "max-w-34"}>{cell(task, col)}</div> : cell(task, col)}
                   </td>
                 ))}
               </tr>
+              </React.Fragment>
             )
           })}
+          {w.after > 0 && spacer("after", w.after)}
         </tbody>
       </table>
       </div>
