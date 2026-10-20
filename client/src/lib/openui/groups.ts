@@ -17,6 +17,12 @@ export const UI_GROUPS: UiGroup[] = [
     caption: "Tables, lists, callouts, comparisons and quotes for prose-shaped answers.",
     components: ["List", "Table", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote"],
   },
+  {
+    id: "interactive",
+    label: "Interactive",
+    caption: "Buttons and form fields. A pick fills the reader's composer; nothing runs on its own.",
+    components: ["Button", "Form", "FormControl", "Input", "Textarea", "Select", "SelectItem", "Checkbox", "Slider"],
+  },
   { id: "process", label: "Process", caption: "Steps, timelines and plans: things done in order.", components: ["Timeline", "Plan", "Steps"] },
   { id: "dev", label: "Developer", caption: "Code, diffs, shortcuts, file trees and terminal output.", components: ["Code", "Diff", "Keys", "FileTree", "Terminal"] },
   { id: "diagrams", label: "Diagrams", caption: "Flowcharts, sequence diagrams and 2x2 matrices.", components: ["Flowchart", "Sequence", "Quadrant"] },

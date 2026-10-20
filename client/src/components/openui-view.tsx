@@ -28,9 +28,10 @@
    while the program is still being written an empty shell is the *correct*
    intermediate state (see the effect below). */
 import * as React from "react"
-import { Renderer } from "@openuidev/react-lang"
+import { Renderer, type ActionEvent } from "@openuidev/react-lang"
 import { Notice } from "@/components/notice"
 import { Prose } from "@/components/tool-parts"
+import { useOpenuiActions } from "@/lib/openui/actions"
 import { openuiLibrary } from "@/lib/openui/library"
 
 type Verdict = "parse" | "empty"
@@ -48,9 +49,58 @@ const WHY: Record<Verdict, React.ReactNode> = {
   ),
 }
 
+/* ── What a click in a drawn answer does ──
+   Two kinds arrive, and neither can do anything on its own:
+   `continue_conversation` is a button asking for words, which land in the
+   composer unsent (the reader still presses send); `open_url` is a link the
+   model was given, opened in a real tab. Everything else an Action contains —
+   `@Set`/`@Reset` — the renderer applies to its own store before this is
+   reached, which is why a filter costs no round trip. No `toolProvider` is
+   passed, so a `Query`/`Mutation` has no tool behind it to run. */
+function messageOf(event: ActionEvent): string {
+  /* Form fields arrive one level down, scoped by the form's name, and each
+     value is `{ value, componentType }`. `$`-prefixed keys are the view's own
+     state: worth carrying, but not twice, so one that repeats a field the
+     reader actually answered is dropped. */
+  const fields: [string, unknown][] = []
+  /* A stored field is `{ value, componentType }` — which is an object, so it has
+     to be told apart from the *bag of fields* a form stores under its own name,
+     or an unwrapped field would come out as `value: 7d, componentType: …`. */
+  const isCell = (raw: unknown): raw is { value: unknown } =>
+    !!raw && typeof raw === "object" && "value" in raw && "componentType" in raw
+  const unwrap = (raw: unknown) => (isCell(raw) ? raw.value : raw)
+  for (const [key, raw] of Object.entries(event.formState ?? {})) {
+    if (key.startsWith("$")) continue
+    if (isCell(raw)) {
+      fields.push([key, raw.value])
+    } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      for (const [name, cell] of Object.entries(raw as Record<string, unknown>)) fields.push([name, unwrap(cell)])
+    } else {
+      fields.push([key, unwrap(raw)])
+    }
+  }
+  const seen = new Set(fields.map(([, value]) => JSON.stringify(value)))
+  for (const [key, raw] of Object.entries(event.formState ?? {})) {
+    if (!key.startsWith("$")) continue
+    const value = unwrap(raw)
+    if (value == null || value === "") continue
+    const json = JSON.stringify(value)
+    if (seen.has(json)) continue
+    seen.add(json)
+    fields.push([key.slice(1), value])
+  }
+  const said = fields.filter(([, value]) => value != null && value !== "")
+  if (said.length === 0) return event.humanFriendlyMessage
+  return [
+    event.humanFriendlyMessage,
+    ...said.map(([name, value]) => `- ${name}: ${typeof value === "string" ? value : JSON.stringify(value)}`),
+  ].join("\n")
+}
+
 export function OpenuiView({ code, streaming }: { code: string; streaming: boolean }) {
   const container = React.useRef<HTMLDivElement>(null)
   const [verdict, setVerdict] = React.useState<Verdict | null>(null)
+  const actions = useOpenuiActions()
 
   /* A new program is a new verdict; without this the previous fence's failure
      would stick to the next one. */
@@ -89,6 +139,27 @@ export function OpenuiView({ code, streaming }: { code: string; streaming: boole
       <Renderer
         library={openuiLibrary}
         response={code}
+        /* A button in a half-written program belongs to a view that is still
+           arriving: the renderer disables it, and a form's fields do not
+           invent defaults while the props are still moving. */
+        isStreaming={streaming}
+        onAction={(event) => {
+          if (event.type === "continue_conversation") {
+            if (actions) actions.fill(messageOf(event))
+            /* A view drawn where no thread is — a task card, a trace — has no
+               composer to fill. Said out loud rather than swallowed. */
+            else console.warn("[openui] a view asked for words with no composer to fill", event)
+            return
+          }
+          if (event.type === "open_url") {
+            const url = typeof event.params.url === "string" ? event.params.url : ""
+            /* A tab is a navigation the reader started by clicking, so it is
+               theirs to make — but only to a web address, never a scheme that
+               runs something. */
+            if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener,noreferrer")
+            else console.warn("[openui] refused a url", url)
+          }
+        }}
         onError={(errors) => {
           /* Called with `[]` once resolved, so this is "has it anything wrong
              *now*", not "did it ever". Every error is logged; only the two that

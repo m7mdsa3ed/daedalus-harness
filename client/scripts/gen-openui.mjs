@@ -43,16 +43,25 @@ const TMP = join(TMP_DIR, "openui-prompt.mjs")
    — `inlineMode: true` is what makes a fenced block legal at all. Without it
      the generated prompt insists the ENTIRE reply is openui-lang, which is
      wrong for a coding agent whose usual answer is prose;
-   — `toolCalls: false` and `bindings: false` are the inertness guarantee. No
-     `Query`/`Mutation` is advertised, so the language has no way to name a tool
-     — and the renderer passes no `toolProvider`, so one could not run if it
-     did. A view composes what the model already knows;
+   — `toolCalls: false` is the inertness guarantee. No `Query`/`Mutation` is
+     advertised, so the language has no way to name a tool — and the renderer
+     passes no `toolProvider`, so one could not run if it did. A view composes
+     what the model already knows and asks for words; every tool call stays an
+     ACP one, with a permission in front of it;
+   — `bindings: true` is the other half of that bargain: `$variables`, the
+     expressions over them, and `@Set`/`@Reset` steps. It is what a field can
+     hold and what a button may change. It costs the Built-in Functions section
+     on every thread the lane is on (the flag is the library's, not a group's),
+     which is the price of a view that can hold a choice at all.
+     `toolCalls` stays false with it: `interactiveFiltersSection` — the only
+     Forms documentation the generator has — is gated on both, so the form
+     paragraph is ours in `additionalRules` below;
    — `editMode: false`: each answer draws its own view, so there is no previous
      program to patch. */
 const PROMPT_OPTIONS = {
   inlineMode: true,
   toolCalls: false,
-  bindings: false,
+  bindings: true,
   editMode: false,
   additionalRules: [
     /* The first rule earns its place: a model asked for a UI reaches for
@@ -65,7 +74,11 @@ const PROMPT_OPTIONS = {
     "Arguments are POSITIONAL ONLY. Write `Section(\"Builds\", \"412 today\")` — NEVER `Section(title=\"Builds\", text=\"412 today\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
     "Use plain prose for ordinary questions, explanations, and facts. When a structured answer is clearer as a view, put the complete OpenUI program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
     "Reach for a fenced block ONLY when the answer is a structure that reads better drawn than described: a comparison, a trend, a handful of figures, a status board. A question, an explanation or a single fact is prose.",
-    "Nothing in a generated program can read a file, run a command or fetch anything. Compose the view from what is already in this conversation; never write a Query, a Mutation or an Action.",
+    /* The boundary, stated as what a program may do rather than as what it may
+       not: never a Query or a Mutation (there is no tool behind one), and an
+       Action only ever asks the reader's behalf — for words, for a tab, or for a
+       change to the view's own state. A click fills the composer, unsent. */
+    "Nothing in a generated program can read a file, run a command or fetch anything: never write a Query or a Mutation. An Action may only ask for words (@ToAssistant), open a URL you were given (@OpenUrl), or change the view's own $variables (@Set/@Reset). A button's click fills the reader's composer, unsent, so write the sentence they would have typed.",
     "Keep the prose around a fence short: the block is drawn inline, in the answer it belongs to.",
     "Write plain ASCII in the program. No smart quotes or arrows inside the fence.",
     /* The model composes for a wall and the reader is often on a phone. These

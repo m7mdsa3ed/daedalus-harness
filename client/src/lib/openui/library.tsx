@@ -26,8 +26,12 @@
    not pass a `toolProvider`, so a `Query(...)` in a generated program has no
    tool to find and is dropped by the parser — the model composes a *view* over
    what it already knows, and every tool call the thread makes stays a normal
-   ACP call. `bindings` and `toolCalls` are off in the prompt for that reason
-   (`scripts/gen-openui.mjs`). */
+   ACP call. `toolCalls` is off in the prompt for that reason
+   (`scripts/gen-openui.mjs`).
+
+   The interactive components (`components/interactive.tsx`) are the one place
+   the view talks back, and what they say is a sentence into the reader's
+   composer — never an action of their own. */
 import { z } from "zod/v4"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, ChevronRight, Image as ImageIcon, Maximize2, MapPin, Minus, Navigation, Plus, Star, X } from "lucide-react"
@@ -67,6 +71,7 @@ import { cn } from "@/lib/utils"
 import { BODY, Box, BoxHeader, CHIP, chartColor, FLOW, HAIRLINE, INSET, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT } from "@/lib/openui/kit"
 import { UI_GROUPS } from "@/lib/openui/groups"
 import { FileTree } from "@/lib/openui/components/FileTree"
+import { Button, Checkbox, Form, FormControl, Input, Select, SelectItem, Slider, Textarea } from "@/lib/openui/components/interactive"
 import { Quadrant } from "@/lib/openui/components/Quadrant"
 import { Quote } from "@/lib/openui/components/Quote"
 import { Sequence } from "@/lib/openui/components/Sequence"
@@ -1781,6 +1786,19 @@ const GROUP_NOTES: Record<string, string[]> = {
     "- text and source are plain strings only: no markdown, no links or URLs as links. Put author, document and section together in source, e.g. \"Jane Doe, Annual Report, section 3\".",
     "- Omit source when there is no attribution. Quote the words verbatim and without surrounding quotation marks; the component marks it as a quote.",
   ],
+  interactive: [
+    "- A Button asks for words: `Button(\"Explain this\", Action([@ToAssistant(\"Explain the week 3 dip\")]))` fills the reader's composer, unsent, and sends nothing by itself. A view cannot reach the server, so never write a Query or a Mutation.",
+    "- `Button(\"Label\")` with no action means `Action([@ToAssistant(\"Label\")])`; write the action's sentence for the words you want said when that is not the label.",
+    "- `$variables` are the view's own state: `$range = \"7d\"` declares one, a field binds it as its last argument, and anything in the program reads it as `$range`. Changing a field re-evaluates the program.",
+    "- Filter what you already drew rather than what you would have to fetch: `@Each(@Filter(rows, \"week\", \"==\", $range), \"r\", ...)` — the rows are in the program, and there is no tool to call.",
+    "- Values in $variables are strings, numbers or booleans, never arrays or objects.",
+    "- A field is named, not labelled: `Input(\"symbol\", \"e.g. AAPL\")`, and `FormControl(\"Symbol\", Input(...))` puts the label above it.",
+    "- A form is a run of FormControls and a Button that sends them: `Form(\"refactor\", Button(\"Ask about this\"), [field1, field2])`. What the reader typed travels with that button's message, so do not repeat it in prose.",
+    "- `rules` takes the builtin validators — `{required: true, email: true, minLength: 3}` — and a submit refuses to fire until they pass.",
+    "- `Slider(\"budget\", 0, 100, 5, $budget)` is a number from a range: name, min, max, then step and value. `Checkbox(\"deep\", \"Include subfolders\", $deep)` is one on/off choice.",
+    "- `@OpenUrl(\"https://...\")` opens a browser tab; use it only for a URL you were given, never one you guessed.",
+    "- Draw an interactive view only when the answer is a decision the reader makes before the next message — a range to look at, an item to act on, a command to confirm. Never draw a field whose value nothing reads.",
+  ],
   process: [
     "- Timeline for ordered steps or history, Plan for a proposed or in-progress task checklist.",
     "- Steps for instructions the reader follows in order (install, setup, a how-to); Timeline for events over time, Plan for a task checklist with status.",
@@ -1867,6 +1885,15 @@ export const openuiLibrary = createLibrary({
     Terminal,
     Sequence,
     Quadrant,
+    Button,
+    Form,
+    FormControl,
+    Input,
+    Textarea,
+    Select,
+    SelectItem,
+    Checkbox,
+    Slider,
   ],
   componentGroups: UI_GROUPS.map((group) => ({ name: group.label, components: group.components, notes: GROUP_NOTES[group.id] ?? [] })),
 })
