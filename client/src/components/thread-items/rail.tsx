@@ -77,8 +77,10 @@ export const InRail = React.createContext(false)
 export const STEP_GUTTER = "ps-7"
 
 /** Rows that are a step — a mark and a title — rather than a group header
-    (whose chevron owns the gutter) or the conversation (messages, notices). */
-const STEP_KINDS = new Set(["tool", "plan", "compaction", "autonomy", "shell", "voice", "thought", "subagent", "subagent-group"])
+    (whose chevron owns the gutter) or the conversation (messages, notices).
+    Not a thought: at the top level it is a card with no mark, and indenting
+    it lined it up with nothing — it sits with the prose it precedes. */
+const STEP_KINDS = new Set(["tool", "plan", "compaction", "autonomy", "shell", "voice", "subagent", "subagent-group"])
 export function isStepRow(kind: string): boolean {
   return STEP_KINDS.has(kind)
 }
