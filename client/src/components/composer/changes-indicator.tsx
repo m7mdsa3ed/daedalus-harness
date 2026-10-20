@@ -20,19 +20,19 @@ import { cn } from "@/lib/utils"
 
 /* Git's own letter for a changed file, and the tone the app already gives that
    outcome elsewhere. A letter rather than four icons: A/M/D/R is the shortest
-   thing that is unambiguous, and this list is read at 12px beside a path. */
+   thing that is unambiguous, and this list is read at `text-sm` beside a path. */
 const FILE_STATUS: Record<ChangedFile["status"], { letter: string; tone: string }> = {
-  added: { letter: "A", tone: "text-emerald-600 dark:text-emerald-400" },
-  modified: { letter: "M", tone: "text-amber-600 dark:text-amber-400" },
+  added: { letter: "A", tone: "text-success" },
+  modified: { letter: "M", tone: "text-warning" },
   deleted: { letter: "D", tone: "text-destructive" },
-  renamed: { letter: "R", tone: "text-sky-600 dark:text-sky-400" },
+  renamed: { letter: "R", tone: "text-primary" },
 }
 
 /** The two figures, in the one place they are spelled. */
 export function DiffCount({ added, removed }: { added: number; removed: number }) {
   return (
-    <span className="shrink-0 font-mono text-[11px] tabular-nums">
-      <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}
+    <span className="shrink-0 font-mono text-xs tabular-nums">
+      <span className="text-success">+{added}</span>{" "}
       <span className="text-destructive">−{removed}</span>
     </span>
   )
@@ -102,7 +102,7 @@ export function ChangesIndicator({
         </p>
         <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
           {changes.files.map((file) => (
-            <li key={file.path} className="flex items-baseline gap-2 text-xs">
+            <li key={file.path} className="flex items-baseline gap-2 text-sm">
               <span
                 className={cn("w-3 shrink-0 text-center font-mono font-semibold", FILE_STATUS[file.status].tone)}
                 title={file.status}
@@ -118,7 +118,7 @@ export function ChangesIndicator({
                 {shortPath(file.path, 40)}
               </span>
               {file.binary ? (
-                <span className="shrink-0 text-[11px] text-muted-foreground">binary</span>
+                <span className="shrink-0 text-xs text-muted-foreground">binary</span>
               ) : (
                 <DiffCount added={file.additions} removed={file.deletions} />
               )}

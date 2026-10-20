@@ -26,6 +26,7 @@ import type { ModelRole } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { EffortMeter, ModeIcon } from "@/components/composer/option-icons"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export interface Choice {
   value: string
@@ -192,7 +193,7 @@ export function MenuRow({
       {(choice.note || choice.recommended) && (
         <span
           className={cn(
-            "ml-auto shrink-0 pl-2 text-[11px]",
+            "ml-auto shrink-0 pl-2 text-xs",
             choice.note ? "text-destructive" : "text-muted-foreground"
           )}
         >
@@ -225,10 +226,7 @@ export function MenuRow({
               ...(index > 0 ? [<DropdownMenuSeparator key={`sep-${section.group ?? "ungrouped"}`} />] : []),
               ...(section.group
                 ? [
-                    <DropdownMenuLabel
-                      key={`lbl-${section.group}`}
-                      className="pt-1 pb-0.5 text-[11px] tracking-wide uppercase"
-                    >
+                    <DropdownMenuLabel key={`lbl-${section.group}`}>
                       {section.group}
                     </DropdownMenuLabel>,
                   ]
@@ -239,7 +237,7 @@ export function MenuRow({
           {/* Absence is said, because a filter that matches nothing and a
               catalog that is empty look identical as a blank popup. */}
           {shown.length === 0 && (
-            <DropdownMenuItem disabled className="text-xs">
+            <DropdownMenuItem disabled>
               No match
             </DropdownMenuItem>
           )}
@@ -415,7 +413,7 @@ export function MenuRowSkeleton({ label }: { label: string }) {
   return (
     <DropdownMenuItem disabled>
       <span className="flex-1">{label}</span>
-      <span className="h-3 w-14 animate-pulse rounded bg-muted" />
+      <Skeleton className="h-3 w-14" />
     </DropdownMenuItem>
   )
 }
@@ -517,7 +515,7 @@ export function HelperModelsSub({
           ) : (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled className="text-xs">
+              <DropdownMenuItem disabled>
                 Every role is assigned
               </DropdownMenuItem>
             </>
@@ -541,7 +539,7 @@ export const selectChoices = (option: acp.SessionConfigOption): Choice[] => {
 
 /** The composer's thread-settings chip. */
 export const PILL =
-  "h-5 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-muted/60 hover:text-foreground aria-expanded:bg-muted/60 data-popup-open:bg-muted/60 pointer-coarse:h-7 pointer-coarse:px-2 [&_[data-slot=avatar]]:size-3.5"
+  "h-6 gap-1 border-0 bg-transparent px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted data-popup-open:bg-muted pointer-coarse:h-8 pointer-coarse:px-2.5 [&_[data-slot=avatar]]:size-3.5"
 
 /**
  * The words on the settings chip, shared by the draft's trigger and the started
@@ -571,7 +569,7 @@ export function PillLabel({
   return (
     <span className="flex min-w-0 max-w-52 items-center gap-1.5 @panel-sm:max-w-80">
       <span className="flex min-w-0 items-baseline gap-1">
-        <span className="min-w-0 truncate font-medium text-foreground/90">{model}</span>
+        <span className="min-w-0 truncate font-medium text-foreground">{model}</span>
       </span>
       {effort && (
         <span className="flex shrink-0 items-center gap-1 capitalize" title={`Effort: ${effort}`}>

@@ -143,7 +143,7 @@ export function FontPicker({
             // `google:` with nothing after it, which resolves to nothing.
             onChange(event.target.value.trim() ? googleFontId(event.target.value) : DEFAULT_VALUE)
           }}
-          className="h-7 text-[11px]"
+          className="h-8"
         />
       )}
     </div>

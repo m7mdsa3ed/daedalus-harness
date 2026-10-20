@@ -19,9 +19,9 @@ export const Quote = defineComponent({
     const source = props.source?.trim()
     return (
       <Box>
-        <figure className={cn("m-0 min-w-0 border-l-2 border-primary/50 whitespace-pre-line", PAD)}>
+        <figure className={cn("m-0 min-w-0 border-l-2 border-primary whitespace-pre-line", PAD)}>
           <blockquote className={cn(BODY, "m-0 text-pretty italic")}>{text}</blockquote>
-          {source && <figcaption className={cn(META, "mt-1.5 @panel-sm:mt-2")}>{"— "}{source}</figcaption>}
+          {source && <figcaption className={cn(META, "mt-2")}>{"— "}{source}</figcaption>}
         </figure>
       </Box>
     )

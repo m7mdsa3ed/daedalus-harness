@@ -373,7 +373,7 @@ export function ChatPanel({
       <div
         ref={peek}
         aria-hidden
-        className="pointer-events-none absolute top-1/2 z-10 max-w-[60%] -translate-y-1/2 truncate rounded-full bg-foreground/85 px-3 py-1.5 text-xs font-medium text-background opacity-0 empty:hidden"
+        className="pointer-events-none absolute top-1/2 z-10 max-w-[60%] -translate-y-1/2 truncate rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background opacity-0 empty:hidden"
       />
       {/* Kept mounted and hidden with `display: none`, never unmounted. Dockview
           hides an inactive panel with `visibility`, which the thread dock's own

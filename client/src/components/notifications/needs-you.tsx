@@ -46,7 +46,7 @@ export function NeedsYou() {
     <Group label="Needs you" action={<StatusBadge tone="warn" dot={false}>{items.length}</StatusBadge>}>
       <ErrorNote error={loadError} onRetry={() => void query.refetch()} className="my-3" />
       {items.length > 0 && (
-        <ul className="-mx-3 divide-y divide-border/60 @panel-sm:-mx-4">
+        <ul className="-mx-3 divide-y @panel-sm:-mx-4">
           {items.map((item) => (
             <li key={`${item.sessionId}:${item.requestId}`}>
               <PendingCard item={item} />
@@ -83,17 +83,17 @@ function PendingCard({ item }: { item: PendingItem }) {
       />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate text-[13px] leading-5 font-semibold">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {item.threadTitle}
           </span>
-          <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground">
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
             {shortAge(item.askedAt)}
           </span>
         </div>
-        <p className="mt-0.5 line-clamp-3 text-xs leading-[1.4] text-pretty break-words text-muted-foreground">
+        <p className="mt-0.5 line-clamp-3 text-xs text-pretty break-words text-muted-foreground">
           {summary(item)}
         </p>
-        {project && <p className="mt-1 truncate text-[11px] leading-4 text-muted-foreground/80">{project}</p>}
+        {project && <p className="mt-1 truncate text-xs text-muted-foreground">{project}</p>}
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {allow && (
             <Button size={size} disabled={answer.isPending} onClick={() => send(allow.optionId)}>

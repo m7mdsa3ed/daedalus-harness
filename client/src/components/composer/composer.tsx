@@ -843,15 +843,10 @@ export function Composer({
     lock.submittable &&
     !files.uploading &&
     (text.trim().length > 0 || files.ready.length > 0)
-  /* Touch targets: the row was written at the 24px xs scale, which is a small
-     target to hold a thumb on. Under a coarse pointer every control grows to
-     the 32px icon-sm scale — still one language across the row, still inside
-     the composer card where the filled Send keeps the eye. */
-  const iconSize = "icon-xs"
-  /* The row's one scale, smaller than the app's xs: 20px under a mouse, 28px
-     under a finger. Every icon button in the composer takes it, so the row is
-     one size and the text box, not the chrome, is what the card is about. */
-  const iconFit = coarse ? "size-7 [&_svg]:size-3.5" : "size-5 [&_svg]:size-3"
+  /* The row's one scale, the Button's own: `icon-xs` (24px) under a mouse,
+     `icon-sm` (32px) under a finger. Every icon button in the composer takes
+     it, so the row is one size and one language. */
+  const iconSize = coarse ? "icon-sm" : "icon-xs"
   const steerChord = formatChord(steerChords[0] ?? "")
 
   const sendTitle = gated
@@ -1008,14 +1003,9 @@ export function Composer({
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-          It wears the theme's card treatment — `shadow-glass` (the card-level
-          `--app-shadow-glass` depth, not the overlay-level `-lg`), a
-          `ring-edge` hairline (the depth's own `--app-edge`), and the theme's own blur
-          and saturation (`--app-blur`, `--app-saturate`) — so the card reads
-          as the raised top of the composer unit in every palette, and a Flat
-          theme draws no shadow, exactly like the theme studio's own composer
-          preview. Focus shows the semantic ring (DESIGN: focus is a ring, not
-          a layout shift); the caret alone is not the signal. The only other
+          It wears the stock card edge (`ring-1 ring-foreground/10`) over the
+          composer's own ground, and focus shows the stock focus ring (a ring,
+          not a layout shift); the caret alone is not the signal. The only other
           ring is destructive, while voice is listening.
 
           It is also the drop target, and deliberately the whole card rather
@@ -1028,10 +1018,10 @@ export function Composer({
         aria-hidden={away || undefined}
         inert={away || undefined}
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-composer p-composer-pad shadow-glass ring-1 ring-edge focus-within:ring-2 focus-within:ring-focus-soft",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-composer p-composer-pad ring-1 ring-foreground/10 focus-within:ring-[3px] focus-within:ring-ring/50",
           /* The morph: clipped down to the pill's box (`--composer-pill` square,
              bottom right) while away. Open is a negative inset, not `none`, so the
-             two shapes interpolate and the 4rem shadow is not clipped off. A
+             two shapes interpolate. A
              clip moves no layout, so `--composer-dock-h` holds. The pill
              corner uses the theme's pill radius, so square themes stay square. */
           "transition-[clip-path,ring-color] duration-300 ease-out motion-reduce:transition-none",
@@ -1039,8 +1029,7 @@ export function Composer({
           away
             ? "[clip-path:inset(calc(100%_-_var(--composer-pill))_0_0_calc(100%_-_var(--composer-pill))_round_var(--app-radius-pill))] [&>*]:opacity-0"
             : "[clip-path:inset(-5rem)]",
-          /* Theme glass: the card token at card-level blur/saturation, the
-             same recipe `Card` wears — never a hardcoded blur or shadow. */
+          /* The composer's ground (theme glass, the recipe `Card` wears). */
           "bg-composer-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))]",
           voice.listening && "ring-1 ring-destructive/40"
         )}
@@ -1068,7 +1057,7 @@ export function Composer({
         }}
       >
         {dragging && (
-          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-composer border-2 border-dashed border-primary bg-composer-glass text-xs font-medium text-primary">
+          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-composer border-2 border-dashed border-primary bg-composer-glass text-sm font-medium text-primary">
             Drop to attach
           </div>
         )}
@@ -1087,7 +1076,6 @@ export function Composer({
             gated={gated}
             hasContent={hasContent}
             size={iconSize}
-            className={iconFit}
             onEnhanced={applySuggestion}
           />
         </div>
@@ -1128,9 +1116,9 @@ export function Composer({
           disabled={disabled || gated}
           className={cn(
             /* Same reading size as the transcript's messages: the card carries
-               the `--text-xs` bump `.thread-transcript` sets, so `text-xs`
-               here is 0.875rem and typing matches what is being answered. */
-            "w-full text-xs md:text-xs",
+               the `--text-sm` bump `.thread-transcript` sets, so typing matches
+               what is being answered. */
+            "w-full text-sm md:text-sm",
             /* Clear of the enhance button in the corner. */
             "pr-7",
             /* Keep the compact default, with more room available on demand. */
@@ -1140,14 +1128,9 @@ export function Composer({
             coarse && "[&_.tiptap]:min-h-11"
           )}
         />
-        {/* One control language across the row: every icon button shares the
-            plus button's size (`iconFit`: 20px, 28px under a finger) and true-
-            circle shape. Idle controls wear the theme's muted ground (the same
-            ground the enhance button wears), Send a primary disc and Stop a
-            destructive wash — both matching `buttonVariants` — so the row is
-            semantic tokens only, never a raw foreground tint. The row sits
-            INSIDE the composer card, so the ground and colour carry the meaning
-            instead of a border. */}
+        {/* One control language across the row: every icon button is the
+            Button's own `iconSize` — idle ones ghost, Send `default`, Stop
+            `destructive` — so the row is stock variants only. */}
         <div
           data-slot="composer-toolbar"
           className={cn("flex items-center gap-1 pt-1", coarse && "gap-1.5 pt-1.5")}
@@ -1155,7 +1138,6 @@ export function Composer({
           <ComposerAddMenu
             disabled={disabled || gated}
             size={iconSize}
-            className={iconFit}
             coarse={coarse}
             onFiles={files.add}
             onLibraryFile={files.addFromLibrary}
@@ -1203,7 +1185,7 @@ export function Composer({
               the server's own message in the title. */}
           {fim.status.kind === "failed" && (
             <span
-              className="flex shrink-0 items-center gap-1 px-1 text-[10px] text-muted-foreground"
+              className="flex shrink-0 items-center gap-1 px-1 text-xs text-muted-foreground"
               aria-live="polite"
               title={fim.status.error ?? "The completion lane did not answer"}
             >
@@ -1217,7 +1199,7 @@ export function Composer({
               is sent, not after. Only where the row has room for words. */}
           {long && (
             <span
-              className="hidden shrink-0 px-1 text-[10px] tabular-nums text-muted-foreground @panel-sm:inline"
+              className="hidden shrink-0 px-1 text-xs tabular-nums text-muted-foreground @panel-sm:inline"
               title={`${chars.toLocaleString()} characters, ${lines} lines — roughly ${formatTokens(Math.ceil(chars / 4))} tokens`}
             >
               {formatTokens(chars)} · ~{formatTokens(Math.ceil(chars / 4))} tok
@@ -1228,8 +1210,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                iconFit,
+                "text-muted-foreground",
                 expanded && "text-primary hover:text-primary"
               )}
               onClick={() => setExpanded((current) => !current)}
@@ -1245,8 +1226,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                iconFit,
+                "text-muted-foreground",
                 // Listening is a live state, so it stays coloured — but as text,
                 // not as a filled chip that reintroduces the chrome.
                 voice.listening && "animate-pulse text-destructive hover:text-destructive"
@@ -1264,8 +1244,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                iconFit,
+                "text-muted-foreground",
                 inCall && "text-primary hover:text-primary"
               )}
               onClick={() => (inCall ? endVoiceCall(sessionId) : startVoiceCall(sessionId))}
@@ -1290,8 +1269,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                iconFit,
+                "text-muted-foreground",
                 thread.paused && "text-primary hover:text-primary"
               )}
               onClick={() =>
@@ -1314,9 +1292,8 @@ export function Composer({
           )}
           {thread.turnActive && (
             <Button
-              variant="ghost"
+              variant="destructive"
               size={iconSize}
-              className={cn("shrink-0 rounded-key bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30", iconFit)}
               /* Stop and Escape are the same gesture, so they answer the same
                  way: a message the user has not seen land comes back into the
                  box rather than staying parked in a queue nothing will drain.
@@ -1336,13 +1313,10 @@ export function Composer({
           {/* Always drawn, even on an empty box: the affordance you aim at
               stays in the same place before and after you type, rather than
               appearing the moment the first character lands. When there is
-              nothing to send `canSend` is false, so it wears the disabled
-              ground — a muted disc — and fills primary the moment it becomes
-              sendable. Like the "+", it is round and the same size. */}
+              nothing to send `canSend` is false and it wears the stock disabled
+              look. Like the "+", it is round and the same size. */}
           <Button
-            variant="ghost"
             size={iconSize}
-            className={cn("shrink-0 rounded-key bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100", iconFit)}
             onClick={() => void send()}
             disabled={!canSend}
             loading={gated}

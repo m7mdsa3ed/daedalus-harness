@@ -12,7 +12,6 @@ import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
 import type { GitStatus } from "@/lib/workspace/git-api"
@@ -46,24 +45,18 @@ export function IconAction({
 }) {
   const coarse = useCoarsePointer()
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant={variant}
-            size="icon-xs"
-            disabled={disabled}
-            loading={loading}
-            onClick={onClick}
-            aria-label={label}
-            className={cn(coarse ? "size-11" : "size-6", className)}
-          >
-            {loading ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />}
-          </Button>
-        }
-      />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <Button
+      title={label}
+      variant={variant}
+      size="icon-xs"
+      disabled={disabled}
+      loading={loading}
+      onClick={onClick}
+      aria-label={label}
+      className={cn(coarse ? "size-11" : "size-6", className)}
+    >
+      {loading ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />}
+    </Button>
   )
 }
 
@@ -79,20 +72,20 @@ export function LineCounts({
 }) {
   if (!insertions && !deletions) return null
   return (
-    <span className={cn("shrink-0 font-mono text-[10px] tabular-nums", className)}>
-      {!!insertions && <span className="text-emerald-600 dark:text-emerald-400">+{insertions}</span>}
+    <span className={cn("shrink-0 font-mono text-xs tabular-nums", className)}>
+      {!!insertions && <span className="text-success">+{insertions}</span>}
       {!!insertions && !!deletions && " "}
-      {!!deletions && <span className="text-red-600 dark:text-red-400">−{deletions}</span>}
+      {!!deletions && <span className="text-destructive">−{deletions}</span>}
     </span>
   )
 }
 
 /** A status letter's colour — the working set's and the Review list's. */
 export const MARK_CLASS: Record<string, string> = {
-  A: "text-emerald-600 dark:text-emerald-400",
-  "?": "text-emerald-600 dark:text-emerald-400",
-  M: "text-amber-600 dark:text-amber-400",
-  D: "text-red-600 dark:text-red-400",
-  U: "text-red-600 dark:text-red-400",
-  R: "text-sky-600 dark:text-sky-400",
+  A: "text-success",
+  "?": "text-success",
+  M: "text-warning",
+  D: "text-destructive",
+  U: "text-destructive",
+  R: "text-primary",
 }

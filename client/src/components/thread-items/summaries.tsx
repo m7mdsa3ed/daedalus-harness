@@ -113,12 +113,12 @@ export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> })
           )
         })}
         {hidden > 0 && (
-          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted/80 text-[10px] font-medium text-foreground ring-2 ring-background">
+          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-foreground ring-2 ring-background">
             +{hidden}
           </span>
         )}
       </AvatarGroup>
-      <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60">
+      <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
         {tools.length} {tools.length === 1 ? "tool" : "tools"}
       </span>
     </div>
@@ -137,9 +137,9 @@ export function RunSummary({ summary }: { summary: ReturnType<typeof summarise> 
     <>
       {summary.map(({ verb, noun, count }, i) => (
         <React.Fragment key={`${verb}:${noun}`}>
-          {i > 0 && <span className="text-muted-foreground/40">{" · "}</span>}
+          {i > 0 && <span className="text-muted-foreground">{" · "}</span>}
           {verb.charAt(0).toUpperCase() + verb.slice(1)}{" "}
-          <span className="text-foreground/80">{count}</span> {pluralNoun(noun, count)}
+          <span className="text-foreground">{count}</span> {pluralNoun(noun, count)}
         </React.Fragment>
       ))}
     </>

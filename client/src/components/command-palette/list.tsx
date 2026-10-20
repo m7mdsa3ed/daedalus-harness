@@ -39,6 +39,7 @@ import { CheckIcon } from "lucide-react"
 
 import { CommandMenuItem, type CommandMenuItemData } from "@/components/ui/command-menu"
 import { Shortcut } from "@/components/shortcut"
+import { Badge as UiBadge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 import {
@@ -127,11 +128,11 @@ export function toMenuItems(groups: PaletteGroup[]): CommandMenuItemData[] {
 }
 
 const BADGE_TONE: Record<BadgeTone, string> = {
-  neutral: "bg-muted text-muted-foreground",
+  neutral: "",
   primary: "bg-primary/10 text-primary",
-  warn: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  warn: "bg-warning/10 text-warning",
   danger: "bg-destructive/10 text-destructive",
-  success: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  success: "bg-success/10 text-success",
 }
 
 export function Row({ item }: { item: PaletteItem }) {
@@ -157,7 +158,7 @@ export function Row({ item }: { item: PaletteItem }) {
           {item.fresh && (
             <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="New" />
           )}
-          <span className={cn("truncate leading-5", item.running && "harness-shimmer text-primary")}>
+          <span className={cn("truncate", item.running && "harness-shimmer text-primary")}>
             {item.title}
           </span>
           {item.badges?.map((badge, index) => (
@@ -165,7 +166,7 @@ export function Row({ item }: { item: PaletteItem }) {
           ))}
         </span>
         {item.subtitle != null && item.subtitle !== "" && (
-          <span className="truncate text-[11px] leading-4 text-muted-foreground">{item.subtitle}</span>
+          <span className="truncate text-xs text-muted-foreground">{item.subtitle}</span>
         )}
       </span>
 
@@ -176,7 +177,7 @@ export function Row({ item }: { item: PaletteItem }) {
           {item.chord ? (
             <Shortcut
               chord={item.chord}
-              keyClassName="h-5 min-w-5 bg-background/60 text-[11px] text-muted-foreground group-aria-selected/row:bg-background group-aria-selected/row:text-foreground"
+              keyClassName="group-aria-selected/row:bg-background"
             />
           ) : (
             <CheckIcon
@@ -200,8 +201,8 @@ function Note({ item }: { item: PaletteItem }) {
     <CommandMenuItem
       value={item.id}
       className={cn(
-        "h-auto min-h-0 cursor-default gap-2 py-2.5 text-xs",
-        item.noteTone === "warn" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+        "h-auto min-h-0 cursor-default gap-2 py-2.5 text-sm",
+        item.noteTone === "warn" ? "text-warning" : "text-muted-foreground",
         // `disabled` fades a row that could have been picked; a note was never
         // going to be, so the fade is only noise over text meant to be read.
         "!opacity-100"
@@ -224,7 +225,7 @@ function Tile({ children }: { children: React.ReactNode }) {
     <span
       aria-hidden="true"
       className={cn(
-        "flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground ring-1 ring-border/50 ring-inset",
+        "flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground",
         "transition-colors group-aria-selected/row:bg-background group-aria-selected/row:text-foreground",
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "[&_img]:size-5"
@@ -237,14 +238,9 @@ function Tile({ children }: { children: React.ReactNode }) {
 
 function Badge({ badge }: { badge: PaletteBadge }) {
   return (
-    <span
-      className={cn(
-        "shrink-0 rounded-pill px-1.5 py-px text-[10px] font-medium leading-4",
-        badge.className ?? BADGE_TONE[badge.tone ?? "neutral"]
-      )}
-    >
+    <UiBadge variant="secondary" className={cn("shrink-0", badge.className ?? BADGE_TONE[badge.tone ?? "neutral"])}>
       {badge.label}
-    </span>
+    </UiBadge>
   )
 }
 
@@ -253,7 +249,7 @@ function Badge({ badge }: { badge: PaletteBadge }) {
     it — the part that is short and always wanted — stays. */
 function Meta({ parts }: { parts: PaletteMeta[] }) {
   return (
-    <span className="flex max-w-[45%] min-w-0 shrink items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+    <span className="flex max-w-[45%] min-w-0 shrink items-center gap-1.5 text-xs text-muted-foreground">
       {parts.map((part, index) => (
         <React.Fragment key={index}>
           {index > 0 && <span className="shrink-0 opacity-50">·</span>}

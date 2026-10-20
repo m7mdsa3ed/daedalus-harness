@@ -21,7 +21,7 @@ import {
   useMarkNotificationsRead,
 } from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
-import { GLASS_SURFACE } from "@/lib/header-chrome"
+import { Empty } from "@/components/empty"
 import { cn } from "@/lib/utils"
 import { FOOTER_ICON } from "@/components/sidebar/scale"
 
@@ -75,7 +75,7 @@ export function NotificationIconButton() {
           </Button>
         }
       />
-      {/* Frosted — see `lib/header-chrome`. `align="start"` and not `end`: the
+      {/* `align="start"` and not `end`: the
           button is at the sidebar's inner edge, so a 24rem card aligned to its
           end opens off the left of the screen and gets shoved back by collision
           handling. From the start edge it opens across the content, which is
@@ -86,7 +86,7 @@ export function NotificationIconButton() {
         align="start"
         side={isMobile ? "bottom" : "top"}
         sideOffset={8}
-        className={cn(GLASS_SURFACE, "w-[min(24rem,calc(var(--float-w)-1rem))] p-0")}
+        className="w-[min(24rem,calc(var(--float-w)-1rem))] gap-0 p-0"
       >
         {/* `overflow-hidden` is not decoration: the popup is `rounded-2xl` and
             this column fills it edge to edge, so without it the header's rule,
@@ -97,15 +97,15 @@ export function NotificationIconButton() {
               one action that belongs with a glance. The padding is the row's
               own (`items.tsx`, the compact face) so the header, the notices
               and the footer stand in one rhythm rather than three. */}
-          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
+          <div className="flex items-center gap-2 border-b px-3 py-2.5">
             <div className="min-w-0 flex-1">
-              <p className="text-[13px] leading-5 font-semibold">Notifications</p>
+              <p className="text-sm font-medium">Notifications</p>
               {!inbox && isPending ? (
                 /* The summary is read, not guessed: a skeleton claims the line
                    "Loading…" did and does not move when the count lands. */
                 <Skeleton className="mt-0.5 h-3 w-24" />
               ) : (
-                <p className="text-[11px] leading-4 text-muted-foreground tabular-nums">
+                <p className="text-xs text-muted-foreground tabular-nums">
                   {!inbox
                     ? "Loading…"
                     : items.length === 0
@@ -123,7 +123,7 @@ export function NotificationIconButton() {
               <Button
                 variant="ghost"
                 size="xs"
-                className="shrink-0 text-muted-foreground hover:text-foreground"
+                className="shrink-0 text-muted-foreground"
                 onClick={() => markRead.mutate(undefined)}
                 title="Mark all read"
               >
@@ -139,14 +139,11 @@ export function NotificationIconButton() {
                  one yet while the list is still arriving. */
               <NotificationRowsSkeleton rows={5} />
             ) : shown.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
-                <BellIcon className="size-5 text-muted-foreground/50" />
-                <p className="text-xs text-muted-foreground">
-                  {inbox ? "You're all caught up." : "Loading…"}
-                </p>
-              </div>
+              <Empty icon={BellIcon} className="m-3">
+                {inbox ? "You're all caught up." : "Loading…"}
+              </Empty>
             ) : (
-              <ul className="divide-y divide-border/60">
+              <ul className="divide-y">
                 {shown.map((n) => (
                   <li key={n.id}>
                     <NotificationRow notification={n} />
@@ -166,12 +163,12 @@ export function NotificationIconButton() {
             /* The focus ring is `inset`, like the landing page's own full-bleed
                rows: a ring drawn outside a row that reaches the card's edge is
                a ring the `overflow-hidden` above clips off. */
-            className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-3 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+            className="flex shrink-0 items-center justify-between gap-2 border-t px-3 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
           >
             <span className="truncate">
               {rest > 0 ? `${rest} more in the inbox` : "All notifications"}
             </span>
-            <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
+            <ChevronRightIcon className="size-4 shrink-0" />
           </button>
         </div>
       </PopoverContent>

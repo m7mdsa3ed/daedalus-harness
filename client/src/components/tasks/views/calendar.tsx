@@ -2,6 +2,7 @@ import * as React from "react"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { COLOR_DOT } from "@/lib/boards"
 import type { Task } from "@/lib/tasks-board"
 import { startOfDay } from "@/lib/tasks-view"
@@ -61,26 +62,27 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
   return (
     <div className="flex min-h-0 flex-1 flex-col p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       <div className="mb-2 flex items-center gap-2">
-        <button type="button" onClick={() => shift(-1)} aria-label="Previous month" className="grid size-8 place-items-center rounded-lg hover:bg-accent">
-          <ChevronLeft className="size-4" />
-        </button>
-        <button type="button" onClick={() => shift(1)} aria-label="Next month" className="grid size-8 place-items-center rounded-lg hover:bg-accent">
-          <ChevronRight className="size-4" />
-        </button>
-        <h2 className="text-sm font-semibold">{label}</h2>
-        <button
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => shift(-1)} aria-label="Previous month">
+          <ChevronLeft />
+        </Button>
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => shift(1)} aria-label="Next month">
+          <ChevronRight />
+        </Button>
+        <h2 className="text-sm font-medium">{label}</h2>
+        <Button
           type="button"
+          variant="outline"
+          size="xs"
           onClick={() => {
             const d = new Date()
             setCursor({ year: d.getFullYear(), month: d.getMonth() })
           }}
-          className="rounded-pill border px-2 py-0.5 text-xs hover:bg-accent"
         >
           Today
-        </button>
+        </Button>
         {undated > 0 && <span className="ml-auto text-xs text-muted-foreground">{undated} without a due date</span>}
       </div>
-      <div className="grid grid-cols-7 text-center text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="grid grid-cols-7 text-center text-xs font-medium text-muted-foreground">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
           <div key={d} className="py-1">
             {d}
@@ -95,10 +97,10 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
           return (
             <div
               key={day}
-              className={cn("group flex min-h-16 flex-col gap-0.5 bg-card p-1 sm:min-h-24", !inMonth && "bg-muted/40 text-muted-foreground", day < today && "bg-card/70")}
+              className={cn("group flex min-h-16 flex-col gap-0.5 bg-card p-1 sm:min-h-24", !inMonth && "bg-muted text-muted-foreground")}
             >
               <div className="flex items-center justify-between">
-                <span className={cn("grid size-5 place-items-center rounded-full text-[11px] tabular-nums", isToday && "bg-primary font-semibold text-primary-foreground")}>
+                <span className={cn("grid size-5 place-items-center rounded-full text-xs tabular-nums", isToday && "bg-primary font-medium text-primary-foreground")}>
                   {new Date(day).getDate()}
                 </span>
                 <button
@@ -108,7 +110,7 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
                     const title = window.prompt("New task title")
                     if (title?.trim()) void onCreate({ title: title.trim(), dueAt: day + 12 * 60 * 60_000 })
                   }}
-                  className="grid size-5 place-items-center rounded opacity-0 hover:bg-accent group-hover:opacity-100 focus-visible:opacity-100"
+                  className="grid size-5 place-items-center rounded-md opacity-0 outline-none hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >
                   <Plus className="size-3" />
                 </button>
@@ -122,7 +124,7 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
                     onClick={() => onOpen(task)}
                     title={task.title}
                     className={cn(
-                      "flex items-center gap-1 truncate rounded-md border-l-2 bg-muted/60 px-1 py-0.5 text-left text-[11px] hover:bg-accent",
+                      "flex items-center gap-1 truncate rounded-md border-l-2 bg-muted px-1 py-0.5 text-left text-xs hover:bg-accent",
                       task.completedAt != null && "line-through opacity-60",
                       ctx.selected.has(task.id) && "ring-1 ring-primary",
                     )}
@@ -138,7 +140,7 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
                 )
               })}
               {list.length > MAX_PER_DAY && (
-                <span className="px-1 text-[10px] text-muted-foreground">+{list.length - MAX_PER_DAY} more</span>
+                <span className="px-1 text-xs text-muted-foreground">+{list.length - MAX_PER_DAY} more</span>
               )}
             </div>
           )

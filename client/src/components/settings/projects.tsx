@@ -87,7 +87,7 @@ const PROJECT_COLUMNS: ColumnDef<Project, unknown>[] = [
       <TitleCell
         title={row.original.name}
         subtitle={
-          <span className="font-mono text-[11px]" title={row.original.cwd}>
+          <span className="font-mono text-xs" title={row.original.cwd}>
             {row.original.cwd}
           </span>
         }
@@ -108,7 +108,7 @@ const PROJECT_COLUMNS: ColumnDef<Project, unknown>[] = [
       row.original.previewUrl ? (
         <span className="inline-flex max-w-full items-center gap-1 text-primary">
           <GlobeIcon className="size-3 shrink-0" />
-          <span className="truncate font-mono text-xs">{row.original.previewUrl}</span>
+          <span className="truncate font-mono text-sm">{row.original.previewUrl}</span>
         </span>
       ) : null,
   },
@@ -123,7 +123,7 @@ const PROJECT_COLUMNS: ColumnDef<Project, unknown>[] = [
           <SquareTerminal className="size-3.5" /> {n}
         </span>
       ) : (
-        <span className="text-muted-foreground/50">—</span>
+        <span className="text-muted-foreground">—</span>
       )
     },
   },
@@ -415,7 +415,7 @@ export function ProjectForm({
                 onChange={(e) => set({ logoUrl: e.target.value })}
                 value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
                 placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.svg"}
-                className="min-w-0 flex-1 font-mono text-xs"
+                className="min-w-0 flex-1 font-mono text-sm"
               />
               <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
             </div>
@@ -432,7 +432,7 @@ export function ProjectForm({
                 value={form.previewUrl}
                 onChange={(e) => set({ previewUrl: e.target.value })}
                 placeholder="http://localhost:5173"
-                className="min-w-0 flex-1 font-mono text-xs"
+                className="min-w-0 flex-1 font-mono text-sm"
               />
             </div>
           </Field>
@@ -573,7 +573,7 @@ function RulesSection({ project }: { project: Project | null }) {
       action={projectId ? <Count n={rules.length} /> : undefined}
     >
       {!projectId ? (
-        <p className="text-xs text-muted-foreground">Save the project first to manage its rules.</p>
+        <p className="text-sm text-muted-foreground">Save the project first to manage its rules.</p>
       ) : (
         <div className="space-y-3">
           <ErrorNote error={error} />
@@ -597,7 +597,7 @@ function RulesSection({ project }: { project: Project | null }) {
                   value={rule.content}
                   onChange={(e) => updateField(rule.id, "content", e.target.value)}
                   rows={3}
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                   placeholder="Standing instruction for the agent…"
                 />
               </div>
@@ -673,7 +673,7 @@ function HelpersSection({ project }: { project: Project | null }) {
       action={projectId ? <Count n={helpers.length} /> : undefined}
     >
       {!projectId ? (
-        <p className="text-xs text-muted-foreground">Save the project first to manage helper commands.</p>
+        <p className="text-sm text-muted-foreground">Save the project first to manage helper commands.</p>
       ) : (
         <>
           {helpers.length === 0 ? (
@@ -693,7 +693,7 @@ function HelpersSection({ project }: { project: Project | null }) {
             />
           )}
           <div ref={formRef} className={cn("space-y-3 p-3", INSET)}>
-            <div className="text-xs font-medium">
+            <div className="text-sm font-medium">
               {editing ? "Edit helper command" : "New helper command"}
             </div>
             <HelperForm
@@ -718,7 +718,7 @@ const HELPER_COLUMNS: ColumnDef<HelperCommand, unknown>[] = [
     cell: ({ row }) => (
       <TitleCell
         title={row.original.name}
-        subtitle={<span className="font-mono text-[11px]" title={row.original.command}>{row.original.command}</span>}
+        subtitle={<span className="font-mono text-xs" title={row.original.command}>{row.original.command}</span>}
       />
     ),
   },
@@ -733,7 +733,7 @@ const HELPER_COLUMNS: ColumnDef<HelperCommand, unknown>[] = [
     header: "Runs in",
     meta: { className: "hidden @panel-lg:table-cell max-w-40" },
     cell: ({ row }) =>
-      row.original.cwd ? <span className="block truncate font-mono text-xs text-muted-foreground">{row.original.cwd}</span> : null,
+      row.original.cwd ? <span className="block truncate font-mono text-sm text-muted-foreground">{row.original.cwd}</span> : null,
   },
   {
     id: "flags",
@@ -849,15 +849,19 @@ function KnowledgeSection({ project }: { project: Project | null }) {
       }
     >
       {!projectId ? (
-        <p className="text-xs text-muted-foreground">Save the project first to manage its knowledge base.</p>
+        <p className="text-sm text-muted-foreground">Save the project first to manage its knowledge base.</p>
       ) : (
         <>
           {error && (
-            <Notice tone="error">
-              {error}{" "}
-              <button type="button" className="underline" onClick={() => void refetch()}>
-                Try again
-              </button>
+            <Notice
+              tone="error"
+              action={
+                <Button type="button" size="xs" variant="outline" onClick={() => void refetch()}>
+                  Try again
+                </Button>
+              }
+            >
+              {error}
             </Notice>
           )}
           {rows.length === 0 ? (
@@ -918,7 +922,7 @@ const KNOWLEDGE_COLUMNS: ColumnDef<KnowledgeEntry, unknown>[] = [
     header: "Tags",
     meta: { className: "hidden @panel-md:table-cell max-w-48" },
     cell: ({ row }) => (
-      <span className="block truncate text-xs text-muted-foreground">{row.original.tags.join(", ")}</span>
+      <span className="block truncate text-sm text-muted-foreground">{row.original.tags.join(", ")}</span>
     ),
   },
 ]

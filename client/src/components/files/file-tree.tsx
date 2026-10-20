@@ -77,7 +77,7 @@ export function FolderTree({
           style={{ paddingLeft: depth * 14 + 4 }}
           className={cn(
             "group flex h-7 cursor-pointer items-center gap-1 rounded-md pr-2 text-sm pointer-coarse:h-10",
-            "hover:bg-muted/60 data-drop:bg-primary/15 data-drop:ring-1 data-drop:ring-primary/40",
+            "hover:bg-muted data-drop:bg-primary/10 data-drop:ring-1 data-drop:ring-primary",
             value === folder.id && "bg-muted font-medium",
             off && "cursor-not-allowed opacity-40 hover:bg-transparent"
           )}
@@ -86,7 +86,7 @@ export function FolderTree({
             type="button"
             tabIndex={-1}
             aria-label={isOpen ? `Collapse ${folder.name}` : `Expand ${folder.name}`}
-            className={cn("flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground", kids.length === 0 && "invisible")}
+            className={cn("flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground", kids.length === 0 && "invisible")}
             onClick={(e) => {
               e.stopPropagation()
               toggle(folder.id)
@@ -114,7 +114,7 @@ export function FolderTree({
         onClick={() => onSelect(null)}
         className={cn(
           "flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm pointer-coarse:h-10",
-          "hover:bg-muted/60 data-drop:bg-primary/15 data-drop:ring-1 data-drop:ring-primary/40",
+          "hover:bg-muted data-drop:bg-primary/10 data-drop:ring-1 data-drop:ring-primary",
           value === null && "bg-muted font-medium"
         )}
       >

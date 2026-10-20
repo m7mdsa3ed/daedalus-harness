@@ -17,6 +17,7 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import { MessageSquareQuoteIcon, MessageSquareTextIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { useCoarsePointer } from "@/hooks/use-device"
 
 interface Anchor {
@@ -89,11 +90,11 @@ export function QuoteSelection({
         translate: below ? "-50% 0" : "-50% -100%",
       }}
     >
-      <div className="flex gap-1">
+      <ButtonGroup>
         <Button
           size="sm"
           variant="outline"
-          className="h-7 gap-1.5 bg-popover px-2 text-xs shadow-md"
+          className="bg-popover"
           // Keep the selection: a mousedown on a button would collapse it first.
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
@@ -109,7 +110,7 @@ export function QuoteSelection({
           <Button
             size="sm"
             variant="outline"
-            className="h-7 gap-1.5 bg-popover px-2 text-xs shadow-md"
+            className="bg-popover"
             title="Ask in a new thread linked to this one (⌘/Ctrl-click: open as tab)"
             onMouseDown={(event) => event.preventDefault()}
             onClick={(event) => {
@@ -122,7 +123,7 @@ export function QuoteSelection({
             Aside
           </Button>
         )}
-      </div>
+      </ButtonGroup>
     </div>,
     document.body
   )

@@ -4,7 +4,7 @@
    on — which is what makes the look one edit in this file rather than twenty.
 
    ── The style: cards and surfaces ──
-   Every group is a **card** - a filled, bordered, softly-shadowed box whose
+   Every group is a **card** - the registry Card's ground and ring - whose
    rows are divided by hairlines - under a heading (`SectionHead`) that always
    sits above it, on every width. See "The kit" below for the four page shapes.
    A settings page is a list of lists, and a card is what says where one list
@@ -32,14 +32,16 @@ import * as React from "react"
 import { ArrowLeft, Search, type LucideIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Field as FieldRoot, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { FilePicker } from "@/components/files/file-picker"
 import { useFileActions } from "@/lib/files"
 import { logoFromFile } from "@/lib/logo-file"
 import { reportError } from "@/lib/errors"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import type { InlineError } from "@/lib/errors"
 import { KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { cn } from "@/lib/utils"
@@ -81,7 +83,7 @@ export function PageHeader({
         {Icon && (
           <span
             aria-hidden
-            className="hidden size-11 shrink-0 items-center justify-center rounded-xl border bg-card text-primary shadow-sm @panel-sm:flex"
+            className="hidden size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground @panel-sm:flex"
           >
             <Icon className="size-5" />
           </span>
@@ -123,9 +125,9 @@ export function SectionHead({
   return (
     <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 px-1">
       <div className="min-w-0 flex-1 basis-56">
-        {label && <h2 className="text-sm font-semibold tracking-tight">{label}</h2>}
+        {label && <h2 className="font-heading text-base font-medium">{label}</h2>}
         {hint && (
-          <p className="mt-0.5 max-w-[68ch] text-xs/relaxed text-pretty text-muted-foreground">{hint}</p>
+          <p className="mt-1 max-w-[68ch] text-sm text-pretty text-muted-foreground">{hint}</p>
         )}
       </div>
       {action && <div className="flex shrink-0 items-center gap-1.5">{action}</div>}
@@ -158,7 +160,7 @@ export function Section({
     answers to the card's width, and `overflow-hidden` so a full-bleed child
     (a table, a scroller that reaches out with `-mx-3`) is clipped to the
     card's radius instead of squaring off its corners. */
-const CARD = "@container min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm"
+const CARD = "@container min-w-0 overflow-hidden rounded-2xl bg-card text-card-foreground ring-1 ring-foreground/10"
 
 /** The first of four page shapes (see "The kit" below): a heading over one
     card whose rows are divided by hairlines. */
@@ -175,7 +177,7 @@ export function Group({
 }) {
   return (
     <Section label={label} hint={hint} action={action}>
-      <div className={cn(CARD, "divide-y divide-border/60 px-3 @panel-sm:px-4")}>{children}</div>
+      <div className={cn(CARD, "divide-y px-3 @panel-sm:px-4")}>{children}</div>
     </Section>
   )
 }
@@ -217,7 +219,7 @@ export function Row({
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{title}</div>
           {subtitle && (
-            <div className="mt-0.5 text-xs/relaxed break-words text-muted-foreground">{subtitle}</div>
+            <div className="mt-0.5 text-sm break-words text-muted-foreground">{subtitle}</div>
           )}
         </div>
       </div>
@@ -238,7 +240,7 @@ export function Row({
     is two identical frames one inside the other and reads as a rendering bug.
     A recessed ground with a lighter hairline says "inside" instead. One token
     so every nested box in every page agrees. */
-export const INSET = "rounded-lg border border-border/60 bg-muted/30"
+export const INSET = "rounded-xl border bg-muted/50"
 
 export function EmptyCard({ icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
   return (
@@ -250,11 +252,11 @@ export function EmptyCard({ icon, text, action }: { icon: LucideIcon; text: stri
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-2">
-      <Label className="text-xs font-medium">{label}</Label>
+    <FieldRoot>
+      <FieldLabel>{label}</FieldLabel>
       {children}
-      {hint && <p className="max-w-[68ch] text-[11px]/relaxed text-muted-foreground">{hint}</p>}
-    </div>
+      {hint && <FieldDescription className="max-w-[68ch]">{hint}</FieldDescription>}
+    </FieldRoot>
   )
 }
 
@@ -352,8 +354,8 @@ export function FormPageHeader({
 export type Tone = "default" | "ok" | "warn" | "bad"
 const TONE_TEXT: Record<Tone, string> = {
   default: "text-foreground",
-  ok: "text-emerald-600 dark:text-emerald-400",
-  warn: "text-amber-600 dark:text-amber-400",
+  ok: "text-success",
+  warn: "text-warning",
   bad: "text-destructive",
 }
 
@@ -373,12 +375,12 @@ export function StatStrip({
       )}
     >
       {stats.map((stat) => (
-        <div key={stat.label} className="min-w-0 rounded-xl border bg-card px-4 py-3 shadow-sm">
-          <dt className="truncate text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{stat.label}</dt>
-          <dd className={cn("mt-1 truncate text-xl font-semibold tabular-nums", TONE_TEXT[stat.tone ?? "default"])}>
+        <div key={stat.label} className="min-w-0 rounded-2xl bg-card px-4 py-3 text-card-foreground ring-1 ring-foreground/10">
+          <dt className="truncate text-sm text-muted-foreground">{stat.label}</dt>
+          <dd className={cn("mt-1 truncate text-2xl font-semibold tabular-nums", TONE_TEXT[stat.tone ?? "default"])}>
             {stat.value}
           </dd>
-          {stat.hint && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{stat.hint}</p>}
+          {stat.hint && <p className="mt-0.5 truncate text-xs text-muted-foreground">{stat.hint}</p>}
         </div>
       ))}
     </dl>
@@ -411,16 +413,17 @@ export function Toolbar({
   return (
     <div className="mb-4 flex flex-col gap-3 @panel-sm:flex-row @panel-sm:items-center">
       {onSearch && (
-        <div className="relative min-w-0 flex-1 @panel-sm:max-w-sm">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <Input
+        <InputGroup className="h-11 min-w-0 flex-1 @panel-sm:h-9 @panel-sm:max-w-sm">
+          <InputGroupAddon>
+            <Search aria-hidden />
+          </InputGroupAddon>
+          <InputGroupInput
             value={search ?? ""}
             onChange={(event) => onSearch(event.target.value)}
             placeholder={placeholder}
             aria-label={placeholder.replace(/\.{3}|\u2026$/, "")}
-            className="h-11 pl-9 @panel-sm:h-9"
           />
-        </div>
+        </InputGroup>
       )}
       {chips && onChip && (
         <Segmented
@@ -438,7 +441,7 @@ export function Toolbar({
 /** The one grid: 1 column on a phone, as many 18rem-plus columns as fit. */
 export function CardGrid({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18rem),1fr))]", className)}>
+    <div className={cn("grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18rem),1fr))]", className)}>
       {children}
     </div>
   )
@@ -482,7 +485,7 @@ export function ItemCard({
           aria-hidden
           className={cn(
             "flex size-9 shrink-0 items-center justify-center rounded-lg",
-            active ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground"
+            active ? "bg-primary/10 text-primary" : "bg-muted text-foreground"
           )}
         >
           {React.isValidElement(icon) ? icon : (() => { const Icon = icon as LucideIcon; return <Icon className="size-4" /> })()}
@@ -490,15 +493,15 @@ export function ItemCard({
       )}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{title}</span>
-        {subtitle && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{subtitle}</span>}
+        {subtitle && <span className="mt-0.5 block truncate text-sm text-muted-foreground">{subtitle}</span>}
       </span>
     </>
   )
   return (
     <article
       className={cn(
-        "@container flex min-w-0 flex-col rounded-xl border bg-card shadow-sm transition-colors",
-        active && "border-primary/50 bg-primary/[0.03]"
+        "@container flex min-w-0 flex-col overflow-hidden rounded-2xl bg-card text-card-foreground ring-1 ring-foreground/10 transition-colors",
+        active && "ring-2 ring-primary/40"
       )}
     >
       <div className="flex flex-1 flex-col gap-3 p-4">
@@ -508,7 +511,7 @@ export function ItemCard({
             <button
               type="button"
               onClick={onOpen}
-              className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               {head}
             </button>
@@ -517,11 +520,11 @@ export function ItemCard({
           )}
         </div>
         {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
-        {preview && <div className="line-clamp-2 text-xs/relaxed text-muted-foreground">{preview}</div>}
+        {preview && <div className="line-clamp-2 text-sm text-muted-foreground">{preview}</div>}
         {children}
       </div>
       {actions && (
-        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-border/60 px-3 py-2">{actions}</div>
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t bg-muted/50 px-3 py-2">{actions}</div>
       )}
     </article>
   )
@@ -555,10 +558,9 @@ export interface TabItem {
   hint?: string
 }
 
-/** The one in-page switch: a track of tabs under the page header, on every page
-    and at every width. A recessed ground with the current tab raised out of it,
-    the same thumb `Segmented` wears - both answer "which one of these", and the
-    icons and counts are the part a *page* needs that a value picker does not.
+/** The one in-page switch: a row of underline tabs under the page header, on
+    every page and at every width — the registry `Tabs` line variant's look,
+    over our own buttons, because `nav` mode is anchors and not a tablist.
 
     It is **not sticky**. A page's tabs belong to the top of the page and scroll
     away with it: nothing floats over the rows somebody is reading, and the app
@@ -617,7 +619,7 @@ export function TabBar({
       {...(nav ? { "aria-label": label } : { role: "tablist", "aria-label": label })}
       onKeyDown={nav ? undefined : onKeyDown}
       className={cn(
-        "mb-8 flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-border/60 bg-muted/50 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "mb-8 flex max-w-full items-center gap-1 overflow-x-auto border-b [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         className
       )}
     >
@@ -637,26 +639,17 @@ export function TabBar({
             onClick={() => onChange(item.id)}
             title={item.hint}
             className={cn(
-              "relative inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring @panel-sm:h-9",
-              /* The thumb is the card's own ground with a hairline around it:
-                 `--card` and `--muted` are two per cent apart in a dark palette,
-                 so a fill alone leaves the current tab unfindable there. */
-              active
-                ? "border-border bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
+              "relative inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 @panel-sm:h-9",
+              "after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
+              active ? "text-foreground after:opacity-100" : "text-muted-foreground hover:text-foreground"
             )}
           >
-            {Icon && (
-              <Icon
-                className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground/70")}
-                aria-hidden
-              />
-            )}
+            {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
             {item.label}
             {item.count !== undefined && (
-              <span className="min-w-4 rounded-full bg-foreground/10 px-1.5 text-center text-[11px] font-medium tabular-nums">
+              <Badge variant="secondary" className="px-1.5 tabular-nums">
                 {item.count}
-              </span>
+              </Badge>
             )}
             {item.dot && <span aria-hidden className="size-1.5 rounded-full bg-destructive" />}
           </button>
@@ -715,8 +708,8 @@ export function FormShell({
 }
 
 /** The one way to pick among a few short words: Light | Dark | System, All |
-    Connected | Error, Export | Import. A pill track with a raised thumb;
-    `radiogroup` with arrow keys. More than ~5 options, or long labels, is a
+    Connected | Error, Export | Import. The registry `Tabs` default look (a muted
+    track, the pick on the background) over a `radiogroup` with arrow keys. More than ~5 options, or long labels, is a
     `Select`, not a longer track. Scrolls sideways rather than wrapping. */
 export function Segmented<T extends string>({
   label,
@@ -746,7 +739,7 @@ export function Segmented<T extends string>({
       aria-disabled={disabled || undefined}
       onKeyDown={onKeyDown}
       className={cn(
-        "flex min-w-0 max-w-full gap-0.5 overflow-x-auto rounded-lg bg-muted/60 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "flex min-w-0 max-w-full items-center overflow-x-auto rounded-4xl bg-muted p-[3px] text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         disabled && "opacity-50",
         className
       )}
@@ -767,11 +760,13 @@ export function Segmented<T extends string>({
             disabled={disabled || option.disabled}
             onClick={() => onChange(option.value)}
             className={cn(
-              "inline-flex h-10 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none @panel-sm:h-8",
-              selected ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              "inline-flex h-10 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-4xl border border-transparent px-3 text-sm font-medium whitespace-nowrap outline-none transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 @panel-sm:h-7.5",
+              selected
+                ? "bg-background text-foreground dark:border-input dark:bg-input/30"
+                : "text-foreground/60 hover:text-foreground dark:text-muted-foreground dark:hover:text-foreground"
             )}
           >
-            {Icon && <Icon className="size-3.5 shrink-0" aria-hidden />}
+            {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
             {option.label}
             {option.count !== undefined && <span className="tabular-nums text-muted-foreground">{option.count}</span>}
           </button>
@@ -808,13 +803,15 @@ export function ChoiceTiles<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(choice.value)}
             className={cn(
-              "flex min-h-20 min-w-0 flex-col items-stretch justify-center gap-1.5 rounded-lg border p-2.5 text-center text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              selected ? "border-primary/60 bg-primary/5 text-foreground shadow-sm" : "border-border/60 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              "flex min-h-20 min-w-0 flex-col items-stretch justify-center gap-1.5 rounded-xl border p-3 text-center text-sm font-medium outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              selected
+                ? "border-primary/30 bg-primary/5 text-foreground dark:border-primary/20 dark:bg-primary/10"
+                : "text-muted-foreground hover:bg-input/40 hover:text-foreground"
             )}
           >
-            {choice.preview ?? (Icon && <Icon className={cn("mx-auto size-5", selected && "text-primary")} aria-hidden />)}
+            {choice.preview ?? (Icon && <Icon className="mx-auto size-5" aria-hidden />)}
             <span className="truncate">{choice.label}</span>
-            {choice.hint && <span className="truncate text-[11px] font-normal text-muted-foreground">{choice.hint}</span>}
+            {choice.hint && <span className="truncate text-xs font-normal text-muted-foreground">{choice.hint}</span>}
           </button>
         )
       })}
@@ -824,15 +821,15 @@ export function ChoiceTiles<T extends string>({
 
 export type StatusTone = "ok" | "warn" | "bad" | "info" | "neutral"
 const STATUS_CLASS: Record<StatusTone, string> = {
-  ok: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-  warn: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  bad: "bg-destructive/10 text-destructive",
+  ok: "bg-success/10 text-success",
+  warn: "bg-warning/10 text-warning",
+  bad: "",
   info: "bg-primary/10 text-primary",
-  neutral: "bg-muted text-muted-foreground",
+  neutral: "",
 }
 const STATUS_DOT: Record<StatusTone, string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
+  ok: "bg-success",
+  warn: "bg-warning",
   bad: "bg-destructive",
   info: "bg-primary",
   neutral: "bg-muted-foreground/60",
@@ -840,13 +837,15 @@ const STATUS_DOT: Record<StatusTone, string> = {
 
 /** A state, said one way everywhere: connected, needs auth, default, missing.
     A dot, a word, a tone - never a bare colour (the word is the accessible
-    half) and never a one-off `bg-emerald-500` in a page. */
+    half) and never a one-off `bg-emerald-500` in a page. The registry `Badge`
+    (`destructive` for bad, `secondary` tinted by `--success`/`--warning`/
+    `--primary` for the rest). */
 export function StatusBadge({ tone = "neutral", dot = true, children }: { tone?: StatusTone; dot?: boolean; children: React.ReactNode }) {
   return (
-    <span className={cn("inline-flex h-5 w-fit shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium whitespace-nowrap", STATUS_CLASS[tone])}>
+    <Badge variant={tone === "bad" ? "destructive" : "secondary"} className={STATUS_CLASS[tone]}>
       {dot && <span aria-hidden className={cn("size-1.5 rounded-full", STATUS_DOT[tone])} />}
       {children}
-    </span>
+    </Badge>
   )
 }
 
@@ -940,9 +939,9 @@ export function Picker<T extends { id: string; name: string }>({
     shown.length === 0 ? (
       <Empty>Nothing matches “{query.trim()}”.</Empty>
     ) : (
-      <div className={cn("max-h-64 divide-y divide-border/60 overflow-y-auto", INSET)}>
+      <div className={cn("max-h-64 divide-y overflow-y-auto", INSET)}>
         {shown.map((item) => (
-          <label key={item.id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-accent/50">
+          <label key={item.id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-muted">
             <Checkbox
               className="mt-0.5 shrink-0"
               checked={selected.includes(item.id)}
@@ -953,7 +952,7 @@ export function Picker<T extends { id: string; name: string }>({
             {icon && <div className="mt-0.5 shrink-0">{icon(item)}</div>}
             <span className="min-w-0 flex-1">
               <span className="block text-sm break-words">{item.name}</span>
-              <span className="mt-0.5 block font-mono text-[11px] break-all text-muted-foreground">
+              <span className="mt-0.5 block font-mono text-xs break-all text-muted-foreground">
                 {subtitle(item)}
               </span>
             </span>

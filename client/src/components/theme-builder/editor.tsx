@@ -57,7 +57,6 @@ import { ButtonGroup, ButtonGroupSeparator } from "@/components/ui/button-group"
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { subscribeSyncStatus, syncStatusSnapshot, type SyncStatus } from "@/lib/custom-theme-sync"
 import {
   contrastRatio,
@@ -108,22 +107,22 @@ export function ThemeEditorPage() {
 
 const SYNC_CHIP: Record<
   SyncStatus,
-  { title: string; hint: string; className: string }
+  { title: string; hint: string; variant: "secondary" | "outline" | "destructive" }
 > = {
   synced: {
     title: "Saved",
     hint: "Every change is saved to this server, so the theme follows the account and not the browser.",
-    className: "border-border text-muted-foreground",
+    variant: "secondary",
   },
   syncing: {
     title: "Saving…",
     hint: "Writing your changes to the server.",
-    className: "border-primary/40 text-foreground",
+    variant: "outline",
   },
   offline: {
     title: "Not synced",
     hint: "The server is unreachable — edits stay on this device and are retried when it recovers.",
-    className: "border-destructive/50 text-destructive",
+    variant: "destructive",
   },
 }
 
@@ -136,19 +135,11 @@ function ThemeSyncChip() {
   const status = React.useSyncExternalStore(subscribeSyncStatus, syncStatusSnapshot, syncStatusSnapshot)
   const chip = SYNC_CHIP[status]
   const Icon = status === "syncing" ? CloudUpload : status === "offline" ? CloudOff : Check
-  const trigger = (
-    <span
-      className={cn("flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium", chip.className)}
-    >
-      <Icon className={cn("size-3", status === "syncing" && "animate-pulse")} />
-      {chip.title}
-    </span>
-  )
   return (
-    <Tooltip>
-      <TooltipTrigger render={trigger} />
-      <TooltipContent>{chip.hint}</TooltipContent>
-    </Tooltip>
+    <Badge variant={chip.variant} title={chip.hint}>
+      <Icon className={cn(status === "syncing" && "animate-pulse")} />
+      {chip.title}
+    </Badge>
   )
 }
 
@@ -302,14 +293,14 @@ function ThemeEditor({
                 <FieldSet key={group.label} className="gap-3">
                   <div className="flex items-end justify-between gap-3">
                     <div className="min-w-0">
-                      <FieldLegend variant="label" className="mb-0 text-xs">
+                      <FieldLegend variant="label" className="mb-0 text-sm">
                         {group.label}
                       </FieldLegend>
-                      <FieldDescription className="text-[11px]">{group.hint}</FieldDescription>
+                      <FieldDescription className="text-xs">{group.hint}</FieldDescription>
                     </div>
                     {/* Column headers, once per group: the two fields on every
                         row below are the same token in the two modes. */}
-                    <div className="hidden shrink-0 gap-2 text-[11px] tracking-wide text-muted-foreground uppercase @panel-sm:flex">
+                    <div className="hidden shrink-0 gap-2 text-xs font-medium text-muted-foreground @panel-sm:flex">
                       {MODES.map((mode) => (
                         <span key={mode} className="w-32 text-center">
                           {mode}
@@ -328,7 +319,7 @@ function ThemeEditor({
                         className="flex-col items-stretch gap-1.5 rounded-lg py-2 @panel-sm:flex-row @panel-sm:items-center @panel-sm:gap-2 @panel-sm:py-1.5"
                       >
                         <ItemContent className="min-w-0">
-                          <ItemTitle className="text-xs font-normal" title={`--${token}`}>
+                          <ItemTitle className="text-sm font-normal" title={`--${token}`}>
                             {label}
                           </ItemTitle>
                         </ItemContent>
@@ -401,8 +392,8 @@ function ThemeEditor({
             than through it. */}
         <aside
           className={cn(
-            "order-first sticky top-[calc(var(--app-header-h,0px)+0.5rem)] z-20 min-w-0 rounded-xl border bg-surface/95 p-2 shadow-glass backdrop-blur",
-            "@panel-lg:order-none @panel-lg:top-[calc(var(--app-header-h,0px)+0.75rem)] @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h,0px)-1rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2 @panel-lg:shadow-none @panel-lg:backdrop-blur-none"
+            "order-first sticky top-[calc(var(--app-header-h,0px)+0.5rem)] z-20 min-w-0 rounded-xl border bg-background p-2",
+            "@panel-lg:order-none @panel-lg:top-[calc(var(--app-header-h,0px)+0.75rem)] @panel-lg:max-h-[calc(var(--panel-h,100svh)-var(--app-header-h,0px)-1rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2"
           )}
         >
           <PreviewPane theme={theme} worn={worn} />
@@ -419,7 +410,7 @@ function SectionHeader({ section }: { section: SectionId }) {
   return (
     <div className="flex items-baseline gap-2 border-b pb-2">
       <h3 className="text-sm font-medium">{entry.label}</h3>
-      <p className="text-[11px] text-muted-foreground">{entry.hint}</p>
+      <p className="text-xs text-muted-foreground">{entry.hint}</p>
     </div>
   )
 }

@@ -264,7 +264,7 @@ export function AskAgentPicker({
                     aria-checked={on}
                     onClick={() => pickAgent(a.id)}
                     className={cn(
-                      "inline-flex h-8 items-center gap-1.5 rounded-pill border px-3 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                      "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
                       on ? cn(ROW_ON, "text-foreground") : cn(ROW_OFF, "text-muted-foreground hover:text-foreground")
                     )}
                   >
@@ -306,14 +306,14 @@ export function AskAgentPicker({
 
           {profile && chatModels(profile.models).length > 0 && (
             <div className="flex items-center gap-3">
-              <span className="w-12 shrink-0 text-xs text-muted-foreground">Model</span>
+              <span className="w-12 shrink-0 text-sm text-muted-foreground">Model</span>
               <Select
                 value={choice?.model ?? DEFAULT}
                 onValueChange={(value) =>
                   setChoice({ profileId: profile.id, ...(value && value !== DEFAULT ? { model: value } : {}) })
                 }
               >
-                <SelectTrigger size="sm" className="min-w-0 flex-1 text-xs">
+                <SelectTrigger size="sm" className="min-w-0 flex-1">
                   <SelectValue>
                     <span className="flex min-w-0 items-center gap-2">
                       {(model ?? defaultModel) && (
@@ -342,7 +342,7 @@ export function AskAgentPicker({
             </div>
           )}
 
-          <label className="flex cursor-pointer items-center gap-2.5 text-xs text-muted-foreground">
+          <label className="flex cursor-pointer items-center gap-2.5 text-sm text-muted-foreground">
             <Switch size="sm" checked={remember} onCheckedChange={setRemember} />
             Use this for every ask to {agent?.name ?? "this agent"} in this thread
           </label>

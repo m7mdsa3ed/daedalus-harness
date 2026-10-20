@@ -7,6 +7,7 @@
    this is the quick menu on the Threads label. */
 import { ListFilter, SlidersHorizontal } from "lucide-react"
 import { useNavigate } from "react-router"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,8 +46,6 @@ export const WITHIN_LABELS: Record<SidebarWithin, string> = {
   month: "Last 30 days",
 }
 
-const HEADING = "text-[11px] uppercase tracking-wide text-muted-foreground"
-
 /** Sort and filter, in one small menu on the Threads label — the controls
     Claude Code desktop puts at the top of its session list. The trigger
     lights up while a filter is on so a short list is never mistaken for an
@@ -66,17 +65,15 @@ export function ViewMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-xs"
             title="Sort and filter"
-            className={cn(
-              "grid size-5 place-items-center rounded-sm transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:text-sidebar-foreground",
-              filtered ? "text-primary hover:text-primary" : "text-muted-foreground"
-            )}
+            className={cn(filtered ? "text-primary" : "text-muted-foreground")}
           />
         }
       >
-        <ListFilter className="size-3.5" />
+        <ListFilter />
         <span className="sr-only">Sort and filter threads</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start" className="w-48">
@@ -84,7 +81,7 @@ export function ViewMenu({
             context and throws outside one, so it sits inside the radio group
             it names rather than loose in the content. */}
         <DropdownMenuRadioGroup value={sort} onValueChange={(value) => setLayoutOption("sidebarSort", value as SidebarSort)}>
-          <DropdownMenuLabel className={HEADING}>Sort</DropdownMenuLabel>
+          <DropdownMenuLabel>Sort</DropdownMenuLabel>
           {(Object.keys(SORT_LABELS) as SidebarSort[]).map((value) => (
             <DropdownMenuRadioItem key={value} value={value}>
               {SORT_LABELS[value]}
@@ -93,7 +90,7 @@ export function ViewMenu({
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={filter} onValueChange={(value) => setLayoutOption("sidebarFilter", value as SidebarFilter)}>
-          <DropdownMenuLabel className={HEADING}>Show</DropdownMenuLabel>
+          <DropdownMenuLabel>Show</DropdownMenuLabel>
           {(Object.keys(FILTER_LABELS) as SidebarFilter[]).map((value) => (
             <DropdownMenuRadioItem key={value} value={value}>
               {FILTER_LABELS[value]}
@@ -102,7 +99,7 @@ export function ViewMenu({
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={within} onValueChange={(value) => setLayoutOption("sidebarWithin", value as SidebarWithin)}>
-          <DropdownMenuLabel className={HEADING}>Active in</DropdownMenuLabel>
+          <DropdownMenuLabel>Active in</DropdownMenuLabel>
           {(Object.keys(WITHIN_LABELS) as SidebarWithin[]).map((value) => (
             <DropdownMenuRadioItem key={value} value={value}>
               {WITHIN_LABELS[value]}

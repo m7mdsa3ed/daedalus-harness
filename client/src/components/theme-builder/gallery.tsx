@@ -37,11 +37,11 @@ export function ThemeGallery() {
   return (
     <>
       <div className="flex items-baseline justify-between gap-2 p-2">
-        <p className="text-xs font-medium text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           {BUILTIN_THEMES.length} built-in
           {customThemes.length > 0 ? `· ${customThemes.length} saved on this server` : ""}
         </p>
-        <p className="min-w-0 truncate text-[11px] text-muted-foreground">
+        <p className="min-w-0 truncate text-xs text-muted-foreground">
           Built-ins ship with the app; your themes are saved to the server and followed across devices.
         </p>
       </div>

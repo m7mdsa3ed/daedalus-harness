@@ -3,10 +3,12 @@
    empty, a scan that found nothing, a filter that matched none of it. One box
    in the two densities the app actually uses:
 
-   — `sm` is the inline one, inside a settings form or a picker: a rounded-lg
+   It is the registry's `Empty` with its dashed edge switched on (`border`):
+
+   — `sm` is the inline one, inside a settings form or a picker: a compact
      line of text with a dashed edge, no glyph. It is a placeholder *in a
      layout* rather than a destination, so it stays small;
-   — `lg` is the page one: rounded-xl, a glyph, room to breathe and, where the
+   — `lg` is the page one: the stock padding, the stock icon tile, room to breathe and, where the
      emptiness is a dead end, an action to get out of it (`EmptyCard` is this
      size, and has been for a while — it now delegates here rather than being a
      second spelling of the same box).
@@ -16,28 +18,17 @@
    nothing", a `Notice` says "something happened" — so the two never share a
    component even though both are bordered boxes. */
 import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
 
+import {
+  Empty as EmptyRoot,
+  EmptyContent,
+  EmptyDescription,
+  EmptyMedia,
+} from "@/components/ui/empty"
 import { cn } from "@/lib/utils"
 
-const emptyVariants = cva(
-  "flex flex-col items-center border border-dashed text-center text-muted-foreground",
-  {
-    variants: {
-      size: {
-        sm: "gap-1.5 rounded-lg px-3 py-4 text-xs",
-        lg: "gap-3 rounded-xl px-6 py-12 text-sm",
-      },
-    },
-    defaultVariants: {
-      size: "sm",
-    },
-  }
-)
-
-export interface EmptyProps
-  extends React.ComponentProps<"div">,
-    VariantProps<typeof emptyVariants> {
+export interface EmptyProps extends React.ComponentProps<"div"> {
+  size?: "sm" | "lg" | null
   /** A glyph above the words. Usually only the `lg` box has one. */
   icon?: React.ElementType
   /** The way out, where the emptiness is a dead end (a filter that matched
@@ -53,16 +44,22 @@ export function Empty({
   children,
   ...props
 }: EmptyProps) {
+  const lg = size === "lg"
   return (
-    <div className={cn(emptyVariants({ size }), className)} {...props}>
-      {Icon && (
-        <Icon
-          aria-hidden
-          className={cn("shrink-0 text-muted-foreground/60", size === "lg" ? "size-6" : "size-4")}
-        />
-      )}
-      <p className="text-pretty">{children}</p>
-      {action}
-    </div>
+    <EmptyRoot
+      className={cn("flex-none border", lg ? "gap-3 p-12" : "gap-2 p-4", className)}
+      {...props}
+    >
+      {Icon &&
+        (lg ? (
+          <EmptyMedia variant="icon" className="mb-0">
+            <Icon aria-hidden />
+          </EmptyMedia>
+        ) : (
+          <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        ))}
+      <EmptyDescription className="text-pretty">{children}</EmptyDescription>
+      {action && <EmptyContent>{action}</EmptyContent>}
+    </EmptyRoot>
   )
 }

@@ -18,7 +18,8 @@
    Results are drawn in the order they are given (`always: true`): the threads
    by our own score, the messages by the server's. */
 import * as React from "react"
-import { Loader2, MessageSquarePlusIcon, SearchXIcon } from "lucide-react"
+import { Spinner } from "@/components/ui/spinner"
+import { MessageSquarePlusIcon, SearchXIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { useSidebar } from "@/components/ui/sidebar"
@@ -161,12 +162,12 @@ export function SearchPage({ threadScoped = false }: { threadScoped?: boolean })
       if (query.length < MIN_QUERY)
         return note("min", `Type ${MIN_QUERY} characters or more to search inside transcripts.`)
       if (loading)
-        return note("loading", "Searching transcripts…", <Loader2 className="animate-spin" />)
+        return note("loading", "Searching transcripts…", <Spinner />)
       if (failed) return note("failed", "Couldn't reach the search index.", <SearchXIcon />)
       return note("none", `No message matches “${query}”.`)
     }
     // Results are in, and a newer request is already out.
-    if (loading) return note("updating", "Updating…", <Loader2 className="animate-spin" />)
+    if (loading) return note("updating", "Updating…", <Spinner />)
     return null
   }
 

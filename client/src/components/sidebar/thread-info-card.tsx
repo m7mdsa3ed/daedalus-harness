@@ -110,8 +110,8 @@ export function ThreadInfoCard({
   }
   if (trash && session.deletedAt) rows.push(["Deleted", when(session.deletedAt)])
   return (
-    <div className="flex flex-col gap-2 text-left text-xs">
-      <p className="text-[13px] font-medium leading-snug">{session.title}</p>
+    <div className="flex flex-col gap-2 text-left text-sm">
+      <p className="text-sm font-medium leading-snug">{session.title}</p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {rows.map(([label, value]) => (
           <React.Fragment key={label}>

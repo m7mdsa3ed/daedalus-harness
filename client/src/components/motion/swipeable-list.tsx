@@ -192,7 +192,7 @@ function SwipeActionButton({
       onClick={() => onAction(action, side)}
       className={cn(
         "group flex h-full shrink-0 items-center justify-center outline-none",
-        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "focus-visible:ring-[3px] focus-visible:ring-ring/50",
         "disabled:pointer-events-none disabled:opacity-50",
         className,
       )}
@@ -604,7 +604,7 @@ function SwipeableListRow({
         onClickCapture={onSurfaceClickCapture}
         style={{ x }}
         className={cn(
-          "relative z-10 min-h-[72px] cursor-grab touch-pan-y select-none rounded-xl border border-border bg-card px-4 py-3 shadow-sm active:cursor-grabbing",
+          "relative z-10 min-h-18 cursor-grab touch-pan-y select-none rounded-xl bg-card px-4 py-3 ring-1 ring-foreground/10 active:cursor-grabbing",
           classNames?.surface,
         )}
       >

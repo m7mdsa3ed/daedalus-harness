@@ -57,7 +57,7 @@ function ServerRows({ servers }: { servers: ServerSettings[] }) {
         <ServerIcon />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate">{server.name}</span>
-          <span className="truncate font-mono text-[11px] text-muted-foreground">
+          <span className="truncate font-mono text-xs text-muted-foreground">
             {serverHost(server.url)}
           </span>
         </span>

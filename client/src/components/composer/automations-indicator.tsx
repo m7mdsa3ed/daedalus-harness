@@ -62,11 +62,11 @@ export function AutomationsIndicator({ sessionId }: { sessionId: string }) {
               <li key={a.id}>
                 <button
                   type="button"
-                  className="block w-full rounded-md px-1.5 py-1 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="block w-full rounded-lg px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   onClick={() => go(automationPath(a.id))}
                 >
                   <span className={cn("block truncate text-foreground", !a.enabled && "text-muted-foreground")}>{a.name}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  <span className="block truncate text-xs text-muted-foreground">
                     {!a.enabled ? "Paused" : next !== null ? `Next ${untilLabel(next)}` : triggersLine(triggers[a.id]) || "…"}
                   </span>
                 </button>

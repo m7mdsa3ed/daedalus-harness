@@ -43,7 +43,7 @@ export function copyText(text: string) {
     inside a subagent (`SubagentTranscript`) and the steps inside a run
     (`workflow-run`) hang off it, and those two files may not import each other
     (see the header comment on workflow-run). */
-export const RAIL_CLASS = "mt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 border-s border-border/60 ps-2.5"
+export const RAIL_CLASS = "mt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 border-s ps-2.5"
 
 /* ── Direction ── a step reads in the direction of its own text: an Arabic
    title puts the mark on the right and the title flush beside it, as one unit,
@@ -87,11 +87,11 @@ export function StepMeta({ parts }: { parts: React.ReactNode[] }) {
   const shown = parts.filter((part) => part !== null && part !== undefined && part !== false && part !== "")
   if (shown.length === 0) return null
   return (
-    <span className="flex h-6 shrink-0 items-center gap-1 text-[11px] tabular-nums text-muted-foreground/60">
+    <span className="flex h-6 shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
       {shown.map((part, i) => (
         <React.Fragment key={i}>
           {i > 0 && (
-            <span aria-hidden className="text-muted-foreground/30">
+            <span aria-hidden className="text-muted-foreground">
               ·
             </span>
           )}
@@ -327,8 +327,8 @@ export const StepRow = React.memo(function StepRow({
               : active
                 ? "border-primary"
                 : status === "completed"
-                  ? "border-emerald-500"
-                  : "border-border/50"
+                  ? "border-success"
+                  : ""
           )
       )}
     >
@@ -354,10 +354,10 @@ export const StepRow = React.memo(function StepRow({
           // of the right edge that messages run to.
           "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-150",
           plain && "mx-0 w-full px-0 py-0 hover:bg-transparent",
-          expandable && !plain && "hover:bg-muted/40",
+          expandable && !plain && "hover:bg-muted",
           compact && "py-0",
           minimal && "py-0",
-          toolLayout === "rail" && "mx-0 w-full hover:bg-muted/30"
+          toolLayout === "rail" && "mx-0 w-full hover:bg-muted"
         )}
       >
         <button
@@ -377,7 +377,7 @@ export const StepRow = React.memo(function StepRow({
                 "harness-part-in relative flex h-6 w-5 shrink-0 items-center justify-center",
                 failed
                   ? "text-destructive"
-                  : (iconAccent ?? (active ? "text-primary" : "text-muted-foreground/60"))
+                  : (iconAccent ?? (active ? "text-primary" : "text-muted-foreground"))
               )}
             >
               {/* The accent's tile: a coloured mark wears its own tinted
@@ -389,7 +389,7 @@ export const StepRow = React.memo(function StepRow({
                   aria-hidden
                   className={cn(
                     "absolute size-5 rounded-full",
-                    failed ? "bg-destructive/10" : (iconChip ?? "bg-muted/50")
+                    failed ? "bg-destructive/10" : (iconChip ?? "bg-muted")
                   )}
                 />
               )}
@@ -424,7 +424,7 @@ export const StepRow = React.memo(function StepRow({
               <div className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-1.5">
                 <span
                   className={cn(
-                    "min-w-0 truncate text-xs leading-6",
+                    "min-w-0 truncate text-sm leading-6",
                     mono && "font-mono",
                     failed ? "text-destructive" : "text-muted-foreground",
                     active && "harness-shimmer"
@@ -438,7 +438,7 @@ export const StepRow = React.memo(function StepRow({
                 <span
                   dir="auto"
                   className={cn(
-                    "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
+                    "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-xs leading-5 text-muted-foreground",
                     d === "rtl" ? "text-right" : "text-left",
                     mono && "font-mono"
                   )}

@@ -193,7 +193,7 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
               <Icon className="size-4 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
                 <span className="truncate">{KIND_META[kind].label}</span>
-                <span className="truncate text-[10px] text-muted-foreground">{KIND_META[kind].blurb}</span>
+                <span className="truncate text-xs text-muted-foreground">{KIND_META[kind].blurb}</span>
               </span>
             </DropdownMenuItem>
           )
@@ -327,7 +327,7 @@ function ScheduleFields({
           checked={trigger.condition?.gitChangedSince === "lastRun"}
           onCheckedChange={(checked) => onPatch({ condition: checked ? { gitChangedSince: "lastRun" } : null })}
         />
-        <span className="min-w-0 text-xs">
+        <span className="min-w-0 text-sm">
           <span className="block font-medium text-foreground">Only if the code has changed</span>
           <span className="text-muted-foreground">
             Compare the project's HEAD against what the last run saw, and write a skipped run
@@ -398,7 +398,7 @@ function ApiFields({
           </Button>
         )}
       </div>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         A POST body of <code className="font-mono">{`{"text": "…"}`}</code> reaches the agent as the
         caller's words, quoted and never interpreted as instructions.
       </p>
@@ -435,7 +435,7 @@ function GitFields({
       </div>
       <Field label="Paths" hint="One glob per line. Empty means any path in the project.">
         <Textarea
-          className="font-mono text-xs"
+          className="font-mono text-sm"
           rows={3}
           placeholder={"src/**\ndocs/*.md"}
           value={paths}
@@ -452,7 +452,7 @@ function CopyLine({ value, mono }: { value: string; mono?: boolean }) {
   return (
     <div className="flex items-center gap-2">
       <code
-        className={`min-w-0 flex-1 truncate rounded-md bg-background px-2 py-1.5 text-xs ${mono ? "font-mono" : ""}`}
+        className={`min-w-0 flex-1 truncate rounded-md bg-background px-2 py-1.5 text-sm ${mono ? "font-mono" : ""}`}
       >
         {value}
       </code>

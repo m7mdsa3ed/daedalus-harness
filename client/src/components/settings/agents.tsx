@@ -192,7 +192,7 @@ export function AgentsPage() {
             <TitleCell
               title={row.original.name}
               subtitle={
-                <span className="font-mono text-[11px]" title={command}>
+                <span className="font-mono text-xs" title={command}>
                   {command}
                 </span>
               }
@@ -207,7 +207,7 @@ export function AgentsPage() {
         cell: ({ row }) => {
           const s = byAgent.get(row.original.id)
           return s?.installed && !s.error ? (
-            <span className="font-mono text-xs">{s.agent?.version ? `v${s.agent.version}` : "unknown"}</span>
+            <span className="font-mono text-sm">{s.agent?.version ? `v${s.agent.version}` : "unknown"}</span>
           ) : (
             <span className="text-muted-foreground">—</span>
           )
@@ -288,12 +288,12 @@ export function AgentsPage() {
             </div>
             <div className="min-w-0 flex-1 space-y-1">
               <div className="truncate text-sm font-medium">{agent.name}</div>
-              <div className="truncate font-mono text-[11px] text-muted-foreground">{commandLine(agent)}</div>
+              <div className="truncate font-mono text-xs text-muted-foreground">{commandLine(agent)}</div>
               <div className="flex flex-wrap gap-1">
                 <StatusBadges status={status} pending={pending} busy={installing.has(agent.id)} showVersion />
               </div>
               {status && (!status.installed || status.error) && (
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   <StatusLine status={status} />
                 </div>
               )}
@@ -335,7 +335,7 @@ export function AgentsPage() {
           </div>
         }
       />
-      <p className="-mt-5 mb-8 text-xs text-muted-foreground">
+      <p className="-mt-5 mb-8 text-sm text-muted-foreground">
         {status ? (
           <>
             Harness speaks ACP protocol v{status.acp.protocolVersion} through SDK{" "}
@@ -447,7 +447,7 @@ function InstallLine({ install }: { install: string }) {
   }
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <code className="rounded bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{install}</code>
+      <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{install}</code>
       <Button
         type="button"
         variant="ghost"
@@ -467,7 +467,7 @@ function InstallLine({ install }: { install: string }) {
    was found; for a missing one, what was not found and the install line. */
 function StatusLine({ status }: { status: AgentStatus }) {
   if (status.installed && !status.error) {
-    return status.path ? <div className="mt-0.5 truncate font-mono opacity-70">{status.path}</div> : null
+    return status.path ? <div className="mt-0.5 truncate font-mono text-muted-foreground">{status.path}</div> : null
   }
   return (
     <div className="mt-1 space-y-1">
@@ -494,7 +494,7 @@ function AgentDetail({
   uses: number
 }) {
   return (
-    <div className="grid gap-x-8 gap-y-3 py-1 text-xs @panel-md:grid-cols-[auto_minmax(0,1fr)]">
+    <div className="grid gap-x-8 gap-y-3 py-1 text-sm @panel-md:grid-cols-[auto_minmax(0,1fr)]">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
         <dt className="text-muted-foreground">ID</dt>
         <dd className="truncate font-mono">{agent.id}</dd>
@@ -613,7 +613,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Input
               value={form.command}
               onChange={(e) => set({ command: e.target.value })}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
               required
             />
           </Field>
@@ -622,7 +622,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
               value={form.args}
               onChange={(e) => set({ args: e.target.value })}
               rows={2}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
             />
           </Field>
           <Field
@@ -633,7 +633,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
               value={form.env}
               onChange={(e) => set({ env: e.target.value })}
               rows={8}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
               spellCheck={false}
             />
           </Field>
@@ -648,7 +648,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Input
               value={form.install}
               onChange={(e) => set({ install: e.target.value })}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
               placeholder="npm install -g …"
             />
           </Field>
@@ -656,7 +656,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Input
               value={form.icon}
               onChange={(e) => set({ icon: e.target.value })}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
               placeholder="https://… or data:image/png;base64,…"
             />
           </Field>

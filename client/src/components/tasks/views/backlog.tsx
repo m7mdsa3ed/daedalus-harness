@@ -2,6 +2,9 @@ import * as React from "react"
 import { CircleCheck, MoreHorizontal, Pencil, Play, Plus, Rocket, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Empty } from "@/components/empty"
+import { StatusBadge } from "@/components/settings/primitives"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,9 +37,9 @@ function SprintHeader({ sprint, tasks, statuses, ops }: { sprint: Sprint; tasks:
   const daysLeft = sprint.endAt != null ? Math.ceil((sprint.endAt - Date.now()) / 86_400_000) : null
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden items-center gap-2 text-[10px] normal-case text-muted-foreground sm:inline-flex">
-        {sprint.state === "active" && <span className="rounded-pill bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-600">Active</span>}
-        {sprint.state === "closed" && <span className="rounded-pill bg-muted px-1.5 py-0.5 font-semibold">Closed</span>}
+      <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:inline-flex">
+        {sprint.state === "active" && <StatusBadge tone="ok" dot={false}>Active</StatusBadge>}
+        {sprint.state === "closed" && <StatusBadge dot={false}>Closed</StatusBadge>}
         <span className="tabular-nums">
           {fmt(sprint.startAt)} → {fmt(sprint.endAt)}
         </span>
@@ -45,29 +48,29 @@ function SprintHeader({ sprint, tasks, statuses, ops }: { sprint: Sprint; tasks:
         )}
         {p.total > 0 && (
           <span className="inline-flex items-center gap-1.5 tabular-nums" title={`${p.done}/${p.total} done · ${p.donePoints}/${p.points} pts`}>
-            <span className="h-1.5 w-16 overflow-hidden rounded-pill bg-muted">
-              <span className="block h-full rounded-pill bg-emerald-500" style={{ width: `${pct}%` }} />
+            <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+              <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
             </span>
             {pct}%
           </span>
         )}
       </span>
       {sprint.state === "planned" && (
-        <button type="button" onClick={() => ops.onStart(sprint)} className="inline-flex h-7 items-center gap-1 rounded-pill bg-primary px-2.5 text-xs font-medium text-primary-foreground hover:bg-primary/90">
-          <Play className="size-3" /> Start
-        </button>
+        <Button type="button" size="xs" onClick={() => ops.onStart(sprint)}>
+          <Play /> Start
+        </Button>
       )}
       {sprint.state === "active" && (
-        <button type="button" onClick={() => ops.onComplete(sprint)} className="inline-flex h-7 items-center gap-1 rounded-pill border px-2.5 text-xs font-medium hover:bg-accent">
-          <CircleCheck className="size-3" /> Complete
-        </button>
+        <Button type="button" size="xs" variant="outline" onClick={() => ops.onComplete(sprint)}>
+          <CircleCheck /> Complete
+        </Button>
       )}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <button type="button" aria-label={`${sprint.name} options`} className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
-              <MoreHorizontal className="size-4" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={`${sprint.name} options`} className="text-muted-foreground">
+              <MoreHorizontal />
+            </Button>
           }
         />
         <DropdownMenuContent align="end" className="w-44">
@@ -75,7 +78,7 @@ function SprintHeader({ sprint, tasks, statuses, ops }: { sprint: Sprint; tasks:
             <Pencil className="size-4" /> Edit sprint…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => ops.onDelete(sprint)} className="text-destructive">
+          <DropdownMenuItem onClick={() => ops.onDelete(sprint)} variant="destructive">
             <Trash2 className="size-4" /> Delete sprint
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -108,9 +111,9 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
           sprints={sprints}
           onChange={(sprintId) => void onUpdate(task.id, { sprintId })}
           trigger={
-            <button type="button" aria-label="Move to sprint" className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
-              <Rocket className="size-3.5" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Move to sprint" className="text-muted-foreground">
+              <Rocket />
+            </Button>
           }
         />
       </div>
@@ -130,7 +133,7 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
       >
         {sprint.goal && <p className="border-b px-3 py-1.5 text-xs text-muted-foreground">{sprint.goal}</p>}
         {list.map(row)}
-        {list.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">Nothing planned yet — move tasks here from the backlog.</p>}
+        {list.length === 0 && <Empty className="m-2">Nothing planned yet — move tasks here from the backlog.</Empty>}
         {sprint.state !== "closed" && (
           <div className="p-1">
             <QuickAdd compact onCreate={async (title) => void (await onCreate({ title, sprintId: sprint.id }))} />
@@ -144,23 +147,19 @@ export function BacklogView({ statuses, sprints, tasks, allTasks, ctx, onOpen, o
     <div className="mx-auto flex w-full min-h-0 max-w-5xl flex-1 flex-col gap-3 overflow-y-auto p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       {active.map((s) => section(s))}
       {planned.map((s) => section(s))}
-      <button
-        type="button"
-        onClick={sprintOps.onCreate}
-        className="flex items-center gap-2 self-start rounded-pill border border-dashed px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
-      >
-        <Plus className="size-3.5" /> New sprint
-      </button>
+      <Button type="button" variant="outline" size="sm" onClick={sprintOps.onCreate} className="self-start border-dashed text-muted-foreground">
+        <Plus /> New sprint
+      </Button>
       <GroupSection title="Backlog" count={backlog.length} points={backlog.reduce((n, t) => n + (t.estimate ?? 0), 0)}>
         {backlog.map(row)}
-        {backlog.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">The backlog is empty.</p>}
+        {backlog.length === 0 && <Empty className="m-2">The backlog is empty.</Empty>}
         <div className="p-1">
           <QuickAdd compact onCreate={async (title) => void (await onCreate({ title }))} />
         </div>
       </GroupSection>
       {closed.length > 0 && (
         <div className="mt-2 flex flex-col gap-3">
-          <h3 className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Closed sprints</h3>
+          <h3 className="px-1 text-xs font-medium text-muted-foreground">Closed sprints</h3>
           {closed.map((s) => section(s, false))}
         </div>
       )}

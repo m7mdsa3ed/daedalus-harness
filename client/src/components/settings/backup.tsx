@@ -144,7 +144,7 @@ export function BackupPage() {
 function Foot({ hint, children }: { hint: string; children?: React.ReactNode }) {
   return (
     <div className="mt-8 flex flex-col gap-2 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between">
-      <span className="text-xs text-muted-foreground">{hint}</span>
+      <span className="text-sm text-muted-foreground">{hint}</span>
       {children}
     </div>
   )
@@ -154,7 +154,7 @@ function Foot({ hint, children }: { hint: string; children?: React.ReactNode }) 
 function Check({ on, label, value, off = "Not included" }: { on: boolean; label: string; value?: React.ReactNode; off?: string }) {
   return (
     <Row title={label}>
-      {value !== undefined && <span className="text-xs text-muted-foreground tabular-nums">{value}</span>}
+      {value !== undefined && <span className="text-sm text-muted-foreground tabular-nums">{value}</span>}
       <StatusBadge tone={on ? "ok" : "neutral"}>{on ? "Included" : off}</StatusBadge>
     </Row>
   )

@@ -102,7 +102,7 @@ export function KindGlyph({
       aria-hidden
       className={cn(
         "grid shrink-0 place-items-center rounded-full transition-colors",
-        read ? "bg-muted text-muted-foreground/70" : "bg-primary/10 text-primary",
+        read ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary",
         className
       )}
     >
@@ -143,10 +143,10 @@ export function NotificationRow({
   return (
     <article
       className={cn(
-        "group/notice relative flex w-full items-start gap-3 transition-colors hover:bg-accent/50 has-[[data-open]:focus-visible]:bg-accent/50",
+        "group/notice relative flex w-full items-start gap-3 transition-colors hover:bg-muted has-[[data-open]:focus-visible]:bg-muted",
         detailed ? "px-4 py-3.5" : "px-3 py-2.5",
-        !n.read && "bg-primary/[0.04]",
-        detailed && "min-h-[116px]"
+        !n.read && "bg-primary/5",
+        detailed && "min-h-28"
       )}
     >
       <KindGlyph
@@ -164,14 +164,14 @@ export function NotificationRow({
         <span className="flex items-baseline gap-2">
           <span
             className={cn(
-              "min-w-0 flex-1 truncate text-[13px] leading-5",
-              n.read ? "font-normal text-foreground/90" : "font-semibold text-foreground"
+              "min-w-0 flex-1 truncate text-sm",
+              n.read ? "font-normal" : "font-medium"
             )}
           >
             {title}
           </span>
           <span
-            className="flex shrink-0 items-center gap-1.5 text-[11px] leading-5 tabular-nums text-muted-foreground"
+            className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-muted-foreground"
             title={exactStamp(n.createdAt)}
           >
             {shortAge(n.createdAt)}
@@ -181,7 +181,7 @@ export function NotificationRow({
         {body && (
           <span
             className={cn(
-              "mt-0.5 block text-xs leading-[1.4] text-muted-foreground",
+              "mt-0.5 block text-xs text-muted-foreground",
               detailed ? "line-clamp-3 text-pretty" : "truncate"
             )}
           >
@@ -203,13 +203,10 @@ export function NotificationRow({
           aria-label="Visit thread"
           title="Visit thread"
           onClick={() => open(n)}
-          className={cn(
-            "text-muted-foreground hover:text-foreground",
-            detailed && "gap-1.5 rounded-lg border-border/70 bg-background/35 px-2.5"
-          )}
+          className="text-muted-foreground"
         >
           {detailed && <span>Visit thread</span>}
-          <ArrowUpRightIcon className="size-3.5" />
+          <ArrowUpRightIcon />
         </Button>
 
         {!n.read && (
@@ -220,9 +217,9 @@ export function NotificationRow({
             aria-label="Mark read"
             title="Mark read"
             onClick={() => markRead.mutate(n.id)}
-            className="text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="text-muted-foreground"
           >
-            <CheckIcon className="size-3.5" />
+            <CheckIcon />
           </Button>
         )}
       </div>

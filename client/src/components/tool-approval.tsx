@@ -41,7 +41,6 @@ import {
   AgentRequestCard,
   AgentRequestHeader,
   AgentRequestWell,
-  REQUEST_BUTTON,
 } from "./agent-request"
 import { FileBadge, JSON_INPUT_PREVIEW, JsonView, PlanFullscreen, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "@/components/tool-parts"
@@ -84,7 +83,7 @@ function prettyJson(value: unknown): string | null {
 
 function CodeBlock({ value }: { value: string }) {
   return (
-    <pre className="max-h-56 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
+    <pre className="max-h-56 overflow-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">
       {value}
     </pre>
   )
@@ -94,7 +93,7 @@ function CodeBlock({ value }: { value: string }) {
     means the same thing wherever it appears. */
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50">
+    <h4 className="text-xs font-medium text-muted-foreground">
       {children}
     </h4>
   )
@@ -111,7 +110,7 @@ function MetaRow({
 }) {
   return (
     <>
-      <dt className="text-muted-foreground/70">{label}</dt>
+      <dt className="text-muted-foreground">{label}</dt>
       <dd className={cn("min-w-0 break-words", mono ? "font-mono break-all" : "whitespace-pre-wrap")}>
         {value}
       </dd>
@@ -189,10 +188,10 @@ function PermissionOptions({
             variant={
               primary ? "default" : rejecting ? "destructive" : allowing ? "secondary" : "outline"
             }
-            className={index === rejectStart ? `${REQUEST_BUTTON} ms-auto` : REQUEST_BUTTON}
+            className={index === rejectStart ? "ms-auto" : undefined}
             onClick={() => resolve({ outcome: { outcome: "selected", optionId: option.optionId } })}
           >
-            {OptionIcon && <OptionIcon aria-hidden className="size-3.5" />}
+            {OptionIcon && <OptionIcon aria-hidden />}
             {option.name}
             {/* The keys ThreadView binds while a permission is open: the
                 option's own digit, and Enter for the primary. Shown on the
@@ -233,7 +232,7 @@ function EvidenceFold({
         render={
           <button
             type="button"
-            className="flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
+            className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
           />
         }
       >
@@ -290,7 +289,7 @@ function PlanApproval({
         label="Plan ready for review"
         aside={
           steps > 0 && (
-            <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/70">
+            <span className="shrink-0 text-xs text-muted-foreground">
               {steps} {steps === 1 ? "step" : "steps"}
             </span>
           )
@@ -315,7 +314,7 @@ function PlanApproval({
               render={
                 <button
                   type="button"
-                  className="flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
+                  className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                 />
               }
             >
@@ -440,7 +439,7 @@ export function InlineApproval({
         label="Permission needed"
         aside={
           kind !== "other" && (
-            <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/70">
+            <span className="shrink-0 text-xs text-muted-foreground">
               {KIND_LABELS[kind]}
             </span>
           )
@@ -480,11 +479,11 @@ export function InlineApproval({
                 <li
                   key={`${location.path}-${index}`}
                   title={location.path}
-                  className="max-w-full truncate rounded-md bg-background/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                  className="max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
                 >
                   {location.path}
                   {location.line != null && (
-                    <span className="pl-1 text-muted-foreground/60">:{location.line}</span>
+                    <span className="pl-1 text-muted-foreground">:{location.line}</span>
                   )}
                 </li>
               ))}
@@ -493,7 +492,7 @@ export function InlineApproval({
         </div>
 
         <EvidenceFold open={open} onOpenChange={setOpen} label="Details">
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-[11px]">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
             {call.title && <MetaRow label="Title" value={call.title} mono={false} />}
             {description && <MetaRow label="Description" value={description} mono={false} />}
             <MetaRow label="Session" value={request.sessionId} />

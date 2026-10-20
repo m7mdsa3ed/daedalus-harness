@@ -1,11 +1,13 @@
 import * as React from "react"
-import { KeyRound, Loader2, Server, Tag } from "lucide-react"
+import { KeyRound, Server, Tag } from "lucide-react"
 import { Notice } from "@/components/notice"
 import { Logo } from "@/components/ui/logo"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Card, CardContent } from "@/components/ui/card"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import { Spinner } from "@/components/ui/spinner"
 import { describeError } from "@/lib/errors"
 import { saveSettings, serverName, type ServerSettings } from "@/lib/settings"
 
@@ -68,129 +70,128 @@ export function ConnectScreen({
   return (
     <main
       data-drag-region
-      className="relative flex min-h-svh items-center justify-center overflow-hidden p-6"
+      className="flex min-h-svh items-center justify-center bg-muted p-6 md:p-10"
     >
-      <div className="relative grid w-full max-w-4xl overflow-hidden rounded-2xl border bg-card shadow-glass-lg lg:grid-cols-[1.1fr_1fr]">
-        <section className="hidden flex-col justify-between gap-10 border-r bg-muted/20 p-10 lg:flex">
-          <div className="flex items-center gap-2.5">
-            <Logo className="size-8 text-primary" />
-            <span className="brand-script text-2xl leading-none">Daedalus</span>
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-balance">
-              One harness, every ACP agent.
-            </h1>
-            <ul className="mt-6 space-y-3">
-              {POINTS.map((point) => (
-                <li key={point} className="flex gap-2.5 text-sm text-pretty text-muted-foreground">
-                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary/60" />
-                  {point}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <p className="font-mono text-xs text-muted-foreground">
-            server prints the token on <span className="text-foreground">pnpm dev</span>
-          </p>
-        </section>
-
-        <section className="flex flex-col justify-center p-7 sm:p-10" data-no-drag>
-          <div className="mb-7 flex items-center gap-2.5 lg:hidden">
-            <img src="/logo.svg" alt="" className="size-7" />
-            <span className="brand-script text-xl leading-none">Daedalus</span>
-          </div>
-          <h2 className="text-lg font-semibold tracking-tight">
-            {onCancel ? "Add a server" : "Connect"}
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {onCancel
-              ? "Connections are kept side by side — switch between them in the sidebar."
-              : "Point this client at a harness server."}
-          </p>
-
-          <form onSubmit={connect} className="mt-6 space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="server-url" className="text-xs font-medium">
-                Server URL
-              </Label>
-              <div className="relative">
-                <Server className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="server-url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="http://192.168.1.10:8791"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  className="pl-9 font-mono text-xs"
-                  required
-                />
+      <Card className="w-full max-w-4xl overflow-hidden p-0">
+        <CardContent className="grid p-0 lg:grid-cols-2">
+          <form onSubmit={connect} className="p-6 md:p-8" data-no-drag>
+            <FieldGroup>
+              <div className="flex flex-col gap-1">
+                <div className="mb-4 flex items-center gap-2.5 lg:hidden">
+                  <img src="/logo.svg" alt="" className="size-7" />
+                  <span className="brand-script text-xl leading-none">Daedalus</span>
+                </div>
+                <h1 className="font-heading text-xl font-medium">
+                  {onCancel ? "Add a server" : "Connect"}
+                </h1>
+                <p className="text-sm text-balance text-muted-foreground">
+                  {onCancel
+                    ? "Connections are kept side by side — switch between them in the sidebar."
+                    : "Point this client at a harness server."}
+                </p>
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="server-token" className="text-xs font-medium">
-                Access token
-              </Label>
-              <div className="relative">
-                <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="server-token"
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="printed by the server on startup"
-                  className="pl-9"
-                  required
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="server-name" className="text-xs font-medium">
-                Name <span className="text-muted-foreground">(optional)</span>
-              </Label>
-              <div className="relative">
-                <Tag className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="server-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={serverName(url)}
-                  className="pl-9"
-                />
-              </div>
-            </div>
-            {error && (
-              <Notice
-                tone="error"
-                size="md"
-                action={
-                  /* Nothing else on this screen is connected yet — no toast
-                     pipeline, no transcript to record into — so the clipboard
-                     is the only way this sentence leaves the machine. */
-                  <CopyButton
-                    text={error}
-                    size="icon-xs"
-                    className="-my-0.5 shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+              <Field>
+                <FieldLabel htmlFor="server-url">Server URL</FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon>
+                    <Server />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="server-url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="http://192.168.1.10:8791"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    className="font-mono"
+                    required
                   />
-                }
-              >
-                {error}
-              </Notice>
-            )}
-            <div className="flex gap-2">
-              {onCancel && (
-                <Button type="button" variant="outline" className="flex-1" onClick={onCancel}>
-                  Cancel
-                </Button>
+                </InputGroup>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="server-token">Access token</FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon>
+                    <KeyRound />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="server-token"
+                    type="password"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="printed by the server on startup"
+                    required
+                  />
+                </InputGroup>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="server-name">
+                  Name <span className="font-normal text-muted-foreground">(optional)</span>
+                </FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon>
+                    <Tag />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="server-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder={serverName(url)}
+                  />
+                </InputGroup>
+              </Field>
+              {error && (
+                <Notice
+                  tone="error"
+                  size="md"
+                  action={
+                    /* Nothing else on this screen is connected yet — no toast
+                       pipeline, no transcript to record into — so the clipboard
+                       is the only way this sentence leaves the machine. */
+                    <CopyButton text={error} size="icon-xs" className="shrink-0" />
+                  }
+                >
+                  {error}
+                </Notice>
               )}
-              <Button type="submit" className="flex-1" loading={busy}>
-                {busy && <Loader2 className="size-4 animate-spin" />}
-                {busy ? "Connecting…" : "Connect"}
-              </Button>
-            </div>
+              <Field orientation="horizontal">
+                {onCancel && (
+                  <Button type="button" variant="outline" className="flex-1" onClick={onCancel}>
+                    Cancel
+                  </Button>
+                )}
+                <Button type="submit" className="flex-1" loading={busy}>
+                  {busy && <Spinner />}
+                  {busy ? "Connecting…" : "Connect"}
+                </Button>
+              </Field>
+            </FieldGroup>
           </form>
-        </section>
-      </div>
+
+          <section className="hidden flex-col justify-between gap-10 bg-muted p-8 lg:flex">
+            <div className="flex items-center gap-2.5">
+              <Logo className="size-8 text-primary" />
+              <span className="brand-script text-2xl leading-none">Daedalus</span>
+            </div>
+            <div>
+              <h2 className="font-heading text-xl font-medium text-balance">
+                One harness, every ACP agent.
+              </h2>
+              <ul className="mt-6 flex flex-col gap-3">
+                {POINTS.map((point) => (
+                  <li key={point} className="flex gap-2.5 text-sm text-pretty text-muted-foreground">
+                    <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
+                    {point}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The server prints the token on <code className="font-mono text-foreground">pnpm dev</code>
+            </p>
+          </section>
+        </CardContent>
+      </Card>
     </main>
   )
 }

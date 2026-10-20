@@ -20,6 +20,7 @@ import {
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -376,11 +377,11 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   if (diff) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
           <Button variant="ghost" size="xs" className="gap-1" onClick={() => setDiff(null)}>
             <ArrowLeftIcon className="size-3.5" /> Back
           </Button>
-          <span className="truncate font-mono text-[11px] text-muted-foreground">{diff.path}</span>
+          <span className="truncate font-mono text-xs text-muted-foreground">{diff.path}</span>
         </div>
         <div className="min-h-0 flex-1"><DiffTab projectId={projectId} path={diff.path} left={diff.left} right={diff.right} repo={diff.repo} active /></div>
       </div>
@@ -446,7 +447,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             ) : statusQuery.error ? (
               <PanelMessage title="Status unavailable" text={describeError(statusQuery.error).title} compact />
             ) : groups.length === 0 ? (
-              <div className="grid min-h-24 place-items-center px-4 text-center"><div><FileIcon className="mx-auto mb-2 size-5 text-muted-foreground/60" /><p className="text-xs font-medium">Working tree is clean</p><p className="mt-1 text-[10px] text-muted-foreground">Changes will appear here as the project moves.</p></div></div>
+              <div className="grid min-h-24 place-items-center px-4 text-center"><div><FileIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-sm font-medium">Working tree is clean</p><p className="mt-1 text-xs text-muted-foreground">Changes will appear here as the project moves.</p></div></div>
             ) : (
               groups.map((group) => {
                 const shut = collapsed.has(group.id)
@@ -455,10 +456,10 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
                 const tracked = group.files.filter((file) => !file.untracked).map((file) => file.path)
                 return (
                   <section key={group.id}>
-                    <div className={cn("flex items-center gap-1 bg-muted/50 pr-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground", coarse ? "min-h-11" : "min-h-6")}>
+                    <div className={cn("flex items-center gap-1 bg-muted pr-1 text-xs font-medium text-muted-foreground", coarse ? "min-h-11" : "min-h-6")}>
                       <Checkbox
                         aria-label={`Select all in ${group.title}`}
-                        className="ml-1.5 size-3.5 rounded-[4px]"
+                        className="ml-1.5 size-3.5 rounded-md"
                         checked={group.files.every((file) => picks.has(pickKey(group.id, file.path)))}
                         indeterminate={group.files.some((file) => picks.has(pickKey(group.id, file.path))) && !group.files.every((file) => picks.has(pickKey(group.id, file.path)))}
                         onCheckedChange={(on) => pickGroup(group.id, on)}
@@ -508,12 +509,12 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             )}
           </div>
           {picked.length > 0 && (
-            <div role="toolbar" aria-label="Bulk actions" className="flex shrink-0 flex-wrap items-center gap-1 border-t border-border/60 bg-accent/60 px-2 py-1 text-[11px]">
+            <div role="toolbar" aria-label="Bulk actions" className="flex shrink-0 flex-wrap items-center gap-1 border-t bg-accent px-2 py-1 text-xs">
               <span className="mr-auto font-medium tabular-nums">{picked.length} selected</span>
               {picked.some((row) => row.group !== "staged") && <TextVerb disabled={busy} onClick={() => void bulk("stage")}>{picked.every((row) => row.group === "merge") ? "Mark Resolved" : "Stage"}</TextVerb>}
               {picked.some((row) => row.group === "staged") && <TextVerb disabled={busy} onClick={() => void bulk("unstage")}>Unstage</TextVerb>}
               {picked.some((row) => row.group === "changes" && !row.file.untracked) && <TextVerb destructive disabled={busy} onClick={() => void bulk("discard")}>Discard</TextVerb>}
-              <button type="button" title="Clear selection" aria-label="Clear selection" onClick={() => setPicks(new Set())} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-background hover:text-foreground"><XIcon className="size-3" /></button>
+              <Button variant="ghost" size="icon-xs" title="Clear selection" aria-label="Clear selection" onClick={() => setPicks(new Set())} className="text-muted-foreground"><XIcon /></Button>
             </div>
           )}
           <CommitBox
@@ -569,11 +570,11 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header title={standing ?? undefined} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/60 bg-muted/30 px-2 py-1">
+      <header title={standing ?? undefined} className="flex shrink-0 flex-wrap items-center gap-1 border-b bg-muted px-2 py-1">
         <div className="contents">
           {repos.length > 1 ? (
             <Select value={repoPath} onValueChange={(value) => { setRepoPath(value as string); setPicks(new Set()); setDiff(null); setSelected(null); setOpenFile(null) }}>
-              <SelectTrigger size="sm" aria-label="Repository" className="order-1 h-6 min-w-0 max-w-44 shrink rounded border-border/70 bg-background px-2 text-xs font-semibold">
+              <SelectTrigger size="sm" aria-label="Repository" className="order-1 h-6 min-w-0 max-w-44 shrink font-medium">
                 <SelectValue>
                   <span className="truncate">{repo.name}</span>
                   {repo.worktree && <WorktreeBadge />}
@@ -585,13 +586,13 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
                     <span className="flex min-w-0 items-center gap-1.5">
                       <span className="truncate">{item.name}</span>
                       {item.worktree && <WorktreeBadge />}
-                      {item.branch && <span className="truncate font-mono text-[10px] font-normal text-muted-foreground">{item.branch}</span>}
+                      {item.branch && <span className="truncate font-mono text-xs font-normal text-muted-foreground">{item.branch}</span>}
                     </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-1.5 text-xs font-semibold"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
+          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-1.5 text-sm font-medium"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
           <Button variant="ghost" size="icon-xs" title="Refresh repository status" aria-label="Refresh repository status" loading={statusQuery.isFetching} onClick={() => void statusQuery.refetch()} className={cn(iconButton, "order-5")}>
             <RefreshCwIcon className={cn("size-3.5", statusQuery.isFetching && "animate-spin")} />
           </Button>
@@ -616,7 +617,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             unborn={status?.unborn ?? false}
             disabled={busy || !status?.repository}
             onPick={(choice) => void write({ action: "checkout", branch: choice.branch, create: choice.create, track: choice.track })}
-            className={cn("order-2 flex min-w-0 max-w-full items-center gap-1.5 rounded border border-border/70 bg-background px-2 py-0.5 font-mono text-xs", coarse && "min-h-11")}
+            className={cn("order-2 flex min-w-0 max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-0.5 font-mono text-sm", coarse && "min-h-11")}
           >
             <GitBranchIcon className="size-3.5 shrink-0" /><span className="truncate">{branch}</span>
           </BranchPicker>
@@ -636,14 +637,14 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
       </header>
 
       {error && <PanelMessage title="Git operation failed" text={error} compact />}
-      {notice && <div role="status" className="flex items-center gap-2 border-b border-border/50 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300"><CheckIcon className="size-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate" title={notice}>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice(null)}><XIcon className="size-3.5" /></button></div>}
+      {notice && <div role="status" className="flex items-center gap-2 border-b bg-success/10 px-3 py-2 text-sm text-success"><CheckIcon className="size-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate" title={notice}>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice(null)}><XIcon className="size-3.5" /></button></div>}
 
       <ScmDock
         panes={{
           locations: locationsPane,
           history: historyPane,
           files: filesPane,
-          diff: diffPane || <p className="px-3 py-6 text-center text-xs text-muted-foreground">Pick a file to see its changes.</p>,
+          diff: diffPane || <p className="px-3 py-6 text-center text-sm text-muted-foreground">Pick a file to see its changes.</p>,
         }}
       />
     </div>
@@ -657,43 +658,43 @@ function RowVerbs({ coarse, children }: { coarse: boolean; children: React.React
 
 function Verb({ label, onClick, disabled, destructive, children }: { label: string; onClick: () => void; disabled?: boolean; destructive?: boolean; children: React.ReactNode }) {
   return (
-    <button type="button" title={label} aria-label={label} disabled={disabled} onClick={onClick} className={cn("grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40", destructive && "hover:bg-destructive/10 hover:text-destructive")}>
+    <Button variant="ghost" size="icon-xs" title={label} aria-label={label} disabled={disabled} onClick={onClick} className={cn("text-muted-foreground", destructive && "hover:bg-destructive/10 hover:text-destructive")}>
       {children}
-    </button>
+    </Button>
   )
 }
 
 /** This directory is a linked worktree (`git worktree add`), not a main checkout. */
 function WorktreeBadge() {
-  return <span title="A linked git worktree - it shares its repository with another checkout" className="shrink-0 rounded-sm border border-violet-500/50 bg-violet-500/15 px-1 text-[9px] font-medium uppercase leading-4 tracking-wide text-violet-700 dark:text-violet-300">worktree</span>
+  return <Badge variant="outline" title="A linked git worktree - it shares its repository with another checkout">worktree</Badge>
 }
 
 function TextVerb({ onClick, disabled, destructive, children }: { onClick: () => void; disabled?: boolean; destructive?: boolean; children: React.ReactNode }) {
   return (
-    <button type="button" disabled={disabled} onClick={onClick} className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-foreground/80 hover:bg-background hover:text-foreground disabled:opacity-40", destructive && "hover:text-destructive")}>
+    <Button variant="ghost" size="xs" disabled={disabled} onClick={onClick} className={cn(destructive && "hover:text-destructive")}>
       {children}
-    </button>
+    </Button>
   )
 }
 
 function FileRow({ file, group, active, picked, selecting, onPick, busy, coarse, onOpen, onStage, onDiscard }: { file: WorkingFile; group: GroupId; active: boolean; picked: boolean; selecting: boolean; onPick: (shift: boolean) => void; busy: boolean; coarse: boolean; onOpen: () => void; onStage: () => void; onDiscard: () => void }) {
-  const markColor = file.conflicted ? "text-red-600 dark:text-red-400" : file.mark === "A" || file.mark === "?" ? "text-emerald-600 dark:text-emerald-400" : file.mark === "D" ? "text-red-600 dark:text-red-400" : file.mark === "R" ? "text-sky-600 dark:text-sky-400" : "text-amber-600 dark:text-amber-400"
+  const markColor = file.conflicted ? "text-destructive" : file.mark === "A" || file.mark === "?" ? "text-success" : file.mark === "D" ? "text-destructive" : file.mark === "R" ? "text-primary" : "text-warning"
   const name = basename(file.path)
   const dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : ""
   return (
-    <div className={cn("group flex items-center gap-2 border-l-2 border-transparent pl-2 pr-1 hover:bg-muted/50", file.conflicted && "bg-destructive/5", active && "border-primary bg-accent", picked && "bg-sky-500/15", coarse ? "min-h-11" : "min-h-6")}>
+    <div className={cn("group flex items-center gap-2 border-l-2 border-transparent pl-2 pr-1 hover:bg-muted", file.conflicted && "bg-destructive/10", active && "border-primary bg-accent", picked && "bg-primary/10", coarse ? "min-h-11" : "min-h-6")}>
       {/* The tick shows on hover, and everywhere once something is ticked - so
           a second row is one click, and shift-click takes the range between. */}
       <Checkbox
         aria-label={`Select ${name}`}
-        className={cn("size-3.5 rounded-[4px]", !(picked || selecting || coarse) && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+        className={cn("size-3.5 rounded-md", !(picked || selecting || coarse) && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
         checked={picked}
         onClick={(event) => onPick(event.shiftKey)}
       />
       <button type="button" onClick={onOpen} title={`Open diff: ${file.from ? `${file.from} → ${file.path}` : file.path}`} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <span className={cn("grid size-4 shrink-0 place-items-center rounded-sm bg-current/10 font-mono text-[10px] font-bold", markColor)}>{file.mark}</span>
-        <span className={cn("min-w-0 shrink-0 truncate text-xs", file.mark === "D" && "line-through opacity-70")}>{name}</span>
-        <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{file.from ? `← ${file.from}` : dir}</span>
+        <span className={cn("grid size-4 shrink-0 place-items-center rounded-md bg-current/10 font-mono text-xs font-medium", markColor)}>{file.mark}</span>
+        <span className={cn("min-w-0 shrink-0 truncate text-sm", file.mark === "D" && "line-through opacity-70")}>{name}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{file.from ? `← ${file.from}` : dir}</span>
         <LineCounts insertions={file.insertions} deletions={file.deletions} />
       </button>
       <RowVerbs coarse={coarse}>
@@ -714,5 +715,5 @@ function toggled<T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> {
 }
 
 function PanelMessage({ title, text, compact = false }: { title: string; text: string; compact?: boolean }) {
-  return <div className={cn("text-center", compact ? "flex items-start gap-2 px-3 py-2" : "grid h-full place-content-center px-5")}><div className="min-w-0 flex-1"><p className="text-xs font-semibold">{title}</p><p className="mt-1 break-words text-[11px] text-muted-foreground">{text}</p></div>{compact && <CopyButton text={`${title}: ${text}`} size="icon-xs" className="shrink-0" />}</div>
+  return <div className={cn("text-center", compact ? "flex items-start gap-2 px-3 py-2" : "grid h-full place-content-center px-5")}><div className="min-w-0 flex-1"><p className="text-sm font-medium">{title}</p><p className="mt-1 break-words text-xs text-muted-foreground">{text}</p></div>{compact && <CopyButton text={`${title}: ${text}`} size="icon-xs" className="shrink-0" />}</div>
 }

@@ -81,7 +81,7 @@ function WarningLine({ warning }: { warning: ChordWarning }) {
   return (
     <span
       className={cn(
-        "flex items-start gap-1.5 text-[11px] leading-snug",
+        "flex items-start gap-1.5 text-xs leading-snug",
         hard ? "text-destructive" : "text-muted-foreground"
       )}
     >
@@ -112,12 +112,12 @@ interface ShortcutRowData {
 /** Alternatives read as alternatives, the way the help sheet prints them. */
 function Chords({ def, chords }: { def: ShortcutDef; chords: string[] }) {
   if (def.display) return <Shortcut keys={def.display} />
-  if (chords.length === 0) return <span className="text-xs text-muted-foreground">Not bound</span>
+  if (chords.length === 0) return <span className="text-sm text-muted-foreground">Not bound</span>
   return (
     <>
       {chords.map((chord, index) => (
         <React.Fragment key={chord}>
-          {index > 0 && <span className="text-[11px] text-muted-foreground">or</span>}
+          {index > 0 && <span className="text-xs text-muted-foreground">or</span>}
           <Shortcut chord={chord} />
         </React.Fragment>
       ))}
@@ -203,13 +203,13 @@ function RecordDialog({
           <div
             className={cn(
               "flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border border-dashed",
-              chord ? "border-primary/40 bg-primary/5" : "bg-muted/30"
+              chord ? "border-primary bg-primary/5" : "bg-muted/50"
             )}
           >
             {chord ? (
               <Shortcut chord={chord} keyClassName="h-7 min-w-7 text-sm" />
             ) : (
-              <p className="text-xs text-muted-foreground">Waiting for a key…</p>
+              <p className="text-sm text-muted-foreground">Waiting for a key…</p>
             )}
           </div>
           {warnings.length > 0 && (
@@ -221,7 +221,7 @@ function RecordDialog({
           )}
           <div className={cn(INSET, "mt-4 space-y-2 p-3")}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">Now</span>
+              <span className="text-sm text-muted-foreground">Now</span>
               <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
                 <Chords def={shortcut} chords={live.chords} />
               </div>
@@ -234,7 +234,7 @@ function RecordDialog({
                 answer. A hard-reserved chord is not overridable at all — the page
                 never receives it — so the switch says so by being disabled. */}
             {liveReserved && (
-              <label className="flex min-h-9 items-center justify-between gap-3 text-xs pointer-coarse:min-h-11">
+              <label className="flex min-h-9 items-center justify-between gap-3 text-sm pointer-coarse:min-h-11">
                 <span>Override the other use of this key</span>
                 <Switch
                   checked={live.override && liveReserved.reserved !== "hard"}
@@ -378,11 +378,11 @@ function renderPhoneRow(row: ShortcutRowData) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{row.def.label}</div>
-        <div className="truncate text-xs text-muted-foreground">
+        <div className="truncate text-sm text-muted-foreground">
           {row.def.scope}
           {status !== "Default" && ` · ${status}`}
         </div>
-        {row.def.note && <div className="line-clamp-2 text-xs text-muted-foreground/80">{row.def.note}</div>}
+        {row.def.note && <div className="line-clamp-2 text-xs text-muted-foreground">{row.def.note}</div>}
       </div>
       <div className="flex max-w-[50%] shrink-0 flex-wrap items-center justify-end gap-1">
         <WarnMark warnings={row.warnings} />
@@ -393,7 +393,7 @@ function renderPhoneRow(row: ShortcutRowData) {
 }
 
 const groupHeader = (counts: Record<string, number>) => (key: string) => (
-  <div className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
     <span>{key}</span>
     <span className="font-normal tabular-nums">{counts[key] ?? 0}</span>
   </div>
@@ -427,7 +427,7 @@ function QuickEntryGroup() {
         >
           <Input
             aria-label="Quick entry shortcut"
-            className="h-11 w-40 min-w-0 font-mono text-xs @panel-sm:h-9 @panel-sm:w-48"
+            className="h-11 w-40 min-w-0 font-mono text-sm @panel-sm:h-9 @panel-sm:w-48"
             value={value}
             placeholder="Off"
             onChange={(event) => setValue(event.target.value)}

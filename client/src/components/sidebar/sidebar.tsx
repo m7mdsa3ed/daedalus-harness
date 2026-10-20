@@ -36,7 +36,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { ChevronRight, FolderIcon, Loader2, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
+import { ChevronRight, FolderIcon, Pin, RefreshCwIcon, Search, Trash2, X } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -47,7 +47,7 @@ import {
 import { SidebarEnvContext, type SidebarEnv } from "./env"
 import { deriveTiers } from "./tiers"
 import { FoldableGroup, ProjectFolder } from "./groups"
-import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, TIER } from "./scale"
+import { PROJECT_PAGE_SIZE } from "./scale"
 import { ThreadList } from "./thread-list"
 import type { ThreadStatus } from "./thread-row"
 import { EmptyTrash } from "./trash"
@@ -65,6 +65,9 @@ import { activityAt, inSpace as isInSpace, isListed, type Project, type SessionM
 import { useStoreSelect, type ThreadItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Spinner } from "@/components/ui/spinner"
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { describeError } from "@/lib/errors"
@@ -332,16 +335,16 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
 
   return (
     <SidebarEnvContext.Provider value={env}>
-      <SidebarGroup className={cn(TIER, GROUP)}>
-        <SidebarGroupLabel className={cn(GROUP_LABEL, "group/label")}>
+      <SidebarGroup>
+        <SidebarGroupLabel className="gap-1.5 pr-0">
           <span className="truncate">Sessions</span>
           {counts.needsYou > 0 && (
-            <span
+            <Badge
               title={`${counts.needsYou} thread${counts.needsYou === 1 ? "" : "s"} need${counts.needsYou === 1 ? "s" : ""} you`}
-              className="rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400"
+              className="bg-warning/10 text-warning tabular-nums"
             >
               {counts.needsYou}
-            </span>
+            </Badge>
           )}
           <div className="ml-auto flex h-full items-center gap-1">
             <Button
@@ -352,12 +355,12 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
               aria-pressed={searching}
               onClick={() => (searching ? closeSearch() : (setSearching(true), requestAnimationFrame(() => searchRef.current?.focus())))}
               className={cn(
-                "rounded-sm text-muted-foreground hover:text-sidebar-foreground",
-                coarse ? "size-10" : "size-6",
+                "text-muted-foreground",
+                coarse && "size-10",
                 (searching || query) && "text-primary"
               )}
             >
-              <Search className="size-3.5" />
+              <Search />
             </Button>
             <Button
               variant="ghost"
@@ -366,19 +369,16 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
               aria-label="Refresh threads"
               loading={refreshing}
               onClick={refreshSessions}
-              className={cn(
-                "rounded-sm text-muted-foreground hover:text-sidebar-foreground",
-                coarse ? "size-10" : "size-6"
-              )}
+              className={cn("text-muted-foreground", coarse && "size-10")}
             >
-              <RefreshCwIcon className={cn("size-3.5", refreshing && "animate-spin")} />
+              <RefreshCwIcon className={cn(refreshing && "animate-spin")} />
             </Button>
             <ViewMenu sort={sort} filter={filter} within={within} />
           </div>
         </SidebarGroupLabel>
         {searching && (
-          <div className="relative mb-1">
-            <input
+          <InputGroup className="mb-1">
+            <InputGroupInput
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -390,29 +390,29 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
               }}
               placeholder="Filter by title, project or agent"
               aria-label="Filter threads by title, project or agent"
-              className="h-8 w-full rounded-lg border border-sidebar-border bg-transparent px-2 pr-7 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
             {query && (
-              <button
-                type="button"
+              <InputGroupAddon align="inline-end">
+              <InputGroupButton
+                size="icon-xs"
                 title="Clear filter"
                 aria-label="Clear filter"
                 onClick={() => {
                   setQuery("")
                   searchRef.current?.focus()
                 }}
-                className="absolute top-1.5 right-1.5 grid size-5 place-items-center rounded-sm text-muted-foreground hover:text-sidebar-foreground"
               >
-                <X className="size-3.5" />
-              </button>
+                <X />
+              </InputGroupButton>
+              </InputGroupAddon>
             )}
-          </div>
+          </InputGroup>
         )}
       </SidebarGroup>
 
       {nothingLive && (
-        <SidebarGroup className={GROUP}>
-          <p className="px-2 py-2 text-xs text-muted-foreground">
+        <SidebarGroup>
+          <p className="px-3 py-2 text-xs text-muted-foreground">
             {query.trim()
               ? "No thread matches that."
               : filtered
@@ -431,7 +431,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       )}
 
       {pinned.length > 0 && options.sidebarShowPinned && (
-        <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
+        <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin />}>
           <ThreadList sessions={pinned} />
         </FoldableGroup>
       )}
@@ -440,7 +440,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           Yesterday / … headings, each row naming its project. The thread in
           front of you is highlighted in place — it is always one of these. */}
       {sort !== "project" && filed.length > 0 && (
-        <SidebarGroup className={GROUP}>
+        <SidebarGroup>
           <ThreadList sessions={filed} grouped showProject />
         </SidebarGroup>
       )}
@@ -449,8 +449,8 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
       {sort === "project" && scopedProjects.length > 0 && !((filtered || searched) && nothingLive) && (
-        <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon className="size-3 shrink-0" />}>
-            <SidebarMenu className={MENU}>
+        <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon />}>
+            <SidebarMenu>
               {scopedProjects
                 /* A folder with nothing in it is "empty" only when nothing is
                    narrowing the list; under a search or a filter it is just
@@ -491,7 +491,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         <FoldableGroup
           groupKey="__trash"
           label="Trash"
-          icon={<Trash2 className="size-3 shrink-0" />}
+          icon={<Trash2 />}
           count={trashed.length}
           defaultOpen={false}
         >
@@ -507,24 +507,21 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           scroll). It draws nothing once the window has caught up with the
           server's count. */}
       {(hasMore || loadingMore) && (
-        <div ref={sentinelRef} className="px-2 pt-1 pb-4">
-          <button
-            type="button"
+        <div ref={sentinelRef} className="px-2 pt-1 pb-4 group-data-[collapsible=icon]:hidden">
+          <Button
+            variant="ghost"
+            size="sm"
             disabled={loadingMore}
             onClick={() => {
               void actions.loadMoreSessions().catch(() => {
                 /* Quiet: the window simply stops where it is. */
               })
             }}
-            className="flex h-8 w-full items-center justify-center gap-2 rounded-lg text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 group-data-[collapsible=icon]:hidden"
+            className="w-full text-muted-foreground"
           >
-            {loadingMore ? (
-              <Loader2 aria-hidden className="size-3.5 animate-spin" />
-            ) : (
-              <ChevronRight aria-hidden className="size-4" />
-            )}
+            {loadingMore ? <Spinner /> : <ChevronRight aria-hidden />}
             <span>{loadingMore ? "Loading more\u2026" : "Load more threads"}</span>
-          </button>
+          </Button>
           <span className="sr-only">
             {sessionWindow.ids.length} of {sessionWindow.total} threads loaded
           </span>

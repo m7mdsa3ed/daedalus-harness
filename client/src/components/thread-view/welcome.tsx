@@ -13,7 +13,7 @@ export function ThreadWelcome({ draft }: { draft?: boolean }) {
       <p className="text-base font-medium">
         {draft ? "What are we working on?" : "Thread ready"}
       </p>
-      <p className="max-w-xs text-xs text-balance text-muted-foreground">
+      <p className="max-w-xs text-sm text-balance text-muted-foreground">
         {draft
           ? "Nothing is running yet — the agent starts when you send the first message."
           : "Send the first message — tool calls, plans and thinking stream in here as steps."}

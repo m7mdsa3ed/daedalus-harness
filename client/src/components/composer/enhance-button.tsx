@@ -133,7 +133,7 @@ export function EnhanceButton({
     <Button
       variant="ghost"
       size={size}
-      className={cn("shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground", className)}
+      className={cn("text-muted-foreground", className)}
       onClick={enhance}
       disabled={disabled || gated || !hasContent}
       loading={enhancing}

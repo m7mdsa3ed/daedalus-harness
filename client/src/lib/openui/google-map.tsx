@@ -19,6 +19,7 @@ import { Notice } from "@/components/notice"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
+import { Item, ItemActions, ItemContent, ItemMedia } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { errorText } from "@/lib/errors"
@@ -201,7 +202,7 @@ export default function GoogleMap(props: Props) {
   return (
     <>
       {phase.kind === "loading" ? (
-        <div className="flex h-24 items-center justify-center gap-2 text-xs text-muted-foreground">
+        <div className="flex h-24 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-3.5" /> Loading map...
         </div>
       ) : (
@@ -487,22 +488,22 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
   return (
     <>
       <div ref={host} className="z-0 h-72 w-full @panel-sm:h-96" role="application" aria-label={label ?? "Interactive map"} />
-      <Collapsible className="border-t border-border/50 text-xs">
-        <CollapsibleTrigger className="group/trigger flex w-full items-center gap-2 px-3 py-2 text-start outline-none hover:bg-muted/40 focus-visible:bg-muted/40 @panel-sm:px-3.5">
-          <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-[panel-open]/trigger:rotate-90" />
+      <Collapsible className="border-t text-sm">
+        <CollapsibleTrigger className="group/trigger flex w-full items-center gap-2 px-3 py-2.5 text-start outline-none hover:bg-muted focus-visible:bg-muted @panel-sm:px-4">
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90" />
           <span className="font-medium text-foreground">Directions and places</span>
           {road && (
-            <span className="ms-auto text-muted-foreground">
+            <span className="ms-auto text-xs text-muted-foreground">
               {clock(road.seconds)} - {km(road.meters)}
             </span>
           )}
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="space-y-2 border-t border-border/50 px-3 py-2.5 @panel-sm:px-3.5">
+          <div className="space-y-3 border-t px-3 py-3 @panel-sm:px-4">
             <div className="flex flex-wrap items-center gap-1.5">
               <ToggleGroup variant="outline" size="sm" spacing={0} value={[profile]} onValueChange={(next) => next[0] && setProfile(next[0] as Profile)} aria-label="Travel mode">
                 {PROFILES.map((p) => (
-                  <ToggleGroupItem key={p.id} value={p.id} className="gap-1 px-2.5">
+                  <ToggleGroupItem key={p.id} value={p.id}>
                     {p.icon}
                     {p.label}
                   </ToggleGroupItem>
@@ -531,15 +532,15 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
                 }
               />
             ))}
-            {pick != null && <p className="text-muted-foreground">Click the map to set this point.</p>}
-            {filled.length < 2 && pick == null && <p className="text-muted-foreground">Search a place, click the map, or use a marker's From / To to plan a route.</p>}
+            {pick != null && <p className="text-xs text-muted-foreground">Click the map to set this point.</p>}
+            {filled.length < 2 && pick == null && <p className="text-xs text-muted-foreground">Search a place, click the map, or use a marker's From / To to plan a route.</p>}
             {state.busy && (
-              <p className="flex items-center gap-1.5 text-muted-foreground">
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Spinner className="size-3.5" /> Finding a route...
               </p>
             )}
             {state.error && <Notice tone="error">{state.error}</Notice>}
-            {state.none && <p className="text-muted-foreground">No {PROFILES.find((p) => p.id === profile)!.label.toLowerCase()} route between these points.</p>}
+            {state.none && <p className="text-xs text-muted-foreground">No {PROFILES.find((p) => p.id === profile)!.label.toLowerCase()} route between these points.</p>}
             {roads.length > 1 && (
               <ToggleGroup
                 variant="outline"
@@ -551,7 +552,7 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
                 aria-label="Route"
               >
                 {roads.map((r, index) => (
-                  <ToggleGroupItem key={index} value={String(index)} className="px-2.5">
+                  <ToggleGroupItem key={index} value={String(index)}>
                     {index === 0 ? "Fastest" : `Route ${index + 1}`} - {clock(r.seconds)}, {km(r.meters)}
                   </ToggleGroupItem>
                 ))}
@@ -569,7 +570,7 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
                 </Button>
               </div>
             )}
-            <div className="space-y-1.5 border-t border-border/50 pt-2">
+            <div className="space-y-2 border-t pt-3">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-foreground">{road ? "Along the route" : "Near the map centre"}</span>
                 {foundState.busy && <Spinner className="size-3.5" />}
@@ -584,7 +585,7 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
                 aria-label="Places to show"
               >
                 {CATEGORIES.map((c) => (
-                  <ToggleGroupItem key={c.id} value={c.id} className="gap-1 px-2.5">
+                  <ToggleGroupItem key={c.id} value={c.id}>
                     {c.icon}
                     {c.label}
                   </ToggleGroupItem>
@@ -592,24 +593,24 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
               </ToggleGroup>
               {foundState.error && <Notice tone="error">{foundState.error}</Notice>}
               {cats.length > 0 && !foundState.busy && !foundState.error && found.length === 0 && (
-                <p className="text-muted-foreground">Nothing found {road ? "along this route" : "near here"}.</p>
+                <p className="text-xs text-muted-foreground">Nothing found {road ? "along this route" : "near here"}.</p>
               )}
               {nearest.length > 0 && (
-                <ul className="max-h-56 overflow-y-auto rounded-xl border border-border/60 p-1">
+                <ul className="max-h-56 overflow-y-auto rounded-xl border p-1">
                   {nearest.map((f) => {
                     const c = CATEGORIES.find((x) => x.id === f.category)!
                     return (
                       <li key={`${f.category}-${f.id}`}>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => openFound(f)} className="h-auto w-full items-start justify-start gap-2 whitespace-normal px-2 py-1.5 text-start text-xs font-normal">
-                          <span className="mt-0.5 shrink-0 text-muted-foreground">{c.icon}</span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block break-words font-medium text-foreground">{f.name}</span>
-                            <span className="block break-words text-muted-foreground">
+                        <Item size="xs" className="flex-nowrap items-start text-start hover:bg-muted" render={<button type="button" onClick={() => openFound(f)} />}>
+                          <ItemMedia variant="icon" className="text-muted-foreground">{c.icon}</ItemMedia>
+                          <ItemContent className="min-w-0">
+                            <span className="block font-medium break-words">{f.name}</span>
+                            <span className="block text-xs break-words text-muted-foreground">
                               {[f.rating ? `${f.rating.toFixed(1)} stars` : "", f.openNow == null ? "" : f.openNow ? "Open now" : "Closed", f.address ?? ""].filter(Boolean).join(" - ")}
                             </span>
-                          </span>
-                          {reference && <span className="shrink-0 tabular-nums text-muted-foreground">{km(metersBetween(reference, [f.latitude, f.longitude]))}</span>}
-                        </Button>
+                          </ItemContent>
+                          {reference && <ItemActions className="shrink-0 text-xs text-muted-foreground tabular-nums">{km(metersBetween(reference, [f.latitude, f.longitude]))}</ItemActions>}
+                        </Item>
                       </li>
                     )
                   })}
@@ -684,30 +685,33 @@ function WaypointField({
           }}
           placeholder={`${name}: search a place`}
           aria-label={name}
-          className="h-8 text-xs md:text-xs"
+          className="h-8"
         />
         <IconButton title="Search" onClick={() => void search()} icon={state.busy ? <Spinner /> : <Search />} disabled={state.busy} />
         <IconButton title="Pick on the map" onClick={onPick} icon={<Crosshair />} pressed={picking} />
         <IconButton title={count > 2 ? "Remove this stop" : "Clear"} onClick={onClear} icon={<X />} />
       </div>
-      {state.error && <p className="mt-1 ps-5 text-destructive">{state.error}</p>}
+      {state.error && <p className="mt-1 ps-5 text-xs text-destructive">{state.error}</p>}
       {results && (
-        <ul className="absolute inset-x-5 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-xl border bg-popover p-1 text-popover-foreground shadow-md">
+        <ul className="absolute inset-x-5 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-2xl bg-popover p-1 text-popover-foreground shadow-2xl ring-1 ring-foreground/5">
           {results.length === 0 && <li className="px-2.5 py-1.5 text-muted-foreground">No places found.</li>}
           {results.map((p, i) => (
             <li key={i}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-auto w-full justify-start whitespace-normal px-2.5 py-1.5 text-start text-xs font-normal break-words"
-                onClick={() => {
-                  setResults(null)
-                  onPlace(p.label.split(",").slice(0, 2).join(","), [p.latitude, p.longitude])
-                }}
+              <Item
+                size="xs"
+                className="text-start break-words hover:bg-accent hover:text-accent-foreground"
+                render={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResults(null)
+                      onPlace(p.label.split(",").slice(0, 2).join(","), [p.latitude, p.longitude])
+                    }}
+                  />
+                }
               >
                 {p.label}
-              </Button>
+              </Item>
             </li>
           ))}
         </ul>

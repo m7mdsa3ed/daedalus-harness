@@ -20,7 +20,8 @@
    it *did* is in the run's own thread, which every row here opens. Inventing a
    count from nothing would be worse than saying so. */
 import * as React from "react"
-import { AlertTriangle, Bot, History, Loader2, Zap } from "lucide-react"
+import { Spinner } from "@/components/ui/spinner"
+import { AlertTriangle, Bot, History, Zap } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { RUN_STATUS } from "@/components/automations/status"
@@ -226,7 +227,7 @@ export function AutomationActivityPage() {
   const emptyNote = (): PaletteItem => {
     if (routines.length === 0) return note("no-routines", "No automations yet.")
     if (loading)
-      return note("loading", "Reading run history…", <Loader2 className="animate-spin" />)
+      return note("loading", "Reading run history…", <Spinner />)
     if (failed)
       return note("failed", "Couldn't read the run history.", <AlertTriangle />, "warn")
     if (query) return note("no-match", `No automation named “${palette.query.trim()}” has run.`)

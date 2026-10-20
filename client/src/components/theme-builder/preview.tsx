@@ -20,7 +20,7 @@ export const MODES: readonly Mode[] = ["light", "dark"]
     only in hue were most of the reason this was worth rebuilding. */
 export function ThemePreview({ themeValue }: { themeValue: string }) {
   return (
-    <div aria-hidden className="overflow-hidden rounded-lg border border-border/60">
+    <div aria-hidden className="overflow-hidden rounded-lg border">
       {MODES.map((mode) => (
         <div
           key={mode}
@@ -178,7 +178,7 @@ export function PreviewPane({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <p className="hidden text-xs font-medium @panel-lg:block">Preview</p>
+        <p className="hidden text-sm font-medium @panel-lg:block">Preview</p>
         <Segmented
           label="Preview mode"
           value={preview}
@@ -199,7 +199,7 @@ export function PreviewPane({
         {shown.map((mode) => (
           <div key={mode} className="space-y-1">
             {preview === "both" && (
-              <p className="px-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+              <p className="px-0.5 text-xs font-medium text-muted-foreground capitalize">
                 {mode}
               </p>
             )}
@@ -208,7 +208,7 @@ export function PreviewPane({
         ))}
       </div>
 
-      <p className="hidden text-[11px] text-muted-foreground @panel-lg:block">
+      <p className="hidden text-xs text-muted-foreground @panel-lg:block">
         Changes apply immediately
         {worn ? " — you are wearing this theme" : ""}.
       </p>

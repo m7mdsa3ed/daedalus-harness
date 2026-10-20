@@ -7,6 +7,7 @@ import * as React from "react"
 import { ArrowLeft, type LucideIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Card, CardDescription, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
@@ -159,24 +160,24 @@ export function StatTile({
   tone?: string
 }) {
   return (
-    <div className="rounded-xl border bg-card p-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+    <Card size="sm" className="gap-1 px-4">
+      <CardDescription className="flex items-center gap-1.5">
         <Icon className="size-3.5" />
         {label}
+      </CardDescription>
+      <div className={cn("truncate text-2xl font-semibold tabular-nums", tone)}>
+        {loading ? <Skeleton className="h-8 w-16" /> : value}
       </div>
-      <div className={cn("mt-1.5 truncate text-2xl font-semibold tabular-nums", tone)}>
-        {loading ? <Skeleton className="h-7 w-16" /> : value}
-      </div>
-      <p className="mt-0.5 truncate text-xs text-muted-foreground" title={hint}>
+      <p className="truncate text-xs text-muted-foreground" title={hint}>
         {hint}
       </p>
-    </div>
+    </Card>
   )
 }
 
 /** The tiles in a row, four across where there is room. */
 export function StatGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
+  return <div className="grid gap-4 @panel-sm:grid-cols-2 @panel-lg:grid-cols-4">{children}</div>
 }
 
 /** A bordered card with a caption, for the lists on a page. */
@@ -192,12 +193,12 @@ export function SurfaceCard({
   className?: string
 }) {
   return (
-    <section className={cn("overflow-hidden rounded-xl border bg-card", className)}>
-      <header className="flex items-center justify-between gap-2 border-b px-4 py-2.5">
-        <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
+    <Card className={cn("gap-0 py-0", className)}>
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <CardTitle className="text-sm">{title}</CardTitle>
         {action}
-      </header>
+      </div>
       {children}
-    </section>
+    </Card>
   )
 }

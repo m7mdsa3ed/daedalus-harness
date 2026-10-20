@@ -3,6 +3,7 @@ import { Plus } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { reportError } from "@/lib/errors"
+import { Button } from "@/components/ui/button"
 
 /**
  * Inline "+ Add task" that turns into a title field, the way a kanban column
@@ -58,17 +59,15 @@ export function QuickAdd({
 
   if (!open) {
     return (
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={() => setOpen(true)}
-        className={cn(
-          "flex w-full items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          compact ? "h-7" : "h-8",
-          className,
-        )}
+        className={cn("w-full justify-start text-muted-foreground", compact && "h-7", className)}
       >
-        <Plus className="size-3.5" /> Add task
-      </button>
+        <Plus /> Add task
+      </Button>
     )
   }
 
@@ -78,7 +77,7 @@ export function QuickAdd({
         e.preventDefault()
         void submit()
       }}
-      className={cn("rounded-lg border bg-card p-1 shadow-xs", className)}
+      className={cn("rounded-xl border bg-card p-1", className)}
     >
       <input
         ref={inputRef}
@@ -98,11 +97,11 @@ export function QuickAdd({
         aria-label="New task title"
         className="h-7 w-full bg-transparent px-1.5 text-sm outline-none placeholder:text-muted-foreground"
       />
-      <div className="flex items-center justify-between px-1 pt-1 text-[10px] text-muted-foreground">
+      <div className="flex items-center justify-between px-1 pt-1 text-xs text-muted-foreground">
         <span>Enter to add · Esc to close</span>
-        <button type="submit" disabled={!title.trim() || busy} className="rounded-pill bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground disabled:opacity-50">
+        <Button type="submit" size="xs" disabled={!title.trim() || busy}>
           {busy ? "Adding…" : "Add"}
-        </button>
+        </Button>
       </div>
     </form>
   )

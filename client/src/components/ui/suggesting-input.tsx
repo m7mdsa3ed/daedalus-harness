@@ -75,7 +75,7 @@ const defaultRenderItem = (item: SuggestingItem) => (
       <AtSign className="size-4 shrink-0 text-muted-foreground" />
     ) : null}
     <span className="min-w-0 flex-1 truncate font-mono text-xs">{item.label}</span>
-    {item.hint && <span className="shrink-0 text-[11px] text-muted-foreground">{item.hint}</span>}
+    {item.hint && <span className="shrink-0 text-xs text-muted-foreground">{item.hint}</span>}
   </>
 )
 
@@ -109,7 +109,7 @@ function SuggestPopup({
   if (!open) return null
   return (
     <div
-      className="absolute top-full right-0 left-0 z-30 mt-1.5 overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-2xl ring-1 ring-edge-float duration-100 animate-in fade-in-0 zoom-in-95"
+      className="absolute top-full right-0 left-0 z-30 mt-1.5 overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-2xl ring-1 ring-foreground/5 duration-100 animate-in fade-in-0 zoom-in-95"
       // Keep focus (and the popup) alive while clicking a row.
       onMouseDown={(e) => e.preventDefault()}
     >
@@ -135,7 +135,7 @@ function SuggestPopup({
         )}
       </div>
       {footer && (
-        <div className="border-t border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground">{footer}</div>
+        <div className="border-t px-3 py-1.5 text-xs text-muted-foreground">{footer}</div>
       )}
     </div>
   )

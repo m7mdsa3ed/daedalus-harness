@@ -100,13 +100,13 @@ export function WebSearchPage() {
       />
       <Group label="What it serves" hint="One backend answers both tools.">
         <Row icon={Search} title="web_search" subtitle={<span className="font-mono">/v1/search</span>}>
-          <span className="max-w-32 truncate font-mono text-xs text-muted-foreground">{form.searchModel || "—"}</span>
+          <span className="max-w-32 truncate font-mono text-sm text-muted-foreground">{form.searchModel || "—"}</span>
         </Row>
         <Row icon={Globe} title="web_fetch" subtitle={<span className="font-mono">/v1/web/fetch</span>}>
-          <span className="max-w-32 truncate font-mono text-xs text-muted-foreground">{form.fetchModel || "—"}</span>
+          <span className="max-w-32 truncate font-mono text-sm text-muted-foreground">{form.fetchModel || "—"}</span>
         </Row>
       </Group>
-      <p className="mt-3 px-1 text-xs text-pretty text-muted-foreground">
+      <p className="mt-3 px-1 text-sm text-pretty text-muted-foreground">
         The token only ever leaves the server process at spawn — it is never shown back to clients and never stored
         in the database. Each profile can override these values in Settings › Profiles.
       </p>
@@ -119,7 +119,7 @@ export function WebSearchPage() {
                 onChange={(e) => set({ searchApiBaseUrl: e.target.value })}
                 placeholder="http://localhost:20128"
                 aria-label="Search API base URL"
-                className="h-11 font-mono text-xs @panel-sm:h-9"
+                className="h-11 font-mono text-sm @panel-sm:h-9"
                 required
               />
             </Field>
@@ -138,10 +138,10 @@ export function WebSearchPage() {
         <FormSection label="Models" hint="What the backend serves for each tool.">
           <div className="grid gap-4 @panel-sm:grid-cols-2">
             <Field label="Search model" hint="Answers web_search, served at /v1/search.">
-              <Input aria-label="Search model" value={form.searchModel} onChange={(e) => set({ searchModel: e.target.value })} placeholder="search-combo" className="h-11 font-mono text-xs @panel-sm:h-9" required />
+              <Input aria-label="Search model" value={form.searchModel} onChange={(e) => set({ searchModel: e.target.value })} placeholder="search-combo" className="h-11 font-mono text-sm @panel-sm:h-9" required />
             </Field>
             <Field label="Fetch model" hint="Answers web_fetch, served at /v1/web/fetch.">
-              <Input aria-label="Fetch model" value={form.fetchModel} onChange={(e) => set({ fetchModel: e.target.value })} placeholder="fetch-combo" className="h-11 font-mono text-xs @panel-sm:h-9" required />
+              <Input aria-label="Fetch model" value={form.fetchModel} onChange={(e) => set({ fetchModel: e.target.value })} placeholder="fetch-combo" className="h-11 font-mono text-sm @panel-sm:h-9" required />
             </Field>
           </div>
         </FormSection>

@@ -446,7 +446,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
             <CompleterRow
               key={`mcp-server:${entry.server.id}`}
               icon={Plug}
-              mark={<McpIcon server={entry.server} className="size-3.5" />}
+              mark={<McpIcon server={entry.server} className="size-4" />}
               label={entry.server.name}
               description={mcpSubtitle(entry.server)}
               badge={mcpNeedsAuth(entry.server) ? "needs auth" : "enable MCP"}
@@ -476,7 +476,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
             <CompleterRow
               key={`project:${entry.id}`}
               icon={Boxes}
-              mark={<ProjectIcon project={entry} className="size-3.5" />}
+              mark={<ProjectIcon project={entry} className="size-4" />}
               label={entry.name}
               aside={entry.cwd}
               badge="project"

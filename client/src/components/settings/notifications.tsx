@@ -181,7 +181,7 @@ const eventPhoneRow = (row: EventRow) => {
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{row.title}</div>
-        <div className="text-xs/relaxed text-muted-foreground">{row.subtitle}</div>
+        <div className="text-sm/relaxed text-muted-foreground">{row.subtitle}</div>
       </div>
       <Switch
         checked={row.on}
@@ -276,7 +276,7 @@ export function NotificationsPage() {
           emptyIcon={<BellIcon />}
           emptyMessage={f.narrowed ? "No events match." : undefined}
           toolbar={
-            <span className="text-xs text-muted-foreground tabular-nums">
+            <span className="text-sm text-muted-foreground tabular-nums">
               {eventsOn} of {rows.length} announced
             </span>
           }

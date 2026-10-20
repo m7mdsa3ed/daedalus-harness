@@ -176,7 +176,7 @@ export function HeaderActionOverflow({
         {showMore && (
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger
-              render={<Button type="button" size="icon" variant={bordered ? "outline" : "ghost"} aria-label="More actions" className={cn(size === "md" ? "size-9" : "size-8", "rounded-md")} />}>
+              render={<Button type="button" size="icon" variant={bordered ? "outline" : "ghost"} aria-label="More actions" className={size === "md" ? "size-9" : "size-8"} />}>
                 <MoreHorizontal />
               
             </PopoverTrigger>
@@ -184,7 +184,7 @@ export function HeaderActionOverflow({
               align="end"
               side="bottom"
               sideOffset={8}
-              className="w-56! rounded-xl p-1"
+              className="w-56!"
             >
               {overflow.map((item) => {
                 const content = (
@@ -196,7 +196,7 @@ export function HeaderActionOverflow({
                   </>
                 );
                 const className = cn(
-                  "w-full flex items-center gap-3 p-2.5 rounded-xl text-sm hover:bg-accent/5 transition-colors disabled:pointer-events-none disabled:opacity-50",
+                  "w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground transition-colors disabled:pointer-events-none disabled:opacity-50",
                   item.destructive && "text-destructive",
                 );
                 const close = () => setOpen(false);

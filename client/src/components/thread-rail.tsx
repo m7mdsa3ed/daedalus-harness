@@ -381,7 +381,7 @@ export function ThreadRail({
              lights it to full opacity over a pill of card background, so the
              finger has a visible track to drag on. */
           scrub !== null
-            ? "bg-background/80 opacity-100 shadow-sm backdrop-blur-sm"
+            ? "bg-background opacity-100 ring-1 ring-foreground/10"
             : "bg-transparent opacity-60 hover:opacity-100"
         )}
         onPointerLeave={() => setHover(null)}
@@ -478,7 +478,7 @@ export function ThreadRail({
         side={edge === "right" ? "left" : "right"}
         align="center"
         sideOffset={coarse ? 16 : 8}
-        className="pointer-events-none w-64 max-w-[calc(var(--float-w)-4rem)] gap-1 rounded-xl bg-popover/95 p-2.5 text-xs shadow-lg backdrop-blur-sm"
+        className="pointer-events-none w-64 max-w-[calc(var(--float-w)-4rem)] gap-1 p-2.5 text-sm"
       >
         {preview && (
           <>
@@ -488,11 +488,11 @@ export function ThreadRail({
                 the two halves are decided separately, since a question in one
                 script is routinely answered in the other. The ordinal is its
                 own row above both, so it votes on neither. */}
-            <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70 tabular-nums">
+            <div className="flex items-center justify-between text-xs font-medium text-muted-foreground tabular-nums">
               <span>
                 Turn {preview.n} of {ticks.length}
               </span>
-              {preview.id === null && <span className="normal-case tracking-normal">loads on jump</span>}
+              {preview.id === null && <span className="font-normal">loads on jump</span>}
             </div>
             <p dir="auto" className="line-clamp-3 font-medium text-foreground">
               {preview.text.trim() || <span className="italic text-muted-foreground">no text</span>}

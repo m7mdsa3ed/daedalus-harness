@@ -66,7 +66,7 @@ export function TokenField({
           onChange={(event) => onChange(event.target.value)}
           className="size-5 cursor-pointer appearance-none rounded border-0 bg-transparent p-0 @panel-sm:size-4.5 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded [&::-webkit-color-swatch]:border-0"
         />
-        <span className="text-[10px] tracking-wide uppercase @panel-sm:hidden">{mode}</span>
+        <span className="text-xs @panel-sm:hidden">{mode}</span>
       </InputGroupAddon>
       <InputGroupInput
         value={draft}
@@ -74,7 +74,7 @@ export function TokenField({
         onBlur={() => setDraft(value)}
         spellCheck={false}
         aria-label={`${token} hex (${mode})`}
-        className="h-9 px-0 text-right font-mono text-[11px] tabular-nums @panel-sm:h-7"
+        className="h-9 px-0 text-right font-mono text-xs tabular-nums @panel-sm:h-7"
       />
       {failing && (
         <InputGroupAddon align="inline-end" className="pr-1.5 text-destructive">

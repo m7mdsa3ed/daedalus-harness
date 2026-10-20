@@ -374,7 +374,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
             /* Fully round (`--dock-corner` is the pill, `index.css`), the same
                shape as the sidebar toggle and the strip's own buttons — a
                control on the strip's line, not a miniature card. */
-            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-1.5 pl-2.5 text-[13px] leading-4",
+            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-1.5 pl-2.5 text-sm leading-4",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -414,7 +414,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               <PanelStatusDot status={status} aria-hidden role={undefined} title={undefined} />
             </span>
             {subtitle && (
-              <span className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3 font-normal text-muted-foreground/80">
+              <span className="flex min-w-0 items-center gap-1.5 text-xs leading-3 font-normal text-muted-foreground">
                 <span className="min-w-0 flex-1 truncate">{subtitle}</span>
                 {age && <span className="shrink-0 tabular-nums">{age}</span>}
               </span>
@@ -488,7 +488,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
    in a 28px chip is a button, and two rounded squares at the end of a rounded
    rectangle is a tab made of three rounded rectangles. */
 const TAB_CONTROL =
-  "size-[var(--dock-control-h)] shrink-0 rounded-inner text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:bg-foreground/15"
+  "size-[var(--dock-control-h)] shrink-0 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
 
 /**
  * A tab's close / unpin control.

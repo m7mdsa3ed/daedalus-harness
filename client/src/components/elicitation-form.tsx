@@ -1,13 +1,13 @@
 import * as React from "react"
 import { CheckIcon, ExternalLinkIcon, MessageCircleQuestionIcon } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   AgentRequestActions,
   AgentRequestBody,
   AgentRequestCard,
   AgentRequestHeader,
-  REQUEST_BUTTON,
 } from "./agent-request"
 import { Shortcut } from "@/components/shortcut"
 import {
@@ -115,19 +115,19 @@ function ElicitationStep({
       <div className="flex items-start justify-between gap-3">
         {/* mb-0! because the wrapper's own margin is set by a `:has(~ …)`
             variant that can't see the description through this row. */}
-        <QuestionnaireTitle className="mb-0! flex-1 text-[15px] leading-snug">
-          <QuestionText text={prompt} className="text-[15px] leading-snug" />
+        <QuestionnaireTitle className="mb-0! flex-1 text-sm leading-snug">
+          <QuestionText text={prompt} className="text-sm leading-snug" />
         </QuestionnaireTitle>
         {chip && (
-          <span className="mt-px shrink-0 rounded-pill bg-background/60 px-2 py-0.5 text-[10px] leading-4 tracking-wide text-muted-foreground">
+          <Badge variant="secondary" className="mt-px">
             {chip}
-          </span>
+          </Badge>
         )}
       </div>
       {/* Two things the user can only learn from the schema: that this one takes
           more than one answer, and that it can't be skipped. */}
       {(field.kind === "multiselect" || field.required) && (
-        <QuestionnaireDescription className="text-xs">
+        <QuestionnaireDescription className="text-sm">
           {field.kind === "multiselect" ? "Choose as many as apply." : "Required."}
         </QuestionnaireDescription>
       )}
@@ -137,7 +137,7 @@ function ElicitationStep({
             <QuestionnaireChoice key={option.value} value={option.value}>
               <ProsePreview text={option.label} className="font-medium" />
               {option.description && (
-                <QuestionnaireChoiceDescription className="text-xs">
+                <QuestionnaireChoiceDescription className="text-sm">
                   <QuestionText text={option.description} />
                 </QuestionnaireChoiceDescription>
               )}
@@ -147,10 +147,10 @@ function ElicitationStep({
                   a wide line scrolls, sideways. */}
               {option.preview && (
                 /* One step further down than the option it sits in — the same
-                   `bg-background/60` would make it invisible against its own
+                   `bg-background` would make it invisible against its own
                    parent. Prose marks up a markdown preview; a code preview
                    still finds its fenced blocks styled by the same renderer. */
-                <div className="mt-1.5 overflow-x-auto rounded-lg bg-muted/60 px-2.5 py-2 text-[11px] leading-relaxed text-foreground/90">
+                <div className="mt-1.5 overflow-x-auto rounded-lg bg-muted px-2.5 py-2 text-xs leading-relaxed text-foreground">
                   {/* A mockup's whitespace is its layout, so it is drawn verbatim
                       in mono; only a preview that fences its own code is markdown. */}
                   {option.preview.includes("```") ? (
@@ -179,7 +179,7 @@ function ElicitationStep({
       )}
       {/* No children: the primitive's own text already distinguishes a required
           question from one you are allowed to skip. */}
-      <QuestionnaireError className="mt-0 text-xs" />
+      <QuestionnaireError className="mt-0 text-sm" />
     </QuestionnaireItem>
   )
 }
@@ -260,14 +260,14 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
           type="button"
           size="sm"
           variant="ghost"
-          className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+          className="text-muted-foreground"
           onClick={() => settle({ action: "decline" })}
         >
           Dismiss
         </Button>
         <Button
           size="sm"
-          className={cn(REQUEST_BUTTON, "ms-auto")}
+          className="ms-auto"
           render={
             <a href={url.url} target="_blank" rel="noreferrer noopener">
               <ExternalLinkIcon aria-hidden className="size-3" />
@@ -293,7 +293,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
         type="button"
         size="sm"
         variant="secondary"
-        className={cn(REQUEST_BUTTON, "ms-auto")}
+        className="ms-auto"
         onClick={() => settle({ action: "decline" })}
       >
         Skip
@@ -365,7 +365,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
             <QuestionnairePrevious
               size="sm"
               variant="ghost"
-              className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+              className="text-muted-foreground"
             />
             {/* Declining answers the whole thing — "I'm not doing this" — where
                 the questionnaire's own Skip passes on one question and carries
@@ -374,7 +374,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
               type="button"
               size="sm"
               variant="ghost"
-              className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+              className="text-muted-foreground"
               onClick={() => settle({ action: "decline" })}
             >
               {single ? "Don't answer" : "Dismiss"}
@@ -392,13 +392,13 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
               <QuestionnaireSkip
                 size="sm"
                 variant="ghost"
-                className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+                className="text-muted-foreground"
               >
                 Skip this
               </QuestionnaireSkip>
             )}
-            <QuestionnaireNext size="sm" className={REQUEST_BUTTON} />
-            <QuestionnaireSubmit size="sm" className={REQUEST_BUTTON}>
+            <QuestionnaireNext size="sm" />
+            <QuestionnaireSubmit size="sm">
               <CheckIcon aria-hidden className="size-3.5" />
               {single ? "Answer" : "Submit"}
             </QuestionnaireSubmit>

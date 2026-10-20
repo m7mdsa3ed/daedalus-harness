@@ -47,6 +47,7 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { PageFrame, SurfaceHeader } from "@/components/page-primitives"
 import { Group, StatStrip, StatusBadge } from "@/components/settings/primitives"
 import { Empty } from "@/components/empty"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -192,11 +193,17 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           </Notice>
         )}
         {error && (
-          <Notice tone="neutral" icon={<AlertTriangleIcon />} className="mt-4">
-            {error}{" "}
-            <button type="button" className="underline" onClick={refresh}>
-              Try again
-            </button>
+          <Notice
+            tone="neutral"
+            icon={<AlertTriangleIcon />}
+            className="mt-4"
+            action={
+              <Button type="button" variant="outline" size="xs" onClick={refresh}>
+                Try again
+              </Button>
+            }
+          >
+            {error}
           </Notice>
         )}
 
@@ -292,17 +299,16 @@ function ProjectBranches({ projectId }: { projectId: string }) {
   return (
     <>
       {shown.map((repo) => (
-        <span
+        <Badge
           key={repo.path}
+          variant="outline"
           title={`${repo.path || "Project"} — ${repo.branch ?? "detached HEAD"}`}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+          className="max-w-full text-muted-foreground"
         >
-          <GitBranchIcon className="size-3 shrink-0 opacity-60" />
-          {repos.length > 1 && repo.path && (
-            <span className="truncate font-medium text-foreground/80">{repo.name}</span>
-          )}
-          <span className="truncate font-mono text-[11px]">{repo.branch ?? "detached"}</span>
-        </span>
+          <GitBranchIcon />
+          {repos.length > 1 && repo.path && <span className="truncate text-foreground">{repo.name}</span>}
+          <span className="truncate font-mono font-normal">{repo.branch ?? "detached"}</span>
+        </Badge>
       ))}
       {repos.length > shown.length && (
         <span className="text-xs text-muted-foreground">+{repos.length - shown.length} more</span>
@@ -328,13 +334,13 @@ function HelpersMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" title="Run a command for this project" className="gap-1.5">
-            <SquareTerminal className="size-3.5" />
+          <Button variant="outline" title="Run a command for this project">
+            <SquareTerminal data-icon="inline-start" />
             <span>Run</span>
             {helpers.length > 0 && (
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-mono leading-none text-muted-foreground">
+              <Badge variant="secondary" className="tabular-nums">
                 {helpers.length}
-              </span>
+              </Badge>
             )}
           </Button>
         }
@@ -344,11 +350,9 @@ function HelpersMenu({
             from context and throws outside one, so the label and its items are
             wrapped together rather than sitting loose in the content. */}
         <DropdownMenuGroup>
-          <DropdownMenuLabel className="flex items-center justify-between text-xs text-muted-foreground">
+          <DropdownMenuLabel className="flex items-center justify-between">
             <span>Project commands</span>
-            {helpers.length > 0 && (
-              <span className="font-mono text-[10px]">{helpers.length} configured</span>
-            )}
+            {helpers.length > 0 && <span className="tabular-nums">{helpers.length} configured</span>}
           </DropdownMenuLabel>
           {helpers.map((helper) => (
             <DropdownMenuItem
@@ -391,35 +395,39 @@ function QuickHelpersBar({
   if (helpers.length === 0) return null
 
   return (
-    <div className="mt-4 flex items-center gap-2 overflow-x-auto py-1 no-scrollbar text-xs">
-      <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-        <SquareTerminal className="size-3 text-muted-foreground" />
+    <div className="mt-4 flex items-center gap-2 overflow-x-auto py-1 no-scrollbar">
+      <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <SquareTerminal className="size-3.5" />
         Quick actions
       </span>
       {helpers.map((helper) => (
-        <button
+        <Button
           key={helper.id}
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => onRunHelper(helper)}
           title={helper.description ?? helper.command}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-pill border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="shrink-0"
         >
-          <Play className="size-2.5 text-primary" />
+          <Play data-icon="inline-start" className="text-primary" />
           <span>{helper.name}</span>
           {/* The same mark the Run menu carries: a chip is one tap from a
               destructive command, so "asks first" has to be visible before it. */}
-          {helper.confirm && <TriangleAlert className="size-2.5 text-warning" aria-hidden />}
-        </button>
+          {helper.confirm && <TriangleAlert className="text-warning" aria-hidden />}
+        </Button>
       ))}
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="xs"
         onClick={() => void navigate(settingsFormPath("projects", project.id))}
-        className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground px-1 py-1"
+        className="shrink-0 text-muted-foreground"
         title="Configure helper commands"
       >
-        <Pencil className="size-3" />
+        <Pencil data-icon="inline-start" />
         <span>Edit</span>
-      </button>
+      </Button>
     </div>
   )
 }
@@ -460,19 +468,17 @@ function ProjectHeader({
       description={project.description || undefined}
       meta={
         <>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="xs"
             onClick={() => void copy()}
             title="Copy working directory"
-            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="max-w-full text-muted-foreground"
           >
-            <span className="truncate font-mono text-[11px]">{project.cwd}</span>
-            {copied ? (
-              <CheckIcon className="size-3 shrink-0 text-foreground" />
-            ) : (
-              <CopyIcon className="size-3 shrink-0 opacity-60" />
-            )}
-          </button>
+            <span className="min-w-0 truncate font-mono font-normal">{project.cwd}</span>
+            {copied ? <CheckIcon data-icon="inline-end" /> : <CopyIcon data-icon="inline-end" />}
+          </Button>
           <ProjectBranches projectId={project.id} />
         </>
       }
@@ -486,27 +492,27 @@ function ProjectHeader({
             </Button>
             <HelpersMenu project={project} onRunHelper={onRunHelper} />
             <Button variant="outline" onClick={onImport} size="sm">
-              <DownloadIcon className="size-3.5" /> Import
+              <DownloadIcon data-icon="inline-start" /> Import
             </Button>
             <Button variant="outline" onClick={onEdit} size="sm">
-              <Pencil className="size-3.5" /> Edit
+              <Pencil data-icon="inline-start" /> Edit
             </Button>
             <Button onClick={onNewThread} size="sm">
-              <Plus className="size-4" /> New thread
+              <Plus data-icon="inline-start" /> New thread
             </Button>
           </div>
 
           {/* Narrow panel: the primary action, Run, and an overflow menu. */}
           <div className="flex w-full items-center gap-2 @panel-sm:hidden">
-            <Button onClick={onNewThread} className="flex-1 font-medium">
-              <Plus className="size-4" /> New thread
+            <Button onClick={onNewThread} className="flex-1">
+              <Plus data-icon="inline-start" /> New thread
             </Button>
             <HelpersMenu project={project} onRunHelper={onRunHelper} />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
                   <Button variant="outline" size="icon" title="More options" aria-label="More options">
-                    <MoreHorizontal className="size-4" />
+                    <MoreHorizontal />
                   </Button>
                 }
               />
@@ -559,26 +565,24 @@ function ActivityStrip({ stats }: { stats: ProjectStats | null }) {
       }
     >
       <div className="py-4">
-        <div className="flex h-16 items-end gap-[3px]">
+        <div className="flex h-16 items-end gap-0.5">
           {(stats ? days : Array.from({ length: ACTIVITY_DAYS }, () => null)).map((day, i) =>
             day ? (
               <div
                 key={day.day}
                 title={`${day.day} · ${day.turns} ${day.turns === 1 ? "turn" : "turns"}`}
                 className={cn(
-                  "min-h-[3px] flex-1 rounded-t-[3px] transition-all duration-150",
-                  day.turns > 0
-                    ? "bg-primary/75 hover:bg-primary hover:brightness-110"
-                    : "bg-muted/60 hover:bg-muted"
+                  "min-h-0.5 flex-1 rounded-t-sm transition-colors",
+                  day.turns > 0 ? "bg-primary/80 hover:bg-primary" : "bg-muted"
                 )}
                 style={{ height: `${day.turns > 0 ? Math.max(8, (day.turns / peak) * 100) : 3}%` }}
               />
             ) : (
-              <div key={i} className="h-[3px] flex-1 rounded-t-[3px] bg-muted/40" />
+              <div key={i} className="h-0.5 flex-1 rounded-t-sm bg-muted" />
             )
           )}
         </div>
-        <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+        <div className="mt-2 flex justify-between text-xs text-muted-foreground">
           <span>{ACTIVITY_DAYS} days ago</span>
           <span>today</span>
         </div>
@@ -679,24 +683,24 @@ function ThreadsCard({
           icon={MessagesSquareIcon}
           className="my-3"
           action={
-            <Button size="sm" onClick={onNewThread} className="gap-1.5">
-              <Plus className="size-4" /> Start thread
+            <Button size="sm" onClick={onNewThread}>
+              <Plus data-icon="inline-start" /> Start thread
             </Button>
           }
         >
           No threads in this project yet. Start a new thread to begin working on this workspace with your AI agents.
         </Empty>
       ) : (
-        <ul className="divide-y divide-border/60">
+        <ul className="divide-y">
           {shown.map((session) => {
             const status = threadStatus(session, liveThreads[session.id])
             const checked = selected.has(session.id)
             return (
-              <li key={session.id} className="group transition-colors">
+              <li key={session.id}>
                 <div
                   className={cn(
-                    "flex w-full items-center gap-3 transition-colors",
-                    selecting && checked && "bg-accent/40"
+                    "-mx-2 flex items-center gap-3 rounded-lg px-2 transition-colors hover:bg-muted",
+                    selecting && checked && "bg-muted"
                   )}
                 >
                   {selecting && (
@@ -711,19 +715,19 @@ function ThreadsCard({
                     type="button"
                     onClick={() => (selecting ? toggle(session.id) : onOpen(session.id))}
                     disabled={busy}
-                    className="flex min-w-0 flex-1 items-center gap-3 py-2.5 text-left focus-visible:outline-none disabled:opacity-60"
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2.5 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
                   >
                     {!selecting && <StatusDot status={status} />}
                     <span className="min-w-0 flex-1">
                       <span
                         className={cn(
-                          "block break-words text-sm font-medium text-foreground group-hover:text-primary transition-colors @panel-sm:truncate",
+                          "block break-words text-sm font-medium @panel-sm:truncate",
                           status === "running" && !selecting && "harness-shimmer"
                         )}
                       >
                         {session.title || "Untitled thread"}
                       </span>
-                      <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
                           <AgentIcon agentId={session.agentId} className="size-3" />
                           <span className="truncate">{session.model || session.agentId}</span>
@@ -731,7 +735,7 @@ function ThreadsCard({
                       </span>
                     </span>
                     <span
-                      className="shrink-0 text-[11px] text-muted-foreground/80 tabular-nums"
+                      className="shrink-0 text-xs text-muted-foreground tabular-nums"
                       title={new Date(activityAt(session)).toLocaleString()}
                     >
                       {shortAge(activityAt(session))}
@@ -746,9 +750,9 @@ function ThreadsCard({
       {(threads.length > THREAD_PAGE || trashed > 0) && (
         <footer className="flex items-center justify-between gap-2 py-2 text-xs text-muted-foreground">
           {threads.length > THREAD_PAGE ? (
-            <button type="button" className="underline" onClick={() => setAll((v) => !v)}>
+            <Button type="button" variant="link" size="xs" className="px-0" onClick={() => setAll((v) => !v)}>
               {all ? "Show fewer" : `Show all ${threads.length}`}
-            </button>
+            </Button>
           ) : (
             <span />
           )}
@@ -860,7 +864,7 @@ function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
 
   return (
     <CardShell title="Worked on with">
-      <ul className="divide-y divide-border/60">
+      <ul className="divide-y">
         {stats.byAgent.map((entry) => (
           <MiniRow
             key={`agent:${entry.id}`}
@@ -908,16 +912,16 @@ function AutomationsCard({
         </Button>
       }
     >
-      <ul className="divide-y divide-border/60">
+      <ul className="divide-y">
         {automations.slice(0, 4).map((row) => {
           const next = row.enabled ? nextFireOf(triggers[row.id]) : null
           return (
             <li key={row.id} className="py-2">
-              <button type="button" className="block w-full text-left" onClick={() => onOpen(row.id)}>
-                <p className="truncate text-xs" title={row.name}>
+              <button type="button" className="group block w-full rounded-lg text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50" onClick={() => onOpen(row.id)}>
+                <p className="truncate text-sm group-hover:underline" title={row.name}>
                   {row.name}
                 </p>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {!row.enabled ? "Paused" : next !== null ? `Next ${untilLabel(next)}` : triggersLine(triggers[row.id]) || "…"} ·{" "}
                   {row.runsIn === "session"
                     ? (sessions.find((s) => s.id === row.sessionId)?.title ?? "thread")
@@ -975,7 +979,7 @@ function GlanceCard({ stats, trashed }: { stats: ProjectStats | null; trashed: n
 
   return (
     <CardShell title="At a glance">
-      <ul className="divide-y divide-border/60">
+      <ul className="divide-y">
         {rows.map((row) => (
           <MiniRow key={row.label} icon={row.icon} label={row.label} value={row.value} />
         ))}
@@ -996,8 +1000,8 @@ function MiniRow({
   return (
     <li className="flex items-center gap-2 py-2">
       {icon}
-      <span className="min-w-0 flex-1 truncate text-xs">{label}</span>
-      <span className="shrink-0 text-xs font-medium tabular-nums">{value}</span>
+      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+      <span className="shrink-0 text-sm font-medium tabular-nums">{value}</span>
     </li>
   )
 }

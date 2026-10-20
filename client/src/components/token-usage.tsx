@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils"
    inherited from wherever it lands, so the figure looks the same in a run's
    header, on a step and under a turn. */
 const FIGURE =
-  "inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] leading-4 tabular-nums text-muted-foreground/60 transition-colors duration-150 hover:text-muted-foreground focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-ring"
+  "inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-xs leading-4 tabular-nums text-muted-foreground transition-colors duration-150 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 /** The headline number: everything the turn or step burned, both directions.
     `totalTokens` is the agent's own sum and is what the composer's popover
@@ -142,7 +142,7 @@ export function StepTokens({
       />
       <PopoverContent align="start" side="top" className="w-56 gap-2">
         <p className="font-medium">This step</p>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
           <Stat label="Request" value={formatTokens(usage.used)} />
           <Stat label="Window" value={`${about}${formatTokens(usage.size)}`} />
           {share !== null && <Stat label="Share of window" value={`${about}${share}%`} />}
@@ -155,10 +155,10 @@ export function StepTokens({
         </dl>
         {turn ? (
           <>
-            <p className="pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="pt-1 text-xs font-medium text-muted-foreground">
               This turn
             </p>
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
               <Stat label="Prompt" value={formatTokens(prompt)} />
               <Stat label="Output" value={formatTokens(turn.outputTokens)} />
               <Stat label="New in" value={formatTokens(turn.inputTokens)} />
@@ -176,7 +176,7 @@ export function StepTokens({
             count — the context it carried plus what it wrote — and which step
             it belongs to is inferred from where it landed. Both halves of that
             are why the figure is written with a tilde. */}
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Roughly what the model request behind this step cost — the context it carried plus what it
           wrote. The split is the whole turn's: runtimes report a per-step total, and the
           prompt/output/cache breakdown only when a turn ends.
@@ -253,14 +253,14 @@ export function TokenSummary({
           >
             <CoinsIcon aria-hidden className="size-3 shrink-0" />
             <TokenFigure usage={usage} />
-            {durationMs !== undefined && <span className="text-muted-foreground/80">· {formatDuration(durationMs)}</span>}
-            {rate && <span className="text-muted-foreground/80">· {rate}</span>}
+            {durationMs !== undefined && <span className="text-muted-foreground">· {formatDuration(durationMs)}</span>}
+            {rate && <span className="text-muted-foreground">· {rate}</span>}
           </button>
         }
       />
       <PopoverContent align="start" side="top" className="w-56 gap-2">
         <p className="font-medium">{label}</p>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
           <Stat label="Prompt" value={formatTokens(prompt)} />
           <Stat label="Output" value={formatTokens(usage.outputTokens)} />
           <Stat label="New in" value={formatTokens(usage.inputTokens)} />
@@ -296,7 +296,7 @@ export function TokenSummary({
         {/* The same caveat the composer's popover carries, and for the same
             reason: a turn re-sends its context once per tool call, so a total
             far above the context size is arithmetic, not a bug. */}
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Billed across every model request in it — a turn re-sends the context once per tool call.
         </p>
       </PopoverContent>

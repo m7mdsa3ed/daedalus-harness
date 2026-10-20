@@ -64,8 +64,8 @@ export function ErrorFallback({
             the app fresh.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <pre className="text-muted-foreground max-h-40 overflow-auto rounded-md border p-3 font-mono text-xs whitespace-pre-wrap">
+        <CardContent className="flex flex-col gap-4">
+          <pre className="max-h-40 overflow-auto rounded-xl border bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
             {error.message || String(error)}
           </pre>
           <div className="flex gap-2">

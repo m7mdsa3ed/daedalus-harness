@@ -400,7 +400,7 @@ const REVEAL =
 /** The sticky header's hairline is an inset shadow: a collapsed border does not
  *  travel with a sticky cell. */
 const HEAD_BG =
-  "bg-[color-mix(in_oklab,var(--card),var(--muted)_40%)] shadow-[inset_0_-1px_0_color-mix(in_oklab,var(--border)_60%,transparent)]";
+  "bg-card shadow-[inset_0_-1px_0_var(--border)]";
 /** Mark slot at the start of a title cell / list row. */
 const MARK_BOX =
   "flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-4";
@@ -496,7 +496,7 @@ function ActionMenu<TData>({
             size="icon"
             title="More actions"
             aria-label="More actions"
-            className={cn("rounded-lg text-muted-foreground hover:text-foreground", className)}
+            className={cn("text-muted-foreground hover:text-foreground", className)}
             onClick={(e) => e.stopPropagation()}
           />
         }
@@ -586,7 +586,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
                 : undefined
             }
             className={cn(
-              "group/row h-14 border-border/60 outline-none hover:bg-muted/40 data-[state=selected]:bg-primary/5 data-[state=selected]:hover:bg-primary/[0.07] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring/70",
+              "group/row h-14 outline-none hover:bg-muted/50 data-[state=selected]:bg-muted data-[state=selected]:hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring/70",
               interactive && "cursor-pointer",
               rowClassName?.(row.original, index),
             )}
@@ -649,7 +649,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
           {/* Only built when open — previously `render` ran for every collapsed
               row on every render. */}
           {exp && hasExpandableRows && (
-            <TableRow className="border-b-0 bg-muted/20 hover:bg-muted/20">
+            <TableRow className="border-b-0 bg-muted/50 hover:bg-muted/50">
               <TableCell colSpan={expandColSpan}>
                 {expandLoading?.(row.original) ? (
                   <ExpandedRowSkeleton />
@@ -797,7 +797,7 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
               className={cn(
                 "min-w-0 flex-1",
                 flat && "flex items-center self-stretch py-3",
-                tappable && "rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+                tappable && "rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50",
               )}
               onPointerDown={(e) => {
                 if (!hasSelection || e.pointerType === "mouse") return;
@@ -880,8 +880,8 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
                     sel && "bg-primary/5 before:opacity-100",
                   )
                 : (wrapperClassName ??
-                    "flex items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm shadow-black/[0.03]"),
-              tappable && "cursor-pointer active:bg-muted/60 transition-colors",
+                    "flex items-center gap-3 rounded-2xl bg-card px-4 py-3.5 ring-1 ring-foreground/10"),
+              tappable && "cursor-pointer active:bg-muted transition-colors",
               !flat && sel && "ring-2 ring-primary ring-inset rounded-2xl",
               rowClassName?.(row.original, rowIndex),
             )}
@@ -1317,7 +1317,7 @@ export function DataTable<TData extends RowData, TValue>({
               aria-label={actionLabel(a, row)}
               disabled={a.disabled?.(row)}
               className={cn(
-                "size-8 rounded-lg pointer-coarse:size-11",
+                "size-8 pointer-coarse:size-11",
                 REVEAL,
                 a.tone && a.tone !== "neutral"
                   ? ACTION_TONE_TEXT[a.tone]
@@ -1387,7 +1387,7 @@ export function DataTable<TData extends RowData, TValue>({
             <div className="shrink-0 text-xs tabular-nums">{draw(statusCell)}</div>
           )}
           {onRowClick && (
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180" />
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" />
           )}
         </div>
       );
@@ -1476,7 +1476,7 @@ export function DataTable<TData extends RowData, TValue>({
     <div
       role="group"
       aria-label="Layout"
-      className="flex shrink-0 items-center rounded-lg bg-muted/60 p-0.5"
+      className="flex shrink-0 items-center rounded-4xl bg-muted p-[3px]"
     >
       {(
         [
@@ -1492,8 +1492,8 @@ export function DataTable<TData extends RowData, TValue>({
           aria-pressed={view === value}
           onClick={() => setView(value)}
           className={cn(
-            "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:size-10",
-            view === value && "bg-background text-foreground shadow-sm",
+            "flex size-7.5 items-center justify-center rounded-4xl border border-transparent text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:size-10",
+            view === value && "bg-background text-foreground dark:border-input dark:bg-input/30",
           )}
         >
           <Icon className="size-4" />
@@ -1599,7 +1599,7 @@ export function DataTable<TData extends RowData, TValue>({
           return (
             <>
               <div
-                className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-primary/15 bg-primary/[0.05] px-3 py-2"
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-primary/5 px-3 py-2"
                 style={{ minHeight: toolbarHeight.current || undefined }}
               >
                 <span className="flex size-4 items-center justify-center pointer-coarse:size-11">
@@ -1668,7 +1668,7 @@ export function DataTable<TData extends RowData, TValue>({
                 role="toolbar"
                 aria-label="Bulk actions"
                 className={cn(
-                  "fixed inset-x-0 z-50 border-t border-border/80 bg-background/95 px-3 pt-2 pb-[max(0.5rem,var(--safe-bottom))] shadow-[0_-8px_24px_-18px_black] backdrop-blur",
+                  "fixed inset-x-0 z-50 border-t bg-background px-3 pt-2 pb-[max(0.5rem,var(--safe-bottom))]",
                   KEYBOARD_RISE,
                 )}
               >
@@ -1714,7 +1714,7 @@ export function DataTable<TData extends RowData, TValue>({
   const footerNode = !showFooter ? null : isNarrow ? (
     // A thumb-sized "Load more" for a client-paged list (the rows stay one
     // continuous list); prev/next when the server owns the pages.
-    <div className="flex flex-col items-stretch gap-2 border-t bg-muted/20 px-3 py-3">
+    <div className="flex flex-col items-stretch gap-2 border-t bg-muted/50 px-3 py-3">
       <span className="text-center text-xs tabular-nums text-muted-foreground">
         {pagination
           ? rangeLabel
@@ -1722,11 +1722,11 @@ export function DataTable<TData extends RowData, TValue>({
       </span>
       {pagination ? (
         <div className="grid grid-cols-2 gap-2">
-          <Button variant="outline" className="h-11 rounded-lg" disabled={!canPrev} onClick={goPrev}>
+          <Button variant="outline" className="h-11" disabled={!canPrev} onClick={goPrev}>
             <ChevronLeft className="size-4 rtl:rotate-180" />
             {"Previous"}
           </Button>
-          <Button variant="outline" className="h-11 rounded-lg" disabled={!canNext} onClick={goNext}>
+          <Button variant="outline" className="h-11" disabled={!canNext} onClick={goNext}>
             {"Next"}
             <ChevronRight className="size-4 rtl:rotate-180" />
           </Button>
@@ -1735,7 +1735,7 @@ export function DataTable<TData extends RowData, TValue>({
         canNext && (
           <Button
             variant="outline"
-            className="h-11 rounded-lg"
+            className="h-11"
             onClick={() => {
               table.setPageIndex(0);
               table.setPageSize(size + loadStep);
@@ -1747,7 +1747,7 @@ export function DataTable<TData extends RowData, TValue>({
       )}
     </div>
   ) : (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t bg-muted/20 px-4 py-2">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t bg-muted/50 px-4 py-2">
       <span className="text-xs tabular-nums text-muted-foreground">{rangeLabel}</span>
       <div className="flex items-center gap-2">
         {pageSizeNode}
@@ -1762,7 +1762,7 @@ export function DataTable<TData extends RowData, TValue>({
                 size="icon"
                 title="Previous page"
                 aria-label="Previous page"
-                className="size-8 rounded-lg pointer-coarse:size-11"
+                className="size-8 pointer-coarse:size-11"
                 disabled={!canPrev}
                 onClick={goPrev}
               >
@@ -1773,7 +1773,7 @@ export function DataTable<TData extends RowData, TValue>({
                 size="icon"
                 title="Next page"
                 aria-label="Next page"
-                className="size-8 rounded-lg pointer-coarse:size-11"
+                className="size-8 pointer-coarse:size-11"
                 disabled={!canNext}
                 onClick={goNext}
               >
@@ -1818,7 +1818,7 @@ export function DataTable<TData extends RowData, TValue>({
             : undefined
         }
         className={cn(
-          "group/head sticky top-0 z-10 h-10 px-3 text-start text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
+          "group/head sticky top-0 z-10 h-10 px-3 text-start text-sm font-medium whitespace-nowrap text-foreground",
           HEAD_BG,
           leadPad && "ps-4",
           nativeSort && "p-0",
@@ -1831,7 +1831,7 @@ export function DataTable<TData extends RowData, TValue>({
             type="button"
             onClick={() => h.column.toggleSorting(sorted === "asc")}
             className={cn(
-              "flex h-10 w-full items-center gap-1 px-3 uppercase tracking-wide outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+              "flex h-10 w-full items-center gap-1 px-3 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50",
               leadPad && "ps-4",
               meta.align === "end" && "justify-end",
               sorted && "text-foreground",
@@ -1897,7 +1897,7 @@ export function DataTable<TData extends RowData, TValue>({
           <TableBody>
             {isLoading ? (
               Array.from({ length: skeletonRows }).map((_, i) => (
-                <TableRow key={`skeleton-${i}`} className="h-14 border-border/60 hover:bg-transparent">
+                <TableRow key={`skeleton-${i}`} className="h-14 hover:bg-transparent">
                   {hasSelection && (
                     <TableCell className="w-12 ps-4 pe-0">
                       <Skeleton className="size-4 rounded" />
@@ -1950,7 +1950,7 @@ export function DataTable<TData extends RowData, TValue>({
                         acc.push(
                           <TableRow
                             key={`group-${gk}`}
-                            className="border-border/60 bg-muted/30 hover:bg-muted/30"
+                            className="bg-muted/50 hover:bg-muted/50"
                           >
                             <TableCell colSpan={totalColSpan}>
                               {content}
@@ -2009,7 +2009,7 @@ export function DataTable<TData extends RowData, TValue>({
             )}
           </TableBody>
           {footer && rows.length > 0 && (
-            <TableFooter className="bg-muted/30">
+            <TableFooter className="bg-muted/50">
               <TableRow className="hover:bg-transparent">
                 {hasSelection && <TableCell className="w-12 ps-4" />}
                 {table.getHeaderGroups()[0].headers.map((header) => {
@@ -2055,15 +2055,15 @@ export function DataTable<TData extends RowData, TValue>({
   // ── Narrow list ──
   const mobileFooterStrip =
     footer && footer.cells.length > 0 ? (
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t bg-muted/30 px-4 py-3 text-sm font-medium">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t bg-muted/50 px-4 py-3 text-sm font-medium">
         {footer.label && (
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {footer.label}
           </span>
         )}
         {footer.cells.map((c) => (
           <span key={c.columnId} className="flex items-center gap-1.5 text-xs">
-            <span className="uppercase tracking-wide text-muted-foreground">
+            <span className="text-muted-foreground">
               {footerLabel(c.columnId)}
             </span>
             {c.loading ? <Skeleton className="h-4 w-16" /> : c.render()}
@@ -2073,7 +2073,7 @@ export function DataTable<TData extends RowData, TValue>({
     ) : null;
 
   const listView = isLoading ? (
-    <div className={flatList ? "divide-y divide-border/60" : "space-y-2 p-3"}>
+    <div className={flatList ? "divide-y" : "space-y-2 p-3"}>
       {Array.from({ length: skeletonRows }).map((_, i) => (
         <React.Fragment key={`sk-${i}`}>
           {mobileRowSkeleton ?? (
@@ -2081,7 +2081,7 @@ export function DataTable<TData extends RowData, TValue>({
               withMark={Boolean(mark)}
               withSelect={flatList && hasSelection}
               withMenu={flatList && hasActions}
-              className={flatList ? undefined : "rounded-2xl border border-border/70 bg-card"}
+              className={flatList ? undefined : "rounded-2xl bg-card ring-1 ring-foreground/10"}
             />
           )}
         </React.Fragment>
@@ -2090,7 +2090,7 @@ export function DataTable<TData extends RowData, TValue>({
   ) : rows.length ? (
     groupedMobile ? (
       <>
-      <div className="divide-y divide-border/60">
+      <div className="divide-y">
         {mobileGroups.map((seg) => {
           const gk = seg.key;
           const isExpanded =
@@ -2118,10 +2118,10 @@ export function DataTable<TData extends RowData, TValue>({
           if (header) {
             return (
               <div key={`group-${gk}`}>
-                <div className="border-b border-border/60 bg-muted/40 px-4 py-2.5">
+                <div className="border-b bg-muted/50 px-4 py-2.5">
                   {header}
                 </div>
-                <div className="divide-y divide-border/60">
+                <div className="divide-y">
                   {seg.rows.map(({ row, index }) =>
                     renderMobileCard(row, index, undefined, `group-${gk}`),
                   )}
@@ -2145,7 +2145,7 @@ export function DataTable<TData extends RowData, TValue>({
       </>
     ) : (
       <>
-        <div className="divide-y divide-border/60">
+        <div className="divide-y">
           {rows.map((row, rowIndex) => renderMobileCard(row, rowIndex))}
         </div>
         {mobileFooterStrip}
@@ -2158,7 +2158,7 @@ export function DataTable<TData extends RowData, TValue>({
   return (
     <div ref={rootRef} className={cn("w-full", className)}>
       {/* One surface: toolbar, rows, footer. Nothing floats beside it. */}
-      <div className="flex flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="flex flex-col overflow-hidden rounded-2xl bg-card text-card-foreground ring-1 ring-foreground/10">
         {toolbarNode}
         {showCards ? listView : tableView}
         {footerNode}
@@ -2270,7 +2270,7 @@ export function SortableHeader({
     <button
       type="button"
       className={cn(
-        "-ms-1 inline-flex items-center gap-1 rounded px-1 py-0.5 uppercase tracking-wide outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
+        "-ms-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
         sorted && "text-foreground",
       )}
       onClick={() => column.toggleSorting(sorted === "asc")}
@@ -2300,7 +2300,7 @@ export function RowsPerPageSelect({
         render={<Button
           variant="outline"
           size="sm"
-          className={cn("h-8 gap-1.5 rounded-lg px-2.5 text-xs", className)} />}>
+          className={cn("gap-1.5", className)} />}>
           <Rows3 className="h-3.5 w-3.5 opacity-60" />
           {`${value} rows`}
           <ChevronDown className="h-3.5 w-3.5 opacity-60" />

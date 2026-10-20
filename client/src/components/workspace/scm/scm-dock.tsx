@@ -102,7 +102,7 @@ function ScmTab({ api }: IDockviewPanelHeaderProps) {
     <div className="flex h-full min-w-0 flex-1 items-center py-0.5">
       <div
         data-active={active || undefined}
-        className={cn("dock-tab relative mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-xs", active ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
+        className={cn("dock-tab relative mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-sm", active ? "text-foreground" : "text-muted-foreground hover:text-foreground")}
         onKeyDown={(event) => {
           if (event.key === "Delete" || event.key === "Backspace") api.close()
         }}
@@ -114,7 +114,7 @@ function ScmTab({ api }: IDockviewPanelHeaderProps) {
           data-tab-action="close"
           aria-label={`Hide ${api.title}`}
           title={`Hide ${api.title}`}
-          className="grid size-4 shrink-0 place-items-center rounded-sm opacity-60 hover:bg-foreground/10 hover:opacity-100"
+          className="grid size-4 shrink-0 place-items-center rounded-md opacity-60 hover:bg-muted hover:opacity-100"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation()
@@ -217,7 +217,7 @@ export function ScmDock({ panes }: { panes: Record<ScmPaneId, React.ReactNode> }
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button size="icon-xs" variant="ghost" aria-label="Show or hide panes" title="Show or hide panes" className="size-6 text-muted-foreground hover:text-foreground">
+                <Button size="icon-xs" variant="ghost" aria-label="Show or hide panes" title="Show or hide panes" className="text-muted-foreground">
                   <LayoutPanelLeftIcon className="size-3.5" />
                 </Button>
               }

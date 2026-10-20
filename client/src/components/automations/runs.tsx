@@ -197,7 +197,7 @@ function RunResult({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
   const tone = runStatus(run.status)
   const failedActions = run.actions.filter((a) => !a.ok)
   return (
-    <div className="min-w-0 space-y-1 text-xs">
+    <div className="min-w-0 space-y-1 text-sm">
       {run.status === "skipped" && (run.skipReason || run.error) ? (
         <p className="text-pretty text-muted-foreground">
           <span className="font-medium text-foreground">{skipLabel(run.skipReason) ?? "Skipped"}</span>
@@ -206,7 +206,7 @@ function RunResult({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
       ) : run.error ? (
         <p className="text-pretty text-destructive">{run.error}</p>
       ) : hasOutputSchema && run.verdict !== null && run.verdict !== undefined ? (
-        <pre className="truncate font-mono text-[11px] text-foreground">{compact(run.verdict)}</pre>
+        <pre className="truncate font-mono text-xs text-foreground">{compact(run.verdict)}</pre>
       ) : (
         <p className="text-pretty text-muted-foreground">{tone.meaning}</p>
       )}
@@ -231,24 +231,24 @@ function RunDetail({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
       )}
       {run.verdict != null && (
         <div>
-          <h4 className="text-[11px] font-medium tracking-wide uppercase text-muted-foreground">Verdict</h4>
-          <pre className="mt-1 overflow-x-auto font-mono text-[11px] whitespace-pre-wrap">
+          <h4 className="text-xs font-medium text-muted-foreground">Verdict</h4>
+          <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap">
             {JSON.stringify(run.verdict, null, 2)}
           </pre>
         </div>
       )}
       {run.output && (
         <div>
-          <h4 className="text-[11px] font-medium tracking-wide uppercase text-muted-foreground">Answer</h4>
-          <p className="mt-1 max-h-64 overflow-y-auto text-xs whitespace-pre-wrap">{run.output}</p>
+          <h4 className="text-xs font-medium text-muted-foreground">Answer</h4>
+          <p className="mt-1 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">{run.output}</p>
         </div>
       )}
       {run.actions.length > 0 && (
         <div>
-          <h4 className="text-[11px] font-medium tracking-wide uppercase text-muted-foreground">
+          <h4 className="text-xs font-medium text-muted-foreground">
             Follow-up actions
           </h4>
-          <ul className="mt-1 space-y-0.5 text-xs">
+          <ul className="mt-1 space-y-0.5 text-sm">
             {run.actions.map((action, i) => (
               <li key={i} className={action.ok ? "text-muted-foreground" : "text-destructive"}>
                 {action.kind} {"\u2014"} {action.ok ? (action.ref ?? "done") : (action.error ?? "failed")}

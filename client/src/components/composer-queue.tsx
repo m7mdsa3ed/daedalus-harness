@@ -5,7 +5,6 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import {
-  CheckIcon,
   CornerDownRightIcon,
   GripVerticalIcon,
   PaperclipIcon,
@@ -21,6 +20,9 @@ import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
 import { Spinner } from "@/components/ui/spinner"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 
 export function ComposerQueue({
@@ -95,15 +97,17 @@ export function ComposerQueue({
   return (
     <section aria-label="Pending updates" className="mt-2">
       <header className="mb-1.5 flex items-center justify-between px-1">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <h3 className="text-xs font-medium text-muted-foreground">
           Up next
         </h3>
         <div className="flex items-center gap-2">
           {editable.length > 1 && (
-            <button
-              type="button"
-              className={cn("inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50", busy && "harness-busy-ring rounded-sm disabled:opacity-100")}
-              disabled={!canSend || busy}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-primary hover:text-primary"
+              disabled={!canSend}
+              loading={busy}
               title={`${running ? "Stop the running turn and send" : "Send"} ${
                 pickedIds.length > 0 ? "the selected messages" : "every queued message"
               } together as one`}
@@ -111,9 +115,9 @@ export function ComposerQueue({
             >
               {busy && <Spinner className="size-3" />}
               {pickedIds.length > 0 ? `Send ${pickedIds.length} selected` : "Send all"}
-            </button>
+            </Button>
           )}
-          <span className="text-[10px] tabular-nums text-muted-foreground/70">
+          <span className="text-xs tabular-nums text-muted-foreground">
             {count} {count === 1 ? "message" : "messages"}
           </span>
         </div>
@@ -201,10 +205,10 @@ function QueuedMessageRow({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       aria-busy={busy || undefined}
       className={cn(
-        "group/queued relative flex min-w-0 flex-col gap-1 rounded-md border border-border/50 bg-muted/40 px-2 py-1.5",
-        "transition-colors hover:border-border hover:bg-muted/70",
+        "group/queued relative flex min-w-0 flex-col gap-1 rounded-xl border border-dashed bg-muted/50 px-3 py-2",
+        "transition-colors hover:bg-muted",
         busy && "opacity-50",
-        isDragging && "z-10 border-border bg-muted shadow-lg"
+        isDragging && "z-10 bg-muted"
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
@@ -212,7 +216,7 @@ function QueuedMessageRow({
           {sortable && (
             <button
               type="button"
-              className="-ms-1 shrink-0 cursor-grab touch-none text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+              className="-ms-1 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
               title="Drag to reorder"
               {...attributes}
               {...listeners}
@@ -221,81 +225,81 @@ function QueuedMessageRow({
             </button>
           )}
           {onToggle && (
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={selected}
+            <Checkbox
+              checked={selected}
               aria-label="Select to send"
               disabled={!canSend || busy}
-              onClick={onToggle}
-              className={cn(
-                "flex size-3.5 shrink-0 items-center justify-center rounded-sm border border-border disabled:opacity-50",
-                selected && "border-primary bg-primary text-primary-foreground"
-              )}
-            >
-              {selected && <CheckIcon className="size-2.5" />}
-            </button>
+              onCheckedChange={onToggle}
+            />
           )}
           <span
             className={cn(
-              "truncate text-[10px] font-medium",
-              item.steer ? "text-primary" : next ? "text-foreground/80" : "text-muted-foreground"
+              "truncate text-xs font-medium",
+              item.steer ? "text-primary" : next ? "text-foreground" : "text-muted-foreground"
             )}
             aria-label={item.steer ? "Steering this turn" : next ? "Up next" : "Queued"}
           >
             {item.steer ? "Steering" : next ? "Next" : "Queued"}
           </span>
           <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-muted-foreground/40" />
-          <Timestamp at={item.createdAt} className="shrink-0 text-[10px] text-muted-foreground/60" />
+          <Timestamp at={item.createdAt} className="shrink-0 text-xs text-muted-foreground" />
         </div>
         {!item.steer && (
-          <div className="ms-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
+          <div className="ms-auto flex flex-wrap items-center justify-end gap-0.5">
             {running && (
-              <button
-                type="button"
-                className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50", action === "steer" && "harness-busy-ring rounded-sm disabled:opacity-100")}
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground"
                 disabled={!canSend || busy}
+                loading={action === "steer"}
                 title="Steer: send this into the running turn without stopping it"
                 onClick={() => run("steer", actions.queueSteer(sessionId, item.id))}
               >
                 {action === "steer" ? <Spinner className="size-3" /> : <CornerDownRightIcon className="size-3" />}
                 Steer
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
-              className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50", action === "send" && "harness-busy-ring rounded-sm disabled:opacity-100")}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-primary hover:text-primary"
               disabled={!canSend || busy}
+              loading={action === "send"}
               title={running ? "Stop the running turn and send this now" : "Send this now"}
               onClick={() => run("send", actions.queueSendNow(sessionId, [item.id]))}
             >
               {action === "send" ? <Spinner className="size-3" /> : <SendHorizontalIcon className="size-3" />}
               Send now
-            </button>
-            <button
-              type="button"
-              className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50", action === "edit" && "harness-busy-ring rounded-sm disabled:opacity-100")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground"
               disabled={!canEdit || busy}
+              loading={action === "edit"}
               title="Take it back to the composer — this removes it from the queue"
               onClick={edit}
             >
               {action === "edit" ? <Spinner className="size-3" /> : <PencilIcon className="size-3" />}
               Edit
-            </button>
-            <button
-              type="button"
-              className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-destructive disabled:opacity-50", action === "remove" && "harness-busy-ring rounded-sm disabled:opacity-100")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground hover:text-destructive"
               disabled={!canEdit || busy}
+              loading={action === "remove"}
               title="Remove from queue"
               onClick={() => run("remove", actions.queueRemove(sessionId, item.id))}
             >
               {action === "remove" ? <Spinner className="size-3" /> : <XIcon className="size-3" />}
               Remove
-            </button>
+            </Button>
           </div>
         )}
       </div>
-      <div dir="auto" className="min-w-0 break-words text-xs leading-5 text-muted-foreground">
+      <div dir="auto" className="min-w-0 break-words text-sm text-muted-foreground">
         {item.attachments && item.attachments.length > 0 && (
           <QueuedAttachments
             attachments={item.attachments}
@@ -332,13 +336,10 @@ function QueuedAttachments({
   return (
     <ul className="mb-1.5 flex flex-wrap gap-1">
       {attachments.map((ref) => (
-        <li
-          key={ref.id}
-          className="flex items-center gap-1 rounded-pill bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-        >
-          <PaperclipIcon className="size-2.5 shrink-0" />
+        <Badge key={ref.id} variant="secondary" render={<li />}>
+          <PaperclipIcon />
           <span className="max-w-32 truncate">{ref.name}</span>
-          <span className="shrink-0 text-muted-foreground/60">{formatBytes(ref.size)}</span>
+          <span className="shrink-0 text-muted-foreground">{formatBytes(ref.size)}</span>
           {removable && (
             <button
               type="button"
@@ -346,10 +347,10 @@ function QueuedAttachments({
               className="-me-0.5 rounded-full p-0.5 hover:text-foreground"
               onClick={() => onRemove(ref.id)}
             >
-              <XIcon className="size-2.5" />
+              <XIcon />
             </button>
           )}
-        </li>
+        </Badge>
       ))}
     </ul>
   )

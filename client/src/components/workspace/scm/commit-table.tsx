@@ -19,10 +19,10 @@ const ROW = 24
 
 /** Local branch, remote branch and tag each read differently at a glance. */
 function refClass(ref: string, current: string | null): string {
-  if (ref.startsWith("tag: ")) return "border-amber-500 bg-amber-500/30 text-amber-900 dark:text-amber-100"
-  if (ref === current || ref === "HEAD") return "border-emerald-600 bg-emerald-600 font-semibold text-white"
-  if (ref.includes("/")) return "border-sky-500 bg-sky-500/30 text-sky-900 dark:text-sky-100"
-  return "border-emerald-500 bg-emerald-500/30 text-emerald-900 dark:text-emerald-100"
+  if (ref.startsWith("tag: ")) return "border-warning/40 bg-warning/10 text-warning"
+  if (ref === current || ref === "HEAD") return "border-primary bg-primary font-medium text-primary-foreground"
+  if (ref.includes("/")) return "border-primary/40 bg-primary/10 text-primary"
+  return "border-success/40 bg-success/10 text-success"
 }
 
 export function CommitTable({
@@ -69,7 +69,7 @@ export function CommitTable({
      titles over their columns. */
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div aria-hidden style={{ paddingLeft: width }} className="flex h-6 shrink-0 items-center gap-2 overflow-hidden border-b border-border/60 bg-muted/40 pr-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground [scrollbar-gutter:stable]">
+      <div aria-hidden style={{ paddingLeft: width }} className="flex h-6 shrink-0 items-center gap-2 overflow-hidden border-b bg-muted/50 pr-3 text-xs font-medium text-muted-foreground [scrollbar-gutter:stable]">
         <span className="min-w-0 flex-1 pl-1">Message</span>
         <span className="hidden w-28 shrink-0 @panel-sm:block">Author</span>
         <span className="hidden w-14 shrink-0 text-right @panel-sm:block">Date</span>
@@ -102,26 +102,26 @@ export function CommitTable({
 
       <ol style={{ paddingLeft: width }}>
         <li style={{ height: ROW }}>
-          <button type="button" data-hash="" aria-current={selected === null} onClick={() => onSelect(null)} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-xs hover:bg-muted/50", selected === null && "bg-accent")}>
+          <button type="button" data-hash="" aria-current={selected === null} onClick={() => onSelect(null)} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-sm hover:bg-muted", selected === null && "bg-muted")}>
             <span className="font-medium italic">Working Directory</span>
-            <span className="text-[10px] text-muted-foreground">{changes === 0 ? "clean" : `${changes} ${changes === 1 ? "file" : "files"} changed`}</span>
+            <span className="text-xs text-muted-foreground">{changes === 0 ? "clean" : `${changes} ${changes === 1 ? "file" : "files"} changed`}</span>
           </button>
         </li>
         {rows.map(({ commit }) => (
           <li key={commit.hash} style={{ height: ROW }}>
-            <button type="button" data-hash={commit.hash} aria-current={selected === commit.hash} onClick={() => onSelect(commit)} title={`${commit.hash}\n${commit.subject}`} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-xs hover:bg-muted/50", selected === commit.hash && "bg-accent text-accent-foreground")}>
+            <button type="button" data-hash={commit.hash} aria-current={selected === commit.hash} onClick={() => onSelect(commit)} title={`${commit.hash}\n${commit.subject}`} className={cn("flex h-full w-full items-center gap-2 pr-3 pl-1 text-left text-sm hover:bg-muted", selected === commit.hash && "bg-muted")}>
               {commit.refs.map((ref) => (
-                <span key={ref} className={cn("shrink-0 rounded-sm border px-1.5 text-[10px] leading-4", refClass(ref, current))}>{ref.replace(/^tag: /, "")}</span>
+                <span key={ref} className={cn("shrink-0 rounded-md border px-1.5 text-xs leading-4", refClass(ref, current))}>{ref.replace(/^tag: /, "")}</span>
               ))}
               <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
-              <span className="hidden w-28 shrink-0 truncate text-[11px] text-muted-foreground @panel-sm:block">{commit.author}</span>
-              <span className="hidden w-14 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground @panel-sm:block">{shortAge(commit.at * 1000)}</span>
-              <span className="hidden w-14 shrink-0 font-mono text-[10px] text-muted-foreground @panel-md:block">{commit.short}</span>
+              <span className="hidden w-28 shrink-0 truncate text-xs text-muted-foreground @panel-sm:block">{commit.author}</span>
+              <span className="hidden w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground @panel-sm:block">{shortAge(commit.at * 1000)}</span>
+              <span className="hidden w-14 shrink-0 font-mono text-xs text-muted-foreground @panel-md:block">{commit.short}</span>
             </button>
           </li>
         ))}
       </ol>
-      {onMore && <div ref={foot} className="h-6 pl-3 text-[10px] leading-6 text-muted-foreground">{loading ? "Loading…" : ""}</div>}
+      {onMore && <div ref={foot} className="h-6 pl-3 text-xs leading-6 text-muted-foreground">{loading ? "Loading…" : ""}</div>}
     </div>
     </div>
   )

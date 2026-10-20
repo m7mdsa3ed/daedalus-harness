@@ -41,12 +41,12 @@ export function McpDetail({ item, active }: { item: ToolItem; active: boolean })
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1.5 text-[11px]">
-        <PlugZapIcon className="size-3 shrink-0 text-muted-foreground/60" />
+      <div className="flex items-center gap-1.5 text-sm">
+        <PlugZapIcon className="size-3 shrink-0 text-muted-foreground" />
         <span className="font-mono text-foreground">{formatMcpName(call.server)}</span>
         {call.tool && (
           <>
-            <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40" />
+            <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
             <span className="font-mono text-muted-foreground">{formatMcpName(call.tool)}</span>
           </>
         )}

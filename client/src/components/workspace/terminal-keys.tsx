@@ -32,6 +32,7 @@
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Popover,
   PopoverContent,
@@ -106,8 +107,8 @@ function KeyCap({
            in sequence and in sight of the thing they are typing into, and a
            keyboard of 44px keys covers the terminal it exists to drive. A wide
            label still grows; a custom key may be a word. */
-        "h-7 min-w-7 shrink-0 justify-center rounded-md px-1.5 text-[11px] leading-none font-medium tabular-nums",
-        active && "bg-muted text-foreground ring-1 ring-ring/60",
+        "h-7 min-w-7 shrink-0 justify-center px-1.5 text-xs leading-none font-medium tabular-nums",
+        active && "bg-muted text-foreground ring-1 ring-ring/50",
         className
       )}
       {...props}
@@ -187,7 +188,7 @@ export function TerminalKeyRow({
   return (
     <div
       data-slot="terminal-keys"
-      className="flex shrink-0 items-start gap-1 border-t border-border/60 px-2 py-1"
+      className="flex shrink-0 items-start gap-1 border-t px-2 py-1"
     >
       <div
         className={cn(
@@ -202,11 +203,11 @@ export function TerminalKeyRow({
         {/* A divider only where there is something on both sides of it: with no
             custom keys a rule here would be a line drawn around nothing. */}
         {custom.length > 0 && (
-          <span aria-hidden className="mx-0.5 h-7 w-px shrink-0 self-center bg-border/70" />
+          <span aria-hidden className="mx-0.5 h-7 w-px shrink-0 self-center bg-border" />
         )}
         {custom.map(cap)}
         {custom.length > 0 && (
-          <span aria-hidden className="mx-0.5 h-7 w-px shrink-0 self-center bg-border/70" />
+          <span aria-hidden className="mx-0.5 h-7 w-px shrink-0 self-center bg-border" />
         )}
         {rest.map(cap)}
       </div>
@@ -217,7 +218,7 @@ export function TerminalKeyRow({
           aria-label={keysExpanded ? "Collapse the key row" : "Show every key"}
           aria-pressed={keysExpanded}
           title={keysExpanded ? "One row" : "Show every key"}
-          className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+          className="size-7 shrink-0 text-muted-foreground"
           onPointerDown={(event: React.PointerEvent) => event.preventDefault()}
           onClick={() => setTerminalPrefs({ keysExpanded: !keysExpanded })}
         >
@@ -248,7 +249,7 @@ function CustomKeyButton() {
             size="icon-xs"
             aria-label="Manage custom keys"
             title="Custom keys"
-            className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+            className="size-7 shrink-0 text-muted-foreground"
           />
         }
       >
@@ -256,8 +257,8 @@ function CustomKeyButton() {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-3">
         <PopoverHeader>
-          <PopoverTitle className="text-sm">Custom terminal keys</PopoverTitle>
-          <PopoverDescription className="text-xs">
+          <PopoverTitle>Custom terminal keys</PopoverTitle>
+          <PopoverDescription>
             Add a key your soft keyboard can't produce. Use a name ("tab", "ctrl+c",
             "f5") or a raw "\x1b…" sequence.
           </PopoverDescription>
@@ -276,7 +277,7 @@ function CustomKeyButton() {
             </ul>
           )}
           <KeyForm onDone={() => setOpen(false)} />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Named keys: esc, tab, enter, up/down/left/right, home, end, backspace,
             delete, pageup, pagedown, f1–f12. Anything else as a "\x" sequence.
           </p>
@@ -308,18 +309,18 @@ function CustomKeyRow({
     )
 
   return (
-    <li className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 py-1 pr-0.5 pl-2">
-      <span className="min-w-0 flex-1 truncate text-xs font-medium">{entry.label}</span>
+    <li className="flex items-center gap-1.5 rounded-xl border bg-muted/50 py-1 pr-0.5 pl-2">
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{entry.label}</span>
       {/* What it sends, in the notation that would type it again — a raw
           `\x1b` here would be an invisible character in a row that then looks
           blank. */}
-      <span className="min-w-0 max-w-20 shrink-0 truncate rounded border border-border/60 bg-background/60 px-1 font-mono text-[10px] text-muted-foreground">
+      <span className="min-w-0 max-w-20 shrink-0 truncate rounded-md border bg-background px-1 font-mono text-xs text-muted-foreground">
         {printable(entry.send)}
       </span>
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground hover:text-foreground"
+        className="size-5 text-muted-foreground"
         aria-label={`Move ${entry.label} left`}
         title="Move left"
         disabled={first}
@@ -330,7 +331,7 @@ function CustomKeyRow({
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground hover:text-foreground"
+        className="size-5 text-muted-foreground"
         aria-label={`Move ${entry.label} right`}
         title="Move right"
         disabled={last}
@@ -341,7 +342,7 @@ function CustomKeyRow({
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground hover:text-foreground"
+        className="size-5 text-muted-foreground"
         aria-label={`Edit ${entry.label}`}
         title="Edit"
         onClick={() => setEditing(true)}
@@ -387,23 +388,22 @@ function KeyForm({ entry, onDone }: { entry?: TerminalKey; onDone: () => void })
   }
 
   return (
-    <div className="space-y-1.5">
-      <input
+    <div className="flex flex-col gap-1.5">
+      <Input
         value={label}
         onChange={(event) => setLabel(event.target.value)}
         placeholder="Label, e.g. Ctrl+S"
-        className="h-8 w-full rounded-md border border-input bg-input/30 px-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring"
       />
-      <input
+      <Input
         value={send}
         onChange={(event) => setSend(event.target.value)}
         placeholder="Send, e.g. ctrl+s or \x13"
         onKeyDown={(event) => {
           if (event.key === "Enter") submit()
         }}
-        className="h-8 w-full rounded-md border border-input bg-input/30 px-2 font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring"
+        className="font-mono"
       />
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex gap-1.5">
         <Button
           size="sm"

@@ -37,13 +37,13 @@ export function BulkActionBar({
   return (
     <>
       {/* Mobile: fixed bottom bar */}
-      <div className={cn("fixed inset-x-0 bottom-0 z-50 border-t border-border/80 bg-background/95 pb-safe shadow-[0_-8px_24px_-18px_black] backdrop-blur md:hidden", className)}>
+      <div className={cn("fixed inset-x-0 bottom-0 z-50 border-t bg-background pb-safe md:hidden", className)}>
         <div className="flex items-center justify-between gap-3 px-4 py-3.5">
           <div className="flex items-center gap-2 min-w-0">
             <Checkbox
               checked={isAllSelected}
               onCheckedChange={onToggleAll}
-              className="h-4 w-4 shrink-0"
+              className="shrink-0"
             />
             <span className="text-sm font-medium truncate">
               {`${selectedCount} selected`}
@@ -52,7 +52,6 @@ export function BulkActionBar({
               variant="ghost"
               size="sm"
               onClick={onClear}
-              className="h-8 text-xs px-2"
             >
               {"Clear"}
             </Button>
@@ -65,10 +64,9 @@ export function BulkActionBar({
                 size="sm"
                 onClick={action.onClick}
                 disabled={action.disabled}
-                className="gap-1.5 h-9"
               >
                 {action.icon}
-                <span className="text-xs">{action.label}</span>
+                {action.label}
               </Button>
             ))}
           </div>
@@ -80,7 +78,7 @@ export function BulkActionBar({
               variant="link"
               size="sm"
               onClick={onSelectAllMatching}
-              className="h-auto p-0 text-xs text-primary"
+              className="h-auto p-0"
             >
               {`Select all ${totalCount}`}
             </Button>
@@ -90,7 +88,7 @@ export function BulkActionBar({
 
       {/* Desktop: inline bar */}
       <div className={cn("mb-4 hidden md:block", className)}>
-        <div className="flex items-center justify-between gap-4 rounded-2xl border border-primary/15 bg-primary/[0.04] p-3.5 shadow-sm shadow-black/[0.02]">
+        <div className="flex items-center justify-between gap-4 rounded-2xl bg-card p-3 ring-1 ring-foreground/10">
           <div className="flex items-center gap-2">
             <Checkbox
               checked={isAllSelected}
@@ -103,7 +101,6 @@ export function BulkActionBar({
               variant="ghost"
               size="sm"
               onClick={onClear}
-              className="text-xs"
             >
               {"Clear"}
             </Button>
@@ -116,7 +113,6 @@ export function BulkActionBar({
                 size="sm"
                 onClick={action.onClick}
                 disabled={action.disabled}
-                className="gap-2"
               >
                 {action.icon}
                 {action.label}
@@ -125,13 +121,13 @@ export function BulkActionBar({
           </div>
         </div>
         {totalCount !== undefined && onSelectAllMatching && selectedCount > 0 && !isAllSelected && totalCount > selectedCount && (
-          <div className="flex items-center justify-center gap-2 rounded-lg border bg-muted/50 p-2 text-sm mt-2">
+          <div className="mt-2 flex items-center justify-center gap-2 rounded-xl border bg-muted/50 p-2 text-sm">
             <span>{`All ${selectedCount} on this page selected`}</span>
             <Button
               variant="link"
               size="sm"
               onClick={onSelectAllMatching}
-              className="h-auto p-0 text-primary"
+              className="h-auto p-0"
             >
               {`Select all ${totalCount}`}
             </Button>

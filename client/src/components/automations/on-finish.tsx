@@ -220,7 +220,7 @@ export function OnFinishEditor({
                 <Icon className="size-4 text-muted-foreground" />
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">{meta.label}</span>
-                  <span className="truncate text-[10px] text-muted-foreground">{meta.blurb}</span>
+                  <span className="truncate text-xs text-muted-foreground">{meta.blurb}</span>
                 </span>
               </DropdownMenuItem>
             )

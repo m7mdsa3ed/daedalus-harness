@@ -29,17 +29,17 @@ function NavRow({ id, group }: { id: SettingsSectionId; group?: string }) {
     <button
       type="button"
       onClick={() => void navigate(settingsPath(id))}
-      className="-mx-3 flex min-h-14 w-[calc(100%+1.5rem)] items-center gap-3 px-3 py-2 text-left @panel-sm:-mx-4 @panel-sm:w-[calc(100%+2rem)] @panel-sm:px-4 transition-colors outline-none hover:bg-muted/40 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset active:bg-muted/60 pointer-coarse:min-h-16"
+      className="-mx-3 flex min-h-14 w-[calc(100%+1.5rem)] items-center gap-3 px-3 py-2 text-left @panel-sm:-mx-4 @panel-sm:w-[calc(100%+2rem)] @panel-sm:px-4 transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset active:bg-muted pointer-coarse:min-h-16"
     >
       <span
         aria-hidden
-        className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/50 text-primary"
+        className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted"
       >
         <Icon className="size-4" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{meta.title}</span>
-        <span className="block truncate text-xs text-muted-foreground">
+        <span className="block truncate text-sm text-muted-foreground">
           {group && <span className="font-medium">{group} · </span>}
           {meta.description}
         </span>

@@ -23,6 +23,9 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -43,7 +46,7 @@ import {
   type TaskPriority,
   type TaskType,
 } from "@/lib/tasks-board"
-import { dueLabel, hueOf, initialsOf, isOverdue } from "@/lib/tasks-view"
+import { dueLabel, initialsOf, isOverdue } from "@/lib/tasks-view"
 
 // ---- atoms ----
 
@@ -55,10 +58,10 @@ const TYPE_ICON: Record<TaskType, React.ComponentType<{ className?: string }>> =
 }
 
 const TYPE_COLOR: Record<TaskType, string> = {
-  task: "text-blue-500",
-  bug: "text-rose-500",
-  story: "text-emerald-500",
-  epic: "text-violet-500",
+  task: "text-primary",
+  bug: "text-destructive",
+  story: "text-success",
+  epic: "text-warning",
 }
 
 export function TypeIcon({ type, className }: { type: TaskType; className?: string }) {
@@ -75,11 +78,11 @@ const PRIORITY_ICON: Record<TaskPriority, React.ComponentType<{ className?: stri
 }
 
 const PRIORITY_COLOR: Record<TaskPriority, string> = {
-  urgent: "text-red-500",
-  high: "text-orange-500",
-  medium: "text-amber-500",
-  low: "text-sky-500",
-  lowest: "text-slate-400",
+  urgent: "text-destructive",
+  high: "text-warning",
+  medium: "text-muted-foreground",
+  low: "text-primary",
+  lowest: "text-muted-foreground",
 }
 
 export function PriorityIcon({ priority, className }: { priority: TaskPriority; className?: string }) {
@@ -110,22 +113,16 @@ export function StatusPill({
   if (!status) return <span className={cn("text-xs text-muted-foreground", className)}>—</span>
   const Icon = CATEGORY_ICON[status.category]
   return (
-    <span
-      className={cn(
-        "inline-flex max-w-full items-center gap-1 rounded-pill px-1.5 py-0.5 text-[11px] font-medium leading-4",
-        status.color ? COLOR_TINT[status.color] : "bg-muted text-muted-foreground",
-        className,
-      )}
-    >
-      <Icon className="size-3 shrink-0" />
+    <Badge variant="secondary" className={cn("max-w-full", status.color ? COLOR_TINT[status.color] : "text-muted-foreground", className)}>
+      <Icon />
       {!compact && <span className="truncate">{status.name}</span>}
-    </span>
+    </Badge>
   )
 }
 
 export function KeyBadge({ task, boardKey, className }: { task: Task; boardKey: string; className?: string }) {
   return (
-    <span className={cn("font-mono text-[11px] tabular-nums text-muted-foreground", className)}>
+    <span className={cn("font-mono text-xs tabular-nums text-muted-foreground", className)}>
       {taskKey(task, boardKey)}
     </span>
   )
@@ -140,43 +137,24 @@ export function AssigneeAvatar({
   size?: "xs" | "sm" | "md"
   className?: string
 }) {
-  const dim = size === "xs" ? "size-4 text-[9px]" : size === "md" ? "size-7 text-xs" : "size-5 text-[10px]"
-  if (!name) {
-    return (
-      <span
-        className={cn("grid shrink-0 place-items-center rounded-full border border-dashed text-muted-foreground", dim, className)}
-        title="Unassigned"
-      >
-        ?
-      </span>
-    )
-  }
-  const hue = hueOf(name)
+  // ponytail: xs is the one size the registry Avatar lacks — a fixed bubble, hence the 10px initials.
   return (
-    <span
-      className={cn("grid shrink-0 place-items-center rounded-full font-semibold text-white", dim, className)}
-      style={{ background: `hsl(${hue} 55% 45%)` }}
-      title={name}
-    >
-      {initialsOf(name)}
-    </span>
+    <Avatar size={size === "md" ? "default" : "sm"} className={cn(size === "xs" && "size-4", className)} title={name ?? "Unassigned"}>
+      <AvatarFallback className={cn("font-medium", size === "xs" && "text-[10px]")}>{name ? initialsOf(name) : "?"}</AvatarFallback>
+    </Avatar>
   )
 }
 
 export function LabelChip({ label, onRemove }: { label: string; onRemove?: () => void }) {
-  const hue = hueOf(label)
   return (
-    <span
-      className="inline-flex max-w-full items-center gap-0.5 rounded-pill px-1.5 py-0.5 text-[10px] font-medium leading-4"
-      style={{ background: `hsl(${hue} 60% 50% / 0.14)`, color: `hsl(${hue} 55% 38%)` }}
-    >
+    <Badge variant="secondary" className="max-w-full">
       <span className="truncate">{label}</span>
       {onRemove && (
-        <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="-mr-0.5 rounded-full hover:bg-black/10">
-          <X className="size-2.5" />
+        <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="-mr-1 rounded-full hover:bg-muted">
+          <X />
         </button>
       )}
-    </span>
+    </Badge>
   )
 }
 
@@ -186,7 +164,7 @@ export function DueChip({ task, className }: { task: Task; className?: string })
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 text-[11px] tabular-nums",
+        "inline-flex items-center gap-1 text-xs tabular-nums",
         overdue ? "font-medium text-destructive" : "text-muted-foreground",
         task.completedAt != null && "line-through opacity-70",
         className,
@@ -203,9 +181,9 @@ export function ProgressBar({ done, total, className }: { done: number; total: n
   if (total === 0) return null
   const pct = Math.round((done / total) * 100)
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground", className)} title={`${done}/${total} done`}>
-      <span className="h-1 w-10 overflow-hidden rounded-pill bg-muted">
-        <span className="block h-full rounded-pill bg-primary transition-[width]" style={{ width: `${pct}%` }} />
+    <span className={cn("inline-flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground", className)} title={`${done}/${total} done`}>
+      <span className="h-1 w-10 overflow-hidden rounded-full bg-muted">
+        <span className="block h-full rounded-full bg-primary transition-[width]" style={{ width: `${pct}%` }} />
       </span>
       {done}/{total}
     </span>
@@ -215,9 +193,9 @@ export function ProgressBar({ done, total, className }: { done: number; total: n
 export function EstimateBadge({ estimate }: { estimate: number | null }) {
   if (estimate == null) return null
   return (
-    <span className="grid size-5 shrink-0 place-items-center rounded-pill bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground" title={`${estimate} points`}>
+    <Badge variant="secondary" className="tabular-nums text-muted-foreground" title={`${estimate} points`}>
       {estimate}
-    </span>
+    </Badge>
   )
 }
 
@@ -227,9 +205,9 @@ export function EstimateBadge({ estimate }: { estimate: number | null }) {
    lets the caller decide what the trigger looks like (a pill in a table cell,
    a labelled row in the detail panel). */
 
-const MENU = "z-50 w-56 gap-0 rounded-xl border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+const MENU = "w-56 gap-0 p-1"
 const ROW =
-  "flex w-full cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+  "flex w-full cursor-default items-center gap-2 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
 
 function PickerShell({
   trigger,
@@ -471,7 +449,7 @@ export function LabelsPicker({
         )}
         {options.map((label) => (
           <button key={label} type="button" onClick={() => toggle(label)} className={ROW} role="menuitemcheckbox" aria-checked={value.includes(label)}>
-            <span className={cn("grid size-3.5 shrink-0 place-items-center rounded border", value.includes(label) && "border-primary bg-primary text-primary-foreground")}>
+            <span className={cn("grid size-4 shrink-0 place-items-center rounded-[6px] border border-input", value.includes(label) && "border-primary bg-primary text-primary-foreground")}>
               {value.includes(label) && <Check className="size-2.5" />}
             </span>
             <LabelChip label={label} />
@@ -508,7 +486,7 @@ export function SprintPicker({
       {openSprints.map((s) => (
         <OptionRow key={s.id} selected={s.id === value} onClick={() => pick(s.id)}>
           <span className="truncate">{s.name}</span>
-          {s.state === "active" && <span className="rounded-pill bg-emerald-500/15 px-1.5 text-[10px] text-emerald-600">Active</span>}
+          {s.state === "active" && <Badge variant="secondary" className="bg-success/10 text-success">Active</Badge>}
         </OptionRow>
       ))}
       {openSprints.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">No open sprints — create one in Sprints.</p>}
@@ -657,23 +635,25 @@ export function NumberPicker({
         className="flex items-center gap-1 p-1"
       >
         <Input autoFocus inputMode="numeric" value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} className="h-8" />
-        <button type="submit" className="grid size-8 shrink-0 place-items-center rounded-lg hover:bg-accent" aria-label="Set">
-          <Check className="size-3.5" />
-        </button>
+        <Button type="submit" variant="ghost" size="icon-sm" aria-label="Set">
+          <Check />
+        </Button>
       </form>
       <div className="flex flex-wrap gap-1 px-1 pb-1">
         {[1, 2, 3, 5, 8, 13].map((n) => (
-          <button
+          <Button
             key={n}
             type="button"
+            size="xs"
+            variant={value === n ? "secondary" : "outline"}
             onClick={() => {
               onChange(n)
               setOpen(false)
             }}
-            className={cn("rounded-pill border px-2 py-0.5 text-xs tabular-nums hover:bg-accent", value === n && "border-primary bg-primary/10")}
+            className="tabular-nums"
           >
             {n}
-          </button>
+          </Button>
         ))}
       </div>
     </PickerShell>
@@ -683,4 +663,4 @@ export function NumberPicker({
 /** The look of a picker's trigger when it sits in a property list or a table
     cell: a quiet chip that reveals it is editable on hover. */
 export const CHIP =
-  "inline-flex h-7 max-w-full items-center gap-1.5 rounded-lg px-1.5 text-xs text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+  "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-sm text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"

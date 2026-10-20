@@ -2,8 +2,9 @@
    The count in the footer's cluster, and `runningAgents` — the one reading of
    "who is still out", shared with the working line. */
 import { formatCount } from "@/components/composer-strip"
+import { Spinner } from "@/components/ui/spinner"
 import { useEffect, useMemo, useState } from "react"
-import { LoaderCircleIcon, NetworkIcon } from "lucide-react"
+import { NetworkIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -116,15 +117,15 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
         <p className="harness-shimmer font-medium text-primary">{label}</p>
         <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
           {agents.map((agent) => (
-            <li key={agent.id} className="flex items-start gap-2 text-xs">
+            <li key={agent.id} className="flex items-start gap-2 text-sm">
               <span className="grid size-5 shrink-0 place-items-center">
-                <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
+                <Spinner aria-hidden className="size-3.5 text-primary" />
               </span>
               <span className="min-w-0 flex-1 leading-5 break-words text-foreground">
                 {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
                 {agent.task}
               </span>
-              <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground/60">
+              <span className="shrink-0 text-xs leading-5 tabular-nums text-muted-foreground">
                 {formatElapsed(now - agent.startedAt)}
               </span>
             </li>

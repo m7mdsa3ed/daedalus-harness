@@ -54,7 +54,6 @@ export function HeaderAction({
       aria-label={label}
       className={cn(
         md ? "size-9" : "size-8",
-        "rounded-md",
         // Desktop: expand to an icon + label pill.
         withLabel && (md ? "md:h-9 md:w-auto md:gap-1.5 md:px-3" : "md:h-8 md:w-auto md:gap-1.5 md:px-3"),
         destructive && "text-destructive hover:text-destructive",

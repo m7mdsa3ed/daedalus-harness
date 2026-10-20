@@ -120,7 +120,7 @@ export function SchedulePicker({
         )}
         {plan.preset === "custom" && (
           <Field label="Cron" hint="Five fields, minute first.">
-            <Input className="font-mono text-xs" value={plan.cron} onChange={(e) => patch({ cron: e.target.value })} />
+            <Input className="font-mono text-sm" value={plan.cron} onChange={(e) => patch({ cron: e.target.value })} />
           </Field>
         )}
       </div>
@@ -131,20 +131,16 @@ export function SchedulePicker({
             {DAY_LABEL.map((label, day) => {
               const on = plan.days.includes(day)
               return (
-                <button
+                <Button
                   key={label}
                   type="button"
+                  variant={on ? "secondary" : "outline"}
                   aria-pressed={on}
                   onClick={() => patch({ days: on ? plan.days.filter((d) => d !== day) : [...plan.days, day] })}
-                  className={cn(
-                    "h-10 min-w-11 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none @panel-sm:h-8",
-                    on
-                      ? "border-primary/60 bg-primary/5 text-foreground"
-                      : "border-border/60 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  )}
+                  className={cn("h-10 min-w-11 @panel-sm:h-8", !on && "text-muted-foreground")}
                 >
                   {label}
-                </button>
+                </Button>
               )
             })}
           </div>
@@ -157,7 +153,7 @@ export function SchedulePicker({
         </Field>
       )}
 
-      <div className={cn("space-y-1.5 px-3 py-2.5 text-xs", INSET)} aria-live="polite">
+      <div className={cn("space-y-1.5 px-3 py-2.5 text-sm", INSET)} aria-live="polite">
         <p className="text-sm font-medium text-foreground">{describePlan(plan)}</p>
         {problem ? (
           <p className="text-destructive">{problem}</p>

@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronUp,
   Globe,
-  Loader2,
   Plus,
   ScrollText,
   Trash2,
@@ -18,6 +17,7 @@ import { settingsFormPath, settingsPath } from "@/lib/router"
 import { captureError, type InlineError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useTableFilter } from "@/lib/use-table-filter"
@@ -48,15 +48,15 @@ const lineCount = (s: string) => (s ? s.split("\n").length : 0)
 /** What the last write did — the Save/Discard question, answered without a button. */
 function SaveState({ pending, failed, saved }: { pending: boolean; failed: boolean; saved: boolean }) {
   const [Icon, text, tone] = pending
-    ? [Loader2, "Saving…", "text-muted-foreground"]
+    ? [Spinner, "Saving…", "text-muted-foreground"]
     : failed
       ? [AlertCircle, "Not saved", "text-destructive"]
       : saved
         ? [Check, "Saved", "text-success"]
         : [null, "Edits save as you type", "text-muted-foreground"]
   return (
-    <span aria-live="polite" className={cn("inline-flex items-center gap-1.5 text-xs", tone)}>
-      {Icon && <Icon className={cn("size-3.5", pending && "animate-spin")} aria-hidden />}
+    <span aria-live="polite" className={cn("inline-flex items-center gap-1.5 text-sm", tone)}>
+      {Icon && <Icon className="size-3.5" aria-hidden />}
       {text}
     </span>
   )
@@ -88,7 +88,7 @@ function Fields({
           value={rule.content}
           onChange={(e) => onField("content", e.target.value)}
           aria-label="Rule content"
-          className="max-h-[50dvh] min-h-56 resize-y overflow-y-auto font-mono text-xs"
+          className="max-h-[50dvh] min-h-56 resize-y overflow-y-auto font-mono text-sm"
           placeholder="Standing instruction for the agent…"
         />
       </Field>

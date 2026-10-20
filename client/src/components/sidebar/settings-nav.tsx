@@ -39,8 +39,6 @@ import {
   type SettingsSectionId,
 } from "@/components/settings/sections"
 import { settingsPath, settingsRootPath } from "@/lib/router"
-import { cn } from "@/lib/utils"
-import { GROUP, GROUP_LABEL, MENU, ROW, TIER } from "./scale"
 
 /** Is the panel in front of you a settings page? See the header: the dock
     writes the focused panel's path to the URL, so this is a reading of the
@@ -70,8 +68,6 @@ export function SettingsNav({ onBack }: { onBack: () => void }) {
   ) => (
     <SidebarMenuItem key={id ?? "overview"}>
       <SidebarMenuButton
-        size="sm"
-        className={ROW}
         tooltip={label}
         isActive={id === section}
         onClick={() => go(id ? settingsPath(id) : settingsRootPath())}
@@ -84,13 +80,12 @@ export function SettingsNav({ onBack }: { onBack: () => void }) {
 
   return (
     <>
-      <SidebarGroup className={cn(TIER, GROUP, "border-b border-sidebar-border pb-3")}>
+      <SidebarGroup className="border-b border-sidebar-border">
         <SidebarGroupContent>
-          <SidebarMenu className={MENU}>
+          <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                size="sm"
-                className={cn(ROW, "text-muted-foreground")}
+                className="text-muted-foreground"
                 tooltip="Back to threads"
                 onClick={onBack}
               >
@@ -105,12 +100,12 @@ export function SettingsNav({ onBack }: { onBack: () => void }) {
 
       <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain group-data-[collapsible=icon]:overflow-hidden">
         {SETTINGS_NAV_GROUPS.map((group) => (
-          <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
-            <SidebarGroupLabel className={GROUP_LABEL}>
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>
               <span className="truncate">{group.label}</span>
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className={MENU}>
+              <SidebarMenu>
                 {group.sections.map((id) => {
                   const meta = sectionMeta(id)
                   return row(id, meta.label, meta.icon)

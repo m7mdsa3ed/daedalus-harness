@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { useConfirm } from "@/components/confirm-dialog"
 import { usePrompt } from "@/components/prompt-dialog"
 import { StashSection } from "@/components/workspace/scm-log"
@@ -70,18 +71,18 @@ function RefGroup({
 
   return (
     <section>
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex h-6 w-full items-center gap-1 bg-muted/50 px-2 text-left text-[10px] font-semibold text-muted-foreground hover:bg-muted">
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex h-7 w-full items-center gap-1 bg-muted/50 px-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
         {open ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
-        <span className="flex-1 truncate uppercase tracking-wide">{title}</span>
-        {total !== undefined && <span className="font-mono tabular-nums font-normal">{total}</span>}
+        <span className="flex-1 truncate">{title}</span>
+        {total !== undefined && <span className="tabular-nums font-normal">{total}</span>}
       </button>
       {open && (
         <ul className="pb-1">
           {names.map((name) => <React.Fragment key={name}>{children(name)}</React.Fragment>)}
-          {query.isPending && <li className="px-6 py-1 text-[11px] text-muted-foreground">Loading…</li>}
-          {query.isError && <li className="px-6 py-1 text-[11px] text-destructive">Could not load</li>}
-          {!query.isPending && names.length === 0 && !query.isError && <li className="px-6 py-1 text-[11px] text-muted-foreground">{q ? "No match" : "None"}</li>}
-          {hasNextPage && <li ref={sentinel} className="px-6 py-1 text-[11px] text-muted-foreground">{isFetchingNextPage ? "Loading…" : ""}</li>}
+          {query.isPending && <li className="px-6 py-1 text-xs text-muted-foreground">Loading…</li>}
+          {query.isError && <li className="px-6 py-1 text-xs text-destructive">Could not load</li>}
+          {!query.isPending && names.length === 0 && !query.isError && <li className="px-6 py-1 text-xs text-muted-foreground">{q ? "No match" : "None"}</li>}
+          {hasNextPage && <li ref={sentinel} className="px-6 py-1 text-xs text-muted-foreground">{isFetchingNextPage ? "Loading…" : ""}</li>}
         </ul>
       )}
     </section>
@@ -109,24 +110,24 @@ function Place({ name, current, onReveal, onCheckout, coarse, menu = [], tick, p
       {tick && (
         <Checkbox
           aria-label={`Select ${name}`}
-          className={cn("ml-2 size-3.5 rounded-[4px]", !(tick.on || tick.selecting || coarse) && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+          className={cn("ml-2", !(tick.on || tick.selecting || coarse) && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
           checked={tick.on}
           onClick={tick.toggle}
         />
       )}
-      <button type="button" onClick={onReveal} onDoubleClick={onCheckout} title={name} className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs", tick ? "pl-1.5" : "pl-6", current && "font-semibold")}>
-        {current && <CheckIcon className="-ml-4 size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />}
+      <button type="button" onClick={onReveal} onDoubleClick={onCheckout} title={name} className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm", tick ? "pl-1.5" : "pl-6", current && "font-medium")}>
+        {current && <CheckIcon className="-ml-4 size-3 shrink-0 text-success" />}
         <span className="truncate">{name}</span>
       </button>
       {pin && (
-        <button type="button" onClick={pin.toggle} title={pin.pinned ? `Unpin ${name}` : `Pin ${name}`} aria-label={pin.pinned ? `Unpin ${name}` : `Pin ${name}`} className={cn("grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-background hover:text-foreground", !coarse && !pin.pinned && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}>
-          {pin.pinned ? <PinOffIcon className="size-3" /> : <PinIcon className="size-3" />}
-        </button>
+        <Button variant="ghost" size="icon-xs" onClick={pin.toggle} title={pin.pinned ? `Unpin ${name}` : `Pin ${name}`} aria-label={pin.pinned ? `Unpin ${name}` : `Pin ${name}`} className={cn("shrink-0 text-muted-foreground", !coarse && !pin.pinned && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}>
+          {pin.pinned ? <PinOffIcon /> : <PinIcon />}
+        </Button>
       )}
       {onCheckout && !current && (
-        <button type="button" onClick={onCheckout} title={`Check out ${name}`} aria-label={`Check out ${name}`} className={cn("grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-background hover:text-foreground", !coarse && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}>
-          <LogInIcon className="size-3" />
-        </button>
+        <Button variant="ghost" size="icon-xs" onClick={onCheckout} title={`Check out ${name}`} aria-label={`Check out ${name}`} className={cn("shrink-0 text-muted-foreground", !coarse && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}>
+          <LogInIcon />
+        </Button>
       )}
     </li>
   )
@@ -262,24 +263,26 @@ export function Locations({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="sticky top-0 z-10 border-b border-border/40 bg-background p-1.5">
-        <div className="relative">
-          <SearchIcon className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
-          <Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter branches and tags" aria-label="Filter branches and tags" className="h-7 pl-6 text-xs" />
-        </div>
+      <div className="sticky top-0 z-10 border-b bg-background p-1.5">
+        <InputGroup className="h-8">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter branches and tags" aria-label="Filter branches and tags" />
+        </InputGroup>
         {ticks.size > 0 && (
-          <div role="toolbar" aria-label="Bulk actions" className="mt-1.5 flex items-center gap-1 text-[11px]">
+          <div role="toolbar" aria-label="Bulk actions" className="mt-1.5 flex items-center gap-1 text-xs">
             <span className="mr-auto font-medium tabular-nums">{ticks.size} selected</span>
-            <Button size="xs" variant="outline" disabled={busy || deleting} className="h-5 px-1.5 text-[10px] text-destructive" onClick={() => void deleteTicked()}>Delete</Button>
-            <Button size="xs" variant="ghost" disabled={deleting} className="h-5 px-1.5 text-[10px]" onClick={() => setTicks(new Set())}>Clear</Button>
+            <Button size="xs" variant="destructive" disabled={busy || deleting} onClick={() => void deleteTicked()}>Delete</Button>
+            <Button size="xs" variant="ghost" disabled={deleting} onClick={() => setTicks(new Set())}>Clear</Button>
           </div>
         )}
       </div>
       {shownPins.length > 0 && (
         <section>
-          <div className="flex h-6 items-center gap-1 bg-muted/50 px-2 text-[10px] font-semibold text-muted-foreground">
+          <div className="flex h-7 items-center gap-1 bg-muted/50 px-2 text-xs font-medium text-muted-foreground">
             <PinIcon className="size-3" />
-            <span className="flex-1 truncate uppercase tracking-wide">Pinned</span>
+            <span className="flex-1 truncate">Pinned</span>
           </div>
           <ul className="pb-1">
             {shownPins.map((name) => <React.Fragment key={name}>{localRow(name)}</React.Fragment>)}
@@ -295,10 +298,10 @@ export function Locations({
       <RefGroup title="Tags" kind="tag" projectId={projectId} repo={repo} q={q}>
         {(name) => <Place name={name} coarse={coarse} onReveal={() => onReveal(`tag: ${name}`)} menu={menuFor(name, "tag")} tick={tickFor(`tag\0${name}`)} />}
       </RefGroup>
-      <div className="border-t border-border/40">
+      <div className="border-t">
         <form className="flex items-center gap-1 px-2 py-1.5" onSubmit={(event) => { event.preventDefault(); onStash(message.trim()); setMessage("") }}>
-          <Input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Stash message" aria-label="Stash message" className="h-7 min-w-0 flex-1 text-xs" />
-          <Button type="submit" size="xs" variant="outline" disabled={busy || !canStash} title="Stash the working directory"><ArchiveIcon className="size-3.5" /></Button>
+          <Input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Stash message" aria-label="Stash message" className="h-8 min-w-0 flex-1" />
+          <Button type="submit" size="icon-sm" variant="outline" disabled={busy || !canStash} title="Stash the working directory" aria-label="Stash the working directory"><ArchiveIcon /></Button>
         </form>
         <StashSection key={stashGeneration} projectId={projectId} repo={repo} open fixed onToggle={() => {}} onStatus={onStatus} coarse={coarse} />
       </div>

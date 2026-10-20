@@ -143,7 +143,7 @@ function FlowNodeView({ data, selected }: NodeProps<FlowNode>) {
     dot: "!min-h-0 !min-w-0 size-3 rounded-full !p-0 bg-border",
   }[data.shape]
   const toneClass = {
-    done: "border-emerald-500",
+    done: "border-success",
     running: "border-primary ring-2 ring-primary/20",
     failed: "border-destructive bg-destructive/5",
     pending: "border-dashed border-border text-muted-foreground",
@@ -152,15 +152,15 @@ function FlowNodeView({ data, selected }: NodeProps<FlowNode>) {
 
   return (
     <div
-      className={`relative flex min-h-12 min-w-28 max-w-52 items-center justify-center border bg-card px-4 py-2 text-center text-xs leading-snug text-card-foreground shadow-sm ${shapeClass} ${border}`}
+      className={`relative flex min-h-12 min-w-28 max-w-52 items-center justify-center border bg-card px-4 py-2 text-center text-xs leading-snug text-card-foreground ${shapeClass} ${border}`}
     >
       <Handle type="target" position={targetPosition} className="!size-2 !border-2 !border-background !bg-primary" />
       {data.shape !== "dot" && (
         <span className="min-w-0 break-words">
           {data.label}
-          {data.hint && <span className="block text-[10px] text-muted-foreground">{data.hint}</span>}
+          {data.hint && <span className="block text-xs text-muted-foreground">{data.hint}</span>}
           {data.updates && data.updates.length > 0 && (
-            <span className="mt-1 block space-y-px border-t border-border/60 pt-1 text-start text-[10px] text-muted-foreground">
+            <span className="mt-1 block space-y-px border-t pt-1 text-start text-xs text-muted-foreground">
               {data.updates.map((update, i) => (
                 <span
                   key={i}
@@ -173,7 +173,7 @@ function FlowNodeView({ data, selected }: NodeProps<FlowNode>) {
           )}
           {data.result && (
             <span
-              className={`mt-1 line-clamp-3 border-t border-border/60 pt-1 text-start text-[10px] leading-snug ${data.tone === "failed" ? "text-destructive" : "text-muted-foreground"}`}
+              className={`mt-1 line-clamp-3 border-t pt-1 text-start text-xs leading-snug ${data.tone === "failed" ? "text-destructive" : "text-muted-foreground"}`}
               title={data.result}
             >
               {data.result}
@@ -353,7 +353,7 @@ export function InteractiveFlowchart({
         className="text-foreground"
       >
         <Background color="var(--border)" gap={18} size={1} />
-        <Controls showInteractive={false} className="!overflow-hidden !rounded-md !border !border-border !bg-card !shadow-sm [&>button]:!border-border [&>button]:!bg-card [&>button]:!fill-foreground [&>button:hover]:!bg-muted" />
+        <Controls showInteractive={false} className="!overflow-hidden !rounded-md !border !border-border !bg-card !shadow-none [&>button]:!border-border [&>button]:!bg-card [&>button]:!fill-foreground [&>button:hover]:!bg-muted" />
       </ReactFlow>
       </div>
     </div>

@@ -23,7 +23,10 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -35,6 +38,8 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { ErrorNote } from "@/components/error-note"
+import { Notice } from "@/components/notice"
+import { Checkbox } from "@/components/ui/checkbox"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import type { Board, BoardStatus, CustomFieldDef, Sprint } from "@/lib/boards"
@@ -83,8 +88,7 @@ import {
 import { QuickAdd } from "./quick-add"
 import { TaskEditor } from "./task-editor"
 
-const FIELD_CHIP =
-  "inline-flex h-9 items-center gap-2 rounded-lg border bg-background px-3 text-sm text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const FIELD_CHIP = buttonVariants({ variant: "outline" })
 
 const fmtWhen = (ms: number) => {
   const d = new Date(ms)
@@ -103,8 +107,8 @@ function Section({ icon: Icon, title, count, action, children }: { icon: React.C
     <section className="grid gap-2">
       <header className="flex items-center gap-2">
         <Icon className="size-3.5 text-muted-foreground" />
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
-        {count != null && count > 0 && <span className="rounded-pill bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">{count}</span>}
+        <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
+        {count != null && count > 0 && <Badge variant="secondary" className="tabular-nums">{count}</Badge>}
         <span className="ml-auto">{action}</span>
       </header>
       {children}
@@ -136,7 +140,7 @@ function PropertiesDisclosure({ children }: { children: React.ReactNode }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 border-b bg-muted/30 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground md:hidden"
+        className="flex w-full items-center gap-2 border-b bg-muted/50 px-4 py-3 text-xs font-medium text-muted-foreground md:hidden"
       >
         Details
         <ChevronDown className={cn("ml-auto size-3.5 transition-transform", open && "rotate-180")} />
@@ -226,20 +230,20 @@ function CustomFieldInput({ def, value, onChange }: { def: CustomFieldDef; value
   }
   switch (def.type) {
     case "checkbox":
-      return <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} className="size-4 accent-primary" aria-label={def.name} />
+      return <Checkbox checked={value === true} onCheckedChange={(checked) => onChange(checked)} aria-label={def.name} />
     case "select":
       return (
-        <select value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || null)} className="h-7 w-full rounded-lg border bg-background px-2 text-xs" aria-label={def.name}>
-          <option value="">—</option>
+        <NativeSelect size="sm" className="w-full" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || null)} aria-label={def.name}>
+          <NativeSelectOption value="">—</NativeSelectOption>
           {(def.options ?? []).map((o) => (
-            <option key={o} value={o}>
+            <NativeSelectOption key={o} value={o}>
               {o}
-            </option>
+            </NativeSelectOption>
           ))}
-        </select>
+        </NativeSelect>
       )
     case "date":
-      return <Input type="date" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || null)} className="h-7 text-xs" aria-label={def.name} />
+      return <Input type="date" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || null)} className="h-8" aria-label={def.name} />
     default:
       return (
         <Input
@@ -248,7 +252,7 @@ function CustomFieldInput({ def, value, onChange }: { def: CustomFieldDef; value
           onChange={(e) => setText(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => e.key === "Enter" && commit()}
-          className="h-7 text-xs"
+          className="h-8"
           aria-label={def.name}
           placeholder="—"
         />
@@ -374,7 +378,7 @@ export function TaskDetailDialog({
           <ResponsiveDialogTitle className="sr-only">Task</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="sr-only">Loading</ResponsiveDialogDescription>
           {detail.isError ? (
-            <div className="text-sm text-muted-foreground">This task could not be loaded.</div>
+            <Notice tone="error">This task could not be loaded.</Notice>
           ) : (
             <TaskDetailSkeleton />
           )}
@@ -443,15 +447,17 @@ export function TaskDetailDialog({
             </button>
           )}
           <span className="ml-auto flex items-center gap-1">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               onClick={() => void patch({ archived: !task.archived })}
-              className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="text-muted-foreground"
               aria-label={task.archived ? "Restore" : "Archive"}
               title={task.archived ? "Restore" : "Archive"}
             >
-              {task.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-            </button>
+              {task.archived ? <ArchiveRestore /> : <Archive />}
+            </Button>
           </span>
         </ResponsiveDialogHeader>
 
@@ -468,7 +474,7 @@ export function TaskDetailDialog({
                 if (e.key === "Escape") setEditingTitle(false)
               }}
               aria-label="Title"
-              className="w-full rounded-lg border border-input bg-background px-2 py-1 text-2xl font-semibold leading-snug outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full rounded-lg border border-input bg-transparent px-2 py-1 text-xl font-medium leading-snug outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />
           ) : (
             <ResponsiveDialogTitle
@@ -479,7 +485,7 @@ export function TaskDetailDialog({
                     setTitle(task.title)
                     setEditingTitle(true)
                   }}
-                  className={cn("-mx-2 rounded-lg px-2 py-1 text-left text-2xl font-semibold leading-snug hover:bg-accent/50", task.completedAt != null && "text-muted-foreground line-through")}
+                  className={cn("-mx-2 rounded-lg px-2 py-1 text-left text-xl font-medium leading-snug hover:bg-muted", task.completedAt != null && "text-muted-foreground line-through")}
                   title="Click to rename"
                 />
               }
@@ -565,7 +571,6 @@ export function TaskDetailDialog({
             title={task.title}
             className="[&_.ProseMirror]:min-h-[12rem]"
           />
-          {task.archived && <p className="text-xs text-muted-foreground">Archived — hidden from every view unless the filter includes it.</p>}
         </div>
 
         <div className="grid w-full content-start border-t md:grid-cols-[minmax(0,1fr)_17rem]">
@@ -573,18 +578,18 @@ export function TaskDetailDialog({
           <div className="grid content-start gap-6 px-4 py-4 sm:px-6">
             <Section icon={ListChecks} title="Checklist" count={progress.total} action={progress.total > 0 ? <span className="text-xs tabular-nums text-muted-foreground">{progress.done}/{progress.total}</span> : null}>
               {progress.total > 0 && (
-                <div className="h-1.5 overflow-hidden rounded-pill bg-muted">
-                  <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
                 </div>
               )}
               <ul className="grid gap-0.5">
                 {task.checklist.map((item) => (
-                  <li key={item.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-accent/40">
-                    <input type="checkbox" checked={item.done} onChange={() => void toggleChecklist(item.id)} className="size-4 accent-primary" aria-label={item.text} />
+                  <li key={item.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-muted">
+                    <Checkbox checked={item.done} onCheckedChange={() => void toggleChecklist(item.id)} aria-label={item.text} />
                     <span className={cn("flex-1 text-sm", item.done && "text-muted-foreground line-through")}>{item.text}</span>
-                    <button type="button" onClick={() => void removeChecklist(item.id)} aria-label="Remove item" className="grid size-6 place-items-center rounded text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100">
-                      <X className="size-3.5" />
-                    </button>
+                    <Button type="button" variant="ghost" size="icon-xs" onClick={() => void removeChecklist(item.id)} aria-label="Remove item" className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100">
+                      <X />
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -596,9 +601,9 @@ export function TaskDetailDialog({
                 {children.map((child) => {
                   const cs = statuses.find((s) => s.id === child.statusId)
                   return (
-                    <li key={child.id} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-accent/40">
+                    <li key={child.id} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-muted">
                       <TypeIcon type={child.type} />
-                      <span className="font-mono text-[11px] text-muted-foreground">{taskKey(child, board.key)}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{taskKey(child, board.key)}</span>
                       <button type="button" onClick={() => onOpen(child)} className={cn("min-w-0 flex-1 truncate text-left text-sm hover:underline", child.completedAt != null && "text-muted-foreground line-through")}>
                         {child.title}
                       </button>
@@ -648,7 +653,7 @@ export function TaskDetailDialog({
                     void navigate(threadPath(id))
                   }}
                 >
-                  <Bot className="size-3" /> Work on this
+                  <Bot /> Work on this
                 </Button>
               }
             >
@@ -661,11 +666,11 @@ export function TaskDetailDialog({
                         close()
                         void navigate(threadPath(s.id))
                       }}
-                      className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-left text-sm hover:bg-accent/40"
+                      className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-left text-sm hover:bg-muted"
                     >
                       <AgentIcon agentId={s.agentId} className="size-4 shrink-0" />
                       <span className="min-w-0 flex-1 truncate hover:underline">{s.title}</span>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">{fmtWhen(s.createdAt)}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{fmtWhen(s.createdAt)}</span>
                     </button>
                   </li>
                 ))}
@@ -679,13 +684,13 @@ export function TaskDetailDialog({
               count={links.length}
               action={
                 <span className="inline-flex items-center gap-1">
-                  <select value={linkKind} onChange={(e) => setLinkKind(e.target.value as LinkKind)} className="h-6 rounded-md border bg-background px-1 text-[11px]" aria-label="Link kind">
+                  <NativeSelect size="sm" value={linkKind} onChange={(e) => setLinkKind(e.target.value as LinkKind)} aria-label="Link kind">
                     {LINK_KINDS.map((k) => (
-                      <option key={k} value={k}>
+                      <NativeSelectOption key={k} value={k}>
                         {LINK_LABEL[k].out}
-                      </option>
+                      </NativeSelectOption>
                     ))}
-                  </select>
+                  </NativeSelect>
                   <ParentPicker
                     value={null}
                     candidates={allTasks}
@@ -696,9 +701,9 @@ export function TaskDetailDialog({
                       addLink.mutateAsync({ fromId: task.id, toId, kind: linkKind }).catch((err) => reportError(err, "Couldn't link the task"))
                     }}
                     trigger={
-                      <button type="button" className="inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[11px] hover:bg-accent">
-                        <Plus className="size-3" /> Link
-                      </button>
+                      <Button type="button" variant="outline" size="xs">
+                        <Plus /> Link
+                      </Button>
                     }
                   />
                 </span>
@@ -711,12 +716,12 @@ export function TaskDetailDialog({
                   const other = allTasks.find((t) => t.id === otherId)
                   const label = outbound ? LINK_LABEL[link.kind].out : LINK_LABEL[link.kind].in
                   return (
-                    <li key={link.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-accent/40">
-                      <span className="w-24 shrink-0 text-[11px] text-muted-foreground">{label}</span>
+                    <li key={link.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-muted">
+                      <span className="w-24 shrink-0 text-xs text-muted-foreground">{label}</span>
                       {other ? (
                         <>
                           <TypeIcon type={other.type} />
-                          <span className="font-mono text-[11px] text-muted-foreground">{taskKey(other, board.key)}</span>
+                          <span className="font-mono text-xs text-muted-foreground">{taskKey(other, board.key)}</span>
                           <button type="button" onClick={() => onOpen(other)} className={cn("min-w-0 flex-1 truncate text-left text-sm hover:underline", other.completedAt != null && "text-muted-foreground line-through")}>
                             {other.title}
                           </button>
@@ -725,14 +730,16 @@ export function TaskDetailDialog({
                       ) : (
                         <span className="flex-1 text-sm text-muted-foreground">A task on another board</span>
                       )}
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon-xs"
                         aria-label="Remove link"
                         onClick={() => deleteLink.mutateAsync({ id: link.id, fromId: link.fromId, toId: link.toId }).catch((err) => reportError(err, "Couldn't remove the link"))}
-                        className="grid size-6 place-items-center rounded text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                        className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
                       >
-                        <X className="size-3.5" />
-                      </button>
+                        <X />
+                      </Button>
                     </li>
                   )
                 })}
@@ -743,24 +750,26 @@ export function TaskDetailDialog({
             <Section icon={MessageSquare} title="Comments" count={comments.length}>
               <ul className="grid gap-2">
                 {comments.map((c) => (
-                  <li key={c.id} className="group rounded-xl border bg-card px-3 py-2">
-                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <li key={c.id} className="group rounded-xl border px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <AssigneeAvatar name={c.author ?? "You"} size="xs" />
                       <span className="font-medium text-foreground">{c.author ?? "You"}</span>
                       <span>{fmtWhen(c.createdAt)}</span>
                       {c.updatedAt !== c.createdAt && <span>(edited)</span>}
                       <span className="ml-auto inline-flex gap-1 opacity-0 group-hover:opacity-100">
-                        <button type="button" onClick={() => setEditingComment({ id: c.id, body: c.body })} aria-label="Edit comment" className="rounded p-0.5 hover:text-foreground">
-                          <Pencil className="size-3" />
-                        </button>
-                        <button
+                        <Button type="button" variant="ghost" size="icon-xs" onClick={() => setEditingComment({ id: c.id, body: c.body })} aria-label="Edit comment">
+                          <Pencil />
+                        </Button>
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="icon-xs"
                           onClick={() => deleteComment.mutateAsync({ id: c.id, taskId: task.id }).catch((err) => reportError(err, "Couldn't delete the comment"))}
                           aria-label="Delete comment"
-                          className="rounded p-0.5 hover:text-destructive"
+                          className="hover:text-destructive"
                         >
-                          <Trash2 className="size-3" />
-                        </button>
+                          <Trash2 />
+                        </Button>
                       </span>
                     </div>
                     {editingComment?.id === c.id ? (
@@ -840,7 +849,7 @@ export function TaskDetailDialog({
 
           {/* Properties — a collapsed "Details" section on a phone, the right column on desktop. */}
           <PropertiesDisclosure>
-          <aside className="grid content-start gap-3 border-b bg-muted/30 px-4 py-4 md:border-b-0 md:border-l">
+          <aside className="grid content-start gap-3 border-b bg-muted/50 px-4 py-4 md:border-b-0 md:border-l">
             <Property label="Sprint">
               <SprintPicker
                 value={task.sprintId}
@@ -910,7 +919,7 @@ export function TaskDetailDialog({
             </Property>
             {board.customFields.length > 0 && (
               <>
-                <hr className="my-1" />
+                <Separator className="my-1" />
                 {board.customFields.map((def) => (
                   <Property key={def.id} label={def.name}>
                     <CustomFieldInput def={def} value={task.custom[def.id]} onChange={(v) => void patch({ custom: { [def.id]: v } })} />
@@ -918,8 +927,8 @@ export function TaskDetailDialog({
                 ))}
               </>
             )}
-            <hr className="my-1" />
-            <dl className="grid gap-1 text-[11px] text-muted-foreground">
+            <Separator className="my-1" />
+            <dl className="grid gap-1 text-xs text-muted-foreground">
               <div className="flex justify-between">
                 <dt>Created</dt>
                 <dd className="tabular-nums">{fmtWhen(task.createdAt)}</dd>
@@ -931,7 +940,7 @@ export function TaskDetailDialog({
               {task.completedAt != null && (
                 <div className="flex justify-between">
                   <dt className="inline-flex items-center gap-1">
-                    <Check className="size-3 text-emerald-500" /> Completed
+                    <Check className="size-3 text-success" /> Completed
                   </dt>
                   <dd className="tabular-nums">{fmtWhen(task.completedAt)}</dd>
                 </div>
@@ -965,7 +974,7 @@ export function TaskDetailDialog({
               </Button>
             </>
           ) : (
-            <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+            <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>
               Delete
             </Button>
           )}

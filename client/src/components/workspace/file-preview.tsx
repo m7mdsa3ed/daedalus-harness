@@ -90,20 +90,20 @@ export function FilePreview({
     <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
       <PanelToolbar>
         {onBack && (
-          <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" className="size-6" onClick={onBack}>
+          <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" onClick={onBack}>
             <ArrowLeftIcon className="size-3.5" />
           </Button>
         )}
         <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={path}>
+        <span className="min-w-0 flex-1 truncate font-mono text-sm" title={path}>
           <span className="text-foreground">{name}</span>
           {name !== path && <span className="ml-2 text-muted-foreground">{path.slice(0, -name.length - 1)}</span>}
         </span>
-        <Button size="icon-xs" variant="ghost" aria-label="Copy path" title="Copy path" className="size-6" onClick={() => void copyText(path)}>
+        <Button size="icon-xs" variant="ghost" aria-label="Copy path" title="Copy path" onClick={() => void copyText(path)}>
           <CopyIcon className="size-3.5" />
         </Button>
       </PanelToolbar>
-      <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
+      <div className="min-h-0 flex-1 overflow-auto bg-muted/50">
         <Body kind={kind} loaded={loaded} name={name} ext={name.slice(name.lastIndexOf(".") + 1)} />
       </div>
     </div>

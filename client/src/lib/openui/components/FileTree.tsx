@@ -50,7 +50,7 @@ function Branch({ node, depth }: { node: Node; depth: number }) {
   return (
     <li className="min-w-0">
       <div
-        className={cn("flex min-w-0 flex-wrap items-baseline gap-x-2 py-0.5 pe-3 @panel-sm:pe-3.5")}
+        className="flex min-w-0 flex-wrap items-baseline gap-x-2 py-0.5 pe-3 @panel-sm:pe-4"
         style={{ paddingInlineStart: `calc(var(--spacing) * 3 + ${depth * 14}px)` }}
       >
         <span className="inline-flex min-w-0 items-center gap-1.5">
@@ -59,7 +59,7 @@ function Branch({ node, depth }: { node: Node; depth: number }) {
           ) : (
             <File aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <span className={cn(BODY, "font-mono text-[12.5px]", isDir && "font-medium", node.change === "deleted" && "line-through opacity-70")}>
+          <span className={cn(BODY, "font-mono", isDir && "font-medium", node.change === "deleted" && "text-muted-foreground line-through")}>
             {node.name}
             {isDir && "/"}
           </span>

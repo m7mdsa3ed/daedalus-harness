@@ -263,7 +263,7 @@ function ResponsiveDialogHeader({ className, ...props }: React.ComponentProps<"h
     <header
       data-slot="dialog-header"
       className={cn(
-        "flex shrink-0 flex-col gap-1.5 border-b border-border/60 pr-14 text-left",
+        "flex shrink-0 flex-col gap-1.5 border-b pr-14 text-left",
         isMobile ? "px-4 py-4" : "px-6 py-5",
         className
       )}
@@ -278,7 +278,7 @@ function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<"f
     <footer
       data-slot="dialog-footer"
       className={cn(
-        "flex shrink-0 gap-2 border-t border-border/60",
+        "flex shrink-0 gap-2 border-t",
         isMobile
           ? "flex-col px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
           : "flex-row justify-end px-6 py-4",

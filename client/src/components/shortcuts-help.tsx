@@ -50,9 +50,9 @@ function Row({ shortcut }: { shortcut: ShortcutDef }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-1.5">
       <div className="min-w-0">
-        <p className="text-[13px] leading-snug">{shortcut.label}</p>
+        <p className="text-sm leading-snug">{shortcut.label}</p>
         {shortcut.note && (
-          <p className="mt-0.5 text-[11px] leading-snug text-pretty text-muted-foreground">
+          <p className="mt-0.5 text-xs leading-snug text-pretty text-muted-foreground">
             {shortcut.note}
           </p>
         )}
@@ -61,7 +61,7 @@ function Row({ shortcut }: { shortcut: ShortcutDef }) {
       <div className="flex shrink-0 items-center gap-1.5">
         {chords.map((chord, index) => (
           <React.Fragment key={chord}>
-            {index > 0 && <span className="text-[11px] text-muted-foreground">or</span>}
+            {index > 0 && <span className="text-xs text-muted-foreground">or</span>}
             <Shortcut chord={chord} />
           </React.Fragment>
         ))}
@@ -95,10 +95,10 @@ export function ShortcutsHelp({
             if (rows.length === 0) return null
             return (
               <section key={scope} className="mb-3 last:mb-0">
-                <h3 className="mb-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
+                <h3 className="mb-1 text-xs font-medium text-muted-foreground">
                   {scope}
                 </h3>
-                <div className="divide-y divide-border/40">
+                <div className="divide-y">
                   {rows.map((shortcut) => (
                     <Row key={`${scope}:${shortcut.label}`} shortcut={shortcut} />
                   ))}

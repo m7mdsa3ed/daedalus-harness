@@ -7,7 +7,6 @@ import {
   AgentRequestCard,
   AgentRequestHeader,
   AgentRequestWell,
-  REQUEST_BUTTON,
 } from "@/components/agent-request"
 import { SessionConfigPopover } from "@/components/session-config"
 import { Button } from "@/components/ui/button"
@@ -84,7 +83,7 @@ export function InlineHeldTurn({
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground/80 hover:text-foreground"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
               <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
               {open ? "Hide details" : "Show details"}
@@ -93,12 +92,12 @@ export function InlineHeldTurn({
           <CopyButton
             text={[reason, info?.detail].filter(Boolean).join("\n\n")}
             size="icon-xs"
-            className="text-muted-foreground/80 hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
           />
         </div>
         {open && info?.detail && (
           <AgentRequestWell>
-            <pre className="max-h-56 overflow-auto font-mono text-[11px] whitespace-pre-wrap">
+            <pre className="max-h-56 overflow-auto font-mono text-xs whitespace-pre-wrap">
               {info.detail}
             </pre>
           </AgentRequestWell>
@@ -116,19 +115,20 @@ export function InlineHeldTurn({
           actions={actions}
           thread={thread}
           trigger={
-            <Button variant="default" className={REQUEST_BUTTON}>
+            <Button variant="default" size="sm">
               <SlidersHorizontalIcon />
               Change model
             </Button>
           }
         />
-        <Button variant="outline" className={REQUEST_BUTTON} onClick={resume}>
+        <Button variant="outline" size="sm" onClick={resume}>
           <PlayIcon />
           Continue
         </Button>
         <Button
           variant="ghost"
-          className={cn(REQUEST_BUTTON, "ms-auto text-muted-foreground hover:text-destructive")}
+          size="sm"
+          className="ms-auto text-muted-foreground hover:text-destructive"
           onClick={stop}
         >
           <SquareIcon />

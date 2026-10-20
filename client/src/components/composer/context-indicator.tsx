@@ -3,8 +3,9 @@
    wears the other way up, its per-turn telemetry, and — under a border, for
    the pair that has a plan to read — the account the thread spends. */
 import * as React from "react"
+import { Spinner } from "@/components/ui/spinner"
 import { useState } from "react"
-import { ChevronDownIcon, LoaderCircleIcon } from "lucide-react"
+import { ChevronDownIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -60,9 +61,9 @@ function Row({
   valueClass?: string
 }) {
   return (
-    <div className="flex items-baseline gap-2 text-xs">
+    <div className="flex items-baseline gap-2 text-sm">
       <dt className="min-w-0 flex-1 truncate text-muted-foreground">{label}</dt>
-      {hint && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{hint}</span>}
+      {hint && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{hint}</span>}
       <dd className={cn("shrink-0 font-medium tabular-nums", valueClass)}>{value}</dd>
     </div>
   )
@@ -76,7 +77,7 @@ const SUBAGENT_ROWS = 4
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="border-t pt-2">
-      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+      <p className="mb-1.5 text-xs font-medium text-muted-foreground">{title}</p>
       <dl className="space-y-1">{children}</dl>
     </section>
   )
@@ -95,7 +96,7 @@ function WindowBar({ window, label }: { window: QuotaWindow; label: string }) {
   const metered = window.unlimited === true
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-2 text-xs">
+      <div className="flex items-baseline justify-between gap-2 text-sm">
         <span className="truncate text-muted-foreground">{label}</span>
         <span className="flex shrink-0 items-baseline gap-1.5">
           {amount && <span className="text-muted-foreground tabular-nums">{amount}</span>}
@@ -118,7 +119,7 @@ function WindowBar({ window, label }: { window: QuotaWindow; label: string }) {
           <div className={cn("h-full rounded-pill transition-all", tone.bar)} style={{ width: `${percent}%` }} />
         </div>
       )}
-      {reset && <p className="mt-0.5 text-[10px] text-muted-foreground">Resets {reset}</p>}
+      {reset && <p className="mt-0.5 text-xs text-muted-foreground">Resets {reset}</p>}
     </div>
   )
 }
@@ -171,9 +172,9 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
     if (!pending) return null
     return (
       <div className="border-t pt-2">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Plan</p>
+        <p className="text-xs font-medium text-muted-foreground">Plan</p>
         <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
-          <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+          <Spinner aria-hidden className="size-3" />
           Reading plan usage…
         </p>
       </div>
@@ -192,7 +193,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
 
   return (
     <div className="border-t pt-2">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Plan</p>
+      <p className="text-xs font-medium text-muted-foreground">Plan</p>
       {quota.windows.length === 0 && accounts.length === 0 ? (
         <p className="mt-0.5 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
       ) : accounts.length > 0 ? (
@@ -211,19 +212,19 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
             return (
               <Collapsible key={account.id} defaultOpen={index === 0} className="border-b last:border-0">
                 <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 py-1.5 text-left">
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium">{accountTitle(account)}</span>
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{accountTitle(account)}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
                     {windows.length} {windows.length === 1 ? "window" : "windows"}
                   </span>
                   {percent !== null && tone && (
-                    <span className={cn("shrink-0 text-xs font-medium tabular-nums", tone.text)}>{percent}%</span>
+                    <span className={cn("shrink-0 text-sm font-medium tabular-nums", tone.text)}>{percent}%</span>
                   )}
                   <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="space-y-1.5 pb-2 pl-2">
                     {windows.length === 0 ? (
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {account.disabled ? "Turned off in the gateway" : (account.state ?? "No quota reported")}
                       </p>
                     ) : (
@@ -243,7 +244,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
             <WindowBar key={window.id} window={window} label={windowTitle(window)} />
           ))}
           {peak && peak.usedPercent >= 90 && (
-            <Notice tone="error" className="px-2 py-1.5 text-[11px]">
+            <Notice tone="error">
               Nearly out of plan — {windowTitle(peak).toLowerCase()} is {Math.round(peak.usedPercent)}% used.
             </Notice>
           )}
@@ -323,9 +324,9 @@ export function ContextIndicator({
     cacheRate === null
       ? undefined
       : cacheRate >= 50
-        ? "text-emerald-600 dark:text-emerald-400"
+        ? "text-success"
         : cacheRate >= 20
-          ? "text-amber-600 dark:text-amber-400"
+          ? "text-warning"
           : "text-destructive"
   const spend = subagentSpend(thread.items)
   const spendTotal = spend.reduce((n, child) => n + child.tokens, 0)
@@ -372,7 +373,7 @@ export function ContextIndicator({
           <div className="flex items-baseline justify-between gap-2">
             <p className="font-medium">Context window</p>
             {context && (
-              <p className="text-lg font-semibold leading-none tabular-nums">
+              <p className="text-base font-medium leading-none tabular-nums">
                 {about}
                 {percent}%
               </p>
@@ -397,13 +398,13 @@ export function ContextIndicator({
           </div>
         )}
         {estimated && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             This model's window size isn't in the catalog, so the size is a default and every
             share is approximate.
           </p>
         )}
         {context && !estimated && percent >= COMPACTION_WARN && (
-          <Notice tone="warn" className="px-2 py-1.5 text-[11px]">
+          <Notice tone="warn">
             Context is nearly full — the agent compacts the history soon to keep the turn going.
           </Notice>
         )}

@@ -31,6 +31,8 @@ import {
 import { ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Button } from "@/components/ui/button"
+import { Empty } from "@/components/empty"
 import { COLOR_DOT, listsOf, sprintsOf, statusesOf, viewsOf, type Board, type BoardList, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
 import { taskKey, type ReorderEntry, type Task, type TaskInput } from "@/lib/tasks-board"
 import {
@@ -161,13 +163,13 @@ function BoardRail({
   const active = sprints.find((s) => s.state === "active")
   const progress = active ? sprintProgress(allTasks, active.id, statuses) : null
   return (
-    <aside className={cn("flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-muted/20 px-2 py-3", className)}>
+    <aside className={cn("flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r px-2 py-3", className)}>
       <div className="grid gap-0.5">
         <div className="flex items-center justify-between px-2 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boards</span>
-          <button type="button" onClick={onNewBoard} aria-label="New board" className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground">
-            <Plus className="size-3.5" />
-          </button>
+          <span className="text-xs font-medium text-muted-foreground">Boards</span>
+          <Button type="button" variant="ghost" size="icon-xs" onClick={onNewBoard} aria-label="New board" className="text-muted-foreground">
+            <Plus />
+          </Button>
         </div>
         {boards.map((b) => {
           const project = b.projectId ? projects.find((p) => p.id === b.projectId) : undefined
@@ -178,36 +180,36 @@ function BoardRail({
               onClick={() => onPick(b)}
               aria-current={b.id === current?.id ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
-                b.id === current?.id && "bg-card font-medium shadow-xs",
+                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                b.id === current?.id && "bg-muted font-medium",
               )}
             >
               {project ? <ProjectIcon project={project} className="size-4" /> : <span className={cn("size-2.5 shrink-0 rounded-full", b.color ? COLOR_DOT[b.color] : "bg-muted-foreground/40")} />}
               <span className="min-w-0 flex-1 truncate">{b.name}</span>
-              <span className="font-mono text-[10px] text-muted-foreground">{b.key}</span>
-              <span className="text-[10px] tabular-nums text-muted-foreground">{counts.get(b.id) ?? 0}</span>
+              <span className="font-mono text-xs text-muted-foreground">{b.key}</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{counts.get(b.id) ?? 0}</span>
             </button>
           )
         })}
       </div>
       {current && (
         <div className="grid gap-0.5">
-          <span className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Sprint</span>
+          <span className="px-2 pb-1 text-xs font-medium text-muted-foreground">Sprint</span>
           {active && progress ? (
-            <button type="button" onClick={onSprints} className="grid gap-1 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent">
+            <button type="button" onClick={onSprints} className="grid gap-1 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted">
               <span className="flex items-center justify-between">
                 <span className="truncate font-medium">{active.name}</span>
                 <span className="tabular-nums text-muted-foreground">
                   {progress.done}/{progress.total}
                 </span>
               </span>
-              <span className="h-1 overflow-hidden rounded-pill bg-muted">
-                <span className="block h-full rounded-pill bg-emerald-500" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
+              <span className="h-1 overflow-hidden rounded-full bg-muted">
+                <span className="block h-full rounded-full bg-success" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
               </span>
-              {active.endAt != null && <span className="text-[10px] text-muted-foreground">Ends {new Date(active.endAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
+              {active.endAt != null && <span className="text-xs text-muted-foreground">Ends {new Date(active.endAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
             </button>
           ) : (
-            <button type="button" onClick={onSprints} className="rounded-lg px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent">
+            <button type="button" onClick={onSprints} className="rounded-lg px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted">
               No active sprint — plan one
             </button>
           )}
@@ -215,11 +217,11 @@ function BoardRail({
       )}
       {current && views.length > 0 && (
         <div className="grid gap-0.5">
-          <span className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Views</span>
+          <span className="px-2 pb-1 text-xs font-medium text-muted-foreground">Views</span>
           {views.map((v) => (
-            <button key={v.id} type="button" onClick={() => onPickView(v)} className={cn("flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-accent", v.id === activeViewId && "bg-card font-medium shadow-xs")}>
+            <button key={v.id} type="button" onClick={() => onPickView(v)} className={cn("flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted", v.id === activeViewId && "bg-muted font-medium")}>
               <span className="min-w-0 flex-1 truncate">{v.name}</span>
-              <span className="text-[10px] uppercase text-muted-foreground">{v.kind}</span>
+              <span className="text-xs text-muted-foreground">{v.kind}</span>
             </button>
           ))}
         </div>
@@ -231,7 +233,7 @@ function BoardRail({
 /** The bar that appears over a multi-select: the bulk verbs. */
 function BulkBar({ count, statuses, sprints, facets, onPatch, onDelete, onClear }: { count: number; statuses: BoardStatus[]; sprints: Sprint[]; facets: { assignees: string[]; labels: string[] }; onPatch: (patch: Parameters<ReturnType<typeof useBulkUpdateTasks>["mutateAsync"]>[0]["patch"]) => void; onDelete: () => void; onClear: () => void }) {
   return (
-    <div className="flex items-center gap-1 overflow-x-auto border-b bg-primary/5 px-3 py-1.5 text-xs sm:px-4">
+    <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/50 px-3 py-1.5 text-sm sm:px-4">
       <span className="mr-1 shrink-0 font-medium">{count} selected</span>
       <StatusPicker value="" statuses={statuses} onChange={(statusId) => onPatch({ statusId })} trigger={<button type="button" className={CHIP}><StatusPill status={undefined} /> Status <ChevronDown className="size-3" /></button>} />
       <PriorityPicker value="medium" onChange={(priority) => onPatch({ priority })} trigger={<button type="button" className={CHIP}><PriorityIcon priority="medium" /> Priority <ChevronDown className="size-3" /></button>} />
@@ -547,7 +549,9 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
        empty board with a caption. A board that genuinely has none is the only
        case that gets words. */
     return loaded && boards.length === 0 ? (
-      <div className="grid flex-1 place-items-center p-8 text-sm text-muted-foreground">No boards yet.</div>
+      <div className="grid flex-1 place-items-center p-8">
+        <Empty size="lg" icon={FolderKanban}>No boards yet.</Empty>
+      </div>
     ) : (
       <BoardSkeleton />
     )
@@ -595,10 +599,10 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <button type="button" className="flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-accent">
+                <button type="button" className="flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50">
                   <span className={cn("size-2.5 shrink-0 rounded-full", board.color ? COLOR_DOT[board.color] : "bg-muted-foreground/40")} />
-                  <span className="truncate text-sm font-semibold">{board.name}</span>
-                  <span className="font-mono text-[11px] text-muted-foreground">{board.key}</span>
+                  <span className="truncate text-sm font-medium">{board.name}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{board.key}</span>
                   <ChevronDown className="size-3.5 text-muted-foreground @panel-md:hidden" />
                 </button>
               }
@@ -608,8 +612,8 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
                 <DropdownMenuItem key={b.id} onClick={() => openBoard(b.id)}>
                   <span className={cn("size-2 rounded-full", b.color ? COLOR_DOT[b.color] : "bg-muted-foreground/40")} />
                   <span className="flex-1 truncate">{b.name}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">{b.key}</span>
-                  <span className="text-[10px] tabular-nums text-muted-foreground">{counts.get(b.id) ?? 0}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{b.key}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground">{counts.get(b.id) ?? 0}</span>
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
@@ -628,15 +632,15 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
           })()}
           {board.description && <span className="hidden truncate text-xs text-muted-foreground md:inline">{board.description}</span>}
           <span className="ml-auto flex items-center gap-1">
-            <button type="button" onClick={() => setBoardDialog({ open: true, board })} aria-label="Board settings" title="Board settings" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
-              <Settings2 className="size-4" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setBoardDialog({ open: true, board })} aria-label="Board settings" title="Board settings" className="text-muted-foreground">
+              <Settings2 />
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <button type="button" aria-label="Board options" className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
-                    <MoreHorizontal className="size-4" />
-                  </button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Board options" className="text-muted-foreground">
+                    <MoreHorizontal />
+                  </Button>
                 }
               />
               <DropdownMenuContent align="end" className="w-52">
@@ -650,7 +654,7 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
                   <Plus className="size-4" /> New sprint…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem disabled={boards.length <= 1} onClick={() => setDeletingBoard(true)} className="text-destructive">
+                <DropdownMenuItem disabled={boards.length <= 1} onClick={() => setDeletingBoard(true)} variant="destructive">
                   <Trash2 className="size-4" /> Delete board…
                 </DropdownMenuItem>
               </DropdownMenuContent>

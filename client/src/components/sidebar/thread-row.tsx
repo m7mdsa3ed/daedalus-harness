@@ -16,13 +16,14 @@ import {
 import { useIsMobile } from "@/hooks/use-device"
 import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon } from "@/components/entity-icon"
+import { Badge } from "@/components/ui/badge"
 import { ThreadInfoCard } from "./thread-info-card"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
-import { ACTION, FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
+import { FLOAT_ACTION, FLOAT_ROW } from "./scale"
 
 /* The reading a row shows comes from `lib/thread/phase.ts` and is shared with
    the dock tabs and the project page. It used to be declared here as
@@ -132,7 +133,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           /* The status is the title's colour, not a mark beside it: amber for a
              thread waiting on you, red for a failed turn, and a shimmer sweeping
              the letters while a turn runs. */
-          !trash && state === "waiting" && "text-amber-700 dark:text-amber-400",
+          !trash && state === "waiting" && "text-warning",
           !trash && state === "failed" && "text-destructive",
           !trash && state === "running" && "harness-shimmer [animation-duration:3.2s]!"
         )}
@@ -142,17 +143,17 @@ export const ThreadRow = React.memo(function ThreadRow({
       {/* An aside is flagged on the row: a thread started from a passage of
           another (`asideQuote`), whose card names that thread. */}
       {session.asideQuote && (
-        <span className="shrink-0 rounded-sm bg-primary/10 px-1 text-[10px] text-primary" title={`Aside on: ${session.asideQuote}`}>
+        <Badge variant="secondary" title={`Aside on: ${session.asideQuote}`}>
           Aside
-        </span>
+        </Badge>
       )}
       {projectLabel && showProject && (
-        <span className="max-w-[35%] shrink-0 truncate text-[11px] text-muted-foreground/70">{project}</span>
+        <span className="max-w-[35%] shrink-0 truncate text-xs text-muted-foreground">{project}</span>
       )}
       {/* The ⋯ floats over the age on hover (`FLOAT_ACTION`, painted in the
           row's own hover colour), so nothing is reserved for it. */}
       {showAge && (
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground transition-opacity group-hover/menu-item:opacity-0">
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground transition-opacity group-hover/menu-item:opacity-0">
           {age}
         </span>
       )}
@@ -169,7 +170,6 @@ export const ThreadRow = React.memo(function ThreadRow({
       <ItemContextMenu items={items}>
         <SidebarMenuButton
           data-thread-id={session.id}
-          size="sm"
           onClick={() => onOpen(session)}
           /* A finger resting on the row must not raise the browser's own
              callout or native context menu — the one context menu is Base
@@ -178,14 +178,13 @@ export const ThreadRow = React.memo(function ThreadRow({
             if (isMobile) event.preventDefault()
           }}
           className={cn(
-            ROW,
             FLOAT_ROW,
             /* A parent's chevron always holds the trailing slot (a button cannot
                sit inside the row's own button), so the age stops short of it. */
             fold && "pr-7!",
             /* A faint wash over the whole row for the two states addressed to
                the reader, a step stronger on hover. */
-            !trash && state === "waiting" && "bg-amber-500/10 hover:bg-amber-500/15",
+            !trash && state === "waiting" && "bg-warning/10 hover:bg-warning/15",
             !trash && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
             isMobile && "select-none [-webkit-touch-callout:none]"
           )}
@@ -197,7 +196,7 @@ export const ThreadRow = React.memo(function ThreadRow({
         <SidebarMenuAction
           title={`${fold.open ? "Hide" : "Show"} ${fold.count} sub thread${fold.count === 1 ? "" : "s"}`}
           aria-expanded={fold.open}
-          className={cn(ACTION, "text-muted-foreground")}
+          className="text-muted-foreground"
           onClick={(event) => {
             event.stopPropagation()
             fold.toggle(!fold.open)

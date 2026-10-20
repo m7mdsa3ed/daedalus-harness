@@ -129,7 +129,7 @@ function CommandForm({
                   placeholder="review-pr"
                   pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]*"
                   title="Letters, digits, . _ - only"
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                   required
                 />
               </Field>
@@ -137,7 +137,7 @@ function CommandForm({
                 <Input
                   value={form.argumentHint}
                   onChange={(e) => set({ argumentHint: e.target.value })}
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                 />
               </Field>
             </div>
@@ -154,7 +154,7 @@ function CommandForm({
                 value={form.content}
                 onChange={(e) => set({ content: e.target.value })}
                 rows={8}
-                className="font-mono text-xs"
+                className="font-mono text-sm"
                 required
               />
             </Field>

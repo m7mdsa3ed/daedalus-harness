@@ -34,8 +34,8 @@ const LAYOUTS: { value: "sidebar" | "inset"; label: string; hint: string; previe
     label: "Flush",
     hint: "A rail beside the content",
     preview: (
-      <span aria-hidden className="flex h-14 overflow-hidden rounded-md border border-border/60 bg-background">
-        <span className="flex w-1/4 flex-col gap-1 border-r border-border/60 bg-muted/60 p-1.5">
+      <span aria-hidden className="flex h-14 overflow-hidden rounded-md border bg-background">
+        <span className="flex w-1/4 flex-col gap-1 border-r bg-muted p-1.5">
           <span className={PV_LINE} /><span className={cn(PV_LINE, "w-2/3")} />
         </span>
         <span className="flex flex-1 flex-col gap-1 p-1.5">
@@ -49,11 +49,11 @@ const LAYOUTS: { value: "sidebar" | "inset"; label: string; hint: string; previe
     label: "Inset",
     hint: "The content floats as a card",
     preview: (
-      <span aria-hidden className="flex h-14 gap-1 overflow-hidden rounded-md border border-border/60 bg-muted/60 p-1">
+      <span aria-hidden className="flex h-14 gap-1 overflow-hidden rounded-md border bg-muted p-1">
         <span className="flex w-1/4 flex-col gap-1 p-0.5">
           <span className={PV_LINE} /><span className={cn(PV_LINE, "w-2/3")} />
         </span>
-        <span className="flex flex-1 flex-col gap-1 rounded-sm border border-border/60 bg-background p-1.5 shadow-sm">
+        <span className="flex flex-1 flex-col gap-1 rounded-sm border bg-background p-1.5">
           <span className={cn(PV_LINE, "w-3/4")} /><span className={cn(PV_LINE, "w-1/2")} />
         </span>
       </span>
@@ -63,7 +63,7 @@ const LAYOUTS: { value: "sidebar" | "inset"; label: string; hint: string; previe
 
 /** The mode's own swatch: what the app will look like, not a mark for it. */
 const swatch = (className: string, Icon: LucideIcon) => (
-  <span aria-hidden className={cn("flex h-14 items-center justify-center rounded-md border border-border/60", className)}>
+  <span aria-hidden className={cn("flex h-14 items-center justify-center rounded-md border", className)}>
     <Icon className="size-5" />
   </span>
 )
@@ -198,9 +198,9 @@ function SliderRow({
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{title}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>
+          <div className="mt-0.5 text-sm text-muted-foreground">{subtitle}</div>
         </div>
-        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-mono text-xs tabular-nums">
+        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-mono text-sm tabular-nums">
           {value}
           {unit}
         </span>

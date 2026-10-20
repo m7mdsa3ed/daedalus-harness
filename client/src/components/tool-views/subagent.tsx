@@ -6,6 +6,7 @@
 import * as React from "react"
 import { BotIcon } from "lucide-react"
 import { AgentIcon } from "@/components/entity-icon"
+import { Badge } from "@/components/ui/badge"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import {
   DetailSection,
@@ -69,7 +70,7 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
 
   if (rows.length === 0) {
     return (
-      <p className={cn("text-[11px] text-muted-foreground/70", !unreachable && "harness-shimmer")}>
+      <p className={cn("text-xs text-muted-foreground", !unreachable && "harness-shimmer")}>
         {unreachable
           ? "Couldn't follow this task's journal on the server."
           : "Waiting for the task's journal…"}
@@ -78,17 +79,17 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
   }
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
         {task.summary && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{task.summary}</span>
         )}
-        <span className="shrink-0 tabular-nums text-muted-foreground/70">
+        <span className="shrink-0 tabular-nums text-muted-foreground">
           {finished}/{rows.length} agents finished
         </span>
       </div>
       <ul className="space-y-0.5">
         {rows.map((row, index) => (
-          <li key={row.agentId} className="flex items-center gap-2 text-[11px]">
+          <li key={row.agentId} className="flex items-center gap-2 text-xs">
             <span
               className={cn(
                 "size-1.5 shrink-0 rounded-full",
@@ -108,7 +109,7 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
             >
               agent {index + 1}
             </span>
-            <span className={cn("text-[10px]", row.failed ? "text-destructive" : "text-muted-foreground/60")}>
+            <span className={cn("text-xs", row.failed ? "text-destructive" : "text-muted-foreground")}>
               {row.failed ? "failed" : row.done ? "finished" : "running"}
             </span>
           </li>
@@ -120,7 +121,7 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
             if (!row.done || row.result === undefined) return null
             return (
               <div key={row.agentId} className="space-y-1">
-                <p className="text-[10px] font-medium text-muted-foreground">Agent {index + 1} result</p>
+                <p className="text-xs font-medium text-muted-foreground">Agent {index + 1} result</p>
                 <BackgroundAgentResult value={row.result} />
               </div>
             )
@@ -155,13 +156,14 @@ export function AskAgentChip({ ask }: { ask: AskInfo }) {
   const pair = [ask.agent, ask.profile].filter(Boolean).join(" · ")
   if (!pair) return null
   return (
-    <span
+    <Badge
+      variant="secondary"
       title={`Answered by ${ask.agent ?? "another agent"}${ask.profile ? ` on ${ask.profile}` : ""}`}
-      className="harness-part-in inline-flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-1.5 text-[10px] font-medium leading-4 text-primary"
+      className="harness-part-in min-w-0 shrink bg-primary/10 text-primary"
     >
       <AgentIcon agentId={ask.agentId} className="size-3 rounded-full" />
       <span className="min-w-0 truncate">{pair}</span>
-    </span>
+    </Badge>
   )
 }
 
@@ -207,12 +209,12 @@ export function SubagentBrief({ item }: { item: ToolItem }) {
         </DetailSection>
       )}
       {(facts.length > 0 || call.sessionId) && (
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/70">
-          <BotIcon className="size-3 shrink-0 text-muted-foreground/60" />
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <BotIcon className="size-3 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate">{facts.join(" · ")}</span>
           {call.sessionId && (
             <span
-              className="ml-auto max-w-[40%] shrink truncate font-mono text-muted-foreground/50"
+              className="ml-auto max-w-[40%] shrink truncate font-mono text-muted-foreground"
               title={`The child session the task ran in: ${call.sessionId}`}
             >
               {call.sessionId}
@@ -269,7 +271,7 @@ export function BriefSection({ text, label = "Brief" }: { text: string; label?: 
           <button
             type="button"
             onClick={() => setFull((value) => !value)}
-            className="mt-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            className="mt-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             {full ? "Show less" : "Show full brief"}
           </button>
@@ -323,7 +325,7 @@ export function AgentMessageDetail({ item, active }: { item: ToolItem; active: b
     <div className="space-y-2">
       {call.message && <BriefSection text={call.message} label="Message" />}
       {call.resumed && !failed ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Resumed agent {agentLabel(call.resumed)}. Its work continues as a subagent of this thread.
         </p>
       ) : call.reply ? (

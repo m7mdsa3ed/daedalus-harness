@@ -18,7 +18,8 @@ import { ProjectIcon } from "@/components/entity-icon"
 import { projectPath } from "@/lib/router"
 import { type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { ACTION, GROUP, GROUP_LABEL, NEST, PROJECT_PAGE_SIZE, ROW, TIER } from "./scale"
+import { NEST, PROJECT_PAGE_SIZE } from "./scale"
+import { Badge } from "@/components/ui/badge"
 import { useSidebarEnv } from "./env"
 import { ThreadList } from "./thread-list"
 import { useFold } from "./fold"
@@ -75,26 +76,16 @@ export function ProjectFolder({
         <CollapsibleTrigger
           render={
             <SidebarMenuButton
-              size="sm"
               tooltip={name}
               isActive={onProjectPage}
               /* Two hover controls need twice the gutter the primitive
-                 reserves for one — the count sits inside it and would land
-                 under the overview button otherwise.
-
-                 `!` because the primitive's own `pr-8` arrives from a
-                 `group-has-data-[sidebar=menu-action]/menu-item:` variant, which
-                 is a two-class specificity and beat a plain `pr-14`: the row
-                 reserved 32px, one control's width, and the overview icon at
-                 `right-8` (32–52px) sat exactly on the count. The same `!` the
-                 scale's `FLOAT_ROW` and `ACTION` already carry, for the same
-                 reason. */
+                 reserves for one. `!` because the primitive's own `pr-8`
+                 arrives from a `group-has-…/menu-item:` variant, a two-class
+                 specificity that beats a plain `pr-14`. */
               className={cn(
-                ROW,
-                /* A folder is a heading over rows, not a row: heavier type and
-                   a faint ground of its own, so a column of them reads apart
-                   from the two-line threads beneath. */
-                "bg-sidebar-accent/30 font-semibold text-sidebar-foreground",
+                /* A folder is a heading over rows, not a row: medium weight,
+                   so a column of them reads apart from the threads beneath. */
+                "font-medium",
                 onOpenProject && "pr-14!"
               )}
             />
@@ -120,24 +111,24 @@ export function ProjectFolder({
           )}
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {!open && needsYou > 0 && (
-            <span
+            <Badge
               title={`${needsYou} need${needsYou === 1 ? "s" : ""} you`}
-              className="shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-700 tabular-nums dark:text-amber-400"
+              className="bg-warning/10 text-warning tabular-nums"
             >
               {needsYou}
-            </span>
+            </Badge>
           )}
           {!open && running > 0 && (
             <span
               title={`${running} running`}
-              className="flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-muted-foreground tabular-nums"
+              className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-muted-foreground tabular-nums"
             >
-              <Loader2 aria-hidden className="size-2.5! animate-spin" />
+              <Loader2 aria-hidden className="size-3! animate-spin" />
               {running}
             </span>
           )}
           {sessions.length > 0 && (
-            <span className="shrink-0 text-[11px] text-muted-foreground/70 tabular-nums transition-opacity group-hover/menu-item:opacity-0">
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums transition-opacity group-hover/menu-item:opacity-0">
               {sessions.length}
             </span>
           )}
@@ -150,7 +141,7 @@ export function ProjectFolder({
             showOnHover
             title={`Open ${name}`}
             onClick={onOpenProject}
-            className={cn(ACTION, "right-8")}
+            className="right-8"
           >
             <PanelsTopLeft />
             <span className="sr-only">Open {name}</span>
@@ -161,7 +152,6 @@ export function ProjectFolder({
             showOnHover
             title={`New thread in ${name}`}
             onClick={onNewThread}
-            className={ACTION}
           >
             <Plus />
             <span className="sr-only">New thread in {name}</span>
@@ -171,7 +161,7 @@ export function ProjectFolder({
         <CollapsibleContent className="harness-collapse">
           <div className={NEST}>
             {sessions.length === 0 ? (
-              <p className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">
+              <p className="flex h-9 items-center px-3 text-xs text-muted-foreground">
                 {onNewThread ? "No threads yet" : "Empty"}
               </p>
             ) : (
@@ -230,20 +220,18 @@ export function FoldableGroup({
 
   return (
     <Collapsible open={open} onOpenChange={toggle}>
-      <SidebarGroup className={cn(TIER, GROUP)}>
+      <SidebarGroup>
         <div className="relative">
           <CollapsibleTrigger
             render={
-              <SidebarGroupLabel
-                className={cn(GROUP_LABEL, "hover:text-sidebar-foreground/70")}
-              />
+              <SidebarGroupLabel className="gap-1.5 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
             }
           >
             {icon}
             <span className="truncate">{label}</span>
             {count != null && (
               <span
-                className="ml-auto tabular-nums opacity-70"
+                className="ml-auto tabular-nums"
               >
                 {count}
               </span>

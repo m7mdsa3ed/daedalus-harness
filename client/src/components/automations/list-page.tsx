@@ -122,9 +122,9 @@ export function AutomationsListPage() {
           if (ts === undefined) return <Skeleton className="h-4 w-16" />
           const at = r.enabled ? nextFireOf(ts) : null
           return at === null ? (
-            <span className="text-xs text-muted-foreground/70">{r.enabled ? "—" : "Paused"}</span>
+            <span className="text-xs text-muted-foreground">{r.enabled ? "—" : "Paused"}</span>
           ) : (
-            <span className="text-xs" title={new Date(at).toLocaleString()}>
+            <span className="text-sm" title={new Date(at).toLocaleString()}>
               {untilLabel(at)}
             </span>
           )
@@ -138,7 +138,7 @@ export function AutomationsListPage() {
         cell: (r) => {
           const last: RoutineRun | null | undefined = latest[r.id]
           if (last === undefined) return <Skeleton className="h-4 w-24" />
-          if (last === null) return <span className="text-xs text-muted-foreground/70">Never run</span>
+          if (last === null) return <span className="text-xs text-muted-foreground">Never run</span>
           const tone = runStatus(last.status)
           return (
             <span className="inline-flex items-center gap-2" title={tone.meaning}>

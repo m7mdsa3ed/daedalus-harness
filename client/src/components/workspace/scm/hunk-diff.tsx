@@ -107,11 +107,11 @@ export function HunkDiff({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="sticky top-0 z-20 flex h-8 items-center gap-2 border-b border-border/60 bg-background px-3">
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px]" title={from ? `${from} -> ${path}` : path}>{path}</span>
+      <div className="sticky top-0 z-20 flex h-8 items-center gap-2 border-b bg-background px-3">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={from ? `${from} -> ${path}` : path}>{path}</span>
         {onOpenFull && (
-          <Button variant="ghost" size="xs" className="gap-1" onClick={onOpenFull} title="Open the whole file as a side-by-side diff">
-            <ExternalLinkIcon className="size-3" /> Full diff
+          <Button variant="ghost" size="xs" onClick={onOpenFull} title="Open the whole file as a side-by-side diff">
+            <ExternalLinkIcon /> Full diff
           </Button>
         )}
       </div>
@@ -122,7 +122,7 @@ export function HunkDiff({
       ) : file.hunks.length === 0 ? (
         <p className="px-3 py-4 text-center text-xs text-muted-foreground">
           {file.binary ? "Binary file - no text to show." : file.head.length === 0 ? "No changes." : null}
-          {!file.binary && file.head.length > 0 && <pre className="text-left font-mono text-[11px] whitespace-pre-wrap">{file.head.join("\n")}</pre>}
+          {!file.binary && file.head.length > 0 && <pre className="text-left font-mono text-xs whitespace-pre-wrap">{file.head.join("\n")}</pre>}
         </p>
       ) : (
         file.hunks.map((hunk, h) => {
@@ -131,23 +131,23 @@ export function HunkDiff({
           let oldNo = hunk.oldStart
           let newNo = hunk.newStart
           return (
-            <section key={hunk.header} className="border-b border-border/40">
-              <div className="sticky top-8 z-10 flex min-h-7 items-center gap-2 border-y border-border/50 bg-muted px-3 text-[10px] text-muted-foreground">
+            <section key={hunk.header} className="border-b">
+              <div className="sticky top-8 z-10 flex min-h-7 items-center gap-2 border-y bg-muted px-3 text-xs text-muted-foreground">
                 <span className="min-w-0 flex-1 truncate font-mono">{hunk.header}</span>
                 {onApply && (
                   <>
                     {!staged && !untracked && (
-                      <Button variant="ghost" size="xs" disabled={!editable} className="h-5 px-1.5 text-[10px] text-destructive" onClick={() => void act(h, "discard")}>
+                      <Button variant="destructive" size="xs" disabled={!editable} onClick={() => void act(h, "discard")}>
                         Discard {what}
                       </Button>
                     )}
-                    <Button variant="outline" size="xs" disabled={!editable} className="h-5 px-1.5 text-[10px]" onClick={() => void act(h, staged ? "unstage" : "stage")}>
+                    <Button variant="outline" size="xs" disabled={!editable} onClick={() => void act(h, staged ? "unstage" : "stage")}>
                       {staged ? "Unstage" : "Stage"} {what}
                     </Button>
                   </>
                 )}
               </div>
-              <div className="font-mono text-[11px] leading-5">
+              <div className="font-mono text-xs leading-5">
                 {hunk.lines.map((line, i) => {
                   const o = line.kind === "+" ? "" : oldNo
                   const n = line.kind === "-" ? "" : newNo
@@ -161,15 +161,15 @@ export function HunkDiff({
                       onClick={pickable ? () => toggle(h, i) : undefined}
                       className={cn(
                         "flex",
-                        line.kind === "+" && "bg-emerald-500/20",
-                        line.kind === "-" && "bg-red-500/20",
-                        on && "bg-sky-500/25",
-                        pickable && "cursor-pointer hover:brightness-95"
+                        line.kind === "+" && "bg-success/10",
+                        line.kind === "-" && "bg-destructive/10",
+                        on && "bg-primary/15",
+                        pickable && "cursor-pointer hover:bg-muted"
                       )}
                     >
-                      <span className="w-9 shrink-0 select-none bg-muted/60 pr-1 text-right text-muted-foreground">{o}</span>
-                      <span className="w-9 shrink-0 select-none border-r border-border/50 bg-muted/60 pr-1 text-right text-muted-foreground">{n}</span>
-                      <span className={cn("w-4 shrink-0 select-none text-center", line.kind === "+" && "text-emerald-600 dark:text-emerald-400", line.kind === "-" && "text-red-600 dark:text-red-400")}>
+                      <span className="w-9 shrink-0 select-none bg-muted/50 pr-1 text-right text-muted-foreground">{o}</span>
+                      <span className="w-9 shrink-0 select-none border-r bg-muted/50 pr-1 text-right text-muted-foreground">{n}</span>
+                      <span className={cn("w-4 shrink-0 select-none text-center", line.kind === "+" && "text-success", line.kind === "-" && "text-destructive")}>
                         {on ? "✓" : line.kind === " " ? "" : line.kind}
                       </span>
                       <span className="min-w-0 flex-1 whitespace-pre pr-3">{line.text}</span>

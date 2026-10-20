@@ -49,10 +49,10 @@ export function PresetsTab({
     <>
       <FieldSet className="gap-3">
         <div>
-          <FieldLegend variant="label" className="mb-0 text-xs">
+          <FieldLegend variant="label" className="mb-0 text-sm">
             Style
           </FieldLegend>
-          <FieldDescription className="text-[11px]">
+          <FieldDescription className="text-xs">
             Sets the whole Design half at once — type, shape, surfaces and layout. Every part
             stays editable afterwards.
           </FieldDescription>
@@ -78,31 +78,32 @@ export function PresetsTab({
 
       <FieldSet className="gap-3">
         <div>
-          <FieldLegend variant="label" className="mb-0 text-xs">
+          <FieldLegend variant="label" className="mb-0 text-sm">
             Palette
           </FieldLegend>
-          <FieldDescription className="text-[11px]">
+          <FieldDescription className="text-xs">
             Regenerates every colour, light and dark, through the same ramp the built-in themes are
             built from. Individual tokens can still be overridden in the Color section afterwards.
           </FieldDescription>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {PALETTE_PRESETS.map((preset) => (
-            <button
+            <Button
               key={preset.id}
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => {
                 setSpec(preset)
                 onPalette(preset)
               }}
-              className="flex items-center gap-1.5 rounded-pill border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             >
               <span
                 className="size-3 rounded-full"
                 style={{ background: `oklch(0.6 ${preset.brand} ${preset.hue})` }}
               />
               {preset.label}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -163,9 +164,9 @@ function StyleSwatch({ base }: { base: BaseTokens }) {
     <span
       aria-hidden
       style={vars as React.CSSProperties}
-      className="flex items-center gap-1 rounded-lg border border-border bg-card p-1.5 shadow-glass"
+      className="flex items-center gap-1 rounded-lg border bg-card p-1.5 shadow-glass"
     >
-      <span className="font-heading text-[11px] leading-none font-medium">Aa</span>
+      <span className="font-heading text-xs leading-none font-medium">Aa</span>
       <span className="ml-auto h-3 w-5 rounded-pill bg-muted" />
       <span className="h-3 w-3.5 rounded-sm bg-primary" />
     </span>
@@ -194,8 +195,8 @@ function SpecSlider({
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium">{label}</span>
-        <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span className="text-xs font-medium">{label}</span>
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
           {value}
           {suffix}
         </span>

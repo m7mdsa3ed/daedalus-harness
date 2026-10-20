@@ -29,6 +29,7 @@ import {
   AttachmentTitle,
   AttachmentTrigger,
 } from "@/components/ui/attachment"
+import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
 import { resolveDelivery } from "@daedalus/delivery"
@@ -151,13 +152,14 @@ export function ComposerAttachments({
           <span className="tabular-nums">
             {label} · {formatBytes(total)}
           </span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => attachments.forEach((entry) => onRemoveAttachment(entry.id))}
-            className="rounded-pill px-1.5 py-0.5 hover:bg-muted hover:text-foreground pointer-coarse:py-1.5"
+            className="pointer-coarse:h-8"
           >
             Remove all
-          </button>
+          </Button>
         </div>
       )}
       {/* Wrapped, not a sideways scroller: fifteen chips in one row hid all but
@@ -319,7 +321,7 @@ function ImageTile({
       data-slot="attachment"
       title={title}
       className={cn(
-        "group/tile relative size-14 shrink-0 overflow-hidden rounded-xl border bg-muted",
+        "group/tile relative size-14 shrink-0 overflow-hidden rounded-lg border bg-muted",
         failed && "border-destructive/40 bg-destructive/10 text-destructive"
       )}
     >
@@ -341,7 +343,7 @@ function ImageTile({
         </button>
       )}
       {outcome && outcome.delivery === "link" && (
-        <span className="absolute bottom-1 left-1 flex size-4 items-center justify-center rounded-full bg-background/90 text-muted-foreground shadow-sm">
+        <span className="absolute bottom-1 left-1 flex size-4 items-center justify-center rounded-full bg-background/90 text-muted-foreground">
           <LinkIcon className="size-2.5" />
         </span>
       )}
@@ -349,7 +351,7 @@ function ImageTile({
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${attachment.name}`}
-        className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover/tile:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+        className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 transition-opacity group-hover/tile:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
       >
         <XIcon className="size-3" />
       </button>

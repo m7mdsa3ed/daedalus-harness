@@ -55,7 +55,7 @@ import {
   CommandMenuInput,
   CommandMenuList,
 } from "@/components/ui/command-menu"
-import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
 import type { Actions } from "@/lib/actions"
@@ -325,20 +325,18 @@ export function CommandPalette({
                   which is also where it stops competing with the caret. */}
               {nested && (
                 <div className="flex items-center gap-2 px-3 pb-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="xs"
                     // Keeps the caret in the box: a chip that steals focus would
                     // leave the next keystroke going nowhere.
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={back}
-                    className={cn(
-                      "flex shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5",
-                      "text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    )}
+                    className="text-muted-foreground"
                   >
-                    <ArrowLeft className="size-3" />
+                    <ArrowLeft />
                     {PAGE_LABEL[page]}
-                  </button>
+                  </Button>
                 </div>
               )}
 

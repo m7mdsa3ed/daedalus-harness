@@ -97,14 +97,14 @@ export function TimelineView({ board, statuses, tasks, ctx, onOpen }: ViewProps)
       <div ref={scroller} className="min-h-0 flex-1 overflow-auto rounded-xl border bg-card">
         <div style={{ width: labelW + width }} className="relative">
           {/* Header: weeks, then days. */}
-          <div className="sticky top-0 z-20 flex border-b bg-background/95 backdrop-blur">
-            <div className="sticky left-0 z-30 shrink-0 border-r bg-background px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" style={{ width: labelW }}>
+          <div className="sticky top-0 z-20 flex border-b bg-card">
+            <div className="sticky left-0 z-30 shrink-0 border-r bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground" style={{ width: labelW }}>
               Task
             </div>
             <div className="relative" style={{ width }}>
               <div className="flex h-5">
                 {weeks.map((w) => (
-                  <div key={w} style={{ width: 7 * DAY_PX }} className="shrink-0 border-r px-1 text-[10px] text-muted-foreground">
+                  <div key={w} style={{ width: 7 * DAY_PX }} className="shrink-0 border-r px-1 text-xs text-muted-foreground">
                     {new Date(w).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                   </div>
                 ))}
@@ -117,7 +117,7 @@ export function TimelineView({ board, statuses, tasks, ctx, onOpen }: ViewProps)
                     <div
                       key={d}
                       style={{ width: DAY_PX }}
-                      className={cn("shrink-0 text-center text-[10px] tabular-nums text-muted-foreground", weekend && "bg-muted/50", d === today && "font-bold text-primary")}
+                      className={cn("shrink-0 text-center text-xs tabular-nums text-muted-foreground", weekend && "bg-muted/50", d === today && "font-medium text-primary")}
                     >
                       {new Date(d).getDate()}
                     </div>
@@ -134,15 +134,15 @@ export function TimelineView({ board, statuses, tasks, ctx, onOpen }: ViewProps)
             const w = bar.point ? DAY_PX : x(bar.end) - left + DAY_PX
             const done = bar.task.completedAt != null
             return (
-              <div key={bar.task.id} className="flex h-9 border-b last:border-b-0 hover:bg-accent/30">
+              <div key={bar.task.id} className="flex h-9 border-b last:border-b-0 hover:bg-muted/50">
                 <button
                   type="button"
                   onClick={() => onOpen(bar.task)}
-                  className={cn("sticky left-0 z-10 flex shrink-0 items-center gap-1.5 truncate border-r bg-card px-3 text-left text-xs hover:underline", ctx.selected.has(bar.task.id) && "bg-primary/5")}
+                  className={cn("sticky left-0 z-10 flex shrink-0 items-center gap-1.5 truncate border-r bg-card px-3 text-left text-sm hover:underline", ctx.selected.has(bar.task.id) && "bg-muted")}
                   style={{ width: labelW, paddingLeft: `${0.75 + depth}rem` }}
                 >
                   <TypeIcon type={bar.task.type} />
-                  <span className="font-mono text-[10px] text-muted-foreground">{taskKey(bar.task, board.key)}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{taskKey(bar.task, board.key)}</span>
                   <span className={cn("truncate", done && "text-muted-foreground line-through")}>{bar.task.title}</span>
                 </button>
                 <div className="relative" style={{ width }}>
@@ -153,8 +153,8 @@ export function TimelineView({ board, statuses, tasks, ctx, onOpen }: ViewProps)
                     onClick={() => onOpen(bar.task)}
                     title={`${bar.task.title} · ${new Date(bar.start).toLocaleDateString()} → ${new Date(bar.end).toLocaleDateString()}`}
                     className={cn(
-                      "absolute top-2 flex h-5 items-center gap-1 overflow-hidden rounded-md px-1.5 text-[10px] font-medium text-white shadow-xs",
-                      status?.color ? COLOR_DOT[status.color] : "bg-slate-500",
+                      "absolute top-2 flex h-5 items-center gap-1 overflow-hidden rounded-md px-1.5 text-xs font-medium text-white",
+                      status?.color ? COLOR_DOT[status.color] : "bg-muted-foreground",
                       bar.point && "rounded-full",
                       done && "opacity-50",
                       bar.end < today && !done && "ring-2 ring-destructive/60",

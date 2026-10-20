@@ -29,7 +29,6 @@ import { useNavigate } from "react-router"
 import {
   ChevronRightIcon,
   FolderPlus,
-  Loader2,
   RefreshCwIcon,
   RotateCcwIcon,
   SearchIcon,
@@ -38,7 +37,8 @@ import { toast } from "@/lib/toast"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import { Spinner } from "@/components/ui/spinner"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -533,7 +533,7 @@ export function ImportThreadsDialog({
               loading={scanning}
               onClick={() => void scan()}
             >
-              {scanning ? <Loader2 className="animate-spin" /> : <RefreshCwIcon />}
+              {scanning ? <Spinner /> : <RefreshCwIcon />}
               {sessions ? "Scan again" : "Scan"}
             </Button>
           </div>
@@ -543,15 +543,16 @@ export function ImportThreadsDialog({
               {/* Search first and full width: it is the one control used on
                   every visit, and the three selects below it are the ones
                   used when it is not enough. */}
-              <div className="relative">
-                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
+              <InputGroup>
+                <InputGroupAddon>
+                  <SearchIcon />
+                </InputGroupAddon>
+                <InputGroupInput
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="pl-8"
                   placeholder={`Search ${total} session${total === 1 ? "" : "s"} by title or path…`}
                 />
-              </div>
+              </InputGroup>
               <div className="flex flex-wrap items-center gap-2">
                 <FilterSelect
                   value={status}
@@ -579,20 +580,16 @@ export function ImportThreadsDialog({
               </div>
               {/* One line of arithmetic, so "nothing here" is never ambiguous
                   between an empty store and a filter that hid everything. */}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-sm text-muted-foreground">
                 <span className="tabular-nums">
                   {shown === total ? `${total} sessions` : `${shown} of ${total} shown`}
                 </span>
                 {visibleNew.length > 0 && (
                   <>
                     <span className="tabular-nums">{visibleNew.length} can be imported</span>
-                    <button
-                      type="button"
-                      className="font-medium text-foreground underline-offset-4 hover:underline"
-                      onClick={() => setMany(visibleNew, !allVisiblePicked)}
-                    >
+                    <Button type="button" variant="link" size="xs" className="h-auto p-0" onClick={() => setMany(visibleNew, !allVisiblePicked)}>
                       {allVisiblePicked ? "Clear selection" : `Select all ${visibleNew.length}`}
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -678,7 +675,7 @@ export function ImportThreadsDialog({
             Cancel
           </Button>
           <Button disabled={picked.size === 0} loading={importing} onClick={() => void run()}>
-            {importing && <Loader2 className="animate-spin" />}
+            {importing && <Spinner />}
             {picked.size ? `Import ${picked.size}` : "Import"}
           </Button>
         </ResponsiveDialogFooter>
@@ -770,9 +767,9 @@ function Group({
               <span className="truncate text-sm font-medium">{group.project.name}</span>
             </>
           ) : (
-            <span className="truncate font-mono text-xs text-muted-foreground">{group.cwd}</span>
+            <span className="truncate font-mono text-sm text-muted-foreground">{group.cwd}</span>
           )}
-          <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
             {group.newCount > 0
               ? `${group.newCount} new · ${group.sessions.length}`
               : group.sessions.length}
@@ -800,7 +797,7 @@ function Group({
       {!collapsed && (
         <>
           {group.project && (
-            <p className="truncate px-1 font-mono text-[11px] text-muted-foreground/70">
+            <p className="truncate px-1 font-mono text-xs text-muted-foreground">
               {group.cwd}
             </p>
           )}
@@ -848,7 +845,7 @@ function Row({
     <li
       className={cn(
         "flex items-center gap-2 rounded-md px-1 py-1.5",
-        !taken && "hover:bg-accent/50"
+        !taken && "hover:bg-muted"
       )}
     >
       <Checkbox
@@ -868,7 +865,7 @@ function Row({
       </button>
       {!Number.isNaN(at) && (
         <span
-          className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+          className="shrink-0 text-xs text-muted-foreground tabular-nums"
           title={new Date(at).toLocaleString()}
         >
           {shortAge(at)}

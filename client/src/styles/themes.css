@@ -71,22 +71,29 @@
   --depth-deep-glass-lg: 0 28px 72px oklch(0 0 0 / 62%), 0 4px 14px oklch(0 0 0 / 46%);
 }
 
+/* Default is stock shadcn: opaque surfaces, no blur, no lift beyond what the
+   registry components draw themselves, the stock hairline (`ring-foreground/10`
+   is `--app-edge: 10%`) and untouched tracking. Glass, depth and tracking stay
+   theme axes — a user-made theme still dials them in the studio. */
 [data-color-theme="default"][data-color-theme] {
   --radius: 0.625rem;
   --app-radius-pill: calc(infinity * 1px);
-  --app-blur: 14px;
+  --app-blur: 0px;
+  --app-solid: 1;
   --harness-chat-width: 748px;
   --app-font-sans: var(--font-family-figtree);
   --app-font-heading: var(--font-family-figtree);
   --app-font-mono: var(--font-family-jetbrains-mono);
-  --app-shadow-glass: var(--depth-soft-glass);
-  --app-shadow-glass-lg: var(--depth-soft-glass-lg);
-  --app-edge: var(--depth-soft-edge);
-  --app-tracking: var(--tracking-tight);
+  --app-shadow-glass: var(--depth-flat-glass);
+  --app-shadow-glass-lg: var(--depth-flat-glass-lg);
+  --app-edge: 10%;
+  --app-tracking: var(--tracking-normal);
   --theme-radius: default;
-  --theme-depth: soft;
-  --theme-tracking: tight;
-  --theme-blur: medium;
+  --theme-depth: flat;
+  --theme-edge: default;
+  --theme-solid: solid;
+  --theme-tracking: normal;
+  --theme-blur: none;
   --theme-width: default;
   --theme-font-sans: figtree;
   --theme-font-heading: figtree;

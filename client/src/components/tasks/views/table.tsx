@@ -2,6 +2,7 @@ import * as React from "react"
 import { ArrowDown, ArrowUp, CalendarIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Empty } from "@/components/empty"
 import type { Task } from "@/lib/tasks-board"
 import { PRIORITY_LABEL, TYPE_LABEL, taskKey } from "@/lib/tasks-board"
 import {
@@ -53,9 +54,8 @@ const SORT_OF: Partial<Record<TableColumn, SortBy>> = {
    lets the columns sliding underneath show through, which is what `bg-inherit`
    (inheriting a transparent `<tr>`) did at every width. Same colours, resolved
    against the page instead of stacked on it. */
-const STUCK =
-  "@panel-sm:sticky bg-background group-hover:bg-[color-mix(in_oklch,var(--accent)_30%,var(--background))]"
-const STUCK_SELECTED = "bg-[color-mix(in_oklch,var(--primary)_5%,var(--background))]"
+const STUCK = "@panel-sm:sticky bg-background group-hover:bg-muted"
+const STUCK_SELECTED = "bg-muted"
 
 const fmtDate = (ms: number | null) =>
   ms == null ? "" : new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" })
@@ -145,7 +145,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
                 {task.labels.slice(0, 3).map((l) => (
                   <LabelChip key={l} label={l} />
                 ))}
-                {task.labels.length > 3 && <span className="text-[10px] text-muted-foreground">+{task.labels.length - 3}</span>}
+                {task.labels.length > 3 && <span className="text-xs text-muted-foreground">+{task.labels.length - 3}</span>}
               </button>
             }
           />
@@ -168,7 +168,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
         return parent ? (
           <button type="button" onClick={() => onOpen(parent)} className={cn(CHIP, "text-muted-foreground hover:text-foreground")}>
             <TypeIcon type={parent.type} />
-            <span className="font-mono text-[11px]">{taskKey(parent, board.key)}</span>
+            <span className="font-mono text-xs">{taskKey(parent, board.key)}</span>
             <span className="truncate">{parent.title}</span>
           </button>
         ) : (
@@ -228,8 +228,8 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
        column must not hand the gesture to the browser's back-navigation. */
     <div className="min-h-0 flex-1 overflow-auto overscroll-x-contain p-3 pb-[max(0.75rem,var(--safe-bottom))]">
       <table className="w-full min-w-[56rem] border-separate border-spacing-0 text-sm">
-        <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
-          <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <thead className="sticky top-0 z-10 bg-background">
+          <tr className="text-left text-xs font-medium text-muted-foreground">
             <th className="w-8 border-b px-2 py-2">
               <input
                 type="checkbox"
@@ -263,7 +263,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
           {tasks.map((task) => {
             const selected = ctx.selected.has(task.id)
             return (
-              <tr key={task.id} className={cn("group hover:bg-accent/30", selected && "bg-primary/5", task.archived && "opacity-60")}>
+              <tr key={task.id} className={cn("group hover:bg-muted", selected && "bg-muted", task.archived && "opacity-60")}>
                 <td className="border-b px-2 py-1">
                   <input
                     type="checkbox"
@@ -273,7 +273,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
                     className="size-3.5 accent-primary"
                   />
                 </td>
-                <td className={cn("left-8 z-10 border-b px-2 py-1 font-mono text-[11px] tabular-nums text-muted-foreground", STUCK, selected && STUCK_SELECTED)}>{taskKey(task, board.key)}</td>
+                <td className={cn("left-8 z-10 border-b px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground", STUCK, selected && STUCK_SELECTED)}>{taskKey(task, board.key)}</td>
                 <td className={cn("left-28 z-10 border-b px-2 py-1", STUCK, selected && STUCK_SELECTED)}>
                   <button
                     type="button"
@@ -295,9 +295,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
         </tbody>
       </table>
       {tasks.length === 0 && (
-        <p className="py-8 text-center text-sm text-muted-foreground">
-          {allTasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}
-        </p>
+        <Empty className="mt-3">{allTasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}</Empty>
       )}
     </div>
   )

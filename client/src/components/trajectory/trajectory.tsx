@@ -23,9 +23,10 @@ import type { TraceSpan, TraceSpanKind } from "@daedalus/protocol"
 import { ErrorNote } from "@/components/error-note"
 import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Toggle } from "@/components/ui/toggle"
 import { inlineFromQuery, reportError } from "@/lib/errors"
 import { useFetchWholeSpans, useThreadSpans } from "@/lib/queries/trace"
 import { useStoreSelect } from "@/lib/store"
@@ -107,7 +108,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
   return (
     <div
       className={cn(
-        "@container flex h-full min-h-0 flex-1 flex-col text-xs",
+        "@container flex h-full min-h-0 flex-1 flex-col text-sm",
         variant === "panel" ? "pt-[var(--dock-content-overlap,0px)]" : "pt-[var(--app-header-h)]"
       )}
     >
@@ -119,16 +120,17 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
             Trajectory
           </h1>
         )}
-        <div className="relative min-w-32 flex-1">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
+        <InputGroup className="h-8 min-w-32 flex-1">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search spans"
             aria-label="Search spans"
-            className="h-7 pl-7 text-xs"
           />
-        </div>
+        </InputGroup>
         {turns.length > 1 && (
           <NativeSelect
             size="sm"
@@ -206,11 +208,12 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
                   const off = hidden.has(kind)
                   const Icon = KIND[kind].icon
                   return (
-                    <button
+                    <Toggle
                       key={kind}
-                      type="button"
-                      aria-pressed={!off}
-                      onClick={() =>
+                      variant="outline"
+                      size="sm"
+                      pressed={!off}
+                      onPressedChange={() =>
                         setHidden((prev) => {
                           const next = new Set(prev)
                           if (off) next.delete(kind)
@@ -218,14 +221,11 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
                           return next
                         })
                       }
-                      className={cn(
-                        "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors",
-                        off ? "text-muted-foreground line-through opacity-60" : "bg-muted/50 hover:bg-muted"
-                      )}
+                      className={cn("h-6 px-2 text-xs", off && "text-muted-foreground line-through")}
                     >
                       <Icon className={cn("size-3", KIND[kind].text)} />
                       {KIND[kind].label}
-                    </button>
+                    </Toggle>
                   )
                 })}
               </div>
@@ -326,8 +326,8 @@ function Kpis({ totals: t }: { totals: ReturnType<typeof sumTotals> }) {
     <dl className="grid grid-cols-4 gap-px border-b bg-border @panel-sm:grid-cols-6 @panel-lg:grid-cols-11">
       {cells.map(([label, value, bad]) => (
         <div key={label} className="bg-background px-2.5 py-1.5">
-          <dt className="truncate text-[10px] text-muted-foreground uppercase">{label}</dt>
-          <dd className={cn("text-sm font-semibold tabular-nums", bad && "text-destructive")}>{value}</dd>
+          <dt className="truncate text-xs text-muted-foreground">{label}</dt>
+          <dd className={cn("text-sm font-medium tabular-nums", bad && "text-destructive")}>{value}</dd>
         </div>
       ))}
     </dl>
@@ -372,7 +372,7 @@ function Overview({
             onClick={() => onPick(root.span.spanId)}
             style={{ flexGrow: dur }}
             className={cn(
-              "relative min-w-1 basis-0 overflow-hidden rounded-sm bg-muted/60 hover:bg-muted",
+              "relative min-w-1 basis-0 overflow-hidden rounded-md bg-muted hover:bg-muted",
               root.span.spanId === selectedId && "ring-1 ring-ring"
             )}
           >
@@ -434,7 +434,7 @@ function Row({
       }}
       className={cn(
         "grid h-7 cursor-pointer grid-cols-[minmax(0,1fr)_minmax(3rem,35%)_3.5rem] items-center gap-2 pr-3 outline-none [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto] focus-visible:bg-muted",
-        selected ? "bg-accent text-accent-foreground" : "hover:bg-muted/50",
+        selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
         isRoot && "mt-1 border-t font-medium first:mt-0 first:border-t-0"
       )}
       style={{ paddingLeft: 8 + depth * 12 }}
@@ -445,7 +445,7 @@ function Row({
             type="button"
             tabIndex={-1}
             aria-label={collapsed ? "Expand" : "Collapse"}
-            className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-foreground/10"
+            className="grid size-4 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
             onClick={(event) => {
               event.stopPropagation()
               onToggle()
@@ -461,12 +461,12 @@ function Row({
           {turn !== undefined ? `Turn ${turn} · ${turnLabel(span)}` : span.name}
         </span>
         {usage?.output != null && (
-          <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
             {formatTokens(usage.output)} out
           </span>
         )}
       </span>
-      <span className="relative h-2.5 rounded-full bg-muted/60">
+      <span className="relative h-2.5 rounded-full bg-muted">
         <span
           className={cn("absolute inset-y-0 min-w-0.5 rounded-full", spanBg(span), span.end === null && "animate-pulse")}
           style={{
@@ -475,7 +475,7 @@ function Row({
           }}
         />
       </span>
-      <span className="text-right text-[11px] text-muted-foreground tabular-nums">
+      <span className="text-right text-xs text-muted-foreground tabular-nums">
         {span.end === null ? "…" : fmtMs(dur)}
       </span>
     </div>

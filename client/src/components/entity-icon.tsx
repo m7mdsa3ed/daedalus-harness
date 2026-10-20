@@ -64,7 +64,7 @@ export function EntityIcon({
       aria-hidden="true"
       onError={() => setBrokenSrc(url)}
       className={cn(
-        "shrink-0 rounded-full object-contain ring-1 ring-border/40",
+        "shrink-0 rounded-full object-contain ring-1 ring-foreground/10",
         disc ? "bg-white p-px" : "bg-muted",
         className
       )}
@@ -211,7 +211,7 @@ function InitialMark({ name, className }: { name: string; className?: string }) 
         color: `oklch(0.38 0.12 ${hue})`,
       }}
       className={cn(
-        "grid shrink-0 place-items-center rounded-full font-semibold leading-none ring-1 ring-border/40 [font-size:0.55em]",
+        "grid shrink-0 place-items-center rounded-full font-semibold leading-none ring-1 ring-foreground/10 [font-size:0.55em]",
         className
       )}
     >

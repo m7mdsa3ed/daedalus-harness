@@ -23,7 +23,6 @@ import { RefreshIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 import type * as Monaco from "monaco-editor"
 
@@ -175,30 +174,24 @@ export function DiffTab({
     <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
         <span
-          className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+          className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
           title={path}
         >
           {path}
         </span>
-        <span className="shrink-0 text-[11px] text-muted-foreground">
+        <span className="shrink-0 text-xs text-muted-foreground">
           {sideLabel(left)} ↔ {sideLabel(right)}
         </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="size-6 shrink-0"
-                aria-label="Read both sides again"
-                onClick={() => setGeneration((current) => current + 1)}
-              >
-                <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} className="size-3.5" />
-              </Button>
-            }
-          />
-          <TooltipContent>Read both sides again</TooltipContent>
-        </Tooltip>
+        <Button
+          title="Read both sides again"
+          variant="ghost"
+          size="icon-xs"
+          className="shrink-0"
+          aria-label="Read both sides again"
+          onClick={() => setGeneration((current) => current + 1)}
+        >
+          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} className="size-3.5" />
+        </Button>
       </PanelToolbar>
       {hunks && original.text !== null && modified.text !== null && changes.length > 0 && (
         <HunkBar
@@ -309,8 +302,8 @@ function HunkBar({
   }
 
   return (
-    <div className="shrink-0 border-b border-border/60">
-      <div className="flex items-center gap-1 px-1.5 py-1 text-[11px]">
+    <div className="shrink-0 border-b">
+      <div className="flex items-center gap-1 px-1.5 py-1 text-xs">
         <Button variant="ghost" size="icon-xs" aria-label="Previous change" title="Previous change" disabled={at === 0} onClick={() => reveal(at - 1)}>
           <ChevronLeftIcon aria-hidden />
         </Button>

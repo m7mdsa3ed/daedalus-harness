@@ -72,7 +72,7 @@ export function SpanDetail({
   const rest = Object.entries(span.attributes).filter(([key]) => !SHOWN.has(key))
 
   return (
-    <div className="flex flex-col gap-4 p-3 text-xs">
+    <div className="flex flex-col gap-4 p-3 text-sm">
       <header className="flex items-start gap-2">
         <Button
           variant="ghost"
@@ -171,8 +171,8 @@ export function SpanDetail({
           <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
             {rest.map(([key, value]) => (
               <React.Fragment key={key}>
-                <dt className="font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{key}</dt>
-                <dd className="font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">
+                <dt className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{key}</dt>
+                <dd className="font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
                   {pending.has(key) ? <Skeleton className="h-4 w-24" /> : text(value)}
                 </dd>
               </React.Fragment>
@@ -185,13 +185,13 @@ export function SpanDetail({
         <Section title="Events" copy={JSON.stringify(span.events, null, 2)}>
           <ol className="space-y-1.5">
             {span.events.map((event, i) => (
-              <li key={i} className="rounded-md bg-muted/40 px-2 py-1.5">
+              <li key={i} className="rounded-md bg-muted px-2 py-1.5">
                 <div className="flex items-baseline gap-2">
                   <span className="font-medium">{event.name}</span>
                   <span className="text-muted-foreground tabular-nums">+{fmtMs(event.at - span.start)}</span>
                 </div>
                 {event.attributes && Object.keys(event.attributes).length > 0 && (
-                  <p className="mt-0.5 font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+                  <p className="mt-0.5 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
                     {Object.entries(event.attributes)
                       .map(([k, v]) => `${k}=${text(v)}`)
                       .join("  ")}
@@ -212,7 +212,7 @@ function Section({ title, copy, children }: { title: string; copy?: string; chil
   return (
     <section className="space-y-1.5">
       <div className="flex items-center gap-1">
-        <h4 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{title}</h4>
+        <h4 className="text-xs font-medium text-muted-foreground">{title}</h4>
         {copy !== undefined && <CopyButton size="icon-xs" className="ml-auto" text={copy} />}
       </div>
       {children}
@@ -225,7 +225,7 @@ function Facts({ title, rows }: { title?: string; rows: [string, string][] }) {
     <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border @panel-sm:grid-cols-3">
       {rows.map(([k, v]) => (
         <div key={k} className="bg-card px-2 py-1.5">
-          <dt className="text-[10px] text-muted-foreground uppercase">{k}</dt>
+          <dt className="text-xs text-muted-foreground">{k}</dt>
           <dd className="font-medium tabular-nums">{v}</dd>
         </div>
       ))}
@@ -245,8 +245,8 @@ function Payload({ label, value }: { label: string; value: TraceAttributeValue }
       {messages ? (
         <ol className="space-y-1.5">
           {(parsed as Message[]).map((message, i) => (
-            <li key={i} className="rounded-md bg-muted/40 px-2 py-1.5">
-              <div className="mb-1 text-[10px] font-semibold text-muted-foreground uppercase">{message.role}</div>
+            <li key={i} className="rounded-md bg-muted px-2 py-1.5">
+              <div className="mb-1 text-xs font-medium text-muted-foreground">{message.role}</div>
               <MessageBody message={message} />
             </li>
           ))}
@@ -285,7 +285,7 @@ function MessageBody({ message }: { message: Message }) {
 
 function Pre({ children }: { children: string }) {
   return (
-    <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">
+    <pre className="max-h-80 overflow-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
       {children}
     </pre>
   )
@@ -319,7 +319,7 @@ function PromptChange({
   const prevReady = !listedPrev?.elided?.length || detail.data !== undefined
 
   const picker = (
-    <div className="ml-auto flex rounded-md bg-muted/60 p-0.5">
+    <div className="ml-auto flex rounded-md bg-muted p-0.5">
       {(["turn", "call"] as const).map((value) => (
         <button
           key={value}
@@ -327,8 +327,8 @@ function PromptChange({
           aria-pressed={scope === value}
           onClick={() => setScope(value)}
           className={cn(
-            "rounded px-1.5 py-0.5 text-[10px]",
-            scope === value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            "rounded-md px-1.5 py-0.5 text-xs",
+            scope === value ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
           {value === "turn" ? "vs last turn" : "vs last call"}
@@ -369,7 +369,7 @@ function PromptChange({
   return (
     <section className="space-y-1.5">
       <div className="flex items-center gap-1">
-        <h4 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Prompt change</h4>
+        <h4 className="text-xs font-medium text-muted-foreground">Prompt change</h4>
         {picker}
       </div>
       {body}
@@ -403,11 +403,11 @@ function PromptPart({
     return (
       <div className="space-y-1.5">
         <PartHeading label={label}>
-          {diff.kept} kept · <span className="text-emerald-600 dark:text-emerald-400">+{diff.added.length}</span>
+          {diff.kept} kept · <span className="text-success">+{diff.added.length}</span>
           {diff.removed.length > 0 && <span className="text-destructive"> −{diff.removed.length}</span>}
         </PartHeading>
         {diff.removed.length > 0 && (
-          <Notice tone="warn" className="px-2 py-1.5 text-[11px]">
+          <Notice tone="warn" className="px-2 py-1.5 text-xs">
             The history was rewritten between the two calls — {diff.removed.length} earlier{" "}
             {diff.removed.length === 1 ? "message is" : "messages are"} no longer sent (a compaction or a rewind).
           </Notice>
@@ -436,7 +436,7 @@ function PromptPart({
           "changed (too long to compare line by line)"
         ) : (
           <>
-            <span className="text-emerald-600 dark:text-emerald-400">+{lines.filter((l) => l.op === "add").length}</span>{" "}
+            <span className="text-success">+{lines.filter((l) => l.op === "add").length}</span>{" "}
             <span className="text-destructive">−{lines.filter((l) => l.op === "del").length}</span> lines
           </>
         )}
@@ -460,10 +460,10 @@ function MessageChange({ message, op }: { message: Message; op: "add" | "del" })
     <li
       className={cn(
         "rounded-md border-l-2 px-2 py-1.5",
-        op === "add" ? "border-emerald-500 bg-emerald-500/5" : "border-destructive bg-destructive/5 opacity-80"
+        op === "add" ? "border-success bg-success/10" : "border-destructive bg-destructive/10 opacity-80"
       )}
     >
-      <div className="mb-1 text-[10px] font-semibold text-muted-foreground uppercase">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">
         {op === "add" ? "+ " : "− "}
         {message.role}
       </div>
@@ -500,7 +500,7 @@ function LineDiff({ lines }: { lines: LineOp[] }) {
     }
   }
   return (
-    <div className="max-h-80 overflow-auto rounded-md bg-muted/40 py-1 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">
+    <div className="max-h-80 overflow-auto rounded-md bg-muted py-1 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
       {rows}
     </div>
   )
@@ -511,7 +511,7 @@ function DiffRow({ line }: { line: LineOp }) {
     <div
       className={cn(
         "px-2",
-        line.op === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        line.op === "add" && "bg-success/10 text-success",
         line.op === "del" && "bg-destructive/10 text-destructive"
       )}
     >

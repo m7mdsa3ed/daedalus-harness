@@ -13,8 +13,8 @@ export function StatusDot({ status }: { status: ThreadActivity }) {
   if (status === "running") {
     return (
       <span className="relative flex size-2 shrink-0 items-center justify-center">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-75" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-success" />
         <span className="sr-only">running</span>
       </span>
     )
@@ -24,7 +24,7 @@ export function StatusDot({ status }: { status: ThreadActivity }) {
       className={cn(
         "size-1.5 shrink-0 rounded-full",
         status === "waiting"
-          ? "bg-amber-500 ring-2 ring-amber-500/20"
+          ? "bg-warning ring-2 ring-warning/20"
           : status === "failed"
             ? "bg-destructive"
             : status === "reconnecting" || status === "offline" || status === "gone"

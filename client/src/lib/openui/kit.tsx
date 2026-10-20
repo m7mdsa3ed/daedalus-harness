@@ -5,41 +5,43 @@
    library (which imports it back). One `SurfaceContext` exists, defined here
    once, so a `StatRow`'s cell and a `Box` read the same instance. */
 import { createContext, useContext, type CSSProperties, type ReactNode } from "react"
+import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
-export const TITLE = "break-words text-[13.5px] leading-snug font-semibold tracking-tight text-foreground"
-export const BODY = "break-words text-[13px] leading-relaxed text-foreground/90"
+export const TITLE = "break-words font-heading text-base leading-snug font-medium text-foreground"
+export const BODY = "break-words text-sm leading-relaxed text-foreground"
 export const META = "break-words text-xs leading-snug text-muted-foreground"
-export const LABEL = "break-words text-[10.5px] leading-tight font-medium tracking-[0.06em] uppercase text-muted-foreground"
-export const PAD = "px-3 py-2.5 @panel-sm:px-3.5 @panel-sm:py-3"
-export const PAD_ROW = "px-3 py-2 @panel-sm:px-3.5"
+export const LABEL = "break-words text-xs leading-tight font-medium text-muted-foreground"
+export const PAD = "p-3 @panel-sm:p-4"
+export const PAD_ROW = "px-3 py-2 @panel-sm:px-4 @panel-sm:py-2.5"
 /** Between siblings, everywhere: a stack, a card's body, a tab's panel. */
-export const FLOW = "flex w-full min-w-0 flex-col gap-2.5 @panel-sm:gap-3"
-export const HAIRLINE = "border-border/60"
+export const FLOW = "flex w-full min-w-0 flex-col gap-3 @panel-sm:gap-4"
 
-export const FRAME = "rounded-xl border border-border/70 bg-card shadow-xs"
-export const INSET = "rounded-lg border border-border/40 bg-muted/40"
+/** The well a frame inside a frame becomes — the settings kit's `INSET`. */
+export const INSET = "rounded-xl border bg-muted/50"
 
 export type Surface = "page" | "frame" | "cell"
 export const SurfaceContext = createContext<Surface>("page")
 
 /** The one framed thing. What it looks like is where it is, never the caller's
-    choice — which is the whole of "styled the same". Its children are inside a
-    frame, so anything framed among them draws as a well. */
+    choice — which is the whole of "styled the same". On the page it is the
+    registry `Card` (its spacing and flex column zeroed, so the caller lays out
+    its own body); inside a frame it is a well; inside a `StatRow` a bare cell.
+    Its children are inside a frame, so anything framed among them draws as a well. */
 export function Box({ className, children, style }: { className?: string; children: ReactNode; style?: CSSProperties }) {
   const surface = useContext(SurfaceContext)
+  const box = cn("w-full min-w-0 overflow-hidden", className)
   return (
     <SurfaceContext.Provider value="frame">
-      <div
-        className={cn(
-          "w-full min-w-0 overflow-hidden",
-          surface === "page" ? FRAME : surface === "frame" ? INSET : "bg-card",
-          className
-        )}
-        style={style}
-      >
-        {children}
-      </div>
+      {surface === "page" ? (
+        <Card className={cn("block gap-0 py-0", box)} style={style}>
+          {children}
+        </Card>
+      ) : (
+        <div className={cn(surface === "frame" && INSET, box)} style={style}>
+          {children}
+        </div>
+      )}
     </SurfaceContext.Provider>
   )
 }
@@ -47,21 +49,19 @@ export function Box({ className, children, style }: { className?: string; childr
 /** A frame's top band: a name and what qualifies it, over a hairline. */
 export function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode }) {
   return (
-    <header className={cn("min-w-0 space-y-0.5 border-b", HAIRLINE, PAD_ROW, "py-2.5")}>
+    <header className="min-w-0 space-y-0.5 border-b px-3 py-3 @panel-sm:px-4">
       <div className={TITLE}>{title}</div>
       {meta && <div className={cn(META, "text-pretty")}>{meta}</div>}
     </header>
   )
 }
 
-/** The one chip: a Badges item and a card tag are the same thing. */
-export const CHIP = "inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-0.5 text-xs font-medium text-foreground/90 shadow-xs"
-
+/** What a chip's tone dot is filled with: the app's status tokens. */
 export const TONE_DOT = {
-  neutral: "bg-muted-foreground/50",
-  info: "bg-chart-2",
-  success: "bg-primary",
-  warn: "bg-chart-3",
+  neutral: "bg-muted-foreground",
+  info: "bg-primary",
+  success: "bg-success",
+  warn: "bg-warning",
   error: "bg-destructive",
 } as const
 

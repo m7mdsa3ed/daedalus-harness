@@ -8,7 +8,7 @@
    half-written: a point without a finite x and y is skipped, not drawn at 0. */
 import { z } from "zod/v4"
 import { defineComponent } from "@openuidev/react-lang"
-import { BODY, Box, BoxHeader, chartColor, HAIRLINE, LABEL, META, PAD } from "@/lib/openui/kit"
+import { BODY, Box, BoxHeader, chartColor, LABEL, META, PAD } from "@/lib/openui/kit"
 import { cn } from "@/lib/utils"
 
 const clamp = (n: number) => Math.min(100, Math.max(0, n))
@@ -34,16 +34,16 @@ export const Quadrant = defineComponent({
         <div className={cn("space-y-3", PAD)}>
           <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1.5">
             <span className={cn(LABEL, "self-center text-center [writing-mode:vertical-rl] rotate-180")}>{props.yLabel}</span>
-            <div aria-hidden="true" className={cn("relative aspect-square max-h-[26rem] w-full overflow-hidden rounded-md border", HAIRLINE)}>
-              <div className={cn("absolute inset-y-0 left-1/2 border-l border-dashed", HAIRLINE)} />
-              <div className={cn("absolute inset-x-0 top-1/2 border-t border-dashed", HAIRLINE)} />
+            <div aria-hidden="true" className="relative aspect-square max-h-104 w-full overflow-hidden rounded-xl border">
+              <div className="absolute inset-y-0 left-1/2 border-l border-dashed" />
+              <div className="absolute inset-x-0 top-1/2 border-t border-dashed" />
               {[0, 1, 2, 3].map((slot) =>
                 corners[slot] ? (
                   <span
                     key={slot}
                     className={cn(
                       LABEL,
-                      "absolute max-w-[46%] p-1.5 text-[9px] @panel-sm:text-[10.5px]",
+                      "absolute max-w-[46%] p-1.5 text-[10px] @panel-sm:text-xs",
                       slot < 2 ? "top-0" : "bottom-0",
                       slot % 2 === 0 ? "left-0 text-left" : "right-0 text-right"
                     )}
@@ -56,7 +56,7 @@ export const Quadrant = defineComponent({
                 {points.map((point, n) => (
                   <span
                     key={point.index}
-                    className="absolute flex size-5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-[10px] leading-none font-semibold text-background tabular-nums shadow-xs"
+                    className="absolute flex size-5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-[10px] leading-none font-medium text-background tabular-nums"
                     style={{ left: `${point.x}%`, bottom: `${point.y}%`, background: chartColor(n) }}
                   >
                     {n + 1}
@@ -72,7 +72,7 @@ export const Quadrant = defineComponent({
               {points.map((point, n) => (
                 <li key={point.index} className="flex min-w-0 items-baseline gap-2">
                   <span className="mt-0.5 size-2.5 shrink-0 self-center rounded-full" style={{ background: chartColor(n) }} aria-hidden="true" />
-                  <span className={cn(BODY, "min-w-0 flex-1 text-xs")}>
+                  <span className={cn(BODY, "min-w-0 flex-1")}>
                     <span className="tabular-nums">{n + 1}. </span>
                     {point.label}
                   </span>

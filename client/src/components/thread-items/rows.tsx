@@ -256,12 +256,12 @@ export const ToolRun = React.memo(function ToolRun({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted/40"
+        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
         <ChevronRightIcon
           aria-hidden
           className={cn(
-            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
+            "size-3 shrink-0 text-muted-foreground transition-transform duration-200",
             dir === "rtl" && "-scale-x-100",
             open && (dir === "rtl" ? "-rotate-90" : "rotate-90")
           )}
@@ -272,7 +272,7 @@ export const ToolRun = React.memo(function ToolRun({
         <span
           dir="auto"
           className={cn(
-            "min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground",
+            "min-w-0 flex-1 truncate text-sm leading-6 text-muted-foreground",
             dir === "rtl" ? "text-right" : "text-left",
             active && "harness-shimmer"
           )}
@@ -472,12 +472,12 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted/40"
+        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
         <ChevronRightIcon
           aria-hidden
           className={cn(
-            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
+            "size-3 shrink-0 text-muted-foreground transition-transform duration-200",
             open && "rotate-90"
           )}
         />
@@ -487,7 +487,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
         <span
           dir="auto"
           className={cn(
-            "min-w-0 flex-1 truncate text-xs leading-6 text-left text-muted-foreground",
+            "min-w-0 flex-1 truncate text-sm leading-6 text-left text-muted-foreground",
             streaming && "harness-shimmer"
           )}
         >
@@ -495,7 +495,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             <RunSummary summary={summary} />
           ) : (
             <>
-              <span className="text-foreground/80">{rows.length}</span> {pluralNoun("step", rows.length)}
+              <span className="text-foreground">{rows.length}</span> {pluralNoun("step", rows.length)}
             </>
           )}
         </span>
@@ -627,7 +627,7 @@ export const SubagentStep = React.memo(function SubagentStep({
     return hasBody ? (
       <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} />
     ) : (
-      <p className="text-xs text-muted-foreground/60">This step left nothing to show.</p>
+      <p className="text-sm text-muted-foreground">This step left nothing to show.</p>
     )
 
   return (
@@ -743,13 +743,13 @@ function SubagentBody({
           agent — see `nativeWorkflowRun`). The same two sections a tool-headed
           step gets, from the only source there is for one of these. */}
       {session?.activity && active && (
-        <p className="text-[11px] text-muted-foreground/70 harness-shimmer">{session.activity}</p>
+        <p className="text-xs text-muted-foreground harness-shimmer">{session.activity}</p>
       )}
       {brief && <BriefSection text={brief} />}
       {stepThread && (
         <Link
           to={threadPath(stepThread)}
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           Open thread <ArrowUpRightIcon className="size-3" />
         </Link>
@@ -854,7 +854,7 @@ function NativeStepTranscript({
        saying so — the tool-call views already stand in this way. */
     if (active && !failed) return <SkeletonText lines={3} className="py-0.5" />
     return (
-      <p className="text-[11px] text-muted-foreground/70">
+      <p className="text-xs text-muted-foreground">
         {failed ? "Couldn't read this agent's transcript on the server." : "This agent left no transcript."}
       </p>
     )
@@ -917,7 +917,7 @@ function SubagentTranscript({
       {active && (
         <div
           aria-label="Subagent working"
-          className="flex items-center gap-2 px-1.5 py-0.5 text-[11px] leading-6 text-primary"
+          className="flex items-center gap-2 px-1.5 py-0.5 text-xs leading-6 text-primary"
         >
           <Logo working className="size-3.5 shrink-0" />
           <ShimmerWave text={rows.length === 0 ? "Starting…" : "Working…"} />
@@ -1019,14 +1019,14 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           {/* Tinted, not filled: a soft wash of the accent with foreground text
               rather than the primary-on-primary-foreground pair, which is the
               loudest thing the theme has and made every prompt shout over the
-              answer under it. Width, alignment and the corner tail are as they
-              were — the bubble still hugs the right edge, and may now grow to the full width. */}
+              answer under it. The bubble hugs the right edge and may grow to
+              the full width; its shape is the stock bubble's. */}
           <Message align="end" className="flex-col items-end gap-0.5 py-2 data-[align=end]:flex-col">
             <MessageContent>
               <Bubble variant="tinted" align="end" className="max-w-full">
                 <BubbleContent
                   dir="auto"
-                  className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm [&_.chip]:bg-background/70 [&_.chip]:ring-1 [&_.chip]:ring-foreground/10 [&_.chip:hover]:bg-background"
+                  className="[&_.chip]:bg-background [&_.chip]:ring-1 [&_.chip]:ring-foreground/10 [&_.chip:hover]:bg-background"
                 >
                   {/* Above the prose, inside the same tinted bubble: what was
                       attached is part of the message, not a note beside it. */}
@@ -1056,7 +1056,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               <Bubble variant="ghost" className={hasOpenui ? "w-full max-w-full" : undefined}>
                 <BubbleContent
                   dir="auto"
-                  className={hasOpenui ? "w-full max-w-full text-sm leading-relaxed" : "text-sm leading-relaxed"}
+                  className={hasOpenui ? "w-full max-w-full" : undefined}
                 >
                   <StreamedAgentText text={item.text} streaming={streaming} />
                 </BubbleContent>
@@ -1081,15 +1081,15 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       // the resume button right there in the rule — picking the turn back up
       // is the only thing anyone wants after stopping it.
       return (
-        <div className="flex items-center gap-2.5 py-2 text-[11px] text-muted-foreground/70">
+        <div className="flex items-center gap-2.5 py-2 text-xs text-muted-foreground">
           <span aria-hidden className="h-px flex-1 bg-border" />
           <span className="shrink-0">{item.text}</span>
           {showTimestamps && <Timestamp at={item.at} />}
           {onContinue && (
             <Button
               variant="outline"
-              size="sm"
-              className="h-6 shrink-0 gap-1 rounded-pill px-2 text-[11px]"
+              size="xs"
+              className="shrink-0"
               onClick={onContinue}
               title="Ask the agent to pick up where it stopped"
             >
@@ -1230,7 +1230,7 @@ function useThoughtElapsed(
    starts at its beginning. */
 function ThoughtLabel({ label }: { label?: string }) {
   return (
-    <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+    <div className="mb-1 text-xs font-medium text-muted-foreground">
       {label ?? "Thinking"}
     </div>
   )
@@ -1312,22 +1312,10 @@ const ToolStep = React.memo(function ToolStep({
       status={item.status}
       icon={KindIcon}
       iconAccent={
-        harnessMark
-          ? harnessMark.accent
-          : isTodoTool
-            ? "text-primary"
-            : isSkillTool
-              ? "text-purple-600 dark:text-purple-400"
-              : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other
+        harnessMark ? harnessMark.accent : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other
       }
       iconChip={
-        harnessMark
-          ? harnessMark.chip
-          : isTodoTool
-            ? "bg-primary/12"
-            : isSkillTool
-              ? "bg-purple-500/12"
-              : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
+        harnessMark ? harnessMark.chip : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
       }
       toolLayout={view.toolLayout}
       toolVariant={view.toolVariant}

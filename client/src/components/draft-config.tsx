@@ -7,7 +7,6 @@ import {
   BotIcon,
   ChevronRightIcon,
   GitBranchIcon,
-  Loader2,
   RefreshCwIcon,
 } from "lucide-react";
 import {
@@ -20,6 +19,7 @@ import {
 import { AvatarGroup } from "@/components/ui/avatar";
 import { levelOf, withEffortIcons, withModeIcons } from "@/components/composer/option-icons";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -235,7 +235,7 @@ export function DraftScopeRow({
             className={cn(
               READING_TRIGGER,
               READING_TRIGGER_ALWAYS,
-              "flex h-6 items-center font-medium text-foreground/80",
+              "flex h-6 items-center font-medium text-foreground",
             )}
           >
             <ReadingFace
@@ -266,7 +266,7 @@ function PathSep() {
   return (
     <ChevronRightIcon
       aria-hidden
-      className="size-3 shrink-0 text-foreground/25"
+      className="size-3 shrink-0 text-muted-foreground"
     />
   );
 }
@@ -446,7 +446,7 @@ export function PickerMenu({
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate" title={option.name}>{option.name}</span>
                   {option.hint && (
-                    <span className="break-all font-mono text-[10px] text-muted-foreground">
+                    <span className="break-all font-mono text-xs text-muted-foreground">
                       {option.hint}
                     </span>
                   )}
@@ -455,7 +455,7 @@ export function PickerMenu({
             ))}
           </DropdownMenuRadioGroup>
           {shown.length === 0 && (
-            <DropdownMenuItem disabled className="text-xs">
+            <DropdownMenuItem disabled>
               No match
             </DropdownMenuItem>
           )}
@@ -740,7 +740,7 @@ export function DraftConfigPopover({
               <AvatarGroup className="-space-x-1">
                 <AgentIcon
                   agentId={agent?.id ?? meta.agentId}
-                  className="size-4 ring-2 ring-surface"
+                  className="size-4 ring-2 ring-composer"
                 />
                 <EntityIcon
                   src={resolvedModel.iconUrl}
@@ -748,22 +748,22 @@ export function DraftConfigPopover({
                     <ProfileIcon
                       profile={profile}
                       agentId={agent?.id ?? meta.agentId}
-                      className="size-4 ring-2 ring-surface"
+                      className="size-4 ring-2 ring-composer"
                     />
                   }
-                  className="size-4 ring-2 ring-surface"
+                  className="size-4 ring-2 ring-composer"
                 />
               </AvatarGroup>
             ) : profile?.logoUrl ? (
               <AvatarGroup className="-space-x-1">
                 <AgentIcon
                   agentId={agent?.id ?? meta.agentId}
-                  className="size-4 ring-2 ring-surface"
+                  className="size-4 ring-2 ring-composer"
                 />
                 <ProfileIcon
                   profile={profile}
                   agentId={agent?.id ?? meta.agentId}
-                  className="size-4 ring-2 ring-surface"
+                  className="size-4 ring-2 ring-composer"
                 />
               </AvatarGroup>
             ) : (
@@ -828,14 +828,14 @@ export function DraftConfigPopover({
           )}
           {nothingYet &&
             (!profile ? (
-              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+              <DropdownMenuItem disabled className="whitespace-normal">
                 Pick a profile to start this thread.
               </DropdownMenuItem>
             ) : probeStatus === "failed" ? (
               /* The one row here that is not disabled: a failed probe is the
                  only state the reader can do something about. */
               <DropdownMenuItem
-                className="whitespace-normal text-xs"
+                className="whitespace-normal"
                 onSelect={(event) => {
                   event.preventDefault();
                   void actions.learnAgentOptions(
@@ -850,12 +850,12 @@ export function DraftConfigPopover({
                 Couldn't reach {agent?.name ?? "this agent"} — try again
               </DropdownMenuItem>
             ) : probeStatus === "asking" ? (
-              <DropdownMenuItem disabled className="whitespace-normal text-xs">
-                <Loader2 className="size-4 animate-spin" />
+              <DropdownMenuItem disabled className="whitespace-normal">
+                <Spinner />
                 Asking {agent?.name ?? "the agent"} what it supports…
               </DropdownMenuItem>
             ) : (
-              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+              <DropdownMenuItem disabled className="whitespace-normal">
                 {agent?.name ?? "This agent"} offers nothing to configure before
                 the thread starts.
               </DropdownMenuItem>
@@ -924,7 +924,7 @@ export function DraftConfigPopover({
               {/* The probe is cached on both ends, keyed on what the harness
                   can see — an upgraded binary or a new login is not in it. */}
               <DropdownMenuItem
-                className="text-xs text-muted-foreground"
+                className="text-muted-foreground"
                 disabled={probeStatus === "asking"}
                 onSelect={(event) => {
                   event.preventDefault();
@@ -937,7 +937,7 @@ export function DraftConfigPopover({
                 }}
               >
                 {probeStatus === "asking" ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Spinner />
                 ) : (
                   <RefreshCwIcon className="size-4" />
                 )}

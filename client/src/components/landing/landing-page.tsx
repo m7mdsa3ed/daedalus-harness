@@ -39,6 +39,7 @@ import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { ProjectIcon } from "@/components/entity-icon"
+import { Button } from "@/components/ui/button"
 import {
   automationsPath,
   boardPath,
@@ -73,7 +74,7 @@ export function LandingPage({
        a document to read and the composer below is a box to be centred. */
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <main className="mx-auto w-full max-w-3xl px-4 pt-[calc(var(--app-header-h)+1.5rem)] pb-16 sm:px-8 sm:pt-[calc(var(--app-header-h)+2.5rem)]">
+        <main className="mx-auto w-full max-w-3xl px-4 pt-[calc(var(--app-header-h)+1.5rem)] pb-16 @panel-sm:px-8 @panel-sm:pt-[calc(var(--app-header-h)+2.5rem)]">
           <LandingSetup
             projects={projects.length}
             profiles={profiles.length}
@@ -238,30 +239,22 @@ function QuickActions({
 }) {
   const navigate = useNavigate()
   const go = (path: string) => () => void navigate(path)
-  const chip =
-    "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/60 bg-card/50 px-3 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+  const chip = (onClick: () => void, icon: React.ReactNode, label: React.ReactNode, key?: string) => (
+    <Button key={key} variant="outline" onClick={onClick} className="text-muted-foreground">
+      {icon}
+      {label}
+    </Button>
+  )
   return (
     <div className="flex flex-wrap content-start items-start justify-center gap-2 px-4 pt-6">
-      <button type="button" className={chip} onClick={onThread}>
-        <MessageSquarePlusIcon className="size-4" /> New thread
-      </button>
-      <button type="button" className={chip} onClick={go(boardPath())}>
-        <SquareKanbanIcon className="size-4" /> Tasks
-      </button>
-      <button type="button" className={chip} onClick={go(automationsPath())}>
-        <RepeatIcon className="size-4" /> Automations
-      </button>
-      <button type="button" className={chip} onClick={go("/notifications")}>
-        <BellIcon className="size-4" /> Inbox
-      </button>
-      <button type="button" className={chip} onClick={go(settingsRootPath())}>
-        <SettingsIcon className="size-4" /> Settings
-      </button>
-      {projects.slice(0, 4).map((project) => (
-        <button key={project.id} type="button" className={chip} onClick={go(projectPath(project.id))}>
-          <ProjectIcon project={project} className="size-4" /> {project.name}
-        </button>
-      ))}
+      {chip(onThread, <MessageSquarePlusIcon />, "New thread")}
+      {chip(go(boardPath()), <SquareKanbanIcon />, "Tasks")}
+      {chip(go(automationsPath()), <RepeatIcon />, "Automations")}
+      {chip(go("/notifications"), <BellIcon />, "Inbox")}
+      {chip(go(settingsRootPath()), <SettingsIcon />, "Settings")}
+      {projects.slice(0, 4).map((project) =>
+        chip(go(projectPath(project.id)), <ProjectIcon project={project} className="size-4" />, project.name, project.id)
+      )}
     </div>
   )
 }

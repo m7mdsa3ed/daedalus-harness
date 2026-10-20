@@ -92,18 +92,18 @@ export function ToolSection<T extends { id: string; name: string }>({
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-64">
         {unreadable && (
-          <div className="px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
             {agentName} does not read {unreadable} from the project — these are linked, but it
             will not see them.
           </div>
         )}
         {searchable && <MenuSearchInput label={title} value={query} onChange={setQuery} />}
         {shown.length === 0 ? (
-          <DropdownMenuItem disabled className="text-xs">
+          <DropdownMenuItem disabled>
             None in the library.
           </DropdownMenuItem>
         ) : matching.length === 0 ? (
-          <DropdownMenuItem disabled className="text-xs">
+          <DropdownMenuItem disabled>
             No match
           </DropdownMenuItem>
         ) : (

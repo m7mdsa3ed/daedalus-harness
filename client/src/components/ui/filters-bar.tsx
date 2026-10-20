@@ -173,7 +173,7 @@ function FilterFieldControl({
           placeholder={field.placeholder}
           value={(value as string) ?? ""}
           onChange={(e) => onChange(field.id, e.target.value)}
-          className="h-10 md:h-9 md:text-xs"
+          className="h-10 md:h-9"
         />
       );
     case "custom":
@@ -216,7 +216,7 @@ export function FiltersBar({
       type="button"
       variant="outline"
       size={isMobile ? "icon" : "default"}
-      className={cn("relative shrink-0 gap-2 rounded-lg", coarse ? "h-11 min-w-11" : "h-9")}
+      className={cn("relative shrink-0 gap-2", coarse ? "h-11 min-w-11" : "h-9")}
       onClick={isMobile ? () => setMobileFiltersOpen(true) : undefined}
     >
       <SlidersHorizontal className="size-4" />
@@ -225,9 +225,9 @@ export function FiltersBar({
         <Badge
           variant="secondary"
           className={cn(
-            "justify-center rounded-full text-[11px]",
+            "justify-center",
             isMobile
-              ? "pointer-events-none absolute -end-1.5 -top-1.5 h-4 min-w-4 px-1 text-[10px] leading-none"
+              ? "pointer-events-none absolute -end-1.5 -top-1.5 h-4 min-w-4 px-1"
               : "ms-0.5 h-5 min-w-5 px-1",
           )}
         >
@@ -243,12 +243,12 @@ export function FiltersBar({
   const buildFilterContent = () => (
     <div className="w-full space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold">{"Filters"}</p>
+        <p className="font-heading text-base font-medium">{"Filters"}</p>
         {filterCount > 0 && onClearFilters && (
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1 px-2 text-xs pointer-coarse:h-11 pointer-coarse:px-3"
+            className="pointer-coarse:h-11 pointer-coarse:px-3"
             onClick={clearFilters}
           >
             <X className="size-3" />
@@ -269,7 +269,7 @@ export function FiltersBar({
             </div>
           ) : (
             <div className="space-y-2">
-              <Label className="text-xs">{field.label}</Label>
+              <Label>{field.label}</Label>
               <FilterFieldControl field={field} value={values[field.id]} onChange={changeFilter} />
             </div>
           )}
@@ -314,7 +314,7 @@ export function FiltersBar({
             placeholder={search.placeholder}
             aria-label={search.placeholder ?? "Search"}
             className={cn(
-              "rounded-lg ps-9 pe-9 text-sm [&::-webkit-search-cancel-button]:hidden",
+              "ps-9 pe-9 [&::-webkit-search-cancel-button]:hidden",
               coarse ? "h-11" : "h-9",
             )}
           />
@@ -344,11 +344,11 @@ export function FiltersBar({
             variant="outline"
             size="icon"
             title="Filters"
-            className={cn("relative shrink-0 gap-2 rounded-lg", coarse ? "size-11" : "size-9")}
+            className={cn("relative shrink-0 gap-2", coarse ? "size-11" : "size-9")}
             onClick={() => setMobileFiltersOpen(true)}
           >
             <SlidersHorizontal className="size-4" />
-            {filterCount > 0 && <Badge variant="secondary" className="pointer-events-none absolute -end-1.5 -top-1.5 h-4 min-w-4 rounded-full px-1 text-[10px] leading-none">{filterCount}</Badge>}
+            {filterCount > 0 && <Badge variant="secondary" className="pointer-events-none absolute -end-1.5 -top-1.5 h-4 min-w-4 px-1">{filterCount}</Badge>}
           </Button>
           <ResponsiveDialogContent className="max-h-[85dvh]">
             <ResponsiveDialogHeader>

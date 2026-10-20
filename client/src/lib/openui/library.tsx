@@ -3,13 +3,13 @@
    and this is the table those names resolve against. Three rules decided it:
 
    — **one surface rule, held in context.** Anything framed goes through `Box`,
-     and `Box` asks where it is: on the page it is a raised card (`FRAME`), inside
+     and `Box` asks where it is: on the page it is the registry `Card`, inside
      another frame it is a recessed well (`INSET`), inside a `StatRow` it is a
      bare cell. So a Table in a Card is never a second bordered card inside the
      first — the bargain `settings/primitives.tsx` makes with its own `INSET` —
      and no component picks its own ground;
    — **one type scale**: `TITLE` for a thing's name, `BODY` for its text,
-     `META` for what qualifies it, `LABEL` (small caps) for a column or a metric's
+     `META` for what qualifies it, `LABEL` for a column or a metric's
      name. Every inset is `PAD` or `PAD_ROW`. A component that wants a new size is
      a component that has stopped matching the rest;
    — the schemas stay flat and shallow, which is what the language asks of its
@@ -57,18 +57,24 @@ import { createLibrary, defineComponent } from "@openuidev/react-lang"
 import { Empty } from "@/components/empty"
 import { Accordion as UiAccordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Button as UiButton, buttonVariants } from "@/components/ui/button"
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { DiffView } from "@/components/ui/diff-view"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import { Progress as UiProgress, ProgressLabel, ProgressValue } from "@/components/ui/progress"
+import { Separator } from "@/components/ui/separator"
+import { Table as UiTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs as UiTabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Notice } from "@/components/notice"
 import { TodoChecklist } from "@/components/todo-checklist"
 import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
 import { usePlacePhoto, type PlacePhoto } from "@/lib/openui/place-photo"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
-import { BODY, Box, BoxHeader, CHIP, chartColor, FLOW, HAIRLINE, INSET, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT } from "@/lib/openui/kit"
+import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT } from "@/lib/openui/kit"
 import { UI_GROUPS } from "@/lib/openui/groups"
 import { FileTree } from "@/lib/openui/components/FileTree"
 import { Button, Checkbox, Form, FormControl, Input, Select, SelectItem, Slider, Textarea } from "@/lib/openui/components/interactive"
@@ -98,10 +104,10 @@ const Stack = defineComponent({
       className={cn(
         "w-full min-w-0",
         props.direction === "row"
-          ? "grid grid-cols-1 items-start gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] @panel-sm:gap-3"
+          ? "grid grid-cols-1 items-start gap-3 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] @panel-sm:gap-4"
           : FLOW,
-        props.gap === "sm" && "gap-1.5 @panel-sm:gap-2",
-        props.gap === "lg" && "gap-4 @panel-sm:gap-5"
+        props.gap === "sm" && "gap-2 @panel-sm:gap-2",
+        props.gap === "lg" && "gap-6 @panel-sm:gap-6"
       )}
     >
       {renderNode(props.children)}
@@ -138,10 +144,10 @@ const Section = defineComponent({
   }),
   component: ({ props }) => (
     <div className="w-full min-w-0 space-y-1 pt-0.5">
-      <h3 className="break-words text-[15px] leading-snug font-semibold tracking-tight text-balance text-foreground">
+      <h3 className="font-heading text-base leading-snug font-medium break-words text-balance text-foreground">
         {props.title}
       </h3>
-      {props.text && <p className={cn(BODY, "text-pretty text-muted-foreground")}>{props.text}</p>}
+      {props.text && <p className="text-sm leading-relaxed break-words text-pretty text-muted-foreground">{props.text}</p>}
     </div>
   ),
 })
@@ -151,7 +157,7 @@ const Divider = defineComponent({
   name: "Divider",
   description: "A horizontal rule.",
   props: z.object({}),
-  component: () => <hr className={HAIRLINE} />,
+  component: () => <Separator />,
 })
 
 /** A folded section: native `<details>`, so it needs no state and survives the
@@ -169,15 +175,14 @@ const Details = defineComponent({
       <details open={props.open} className="group/details">
         <summary
           className={cn(
-            "flex cursor-pointer list-none items-center gap-2 select-none hover:bg-muted/40 [&::-webkit-details-marker]:hidden",
-            PAD_ROW,
-            "py-2.5"
+            "flex cursor-pointer list-none items-center gap-2 text-sm font-medium select-none hover:bg-muted [&::-webkit-details-marker]:hidden",
+            PAD
           )}
         >
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/details:rotate-90" />
-          <span className={cn(TITLE, "min-w-0 font-medium")}>{props.summary}</span>
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open/details:rotate-90" />
+          <span className="min-w-0 break-words">{props.summary}</span>
         </summary>
-        <div className={cn(FLOW, "border-t", HAIRLINE, PAD)}>{renderNode(props.children)}</div>
+        <div className={cn(FLOW, "border-t", PAD)}>{renderNode(props.children)}</div>
       </details>
     </Box>
   ),
@@ -192,16 +197,16 @@ const Tabs = defineComponent({
     tabs: z.array(z.object({ label: z.string(), children: z.array(z.any()) })),
   }),
   component: ({ props, renderNode }) => (
-    <UiTabs defaultValue={0} className="w-full min-w-0 gap-3">
+    <UiTabs defaultValue={0} className="w-full min-w-0 gap-4">
       {/* Scrolls sideways rather than wrapping; `scrollbar-none` keeps a
           classic scrollbar from eating the fixed-height strip's content box,
           which clipped every label against it. */}
       <TabsList
         variant="line"
-        className={cn("w-full max-w-full min-w-0 justify-start overflow-x-auto border-b scrollbar-none", HAIRLINE)}
+        className="w-full max-w-full min-w-0 justify-start overflow-x-auto border-b scrollbar-none"
       >
         {props.tabs.map((tab, index) => (
-          <TabsTrigger key={index} value={index} className="min-w-0 flex-none text-[13px]">
+          <TabsTrigger key={index} value={index} className="min-w-0 flex-none">
             {tab.label}
           </TabsTrigger>
         ))}
@@ -224,19 +229,14 @@ const Accordion = defineComponent({
   }),
   component: ({ props, renderNode }) => (
     <Box>
-      <UiAccordion className="w-full min-w-0">
+      {/* The frame is the Box's, so the registry accordion's own border goes. */}
+      <UiAccordion className="w-full min-w-0 rounded-none border-0">
         {props.items.map((item, index) => (
-          <AccordionItem key={index} value={index} className={cn("border-b last:border-b-0", HAIRLINE)}>
-            <AccordionTrigger
-              className={cn(
-                "min-w-0 gap-2 rounded-none hover:bg-muted/40 hover:no-underline [&_[data-slot=accordion-trigger-icon]]:mt-0.5",
-                PAD_ROW,
-                "py-2.5"
-              )}
-            >
-              <span className={cn(TITLE, "min-w-0 font-medium")}>{item.title}</span>
+          <AccordionItem key={index} value={index}>
+            <AccordionTrigger className="min-w-0">
+              <span className="min-w-0 break-words">{item.title}</span>
             </AccordionTrigger>
-            <AccordionContent className={cn(PAD, "pt-0")}>
+            <AccordionContent>
               <div className={FLOW}>{renderNode(item.children)}</div>
             </AccordionContent>
           </AccordionItem>
@@ -264,13 +264,13 @@ const List = defineComponent({
       <Tag className="w-full min-w-0 space-y-1.5">
         {props.items.map((item, index) => (
           <li key={index} className="flex min-w-0 gap-2.5">
-            <span className="flex h-[1.625em] w-5 shrink-0 items-center justify-center text-[13px]">
+            <span className="flex h-[1.625em] w-5 shrink-0 items-center justify-center text-sm">
               {props.numbered ? (
-                <span className="flex size-5 items-center justify-center rounded-md bg-muted text-[11px] font-medium tabular-nums text-muted-foreground">
+                <span className="flex size-5 items-center justify-center rounded-md bg-muted text-[10px] font-medium tabular-nums text-muted-foreground">
                   {index + 1}
                 </span>
               ) : (
-                <span className="size-1.5 rounded-full bg-foreground/35" />
+                <span className="size-1.5 rounded-full bg-muted-foreground" />
               )}
             </span>
             <span className={cn(BODY, "min-w-0 flex-1")}>{item}</span>
@@ -323,27 +323,23 @@ const Table = defineComponent({
     // Two columns (a name and its value) still fit a phone panel, and stacking
     // them would put a column label above every row for nothing.
     const stacked = props.columns.length > 2
-    const cell = "px-3 py-2 align-top first:ps-3 last:pe-3 @panel-sm:first:ps-3.5 @panel-sm:last:pe-3.5"
     return (
       <Box>
         {/* Narrow: one block per row. The name is the block's head, and a column
             with nothing in that row is left out rather than drawn as a label
             with a blank beside it. */}
         {stacked && (
-          <ul className="w-full min-w-0 list-none @panel-sm:hidden">
+          <ul className="w-full min-w-0 list-none divide-y @panel-sm:hidden">
             {props.rows.map((row, rowIndex) => {
               const facts = props.columns
                 .map((column, index) => ({ column, value: (row[index] ?? "").trim(), index }))
                 .slice(1)
                 .filter((fact) => fact.value !== "")
               return (
-                <li
-                  key={rowIndex}
-                  className={cn("min-w-0 border-b last:border-b-0", HAIRLINE, PAD_ROW, "space-y-1 py-2.5")}
-                >
+                <li key={rowIndex} className={cn("min-w-0 space-y-1", PAD_ROW)}>
                   <p
                     className={cn(
-                      "min-w-0 text-[13px] leading-snug font-medium",
+                      "min-w-0 text-sm leading-snug font-medium",
                       muted ? "text-muted-foreground" : "text-foreground"
                     )}
                   >
@@ -353,11 +349,11 @@ const Table = defineComponent({
                     <dl className="min-w-0 space-y-0.5">
                       {facts.map((fact) => (
                         <div key={fact.index} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
-                          <dt className={cn(LABEL, "min-w-0 text-[9.5px]")}>{fact.column}</dt>
+                          <dt className={cn(LABEL, "min-w-0")}>{fact.column}</dt>
                           <dd
                             className={cn(
-                              "ms-auto min-w-0 text-end text-[12.5px] break-words",
-                              muted ? "text-muted-foreground" : "text-foreground/90",
+                              "ms-auto min-w-0 text-end text-sm break-words",
+                              muted ? "text-muted-foreground" : "text-foreground",
                               numeric[fact.index] && "tabular-nums"
                             )}
                           >
@@ -372,42 +368,41 @@ const Table = defineComponent({
             })}
           </ul>
         )}
-        {/* Wide: the grid. The frame is the scroll container, so a table still
-            wider than the panel scrolls inside the turn rather than widening it. */}
-        <div className={cn("w-full min-w-0 overflow-x-auto", stacked && "hidden @panel-sm:block")}>
-          <table className="w-full border-collapse text-[13px]">
+        {/* Wide: the registry table, whose own container scrolls, so a table
+            still wider than the panel scrolls inside the turn rather than widening it. */}
+        <div className={cn("w-full min-w-0", stacked && "hidden @panel-sm:block")}>
+          <UiTable>
             {props.header !== false && (
-              <thead className="bg-muted/40">
-                <tr className={cn("border-b", HAIRLINE)}>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
                   {props.columns.map((column, index) => (
-                    <th key={index} className={cn(cell, LABEL, numeric[index] ? "text-end" : "text-start")}>
+                    <TableHead key={index} className={cn("h-10 px-4 whitespace-normal text-muted-foreground", numeric[index] ? "text-end" : "text-start")}>
                       {column}
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
+                </TableRow>
+              </TableHeader>
             )}
-            <tbody className="divide-y divide-border/50">
+            <TableBody>
               {props.rows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="hover:bg-muted/30">
+                <TableRow key={rowIndex}>
                   {props.columns.map((_, cellIndex) => (
-                    <td
+                    <TableCell
                       key={cellIndex}
                       className={cn(
-                        cell,
-                        "min-w-24 break-words text-foreground/90",
+                        "min-w-24 px-4 align-top break-words whitespace-normal",
                         numeric[cellIndex] && "min-w-0 text-end whitespace-nowrap tabular-nums",
                         muted && "text-muted-foreground",
-                        cellIndex === 0 && !muted && "font-medium text-foreground"
+                        cellIndex === 0 && !muted && "font-medium"
                       )}
                     >
                       {row[cellIndex] ?? ""}
-                    </td>
+                    </TableCell>
                   ))}
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </UiTable>
         </div>
       </Box>
     )
@@ -431,8 +426,8 @@ const Callout = defineComponent({
       className="w-full min-w-0 [&_p]:break-words [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:break-words"
       tone={props.tone ?? "neutral"}
       size="sm"
+      title={props.title}
     >
-      {props.title && <p className="break-words font-medium text-pretty">{props.title}</p>}
       <span className="break-words">{props.text}</span>
     </Notice>
   ),
@@ -451,11 +446,11 @@ const Code = defineComponent({
   component: ({ props }) => (
     <Box>
       {props.language && (
-        <div className={cn("border-b bg-muted/40", HAIRLINE, PAD_ROW, "py-1.5", LABEL)}>{props.language}</div>
+        <div className={cn("border-b bg-muted/50 px-3 py-1.5 @panel-sm:px-4", LABEL)}>{props.language}</div>
       )}
       <pre
         className={cn(
-          "overflow-auto font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90",
+          "overflow-auto font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground",
           PAD
         )}
       >
@@ -476,14 +471,14 @@ const KeyValue = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <dl className="w-full divide-y divide-border/50">
+      <dl className="w-full divide-y">
         {props.items.map((item, index) => (
           <div
             key={index}
             className={cn("flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5", PAD_ROW)}
           >
-            <dt className="min-w-0 break-words text-[13px] text-muted-foreground">{item.key}</dt>
-            <dd className="ms-auto min-w-0 text-end break-words text-[13px] font-medium text-foreground tabular-nums">
+            <dt className="min-w-0 text-sm break-words text-muted-foreground">{item.key}</dt>
+            <dd className="ms-auto min-w-0 text-end text-sm font-medium break-words text-foreground tabular-nums">
               {item.value}
             </dd>
           </div>
@@ -560,14 +555,14 @@ function GeneratedImage({ src, alt, caption }: { src: string; alt: string; capti
           <button
             type="button"
             onClick={() => setShown(true)}
-            className={cn("flex w-full flex-col items-start gap-0.5 text-start hover:bg-muted/40", PAD)}
+            className={cn("flex w-full flex-col items-start gap-0.5 text-start outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset", PAD)}
           >
             <span className={cn(BODY, "[overflow-wrap:anywhere]")}>{alt}</span>
             <span className={cn(META, "[overflow-wrap:anywhere]")}>Load image from {host}</span>
           </button>
         )}
         {caption && (
-          <figcaption className={cn(META, "border-t text-pretty", HAIRLINE, PAD_ROW)}>{caption}</figcaption>
+          <figcaption className={cn(META, "border-t text-pretty", PAD_ROW)}>{caption}</figcaption>
         )}
       </figure>
     </Box>
@@ -590,13 +585,10 @@ const Badges = defineComponent({
   component: ({ props }) => (
     <div className="flex w-full min-w-0 flex-wrap gap-1.5">
       {props.items.map((item, index) => (
-        <span
-          key={index}
-          className={CHIP}
-        >
+        <Badge key={index} variant="outline" className="h-auto max-w-full gap-1.5 whitespace-normal">
           <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[item.tone ?? "neutral"])} />
           <span className="min-w-0 break-words">{item.text}</span>
-        </span>
+        </Badge>
       ))}
     </div>
   ),
@@ -624,15 +616,15 @@ const Timeline = defineComponent({
         return (
           <li key={index} className="relative flex min-w-0 gap-3 pb-4 last:pb-0">
             {index < props.items.length - 1 && (
-              <span className="absolute top-6 bottom-1 left-[9.5px] w-px bg-border" />
+              <span className="absolute top-6 bottom-1 left-2.5 w-px -translate-x-1/2 bg-border" />
             )}
             <span
               className={cn(
                 "mt-px flex size-5 shrink-0 items-center justify-center rounded-full",
                 status === "done" && "bg-primary text-primary-foreground",
-                status === "active" && "bg-primary/15 ring-1 ring-primary ring-inset",
-                status === "failed" && "bg-destructive text-white",
-                status === "pending" && "bg-card ring-1 ring-border ring-inset"
+                status === "active" && "bg-primary/10 ring-1 ring-primary ring-inset",
+                status === "failed" && "bg-destructive/10 text-destructive ring-1 ring-destructive ring-inset",
+                status === "pending" && "bg-background ring-1 ring-border ring-inset"
               )}
             >
               {status === "done" && <Check className="size-3" strokeWidth={3} />}
@@ -642,7 +634,7 @@ const Timeline = defineComponent({
             <div className="min-w-0 flex-1 space-y-0.5 pt-px">
               <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
                 <span
-                  className={cn(TITLE, "min-w-0 text-[13px] font-medium", status === "pending" && "text-muted-foreground")}
+                  className={cn("min-w-0 text-sm leading-snug font-medium break-words", status === "pending" && "text-muted-foreground")}
                 >
                   {item.title}
                 </span>
@@ -673,14 +665,14 @@ const Compare = defineComponent({
     ),
   }),
   component: ({ props }) => (
-    <div className="grid w-full min-w-0 gap-2.5 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] @panel-sm:gap-3">
+    <div className="grid w-full min-w-0 gap-3 @panel-sm:grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] @panel-sm:gap-4">
       {props.options.map((option, index) => (
         <Box key={index}>
           <BoxHeader title={option.name} meta={option.verdict} />
           <ul className={cn("min-w-0 space-y-1.5", PAD)}>
             {option.pros?.map((pro, i) => (
               <li key={`p${i}`} className="flex min-w-0 gap-2">
-                <Plus className="mt-[0.3em] size-3.5 shrink-0 text-primary" strokeWidth={2.5} />
+                <Plus className="mt-[0.3em] size-3.5 shrink-0 text-success" strokeWidth={2.5} />
                 <span className={cn(BODY, "min-w-0")}>{pro}</span>
               </li>
             ))}
@@ -718,7 +710,7 @@ const Keys = defineComponent({
   }),
   component: ({ props }) => (
     <Box>
-      <div className="w-full divide-y divide-border/50">
+      <div className="w-full divide-y">
         {props.items.map((item, index) => (
           <div
             key={index}
@@ -750,7 +742,7 @@ const People = defineComponent({
       {props.items.map((person, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2.5">
           <Avatar>
-            <AvatarFallback className="text-xs font-medium">
+            <AvatarFallback className="text-xs">
               {person.name
                 .split(/\s+/)
                 .slice(0, 2)
@@ -759,7 +751,7 @@ const People = defineComponent({
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-[13px] font-medium text-foreground">{person.name}</p>
+            <p className="truncate text-sm font-medium text-foreground">{person.name}</p>
             {person.role && <p className={cn(META, "truncate")}>{person.role}</p>}
           </div>
         </div>
@@ -865,20 +857,25 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
   )
   const focus = pick ? locations.findIndex((l) => l.label === pick.title) : -1
   return (
-    <div className="flex w-full min-w-0 flex-col gap-2.5 @panel-sm:gap-3">
+    <div className={FLOW}>
       {!photos && photoSources.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setPhotos(true)}
-          className={cn("flex w-full min-w-0 items-center gap-2 rounded-lg border border-dashed border-border bg-card text-start hover:bg-muted/40", PAD_ROW)}
+        <Item
+          variant="outline"
+          size="xs"
+          className="flex-nowrap text-start hover:bg-muted"
+          render={<button type="button" onClick={() => setPhotos(true)} />}
         >
-          <ImageIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1">
-            <span className={cn(BODY, "block font-medium")}>Show photos</span>
-            <span className={cn(META, "block truncate")}>Loads from {photoSources.join(", ")}</span>
-          </span>
-          <ChevronRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-        </button>
+          <ItemMedia variant="icon">
+            <ImageIcon aria-hidden className="text-muted-foreground" />
+          </ItemMedia>
+          <ItemContent className="min-w-0">
+            <ItemTitle>Show photos</ItemTitle>
+            <ItemDescription className="text-xs">Loads from {photoSources.join(", ")}</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <ChevronRight aria-hidden className="size-4 text-muted-foreground" />
+          </ItemActions>
+        </Item>
       )}
       {carousel ? (
         <Carousel opts={{ align: "start" }} className="w-full min-w-0">
@@ -897,7 +894,7 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
           )}
         </Carousel>
       ) : (
-        <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 @panel-sm:grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] @panel-sm:gap-3">
+        <div className="grid w-full min-w-0 grid-cols-1 gap-3 @panel-sm:grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] @panel-sm:gap-4">
           {items.map((item, index) => (
             <GridCard key={index} index={index} item={item} photos={photos} selected={picked === index} onPick={() => setPicked(picked === index ? null : index)} />
           ))}
@@ -906,7 +903,7 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
       {pick && (
         <div ref={panel} className="scroll-mb-4">
           <Box>
-            <div className={cn("flex items-center gap-3 border-b", HAIRLINE, PAD)}>
+            <div className={cn("flex items-center gap-3 border-b", PAD)}>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
                 <MapPin aria-hidden className="size-4" />
               </span>
@@ -914,14 +911,9 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
                 <span className={cn(TITLE, "block")}>{pick.title}</span>
                 <span className={META}>{origin ? `Driving from ${origin.label}` : "On the map"}</span>
               </span>
-              <button
-                type="button"
-                title="Hide map"
-                onClick={() => setPicked(null)}
-                className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <X aria-hidden className="size-4" />
-              </button>
+              <UiButton type="button" variant="ghost" size="icon-sm" title="Hide map" onClick={() => setPicked(null)}>
+                <X aria-hidden />
+              </UiButton>
             </div>
             <Suspense fallback={<div className={cn(META, PAD)}>Loading map...</div>}>
               <GoogleMap locations={locations} routes={routes} colors={MAP_COLORS} focus={focus >= 0 ? focus : null} onFocus={noop} label={pick.title} />
@@ -945,7 +937,7 @@ function GridCard({ index, item, photos, selected, onPick }: { index: number; it
   // Text is clamped and the footer pinned, so a row of cards is one height at any width.
   return (
     <Box className={cn("@container flex h-full flex-col @min-[26rem]:flex-row", selected && "ring-2 ring-primary")}>
-      <div className="relative h-36 w-full shrink-0 overflow-hidden border-b border-border/60 bg-muted @min-[26rem]:h-auto @min-[26rem]:w-36 @min-[26rem]:self-stretch @min-[26rem]:border-e @min-[26rem]:border-b-0">
+      <div className="relative h-36 w-full shrink-0 overflow-hidden border-b bg-muted @min-[26rem]:h-auto @min-[26rem]:w-36 @min-[26rem]:self-stretch @min-[26rem]:border-e @min-[26rem]:border-b-0">
         {photo ? (
           <img
             src={photo.url}
@@ -956,10 +948,10 @@ function GridCard({ index, item, photos, selected, onPick }: { index: number; it
             className="absolute inset-0 size-full object-cover"
           />
         ) : (
-          <MapPin aria-hidden className="absolute top-1/2 left-1/2 size-8 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/40" />
+          <MapPin aria-hidden className="absolute top-1/2 left-1/2 size-8 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />
         )}
         {photo?.attribution && (
-          <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-0.5 text-[10px] text-white/90">Photo: {photo.attribution}</span>
+          <span className="absolute inset-x-0 bottom-0 truncate bg-background/80 px-2 py-0.5 text-xs text-muted-foreground">Photo: {photo.attribution}</span>
         )}
       </div>
       <div className={cn("flex min-w-0 flex-1 flex-col gap-2", PAD)}>
@@ -970,8 +962,8 @@ function GridCard({ index, item, photos, selected, onPick }: { index: number; it
               {title}
             </div>
             {item.rating !== undefined && (
-              <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium tabular-nums">
-                <Star aria-hidden className="size-3.5 fill-chart-3 text-chart-3" />
+              <span className="inline-flex shrink-0 items-center gap-0.5 text-sm font-medium tabular-nums">
+                <Star aria-hidden className="size-3.5 fill-warning text-warning" />
                 {item.rating.toFixed(1)}
               </span>
             )}
@@ -985,11 +977,11 @@ function GridCard({ index, item, photos, selected, onPick }: { index: number; it
         </div>
         {text && <p className={cn(BODY, "line-clamp-2 text-pretty")}>{text}</p>}
         {item.facts && item.facts.length > 0 && (
-          <dl className="divide-y divide-border/50 border-y border-border/50">
+          <dl className="divide-y border-y">
             {item.facts.slice(0, 4).map((fact, i) => (
-              <div key={i} className="flex min-w-0 items-baseline justify-between gap-3 py-1">
-                <dt className="min-w-0 text-xs text-muted-foreground">{fact.label}</dt>
-                <dd className="min-w-0 text-end text-xs font-medium break-words text-foreground">{fact.value}</dd>
+              <div key={i} className="flex min-w-0 items-baseline justify-between gap-3 py-1.5">
+                <dt className="min-w-0 text-sm text-muted-foreground">{fact.label}</dt>
+                <dd className="min-w-0 text-end text-sm font-medium break-words text-foreground">{fact.value}</dd>
               </div>
             ))}
           </dl>
@@ -997,27 +989,19 @@ function GridCard({ index, item, photos, selected, onPick }: { index: number; it
         {tags && tags.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {tags.slice(0, 3).map((tag, i) => (
-              <span key={i} className={CHIP}>
+              <Badge key={i} variant="secondary" className="h-auto max-w-full whitespace-normal break-words">
                 {tag}
-              </span>
+              </Badge>
             ))}
           </div>
         )}
         <div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-1">
           {item.price ? <span className={cn(TITLE, "min-w-0 tabular-nums")}>{item.price}</span> : <span />}
           {hasPlace && (
-            <button
-              type="button"
-              aria-pressed={selected}
-              onClick={onPick}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
-                selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-muted"
-              )}
-            >
-              {selected ? <ChevronDown aria-hidden className="size-3.5" /> : <MapPin aria-hidden className="size-3.5" />}
+            <UiButton type="button" size="sm" variant={selected ? "default" : "outline"} aria-pressed={selected} onClick={onPick}>
+              {selected ? <ChevronDown aria-hidden data-icon="inline-start" /> : <MapPin aria-hidden data-icon="inline-start" />}
               {selected ? "On map" : "Show on map"}
-            </button>
+            </UiButton>
           )}
         </div>
       </div>
@@ -1071,15 +1055,9 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
         <div className="relative rounded-md">
           <InteractiveFlowchart key={chartKey} {...chart} />
           <DialogTrigger
-            render={
-              <button
-                type="button"
-                title="Full screen"
-                className="absolute top-2 right-2 z-10 inline-flex size-7 items-center justify-center rounded-md border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-              />
-            }
+            render={<UiButton type="button" variant="outline" size="icon-sm" title="Full screen" className="absolute top-2 right-2 z-10 bg-background" />}
           >
-            <Maximize2 aria-hidden className="size-3.5" />
+            <Maximize2 aria-hidden />
             <span className="sr-only">Full screen</span>
           </DialogTrigger>
         </div>
@@ -1089,7 +1067,7 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
         </DialogContent>
       </Dialog>
       {props.caption && <p className={cn(META, "px-1")}>{props.caption}</p>}
-      <p className="px-1 text-[10px] text-muted-foreground/75">
+      <p className={cn(META, "px-1")}>
         Drag nodes; drag between handles to connect. Select an edge or node and press Delete to remove it.
       </p>
     </Box>
@@ -1120,7 +1098,7 @@ const Stat = defineComponent({
   component: ({ props }) => (
     <Box className={cn(PAD, "space-y-1")}>
       <p className={cn(LABEL, "text-balance")}>{props.label}</p>
-      <p className="break-words text-xl leading-tight font-semibold tracking-tight text-foreground tabular-nums @panel-sm:text-2xl">
+      <p className="font-heading text-xl leading-tight font-medium break-words text-foreground tabular-nums @panel-sm:text-2xl">
         {props.value}
       </p>
       {props.hint && <p className={cn(META, "text-pretty")}>{props.hint}</p>}
@@ -1141,7 +1119,8 @@ const StatRow = defineComponent({
   component: ({ props, renderNode }) => (
     <Box
       className={cn(
-        "grid bg-card [&>*]:shadow-[1px_0_0_0_var(--border),0_1px_0_0_var(--border)]",
+        // ponytail: a hairline drawn as a 1px shadow, the one way a wrapping grid gets inner rules only.
+        "grid [&>*]:shadow-[1px_0_0_0_var(--border),0_1px_0_0_var(--border)]",
         props.stats.length > 1
           ? "grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] @panel-sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]"
           : "grid-cols-1"
@@ -1162,20 +1141,10 @@ const Progress = defineComponent({
     hint: z.string().optional(),
   }),
   component: ({ props }) => (
-    <div className="w-full min-w-0 space-y-1.5">
-      <div className="flex min-w-0 items-baseline justify-between gap-x-3">
-        <span className={cn(BODY, "min-w-0")}>{props.label}</span>
-        <span className="shrink-0 text-xs font-medium text-foreground tabular-nums">
-          {props.hint ?? `${Math.round(props.value)}%`}
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-pill bg-muted">
-        <div
-          className="h-full rounded-pill bg-primary"
-          style={{ width: `${Math.min(100, Math.max(0, props.value))}%` }}
-        />
-      </div>
-    </div>
+    <UiProgress value={Math.min(100, Math.max(0, props.value))} className="w-full min-w-0 gap-x-3 gap-y-2">
+      <ProgressLabel className="min-w-0 break-words font-normal">{props.label}</ProgressLabel>
+      <ProgressValue className="shrink-0 font-medium text-foreground">{() => props.hint ?? `${Math.round(props.value)}%`}</ProgressValue>
+    </UiProgress>
   ),
 })
 
@@ -1217,52 +1186,23 @@ const Chart = defineComponent({
     const chartHeight = Math.min(480, Math.max(180, props.height ?? (round || props.kind === "radar" ? 280 : 240)))
     const axes = (
       <>
-        <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="2 6" />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={12}
-          fontSize={10}
-          interval="preserveStartEnd"
-          tick={{ fill: "var(--muted-foreground)" }}
-        />
+        <CartesianGrid vertical={false} />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
         <YAxis
           tickLine={false}
           axisLine={false}
           width={36}
-          fontSize={10}
-          tick={{ fill: "var(--muted-foreground)" }}
           tickFormatter={(value: number) => new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value)}
         />
-        <ChartTooltip content={<ChartTooltipContent />} cursor={{ stroke: "var(--primary)", strokeDasharray: "3 3" }} />
+        <ChartTooltip content={<ChartTooltipContent />} />
       </>
     )
     const margin = { left: 2, right: 12, top: 12, bottom: 2 }
-    const seriesLegend = round
-      ? props.labels.map((label, index) => ({ name: label, color: chartColor(index) }))
-      : props.series.map((series, index) => ({ name: series.name, color: chartColor(index) }))
+    const legend = <ChartLegend content={<ChartLegendContent nameKey={round ? "label" : undefined} className="flex-wrap gap-x-4 gap-y-1" />} />
     return (
-      <Box className="w-full overflow-hidden">
-        {(props.title || seriesLegend.length > 0) && (
-          <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3.5">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <span className="size-2 shrink-0 rounded-full bg-primary shadow-[0_0_0_4px_color-mix(in_oklch,var(--primary)_14%,transparent)]" />
-              {props.title && <h3 className={cn(TITLE, "min-w-0 text-sm")}>{props.title}</h3>}
-            </div>
-            {seriesLegend.length > 0 && (
-              <div className="flex min-w-0 flex-wrap justify-end gap-x-4 gap-y-2">
-                {seriesLegend.map((item) => (
-                  <span key={item.name} className="inline-flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-                    <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="max-w-32 truncate">{item.name}</span>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        <div className="w-full min-w-0 bg-[linear-gradient(180deg,color-mix(in_oklch,var(--primary)_5%,var(--card)),var(--card)_68%)] px-2 pt-4 pb-2 @panel-sm:px-4">
+      <Box className="w-full">
+        {props.title && <BoxHeader title={props.title} />}
+        <div className="w-full min-w-0 px-2 pt-4 pb-2 @panel-sm:px-4">
           <ChartContainer
             config={config}
             className="aspect-auto w-full min-w-0"
@@ -1275,37 +1215,27 @@ const Chart = defineComponent({
                   data={props.labels.map((label, index) => ({ label, value: props.series[0]?.values[index] ?? 0 }))}
                   dataKey="value"
                   nameKey="label"
-                  innerRadius={props.kind === "donut" ? "62%" : 0}
-                  outerRadius="86%"
-                  paddingAngle={props.kind === "donut" ? 3 : 1}
-                  cornerRadius={props.kind === "donut" ? 4 : 0}
-                  stroke="var(--card)"
-                  strokeWidth={3}
+                  innerRadius={props.kind === "donut" ? "60%" : 0}
+                  outerRadius="80%"
                 >
                   {props.labels.map((label, index) => (
                     <Cell key={`${label}-${index}`} fill={chartColor(index)} />
                   ))}
                 </Pie>
+                {legend}
               </PieChart>
             ) : props.kind === "radar" ? (
               <RadarChart data={data} outerRadius="76%">
-                <PolarGrid stroke="var(--border)" />
-                <PolarAngleAxis dataKey="label" fontSize={10} tick={{ fill: "var(--muted-foreground)" }} />
+                <PolarGrid />
+                <PolarAngleAxis dataKey="label" tick={{ fill: "var(--muted-foreground)" }} />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 {props.series.map((series, index) => (
-                  <Radar
-                    key={series.name}
-                    dataKey={series.name}
-                    stroke={chartColor(index)}
-                    strokeWidth={2.5}
-                    fill={chartColor(index)}
-                    fillOpacity={0.18}
-                    dot={{ r: 3, fill: chartColor(index), stroke: "var(--card)", strokeWidth: 2 }}
-                  />
+                  <Radar key={series.name} dataKey={series.name} stroke={chartColor(index)} fill={chartColor(index)} fillOpacity={0.3} />
                 ))}
+                {legend}
               </RadarChart>
             ) : props.kind === "bar" ? (
-              <BarChart data={data} margin={margin} barCategoryGap="28%">
+              <BarChart data={data} margin={margin}>
                 {axes}
                 {props.series.map((series, index) => (
                   <Bar
@@ -1313,18 +1243,19 @@ const Chart = defineComponent({
                     dataKey={series.name}
                     stackId={stack}
                     fill={chartColor(index)}
-                    radius={stack ? 0 : [7, 7, 2, 2]}
+                    radius={stack ? 0 : 8}
                     maxBarSize={props.series.length > 1 ? 28 : 44}
                   />
                 ))}
+                {legend}
               </BarChart>
             ) : props.kind === "area" ? (
               <AreaChart data={data} margin={margin}>
                 <defs>
                   {props.series.map((series, index) => (
                     <linearGradient key={series.name} id={`${chartId}-area-${index}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={chartColor(index)} stopOpacity={0.34} />
-                      <stop offset="95%" stopColor={chartColor(index)} stopOpacity={0.015} />
+                      <stop offset="5%" stopColor={chartColor(index)} stopOpacity={0.8} />
+                      <stop offset="95%" stopColor={chartColor(index)} stopOpacity={0.1} />
                     </linearGradient>
                   ))}
                 </defs>
@@ -1336,28 +1267,18 @@ const Chart = defineComponent({
                     dataKey={series.name}
                     stackId={stack}
                     stroke={chartColor(index)}
-                    strokeWidth={2.5}
                     fill={`url(#${chartId}-area-${index})`}
-                    activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2 }}
                   />
                 ))}
+                {legend}
               </AreaChart>
             ) : (
               <LineChart data={data} margin={margin}>
                 {axes}
                 {props.series.map((series, index) => (
-                  <Line
-                    key={series.name}
-                    type="monotone"
-                    dataKey={series.name}
-                    stroke={chartColor(index)}
-                    strokeWidth={2.75}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    dot={{ r: 2.5, fill: chartColor(index), stroke: "var(--card)", strokeWidth: 2 }}
-                    activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2 }}
-                  />
+                  <Line key={series.name} type="monotone" dataKey={series.name} stroke={chartColor(index)} strokeWidth={2} dot={data.length < 2} />
                 ))}
+                {legend}
               </LineChart>
             )}
           </ChartContainer>
@@ -1389,15 +1310,15 @@ const Sparkline = defineComponent({
       return `${x},${y}`
     })
     const tone = props.tone ?? "neutral"
-    const color = tone === "positive" ? "var(--primary)" : tone === "negative" ? "var(--destructive)" : "var(--chart-1)"
+    const color = tone === "positive" ? "var(--success)" : tone === "negative" ? "var(--destructive)" : "var(--chart-1)"
     return (
-      <Box className={cn("flex min-w-0 items-center justify-between gap-4", PAD)}>
+      <Box className={cn("flex min-w-0 flex-row items-center justify-between gap-4", PAD)}>
         <div className="min-w-0 space-y-1">
           <p className={cn(LABEL, "text-balance")}>{props.label}</p>
-          <p className="break-words text-xl leading-tight font-semibold tracking-tight text-foreground tabular-nums @panel-sm:text-2xl">
+          <p className="font-heading text-xl leading-tight font-medium break-words text-foreground tabular-nums @panel-sm:text-2xl">
             {props.value}
           </p>
-          {props.change && <p className={cn(META, tone === "positive" && "text-primary", tone === "negative" && "text-destructive")}>{props.change}</p>}
+          {props.change && <p className={cn(META, tone === "positive" && "text-success", tone === "negative" && "text-destructive")}>{props.change}</p>}
         </div>
         <svg className="h-12 w-28 shrink-0 overflow-visible" viewBox="0 0 100 32" role="img" aria-label={`${props.label} trend`}>
           <defs>
@@ -1451,7 +1372,7 @@ const Heatmap = defineComponent({
             {props.columns.map((column, index) => (
               <span
                 key={`${column}-${index}`}
-                className={cn(LABEL, "text-center text-[9px] [overflow-wrap:anywhere] @panel-sm:truncate")}
+                className={cn(LABEL, "text-center text-[10px] [overflow-wrap:anywhere] @panel-sm:truncate @panel-sm:text-xs")}
                 title={column}
               >
                 {column}
@@ -1460,7 +1381,7 @@ const Heatmap = defineComponent({
             {props.rows.map((row, rowIndex) => (
               <div key={`${row.label}-${rowIndex}`} className="contents">
                 <span
-                  className={cn(BODY, "self-center text-[11px] leading-tight [overflow-wrap:anywhere] @panel-sm:truncate @panel-sm:text-xs")}
+                  className={cn(BODY, "self-center text-xs leading-tight [overflow-wrap:anywhere] @panel-sm:truncate @panel-sm:text-sm")}
                   title={row.label}
                 >
                   {row.label}
@@ -1471,7 +1392,7 @@ const Heatmap = defineComponent({
                   return (
                     <span
                       key={`${rowIndex}-${column}-${columnIndex}`}
-                      className="flex aspect-square min-h-5 items-center justify-center rounded-[4px] text-[9px] tabular-nums text-foreground"
+                      className="flex aspect-square min-h-5 items-center justify-center rounded-md text-[10px] tabular-nums text-foreground"
                       style={{ background: Number.isFinite(value) ? `color-mix(in oklch, var(--chart-1) ${intensity}%, var(--muted))` : "var(--muted)", opacity: Number.isFinite(value) ? 1 : 0.45 }}
                       title={`${row.label}, ${column}: ${Number.isFinite(value) ? value : "no value"}`}
                       aria-label={`${row.label}, ${column}: ${Number.isFinite(value) ? value : "no value"}`}
@@ -1533,7 +1454,7 @@ function MapSketch({ locations, routes }: { locations: { label: string; latitude
   })
   const pos = new globalThis.Map(locations.map((l) => [l.label, at(l)]))
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} aria-hidden preserveAspectRatio="xMidYMid slice" className="block h-24 w-full bg-muted/40 text-muted-foreground/40">
+    <svg viewBox={`0 0 ${W} ${H}`} aria-hidden preserveAspectRatio="xMidYMid slice" className="block h-24 w-full bg-muted/50 text-muted-foreground">
       <defs>
         <pattern id="map-dots" width="4" height="4" patternUnits="userSpaceOnUse">
           <circle cx="1" cy="1" r="0.25" fill="currentColor" />
@@ -1574,16 +1495,16 @@ function MapView(props: {
   const [open, setOpen] = useState(false)
   const list =
     props.locations.length > 0 ? (
-      <ul className={cn("grid grid-cols-1 divide-y divide-border/50 @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
+      <ul className={cn("grid grid-cols-1 divide-y @panel-sm:grid-cols-2 @panel-sm:divide-y-0", PAD_ROW)}>
         {props.locations.map((location, index) => (
-          <li key={`${location.label}-${index}`} className="min-w-0 @panel-sm:[&:nth-child(n+3)]:border-t @panel-sm:[&:nth-child(n+3)]:border-border/50">
+          <li key={`${location.label}-${index}`} className="min-w-0 @panel-sm:[&:nth-child(n+3)]:border-t">
             <button
               type="button"
               onClick={() => {
                 setFocus(index)
                 setOpen(true)
               }}
-              className="flex w-full min-w-0 items-start gap-2.5 py-2 text-start hover:bg-muted/40"
+              className="flex w-full min-w-0 items-start gap-2.5 rounded-md py-2 text-start outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: chartColor(index) }} />
               <span className="min-w-0 flex-1">
@@ -1607,7 +1528,7 @@ function MapView(props: {
         </Suspense>
       ) : (
         <>
-          <button type="button" onClick={() => setOpen(true)} className={cn("group block w-full border-b text-start", HAIRLINE)}>
+          <button type="button" onClick={() => setOpen(true)} className="group block w-full border-b text-start outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
             <MapSketch locations={props.locations} routes={routes} />
             <span className={cn("flex items-center gap-3", PAD)}>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -1619,8 +1540,9 @@ function MapView(props: {
                   {props.locations.length} places{routes.length > 0 ? ` · ${routes.length} routes with directions` : ""}
                 </span>
               </span>
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground shadow-xs transition-opacity group-hover:opacity-90">
-                Show map <ChevronRight aria-hidden className="size-3.5" />
+              {/* Drawn as the stock button; the whole row is the one control. */}
+              <span className={cn(buttonVariants({ size: "sm" }), "group-hover:bg-primary/80")}>
+                Show map <ChevronRight aria-hidden data-icon="inline-end" />
               </span>
             </span>
           </button>
@@ -1654,8 +1576,8 @@ const Funnel = defineComponent({
                   <span className={cn(BODY, "min-w-0 font-medium")} title={stage.label}>{stage.label}</span>
                   <span className={cn(META, "shrink-0 tabular-nums")}>{new Intl.NumberFormat().format(value)}{index > 0 && first > 0 ? ` · ${retained}%` : ""}</span>
                 </div>
-                <div className="h-3 overflow-hidden rounded-pill bg-muted/80">
-                  <div className="h-full rounded-pill transition-[width]" style={{ width: `${width}%`, background: `linear-gradient(90deg, ${chartColor(index)}, color-mix(in oklch, ${chartColor(index)} 65%, var(--card)))` }} />
+                <div className="h-3 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full transition-[width]" style={{ width: `${width}%`, background: chartColor(index) }} />
                 </div>
               </div>
             )
@@ -1716,8 +1638,8 @@ const Waterfall = defineComponent({
                     <rect x={x} y={top} width={barWidth} height={height} rx="4" fill={fill}>
                       <title>{`${item.label}: ${new Intl.NumberFormat().format(item.value)}${item.total ? " (total)" : ""}`}</title>
                     </rect>
-                    <text x={x + barWidth / 2} y={Math.max(12, top - 5)} textAnchor="middle" className="fill-muted-foreground" fontSize="9">{new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(item.value)}</text>
-                    <text x={x + barWidth / 2} y="198" textAnchor="middle" className="fill-muted-foreground" fontSize="10">{item.label.length > 11 ? `${item.label.slice(0, 10)}...` : item.label}</text>
+                    <text x={x + barWidth / 2} y={Math.max(12, top - 5)} textAnchor="middle" className="fill-muted-foreground" fontSize="10">{new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(item.value)}</text>
+                    <text x={x + barWidth / 2} y="198" textAnchor="middle" className="fill-muted-foreground" fontSize="12">{item.label.length > 11 ? `${item.label.slice(0, 10)}...` : item.label}</text>
                   </g>
                 )
               })}

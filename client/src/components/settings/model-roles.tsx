@@ -42,7 +42,7 @@ import { sectionMeta } from "./sections"
    add) a phone row opens to edit, where the inline inputs would be too small to
    aim at. Label and description save on change, as they always did. */
 
-const INPUT = "text-xs pointer-coarse:h-11"
+const INPUT = "text-sm pointer-coarse:h-11"
 const UNSET = "border-dashed"
 
 export function ModelRolesPage() {
@@ -105,7 +105,7 @@ export function ModelRolesPage() {
                 aria-label={`Label for ${role.id}`}
                 className={cn(INPUT, "font-medium")}
               />
-              <Badge variant="secondary" className="max-w-full truncate font-mono text-[11px]" title={role.id}>
+              <Badge variant="secondary" className="max-w-full truncate font-mono" title={role.id}>
                 {role.id}
               </Badge>
             </div>
@@ -395,13 +395,13 @@ function RoleRow({ role }: { role: ModelRole }) {
         <div className="truncate text-sm font-medium">{role.label || role.id}</div>
         <div
           className={cn(
-            "truncate text-xs",
-            role.description.trim() ? "text-muted-foreground" : "italic text-muted-foreground/70",
+            "truncate text-sm",
+            role.description.trim() ? "text-muted-foreground" : "italic text-muted-foreground",
           )}
         >
           {role.description.trim() || "No description"}
         </div>
-        <div className="truncate font-mono text-[11px] text-muted-foreground/80">{role.id}</div>
+        <div className="truncate font-mono text-xs text-muted-foreground">{role.id}</div>
       </div>
     </div>
   )

@@ -328,7 +328,7 @@ export function ProjectCommandMenu({
           trailing={
             suggestion.confirm ? (
               <TriangleAlert
-                className="size-3 shrink-0 text-amber-500"
+                className="size-3 shrink-0 text-warning"
                 aria-label="Asks before running"
               />
             ) : projectId && suggestion.kind !== "helper" ? (
@@ -340,7 +340,7 @@ export function ProjectCommandMenu({
               <span
                 role="button"
                 title="Save as a project command"
-                className="-my-1 inline-flex h-6 items-center gap-1 rounded-pill px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:-my-2 pointer-coarse:h-9 pointer-coarse:min-w-9 pointer-coarse:justify-center"
+                className="-my-1 inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:-my-2 pointer-coarse:h-9 pointer-coarse:min-w-9 pointer-coarse:justify-center"
                 onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -348,7 +348,7 @@ export function ProjectCommandMenu({
                 }}
               >
                 <BookmarkPlus className="size-3.5 pointer-coarse:size-4" />
-                <span className="hidden text-[11px] @panel-sm:inline pointer-coarse:hidden">Save</span>
+                <span className="hidden text-xs @panel-sm:inline pointer-coarse:hidden">Save</span>
               </span>
             ) : undefined
           }

@@ -204,7 +204,7 @@ export function AutonomyPermissions({
         {/* Last, and visually apart: the blanket answer is the fallback for the
             rows above and for every kind ACP has not shipped yet, which is the
             opposite of a headline switch. */}
-        <div className="bg-muted/40">
+        <div className="bg-muted/50">
           {row("default", "Everything else", "Anything not answered above, and any tool kind a future agent adds.", {
             grave: true,
             disabled: blanketBlocked

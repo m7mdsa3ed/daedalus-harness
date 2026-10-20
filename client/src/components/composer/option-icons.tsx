@@ -82,7 +82,7 @@ export function ModeIcon({
   return (
     <Icon
       aria-hidden
-      className={cn("size-3 shrink-0", warn && "text-amber-600 dark:text-amber-400", className)}
+      className={cn("size-3 shrink-0", warn && "text-warning", className)}
     />
   )
 }

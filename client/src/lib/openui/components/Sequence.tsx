@@ -15,19 +15,20 @@ import { z } from "zod/v4"
 import { RotateCw } from "lucide-react"
 import { defineComponent } from "@openuidev/react-lang"
 import { cn } from "@/lib/utils"
-import { BODY, Box, CHIP, META, PAD } from "../kit"
+import { Badge } from "@/components/ui/badge"
+import { BODY, Box, META, PAD } from "../kit"
 
 /** Two tracks per actor: actor `i`'s lifeline is grid line `2i + 2`. */
 const mid = (i: number) => 2 * i + 2
 
 function Arrow({ dashed, leftward }: { dashed: boolean; leftward: boolean }) {
   const head = cn(
-    "size-0 shrink-0 border-y-[4px] border-y-transparent text-foreground/70",
+    "size-0 shrink-0 border-y-4 border-y-transparent text-muted-foreground",
     leftward ? "border-r-[7px] border-r-current" : "border-l-[7px] border-l-current"
   )
   return (
     <div aria-hidden className={cn("flex items-center", leftward && "flex-row-reverse")}>
-      <span className={cn("flex-1 border-t border-foreground/70", dashed && "border-dashed")} />
+      <span className={cn("flex-1 border-t border-muted-foreground", dashed && "border-dashed")} />
       <span className={head} />
     </div>
   )
@@ -74,7 +75,7 @@ export const Sequence = defineComponent({
         return [
           <li key={i} className="grid" style={columns}>
             <div
-              className={cn(BODY, "flex min-w-0 items-start justify-center gap-1.5 rounded-md border border-border/70 bg-muted px-2 py-1 text-center")}
+              className={cn(BODY, "flex min-w-0 items-start justify-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-center")}
               style={{ gridColumn: `${2 * lo + 1} / ${2 * hi + 3}` }}
             >
               {kind !== "note" && <RotateCw aria-hidden className="mt-[0.3em] size-3 shrink-0 text-muted-foreground" />}
@@ -108,14 +109,14 @@ export const Sequence = defineComponent({
             <div aria-label="Actors" className="grid pb-2" style={columns}>
               {actors.map((actor, i) => (
                 <div key={i} className="flex min-w-0 justify-center" style={{ gridColumn: `${2 * i + 1} / span 2` }}>
-                  <span className={cn(CHIP, "min-w-0 text-center [overflow-wrap:anywhere]")}>{actor}</span>
+                  <Badge variant="outline" className="h-auto min-w-0 whitespace-normal text-center [overflow-wrap:anywhere]">{actor}</Badge>
                 </div>
               ))}
             </div>
             <div className="relative">
               <div aria-hidden className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
                 {actors.map((_, i) => (
-                  <span key={i} className="mx-auto h-full w-px border-l border-dashed border-border" />
+                  <span key={i} className="mx-auto h-full w-px border-l border-dashed" />
                 ))}
               </div>
               <ol className="relative flex flex-col gap-3 py-1">{rows}</ol>

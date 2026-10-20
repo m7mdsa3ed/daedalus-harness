@@ -37,7 +37,7 @@ function DevicePanel({
 }) {
   return (
     <FormSection label={title} hint={hint} action={status}>
-      <div className="space-y-3 text-xs/relaxed text-muted-foreground">{children}</div>
+      <div className="space-y-3 text-sm/relaxed text-muted-foreground">{children}</div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </FormSection>
   )
@@ -145,7 +145,7 @@ export function SecurityGroup() {
           </li>
         ))}
       </ul>
-      <p className="border-t border-border/60 pt-3 text-[11px]/relaxed">
+      <p className="border-t pt-3 text-xs/relaxed">
         <span className="font-medium text-foreground/80">Certificates and site permissions.</span> A page cannot
         clear a certificate, a certificate exception or an HSTS entry — that state is the browser's, deliberately
         out of reach of the sites it protects. In Chrome: tap the icon left of the address bar → Permissions /
@@ -210,7 +210,7 @@ export function SiteDataGroup() {
           {busy === "cache" ? "Clearing…" : "Clear cache"}
         </Button>
       </div>
-      <div className="space-y-2 border-t border-border/60 pt-3">
+      <div className="space-y-2 border-t pt-3">
         <div>
           <p className="text-sm font-medium text-foreground">Clear all site data</p>
           <p>

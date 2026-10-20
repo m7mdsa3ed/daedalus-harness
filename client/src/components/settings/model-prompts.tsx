@@ -133,7 +133,7 @@ export function ModelPromptsPage() {
         header: "Pattern",
         cell: ({ row }) => (
           <TitleCell
-            title={<code className="font-mono text-[13px]">{row.original.match}</code>}
+            title={<code className="font-mono text-sm">{row.original.match}</code>}
             subtitle={row.original.name}
           />
         ),
@@ -157,7 +157,7 @@ export function ModelPromptsPage() {
         id: "order",
         header: "Order",
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-muted-foreground tabular-nums">{row.original.sortOrder}</span>
+          <span className="font-mono text-sm text-muted-foreground tabular-nums">{row.original.sortOrder}</span>
         ),
         meta: { align: "end", className: "hidden @panel-lg:table-cell" } satisfies DataTableColumnMeta,
       },
@@ -199,12 +199,12 @@ export function ModelPromptsPage() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
-                <code className="min-w-0 truncate font-mono text-[13px] font-medium">{item.match}</code>
+                <code className="min-w-0 truncate font-mono text-sm font-medium">{item.match}</code>
                 {!item.enabled && <StatusBadge>Off</StatusBadge>}
               </div>
-              <div className="truncate text-xs text-muted-foreground">{item.name}</div>
-              <div className="mt-1 line-clamp-2 text-xs break-words text-muted-foreground">{oneLine(item.prompt)}</div>
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+              <div className="truncate text-sm text-muted-foreground">{item.name}</div>
+              <div className="mt-1 line-clamp-2 text-sm break-words text-muted-foreground">{oneLine(item.prompt)}</div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                 <span>{scopeOf(item.match).label}</span>
                 <span>Order {item.sortOrder}</span>
               </div>
@@ -362,12 +362,12 @@ function ModelPromptForm({
                   value={form.match}
                   onChange={(e) => set({ match: e.target.value })}
                   placeholder="qwen*"
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                   required
                 />
               </Field>
             </div>
-            <div className={cn(INSET, "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs")}>
+            <div className={cn(INSET, "flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm")}>
               <span className="text-muted-foreground">Applies to</span>
               <span className="font-medium">{scope.label}</span>
               <span className="text-muted-foreground">{scope.detail}</span>
@@ -407,10 +407,10 @@ function ModelPromptForm({
                 value={form.prompt}
                 onChange={(e) => set({ prompt: e.target.value })}
                 rows={18}
-                className="min-h-72 resize-y font-mono text-xs/relaxed @panel-md:min-h-[26rem]"
+                className="min-h-72 resize-y font-mono text-sm/relaxed @panel-md:min-h-[26rem]"
                 required
               />
-              <p className="text-right text-[11px] text-muted-foreground tabular-nums">
+              <p className="text-right text-xs text-muted-foreground tabular-nums">
                 {form.prompt ? form.prompt.split("\n").length : 0} lines · {form.prompt.length} chars
               </p>
             </Field>
@@ -439,7 +439,7 @@ function ModelPromptForm({
                 step={10}
                 value={form.sortOrder}
                 onChange={(e) => set({ sortOrder: e.target.value })}
-                className="font-mono text-xs"
+                className="font-mono text-sm"
               />
             </Field>
           </FormSection>

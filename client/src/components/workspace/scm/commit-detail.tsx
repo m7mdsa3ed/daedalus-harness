@@ -21,11 +21,11 @@ import { basename } from "@/lib/workspace/fs-api"
 import { gitCommit, type CommitDetail, type CommitFile, type GitCommit } from "@/lib/workspace/git-api"
 
 const STATUS_CLASS: Record<string, string> = {
-  A: "text-emerald-600 dark:text-emerald-400",
-  M: "text-amber-600 dark:text-amber-400",
-  D: "text-red-600 dark:text-red-400",
-  R: "text-sky-600 dark:text-sky-400",
-  C: "text-sky-600 dark:text-sky-400",
+  A: "text-success",
+  M: "text-warning",
+  D: "text-destructive",
+  R: "text-primary",
+  C: "text-primary",
 }
 
 export function CommitDetailView({
@@ -79,34 +79,34 @@ export function CommitDetailView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1">
+      <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
         {onBack && (
-          <Button variant="ghost" size="xs" className="gap-1" onClick={onBack}>
-            <ArrowLeftIcon className="size-3.5" /> History
+          <Button variant="ghost" size="xs" onClick={onBack}>
+            <ArrowLeftIcon /> History
           </Button>
         )}
-        <span className="ml-auto font-mono text-[10px] text-muted-foreground">{commit.short}</span>
+        <span className="ml-auto font-mono text-xs text-muted-foreground">{commit.short}</span>
         <CopyButton text={commit.hash} size="icon-xs" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="space-y-2 border-b border-border/50 px-3 py-2.5">
-          <p className="text-xs font-semibold break-words">{subject}</p>
+        <div className="flex flex-col gap-2 border-b px-3 py-2.5">
+          <p className="text-sm font-medium break-words">{subject}</p>
           {body && (
-            <pre className="max-h-48 overflow-auto font-sans text-[11px] leading-4 whitespace-pre-wrap text-muted-foreground">
+            <pre className="max-h-48 overflow-auto font-sans text-xs whitespace-pre-wrap text-muted-foreground">
               {body}
             </pre>
           )}
           {commit.refs.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {commit.refs.map((ref) => (
-                <Badge key={ref} variant="outline" className="px-1 text-[10px]">
+                <Badge key={ref} variant="outline">
                   {ref}
                 </Badge>
               ))}
             </div>
           )}
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[10px]">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             <dt className="text-muted-foreground">Author</dt>
             <dd className="min-w-0 truncate" title={detail?.email}>
               {commit.author}
@@ -131,7 +131,7 @@ export function CommitDetailView({
           </dl>
         </div>
 
-        <div className="flex items-center gap-2 px-3 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">
+        <div className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
           <span>
             {detail ? detail.files.length : commit.filesChanged}{" "}
             {(detail ? detail.files.length : commit.filesChanged) === 1 ? "file" : "files"} changed
@@ -140,7 +140,7 @@ export function CommitDetailView({
             insertions={detail?.insertions ?? commit.insertions}
             deletions={detail?.deletions ?? commit.deletions}
           />
-          {commit.parents.length > 1 && <span className="ml-auto text-[10px]">vs first parent</span>}
+          {commit.parents.length > 1 && <span className="ml-auto text-xs">vs first parent</span>}
         </div>
 
         {error ? (
@@ -160,14 +160,14 @@ export function CommitDetailView({
                     onClick={() => onOpenFile(file, detail)}
                     title={file.from ? `${file.from} → ${file.path}` : file.path}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-accent/50",
-                      file.path === selected && "bg-accent",
+                      "flex w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted",
+                      file.path === selected && "bg-muted",
                       coarse ? "min-h-11" : "min-h-7"
                     )}
                   >
                     <span
                       className={cn(
-                        "w-3 shrink-0 text-center font-mono text-[10px] font-bold",
+                        "w-3 shrink-0 text-center font-mono text-xs font-medium",
                         STATUS_CLASS[file.status] ?? "text-muted-foreground"
                       )}
                     >
@@ -176,9 +176,9 @@ export function CommitDetailView({
                     <span className={cn("min-w-0 shrink-0 truncate", file.status === "D" && "line-through opacity-70")}>
                       {basename(file.path)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{dir}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{dir}</span>
                     {file.insertions === null ? (
-                      <span className="shrink-0 text-[10px] text-muted-foreground">binary</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">binary</span>
                     ) : (
                       <LineCounts insertions={file.insertions} deletions={file.deletions} />
                     )}

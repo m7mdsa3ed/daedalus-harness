@@ -32,7 +32,7 @@ export function IncompatibleServer({
 
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-3">
+      <div className="flex w-full max-w-md flex-col gap-3">
         {compat === "server-old" ? <ServerOld settings={settings} /> : <ClientOld settings={settings} />}
         <div className="flex flex-wrap gap-2">
           {others.map((server) => (
@@ -64,7 +64,7 @@ function ServerOld({ settings }: { settings: ServerSettings }) {
         runs:
       </p>
       <div className="flex items-center gap-1">
-        <code className="min-w-0 flex-1 rounded bg-background/60 px-2 py-1 font-mono text-xs">
+        <code className="min-w-0 flex-1 rounded-md bg-muted px-2 py-1 font-mono text-sm">
           {SERVER_UPDATE_COMMAND}
         </code>
         <CopyButton text={SERVER_UPDATE_COMMAND} label="Copy" />

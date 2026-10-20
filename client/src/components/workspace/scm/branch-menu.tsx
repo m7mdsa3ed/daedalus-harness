@@ -12,7 +12,7 @@ export function Tracking({ status }: { status: GitStatus | null }) {
   if (!status?.upstream || (status.ahead === 0 && status.behind === 0)) return null
   return (
     <span
-      className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground"
+      className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground"
       title={`${status.ahead} ahead of and ${status.behind} behind ${status.upstream}`}
     >
       {status.ahead > 0 && <span>↑{status.ahead}</span>}

@@ -184,7 +184,7 @@ export function NewTaskDialog({
                 value={draft.title ?? ""}
                 onChange={(e) => patch({ title: e.target.value })}
                 placeholder="What needs doing?"
-                className="h-10 text-base font-medium"
+                className="h-10 text-base"
               />
             </div>
 
@@ -242,7 +242,7 @@ export function NewTaskDialog({
             </div>
 
             {more && (
-              <div className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/30 p-2">
+              <div className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/50 p-2">
                 <LabelsPicker
                   value={draft.labels ?? []}
                   suggestions={facets.labels}
@@ -296,7 +296,7 @@ export function NewTaskDialog({
                     inputMode="numeric"
                     value={draft.estimate ?? ""}
                     onChange={(e) => patch({ estimate: e.target.value === "" ? null : Math.max(0, Math.round(Number(e.target.value)) || 0) })}
-                    className="h-7 w-14 text-xs"
+                    className="h-8 w-16"
                   />
                 </label>
               </div>

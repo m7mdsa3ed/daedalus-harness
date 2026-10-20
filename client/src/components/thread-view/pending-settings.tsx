@@ -21,7 +21,8 @@
    A staged tool link is part of the same `StagedConfig`, so it is named here
    too; the tools menu keeps its own header where the picks are made. */
 import { useState } from "react"
-import { CheckIcon, ClockIcon, LoaderCircleIcon, XIcon } from "lucide-react"
+import { Spinner } from "@/components/ui/spinner"
+import { CheckIcon, ClockIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -82,28 +83,25 @@ export function PendingSettings({
     <section aria-label="Pending settings change" className="mt-2">
       <header className="mb-1.5 flex items-center gap-1.5 px-1">
         {applying ? (
-          <LoaderCircleIcon className="size-3 animate-spin text-muted-foreground" />
+          <Spinner className="size-3 text-muted-foreground" />
         ) : (
-          <ClockIcon className="size-3 text-amber-600 dark:text-amber-400" />
+          <ClockIcon className="size-3 text-warning" />
         )}
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <h3 className="text-xs font-medium text-muted-foreground">
           {applying ? "Applying settings" : "Settings on next send"}
         </h3>
       </header>
       <div
-        className={cn(
-          "rounded-md border border-border/50 bg-muted/40 px-2 py-1.5",
-          applying && "border-primary/30"
-        )}
+        className={cn("rounded-xl border bg-muted/50 px-3 py-2", applying && "border-primary/30")}
       >
-        <p className="min-w-0 break-words text-xs text-foreground">{description}</p>
-        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+        <p className="min-w-0 break-words text-sm text-foreground">{description}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
           {applying
             ? "A change that costs the process restarts the agent; one that does not moves on the running turn. Either way nothing is lost — the conversation comes back through a load."
             : `Picks are held until a turn starts — or a spawn, for what only a restart can place. Nothing is applied before you ask. ${action} takes what the running agent can take as it is${thread.turnActive ? ", and the rest waits for the next turn" : ""}.`}
         </p>
         {!applying && (
-          <div className="mt-1.5 flex gap-1.5">
+          <div className="mt-2 flex gap-1.5">
             <Button
               size="xs"
               className="flex-1"

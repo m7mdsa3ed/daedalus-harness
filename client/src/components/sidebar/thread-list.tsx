@@ -2,7 +2,7 @@
 import * as React from "react"
 import { ChevronRight } from "lucide-react"
 import { useNavigate } from "react-router"
-import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { useThreadRowActions } from "@/components/thread-menu"
 import { threadPath } from "@/lib/router"
 import { useActiveChat } from "@/lib/workspace/open-threads"
@@ -10,7 +10,7 @@ import { useLayoutOptions } from "@/lib/layout-options"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { MENU, NEST } from "./scale"
+import { NEST } from "./scale"
 import { useSidebarEnv } from "./env"
 import { ThreadRow, type ThreadRowHandlers } from "./thread-row"
 import { useFold } from "./fold"
@@ -37,7 +37,7 @@ function ThreadFamily({
         /* The indent is the item's, never the menu's: the menu is `w-full`, so
            a margin on it pushed the rows (and their ⋯) past the parent's edge. */
         <li data-slot="sidebar-menu-item" data-sidebar="menu-item" className={NEST}>
-          <SidebarMenu className={MENU}>
+          <SidebarMenu>
             {subs.map((child) => (
               <React.Fragment key={child.id}>{row(child)}</React.Fragment>
             ))}
@@ -162,7 +162,7 @@ export const ThreadList = React.memo(function ThreadList({
 
   let previousLabel: string | null = null
   return (
-    <SidebarMenu ref={listRef} onKeyDown={onListKeyDown} className={MENU}>
+    <SidebarMenu ref={listRef} onKeyDown={onListKeyDown}>
       {visible.map((session) => {
         const label = headings ? periodLabel(periodAt(session)) : null
         const heading = label && label !== previousLabel
@@ -179,7 +179,7 @@ export const ThreadList = React.memo(function ThreadList({
               <li
                 data-slot="sidebar-menu-item"
                 data-sidebar="menu-item"
-                className="mt-1.5 flex h-6 items-center px-2 text-[11px] font-medium text-muted-foreground/70 first:mt-0"
+                className="mt-2 flex h-8 items-center px-3 text-xs font-medium text-sidebar-foreground/70 first:mt-0"
               >
                 <span className="truncate">{label}</span>
               </li>
@@ -198,17 +198,16 @@ export const ThreadList = React.memo(function ThreadList({
           it expands the index you are already scanning. */}
       {hidden > 0 && (
         <SidebarMenuItem>
-          <button
-            type="button"
+          <SidebarMenuButton
             onClick={() => setExpanded((value) => !value)}
-            className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:hidden"
+            className="text-muted-foreground group-data-[collapsible=icon]:hidden"
           >
             <ChevronRight
               aria-hidden
-              className={cn("size-4 shrink-0 transition-transform duration-200", expanded && "rotate-90")}
+              className={cn("transition-transform duration-200", expanded && "rotate-90")}
             />
             <span>{expanded ? "Show less" : `Show ${hidden} more`}</span>
-          </button>
+          </SidebarMenuButton>
         </SidebarMenuItem>
       )}
     </SidebarMenu>

@@ -132,10 +132,10 @@ const OTHER = "Other"
 const toneOf = (used: number): StatusTone => (used >= 90 ? "bad" : used >= 75 ? "warn" : "ok")
 const BAR: Record<StatusTone, string> = {
   ok: "bg-primary",
-  warn: "bg-foreground/60",
+  warn: "bg-warning",
   bad: "bg-destructive",
   info: "bg-primary",
-  neutral: "bg-muted-foreground/50",
+  neutral: "bg-muted-foreground",
 }
 
 /** Everything a row draws from its window, worked out once. The figure is the
@@ -176,13 +176,13 @@ function Meter({ window, className }: { window: QuotaWindow; className?: string 
   return (
     <div className={cn("flex min-w-0 items-center gap-2", className)}>
       {unlimited ? (
-        <span className="flex-1 text-xs text-muted-foreground">No cap</span>
+        <span className="flex-1 text-sm text-muted-foreground">No cap</span>
       ) : (
         <div className="h-1.5 min-w-10 flex-1 overflow-hidden rounded-pill bg-muted">
           <div className={cn("h-full rounded-pill transition-[width]", BAR[tone])} style={{ width: `${used}%` }} />
         </div>
       )}
-      <span className={cn("w-9 shrink-0 text-right text-xs font-semibold tabular-nums", unlimited || tone !== "bad" ? "text-muted-foreground" : "text-destructive")}>
+      <span className={cn("w-9 shrink-0 text-right text-sm font-medium tabular-nums", unlimited || tone !== "bad" ? "text-muted-foreground" : "text-destructive")}>
         {unlimited ? "∞" : `${used}%`}
       </span>
     </div>
@@ -241,7 +241,7 @@ function usageColumns(withAccounts: boolean): ColumnDef<UsageRow, unknown>[] {
         row.original.window ? (
           <Meter window={row.original.window} />
         ) : (
-          <span className="block truncate text-xs text-muted-foreground">{row.original.note}</span>
+          <span className="block truncate text-sm text-muted-foreground">{row.original.note}</span>
         ),
     },
     {
@@ -249,7 +249,7 @@ function usageColumns(withAccounts: boolean): ColumnDef<UsageRow, unknown>[] {
       header: "Spent",
       meta: { className: "hidden @panel-md:table-cell" } satisfies DataTableColumnMeta,
       cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground tabular-nums">
+        <span className="text-sm text-muted-foreground tabular-nums">
           {(row.original.window && readWindow(row.original.window).amount) ?? ""}
         </span>
       ),
@@ -257,7 +257,7 @@ function usageColumns(withAccounts: boolean): ColumnDef<UsageRow, unknown>[] {
     {
       id: "resets",
       header: "Resets",
-      meta: { className: "w-32 whitespace-nowrap text-xs" } satisfies DataTableColumnMeta,
+      meta: { className: "w-32 whitespace-nowrap text-sm" } satisfies DataTableColumnMeta,
       cell: ({ row }) => (row.original.window ? <ResetText window={row.original.window} /> : null),
     },
     {
@@ -280,7 +280,7 @@ function renderUsageRow(row: UsageRow) {
     return (
       <div className="min-w-0">
         <div className="truncate text-sm font-medium">{account?.name}</div>
-        <div className="truncate text-xs text-muted-foreground">{note}</div>
+        <div className="truncate text-sm text-muted-foreground">{note}</div>
       </div>
     )
   }
@@ -296,7 +296,7 @@ function renderUsageRow(row: UsageRow) {
         <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
       </div>
       <Meter window={window} />
-      <div className="flex min-w-0 items-baseline justify-between gap-2 text-xs text-muted-foreground">
+      <div className="flex min-w-0 items-baseline justify-between gap-2 text-sm text-muted-foreground">
         <span className="min-w-0 truncate tabular-nums">{amount ?? ""}</span>
         <span className="shrink-0 tabular-nums">
           <ResetText window={window} />
@@ -356,9 +356,9 @@ function usageRows(quota: QuotaSnapshot): UsageRow[] {
 /** The heading of one group of accounts. */
 function ProviderHead({ provider, accounts }: { provider: string; accounts: number }) {
   return (
-    <div className="flex items-baseline gap-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+    <div className="flex items-baseline gap-2 text-xs font-medium text-muted-foreground">
       {provider}
-      <span className="font-normal tabular-nums normal-case">{accounts === 1 ? "1 account" : `${accounts} accounts`}</span>
+      <span className="font-normal tabular-nums">{accounts === 1 ? "1 account" : `${accounts} accounts`}</span>
     </div>
   )
 }
@@ -434,7 +434,7 @@ function RawReport({ raw, label }: { raw: string; label: string }) {
         {/* `break-words` and not `overflow-x-auto`: a report is prose and long
             paths, and a horizontally scrolling block inside a vertically
             scrolling page is a gesture fight on a phone. */}
-        <pre className={cn("mt-2 max-h-64 overflow-y-auto p-3 text-[11px] leading-relaxed break-words whitespace-pre-wrap", INSET)}>
+        <pre className={cn("mt-2 max-h-64 overflow-y-auto p-3 text-xs leading-relaxed break-words whitespace-pre-wrap", INSET)}>
           {raw}
         </pre>
       </CollapsibleContent>
@@ -451,7 +451,7 @@ function ReadingExtras({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: st
     <>
       {quota.credits && (
         <div className={cn("flex items-baseline justify-between gap-3 px-3 py-2", INSET)}>
-          <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground">
             <CoinsIcon className="size-3.5" />
             Balance
           </span>
@@ -504,10 +504,10 @@ function UsageBlock({
           {icon}
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
-              <h3 className="min-w-0 truncate text-sm font-semibold tracking-tight">{name}</h3>
+              <h3 className="min-w-0 truncate text-sm font-medium">{name}</h3>
               <PlanBadge plan={plan} />
             </div>
-            <div className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</div>
+            <div className="mt-0.5 truncate text-sm text-muted-foreground">{subtitle}</div>
           </div>
         </div>
         {controls && <div className="ml-auto flex shrink-0 items-center gap-1.5">{controls}</div>}
@@ -607,7 +607,7 @@ function AgentUsage({
         <>
           {profiles.length > 1 && (
             <Select value={profileId} onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}>
-              <SelectTrigger size="sm" className="w-28 text-xs pointer-coarse:h-11" aria-label={`Profile ${agentName} is read through`}>
+              <SelectTrigger size="sm" className="w-28 text-sm pointer-coarse:h-11" aria-label={`Profile ${agentName} is read through`}>
                 <SelectValue>{profileName}</SelectValue>
               </SelectTrigger>
               <SelectContent>

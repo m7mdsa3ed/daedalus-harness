@@ -114,11 +114,11 @@ export function AsideWindow({
     <div
       role="dialog"
       aria-label={`Aside: ${meta.title}`}
-      className="@container fixed z-50 flex min-h-60 min-w-72 max-h-[calc(var(--float-h)-16px)] max-w-[calc(var(--float-w)-16px)] resize flex-col overflow-hidden rounded-xl border bg-background shadow-xl animate-in fade-in-0 zoom-in-95"
+      className="@container fixed z-50 flex min-h-60 min-w-72 max-h-[calc(var(--float-h)-16px)] max-w-[calc(var(--float-w)-16px)] resize flex-col overflow-hidden rounded-2xl bg-popover text-popover-foreground ring-1 ring-foreground/10 animate-in fade-in-0 zoom-in-95"
       style={{ ...box, "--dock-content-overlap": "0px" } as React.CSSProperties}
     >
       <div
-        className="flex h-9 shrink-0 cursor-grab touch-none items-center gap-1.5 border-b px-2 text-xs select-none active:cursor-grabbing"
+        className="flex h-9 shrink-0 cursor-grab touch-none items-center gap-1.5 border-b px-2 text-sm select-none active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

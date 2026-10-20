@@ -40,6 +40,9 @@ import {
    `stepUsage`, `stepNameOf`) are declared *here* and imported by thread-items,
    because the one-way edge already points this way. */
 import { formatElapsed, StepMeta, useElapsed } from "@/components/step-row"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { TokenSummary } from "@/components/token-usage"
 import { KIND_CHIPS, KIND_COLORS } from "@/components/tool-parts"
 import { extractSubagent, toolHeading, toolOutputText } from "@/lib/tools"
@@ -340,12 +343,12 @@ function phasesOf(group: Pick<WorkflowGroup, "steps" | "plan">): PhaseView[] {
 }
 
 const STATE_ICON = {
-  completed: [CheckIcon, "text-emerald-600 dark:text-emerald-400"],
+  completed: [CheckIcon, "text-success"],
   running: [LoaderCircleIcon, "text-primary motion-safe:animate-spin"],
   failed: [XIcon, "text-destructive"],
-  cancelled: [CircleSlashIcon, "text-muted-foreground/60"],
-  disconnected: [CircleSlashIcon, "text-muted-foreground/60"],
-  pending: [CircleDashedIcon, "text-muted-foreground/40"],
+  cancelled: [CircleSlashIcon, "text-muted-foreground"],
+  disconnected: [CircleSlashIcon, "text-muted-foreground"],
+  pending: [CircleDashedIcon, "text-muted-foreground"],
 } as const
 
 /**
@@ -386,13 +389,13 @@ function StepCard({
     <>
       <span className="flex min-w-0 items-center gap-1.5">
         <Icon aria-hidden className={cn("size-3 shrink-0", tone)} />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">{label}</span>
-        {meta && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">{meta}</span>}
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+        {meta && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{meta}</span>}
       </span>
       {detail && (
         <span
           className={cn(
-            "block truncate ps-[18px] text-[11px] text-muted-foreground/70",
+            "block truncate ps-[18px] text-xs text-muted-foreground",
             state === "running" && "harness-shimmer"
           )}
         >
@@ -403,7 +406,7 @@ function StepCard({
   )
   if (!group)
     return (
-      <div className="rounded-md border border-dashed border-border/70 px-2 py-1.5 text-muted-foreground/60">
+      <div className="rounded-xl border border-dashed px-2.5 py-2 text-muted-foreground">
         <span className="sr-only">pending: </span>
         {body}
       </div>
@@ -414,10 +417,10 @@ function StepCard({
       aria-pressed={selected}
       onClick={() => onPick(group.id)}
       className={cn(
-        "block w-full min-w-0 rounded-md border bg-card px-2 py-1.5 text-start shadow-xs transition-colors hover:bg-muted/60",
-        selected ? "border-primary ring-1 ring-primary/30" : "border-border/60",
-        state === "failed" && !selected && "border-destructive/40 bg-destructive/5",
-        state === "running" && !selected && "border-primary/40"
+        "block w-full min-w-0 rounded-xl border bg-card px-2.5 py-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        selected ? "border-primary" : "",
+        state === "failed" && !selected && "border-destructive/30 bg-destructive/10",
+        state === "running" && !selected && "border-primary/30"
       )}
     >
       {body}
@@ -430,7 +433,7 @@ export type StepState = ReturnType<typeof stepStateOf> | "pending"
 /* One colour per state, shared by the progress segments and the phase nodes so
    the strip and the board under it read as the same legend. */
 export const SEGMENT: Record<StepState, string> = {
-  completed: "bg-emerald-500/80",
+  completed: "bg-success",
   running: "bg-primary motion-safe:animate-pulse",
   failed: "bg-destructive",
   cancelled: "bg-muted-foreground/40",
@@ -449,9 +452,9 @@ function phaseState(states: StepState[]): StepState {
 
 const BADGE = {
   running: ["Running", "bg-primary/10 text-primary"],
-  paused: ["Paused", "bg-amber-500/12 text-amber-700 dark:text-amber-400"],
+  paused: ["Paused", "bg-warning/10 text-warning"],
   failed: ["Failed", "bg-destructive/10 text-destructive"],
-  completed: ["Done", "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"],
+  completed: ["Done", "bg-success/10 text-success"],
 } as const
 
 /* ── The run's layouts ── one outline (`phasesOf`), drawn five ways. Each is
@@ -521,14 +524,14 @@ function BoardView({ phases, staged, picked, pick }: ViewProps) {
           <section
             key={phase.name ?? p}
             aria-label={phaseLabel(phase, p)}
-            className="flex w-44 min-w-44 flex-1 shrink-0 snap-start flex-col gap-1 rounded-md bg-muted/40 p-1.5"
+            className="flex w-44 min-w-44 flex-1 shrink-0 snap-start flex-col gap-1 rounded-xl bg-muted p-1.5"
           >
             <header className="flex h-5 items-center gap-1.5 px-0.5">
               <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", SEGMENT[phaseState(own)])} />
-              <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/80">
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
                 {phaseLabel(phase, p)}
               </span>
-              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                 {own.filter((s) => s === "completed").length}/{own.length}
               </span>
               <PhaseHold phase={phase} />
@@ -548,11 +551,11 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
       step.group ? (
         <StepView key={step.group.id} group={step.group} showTimestamps={showTimestamps} />
       ) : (
-        <div key={`${p}:${i}`} className="flex h-6 items-center gap-2 text-xs text-muted-foreground/50">
+        <div key={`${p}:${i}`} className="flex h-6 items-center gap-2 text-sm text-muted-foreground">
           <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
           <span className="sr-only">pending: </span>
           <span className="min-w-0 flex-1 truncate">{step.name}</span>
-          <span className="shrink-0 text-[11px] text-muted-foreground/40">waiting</span>
+          <span className="shrink-0 text-xs text-muted-foreground">waiting</span>
         </div>
       )
     )
@@ -568,24 +571,24 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
             <span aria-hidden className="flex w-5 shrink-0 flex-col items-center">
               <span
                 className={cn(
-                  "mt-0.5 flex size-5 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
-                  state === "completed" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-                  state === "running" && "bg-primary/15 text-primary ring-2 ring-primary/30",
-                  state === "failed" && "bg-destructive/15 text-destructive",
+                  "mt-0.5 flex size-5 items-center justify-center rounded-full text-xs font-medium tabular-nums",
+                  state === "completed" && "bg-success/10 text-success",
+                  state === "running" && "bg-primary/10 text-primary",
+                  state === "failed" && "bg-destructive/10 text-destructive",
                   (state === "pending" || state === "cancelled" || state === "disconnected") &&
-                    "bg-muted text-muted-foreground/60"
+                    "bg-muted text-muted-foreground"
                 )}
               >
                 {state === "completed" ? <CheckIcon className="size-3" /> : p + 1}
               </span>
               {!last && (
-                <span className={cn("mt-0.5 w-px flex-1", state === "completed" ? "bg-emerald-500/40" : "bg-border")} />
+                <span className={cn("mt-0.5 w-px flex-1", state === "completed" ? "bg-success/30" : "bg-border")} />
               )}
             </span>
             <div className={cn("min-w-0 flex-1", !last && "pb-3")}>
               <div className="flex h-6 items-center gap-2">
-                <span className="truncate text-xs font-medium">{phaseLabel(phase, p)}</span>
-                <span className="ms-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
+                <span className="truncate text-sm font-medium">{phaseLabel(phase, p)}</span>
+                <span className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground">
                   {own.filter((s) => s === "completed").length}/{own.length}
                 </span>
                 <PhaseHold phase={phase} />
@@ -616,7 +619,7 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
       {phases.map((phase, p) => (
         <React.Fragment key={phase.name ?? p}>
           {staged && (
-            <div className="flex items-center gap-1 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground/50 uppercase first:pt-0">
+            <div className="flex items-center gap-1 pt-1.5 pb-0.5 text-xs font-medium text-muted-foreground first:pt-0">
               <span className="min-w-0 flex-1 truncate">{phaseLabel(phase, p)}</span>
               <PhaseHold phase={phase} />
             </div>
@@ -628,8 +631,8 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
             const group = step.group
             return (
               <div key={group?.id ?? `${p}:${i}`} className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] items-center gap-2">
-                <span className={cn("truncate text-xs", state === "pending" && "text-muted-foreground/50")}>{label}</span>
-                <div className="relative h-5 rounded-sm bg-muted/40">
+                <span className={cn("truncate text-sm", state === "pending" && "text-muted-foreground")}>{label}</span>
+                <div className="relative h-5 rounded-md bg-muted">
                   {span && group ? (
                     <button
                       type="button"
@@ -642,13 +645,13 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
                         width: `max(6px, ${((span[1] - span[0]) / width) * 100}%)`,
                       }}
                       className={cn(
-                        "absolute inset-y-1 rounded-sm transition-[width]",
+                        "absolute inset-y-1 rounded-md transition-[width]",
                         SEGMENT[state],
-                        picked === group.id && "ring-2 ring-primary/40 ring-offset-1 ring-offset-background"
+                        picked === group.id && "ring-[3px] ring-ring/50"
                       )}
                     />
                   ) : (
-                    <span className="absolute inset-y-0 start-1.5 flex items-center text-[10px] text-muted-foreground/40">
+                    <span className="absolute inset-y-0 start-1.5 flex items-center text-xs text-muted-foreground">
                       waiting
                     </span>
                   )}
@@ -659,7 +662,7 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
         </React.Fragment>
       ))}
       {known.length > 0 && (
-        <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-2 pt-0.5 text-[10px] tabular-nums text-muted-foreground/50">
+        <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-2 pt-0.5 text-xs tabular-nums text-muted-foreground">
           <span />
           <span className="flex justify-between">
             <span>0s</span>
@@ -702,20 +705,22 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
 
   return (
     <div className="min-w-0">
-      <nav aria-label="Run" className="mb-1.5 flex h-6 min-w-0 items-center gap-1 text-xs">
+      <nav aria-label="Run" className="mb-1.5 flex h-6 min-w-0 items-center gap-1 text-sm">
         {(level === 2 || (level === 1 && staged)) && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             onClick={back}
             title="Back"
-            className="-ms-0.5 flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="-ms-1 text-muted-foreground"
           >
             <ChevronLeftIcon className="size-3.5" />
-          </button>
+          </Button>
         )}
         {crumbs.map((node, i) => (
           <React.Fragment key={i}>
-            {i > 0 && <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/40" />}
+            {i > 0 && <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />}
             {node}
           </React.Fragment>
         ))}
@@ -733,19 +738,19 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                   type="button"
                   onClick={() => setPhaseAt(i)}
                   className={cn(
-                    "group/phase flex w-full min-w-0 flex-1 items-center gap-2.5 rounded-md border bg-card px-2.5 py-2 text-start shadow-xs transition-colors hover:bg-muted/60",
-                    state === "running" ? "border-primary/40" : state === "failed" ? "border-destructive/40" : "border-border/60"
+                    "group/phase flex w-full min-w-0 flex-1 items-center gap-2.5 rounded-xl border bg-card px-2.5 py-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                    state === "running" ? "border-primary/30" : state === "failed" ? "border-destructive/30" : ""
                   )}
                 >
                   <span
                     aria-hidden
                     className={cn(
-                      "flex size-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums",
-                      state === "completed" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+                      "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium tabular-nums",
+                      state === "completed" && "bg-success/10 text-success",
                       state === "running" && "bg-primary/15 text-primary",
-                      state === "failed" && "bg-destructive/15 text-destructive",
+                      state === "failed" && "bg-destructive/10 text-destructive",
                       (state === "pending" || state === "cancelled" || state === "disconnected") &&
-                        "bg-muted text-muted-foreground/60"
+                        "bg-muted text-muted-foreground"
                     )}
                   >
                     {state === "completed" ? <CheckIcon className="size-3.5" /> : i + 1}
@@ -754,7 +759,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                     <span className="block truncate text-sm font-medium">{phaseLabel(ph, i)}</span>
                     <span
                       className={cn(
-                        "block truncate text-[11px] text-muted-foreground",
+                        "block truncate text-xs text-muted-foreground",
                         running && "harness-shimmer"
                       )}
                     >
@@ -769,12 +774,12 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                       <span key={k} className={cn("h-1 flex-1 rounded-full", SEGMENT[st])} />
                     ))}
                   </span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                     {own.filter((s) => s === "completed").length}/{own.length}
                   </span>
                   <ChevronRightIcon
                     aria-hidden
-                    className="size-3.5 shrink-0 text-muted-foreground/40 transition-transform group-hover/phase:translate-x-0.5"
+                    className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover/phase:translate-x-0.5"
                   />
                 </button>
                 <PhaseHold phase={ph} />
@@ -832,7 +837,7 @@ function RunHead({
       <span
         aria-hidden
         className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-md",
+          "flex size-7 shrink-0 items-center justify-center rounded-lg",
           KIND_CHIPS.other,
           KIND_COLORS.other
         )}
@@ -845,14 +850,14 @@ function RunHead({
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium leading-7">{name}</span>
-          <span className={cn("shrink-0 rounded-full px-1.5 text-[10px] font-medium leading-4", badge[1])}>
+          <Badge variant="secondary" className={badge[1]}>
             {badge[0]}
-          </span>
+          </Badge>
         </span>
         {caption && (
           <span
             className={cn(
-              "-mt-1 block truncate text-xs leading-5 text-muted-foreground",
+              "-mt-1 block truncate text-sm leading-5 text-muted-foreground",
               active && !paused && "harness-shimmer"
             )}
           >
@@ -891,19 +896,18 @@ export function RunViewTabs<V extends string>({
   return (
     <div className={cn("flex flex-wrap gap-0.5", className)} role="group" aria-label={label}>
       {views.map((mode) => (
-        <button
+        <Button
           key={mode.id}
           type="button"
+          variant="ghost"
+          size="xs"
           aria-pressed={value === mode.id}
           onClick={() => onChange(mode.id)}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-sm px-1.5 text-xs leading-5 transition-colors",
-            value === mode.id ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-          )}
+          className={value === mode.id ? "bg-muted text-foreground" : "text-muted-foreground"}
         >
-          <mode.icon aria-hidden className="size-3" />
+          <mode.icon aria-hidden />
           {mode.label}
-        </button>
+        </Button>
       ))}
     </div>
   )
@@ -947,7 +951,7 @@ export function RunLayout({
     <>
       {/* The flowchart has no headings, so its runs' toggles stand above it. */}
       {view === "flowchart" && holds.length > 0 && (
-        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground", fill ? "px-2.5 py-1" : "pb-1.5")}>
+        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground", fill ? "px-2.5 py-1" : "pb-1.5")}>
           {holds.map((phase, i) => (
             <span key={i} className="inline-flex min-w-0 items-center gap-0.5">
               <span className="truncate">{phase.name}</span>
@@ -960,7 +964,7 @@ export function RunLayout({
         <div
           className={cn(
             "flex flex-col",
-            fill ? "min-h-0 flex-1" : "-mx-2.5 h-[min(70vh,600px)] min-h-64 border-y border-border/50"
+            fill ? "min-h-0 flex-1" : "-mx-2.5 h-[min(70vh,600px)] min-h-64 border-y "
           )}
         >
           <React.Suspense fallback={<div className="flex-1" />}>
@@ -993,7 +997,7 @@ export function RunLayout({
       {pickedStep && view !== "list" && view !== "browse" && (
         <div
           className={cn(
-            "mt-2 min-w-0 border-t border-border/50 pt-1.5",
+            "mt-2 min-w-0 border-t pt-1.5",
             fill && view === "flowchart" && "mt-0 max-h-[45%] shrink-0 overflow-y-auto px-2.5 pb-2"
           )}
         >
@@ -1176,7 +1180,7 @@ function RunRow({
 
   const steps =
     all.length === 0 ? (
-      <div className={cn("text-xs text-muted-foreground/60", active && "harness-shimmer")}>
+      <div className={cn("text-sm text-muted-foreground", active && "harness-shimmer")}>
         {active ? "Starting…" : "No steps ran"}
       </div>
     ) : (
@@ -1184,7 +1188,7 @@ function RunRow({
     )
 
   return (
-    <div className="my-1.5 overflow-hidden rounded-lg border border-border/60 bg-card/40">
+    <Card size="sm" className="my-1.5 gap-0 py-0">
       <div className="flex min-w-0 items-start gap-2.5 px-2.5 pt-2">
         <RunHead
           open={open}
@@ -1204,8 +1208,8 @@ function RunRow({
 
       <RunStrip phases={phases} className="px-2.5 pt-2 pb-2.5" />
 
-      {open && <div className="min-w-0 border-t border-border/50 bg-background/40 px-2.5 py-2">{steps}</div>}
-    </div>
+      {open && <div className="min-w-0 border-t px-2.5 py-2">{steps}</div>}
+    </Card>
   )
 }
 
@@ -1258,22 +1262,20 @@ function WorkflowHold({ sessionId, runId, paused }: { sessionId: string; runId: 
     }
   }
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon-xs"
       disabled={busy}
       onClick={() => void toggle()}
       title={paused ? "Resume the workflow" : "Pause the workflow after the steps in flight"}
-      className={cn(
-        // No margin of its own: it is the row's own trailing slot now, so the
-        // row's gap is the gap (see StepRow's `control`).
-        "inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm align-middle transition-colors",
-        paused ? "text-primary hover:text-primary" : "text-muted-foreground/60 hover:text-foreground",
-        busy && "opacity-50"
-      )}
+      // No margin of its own: it is the row's own trailing slot now, so the
+      // row's gap is the gap (see StepRow's `control`).
+      className={paused ? "text-primary hover:text-primary" : "text-muted-foreground"}
     >
-      {paused ? <PlayIcon className="size-3" /> : <PauseIcon className="size-3" />}
+      {paused ? <PlayIcon /> : <PauseIcon />}
       <span className="sr-only">{paused ? "Resume" : "Pause"}</span>
-    </button>
+    </Button>
   )
 }
 

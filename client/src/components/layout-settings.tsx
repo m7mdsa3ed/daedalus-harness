@@ -494,7 +494,7 @@ function ToolLayoutPreview({ layout, variant }: { layout: ToolLayout; variant: T
   const node = "size-1.5 shrink-0 rounded-full"
   const rows = [["w-3/4"], ["w-1/2"], ["w-2/3"]]
   return (
-    <span aria-hidden className="flex h-12 flex-col justify-center gap-1.5 overflow-hidden rounded-md bg-background/70 p-1.5">
+    <span aria-hidden className="flex h-12 flex-col justify-center gap-1.5 overflow-hidden rounded-md bg-background p-1.5">
       {layout === "rail" ? (
         <span className="flex flex-col gap-1 border-l-2 border-primary/40 pl-1.5">
           <span className={cn(line, "w-3/4")} /><span className={cn(line, "w-1/2")} />
@@ -503,26 +503,26 @@ function ToolLayoutPreview({ layout, variant }: { layout: ToolLayout; variant: T
         <svg viewBox="0 0 60 36" className="h-full w-full" fill="none" strokeWidth={1.5}>
           {variant === "fork" ? (
             <>
-              <path d="M5 0V36" className="stroke-sky-500/70" />
-              <path d="M5 4V6Q5 10 9 10H12M5 22V24Q5 28 9 28H12" className="stroke-sky-500/70" />
-              <circle cx="14" cy="10" r="2.5" className="fill-sky-500 stroke-none" />
-              <circle cx="14" cy="28" r="2.5" className="fill-sky-500 stroke-none" />
+              <path d="M5 0V36" className="stroke-primary/70" />
+              <path d="M5 4V6Q5 10 9 10H12M5 22V24Q5 28 9 28H12" className="stroke-primary/70" />
+              <circle cx="14" cy="10" r="2.5" className="fill-primary stroke-none" />
+              <circle cx="14" cy="28" r="2.5" className="fill-primary stroke-none" />
               <path d="M20 10H44M20 28H36" className="stroke-muted-foreground/35" />
             </>
           ) : (
             <>
-              <path d="M5 2V34" className="stroke-sky-500/70" />
-              <path d="M5 14C5 18 13 16 13 22V34" className="stroke-emerald-500/70" />
-              <path d="M13 26C13 30 5 28 5 34" className="stroke-emerald-500/70" />
-              <circle cx="5" cy="6" r="2.5" className="fill-sky-500 stroke-none" />
-              <circle cx="13" cy="22" r="2.5" className={variant === "hollow" ? "fill-background stroke-emerald-500" : "fill-emerald-500 stroke-none"} />
-              <circle cx="5" cy="32" r="2.5" className="fill-sky-500 stroke-none" />
+              <path d="M5 2V34" className="stroke-primary/70" />
+              <path d="M5 14C5 18 13 16 13 22V34" className="stroke-success/70" />
+              <path d="M13 26C13 30 5 28 5 34" className="stroke-success/70" />
+              <circle cx="5" cy="6" r="2.5" className="fill-primary stroke-none" />
+              <circle cx="13" cy="22" r="2.5" className={variant === "hollow" ? "fill-background stroke-success" : "fill-success stroke-none"} />
+              <circle cx="5" cy="32" r="2.5" className="fill-primary stroke-none" />
               <path d="M22 6H44M22 22H36M22 32H40" className="stroke-muted-foreground/35" />
             </>
           )}
         </svg>
       ) : (
-        <span className={cn("flex flex-col border-l border-border/70 pl-1.5", variant === "default" ? "gap-1" : variant === "compact" ? "gap-0.5" : "gap-1")}>
+        <span className={cn("flex flex-col border-l pl-1.5", variant === "default" ? "gap-1" : variant === "compact" ? "gap-0.5" : "gap-1")}>
           {rows.slice(0, variant === "default" ? 2 : 3).map(([w], i) => (
             <span key={i} className="flex items-center gap-1">
               {variant !== "minimal" && <span className={cn(node, "bg-primary/60")} />}
@@ -590,9 +590,9 @@ function OptionRow({
     <div
       role="presentation"
       onClick={disabled ? undefined : () => setLayoutOption(key, !value)}
-      className={cn(BLEED, "transition-colors", disabled ? "opacity-50" : "cursor-pointer hover:bg-muted/40")}
+      className={cn(BLEED, "transition-colors", disabled ? "opacity-50" : "cursor-pointer hover:bg-muted")}
     >
-      <div className={cn(parent && "ml-4 border-l border-border/70 pl-3")}>
+      <div className={cn(parent && "ml-4 border-l pl-3")}>
         <Row {...rowHead(icon, title, value && !disabled, changed)} subtitle={description}>
           {/* Stopped, or the row's own handler would toggle it straight back. */}
           <span onClick={(event) => event.stopPropagation()}>

@@ -139,9 +139,9 @@ function Entrance({ animate, children }: { animate: boolean; children: React.Rea
     child — the server routes it by the request's id. */
 function AskedBy({ from }: { from: RequestFrom }) {
   return (
-    <p className="mb-1.5 flex min-w-0 items-center gap-1.5 px-1 text-xs text-muted-foreground">
+    <p className="mb-1.5 flex min-w-0 items-center gap-1.5 px-1 text-sm text-muted-foreground">
       <span className="truncate">
-        Asked by <span className="font-medium text-foreground/80">{from.title}</span>
+        Asked by <span className="font-medium text-foreground">{from.title}</span>
       </span>
       <Link
         to={threadPath(from.sessionId)}
@@ -741,7 +741,7 @@ export function ThreadView({
               tabIndex={-1}
               /* A dim, not a blur: a backdrop filter over the whole scroller
                  re-blurs it every frame the transcript streams or scrolls. */
-              className="absolute inset-0 z-30 bg-background/60"
+              className="absolute inset-0 z-30 bg-background"
               onClick={() => setSheetOpen(false)}
             />
           )}
@@ -827,7 +827,7 @@ export function ThreadView({
                 <MessageScrollerItem messageId="earlier">
                   <div
                     ref={earlierRef}
-                    className="mb-2 flex items-center justify-center gap-2 text-xs text-muted-foreground"
+                    className="mb-2 flex items-center justify-center gap-2 text-sm text-muted-foreground"
                   >
                     <Button
                       size="sm"
@@ -868,7 +868,7 @@ export function ThreadView({
                   {/* No `first:hidden`: the divider is always its item's first
                       child, so that hid every one. `firstUserIndex` already
                       skips the first turn. */}
-                  {divider && <div aria-hidden className="my-1.5 h-px bg-border/50" />}
+                  {divider && <div aria-hidden className="my-1.5 h-px bg-border" />}
                   {/* The entrance wrapper (index.css): one per row, so the
                       divider and the Sources strip sit beside it — each mounts
                       at its own moment and rises in on its own.

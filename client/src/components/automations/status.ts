@@ -51,17 +51,17 @@ export const RUN_STATUS: Record<RoutineRunStatus, StatusTone> = {
     meaning:
       "The agent asked for something, nobody answered in time, and the fallback answered for it. The run needs a person.",
     badge: "warn",
-    text: "text-amber-600 dark:text-amber-400",
-    chip: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-    dot: "bg-amber-500",
+    text: "text-warning",
+    chip: "bg-warning/10 text-warning",
+    dot: "bg-warning",
   },
   skipped: {
     label: "Skipped",
     meaning:
       "It never started: a fire condition said nothing had changed, the plan was too low, or a previous run was still going. Not an error.",
     badge: "neutral",
-    text: "text-muted-foreground/70",
-    chip: "bg-muted text-muted-foreground/70",
+    text: "text-muted-foreground",
+    chip: "bg-muted text-muted-foreground",
     dot: "bg-muted-foreground/25",
   },
   failed: {

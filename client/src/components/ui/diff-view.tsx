@@ -118,11 +118,11 @@ export function DiffView({
   const removed = rows.filter((row) => row.type === "del").length
 
   return (
-    <div className={cn("overflow-hidden rounded-md border border-border/50", className)}>
+    <div className={cn("overflow-hidden rounded-md border", className)}>
       {(path || added || removed) && (
-        <div className="flex items-center gap-2 border-b border-border/50 bg-muted/40 px-2 py-1 font-mono text-[11px]">
+        <div className="flex items-center gap-2 border-b bg-muted/50 px-2 py-1 font-mono text-xs">
           {path && <span className="min-w-0 flex-1 truncate text-muted-foreground">{path}</span>}
-          <span className="ml-auto shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">
+          <span className="ml-auto shrink-0 tabular-nums text-success">
             +{added}
           </span>
           <span className="shrink-0 tabular-nums text-red-600 dark:text-red-400">−{removed}</span>
@@ -138,7 +138,7 @@ export function DiffView({
               row.type === "skip" ? (
                 <div
                   key={index}
-                  className="col-span-2 my-0.5 border-y border-border/40 bg-muted/30 px-2.5 py-0.5 text-[10px] text-muted-foreground/60 select-none"
+                  className="col-span-2 my-0.5 border-y bg-muted/50 px-2.5 py-0.5 text-xs text-muted-foreground select-none"
                 >
                   ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
                 </div>
@@ -155,7 +155,7 @@ export function DiffView({
               row.type === "skip" ? (
                 <div
                   key={index}
-                  className="my-0.5 border-y border-border/40 bg-muted/30 px-2.5 py-0.5 text-[10px] text-muted-foreground/60 select-none"
+                  className="my-0.5 border-y bg-muted/50 px-2.5 py-0.5 text-xs text-muted-foreground select-none"
                 >
                   ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
                 </div>
@@ -164,7 +164,7 @@ export function DiffView({
                   key={index}
                   className={cn(
                     "flex whitespace-pre",
-                    row.type === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                    row.type === "add" && "bg-success/10 text-success",
                     row.type === "del" && "bg-red-500/10 text-red-700 dark:text-red-300"
                   )}
                 >
@@ -210,7 +210,7 @@ function DiffSplitRow({ row }: { row: Row }) {
       <div
         className={cn(
           "whitespace-pre ps-3",
-          right?.type === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+          right?.type === "add" && "bg-success/10 text-success",
           right?.type === "eq" && "text-muted-foreground"
         )}
       >

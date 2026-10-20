@@ -1,5 +1,7 @@
 import { CheckIcon, CircleDotIcon, CircleIcon } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
+import { Item } from "@/components/ui/item"
 import { cn } from "@/lib/utils"
 
 export interface ChecklistItem {
@@ -13,12 +15,12 @@ export function TodoChecklist({ items, className }: { items: ChecklistItem[]; cl
   return (
     <ul className={cn("flex min-w-0 flex-col gap-1", className)}>
       {items.map((item, index) => (
-        <li
+        <Item
           key={`${item.content}-${index}`}
-          className={cn(
-            "flex min-w-0 items-start gap-2 rounded-md border border-border/60 px-2 py-1.5 text-start transition-colors",
-            item.status === "in_progress" && "border-primary/30 bg-primary/[0.04]"
-          )}
+          render={<li />}
+          variant={item.status === "in_progress" ? "muted" : "outline"}
+          size="xs"
+          className="min-w-0 flex-nowrap items-start gap-2 py-1.5 text-start"
         >
           <span aria-hidden className="grid h-5 w-4 shrink-0 place-items-center">
             {item.status === "completed" ? (
@@ -26,15 +28,15 @@ export function TodoChecklist({ items, className }: { items: ChecklistItem[]; cl
             ) : item.status === "in_progress" ? (
               <CircleDotIcon className="size-3.5 text-primary" />
             ) : (
-              <CircleIcon className="size-3 text-muted-foreground/60" />
+              <CircleIcon className="size-3 text-muted-foreground" />
             )}
           </span>
           <div className="min-w-0 flex-1">
             <span
               className={cn(
-                "block break-words text-xs leading-5",
+                "block break-words text-sm leading-5",
                 item.status === "completed"
-                  ? "text-muted-foreground line-through decoration-muted-foreground/40"
+                  ? "text-muted-foreground line-through"
                   : item.status === "in_progress"
                     ? "font-medium text-foreground"
                     : "text-muted-foreground"
@@ -42,14 +44,12 @@ export function TodoChecklist({ items, className }: { items: ChecklistItem[]; cl
             >
               {item.content}
             </span>
-            {item.note && <p className="break-words text-[11px] leading-snug text-muted-foreground">{item.note}</p>}
+            {item.note && <p className="break-words text-xs leading-snug text-muted-foreground">{item.note}</p>}
           </div>
           {item.priority === "high" && item.status !== "completed" && (
-            <span className="shrink-0 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide uppercase text-destructive">
-              high
-            </span>
+            <Badge variant="destructive">high</Badge>
           )}
-        </li>
+        </Item>
       ))}
     </ul>
   )

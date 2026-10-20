@@ -10,7 +10,9 @@ import {
 } from "@/lib/queries"
 import { useMcpServers } from "@/lib/queries/catalog"
 import { AudioLines, Radio, Settings2, Trash2 } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Combobox,
@@ -128,13 +130,13 @@ function SuggestInput({
         if (next !== null) onChange(next)
       }}
     >
-      <ComboboxInput placeholder={placeholder} aria-label={ariaLabel} className="w-full font-mono text-xs" required={required} />
+      <ComboboxInput placeholder={placeholder} aria-label={ariaLabel} className="w-full font-mono text-sm" required={required} />
       <ComboboxContent>
         <ComboboxList>
           {options.map(([v, note]) => (
             <ComboboxItem key={v} value={v}>
-              <span className="font-mono text-xs">{v}</span>
-              <span className="ms-auto ps-3 text-[11px] text-muted-foreground">{note}</span>
+              <span className="font-mono text-sm">{v}</span>
+              <span className="ms-auto ps-3 text-xs text-muted-foreground">{note}</span>
             </ComboboxItem>
           ))}
         </ComboboxList>
@@ -171,7 +173,7 @@ export function VoiceBackendField({
   return (
     <Field label="Voice backend" hint={hint ?? "Which realtime model a voice call on these threads uses."}>
       <Select value={value || "default"} onValueChange={(v) => onChange(!v || v === "default" ? "" : v)}>
-        <SelectTrigger className="h-9 w-full @panel-sm:w-56">
+        <SelectTrigger className="w-full @panel-sm:w-56">
           <SelectValue>{value ? labelOf(value) : "Default"}</SelectValue>
         </SelectTrigger>
         <SelectContent>
@@ -234,7 +236,7 @@ export function VoicePage() {
         header: "Model",
         secondary: true,
         cell: ({ preset, row }) => (
-          <span className="block max-w-56 truncate font-mono text-xs text-muted-foreground">{row?.model ?? preset.model}</span>
+          <span className="block max-w-56 truncate font-mono text-sm text-muted-foreground">{row?.model ?? preset.model}</span>
         ),
       },
       {
@@ -242,7 +244,7 @@ export function VoicePage() {
         header: "Voice",
         secondary: true,
         cell: ({ preset, row }) => (
-          <span className="block max-w-32 truncate font-mono text-xs text-muted-foreground">{row?.voice || preset.voice}</span>
+          <span className="block max-w-32 truncate font-mono text-sm text-muted-foreground">{row?.voice || preset.voice}</span>
         ),
       },
       {
@@ -440,37 +442,28 @@ function VoiceForm({ preset: p, row }: { preset: (typeof PROVIDERS)[number]; row
               {mcpServers.map((s) => {
                 const active = draft.mcpServerIds.includes(s.id)
                 return (
-                  <button
+                  <Label
                     key={s.id}
-                    type="button"
-                    onClick={() => toggleMcp(s.id)}
-                    disabled={save.isPending}
-                    className={cn(
-                      "flex items-center gap-2 w-full text-left px-2 py-1.5 text-xs rounded border transition-colors",
-                      active
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-muted-foreground",
-                    )}
+                    className="w-full rounded-md px-2 py-1.5 font-normal hover:bg-muted has-disabled:opacity-50"
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={active}
-                      readOnly
-                      className="w-3 h-3 shrink-0"
+                      onCheckedChange={() => toggleMcp(s.id)}
+                      disabled={save.isPending}
                       aria-label={`Use ${s.name} for ${p.label} voice mode`}
                     />
                     <span className="font-mono">{s.name}</span>
                     {s.type === "builtin" && s.builtin === "web-search" && (
-                      <span className="ms-auto text-[10px] text-muted-foreground">web search + fetch</span>
+                      <span className="ms-auto text-xs text-muted-foreground">web search + fetch</span>
                     )}
                     {s.type === "builtin" && s.builtin === "knowledge" && (
-                      <span className="ms-auto text-[10px] text-muted-foreground">knowledge base</span>
+                      <span className="ms-auto text-xs text-muted-foreground">knowledge base</span>
                     )}
-                  </button>
+                  </Label>
                 )
               })}
               {mcpServers.length === 0 && (
-                <p className="text-xs text-muted-foreground">No MCP servers in the library yet — add one in Settings › MCP.</p>
+                <p className="text-sm text-muted-foreground">No MCP servers in the library yet — add one in Settings › MCP.</p>
               )}
             </div>
           </Row>

@@ -184,7 +184,7 @@ export function PhaseLine({
       <span
         key={text}
         aria-hidden
-        className="harness-phase-swap min-w-0 truncate text-xs leading-6"
+        className="harness-phase-swap min-w-0 truncate text-sm leading-6"
         title={still ? text : undefined}
       >
         {still ? text : <ShimmerWave text={text} />}

@@ -34,6 +34,7 @@ import {
   type UseFluidHoverReturn,
 } from "@/hooks/use-fluid-hover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Kbd } from "@/components/ui/kbd";
 import {
   FluidHoverHighlight,
   type FluidHoverSource,
@@ -859,7 +860,7 @@ const CommandMenuInput = forwardRef<HTMLInputElement, CommandMenuInputProps>(
             "min-w-0 flex-1 rounded-none bg-transparent text-foreground placeholder:text-muted-foreground outline-none font-[inherit]",
             // One notch above the rows' body size: the field is the palette's
             // title line. The line box keeps the caret in proportion.
-            compact ? "text-[13px] leading-5" : "text-[14px] leading-6",
+            "text-sm",
             className
           )}
           {...props}
@@ -1047,7 +1048,7 @@ const CommandMenuList = forwardRef<HTMLDivElement, CommandMenuListProps>(
       // it; the bottom hairline stands while rows continue below and goes at
       // the end, which is why the footer draws no line of its own.
       <ScrollArea
-        className="scroll-divider flex min-h-0 flex-1 flex-col border-t border-border/60 [&::before]:!-top-px [&>[data-slot=scroll-area-viewport]]:min-h-0 [&>[data-slot=scroll-area-viewport]]:flex-1 [&>[data-slot=scroll-area-viewport]>div[style]]:!block [&>[data-slot=scroll-area-viewport]>div[style]]:!min-w-0 [&>[data-slot=scroll-area-viewport]]:[--scroll-fade-size:32px] [&>[data-slot=scroll-area-viewport]]:scroll-fade"
+        className="scroll-divider flex min-h-0 flex-1 flex-col border-t [&::before]:!-top-px [&>[data-slot=scroll-area-viewport]]:min-h-0 [&>[data-slot=scroll-area-viewport]]:flex-1 [&>[data-slot=scroll-area-viewport]>div[style]]:!block [&>[data-slot=scroll-area-viewport]>div[style]]:!min-w-0 [&>[data-slot=scroll-area-viewport]]:[--scroll-fade-size:32px] [&>[data-slot=scroll-area-viewport]]:scroll-fade"
       >
         <div
           ref={(node) => {
@@ -1175,15 +1176,9 @@ const CommandMenuShortcut = forwardRef<HTMLElement, CommandMenuShortcutProps>(
         {...props}
       >
         {caps.map((cap, i) => (
-          <span
-            key={`${cap}-${i}`}
-            className={cn(
-              "flex items-center justify-center rounded-[5px] bg-hover text-muted-foreground",
-              compact ? "h-4 min-w-4 px-1 text-[10px]" : "h-5 min-w-5 px-1 text-[11px]"
-            )}
-          >
+          <Kbd key={`${cap}-${i}`} className={compact ? "h-4 min-w-4" : undefined}>
             {cap}
-          </span>
+          </Kbd>
         ))}
       </kbd>
     );
@@ -1364,7 +1359,7 @@ const CommandMenuFooter = forwardRef<HTMLDivElement, CommandMenuFooterProps>(
         data-slot="command-menu-footer"
         className={cn(
           "flex shrink-0 items-center overflow-hidden text-muted-foreground",
-          compact ? "h-8 gap-3 px-3 text-[11px]" : "h-10 gap-4 px-4 text-[12px]",
+          compact ? "h-8 gap-3 px-3 text-xs" : "h-10 gap-4 px-4 text-xs",
           className
         )}
         {...props}

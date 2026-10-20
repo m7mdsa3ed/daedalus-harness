@@ -188,7 +188,7 @@ export function CommitBox({
 
   return (
     <form
-      className="space-y-1.5 border-t border-border/60 p-2"
+      className="flex flex-col gap-1.5 border-t p-2"
       onSubmit={(event) => {
         event.preventDefault()
         void submit()
@@ -200,7 +200,7 @@ export function CommitBox({
           onChange={(event) => setMessage(join(event.target.value.replace(/\n/g, " "), description))}
           placeholder={amend ? "Amended summary" : named ? `Commit to ${repoName}` : "Commit summary"}
           aria-label="Commit summary"
-          className="h-7 min-w-0 flex-1 text-xs"
+          className="h-8 min-w-0 flex-1"
           onKeyDown={(event) => {
             sendOnShortcut(event)
             if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
@@ -209,7 +209,7 @@ export function CommitBox({
             }
           }}
         />
-        <span className={cn("w-6 shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground", summary.length > 72 && "text-amber-600 dark:text-amber-400")} title="Summary length - 72 or fewer reads well in a log">
+        <span className={cn("w-6 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground", summary.length > 72 && "text-warning")} title="Summary length - 72 or fewer reads well in a log">
           {summary.length}
         </span>
         {canAmend && (
@@ -251,7 +251,7 @@ export function CommitBox({
         placeholder="Description"
         aria-label="Commit description"
         rows={3}
-        className="min-h-0 resize-y text-xs"
+        className="min-h-0 resize-y"
         onKeyDown={sendOnShortcut}
       />
       {/* The button says what it will commit, because "commit" with nothing

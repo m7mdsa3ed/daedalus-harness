@@ -24,6 +24,7 @@ import { KIND_META, NotificationRow } from "@/components/notifications/items"
 import { NeedsYou } from "@/components/notifications/needs-you"
 import { SurfaceHeader } from "@/components/page-primitives"
 import { EmptyCard, Group, TabBar } from "@/components/settings/primitives"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
 import type { AppNotification } from "@/lib/notifications-inbox"
@@ -190,9 +191,9 @@ export function NotificationsInboxPage() {
               <Group
                 key={g.label}
                 label={g.label}
-                action={<span className="text-xs tabular-nums text-muted-foreground">{g.items.length}</span>}
+                action={<Badge variant="secondary" className="tabular-nums">{g.items.length}</Badge>}
               >
-                <ul className="-mx-3 divide-y divide-border/60 @panel-sm:-mx-4">
+                <ul className="-mx-3 divide-y @panel-sm:-mx-4">
                   {g.items.map((n) => (
                     <li key={n.id}>
                       <NotificationRow notification={n} detailed />

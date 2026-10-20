@@ -52,7 +52,7 @@ function EntryDetail({ entry, withMeta = true }: { entry: KnowledgeEntryAcross; 
   return (
     <div className="min-w-0 space-y-3" onClick={(e) => e.stopPropagation()}>
       <p className="text-sm/relaxed break-words whitespace-pre-wrap select-text">{entry.content}</p>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted-foreground">
         {withMeta && (
           <>
             <span>{entry.projectName}</span>
@@ -231,8 +231,8 @@ export function KnowledgePage() {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{entry.title}</div>
-                {!open && <div className="mt-0.5 line-clamp-2 text-xs break-words text-muted-foreground">{entry.content}</div>}
-                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                {!open && <div className="mt-0.5 line-clamp-2 text-sm break-words text-muted-foreground">{entry.content}</div>}
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   <span className="max-w-32 truncate">{entry.projectName}</span>
                   <span>{dayFormat.format(entry.updatedAt)}</span>
                   <span>{sizeOf(entry)}</span>
@@ -245,7 +245,7 @@ export function KnowledgePage() {
               />
             </div>
             {open && (
-              <div className="mt-3 border-t border-border/60 pt-3">
+              <div className="mt-3 border-t pt-3">
                 <EntryDetail entry={entry} withMeta={false} />
               </div>
             )}

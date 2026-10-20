@@ -530,7 +530,7 @@ function ThreadTab({ api, containerApi }: IDockviewPanelHeaderProps) {
       <div
         data-active={active || undefined}
         className={cn(
-          "dock-tab relative mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-xs",
+          "dock-tab relative mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-sm",
           active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
         )}
         onKeyDown={(event) => {
@@ -550,7 +550,7 @@ function ThreadTab({ api, containerApi }: IDockviewPanelHeaderProps) {
             data-tab-action="maximize"
             aria-label={filled ? "Restore the columns" : "Fill the thread"}
             title={filled ? "Restore the columns" : "Fill the thread"}
-            className="grid size-4 shrink-0 place-items-center rounded-sm opacity-60 hover:bg-foreground/10 hover:opacity-100"
+            className="grid size-4 shrink-0 place-items-center rounded-md opacity-60 hover:bg-muted hover:opacity-100"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
@@ -569,7 +569,7 @@ function ThreadTab({ api, containerApi }: IDockviewPanelHeaderProps) {
             data-tab-action="close"
             aria-label={`Close ${title}`}
             title={`Close ${title}`}
-            className="grid size-4 shrink-0 place-items-center rounded-sm opacity-60 hover:bg-foreground/10 hover:opacity-100"
+            className="grid size-4 shrink-0 place-items-center rounded-md opacity-60 hover:bg-muted hover:opacity-100"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
@@ -605,13 +605,13 @@ function ThreadPanelsMenu() {
         <DropdownMenuTrigger
           render={
             <Button
-              size="icon-xs"
+              size="icon-sm"
               variant="ghost"
               aria-label="Open a panel in this thread"
               title="Open a panel in this thread"
-              className="size-7 rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+              className="text-muted-foreground"
             >
-              <PlusIcon className="size-4" />
+              <PlusIcon />
             </Button>
           }
         />

@@ -223,7 +223,7 @@ function Lightbox({
                 </>
               )}
             </div>
-            <div className="flex min-w-0 items-center gap-2 px-1 text-xs text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-2 px-1 text-sm text-muted-foreground">
               <span className="min-w-0 flex-1 truncate" title={image.name}>
                 <span className="font-medium text-foreground">{image.name}</span> ·{" "}
                 {formatBytes(image.size)}
@@ -286,13 +286,15 @@ function FileList({ files }: { files: Ref[] }) {
         <FileRow key={file.id} file={file} />
       ))}
       {folded && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={() => setExpanded(true)}
-          className="self-end rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+          className="self-end text-muted-foreground"
         >
           Show {files.length - shown.length} more files
-        </button>
+        </Button>
       )}
     </div>
   )

@@ -43,6 +43,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -639,7 +640,7 @@ export function TerminalPanel({
       className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))] pb-[var(--keyboard-inset,0px)] transition-[padding] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none"
     >
       <PanelToolbar>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {/* Where this shell actually is. Not decoration — it is frequently not
               this machine, and every command here is typed on that assumption. */}
           {project?.name ?? "project"} · running on {where}
@@ -647,7 +648,7 @@ export function TerminalPanel({
         {status !== "ready" && (
           <span
             className={cn(
-              "flex shrink-0 items-center gap-1.5 text-[11px]",
+              "flex shrink-0 items-center gap-1.5 text-xs",
               status === "failed"
                 ? "text-destructive"
                 : status === "connecting"
@@ -687,7 +688,6 @@ export function TerminalPanel({
             variant="ghost"
             aria-label={status === "exited" ? "Start a new shell" : "Reconnect"}
             title={status === "exited" ? "Start a new shell" : "Reconnect"}
-            className="size-6"
             onClick={() =>
               status === "exited" ? void restart() : setGeneration((current) => current + 1)
             }
@@ -707,7 +707,6 @@ export function TerminalPanel({
                 variant="ghost"
                 aria-label="Terminal actions"
                 title="Terminal actions"
-                className="size-6"
               >
                 <MoreHorizontal className="size-3.5" />
               </Button>
@@ -737,7 +736,6 @@ export function TerminalPanel({
                 variant="ghost"
                 aria-label="Smaller type"
                 title="Smaller type"
-                className="size-6"
                 disabled={prefs.fontSize <= MIN_FONT_SIZE}
                 onClick={(event) => {
                   event.preventDefault()
@@ -746,13 +744,12 @@ export function TerminalPanel({
               >
                 <MinusIcon className="size-3.5" />
               </Button>
-              <span className="w-6 text-center text-xs tabular-nums">{prefs.fontSize}</span>
+              <span className="w-6 text-center text-sm tabular-nums">{prefs.fontSize}</span>
               <Button
                 size="icon-xs"
                 variant="ghost"
                 aria-label="Larger type"
                 title="Larger type"
-                className="size-6"
                 disabled={prefs.fontSize >= MAX_FONT_SIZE}
                 onClick={(event) => {
                   event.preventDefault()
@@ -902,8 +899,8 @@ function TerminalFindBar({
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1">
-      <input
+    <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+      <Input
         autoFocus
         value={term}
         onChange={(event) => {
@@ -931,11 +928,11 @@ function TerminalFindBar({
         }}
         placeholder="Find in the scrollback"
         className={cn(
-          "h-7 min-w-0 flex-1 rounded-md border border-input bg-input/30 px-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring",
+          "h-8 min-w-0 flex-1",
           found === false && "border-destructive"
         )}
       />
-      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
         {count && count.total > 0
           ? `${count.index + 1}/${count.total}`
           : found === false
@@ -947,7 +944,6 @@ function TerminalFindBar({
         variant="ghost"
         aria-label="Previous match"
         title="Previous match (⇧↵)"
-        className="size-6"
         onClick={() => run("previous")}
       >
         <ChevronUpIcon className="size-3.5" />
@@ -957,7 +953,6 @@ function TerminalFindBar({
         variant="ghost"
         aria-label="Next match"
         title="Next match (↵)"
-        className="size-6"
         onClick={() => run("next")}
       >
         <ChevronDownIcon className="size-3.5" />
@@ -967,7 +962,6 @@ function TerminalFindBar({
         variant="ghost"
         aria-label="Close find"
         title="Close find (Esc)"
-        className="size-6"
         onClick={onClose}
       >
         <XIcon className="size-3.5" />

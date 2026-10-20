@@ -6,6 +6,7 @@
 import * as React from "react"
 import { GlobeIcon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarGroup, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import {
   DetailSection,
@@ -47,13 +48,13 @@ export function FetchDetail({ item }: { item: ToolItem }) {
           href={/^https?:\/\//.test(url) ? url : undefined}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-1.5 font-mono text-[11px] text-primary hover:underline"
+          className="flex items-center gap-1.5 font-mono text-xs text-primary hover:underline"
         >
           <GlobeIcon className="size-3 shrink-0" />
           <span className="truncate">{url}</span>
         </a>
       )}
-      {query && !url && <div className="text-[11px] text-muted-foreground">“{query}”</div>}
+      {query && !url && <div className="text-xs text-muted-foreground">“{query}”</div>}
       <SmartBlock text={text} />
     </div>
   )
@@ -85,8 +86,8 @@ export function WebSearchDetail({ item, active }: { item: ToolItem; active: bool
 
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
-        <GlobeIcon className="size-3 shrink-0 self-center text-muted-foreground/60" />
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+        <GlobeIcon className="size-3 shrink-0 self-center text-muted-foreground" />
         {call.query && <span className="text-foreground">“{call.query}”</span>}
         {call.pattern && <code className="font-mono text-foreground">{call.pattern}</code>}
         {call.url && (
@@ -100,10 +101,10 @@ export function WebSearchDetail({ item, active }: { item: ToolItem; active: bool
           </a>
         )}
         {call.action && call.action !== "search" && (
-          <span className="text-muted-foreground/70">{call.action.replace(/([A-Z])/g, " $1").toLowerCase()}</span>
+          <span className="text-muted-foreground">{call.action.replace(/([A-Z])/g, " $1").toLowerCase()}</span>
         )}
         {call.results.length > 0 && (
-          <span className="ml-auto text-muted-foreground/60">
+          <span className="ml-auto text-muted-foreground">
             {call.results.length} {call.results.length === 1 ? "result" : "results"}
           </span>
         )}
@@ -111,18 +112,10 @@ export function WebSearchDetail({ item, active }: { item: ToolItem; active: bool
       {domains.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {domains.map(({ domain, allowed }) => (
-            <span
-              key={domain}
-              className={cn(
-                "rounded-sm border px-1 py-px font-mono text-[10px]",
-                allowed
-                  ? "border-border/60 text-muted-foreground"
-                  : "border-destructive/40 text-destructive/80"
-              )}
-            >
+            <Badge key={domain} variant={allowed ? "outline" : "destructive"} className="font-mono">
               {allowed ? "" : "−"}
               {domain}
-            </span>
+            </Badge>
           ))}
         </div>
       )}
@@ -204,7 +197,7 @@ export function ToolSources({ item }: { item: ToolItem }) {
           </button>
         )}
       </AvatarGroup>
-      <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60">
+      <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
         {fetched
           ? hosts[0][0]
           : `${pages.length} ${pages.length === 1 ? "result" : "results"} · ${hosts.length} ${hosts.length === 1 ? "site" : "sites"}`}
@@ -239,7 +232,7 @@ function SiteAvatar({ host, url, title }: { host: string; url: string; title?: s
         referrerPolicy="no-referrer"
         className="p-[3px]"
       />
-      <AvatarFallback className="text-[9px] font-medium uppercase">{host.charAt(0)}</AvatarFallback>
+      <AvatarFallback className="text-[10px] font-medium uppercase">{host.charAt(0)}</AvatarFallback>
     </Avatar>
   )
 }
@@ -249,7 +242,7 @@ const SNIPPET_LINES = 3
 
 function WebResultList({ results }: { results: WebResult[] }) {
   return (
-    <ol className={cn(PANE, PANE_MAX_H, "divide-y divide-border/40 overflow-auto")}>
+    <ol className={cn(PANE, PANE_MAX_H, "divide-y overflow-auto")}>
       {results.map((hit, index) => (
         <WebResultRow key={`${hit.url}-${index}`} hit={hit} />
       ))}
@@ -263,7 +256,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
   const host = hostOf(hit.url)
   return (
     <li className="px-2.5 py-2">
-      <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground/70">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
         <Favicon url={hit.url} className="size-3.5" />
         <span className="truncate">{host || hit.url}</span>
       </div>
@@ -273,7 +266,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
         rel="noreferrer noopener"
         onClick={(event) => openSource(event, hit.url)}
         title={hit.url}
-        className="mt-0.5 block truncate text-[12px] font-medium leading-5 text-foreground hover:text-primary hover:underline"
+        className="mt-0.5 block truncate text-sm font-medium text-foreground hover:underline"
       >
         {hit.title}
       </a>
@@ -285,7 +278,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
           type="button"
           onClick={() => setOpen((value) => !value)}
           className={cn(
-            "mt-0.5 block w-full text-left text-[11.5px] leading-[1.45] text-muted-foreground",
+            "mt-0.5 block w-full text-left text-xs text-muted-foreground",
             !open && "line-clamp-3"
           )}
           style={open ? undefined : { WebkitLineClamp: SNIPPET_LINES }}
@@ -313,9 +306,9 @@ export function WebFetchDetail({ item, active }: { item: ToolItem; active: boole
   const failed = item.status === "failed" || /^error:/i.test(call.text.trim())
   return (
     <div className="space-y-1.5">
-      <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
+      <div className="flex min-w-0 items-center gap-1.5 text-sm">
         <Favicon url={call.url} />
-        <span className="shrink-0 text-muted-foreground/70">{hostOf(call.url)}</span>
+        <span className="shrink-0 text-muted-foreground">{hostOf(call.url)}</span>
         <a
           href={call.url}
           target="_blank"
@@ -327,7 +320,7 @@ export function WebFetchDetail({ item, active }: { item: ToolItem; active: boole
           {call.url}
         </a>
         {call.text && !failed && (
-          <span className="ml-auto shrink-0 text-muted-foreground/60">
+          <span className="ml-auto shrink-0 text-muted-foreground">
             {call.text.length >= 1000 ? `${Math.round(call.text.length / 1000)}k` : call.text.length} chars
             {call.truncated ? "+" : ""}
           </span>
@@ -335,7 +328,7 @@ export function WebFetchDetail({ item, active }: { item: ToolItem; active: boole
       </div>
       {call.prompt && (
         <DetailSection label="Asked">
-          <p className="text-xs text-foreground/80">{call.prompt}</p>
+          <p className="text-sm text-foreground">{call.prompt}</p>
         </DetailSection>
       )}
       {failed ? (

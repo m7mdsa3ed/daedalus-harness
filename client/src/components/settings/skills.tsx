@@ -94,7 +94,7 @@ function SkillForm({
                 value={form.path}
                 onChange={(e) => set({ path: e.target.value })}
                 placeholder="/home/me/.claude/skills/my-skill"
-                className="font-mono text-xs"
+                className="font-mono text-sm"
                 required
               />
             </Field>

@@ -4,6 +4,7 @@
    a write. See `./index.tsx` for the rule these all obey — nothing here
    matches on a vendor tool name. */
 import * as React from "react"
+import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
@@ -80,7 +81,7 @@ export function ReadDetail({ item }: { item: ToolItem }) {
         {!preNumbered && (
           <pre
             aria-hidden
-            className="shrink-0 py-1 pe-3 ps-2 text-end font-mono text-[11.5px] leading-5 tabular-nums whitespace-pre text-muted-foreground/50 select-none"
+            className="shrink-0 py-1 pe-3 ps-2 text-end font-mono text-xs leading-5 tabular-nums whitespace-pre text-muted-foreground select-none"
           >
             {lines.map((_, index) => first + index).join("\n")}
           </pre>
@@ -89,7 +90,7 @@ export function ReadDetail({ item }: { item: ToolItem }) {
           <Highlighted
             code={body}
             language={language}
-            className="[&_pre]:whitespace-pre [&_pre]:leading-5 [&_pre]:text-[11.5px]"
+            className="[&_pre]:whitespace-pre [&_pre]:leading-5 [&_pre]:text-xs"
           />
         </div>
       </div>
@@ -151,35 +152,32 @@ export function SearchDetail({ item }: { item: ToolItem }) {
 
   return (
     <div className="space-y-1">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
         {pattern && <code className="font-mono text-foreground">{pattern}</code>}
         {scope && (
           <span className="font-mono text-muted-foreground">in {shortPath(scope, 44)}</span>
         )}
-        <span className="text-muted-foreground/70">
+        <span className="text-muted-foreground">
           {lines.length} {lines.length === 1 ? "match" : "matches"}
         </span>
         {flags.map((flag) => (
-          <span
-            key={flag}
-            className="rounded-sm border border-border/60 px-1 py-px text-[10px] text-muted-foreground/70"
-          >
+          <Badge key={flag} variant="outline" className="font-mono">
             {flag}
-          </span>
+          </Badge>
         ))}
       </div>
       {shown.length > 0 && (
         <div className={cn(PANE, "max-h-80 overflow-auto")}>
-          <ul className="divide-y divide-border/40 font-mono text-[11.5px]">
+          <ul className="divide-y font-mono text-xs">
             {shown.map((line, index) => {
               const match = /^(.*?):(\d+):(.*)$/.exec(line)
               return (
                 <li key={index} className="flex gap-2 px-2.5 py-1">
                   {match ? (
                     <>
-                      <span className="shrink-0 text-muted-foreground/70">
+                      <span className="shrink-0 text-muted-foreground">
                         {shortPath(match[1], 42)}
-                        <span className="text-muted-foreground/40">:{match[2]}</span>
+                        <span className="text-muted-foreground">:{match[2]}</span>
                       </span>
                       <span className="min-w-0 flex-1 truncate">
                         <MarkedLine text={match[3].trim()} pattern={pattern} />
@@ -193,7 +191,7 @@ export function SearchDetail({ item }: { item: ToolItem }) {
             })}
           </ul>
           {lines.length > shown.length && (
-            <div className="px-2.5 py-1 text-[11px] text-muted-foreground/60">
+            <div className="px-2.5 py-1 text-xs text-muted-foreground">
               …and {lines.length - shown.length} more
             </div>
           )}
@@ -236,9 +234,9 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
     .join("\n")
 
   return (
-    <div className={cn(PANE, failed && "border-destructive/40 bg-destructive/5")}>
-      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed">
-        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground/60">
+    <div className={cn(PANE, failed && "bg-destructive/10")}>
+      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-xs leading-relaxed">
+        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground">
           $
         </span>
         <ShellScript command={command} className="min-w-0 flex-1" />
@@ -247,7 +245,7 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
         <pre
           className={cn(
             PANE_MAX_H,
-            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
+            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap",
             failed ? "text-destructive" : "text-muted-foreground"
           )}
         >
@@ -261,12 +259,12 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
           died is a row worth having, because it is what carries the copy of
           the command and its output out of here. */}
       {failed && (
-        <div className="flex items-center gap-2 border-t border-inherit px-2.5 py-1 font-mono text-[11px] text-destructive">
+        <div className="flex items-center gap-2 border-t border-inherit px-2.5 py-1 font-mono text-xs text-destructive">
           <span className="min-w-0 flex-1 truncate">{exited ?? "failed"}</span>
           <CopyButton
             text={transcript}
             size="icon-xs"
-            className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+            className="shrink-0 text-destructive hover:bg-destructive/20 hover:text-destructive"
           />
         </div>
       )}

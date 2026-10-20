@@ -3,6 +3,8 @@
    is these two setup steps instead of the recent-threads/features grid. */
 import { Check, ChevronRight, FolderKanban, Server } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
+import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { cn } from "@/lib/utils"
 
 export function LandingSetup({
@@ -38,7 +40,7 @@ export function LandingSetup({
   return (
     <section aria-labelledby="landing-setup-title">
       <div>
-        <h2 id="landing-setup-title" className="font-heading text-lg font-semibold tracking-tight">
+        <h2 id="landing-setup-title" className="font-heading text-base font-medium">
           Finish the setup
         </h2>
         <p className="mt-1 max-w-md text-sm text-pretty text-muted-foreground">
@@ -47,50 +49,40 @@ export function LandingSetup({
         </p>
       </div>
 
-      <ol className="mt-6 grid gap-3 sm:grid-cols-2">
+      <ol className="mt-6 grid gap-3 @panel-sm:grid-cols-2">
         {steps.map((step, index) => {
           const Icon = step.icon
           return (
             <li key={step.id}>
-              <button
-                type="button"
-                onClick={step.onOpen}
-                aria-label={`${step.title}${step.done ? " — done" : ""}`}
-                className={cn(
-                  "group flex h-full w-full flex-col gap-3 rounded-2xl border bg-card/60 p-5 text-left transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:bg-card hover:shadow-glass focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  step.done && "border-transparent opacity-80 hover:opacity-100"
-                )}
+              <Item
+                variant="outline"
+                className={cn("h-full items-start text-left hover:bg-muted", step.done && "opacity-80")}
+                render={
+                  <button
+                    type="button"
+                    onClick={step.onOpen}
+                    aria-label={`${step.title}${step.done ? " — done" : ""}`}
+                  />
+                }
               >
-                <span className="flex items-center justify-between gap-2">
-                  <span
-                    className={cn(
-                      "grid size-9 place-items-center rounded-xl bg-muted text-foreground/80",
-                      step.done && "bg-primary/10 text-primary",
-                      !step.done && "group-hover:bg-primary/10 group-hover:text-primary"
-                    )}
-                  >
-                    {step.done ? <Check className="size-4" /> : <Icon className="size-4" />}
-                  </span>
-                  <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-                    Step {index + 1} of 2
-                  </span>
-                </span>
-                <span>
-                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                <ItemMedia variant="icon" className={cn("size-9 rounded-lg bg-muted", step.done && "bg-primary/10 text-primary")}>
+                  {step.done ? <Check /> : <Icon />}
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>
                     {step.title}
-                    {step.done && (
-                      <span className="text-xs font-normal text-muted-foreground">— done</span>
-                    )}
+                    {step.done && <span className="font-normal text-muted-foreground">— done</span>}
+                  </ItemTitle>
+                  <ItemDescription>{step.description}</ItemDescription>
+                  <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                    {step.done ? "Reopened in settings" : "Set it up"}
+                    <ChevronRight className="size-3.5" />
                   </span>
-                  <span className="mt-1.5 block text-[13px] leading-relaxed text-pretty text-muted-foreground">
-                    {step.description}
-                  </span>
-                </span>
-                <span className="mt-auto inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors group-hover:text-primary">
-                  {step.done ? "Reopened in settings" : "Set it up"}
-                  <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-                </span>
-              </button>
+                </ItemContent>
+                <Badge variant="secondary" className="tabular-nums">
+                  Step {index + 1} of 2
+                </Badge>
+              </Item>
             </li>
           )
         })}

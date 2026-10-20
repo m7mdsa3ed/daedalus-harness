@@ -558,7 +558,7 @@ export function VoiceCall({
      the call (the composer places it): the box is away for the whole call, so
      this is the whole of the call's chrome. The caption is the label while the
      voice model speaks; the failure sits over the bar, where it is read. */
-  const btn = "size-7 shrink-0 rounded-full [&_svg]:size-3.5"
+  const btn = "size-7 shrink-0 [&_svg]:size-3.5"
   return (
     <div className="flex flex-col items-end gap-2">
       <ErrorNote error={error} className="w-[min(24rem,calc(100vw-2rem))] text-left" />
@@ -566,14 +566,14 @@ export function VoiceCall({
         <p
           dir="auto"
           className={cn(
-            "line-clamp-3 w-fit max-w-[min(24rem,calc(100vw-2rem))] rounded-2xl px-4 py-2.5 text-start text-sm shadow-glass",
-            caption ? "rounded-bl-sm bg-muted" : "rounded-br-sm bg-primary/10"
+            "line-clamp-3 w-fit max-w-[min(24rem,calc(100vw-2rem))] rounded-3xl px-3.5 py-2.5 text-start text-sm",
+            caption ? "bg-muted" : "bg-primary/10"
           )}
         >
           {caption || heard}
         </p>
       )}
-      <div className="flex h-(--composer-pill) items-center gap-1 rounded-pill bg-composer-glass-hi ps-3 pe-0.5 text-xs shadow-glass ring-1 ring-edge backdrop-blur-[var(--app-blur)]">
+      <div className="flex h-(--composer-pill) items-center gap-1 rounded-pill bg-composer-glass-hi ps-3 pe-0.5 text-sm ring-1 ring-foreground/10">
         <Wave mode={realtime.status !== "connected" ? "idle" : realtime.isPlaying ? "speaking" : realtime.isCapturing && !waiting ? "listening" : "idle"} />
         <span className="hidden text-muted-foreground @panel-sm:inline">{label}</span>
         {realtime.status === "connected" && (
@@ -599,7 +599,7 @@ export function VoiceCall({
           <Button
             variant={realtime.isCapturing ? "default" : "outline"}
             size="xs"
-            className="h-7 touch-none select-none rounded-full"
+            className="h-7 touch-none select-none"
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId)
               talkDown()

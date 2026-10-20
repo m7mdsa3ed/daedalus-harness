@@ -19,8 +19,12 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Separator } from "@/components/ui/separator"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -77,26 +81,22 @@ const MODES: { id: WorkspaceMode; label: string; icon: React.ComponentType<{ cla
    Prominent pill buttons with icons, the active one highlighted. */
 function ViewTabs({ mode, onChange }: { mode: WorkspaceMode; onChange: (m: WorkspaceMode) => void }) {
   return (
-    <div className="inline-flex shrink-0 items-center gap-0.5 rounded-xl border bg-muted/40 p-0.5" aria-label="View">
+    <ToggleGroup
+      aria-label="View"
+      variant="outline"
+      size="sm"
+      spacing={0}
+      value={[mode]}
+      onValueChange={(next) => next[0] && onChange(next[0] as WorkspaceMode)}
+      className="shrink-0"
+    >
       {MODES.map(({ id, label, icon: Icon }) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => onChange(id)}
-          aria-pressed={mode === id}
-          title={label}
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            mode === id
-              ? "bg-background text-foreground shadow-sm ring-1 ring-border"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground",
-          )}
-        >
-          <Icon className="size-3.5 shrink-0" />
+        <ToggleGroupItem key={id} value={id} title={label} className="text-muted-foreground aria-pressed:text-foreground">
+          <Icon />
           <span className="hidden @panel-sm:inline">{label}</span>
-        </button>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   )
 }
 
@@ -118,21 +118,20 @@ function Facet<T extends string>({
   const toggle = (id: T) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
   return (
     <div className="grid gap-1.5">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <p className="text-xs font-medium text-muted-foreground">{title}</p>
       <div className="flex flex-wrap gap-1">
         {options.map((o) => (
-          <button
+          <Button
             key={o.id}
             type="button"
+            size="xs"
+            variant={value.includes(o.id) ? "secondary" : "ghost"}
             onClick={() => toggle(o.id)}
             aria-pressed={value.includes(o.id)}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-xs transition-colors",
-              value.includes(o.id) ? "border-primary/40 bg-primary/10 text-primary" : "border-transparent bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
+            className={cn(!value.includes(o.id) && "text-muted-foreground")}
           >
             {render ? render(o.id) : o.label}
-          </button>
+          </Button>
         ))}
       </div>
     </div>
@@ -170,20 +169,20 @@ export function FilterPopover({
     <Popover>
       <PopoverTrigger
         render={
-          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", count > 0 && "border-solid border-primary/40 bg-primary/5 text-primary")}>
-            <Filter className="size-3.5" />
+          <Button type="button" variant={count > 0 ? "secondary" : "outline"} size="sm" className={cn(count === 0 && "border-dashed text-muted-foreground")}>
+            <Filter />
             <span className="hidden @panel-sm:inline">Filter</span>
-            {count > 0 && <span className="rounded-pill bg-primary px-1.5 text-[10px] text-primary-foreground">{count}</span>}
-          </button>
+            {count > 0 && <Badge className="tabular-nums">{count}</Badge>}
+          </Button>
         }
       />
       <PopoverContent align="start" className="w-[22rem] gap-4 p-3">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">Filters</p>
           {count > 0 && (
-            <button type="button" onClick={() => onChange({ ...EMPTY_FILTERS, query: filters.query })} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              <X className="size-3" /> Clear all
-            </button>
+            <Button type="button" variant="ghost" size="xs" onClick={() => onChange({ ...EMPTY_FILTERS, query: filters.query })} className="text-muted-foreground">
+              <X /> Clear all
+            </Button>
           )}
         </div>
         <div className="grid max-h-[60vh] gap-4 overflow-y-auto">
@@ -289,13 +288,13 @@ function FilterPill({
   children?: React.ReactNode
 }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-pill border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary">
+    <Badge variant="secondary">
       {children}
-      <span className="max-w-[8rem] truncate">{label}</span>
-      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="-mr-0.5 ml-0.5 rounded-full hover:bg-primary/15">
-        <X className="size-3" />
+      <span className="max-w-32 truncate">{label}</span>
+      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="-mr-1 rounded-full hover:bg-muted">
+        <X />
       </button>
-    </span>
+    </Badge>
   )
 }
 
@@ -367,13 +366,13 @@ function SortButton({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active && "border-primary/30 bg-primary/5 text-primary")}>
+          <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
             <ArrowUpDown className="size-3.5" />
             <span className="hidden @panel-sm:inline">
               {SORT_LABEL[view.sortBy]}
               {active && (view.sortDir === "asc" ? " ↑" : " ↓")}
             </span>
-          </button>
+          </Button>
         }
       />
       <DropdownMenuContent align="start" className="w-44">
@@ -411,10 +410,10 @@ function GroupButton({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active && "border-primary/30 bg-primary/5 text-primary")}>
+          <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
             <Group className="size-3.5" />
             <span className="hidden @panel-sm:inline">{GROUP_LABEL[view.groupBy]}</span>
-          </button>
+          </Button>
         }
       />
       <DropdownMenuContent align="start" className="w-44">
@@ -443,10 +442,10 @@ function ColumnsButton({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button type="button" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Columns3 className="size-3.5" />
+          <Button type="button" variant="outline" size="sm" className="text-muted-foreground">
+            <Columns3 />
             <span className="hidden @panel-sm:inline">Columns</span>
-          </button>
+          </Button>
         }
       />
       <DropdownMenuContent align="start" className="w-44">
@@ -492,21 +491,21 @@ function SavedViewsButton({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active && "border-primary/30 bg-primary/5 text-primary")}>
+          <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
             <Bookmark className="size-3.5" />
             <span className="hidden @panel-sm:inline">{savedViews.find((v) => v.id === activeViewId)?.name ?? "Views"}</span>
-          </button>
+          </Button>
         }
       />
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Saved views</DropdownMenuLabel>
-          {savedViews.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">None yet — set up filters, then save.</p>}
+          {savedViews.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">None yet — set up filters, then save.</p>}
           {savedViews.map((v) => (
             <DropdownMenuItem key={v.id} onClick={() => onPickView(v)}>
               {v.id === activeViewId ? <Check className="size-4 text-primary" /> : <span className="size-4" />}
               <span className="flex-1 truncate">{v.name}</span>
-              <span className="text-[10px] uppercase text-muted-foreground">{v.kind}</span>
+              <span className="text-xs text-muted-foreground">{v.kind}</span>
               <button
                 type="button"
                 aria-label={`Delete view ${v.name}`}
@@ -514,7 +513,7 @@ function SavedViewsButton({
                   e.stopPropagation()
                   onDeleteView(v)
                 }}
-                className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                className="grid size-5 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="size-3" />
               </button>
@@ -580,39 +579,38 @@ export function Toolbar({
       {/* Row 1: View tabs + search + new task */}
       <div className="flex flex-wrap items-center gap-2">
         <ViewTabs mode={mode} onChange={onMode} />
-        <div className="relative min-w-0 flex-1 sm:max-w-xs">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
+        <InputGroup className="h-8 min-w-0 flex-1 sm:max-w-xs">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
             value={view.filters.query}
             onChange={(e) => onChange({ filters: { ...view.filters, query: e.target.value } })}
             placeholder="Search tasks…"
             aria-label="Search tasks"
-            className="h-8 pl-8 text-xs"
           />
           {view.filters.query && (
-            <button type="button" onClick={() => onChange({ filters: { ...view.filters, query: "" } })} aria-label="Clear search" className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X className="size-3.5" />
-            </button>
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" onClick={() => onChange({ filters: { ...view.filters, query: "" } })} aria-label="Clear search">
+                <X />
+              </InputGroupButton>
+            </InputGroupAddon>
           )}
-        </div>
-        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+        </InputGroup>
+        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
           {visible === total ? `${total} tasks` : `${visible} of ${total}`}
         </span>
-        <button
-          type="button"
-          onClick={onNewTask}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Plus className="size-4" />
+        <Button type="button" size="sm" onClick={onNewTask}>
+          <Plus />
           <span className="hidden min-[380px]:inline">New task</span>
-        </button>
+        </Button>
       </div>
 
       {/* Row 2: Filter pill bar + group/sort/columns + saved views */}
       <div className="flex flex-wrap items-center gap-1.5 max-sm:flex-nowrap max-sm:overflow-x-auto">
         <FilterPopover filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} sprints={sprints} epics={epics} facets={facets} boardKey={boardKey} />
         <ActiveFilterPills filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} />
-        <span className="h-4 w-px bg-border shrink-0" />
+        <Separator orientation="vertical" className="h-4" />
         <GroupButton view={view} onChange={onChange} groupable={groupable} />
         <SortButton view={view} onChange={onChange} sortable={sortable} />
         {mode === "table" && <ColumnsButton view={view} onChange={onChange} />}

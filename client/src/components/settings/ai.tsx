@@ -151,7 +151,7 @@ function DeviceModelSelect({ helper, className }: { helper: DeviceHelper; classN
   const { picked, modelId } = useResolved(helper.pick)
   /* A profile that serves no models has nothing to pick: say what runs. */
   if (!picked || picked.models.length === 0) {
-    return <span className="text-xs text-muted-foreground">Profile default</span>
+    return <span className="text-sm text-muted-foreground">Profile default</span>
   }
   return (
     <Select
@@ -208,7 +208,7 @@ function LaneProfileSelect({ helper, className }: { helper: LaneHelper; classNam
   }, [model.candidates])
 
   if (profiles.length === 0) {
-    return <span className="text-xs text-muted-foreground">No {lane} model in any profile</span>
+    return <span className="text-sm text-muted-foreground">No {lane} model in any profile</span>
   }
   return (
     <Select
@@ -240,7 +240,7 @@ function LaneModelSelect({ helper, className }: { helper: LaneHelper; className?
   const set = useSetSideModel(lane)
   const mine = model.candidates.filter((candidate) => candidate.profileId === model.default?.profileId)
   if (mine.length === 0) {
-    return <span className="text-xs text-muted-foreground">{model.default?.label ?? "No model"}</span>
+    return <span className="text-sm text-muted-foreground">{model.default?.label ?? "No model"}</span>
   }
   return (
     <Select
@@ -322,7 +322,7 @@ const COLUMNS: ColumnDef<Helper, unknown>[] = [
     id: "what",
     header: "What it does",
     cell: ({ row }) => (
-      <span className="line-clamp-2 text-xs/relaxed text-muted-foreground" title={row.original.subtitle}>
+      <span className="line-clamp-2 text-sm/relaxed text-muted-foreground" title={row.original.subtitle}>
         {row.original.subtitle}
       </span>
     ),
@@ -370,11 +370,11 @@ export function AiPage() {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{helper.name}</span>
-            <span className="block truncate text-xs text-muted-foreground">
+            <span className="block truncate text-sm text-muted-foreground">
               <RunsOn helper={helper} />
             </span>
           </span>
-          <ChevronRight className="size-4 shrink-0 text-muted-foreground/60 rtl:rotate-180" />
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" />
         </button>
       ),
     }),
@@ -411,7 +411,7 @@ export function AiPage() {
             emptyMessage="No helper matches."
             filtering={f.filtering}
           />
-          <p className="mt-3 text-xs/relaxed text-muted-foreground">
+          <p className="mt-3 text-sm/relaxed text-muted-foreground">
             Device picks are remembered on this device; the composer and decision models are stored
             on the server, so every device uses the same pair. The API key never leaves the server.
           </p>

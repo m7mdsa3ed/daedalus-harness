@@ -160,9 +160,9 @@ export function LibrarySection<T extends { id: string; name: string }>({
           const item = row.original
           const detail = live.current.rowDetail?.(item)
           return detail ? (
-            <div className="max-w-lg truncate text-xs text-muted-foreground">{detail}</div>
+            <div className="max-w-lg truncate text-sm text-muted-foreground">{detail}</div>
           ) : (
-            <div className="max-w-lg truncate font-mono text-xs text-muted-foreground">{live.current.subtitle(item)}</div>
+            <div className="max-w-lg truncate font-mono text-sm text-muted-foreground">{live.current.subtitle(item)}</div>
           )
         },
         meta: { className: "hidden @panel-md:table-cell" },
@@ -398,7 +398,7 @@ export function LibraryImportPage({
         cell: ({ row }) => {
           const item = row.original
           return (
-            <div className="max-w-md truncate font-mono text-xs text-muted-foreground">
+            <div className="max-w-md truncate font-mono text-sm text-muted-foreground">
               {(item.url as string) ?? (item.path as string) ?? (item.command as string) ?? (item.description as string) ?? ""}
             </div>
           )
@@ -461,7 +461,7 @@ export function LibraryImportPage({
                 filtering={found.length > 0 ? f.filtering : undefined}
                 toolbar={
                   found.length > 0 ? (
-                    <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                    <span className="text-sm whitespace-nowrap text-muted-foreground tabular-nums">
                       {selected.length} of {found.length} selected
                     </span>
                   ) : undefined

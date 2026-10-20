@@ -92,6 +92,8 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -136,11 +138,11 @@
   --font-heading: var(--app-font-heading);
   --font-mono: var(--app-font-mono);
 
-  /* One body size for the whole app — chat prose, sidebar, settings, controls.
-     The kit is downsized to text-xs everywhere, so this is *the* size knob;
-     text-sm stays the title tier, text-[11px] the caption tier. */
-  --text-xs: 0.875rem;
-  --text-xs--line-height: 1.25rem;
+  /* The type scale is Tailwind's and shadcn's, untouched: `text-sm` is the
+     body (chat prose, sidebar, settings, controls), `text-xs` the meta and
+     caption tier, `text-base` a title. (`--text-xs` used to be raised to 14px
+     and the kit written in it, which made every registry badge, kbd and
+     tooltip a body-size block.) */
 
   /* Container breakpoints for the dock (`components/workspace/panel-container`).
      Deliberately the pixel values of `sm:` and `md:` rather than Tailwind's own
@@ -235,11 +237,11 @@
      `--depth-*` pair is redeclared there under `.dark`, which is why there is
      no dark override for the two shadows here. */
   --app-radius-pill: calc(infinity * 1px);
-  --app-blur: 14px;
+  --app-blur: 0px;
   /* 0–1: how far the translucent surfaces are pulled toward opaque. Paired with
      `--app-blur` by the blur presets (BLUR_PRESETS.solid): the glass fills below
      are only legible because the blur softens what is behind them. */
-  --app-solid: 0;
+  --app-solid: 1;
   /* The hairline round the composer and its pill, as a percentage of the
      foreground. Paired with depth (`--depth-<id>-edge`): a flat theme has no
      shadow to lift the box, so its edge carries the separation alone. */
@@ -271,8 +273,8 @@
   --app-font-heading: var(--app-font-sans);
   --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --app-tracking: 0em;
-  --app-shadow-glass: var(--depth-soft-glass);
-  --app-shadow-glass-lg: var(--depth-soft-glass-lg);
+  --app-shadow-glass: var(--depth-flat-glass);
+  --app-shadow-glass-lg: var(--depth-flat-glass-lg);
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -289,6 +291,11 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* The two states the stock palette has no word for — running/connected/done
+     and waiting/needs-you — so no component spells emerald or amber itself.
+     Tailwind's green-600 / amber-600, and their -500 / -400 under .dark. */
+  --success: oklch(0.627 0.194 149.214);
+  --warning: oklch(0.666 0.179 58.318);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -474,10 +481,10 @@
   --step-think: oklch(0.685 0.169 237.323);
   --step-command: oklch(0.556 0.015 286.067);
   --step-tool: oklch(0.606 0.25 292.717);
-  --hover: rgb(0 0 0 / 0.04);
-  --active: rgb(0 0 0 / 0.07);
+  --hover: var(--muted);
+  --active: var(--accent);
   --overlay: 0 0 0;
-  --focus-ring: #6B97FF;
+  --focus-ring: var(--ring);
 }
 
 :root:not(.dark) {
@@ -532,6 +539,8 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.723 0.219 149.579);
+  --warning: oklch(0.828 0.189 84.429);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -558,8 +567,6 @@
   --step-think: oklch(0.746 0.16 232.661);
   --step-command: oklch(0.705 0.015 286.067);
   --step-tool: oklch(0.702 0.183 293.541);
-  --hover: rgb(255 255 255 / 0.06);
-  --active: rgb(255 255 255 / 0.1);
   --overlay: 255 255 255;
 }
 
@@ -701,13 +708,6 @@
   }
 
 
-  /* ── Overlay backdrop ── */
-  [data-slot="sheet-overlay"],
-  [data-slot="dialog-overlay"],
-  [data-slot="alert-dialog-overlay"] {
-    background-color: oklch(0 0 0 / 0.2);
-  }
-
   html {
     @apply font-sans;
   }
@@ -719,13 +719,11 @@
     font-weight: 400;
     letter-spacing: 0;
   }
+  /* What an element without its own focus style draws — the registry's
+     `ring-ring/50` as an outline, so a bare focusable reads like a stock one. */
   :focus-visible {
-    outline: 1px solid var(--focus-ring, #6B97FF);
+    outline: 2px solid color-mix(in oklch, var(--ring) 50%, transparent);
     outline-offset: 2px;
-    border-radius: var(--shape-input-radius, 8px);
-  }
-  a:focus-visible {
-    border-radius: 2px;
   }
 }
 
@@ -733,7 +731,9 @@
    The theme tokens are opaque on purpose (they are the no-blur fallback and
    what the theme builder edits); where backdrop-filter exists, the surface
    mixes its token toward transparent so the blur actually shows through.
-   Unlayered so it outranks the bg-popover/bg-card utility on the element. */
+   Unlayered so it outranks the bg-popover/bg-card utility on the element —
+   which is also why a Card's ground cannot be changed at its call site: a box
+   that wants another ground is an Item (`variant="muted"`) or a plain div. */
 @supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
   [data-slot="card"] {
     background-color: color-mix(in oklch, var(--card) calc(80% + 20% * var(--app-solid)), transparent);
@@ -961,10 +961,10 @@
 }
 
 /* ── Transcript reading size ──
-   The app's one body size (`--text-xs`) is set for controls, sidebar and
-   settings; a transcript is read, not scanned, so the column nudges the same
-   knob up a step for itself alone. Everything inside — prose, step rows, tool
-   views — sizes off `text-xs`, so this is the only place the number changes.
+   The app's body size (`text-sm`) is set for controls, sidebar and settings;
+   a transcript is read, not scanned, so the column nudges the same knob up a
+   step for itself alone. Everything inside — prose, step rows, tool views —
+   sizes its body off `text-sm`, so this is the only place the number changes.
    The composer wears the same bump: typing is writing, and its textarea reads
    at the size of the messages it answers, not the control tier (`md:text-sm`
    on the Textarea primitive would otherwise win halfway up the breakpoints). */
@@ -977,8 +977,8 @@
 }
 
 :is(.thread-transcript, [data-slot="composer-card"]) {
-  --text-xs: 0.9375rem;
-  --text-xs--line-height: 1.375rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.375rem;
 }
 
 /* ── Streaming prose: the sweep ──
@@ -1426,7 +1426,7 @@ html[data-window-controls-overlay="true"] {
 .prose {
   /* Markdown reads at the app body size, not the plugin's own scale — prose-sm
      keeps its spacing, children size in em so they follow. */
-  @apply text-xs/relaxed;
+  @apply text-sm/relaxed;
   --tw-prose-body: var(--foreground);
   --tw-prose-headings: var(--foreground);
   --tw-prose-lead: var(--muted-foreground);
@@ -1457,7 +1457,7 @@ html[data-window-controls-overlay="true"] {
 
 /* Inline code as a chip — and without the plugin's literal backticks. */
 .prose :where(code):not(:where(pre code)) {
-  @apply rounded border border-border/60 bg-muted/60 px-1 py-px text-[0.85em] font-normal;
+  @apply rounded-md bg-muted px-[0.3em] py-[0.1em] text-[0.875em] font-normal;
 }
 .prose :where(code)::before,
 .prose :where(code)::after {
@@ -1466,7 +1466,7 @@ html[data-window-controls-overlay="true"] {
 
 /* Fenced code: scrolls rather than stretches, sized for transcript density. */
 .prose :where(pre) {
-  @apply overflow-x-auto rounded-lg border border-border/60 p-3 text-xs leading-relaxed;
+  @apply overflow-x-auto rounded-xl border p-3 text-[0.875em] leading-relaxed;
   overscroll-behavior-x: contain;
 }
 
@@ -1777,7 +1777,7 @@ html[data-window-controls-overlay="true"] {
   border-left-color: color-mix(in oklab, var(--destructive) 55%, transparent);
 }
 .harness-status[data-tone="warn"] {
-  border-left-color: color-mix(in oklab, var(--color-amber-500) 55%, transparent);
+  border-left-color: color-mix(in oklab, var(--warning) 55%, transparent);
 }
 .harness-status-body {
   display: grid;
@@ -1898,7 +1898,7 @@ html[data-window-controls-overlay="true"] {
    one scrolls inside the turn instead of widening it. The frame is on the
    wrapper too — a border on a scrolling element scrolls away with it. */
 .harness-table {
-  @apply my-[1em] w-full max-w-full overflow-x-auto rounded-lg border border-border/60;
+  @apply my-[1em] w-full max-w-full overflow-x-auto rounded-xl border;
   /* A sideways swipe inside the table must not become the browser's
      back-gesture once it reaches the end — on a phone that navigates out of
      the thread, which is an expensive way to reach the last column. */
@@ -1910,7 +1910,7 @@ html[data-window-controls-overlay="true"] {
    nothing to scroll. Sizing to content makes it overflow (and therefore scroll)
    while `min-width: 100%` still fills the frame when the table is narrow. */
 .prose :where(.harness-table table) {
-  @apply my-0 text-xs;
+  @apply my-0 text-[0.9375em];
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
@@ -1933,10 +1933,10 @@ html[data-window-controls-overlay="true"] {
    two-line cell beside a one-line cell has nothing to say where it ends. The
    last row's line is the wrapper's border, so it is dropped. */
 .prose :where(.harness-table thead tr) {
-  @apply border-b border-border/60;
+  @apply border-b;
 }
 .prose :where(.harness-table tbody tr) {
-  @apply border-b border-border/40;
+  @apply border-b;
 }
 .prose :where(.harness-table tbody tr):last-child {
   @apply border-b-0;
@@ -1997,7 +1997,7 @@ html[data-window-controls-overlay="true"] {
   overflow-wrap: anywhere;
 }
 
-/* Headings, rescaled. The body here is text-xs, but the typography plugin sizes
+/* Headings, rescaled. The body here is text-sm, but the typography plugin sizes
    headings against its own base — at prose-sm an h1 lands nearly three times
    the body size, which in a chat turn reads as shouting. Relative ems, tight
    enough that four levels still separate. */
@@ -2020,12 +2020,12 @@ html[data-window-controls-overlay="true"] {
 /* An image is untrusted remote content in a chat column: bound it, and give it
    the same frame as a code block so a broken one still reads as a slot. */
 .prose :where(img):not(:where(.not-prose *)) {
-  @apply my-[1em] max-w-full rounded-md border border-border/60;
+  @apply my-[1em] max-w-full rounded-lg border;
 }
 
 /* GFM footnotes are a section, not more prose — quieter, and fenced off. */
 .prose :where(.footnotes) {
-  @apply mt-6 border-t border-border/60 pt-3 text-[0.9em] text-muted-foreground;
+  @apply mt-6 border-t pt-3 text-[0.9em] text-muted-foreground;
 }
 .prose :where(.footnotes h2) {
   @apply sr-only;

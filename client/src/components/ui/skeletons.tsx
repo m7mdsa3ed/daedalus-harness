@@ -24,7 +24,7 @@ export function TranscriptSkeleton() {
   return (
     <div aria-busy="true" className="space-y-4">
       <div className="flex justify-end">
-        <div className="w-1/3 space-y-2 rounded-lg bg-muted/40 p-3">
+        <div className="w-1/3 space-y-2 rounded-lg bg-muted/50 p-3">
           <SkeletonText lines={2} />
         </div>
       </div>
@@ -139,7 +139,7 @@ export function GroupRowsSkeleton({
   return (
     <section aria-busy="true" className={cn("mb-6 last:mb-0", className)}>
       {label && <Skeleton className="mb-2 ml-1 h-3 w-16" />}
-      <div className="divide-y overflow-hidden rounded-xl border bg-card">
+      <div className="divide-y overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10">
         {[...Array(rows).keys()].map((index) => (
           <div key={index} className="flex items-center gap-3 px-3.5 py-3 sm:px-4">
             <Skeleton className="mt-0.5 size-4 shrink-0 self-start rounded-sm" />
@@ -168,7 +168,7 @@ export function NotificationRowsSkeleton({
   className?: string
 }) {
   return (
-    <ul aria-busy="true" className={cn("divide-y divide-border/60", className)}>
+    <ul aria-busy="true" className={cn("divide-y", className)}>
       {[...Array(rows).keys()].map((index) => (
         <li
           key={index}
@@ -218,7 +218,7 @@ export function DiffRowsSkeleton({ hunks = 3, className }: { hunks?: number; cla
               <Skeleton
                 className={cn(
                   "h-3",
-                  line === 1 || line === 2 ? "bg-emerald-500/30" : line === 3 ? "bg-destructive/25" : ""
+                  line === 1 || line === 2 ? "bg-success/30" : line === 3 ? "bg-destructive/25" : ""
                 )}
                 style={{ width: `${30 + ((line * 31) % 60)}%` }}
               />
@@ -260,7 +260,7 @@ export function SetupCardsSkeleton() {
   return (
     <div aria-busy="true" className="mt-8 grid gap-2 text-left sm:grid-cols-2">
       {[0, 1].map((index) => (
-        <div key={index} className="rounded-xl border bg-card p-3">
+        <div key={index} className="rounded-2xl bg-card p-4 ring-1 ring-foreground/10">
           <Skeleton className="h-3 w-20" />
           <Skeleton className="mt-2 h-3 w-full" />
           <Skeleton className="mt-1.5 h-3 w-3/4" />

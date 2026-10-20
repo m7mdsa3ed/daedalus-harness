@@ -1,5 +1,6 @@
 import * as React from "react"
 
+import { Empty } from "@/components/empty"
 import { COLOR_DOT, type BoardColor } from "@/lib/boards"
 import type { TaskInput } from "@/lib/tasks-board"
 import { groupTasks, type GroupBy } from "@/lib/tasks-view"
@@ -76,7 +77,7 @@ export function ListView({ statuses, sprints, tasks, allTasks, view, ctx, onOpen
         )
       })}
       {tasks.length === 0 && (
-        <p className="py-6 text-center text-sm text-muted-foreground">No tasks match the current filters.</p>
+        <Empty>No tasks match the current filters.</Empty>
       )}
     </div>
   )

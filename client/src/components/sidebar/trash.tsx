@@ -7,8 +7,6 @@ import { useConfirm } from "@/components/confirm-dialog"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import type { SessionMeta } from "@/lib/settings"
-import { cn } from "@/lib/utils"
-import { MENU, ROW } from "./scale"
 
 /** The one action that belongs to the Trash rather than to a thread in it.
     At the foot of the list, not on the label: the label is a disclosure
@@ -42,14 +40,13 @@ export function EmptyTrash({ sessions, actions }: { sessions: SessionMeta[]; act
   }
 
   return (
-    <SidebarMenu className={MENU}>
+    <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton
-          size="sm"
           onClick={empty}
           disabled={busy}
           tooltip="Delete every thread in the Trash"
-          className={cn(ROW, "text-muted-foreground hover:bg-destructive/10 hover:text-destructive")}
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
         >
           <Trash2 />
           <span className="truncate">{busy ? "Emptying…" : "Empty Trash"}</span>

@@ -256,7 +256,7 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
         onBack={back}
         icon={
           session ? (
-            <span className="flex size-11 items-center justify-center rounded-xl border bg-card text-primary shadow-sm">
+            <span className="flex size-11 items-center justify-center rounded-lg bg-muted text-primary">
               <MessagesSquareIcon className="size-5" />
             </span>
           ) : (

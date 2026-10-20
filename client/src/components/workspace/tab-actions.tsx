@@ -25,6 +25,7 @@ import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
 import { ChevronDownIcon, HistoryIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -39,7 +40,6 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useStoreSelect } from "@/lib/store"
 import { useIsMobile } from "@/hooks/use-device"
 import { HEADER_CHIP } from "@/lib/header-chrome"
@@ -120,7 +120,7 @@ function TabGrid({
       >
         {/* On a phone the count is the glyph: bare, like the toggle's icon. */}
         {isMobile ? (
-          <span className="text-[13px] leading-none font-semibold tabular-nums">{panels.length}</span>
+          <span className="text-sm font-medium tabular-nums">{panels.length}</span>
         ) : (
           <ChevronDownIcon className="size-4" />
         )}
@@ -128,23 +128,24 @@ function TabGrid({
       <ResponsiveDialog open={open} onOpenChange={setOpen}>
         <ResponsiveDialogContent bodyClassName="gap-0.5 px-2 py-2" className="sm:max-w-md">
           <ResponsiveDialogHeader className="flex-row items-center gap-2 py-3">
-            <ResponsiveDialogTitle className="text-base font-semibold tracking-tight">Tabs</ResponsiveDialogTitle>
-            <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[11px] leading-none font-semibold text-muted-foreground tabular-nums">
+            <ResponsiveDialogTitle>Tabs</ResponsiveDialogTitle>
+            <Badge variant="secondary" className="tabular-nums">
               {panels.length}
-            </span>
+            </Badge>
             {/* The group's own tidy-up. Closing the panel first keeps it from
                 standing over a dock that is now empty. */}
             {panels.length > 1 && (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => {
                   setOpen(false)
                   onCloseAll()
                 }}
-                className="ml-auto rounded-full px-3 py-1.5 text-[13px] font-medium text-muted-foreground hover:bg-foreground/5 active:bg-foreground/10"
+                className="ml-auto text-muted-foreground"
               >
                 Close all
-              </button>
+              </Button>
             )}
           </ResponsiveDialogHeader>
           {panels.map((panel) => (
@@ -152,8 +153,8 @@ function TabGrid({
           ))}
           {recent.length > 0 && (
             <>
-              <div className="mt-3 flex h-6 items-center gap-1.5 px-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                <HistoryIcon className="size-3" />
+              <div className="mt-3 flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
+                <HistoryIcon className="size-3.5" />
                 Recent
               </div>
               {recent.map((s) => (
@@ -164,9 +165,9 @@ function TabGrid({
                     setOpen(false)
                     onOpenThread(s.id)
                   }}
-                  className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left hover:bg-foreground/5 active:bg-foreground/5"
+                  className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left hover:bg-muted"
                 >
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{s.title || "Untitled thread"}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{s.title || "Untitled thread"}</span>
                   <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                     {relativeAge(activityAt(s))}
                   </span>
@@ -176,17 +177,18 @@ function TabGrid({
           )}
           {onNew && (
             <ResponsiveDialogFooter className="flex-col justify-stretch px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="lg"
                 onClick={() => {
                   setOpen(false)
                   onNew()
                 }}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground/5 text-sm font-medium text-foreground hover:bg-foreground/10 active:bg-foreground/10"
+                className="w-full pointer-coarse:min-h-11"
               >
-                <PlusIcon className="size-4" />
+                <PlusIcon />
                 New tab
-              </button>
+              </Button>
             </ResponsiveDialogFooter>
           )}
         </ResponsiveDialogContent>
@@ -211,7 +213,7 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
     <div
       className={cn(
         "flex min-h-12 items-center rounded-xl transition-colors",
-        active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-foreground/5 active:bg-foreground/5"
+        active ? "bg-muted" : "hover:bg-muted"
       )}
     >
       <button
@@ -226,7 +228,7 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
         <span className="flex size-4 shrink-0 items-center justify-center">
           {descriptor ? <PanelIcon panel={descriptor} className="size-4" /> : Icon && <Icon className="size-4 text-muted-foreground" />}
         </span>
-        <span className={cn("min-w-0 flex-1 truncate text-[13px]", status?.tone === "running" && "harness-shimmer")}>
+        <span className={cn("min-w-0 flex-1 truncate text-sm", status?.tone === "running" && "harness-shimmer")}>
           {title}
         </span>
         <PanelStatusDot status={status} />
@@ -237,17 +239,15 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
       {pinned ? (
         <PinIcon aria-label="Pinned" className="mr-3 size-3.5 shrink-0 text-muted-foreground" />
       ) : (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon"
           aria-label={`Close ${title}`}
           onClick={onClose}
-          className={cn(
-            "mr-1.5 grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground active:bg-foreground/10",
-            active && "text-sidebar-accent-foreground/70"
-          )}
+          className="mr-1.5 shrink-0 text-muted-foreground"
         >
-          <XIcon className="size-4" />
-        </button>
+          <XIcon />
+        </Button>
       )}
     </div>
   )
@@ -258,20 +258,14 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
 export function LayoutMenu({ onPick, className }: { onPick: (preset: PresetId) => void; className?: string }) {
   return (
     <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <DropdownMenuTrigger
-              render={
-                <Button size="icon-xs" variant="ghost" aria-label="Arrange this dock" className={className}>
-                  <LayoutGrid className="size-3.5" />
-                </Button>
-              }
-            />
-          }
-        />
-        <TooltipContent side="bottom">Layout</TooltipContent>
-      </Tooltip>
+      <DropdownMenuTrigger
+        title="Layout"
+        render={
+          <Button size="icon-xs" variant="ghost" aria-label="Arrange this dock" className={className}>
+            <LayoutGrid className="size-3.5" />
+          </Button>
+        }
+      />
       <DropdownMenuContent align="start" className={MENU_WIDTH}>
         {LAYOUT_PRESETS.map(({ id, label, Icon }) => (
           <DropdownMenuItem key={id} onClick={() => onPick(id)} className={MENU_ROW}>
@@ -299,25 +293,19 @@ export function TabActions({ panels, group }: IDockviewHeaderActionsProps) {
     <div className="flex h-full items-center gap-1 pl-0.5">
       {onNewTab && (
         <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="Open something in this group"
-                      className={STRIP_CONTROL}
-                    >
-                      <PlusIcon className="size-4" />
-                    </Button>
-                  }
-                />
-              }
-            />
-            <TooltipContent side="bottom">New tab</TooltipContent>
-          </Tooltip>
+          <DropdownMenuTrigger
+            title="New tab"
+            render={
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Open something in this group"
+                className={STRIP_CONTROL}
+              >
+                <PlusIcon className="size-4" />
+              </Button>
+            }
+          />
           <DropdownMenuContent align="end" className={MENU_WIDTH}>
             {/* Flat: the + already asked "open what?", so answering with one
                 row and a submenu is a hop for nothing. The rows themselves are

@@ -256,18 +256,18 @@ function ModelName({ item }: { item: ModelItem }) {
             {row.label.trim() || "Unnamed model"}
           </span>
           {isDefault && (
-            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium tracking-wide">
+            <Badge variant="secondary">
               default
             </Badge>
           )}
         </span>
       }
-      subtitle={<span className="font-mono text-[11px]">{row.id.trim() || "no id yet"}</span>}
+      subtitle={<span className="font-mono text-xs">{row.id.trim() || "no id yet"}</span>}
     />
   )
 }
 
-const Dash = () => <span className="text-muted-foreground/60">—</span>
+const Dash = () => <span className="text-muted-foreground">—</span>
 
 const MODEL_COLUMNS: ColumnDef<ModelItem, unknown>[] = [
   {
@@ -281,7 +281,7 @@ const MODEL_COLUMNS: ColumnDef<ModelItem, unknown>[] = [
     header: "Context",
     cell: ({ row }) => {
       const context = Number(row.original.row.contextWindow.trim())
-      return context > 0 ? <span className="text-xs">{formatTokens(Math.round(context))}</span> : <Dash />
+      return context > 0 ? <span className="text-sm">{formatTokens(Math.round(context))}</span> : <Dash />
     },
     meta: { align: "end", className: "hidden @panel-sm:table-cell w-24" },
   },
@@ -291,7 +291,7 @@ const MODEL_COLUMNS: ColumnDef<ModelItem, unknown>[] = [
     cell: ({ row }) => {
       const { pricingInput, pricingOutput } = row.original.row
       return pricingInput.trim() && pricingOutput.trim() ? (
-        <span className="whitespace-nowrap text-xs">
+        <span className="whitespace-nowrap text-sm">
           ${trimNum(Number(pricingInput))} / ${trimNum(Number(pricingOutput))}
         </span>
       ) : (
@@ -306,7 +306,7 @@ const MODEL_COLUMNS: ColumnDef<ModelItem, unknown>[] = [
     cell: ({ row }) => {
       const efforts = row.original.row.efforts.split(/[,\s]+/).filter(Boolean)
       return efforts.length ? (
-        <span className="text-xs text-muted-foreground">{efforts.join(" · ")}</span>
+        <span className="text-sm text-muted-foreground">{efforts.join(" · ")}</span>
       ) : (
         <Dash />
       )
@@ -342,16 +342,16 @@ function ModelRowCard({ item }: { item: ModelItem }) {
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate text-sm font-medium">{row.label.trim() || "Unnamed model"}</span>
           {isDefault && (
-            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium tracking-wide">
+            <Badge variant="secondary">
               default
             </Badge>
           )}
         </div>
-        <span className="block truncate font-mono text-[11px] text-muted-foreground">{row.id.trim() || "no id yet"}</span>
+        <span className="block truncate font-mono text-xs text-muted-foreground">{row.id.trim() || "no id yet"}</span>
         {badges.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {badges.map((badge) => (
-              <Badge key={badge} variant="outline" className="text-[11px] font-normal break-words text-muted-foreground">
+              <Badge key={badge} variant="outline" className="font-normal break-words text-muted-foreground">
                 {badge}
               </Badge>
             ))}
@@ -623,7 +623,7 @@ function ModelEditorFields({
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border/40">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <EntityIcon
             src={row.iconUrl}
@@ -631,10 +631,10 @@ function ModelEditorFields({
             className="size-6 shrink-0"
           />
           <div className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-semibold text-foreground">
+            <span className="block truncate text-sm font-medium text-foreground">
               Editing {row.label.trim() || row.id.trim() || "model"}
             </span>
-            <span className="block truncate font-mono text-[10px] text-muted-foreground">
+            <span className="block truncate font-mono text-xs text-muted-foreground">
               {row.id.trim() || "No model ID configured"}
             </span>
           </div>
@@ -643,7 +643,7 @@ function ModelEditorFields({
           type="button"
           variant={isDefault ? "secondary" : "outline"}
           size="sm"
-          className="h-7 w-full text-xs pointer-coarse:h-11 @panel-sm:w-auto"
+          className="w-full pointer-coarse:h-11 @panel-sm:w-auto"
           onClick={onSetDefault}
         >
           {isDefault ? "Default model" : "Set as default"}
@@ -655,7 +655,7 @@ function ModelEditorFields({
             value={row.id}
             onChange={(e) => onPatch({ id: e.target.value })}
             placeholder="claude-opus-5"
-            className="font-mono text-xs"
+            className="font-mono text-sm"
           />
         </Field>
         <Field label="Display name" hint="Empty = the id.">
@@ -663,7 +663,7 @@ function ModelEditorFields({
             value={row.label}
             onChange={(e) => onPatch({ label: e.target.value })}
             placeholder="Claude Opus 5"
-            className="text-xs"
+            className="text-sm"
           />
         </Field>
         <Field
@@ -676,7 +676,7 @@ function ModelEditorFields({
               onPatch({ kind: (value ?? "chat") as ModelKind, ...(value && value !== "chat" ? {} : { wire: "" as const }) })
             }
           >
-            <SelectTrigger className="w-full text-xs" aria-label="Model kind">
+            <SelectTrigger className="w-full" aria-label="Model kind">
               <SelectValue>{row.kind}</SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -695,7 +695,7 @@ function ModelEditorFields({
               value={row.wire || null}
               onValueChange={(value: string | null) => onPatch({ wire: (value ?? "") as ModelWire | "" })}
             >
-              <SelectTrigger className="w-full text-xs" aria-label="Model wire">
+              <SelectTrigger className="w-full" aria-label="Model wire">
                 <SelectValue>{row.wire || "Pick a wire"}</SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -717,7 +717,7 @@ function ModelEditorFields({
             value={row.contextWindow}
             onChange={(e) => onPatch({ contextWindow: e.target.value })}
             placeholder="200000"
-            className="text-left @panel-sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-sm"
           />
         </Field>
         <Field label="Max output tokens">
@@ -726,7 +726,7 @@ function ModelEditorFields({
             value={row.maxOutputTokens}
             onChange={(e) => onPatch({ maxOutputTokens: e.target.value })}
             placeholder="64000"
-            className="text-left @panel-sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-sm"
           />
         </Field>
         <Field label="Reasoning efforts" hint="Comma-separated; empty = no effort control.">
@@ -734,7 +734,7 @@ function ModelEditorFields({
             value={row.efforts}
             onChange={(e) => onPatch({ efforts: e.target.value })}
             placeholder="low, medium, high"
-            className="font-mono text-xs"
+            className="font-mono text-sm"
           />
         </Field>
         <Field label="Input modalities" hint="Comma-separated.">
@@ -742,7 +742,7 @@ function ModelEditorFields({
             value={row.modalities}
             onChange={(e) => onPatch({ modalities: e.target.value })}
             placeholder="text, image"
-            className="font-mono text-xs"
+            className="font-mono text-sm"
           />
         </Field>
         <Field label="Price in (USD / Mtok)">
@@ -753,7 +753,7 @@ function ModelEditorFields({
             value={row.pricingInput}
             onChange={(e) => onPatch({ pricingInput: e.target.value })}
             placeholder="3"
-            className="text-left @panel-sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-sm"
           />
         </Field>
         <Field label="Price out (USD / Mtok)">
@@ -764,7 +764,7 @@ function ModelEditorFields({
             value={row.pricingOutput}
             onChange={(e) => onPatch({ pricingOutput: e.target.value })}
             placeholder="15"
-            className="text-left @panel-sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-sm"
           />
         </Field>
         <div className="@panel-sm:col-span-2">
@@ -779,7 +779,7 @@ function ModelEditorFields({
                 value={row.iconUrl.startsWith("data:") ? "" : row.iconUrl}
                 onChange={(e) => onPatch({ iconUrl: e.target.value })}
                 placeholder={row.iconUrl.startsWith("data:") ? "Uploaded image" : "https://models.dev/logos/anthropic.svg"}
-                className="font-mono text-xs min-w-0 flex-1"
+                className="font-mono text-sm min-w-0 flex-1"
               />
               <LogoUpload value={row.iconUrl} onChange={(iconUrl) => onPatch({ iconUrl })} />
             </div>
@@ -875,7 +875,7 @@ function ModelTest({
 
   if (row.kind === "decision") {
     return (
-      <p className="border-t border-border/40 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+      <p className="border-t pt-3 text-xs leading-relaxed text-muted-foreground">
         A decision model answers typed questions — a state plus a map of noul, choice and score
         questions — and nothing in the harness asks one yet, so there is nothing to send from here.
         The row keeps its {row.wire || "unset"} wire for the first consumer.
@@ -884,20 +884,20 @@ function ModelTest({
   }
 
   return (
-    <div className="space-y-2 border-t border-border/40 pt-3">
+    <div className="space-y-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 text-xs pointer-coarse:h-11"
+          className="h-7 text-sm pointer-coarse:h-11"
           disabled={testing || !id || !baseUrl.trim()}
           title={baseUrl.trim() ? undefined : "Add a base URL first"}
           onClick={() => void run()}
         >
           <PlugZap className="size-4" /> {testing ? "Testing…" : "Test model"}
         </Button>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {completion
             ? "One fill-in-the-middle request, sent to this profile's saved endpoint."
             : row.maxOutputTokens.trim() && maxOut > 0
@@ -906,7 +906,7 @@ function ModelTest({
         </span>
       </div>
       {result && (
-        <p className={cn("px-2.5 py-2 text-[11px] text-muted-foreground", INSET)}>
+        <p className={cn("px-2.5 py-2 text-xs text-muted-foreground", INSET)}>
           Answered in {(result.ms / 1000).toFixed(1)}s
           {result.finishReason ? ` (${result.finishReason})` : ""}
           {result.reply ? ` — “${result.reply}”` : ""}
@@ -1081,12 +1081,12 @@ function ModelsDevMatch({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{hit.label || hit.id}</span>
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                  <span className="block truncate font-mono text-xs text-muted-foreground">
                     {hit.providerName ? `${hit.providerName} · ` : ""}
                     {hit.id}
                   </span>
                   {(hit.contextWindow || hit.pricing || hit.reasoningEfforts.length > 0) && (
-                    <span className="block truncate text-[11px] text-muted-foreground">
+                    <span className="block truncate text-xs text-muted-foreground">
                       {[
                         hit.contextWindow ? `${formatTokens(hit.contextWindow)} ctx` : "",
                         hit.pricing
@@ -1105,19 +1105,15 @@ function ModelsDevMatch({
             ))}
           </ComboboxList>
           {state !== "ready" || results.length === 0 ? (
-            <div className="px-3 py-3 text-center text-xs text-pretty text-muted-foreground">
+            <div className="px-3 py-3 text-center text-sm text-pretty text-muted-foreground">
               {state === "loading" ? (
                 "Searching…"
               ) : state === "failed" ? (
                 <>
                   models.dev is unreachable right now.{" "}
-                  <button
-                    type="button"
-                    className="underline underline-offset-2"
-                    onClick={() => setAttempt((n) => n + 1)}
-                  >
+                  <Button type="button" variant="link" size="xs" className="h-auto p-0" onClick={() => setAttempt((n) => n + 1)}>
                     Retry
-                  </button>
+                  </Button>
                 </>
               ) : (
                 "No match — try the model's real name rather than the id this provider serves it under."
@@ -1127,7 +1123,7 @@ function ModelsDevMatch({
         </ComboboxContent>
       </Combobox>
       {matched && (
-        <span className="font-mono text-xs text-muted-foreground break-all">
+        <span className="font-mono text-sm text-muted-foreground break-all">
           matched <span className="text-foreground font-medium">{matched}</span>
         </span>
       )}
@@ -1163,8 +1159,8 @@ function CandidatePicker({
       searchPlaceholder="Search models…"
       searchText={(c) => `${c.name} ${c.id} ${c.providerName ?? ""}`}
       subtitle={(c) => (
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-tight min-w-0">
-          {c.providerName && <span className="font-sans text-muted-foreground/70">{c.providerName}</span>}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-tight min-w-0">
+          {c.providerName && <span className="font-sans text-muted-foreground">{c.providerName}</span>}
           <span className="break-all">{c.id}</span>
           {c.contextWindow ? <span>{formatTokens(c.contextWindow)} ctx</span> : null}
           {c.pricing ? (
@@ -1293,7 +1289,7 @@ function FetchModelsDialog({
             <ResponsiveDialogHeader>
               <ResponsiveDialogTitle>Fetch models</ResponsiveDialogTitle>
               <ResponsiveDialogDescription className="break-words">
-                The live model list from <span className="font-mono text-xs break-all">{baseUrl.trim()}</span>. Pick the ones to add.
+                The live model list from <span className="font-mono text-sm break-all">{baseUrl.trim()}</span>. Pick the ones to add.
               </ResponsiveDialogDescription>
             </ResponsiveDialogHeader>
             {fetching ? (
@@ -1330,7 +1326,7 @@ function FetchModelsDialog({
                 to get the name, context window, pricing and efforts.
               </ResponsiveDialogDescription>
             </ResponsiveDialogHeader>
-            <div className={cn("max-h-[50vh] divide-y divide-border/60 overflow-y-auto @panel-sm:max-h-[60vh]", INSET)}>
+            <div className={cn("max-h-[50vh] divide-y overflow-y-auto @panel-sm:max-h-[60vh]", INSET)}>
               {picked.map((c) => {
                 const row = drafts[c.id]
                 if (!row) return null
@@ -1347,7 +1343,7 @@ function FetchModelsDialog({
                         <span className="block truncate text-sm font-medium">
                           {row.label.trim() || row.id}
                         </span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                        <span className="block truncate font-mono text-xs text-muted-foreground">
                           {row.id}
                         </span>
                       </div>

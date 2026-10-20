@@ -476,7 +476,7 @@ export function AutomationForm({
               hint="Named steps or phases, with dependsOn edges and {{inputs}} templates. The server validates it on save and says what is wrong."
             >
               <Textarea
-                className="font-mono text-xs"
+                className="font-mono text-sm"
                 rows={16}
                 value={draft.workflowText}
                 onChange={(e) => patch({ workflowText: e.target.value })}
@@ -557,7 +557,7 @@ export function AutomationForm({
               Every run works in <code className="font-mono text-foreground">{project.cwd}</code>.
             </p>
           ) : (
-            <p className="px-1 text-xs text-destructive">Pick a project: it is the directory every run acts in.</p>
+            <p className="px-1 text-sm text-destructive">Pick a project: it is the directory every run acts in.</p>
           )}
           <label className="flex items-start gap-2.5">
             <Switch className="mt-0.5" checked={draft.worktree} onCheckedChange={(worktree) => patch({ worktree })} />
@@ -688,7 +688,7 @@ export function AutomationForm({
                         </Field>
                         <Field label="Paths" hint="One glob per line. Empty means any path.">
                           <Textarea
-                            className="font-mono text-xs"
+                            className="font-mono text-sm"
                             rows={2}
                             value={draft.git.paths}
                             onChange={(e) => patch({ git: { ...draft.git, paths: e.target.value } })}
@@ -706,7 +706,7 @@ export function AutomationForm({
                 hint="Declaring one buys the run a repair turn and a structured verdict, which is what the run list leads with. Blank, a run says only that its turn ended."
               >
                 <Textarea
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                   rows={8}
                   value={draft.outputText}
                   onChange={(e) => patch({ outputText: e.target.value })}
@@ -726,7 +726,7 @@ export function AutomationForm({
 
       {/* Sticky, so the distance between changing a setting and committing it is
           zero from every section. */}
-      <footer className="sticky bottom-0 z-10 mt-6 flex flex-col gap-3 border-t bg-background/95 pt-3 pb-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <footer className="sticky bottom-0 z-10 mt-6 flex flex-col gap-3 border-t bg-background pt-3 pb-3">
         <ErrorNote error={error} />
         <div className="flex flex-wrap items-center gap-2">
           {!session && (

@@ -38,6 +38,7 @@ import {
   XIcon,
 } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
@@ -504,10 +505,10 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
     return (
       <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
         <PanelToolbar>
-          <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" className="size-6" onClick={() => api.updateParameters({ diff: undefined })}>
+          <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" onClick={() => api.updateParameters({ diff: undefined })}>
             <ArrowLeftIcon className="size-3.5" />
           </Button>
-          <span className="truncate font-mono text-[11px] text-muted-foreground">{params.diff.path}</span>
+          <span className="truncate font-mono text-xs text-muted-foreground">{params.diff.path}</span>
         </PanelToolbar>
         <div className="min-h-0 flex-1">
           <DiffTab projectId={projectId} path={params.diff.path} left={params.diff.left} right={params.diff.right} repo={params.diff.repo} active />
@@ -531,7 +532,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           size="icon-xs"
           variant="ghost"
           aria-label="Back"
-          className="size-6"
           disabled={!nav?.back}
           title={GUEST ? "Back" : "A sandboxed frame does not expose its history"}
           onClick={() => viewRef.current?.goBack()}
@@ -542,7 +542,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           size="icon-xs"
           variant="ghost"
           aria-label="Forward"
-          className="size-6"
           disabled={!nav?.forward}
           title={GUEST ? "Forward" : "A sandboxed frame does not expose its history"}
           onClick={() => viewRef.current?.goForward()}
@@ -553,7 +552,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           size="icon-xs"
           variant="ghost"
           aria-label="Reload"
-          className="size-6"
           onClick={() => setReloadKey((current) => current + 1)}
         >
           <RefreshCwIcon className="size-3.5" />
@@ -572,7 +570,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             onChange={(event) => setTyped(event.target.value)}
             placeholder="localhost:5173"
             aria-label="Address"
-            className="h-7 font-mono text-xs"
+            className="h-7 font-mono text-sm"
           />
         </form>
 
@@ -580,23 +578,16 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             reading a plain iframe cannot be trusted with. Shown only where a
             preview URL is configured — an empty bar says nothing. */}
         {trust === "project" && probe?.url && (
-          <span
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]",
-              probe.up
-                ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                : "border-amber-500/30 text-amber-600 dark:text-amber-400"
-            )}
-          >
+          <Badge variant="outline" className={cn("shrink-0", probe.up ? "text-success" : "text-warning")}>
             <span
               aria-hidden
               className={cn(
                 "size-1.5 rounded-full",
-                probe.up ? "bg-emerald-500" : "bg-amber-500"
+                probe.up ? "bg-success" : "bg-warning"
               )}
             />
             {probe.up ? "Running" : "Not running"}
-          </span>
+          </Badge>
         )}
 
 
@@ -642,7 +633,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             {problems > 0 && (
               <span
                 aria-hidden
-                className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-amber-500"
+                className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-warning"
               />
             )}
           </Button>
@@ -653,7 +644,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           variant="ghost"
           aria-label="Open in your browser"
           title="Open in your browser"
-          className="size-6"
           disabled={!url}
           onClick={() => url && window.open(url, "_blank", "noopener")}
         >
@@ -666,18 +656,18 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           goes to the composer in one click. The selector truncates because a
           deep DOM path is long and the buttons beside it are the point. */}
       {picking && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-primary/5 px-2 py-1.5 text-[11px] text-primary">
+        <div className="flex shrink-0 items-center gap-2 border-b bg-primary/5 px-2 py-1.5 text-xs text-primary">
           <CrosshairIcon className="size-3.5 shrink-0" />
           <span>Click an element on the page. Escape cancels.</span>
         </div>
       )}
       {picked && !picking && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-muted/40 px-2 py-1.5">
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-2 py-1.5">
           <CrosshairIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <code className="min-w-0 flex-1 truncate font-mono text-[11px]" title={picked.selector}>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs" title={picked.selector}>
             {picked.selector}
           </code>
-          <span className="hidden min-w-0 max-w-[14rem] truncate text-[11px] text-muted-foreground @panel-sm:inline">
+          <span className="hidden min-w-0 max-w-56 truncate text-xs text-muted-foreground @panel-sm:inline">
             {picked.tag}
             {picked.text ? ` "${picked.text}"` : ""}
           </span>
@@ -689,7 +679,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             size="icon-xs"
             variant="ghost"
             aria-label="Dismiss"
-            className="size-6"
             onClick={() => setPicked(null)}
           >
             <XIcon className="size-3.5" />
@@ -794,11 +783,11 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           a console is scanned rather than read, and errors and warnings wear
           the ink they earn. */}
       {consoleOpen && GUEST && (
-        <div className="flex h-44 shrink-0 flex-col border-t border-border/60 bg-muted/30">
-          <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-2 py-1">
+        <div className="flex h-44 shrink-0 flex-col border-t bg-muted/50">
+          <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1">
             <TerminalIcon className="size-3.5 text-muted-foreground" />
-            <span className="text-[11px] font-medium">Console</span>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs font-medium">Console</span>
+            <span className="text-xs text-muted-foreground">
               {consoleEntries.entries.length === 0
                 ? "no messages"
                 : `${consoleEntries.entries.length} message${consoleEntries.entries.length === 1 ? "" : "s"}`}
@@ -809,7 +798,6 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
               variant="ghost"
               aria-label="Clear console"
               title="Clear"
-              className="size-6"
               onClick={consoleEntries.clear}
             >
               <EraserIcon className="size-3.5" />
@@ -819,13 +807,12 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
               variant="ghost"
               aria-label="Hide console"
               title="Hide"
-              className="size-6"
               onClick={() => setConsoleOpen(false)}
             >
               <XIcon className="size-3.5" />
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto py-1 font-mono text-[11px] leading-relaxed">
+          <div className="min-h-0 flex-1 overflow-auto py-1 font-mono text-xs leading-relaxed">
             {consoleEntries.entries.length === 0 ? (
               <p className="px-2 py-0.5 text-muted-foreground">Nothing logged yet.</p>
             ) : (
@@ -843,12 +830,12 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
 function ConsoleLine({ entry }: { entry: ConsoleEntry }) {
   const tone =
     entry.level === "error"
-      ? "text-red-600 dark:text-red-400"
+      ? "text-destructive"
       : entry.level === "warning"
-        ? "text-amber-600 dark:text-amber-400"
+        ? "text-warning"
         : entry.level === "debug"
           ? "text-muted-foreground"
-          : "text-foreground/80"
+          : "text-foreground"
   return (
     <div className={cn("flex gap-2 px-2 py-0.5", tone)}>
       <span aria-hidden className="shrink-0 select-none opacity-70">

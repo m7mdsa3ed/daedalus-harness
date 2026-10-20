@@ -17,12 +17,12 @@ import {
 } from "@/components/ui/sidebar"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { Shortcut } from "@/components/shortcut"
+import { Badge } from "@/components/ui/badge"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { automationsPath, boardPath } from "@/lib/router"
 import { useLayoutOptions } from "@/lib/layout-options"
 import { useAutomations } from "@/lib/queries/automations"
-import { GROUP, MENU, ROW } from "./scale"
 
 /** One nav row. Data rather than four copies of the same JSX: every row is the
     same three primitives — a menu item, a button, an icon and a label — and
@@ -102,18 +102,16 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
   const shown = sidebarShowPlaces ? items : items.filter((item) => item.key === "new-thread")
 
   return (
-    <SidebarGroup className={GROUP}>
+    <SidebarGroup>
       <SidebarGroupContent>
-        <SidebarMenu className={MENU}>
+        <SidebarMenu>
           {shown.map((item) => (
             <SidebarMenuItem key={item.key}>
               <ItemContextMenu items={item.menu ?? []}>
                 <SidebarMenuButton
-                  size="sm"
                   tooltip={item.tooltip}
                   isActive={item.isActive}
                   onClick={item.onClick}
-                  className={ROW}
                 >
                   {item.icon}
                   <span>{item.label}</span>
@@ -135,9 +133,9 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
 function NavCount({ count }: { count: number }) {
   if (count <= 0) return null
   return (
-    <span className="ml-auto text-[10px] tabular-nums text-muted-foreground group-data-[collapsible=icon]:hidden">
+    <Badge variant="secondary" className="ml-auto tabular-nums group-data-[collapsible=icon]:hidden">
       {count}
-    </span>
+    </Badge>
   )
 }
 
@@ -148,7 +146,6 @@ function Kbd({ id }: { id: ShortcutId }) {
     <Shortcut
       id={id}
       className="ml-auto hidden opacity-0 transition-opacity group-hover/menu-button:opacity-100 sm:inline-flex group-data-[collapsible=icon]:hidden"
-      keyClassName="h-4 min-w-4 bg-transparent px-0.5 text-[10px] text-muted-foreground/70"
     />
   )
 }

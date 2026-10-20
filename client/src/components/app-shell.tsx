@@ -51,7 +51,7 @@ import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
 import { useDesktopBridge } from "@/lib/desktop"
-import { HEADER_BADGE, HEADER_CHIP, STRIP_GROUND } from "@/lib/header-chrome"
+import { HEADER_CHIP, STRIP_GROUND } from "@/lib/header-chrome"
 import { useChord } from "@/lib/keybindings"
 import { useActiveSpace, useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
 import {
@@ -569,7 +569,7 @@ export function AppShell({
               type="button"
               onClick={() => void navigate("/")}
               aria-label="Go to homepage"
-              className="flex shrink-0 items-center gap-2 rounded-sm pl-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex shrink-0 items-center gap-2 rounded-md pl-2 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >
               <Logo idle className="size-4 shrink-0" />
               <span className="brand-script text-xl leading-none">Daedalus</span>
@@ -580,12 +580,12 @@ export function AppShell({
             <Button
               variant="ghost"
               size="icon-xs"
-              className={cn(HEADER_CHIP, "ml-auto text-muted-foreground hover:text-foreground")}
+              className={cn(HEADER_CHIP, "ml-auto text-muted-foreground")}
               title={`Search threads and commands (${formatChord(paletteChord)})`}
               aria-label="Search"
               onClick={() => palette.setOpen(true)}
             >
-              <SearchIcon className="size-3.5" />
+              <SearchIcon />
             </Button>
           </div>
         </SidebarHeader>
@@ -601,7 +601,7 @@ export function AppShell({
             and the sidebar is threads again, on the same gesture. Settings
             therefore carries no second sidebar of its own; see
             `sidebar/settings-nav.tsx`. */}
-        <SidebarContent className="gap-0 pt-2">
+        <SidebarContent className="gap-0">
           {settingsNav ? (
             <SettingsNav onBack={() => setSettingsNav(false)} />
           ) : (
@@ -618,7 +618,7 @@ export function AppShell({
             </>
           )}
         </SidebarContent>
-        <SidebarFooter className="p-2">
+        <SidebarFooter>
           {/* ── One row of icons ──
               The things the panel itself needs, on one line: the space, the
               server it is talking to, what has arrived while you were away,
@@ -639,7 +639,7 @@ export function AppShell({
               onClick={() => setSettingsNav((on) => !on)}
               className={cn(
                 FOOTER_ICON,
-                settingsNav && "bg-sidebar-accent text-sidebar-accent-foreground",
+                settingsNav && "bg-muted text-foreground",
                 "ml-auto group-data-[collapsible=icon]:ml-0"
               )}
             >
@@ -736,18 +736,16 @@ export function AppShell({
               </Button>
             )}
             {forkedFrom && (
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="xs"
                 title={`Open ${forkedFrom.title}`}
-                className={cn(
-                  HEADER_BADGE,
-                  "pointer-events-auto hidden min-w-0 shrink-0 items-center gap-1 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex"
-                )}
+                className="pointer-events-auto hidden min-w-0 shrink-0 text-muted-foreground sm:inline-flex"
                 onClick={() => void navigate(threadPath(forkedFrom.id))}
               >
-                <GitBranch className="size-3 shrink-0" />
-                <span className="max-w-[140px] truncate">{forkedFrom.title}</span>
-              </button>
+                <GitBranch />
+                <span className="max-w-36 truncate">{forkedFrom.title}</span>
+              </Button>
             )}
           </div>
         </header>

@@ -41,7 +41,9 @@ import { mimeIcon } from "@/components/files/mime-icon"
 import { copyText } from "@/components/step-row"
 import { Highlighted, Prose } from "@/components/tool-parts"
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Slides } from "@/components/workspace/file-preview"
 import { formatBytes } from "@/lib/attachments"
 import { captureError, reportError } from "@/lib/errors"
@@ -88,7 +90,7 @@ const isTextual = (kind: PreviewKind | null) =>
 
 function Bar({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1 text-xs text-muted-foreground", className)}>
+    <div className={cn("flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1 text-sm text-muted-foreground", className)}>
       {children}
     </div>
   )
@@ -102,7 +104,6 @@ function Tool({ active, ...props }: React.ComponentProps<typeof Button> & { acti
       variant={active ? "secondary" : "ghost"}
       aria-pressed={active}
       {...props}
-      className={cn("size-7", props.className)}
     />
   )
 }
@@ -118,24 +119,13 @@ function Segmented<T extends string>({
   onChange: (value: T) => void
 }) {
   return (
-    <div role="radiogroup" className="flex items-center rounded-md bg-muted p-0.5">
+    <ToggleGroup size="sm" spacing={0} variant="outline" value={[value]} onValueChange={(next) => next[0] && onChange(next[0] as T)}>
       {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={value === option.value}
-          title={option.title}
-          onClick={() => onChange(option.value)}
-          className={cn(
-            "flex h-6 items-center gap-1 rounded px-2 text-xs",
-            value === option.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-          )}
-        >
+        <ToggleGroupItem key={option.value} value={option.value} title={option.title}>
           {option.label}
-        </button>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   )
 }
 
@@ -199,21 +189,16 @@ function ImageViewer({ url, name }: { url: string; name: string }) {
         <Tool title="Zoom out (−)" onClick={() => zoomBy(0.8)}>
           <MinusIcon />
         </Tool>
-        <button
-          type="button"
-          title="Actual size (1)"
-          onClick={() => zoomTo(1)}
-          className="w-12 rounded py-1 text-center tabular-nums hover:bg-muted hover:text-foreground"
-        >
+        <Button type="button" variant="ghost" size="sm" title="Actual size (1)" onClick={() => zoomTo(1)} className="w-14 tabular-nums">
           {Math.round(scale * 100)}%
-        </button>
+        </Button>
         <Tool title="Zoom in (+)" onClick={() => zoomBy(1.25)}>
           <PlusIcon />
         </Tool>
         <Tool title="Fit to the window (0)" active={zoom === "fit"} onClick={() => zoomTo("fit")}>
           <ShrinkIcon />
         </Tool>
-        <div className="mx-1 h-4 w-px bg-border" />
+        <Separator orientation="vertical" className="mx-1 h-4" />
         <Segmented
           value={ground}
           onChange={setGround}
@@ -355,7 +340,7 @@ function NoPreview({ file, reason, large }: { file: FileRecord; reason: string; 
   return (
     <Centered className="flex-col gap-2 p-6 text-center text-muted-foreground">
       <Icon className={large ? "size-16" : "size-10"} strokeWidth={1.25} />
-      <span className="text-xs">{reason}</span>
+      <span className="text-sm">{reason}</span>
     </Centered>
   )
 }
@@ -416,7 +401,7 @@ export function FileFacts({ file, location }: { file: FileRecord; location?: Pat
     ["Created", formatDate(file.createdAt)],
   ]
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
       {rows.map(([label, value]) => (
         <React.Fragment key={label}>
           <dt className="text-muted-foreground">{label}</dt>
@@ -452,11 +437,11 @@ export function FileDetails({
       <div className="flex flex-col gap-3 p-3">
         <div className="grid grid-cols-3 gap-1.5">
           {selected.slice(0, 9).map((item) => (
-            <Thumb key={item.id} item={item} crop className="aspect-square rounded-md bg-muted/50" />
+            <Thumb key={item.id} item={item} crop className="aspect-square rounded-lg bg-muted" />
           ))}
         </div>
         <p className="text-sm font-medium">{selected.length} items selected</p>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">Folders</dt>
           <dd className="text-right tabular-nums">{selected.length - files.length}</dd>
           <dt className="text-muted-foreground">Files</dt>
@@ -475,7 +460,7 @@ export function FileDetails({
       <div className="flex flex-col items-center gap-2 p-6 text-center text-muted-foreground">
         <Icon className="size-10 text-primary/70" strokeWidth={1.25} />
         <p className="text-sm font-medium text-foreground">{folderName}</p>
-        <p className="text-xs">
+        <p className="text-sm">
           {folderCount} {folderCount === 1 ? "item" : "items"} · select a file to preview it here
         </p>
       </div>
@@ -483,7 +468,7 @@ export function FileDetails({
   }
   return (
     <div className="flex flex-col gap-3 p-3">
-      <div className="flex aspect-[4/3] items-center justify-center rounded-lg bg-muted/50">
+      <div className="flex aspect-[4/3] items-center justify-center rounded-xl bg-muted">
         <Icon className="size-12 text-primary/70" strokeWidth={1.25} fill="currentColor" fillOpacity={0.15} />
       </div>
       <p className="text-sm font-medium break-all">{item.name}</p>
@@ -564,7 +549,6 @@ export function PreviewPanel({
     }
   }
 
-  const tool = "size-7"
   return (
     <section
       ref={root}
@@ -589,17 +573,17 @@ export function PreviewPanel({
         </span>
         {files.length > 1 && (
           <>
-            <span className="hidden px-1 text-xs text-muted-foreground tabular-nums @min-[24rem]:inline">
+            <span className="hidden px-1 text-sm text-muted-foreground tabular-nums @min-[24rem]:inline">
               {index + 1}/{files.length}
             </span>
-            <Button type="button" variant="ghost" size="icon-sm" className={tool} title="Previous file (←)" disabled={index <= 0} onClick={() => step(-1)}>
+            <Button type="button" variant="ghost" size="icon-sm" title="Previous file (←)" disabled={index <= 0} onClick={() => step(-1)}>
               <ChevronLeftIcon />
             </Button>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              className={tool}
+             
               title="Next file (→)"
               disabled={index < 0 || index >= files.length - 1}
               onClick={() => step(1)}
@@ -608,10 +592,10 @@ export function PreviewPanel({
             </Button>
           </>
         )}
-        <Button type="button" variant="ghost" size="icon-sm" className={tool} title="Open in a new tab" onClick={() => void openInTab()}>
+        <Button type="button" variant="ghost" size="icon-sm" title="Open in a new tab" onClick={() => void openInTab()}>
           <ExternalLinkIcon />
         </Button>
-        <Button type="button" variant="ghost" size="icon-sm" className={tool} title="Download" onClick={() => onDownload(file)}>
+        <Button type="button" variant="ghost" size="icon-sm" title="Download" onClick={() => onDownload(file)}>
           <DownloadIcon />
         </Button>
         <div className="mx-0.5 h-4 w-px bg-border" />
@@ -620,7 +604,7 @@ export function PreviewPanel({
             type="button"
             variant={wide ? "secondary" : "ghost"}
             size="icon-sm"
-            className={tool}
+           
             title={wide ? "Back to the side panel (Esc)" : "Full width (Space)"}
             aria-pressed={wide}
             onClick={() => onSize(wide ? "pane" : "wide")}
@@ -632,7 +616,7 @@ export function PreviewPanel({
           type="button"
           variant={fullscreen ? "secondary" : "ghost"}
           size="icon-sm"
-          className={tool}
+         
           title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
           aria-pressed={fullscreen}
           onClick={toggleFullscreen}
@@ -640,7 +624,7 @@ export function PreviewPanel({
           {fullscreen ? <MinimizeIcon /> : <MaximizeIcon />}
         </Button>
         {wide && !fullscreen && (
-          <Button type="button" variant="ghost" size="icon-sm" className={tool} title="Close the preview (Esc)" onClick={() => onSize("pane")}>
+          <Button type="button" variant="ghost" size="icon-sm" title="Close the preview (Esc)" onClick={() => onSize("pane")}>
             <XIcon />
           </Button>
         )}
@@ -650,26 +634,30 @@ export function PreviewPanel({
         <FilePreview key={file.id} file={file} />
         {/* Big side arrows over a wide stage, for a pointer that is not near the header. */}
         {(wide || fullscreen) && index > 0 && (
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="icon-lg"
             tabIndex={-1}
             aria-hidden
             onClick={() => step(-1)}
-            className="absolute top-1/2 left-3 hidden size-10 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 opacity-0 shadow-md backdrop-blur transition-opacity group-hover/stage:opacity-100 pointer-fine:flex"
+            className="absolute top-1/2 left-3 hidden -translate-y-1/2 opacity-0 transition-opacity group-hover/stage:opacity-100 pointer-fine:inline-flex"
           >
             <ChevronLeftIcon className="size-5" />
-          </button>
+          </Button>
         )}
         {(wide || fullscreen) && index >= 0 && index < files.length - 1 && (
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="icon-lg"
             tabIndex={-1}
             aria-hidden
             onClick={() => step(1)}
-            className="absolute top-1/2 right-3 hidden size-10 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 opacity-0 shadow-md backdrop-blur transition-opacity group-hover/stage:opacity-100 pointer-fine:flex"
+            className="absolute top-1/2 right-3 hidden -translate-y-1/2 opacity-0 transition-opacity group-hover/stage:opacity-100 pointer-fine:inline-flex"
           >
             <ChevronRightIcon className="size-5" />
-          </button>
+          </Button>
         )}
       </div>
 
@@ -687,7 +675,7 @@ export function PreviewPanel({
               }}
               onClick={() => onStep(f)}
               className={cn(
-                "size-14 shrink-0 overflow-hidden rounded-md border-2 bg-muted/50",
+                "size-14 shrink-0 overflow-hidden rounded-lg border-2 bg-muted",
                 f.id === file.id ? "border-primary" : "border-transparent opacity-70 hover:opacity-100"
               )}
             >
@@ -699,7 +687,7 @@ export function PreviewPanel({
 
       {!fullscreen && (
         <details className="group/facts shrink-0 border-t" open={!wide}>
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
             <ChevronRightIcon className="size-3.5 transition-transform group-open/facts:rotate-90" />
             {kindLabel(file)} · {formatBytes(file.size)}
           </summary>

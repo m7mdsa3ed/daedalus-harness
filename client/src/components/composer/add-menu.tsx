@@ -45,7 +45,6 @@ export function ComposerAddMenu({
   disabled: boolean
   /** The row's one scale — 24px under a mouse, 32px under a finger. */
   size: React.ComponentProps<typeof Button>["size"]
-  /** The row's one scale — see `iconFit` in the composer. */
   className?: string
   coarse: boolean
   onFiles: (files: Iterable<File>) => void
@@ -84,7 +83,7 @@ export function ComposerAddMenu({
               variant="ghost"
               size={size}
               className={cn(
-                "shrink-0 rounded-key bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground data-popup-open:bg-muted/70 data-popup-open:text-foreground",
+                "text-muted-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
                 className
               )}
               disabled={disabled}

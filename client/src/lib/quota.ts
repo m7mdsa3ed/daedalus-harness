@@ -129,8 +129,8 @@ export function peakWindow(quota: QuotaSnapshot | null | undefined): QuotaWindow
  */
 export function quotaTone(percent: number): { text: string; bar: string } {
   if (percent >= 90) return { text: "text-destructive", bar: "bg-destructive" }
-  if (percent >= 75) return { text: "text-amber-600 dark:text-amber-400", bar: "bg-amber-500" }
-  return { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" }
+  if (percent >= 75) return { text: "text-warning", bar: "bg-warning" }
+  return { text: "text-success", bar: "bg-success" }
 }
 
 /** Short display name for a provider usage kind — the card label when several

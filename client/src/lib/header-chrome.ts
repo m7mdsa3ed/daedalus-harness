@@ -65,18 +65,3 @@ export const STRIP_GROUND =
     cannot drift apart. The sidebar header's own buttons are not bound by this —
     they stand on a surface of their own, with nothing to line up with. */
 export const HEADER_CHIP = `size-[var(--dock-chip-h)] ${STRIP_GROUND}`
-
-/** The ground of a surface the app *raises over* its own content — what a
-    capsule opens (the bell's glance) and what the app raises on its own (a
-    toast). Frosted for the same reason the chip is: these float over a moving
-    transcript, and a solid slab there reads as a second window rather than
-    something belonging to the one you are in.
-
-    `supports-[backdrop-filter]` keeps it nearly opaque where the filter is
-    unavailable — a translucent panel with no blur behind it is unreadable.
-
-    Kept beside the header's own two because it is the same recipe at a
-    different scale, and one recipe is the point: a frosted surface that is
-    frosted *differently* looks like a bug. */
-export const GLASS_SURFACE =
-  "bg-popover/95 backdrop-blur-xl supports-[backdrop-filter]:bg-popover/75"

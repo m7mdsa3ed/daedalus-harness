@@ -4,6 +4,7 @@ import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { MARKDOWN_COMPONENTS } from "@/components/tool-parts"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Textarea } from "@/components/ui/textarea"
 import {
   api,
@@ -79,7 +80,7 @@ import {
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, saveLibraryEntry } from "./library"
-import { captureError, reportError, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { mcpDetailPath, settingsFormPath, settingsPath } from "@/lib/router"
 
@@ -336,7 +337,7 @@ export function McpPage() {
           <TitleCell
             title={row.original.server.name}
             subtitle={
-              <span className={cn(row.original.server.type !== "builtin" && "font-mono text-[11px]")}>
+              <span className={cn(row.original.server.type !== "builtin" && "font-mono text-xs")}>
                 {endpointOf(row.original.server)}
               </span>
             }
@@ -508,7 +509,7 @@ function listedWhen(result: McpCheckResult) {
  */
 function McpOffers({ row }: { row: ServerRow }) {
   const { server, data } = row
-  if (isThreadScoped(server) || !data?.ok) return <span className="text-xs text-muted-foreground/60">—</span>
+  if (isThreadScoped(server) || !data?.ok) return <span className="text-sm text-muted-foreground">—</span>
   const groups = (
     [
       ["tools", data.tools],
@@ -518,7 +519,7 @@ function McpOffers({ row }: { row: ServerRow }) {
   ).filter(([, list]) => list.length > 0)
   if (groups.length === 0) {
     return (
-      <span className="text-xs text-muted-foreground" title={listedWhen(data)}>
+      <span className="text-sm text-muted-foreground" title={listedWhen(data)}>
         Nothing advertised
       </span>
     )
@@ -557,11 +558,7 @@ function McpDetail({
       {server.type === "http" && server.auth === "oauth" && (
         <McpConnection server={server} settings={settings} refresh={refresh} />
       )}
-      {row.health === "error" && failure && (
-        <pre className="max-h-40 overflow-auto rounded-md bg-destructive/5 p-2 font-mono text-[11px] whitespace-pre-wrap text-destructive">
-          {failure}
-        </pre>
-      )}
+      {row.health === "error" && failure && <ErrorNote error={inlineFromQuery(failure, "The last check failed")} />}
     </>
   )
 }
@@ -583,7 +580,7 @@ function McpExpanded({
   const facts: [string, React.ReactNode][] = [
     [
       server.type === "http" ? "URL" : server.type === "stdio" ? "Command" : "Purpose",
-      <span key="e" className={cn("break-all", server.type !== "builtin" && "font-mono text-[11px]")}>
+      <span key="e" className={cn("break-all", server.type !== "builtin" && "font-mono text-xs")}>
         {endpointOf(server)}
       </span>,
     ],
@@ -592,10 +589,10 @@ function McpExpanded({
   ]
   return (
     <div className="space-y-3 py-1">
-      <dl className="grid gap-x-6 gap-y-2 text-xs @panel-md:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
+      <dl className="grid gap-x-6 gap-y-2 text-sm @panel-md:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
         {facts.map(([label, value]) => (
           <div key={label} className="min-w-0">
-            <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
             <dd className="mt-0.5">{value}</dd>
           </div>
         ))}
@@ -626,7 +623,7 @@ function McpMobileRow({
         </span>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{server.name}</div>
-          <div className={cn("truncate text-xs text-muted-foreground", server.type !== "builtin" && "font-mono text-[11px]")}>
+          <div className={cn("truncate text-sm text-muted-foreground", server.type !== "builtin" && "font-mono text-xs")}>
             {endpointOf(server)}
           </div>
           <McpStatus row={row} />
@@ -654,7 +651,7 @@ function McpMobileRow({
  */
 function McpThreadScoped() {
   return (
-    <p className="text-xs text-muted-foreground">
+    <p className="text-sm text-muted-foreground">
       Resolved at spawn, on the thread that links it — its connection is that thread's own, so there is
       nothing to connect to from Settings. Link it to a profile or a thread to give an agent its tools.
     </p>
@@ -900,7 +897,7 @@ export function McpBrowsePage() {
                 {row.original.verified && <BadgeCheckIcon className="size-3.5 text-primary" aria-label="Verified" />}
               </span>
             }
-            subtitle={<span className="font-mono text-[11px]">{row.original.qualifiedName}</span>}
+            subtitle={<span className="font-mono text-xs">{row.original.qualifiedName}</span>}
           />
         ),
       },
@@ -909,7 +906,7 @@ export function McpBrowsePage() {
         header: "About",
         meta: { className: "hidden @panel-md:table-cell max-w-72 min-w-48" },
         cell: ({ row }) => (
-          <span className="line-clamp-2 text-xs whitespace-normal text-muted-foreground">
+          <span className="line-clamp-2 text-sm whitespace-normal text-muted-foreground">
             {row.original.description}
           </span>
         ),
@@ -931,11 +928,11 @@ export function McpBrowsePage() {
         meta: { className: "hidden @panel-lg:table-cell" },
         cell: ({ row }) =>
           row.original.needs.length > 0 ? (
-            <span className="font-mono text-[11px] text-muted-foreground" title={row.original.needs.join(", ")}>
+            <span className="font-mono text-xs text-muted-foreground" title={row.original.needs.join(", ")}>
               {row.original.needs.join(", ")}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground/60">—</span>
+            <span className="text-sm text-muted-foreground">—</span>
           ),
       },
       {
@@ -987,17 +984,17 @@ export function McpBrowsePage() {
               {entry.server.name}
               {entry.verified && <BadgeCheckIcon className="size-3.5 shrink-0 text-primary" aria-label="Verified" />}
             </div>
-            <div className="truncate font-mono text-[11px] text-muted-foreground">{entry.qualifiedName}</div>
+            <div className="truncate font-mono text-xs text-muted-foreground">{entry.qualifiedName}</div>
           </div>
         </div>
-        <p className="line-clamp-3 text-xs text-muted-foreground">{entry.description}</p>
+        <p className="line-clamp-3 text-sm text-muted-foreground">{entry.description}</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <ViaCell entry={entry} />
           <PopularityCell entry={entry} />
           {have.has(entry.server.name) && <Badge variant="secondary">In library</Badge>}
         </div>
         {entry.needs.length > 0 && (
-          <p className="text-[11px] break-words text-muted-foreground">
+          <p className="text-xs break-words text-muted-foreground">
             Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
           </p>
         )}
@@ -1038,17 +1035,18 @@ export function McpBrowsePage() {
                 label: x.label,
               }))}
             />
-            <div className="relative">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
+            <InputGroup className="h-11">
+              <InputGroupAddon>
+                <SearchIcon />
+              </InputGroupAddon>
+              <InputGroupInput
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="github, postgres, figma…"
                 aria-label="Search the MCP registry"
-                className="h-11 pl-9 text-sm"
                 autoFocus
               />
-            </div>
+            </InputGroup>
             {hasPopularity && (
               <Segmented
                 label="Order"
@@ -1140,14 +1138,14 @@ export function McpRegistryDetailPage() {
               <PopularityCell entry={entry} />
               {entry.verified && <Badge variant="secondary"><BadgeCheckIcon className="size-3" /> Verified</Badge>}
               {entry.repositoryUrl && (
-                <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
                   Source <ExternalLinkIcon className="size-3.5" />
                 </a>
               )}
             </div>
-            <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{run}</pre>
+            <pre className="overflow-x-auto rounded-xl border bg-muted/50 p-3 font-mono text-sm">{run}</pre>
             {entry.needs.length > 0 && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
               </p>
             )}
@@ -1162,19 +1160,19 @@ export function McpRegistryDetailPage() {
           </FormSection>
           <FormSection id="tools" label="Tools" hint={detail?.tools ? `${detail.tools.length} published` : undefined}>
             {detail === null ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
+              <p className="text-sm text-muted-foreground">Loading…</p>
             ) : detail.tools === null ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 {entry.source === "smithery"
                   ? "Smithery lists no tools for this server."
                   : "This source does not publish a tool list. Install it, then Check it in the library to see exactly what it offers."}
               </p>
             ) : (
-              <ul className="divide-y rounded-md border">
+              <ul className="divide-y rounded-xl border">
                 {detail.tools.map((t) => (
                   <li key={t.name} className="px-3 py-2">
-                    <div className="font-mono text-xs font-medium">{t.name}</div>
-                    {t.description && <div className="line-clamp-2 text-xs text-muted-foreground">{t.description}</div>}
+                    <div className="font-mono text-sm font-medium">{t.name}</div>
+                    {t.description && <div className="line-clamp-2 text-sm text-muted-foreground">{t.description}</div>}
                   </li>
                 ))}
               </ul>
@@ -1182,7 +1180,7 @@ export function McpRegistryDetailPage() {
           </FormSection>
           <FormSection id="readme" label="README">
             {detail === null ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
+              <p className="text-sm text-muted-foreground">Loading…</p>
             ) : detail.readme ? (
               <div className="prose prose-sm max-w-none">
                 <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
@@ -1190,7 +1188,7 @@ export function McpRegistryDetailPage() {
                 </Markdown>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">No README could be read from the source.</p>
+              <p className="text-sm text-muted-foreground">No README could be read from the source.</p>
             )}
           </FormSection>
         </FormShell>
@@ -1206,7 +1204,7 @@ function ViaCell({ entry }: { entry: RegistryEntry }) {
       <Badge variant="outline" className="font-normal">
         {entry.via === "remote" ? "HTTP" : entry.via}
       </Badge>
-      {entry.version && <span className="text-xs text-muted-foreground">{entry.version}</span>}
+      {entry.version && <span className="text-sm text-muted-foreground">{entry.version}</span>}
     </span>
   )
 }
@@ -1214,10 +1212,10 @@ function ViaCell({ entry }: { entry: RegistryEntry }) {
 /** Uses (Smithery) or weekly downloads (npm), compacted; nothing where the
     source publishes no figure. */
 function PopularityCell({ entry }: { entry: RegistryEntry }) {
-  if (entry.popularity == null) return <span className="text-xs text-muted-foreground/60">—</span>
+  if (entry.popularity == null) return <span className="text-sm text-muted-foreground">—</span>
   const unit = entry.source === "npm" ? "/wk" : " uses"
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className="text-sm text-muted-foreground">
       {new Intl.NumberFormat(undefined, { notation: "compact" }).format(entry.popularity)}
       {unit}
     </span>
@@ -1387,7 +1385,7 @@ function McpForm({
               value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
               onChange={(e) => set({ logoUrl: e.target.value })}
               placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.png"}
-              className="min-w-0 flex-1 font-mono text-xs"
+              className="min-w-0 flex-1 font-mono text-sm"
             />
             <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
           </div>
@@ -1421,7 +1419,7 @@ function McpForm({
                 value={form.url}
                 onChange={(e) => set({ url: e.target.value, auth: "none" })}
                 placeholder="https://mcp.example.com/mcp"
-                className="min-w-0 flex-1 basis-full font-mono text-xs @panel-sm:basis-0"
+                className="min-w-0 flex-1 basis-full font-mono text-sm @panel-sm:basis-0"
                 required
               />
               <Button
@@ -1436,7 +1434,7 @@ function McpForm({
             </div>
           </Field>
           {probe && (
-            <p className="-mt-2 text-xs text-muted-foreground">
+            <p className="-mt-2 text-sm text-muted-foreground">
               {probe.kind === "oauth"
                 ? `Needs OAuth — ${probe.issuer}. Save, then Connect from the list.`
                 : probe.kind === "none"
@@ -1462,7 +1460,7 @@ function McpForm({
               value={form.headers}
               onChange={(e) => set({ headers: e.target.value })}
               rows={3}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
             />
           </Field>
         </>
@@ -1473,7 +1471,7 @@ function McpForm({
               value={form.command}
               onChange={(e) => set({ command: e.target.value })}
               placeholder="npx"
-              className="font-mono text-xs"
+              className="font-mono text-sm"
               required
             />
           </Field>
@@ -1482,7 +1480,7 @@ function McpForm({
               value={form.args}
               onChange={(e) => set({ args: e.target.value })}
               rows={3}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
             />
           </Field>
           <Field label="Environment" hint="One per line: NAME=value">
@@ -1490,7 +1488,7 @@ function McpForm({
               value={form.env}
               onChange={(e) => set({ env: e.target.value })}
               rows={2}
-              className="font-mono text-xs"
+              className="font-mono text-sm"
             />
           </Field>
         </>

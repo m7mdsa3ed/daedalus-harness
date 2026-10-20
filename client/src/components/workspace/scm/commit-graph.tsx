@@ -26,11 +26,11 @@ const DOT_RADIUS = 3.5
    classes by scanning source text, so `stroke-${hue}-500` would generate
    nothing at all and every lane would draw in the current colour. */
 const LANE_COLORS = [
-  { stroke: "stroke-sky-500", fill: "fill-sky-500" },
-  { stroke: "stroke-emerald-500", fill: "fill-emerald-500" },
-  { stroke: "stroke-amber-500", fill: "fill-amber-500" },
-  { stroke: "stroke-violet-500", fill: "fill-violet-500" },
-  { stroke: "stroke-rose-500", fill: "fill-rose-500" },
+  { stroke: "stroke-primary", fill: "fill-primary" },
+  { stroke: "stroke-success", fill: "fill-success" },
+  { stroke: "stroke-warning", fill: "fill-warning" },
+  { stroke: "stroke-step-tool", fill: "fill-step-tool" },
+  { stroke: "stroke-destructive", fill: "fill-destructive" },
   { stroke: "stroke-teal-500", fill: "fill-teal-500" },
 ] as const
 
@@ -119,19 +119,19 @@ export function CommitGraph({
               title={`${row.commit.hash}\n${row.commit.author} · ${new Date(row.commit.at * 1000).toLocaleString()}\n${row.commit.subject}\n\n${hint}`}
               className={cn(
                 "flex h-full w-full flex-col justify-center gap-0.5 rounded-md pr-1 pl-1 text-left",
-                "hover:bg-accent/40",
+                "hover:bg-muted",
                 coarse && "py-1"
               )}
             >
               <div className="flex min-w-0 items-center gap-1.5">
                 {row.commit.refs.slice(0, 2).map((ref) => (
-                  <Badge key={ref} variant="outline" className="shrink-0 px-1 text-[10px]">
+                  <Badge key={ref} variant="outline" className="shrink-0">
                     {ref}
                   </Badge>
                 ))}
-                <span className="min-w-0 flex-1 truncate text-xs">{row.commit.subject}</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{row.commit.subject}</span>
               </div>
-              <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="font-mono">{row.commit.short}</span>
                 <span className="truncate">{row.commit.author}</span>
                 <span className="ml-auto shrink-0 tabular-nums">

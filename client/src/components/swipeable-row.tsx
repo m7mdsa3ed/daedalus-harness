@@ -76,10 +76,9 @@ export function SwipeableRow({
       className="gap-0"
       items={[{ id: "row", content: children, rightActions, leftActions, disabled }]}
       classNames={{
-        // Shadow lives on the outer `item` — the `surface` sits inside beui's
-        // `overflow-hidden` row container, which would clip a shadow placed there.
+        // Flat: beui's own card shadow is switched off on both halves.
         root: className,
-        item: flat ? "rounded-none shadow-none" : "rounded-lg shadow-sm",
+        item: flat ? "rounded-none shadow-none" : "rounded-lg shadow-none",
         surface: flat ? FLAT_SURFACE : STRIP_SURFACE,
       }}
       neighborMotion={neighborMotion}

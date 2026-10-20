@@ -63,6 +63,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
 
 /* ── The shelf's one horizontal inset ──
    Card content, the footer's row and the rail's own tab text all start at the
@@ -93,9 +94,9 @@ export function formatCount(count: number, cap: 9 | 99 = 9): string {
  * and, by the same token, anything else that has to say "how many". It used to
  * be three sizes of the same idea — `9px` on the rail, `9px` padded wider on a
  * sliver, `8px` in the bubble — so the same number measured differently
- * depending on which dress it happened to be in. It is `primary`-tinted and
- * nothing else: a count is a count, and a second tone on it was a second
- * meaning that did not exist.
+ * depending on which dress it happened to be in. It is the stock `Badge` at a
+ * bubble's size and nothing else: a count is a count, and a second tone on it
+ * was a second meaning that did not exist.
  */
 export function ChipBadge({
   children,
@@ -105,14 +106,7 @@ export function ChipBadge({
   className?: string
 }) {
   return (
-    <span
-      className={cn(
-        "inline-grid h-3.5 min-w-3.5 shrink-0 place-items-center rounded-full bg-primary/15 px-1 text-[9px] leading-none font-semibold tabular-nums text-primary",
-        className
-      )}
-    >
-      {children}
-    </span>
+    <Badge className={cn("h-4 min-w-4 px-1 text-[10px] tabular-nums", className)}>{children}</Badge>
   )
 }
 
@@ -538,12 +532,12 @@ export function ComposerStrip({
                   tabIndex={selected ? 0 : -1}
                   onClick={() => setPicked(entry.id)}
                   className={cn(
-                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-pill px-2 text-left text-[11px] font-medium transition-colors",
+                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-left text-xs font-medium transition-colors",
                     wideLayout && "w-full justify-start",
                     selected
-                      ? "bg-composer text-foreground ring-1 ring-edge"
+                      ? "bg-composer text-foreground ring-1 ring-foreground/10"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                    "outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   )}
                 >
                   {Icon && <Icon className="size-3.5 shrink-0" />}

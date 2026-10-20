@@ -22,7 +22,9 @@ import {
   UserRoundXIcon,
 } from "lucide-react"
 import { useNavigate } from "react-router"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Notice } from "@/components/notice"
 import { CopyButton } from "@/components/ui/copy-button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import {
@@ -112,10 +114,10 @@ function AgentBlock({
         "my-0",
         // A proposal is waiting on a decision, so it reads a shade louder than
         // an aside that is only explaining something.
-        accent ? "border-primary/30 border-l-2 border-l-primary/60 bg-primary/[0.03]" : "border-border/60 bg-muted/40"
+        accent ? "border-s-2 border-s-primary" : "bg-muted"
       )}
     >
-      <p className={cn(LABEL, "mb-1.5", accent && "text-primary/80")}>
+      <p className={cn(LABEL, "mb-1.5", accent && "text-primary")}>
         <span aria-hidden>{mark}</span> {label}
       </p>
       <ProseWithOpenui text={body} stream={stream} streaming={streaming} />
@@ -308,22 +310,12 @@ const AlertCard = React.memo(function AlertCard({
   children: React.ReactNode
 }) {
   return (
-    <div
-      className={cn(
-        CARD,
-        "text-xs",
-        tone === "error"
-          ? "border-destructive/30 bg-destructive/5"
-          : tone === "warn"
-            ? "border-amber-500/40 bg-amber-500/10"
-            : "border-border/60 bg-muted/40"
-      )}
-    >
-      <div className="flex items-start gap-2">
-        <span className="mt-px shrink-0 [&>svg]:size-3.5">{icon}</span>
-        <div className="min-w-0 flex-1 space-y-1.5">{children}</div>
-      </div>
-    </div>
+    /* The stock alert (`Notice`), with no live-region role: a replayed
+       transcript mounts every one of these at once, and they are history, not
+       news. */
+    <Notice tone={tone} icon={icon} size="md" role={undefined} className="my-2">
+      {children}
+    </Notice>
   )
 })
 AlertCard.displayName = "AlertCard"
@@ -383,21 +375,18 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
         {task.summary ?? "Background task finished"}
       </p>
       {stats.length > 0 && (
-        <p className="text-[11px] tabular-nums text-muted-foreground">{stats.join(" · ")}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{stats.join(" · ")}</p>
       )}
       {grouped.map(({ message, labels }, index) => (
         <div key={index} className="space-y-0.5">
           <p className="flex flex-wrap gap-1">
             {labels.map((label) => (
-              <span
-                key={label}
-                className="rounded-sm bg-destructive/10 px-1.5 py-px font-mono text-[10px] text-destructive"
-              >
+              <Badge key={label} variant="destructive" className="font-mono">
                 {label}
-              </span>
+              </Badge>
             ))}
           </p>
-          <p className="text-[11px] text-muted-foreground">{message}</p>
+          <p className="text-xs text-muted-foreground">{message}</p>
         </div>
       ))}
       {task.result && (
@@ -410,7 +399,7 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
           launch row above is already tailing it — so this says where the
           detail lives rather than repeating it here. */}
       {task.transcriptDir && (
-        <p className="truncate font-mono text-[10px] text-muted-foreground/50" title={task.transcriptDir}>
+        <p className="truncate font-mono text-xs text-muted-foreground" title={task.transcriptDir}>
           {shortPath(task.transcriptDir, 60)}
         </p>
       )}
@@ -420,14 +409,9 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
 })
 TaskNotificationCard.displayName = "TaskNotificationCard"
 
-export const PILL = "h-6 gap-1 rounded-pill px-2 text-[11px] [&_svg]:size-3"
-
 /** The one action pill of an error or a status line (Continue, Retry, Reconnect…). */
-export function ActionPill({
-  className,
-  ...props
-}: Omit<React.ComponentProps<typeof Button>, "size"> & { className?: string }) {
-  return <Button variant="outline" size="sm" className={cn(PILL, className)} {...props} />
+export function ActionPill(props: Omit<React.ComponentProps<typeof Button>, "size">) {
+  return <Button variant="outline" size="xs" {...props} />
 }
 
 /**
@@ -488,10 +472,10 @@ export const ErrorRow = React.memo(function ErrorRow({
   ]
   if (compact)
     return (
-      <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground select-text">
+      <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground select-text">
         <TriangleAlertIcon className="size-3.5 shrink-0" />
         <span className="min-w-0 truncate">{item.title}</span>
-        <CopyButton text={full} size="icon-xs" className="text-muted-foreground/80 hover:text-foreground" />
+        <CopyButton text={full} size="icon-xs" className="text-muted-foreground hover:text-foreground" />
       </div>
     )
   return (
@@ -509,7 +493,7 @@ export const ErrorRow = React.memo(function ErrorRow({
             <InfoIcon className="text-muted-foreground" />
           ) : (
             <TriangleAlertIcon
-              className={severity === "warning" ? "text-amber-700 dark:text-amber-400" : "text-destructive"}
+              className={severity === "warning" ? "text-warning" : "text-destructive"}
             />
           )
         }
@@ -518,7 +502,7 @@ export const ErrorRow = React.memo(function ErrorRow({
           className={cn(
             "font-medium",
             severity === "warning"
-              ? "text-amber-700 dark:text-amber-400"
+              ? "text-warning"
               : severity === "info"
                 ? "text-foreground"
                 : "text-destructive"
@@ -528,7 +512,7 @@ export const ErrorRow = React.memo(function ErrorRow({
         </p>
         {item.reason && <p className="text-muted-foreground">{item.reason}</p>}
         {missing?.install && (
-          <code className="block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
+          <code className="block w-fit max-w-full rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs break-all text-foreground select-text">
             {missing.install}
           </code>
         )}
@@ -538,7 +522,7 @@ export const ErrorRow = React.memo(function ErrorRow({
           </Disclosure>
         )}
         {open && item.detail && (
-          <pre className="max-h-56 overflow-auto rounded-sm border border-destructive/20 bg-background/50 p-2 font-mono text-[11px] whitespace-pre-wrap">
+          <pre className="max-h-56 overflow-auto rounded-lg bg-muted p-2 font-mono text-xs whitespace-pre-wrap text-foreground">
             {item.detail}
           </pre>
         )}
@@ -582,11 +566,7 @@ export const ErrorRow = React.memo(function ErrorRow({
               Retry as file paths
             </ActionPill>
           )}
-          <CopyButton
-            text={full}
-            label="Copy"
-            className={PILL}
-          />
+          <CopyButton text={full} label="Copy" size="xs" />
           {onDismiss && (
             <ActionPill variant="ghost" className="text-muted-foreground" onClick={onDismiss}>
               Dismiss
@@ -631,7 +611,7 @@ export const CompactionStep = React.memo(function CompactionStep({
       <div className="min-w-0 space-y-2">
         {item.error && (
           <div className="flex items-start gap-1">
-            <p className="min-w-0 flex-1 text-xs text-destructive">{item.error}</p>
+            <p className="min-w-0 flex-1 text-sm text-destructive">{item.error}</p>
             <CopyButton text={item.error} size="icon-xs" className="shrink-0 text-destructive" />
           </div>
         )}
@@ -685,7 +665,7 @@ export const AutonomyStep = React.memo(function AutonomyStep({
       mono={false}
       target={line.title}
       metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
-      detail={<p className="text-xs leading-relaxed text-muted-foreground">{line.detail}</p>}
+      detail={<p className="text-sm leading-relaxed text-muted-foreground">{line.detail}</p>}
     />
   )
 })
@@ -714,7 +694,6 @@ export const VoiceStep = React.memo(function VoiceStep({
           <BubbleContent
             dir="auto"
             title={user ? "Said by voice" : "Voice"}
-            className={cn("rounded-2xl px-4 py-2.5 text-sm", user ? "rounded-br-sm" : "rounded-bl-sm")}
           >
             <p className="text-pretty whitespace-pre-wrap">{item.text}</p>
           </BubbleContent>
@@ -785,7 +764,7 @@ export const ShellStep = React.memo(function ShellStep({
             emptyNote={running ? undefined : "No output."}
           />
           {item.timedOut && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Stopped at the timeout — this is what it printed first.
             </p>
           )}
@@ -825,19 +804,19 @@ export const ShellRun = React.memo(function ShellRun({
       <button
         type="button"
         onClick={() => setChoice(!open)}
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted/40"
+        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
         <ChevronRightIcon
           aria-hidden
           className={cn(
-            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
+            "size-3 shrink-0 text-muted-foreground transition-transform duration-200",
             open && "rotate-90"
           )}
         />
         <SquareTerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span
           className={cn(
-            "min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground",
+            "min-w-0 flex-1 truncate text-sm leading-6 text-muted-foreground",
             running && "harness-shimmer"
           )}
         >
@@ -850,7 +829,7 @@ export const ShellRun = React.memo(function ShellRun({
       {open && (
         /* One rail for the blocks, the way a folded tool run draws one: the
            commands are a group, and the line down their left says so. */
-        <div className="ms-1.5 border-s border-border/50 ps-1">
+        <div className="ms-1.5 border-s ps-1">
           {items.map((item) => (
             <ShellStep key={item.id} item={item} showTimestamp={showTimestamps} />
           ))}
@@ -881,7 +860,7 @@ export const SourcesStrip = React.memo(function SourcesStrip({ turn }: { turn: T
         <SourceChip key={source.url} url={source.url} title={source.title} />
       ))}
       {consulted.length > 0 && (
-        <span className="ml-auto text-[10px] text-muted-foreground/50">{consulted.join(" · ")}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{consulted.join(" · ")}</span>
       )}
     </div>
   )
@@ -913,7 +892,7 @@ export const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem 
           item.markdown !== undefined ? (
             <Prose text={item.markdown} />
           ) : (
-            <span className="font-mono text-xs text-muted-foreground">{item.uri}</span>
+            <span className="font-mono text-sm text-muted-foreground">{item.uri}</span>
           )
         }
       />

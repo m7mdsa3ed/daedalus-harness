@@ -46,7 +46,7 @@ export const PEEK = 3
 export const RUN_RAIL_CLASS = "pt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 ps-2.5"
 
 export const RAIL_ELBOW =
-  "harness-rail-draw relative before:absolute before:-top-0.5 before:-start-[11px] before:h-4 before:w-[24px] before:rounded-es-[6px] before:border-b before:border-s before:border-border/60"
+  "harness-rail-draw relative before:absolute before:-top-0.5 before:-start-[11px] before:h-4 before:w-[24px] before:rounded-es-[6px] before:border-b before:border-s before:border-border"
 
 /** The rail continuing past a step to the one under it — every step but the
     last, which is what makes the run's line end on its own last elbow. */
@@ -64,7 +64,7 @@ export function EarlierSteps({ count, onClick }: { count: number; onClick: () =>
     <button
       type="button"
       onClick={onClick}
-      className="-mx-1 block rounded-sm px-1 text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
+      className="-mx-1 block rounded-md px-1 text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground"
     >
       {count} earlier {count === 1 ? "step" : "steps"}
     </button>

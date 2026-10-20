@@ -18,6 +18,7 @@
    editable, caret at the end. Nothing is run or sent by the click. */
 import { LABEL } from "@/components/tool-parts"
 import type { SuggestGroup } from "@/lib/suggestions"
+import { Item } from "@/components/ui/item"
 import { cn } from "@/lib/utils"
 
 export function SuggestionGroup({
@@ -48,34 +49,30 @@ export function SuggestionGroup({
       {lines.map((line) => {
         const text = kind.show ? kind.show(line) : line
         return (
-          <button
+          <Item
             key={line}
-            type="button"
-            onClick={() => onPick(kind.fill(line))}
-            title={kind.fill(line)}
+            variant={kind.mono ? "muted" : "outline"}
+            size="xs"
+            render={<button type="button" onClick={() => onPick(kind.fill(line))} title={kind.fill(line)} />}
             className={cn(
-              // The source chip's frame (`SourceChip` in tool-parts), stretched
-              // to the width: same radius, same hairline, same hover promotion.
-              "group/suggestion flex w-full min-w-0 gap-2 rounded-md border border-border/60 px-2 py-1 text-start",
-              kind.mono ? "items-center bg-muted/40" : "items-start bg-transparent",
-              "transition-colors hover:border-border hover:bg-accent hover:text-accent-foreground",
-              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              "group/suggestion min-w-0 flex-nowrap gap-2 py-1.5 text-start hover:bg-muted",
+              kind.mono ? "items-center" : "items-start"
             )}
           >
             {/* h-5 grid, not a bare icon: it pins the mark to the first line
                 box, so a two-line row keeps its mark beside the first line. */}
             <span aria-hidden className="grid h-5 shrink-0 place-items-center">
-              <Icon className="size-3.5 text-muted-foreground/60 transition-colors group-hover/suggestion:text-current" />
+              <Icon className="size-3.5 text-muted-foreground transition-colors group-hover/suggestion:text-foreground" />
             </span>
             <span
               className={cn(
-                "min-w-0 flex-1 text-xs leading-5 text-muted-foreground transition-colors group-hover/suggestion:text-current",
+                "min-w-0 flex-1 text-sm leading-5 text-muted-foreground transition-colors group-hover/suggestion:text-foreground",
                 kind.mono ? "truncate font-mono" : "line-clamp-2"
               )}
             >
               {text}
             </span>
-          </button>
+          </Item>
         )
       })}
     </div>

@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -69,8 +73,8 @@ export function ColorPicker({ value, onChange }: { value: BoardColor | null; onC
         aria-label="No colour"
         aria-pressed={value === null}
         className={cn(
-          "grid size-7 place-items-center rounded-full border text-[10px] text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          value === null ? "border-primary/50 bg-primary/10" : "border-transparent bg-muted/50",
+          "grid size-7 place-items-center rounded-full border text-xs text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          value === null ? "border-primary bg-muted" : "border-transparent bg-muted",
         )}
       >
         —
@@ -84,8 +88,8 @@ export function ColorPicker({ value, onChange }: { value: BoardColor | null; onC
           title={COLOR_LABEL[color]}
           aria-pressed={value === color}
           className={cn(
-            "grid size-7 place-items-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            value === color ? "border-primary/50 bg-primary/10" : "border-transparent",
+            "grid size-7 place-items-center rounded-full border outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            value === color ? "border-primary" : "border-transparent",
           )}
         >
           <span className={cn("size-3.5 rounded-full", COLOR_DOT[color])} />
@@ -245,7 +249,7 @@ export function BoardDialog({
                     setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))
                   }}
                   placeholder="WEB"
-                  className="font-mono uppercase"
+                  className="font-mono"
                 />
               </div>
             </div>
@@ -283,37 +287,37 @@ export function BoardDialog({
                 <p className="text-xs text-muted-foreground">A task entering a <em>Done</em> column is completed. A WIP limit is shown, never enforced. Column edits save immediately.</p>
                 <ul className="grid gap-1 rounded-xl border p-1">
                   {statuses.map((s, i) => (
-                    <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-accent/40 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto]">
-                      <GripVertical className="size-3.5 text-muted-foreground/50" />
+                    <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-muted sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto]">
+                      <GripVertical className="size-3.5 text-muted-foreground" />
                       <Input
                         defaultValue={s.name}
                         onBlur={(e) => {
                           const v = e.target.value.trim()
                           if (v && v !== s.name) void patchStatus(s, { name: v })
                         }}
-                        className="h-7 text-xs"
+                        className="h-8"
                         aria-label="Column name"
                       />
                       <span className="inline-flex">
-                        <button type="button" disabled={i === 0} onClick={() => moveColumn(s, -1)} aria-label="Move up" className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-accent disabled:opacity-30">
-                          <ChevronUp className="size-3.5" />
-                        </button>
-                        <button type="button" disabled={i === statuses.length - 1} onClick={() => moveColumn(s, 1)} aria-label="Move down" className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-accent disabled:opacity-30">
-                          <ChevronDown className="size-3.5" />
-                        </button>
-                        <button type="button" disabled={statuses.length <= 1} onClick={() => onDeleteStatus(s)} aria-label="Delete column" className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30">
-                          <Trash2 className="size-3.5" />
-                        </button>
+                        <Button type="button" variant="ghost" size="icon-sm" disabled={i === 0} onClick={() => moveColumn(s, -1)} aria-label="Move up" className="text-muted-foreground">
+                          <ChevronUp />
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon-sm" disabled={i === statuses.length - 1} onClick={() => moveColumn(s, 1)} aria-label="Move down" className="text-muted-foreground">
+                          <ChevronDown />
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon-sm" disabled={statuses.length <= 1} onClick={() => onDeleteStatus(s)} aria-label="Delete column" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                          <Trash2 />
+                        </Button>
                       </span>
                       {/* The three controls rejoin the flat grid on desktop. */}
                       <div className="col-span-full grid grid-cols-[minmax(0,1fr)_4.5rem_minmax(0,1fr)] gap-1.5 sm:contents">
-                        <select value={s.category} onChange={(e) => void patchStatus(s, { category: e.target.value as StatusCategory })} className="h-7 rounded-md border bg-background px-1 text-xs" aria-label="Category">
+                        <NativeSelect size="sm" className="w-full" value={s.category} onChange={(e) => void patchStatus(s, { category: e.target.value as StatusCategory })} aria-label="Category">
                           {STATUS_CATEGORIES.map((c) => (
-                            <option key={c} value={c}>
+                            <NativeSelectOption key={c} value={c}>
                               {CATEGORY_LABEL[c]}
-                            </option>
+                            </NativeSelectOption>
                           ))}
-                        </select>
+                        </NativeSelect>
                         <Input
                           type="number"
                           min={1}
@@ -323,17 +327,17 @@ export function BoardDialog({
                             if (v !== s.wipLimit) void patchStatus(s, { wipLimit: v })
                           }}
                           placeholder="WIP"
-                          className="h-7 text-xs"
+                          className="h-8"
                           aria-label="WIP limit"
                         />
-                        <select value={s.color ?? ""} onChange={(e) => void patchStatus(s, { color: (e.target.value || null) as BoardColor | null })} className="h-7 rounded-md border bg-background px-1 text-xs" aria-label="Colour">
-                          <option value="">No colour</option>
+                        <NativeSelect size="sm" className="w-full" value={s.color ?? ""} onChange={(e) => void patchStatus(s, { color: (e.target.value || null) as BoardColor | null })} aria-label="Colour">
+                          <NativeSelectOption value="">No colour</NativeSelectOption>
                           {BOARD_COLORS.map((c) => (
-                            <option key={c} value={c}>
+                            <NativeSelectOption key={c} value={c}>
                               {COLOR_LABEL[c]}
-                            </option>
+                            </NativeSelectOption>
                           ))}
-                        </select>
+                        </NativeSelect>
                       </div>
                     </li>
                   ))}
@@ -348,10 +352,10 @@ export function BoardDialog({
                         }
                       }}
                       placeholder="New column name…"
-                      className="h-7 text-xs"
+                      className="h-8"
                     />
                     <Button type="button" size="xs" variant="outline" onClick={addColumn} disabled={!newColumn.trim()}>
-                      <Plus className="size-3" /> Add
+                      <Plus /> Add
                     </Button>
                   </li>
                 </ul>
@@ -365,19 +369,19 @@ export function BoardDialog({
                 <ul className="grid gap-1 rounded-xl border p-1">
                   {fields.map((f) => (
                     <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto]">
-                      <Input value={f.name} onChange={(e) => setField(f.id, { name: e.target.value })} placeholder="Field name" className="h-7 text-xs" aria-label="Field name" />
-                      <button type="button" onClick={() => setFields((fs) => fs.filter((x) => x.id !== f.id))} aria-label="Remove field" className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      <Input value={f.name} onChange={(e) => setField(f.id, { name: e.target.value })} placeholder="Field name" className="h-8" aria-label="Field name" />
+                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => setFields((fs) => fs.filter((x) => x.id !== f.id))} aria-label="Remove field" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                        <Trash2 />
+                      </Button>
                       {/* Type and options rejoin the flat grid on desktop. */}
                       <div className="col-span-full grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5 sm:contents">
-                        <select value={f.type} onChange={(e) => setField(f.id, { type: e.target.value as CustomFieldDef["type"] })} className="h-7 rounded-md border bg-background px-1 text-xs" aria-label="Field type">
+                        <NativeSelect size="sm" className="w-full" value={f.type} onChange={(e) => setField(f.id, { type: e.target.value as CustomFieldDef["type"] })} aria-label="Field type">
                           {FIELD_TYPES.map((t) => (
-                            <option key={t} value={t}>
+                            <NativeSelectOption key={t} value={t}>
                               {t}
-                            </option>
+                            </NativeSelectOption>
                           ))}
-                        </select>
+                        </NativeSelect>
                         {f.type === "select" ? (
                           <Input
                             value={(f.options ?? []).join(", ")}
@@ -390,7 +394,7 @@ export function BoardDialog({
                               })
                             }
                             placeholder="Options, comma-separated"
-                            className="h-7 text-xs"
+                            className="h-8"
                             aria-label="Options"
                           />
                         ) : (
@@ -401,7 +405,7 @@ export function BoardDialog({
                   ))}
                   <li className="px-1 py-1">
                     <Button type="button" size="xs" variant="outline" onClick={() => setFields((fs) => [...fs, { id: uuid(), name: "", type: "text" }])}>
-                      <Plus className="size-3" /> Add field
+                      <Plus /> Add field
                     </Button>
                   </li>
                 </ul>
@@ -504,13 +508,13 @@ export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; o
             </div>
             <div className="grid gap-2">
               <Label>Category</Label>
-              <div className="flex gap-1">
+              <ToggleGroup aria-label="Category" variant="outline" size="sm" spacing={0} value={[category]} onValueChange={(next) => next[0] && setCategory(next[0] as StatusCategory)}>
                 {STATUS_CATEGORIES.map((c) => (
-                  <button key={c} type="button" onClick={() => setCategory(c)} aria-pressed={category === c} className={cn("rounded-pill border px-2.5 py-1 text-xs", category === c ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent")}>
+                  <ToggleGroupItem key={c} value={c}>
                     {CATEGORY_LABEL[c]}
-                  </button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="col-wip">WIP limit</Label>
@@ -677,14 +681,14 @@ export function CompleteSprintDialog({ open, onOpenChange, sprint, openCount, do
           {openCount > 0 ? `${openCount} ${openCount === 1 ? "task is" : "tasks are"} still open — choose where they go.` : "Nothing is left open."}
         </ResponsiveDialogDescription>
         {openCount > 0 && (
-          <div className="grid gap-1 py-2">
+          <RadioGroup value={moveTo} onValueChange={(v) => setMoveTo(v as typeof moveTo)} className="gap-1 py-2">
             {(["next", "backlog"] as const).map((opt) => (
-              <label key={opt} className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm", moveTo === opt && "border-primary/40 bg-primary/5")}>
-                <input type="radio" name="moveTo" checked={moveTo === opt} onChange={() => setMoveTo(opt)} className="accent-primary" />
+              <label key={opt} className={cn("flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm", moveTo === opt && "border-primary bg-muted")}>
+                <RadioGroupItem value={opt} />
                 {opt === "next" ? "Move to the next sprint (created if there is none)" : "Return to the backlog"}
               </label>
             ))}
-          </div>
+          </RadioGroup>
         )}
         <ErrorNote error={error} />
         <ResponsiveDialogFooter>
@@ -750,17 +754,17 @@ export function SaveViewDialog({ open, onOpenChange, boardId, state, existing, o
             </div>
             <div className="grid gap-2">
               <Label>Layout</Label>
-              <div className="flex flex-wrap gap-1">
+              <ToggleGroup aria-label="Layout" variant="outline" size="sm" value={[kind]} onValueChange={(next) => next[0] && setKind(next[0] as ViewKind)} className="flex-wrap">
                 {VIEW_KINDS.map((k) => (
-                  <button key={k} type="button" onClick={() => setKind(k)} aria-pressed={kind === k} className={cn("rounded-pill border px-2.5 py-1 text-xs capitalize", kind === k ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent")}>
+                  <ToggleGroupItem key={k} value={k} className="capitalize">
                     {k}
-                  </button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
             </div>
             {existing && (
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={asNew} onChange={(e) => setAsNew(e.target.checked)} className="accent-primary" />
+                <Checkbox checked={asNew} onCheckedChange={(checked) => setAsNew(checked)} />
                 Save as a new view instead of updating “{existing.name}”
               </label>
             )}

@@ -69,7 +69,7 @@ function RenameInput({ item, onRename, className }: { item: ListedItem; onRename
       autoFocus
       defaultValue={item.name}
       aria-label={`Rename ${item.name}`}
-      className={cn("h-6 min-w-0 px-1.5 text-xs", className)}
+      className={cn("h-6 min-w-0 px-1.5 text-sm", className)}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onFocus={(e) => {
@@ -108,9 +108,9 @@ function itemAttrs(item: ListedItem, h: ItemHandlers) {
     onContextMenu: () => h.onContext(item),
     className: cn(
       "relative cursor-default select-none rounded-md outline-none",
-      "hover:bg-muted/60 data-selected:bg-primary/12 data-selected:hover:bg-primary/16",
-      "data-focus:ring-1 data-focus:ring-ring/60",
-      "data-drop:bg-primary/20 data-drop:ring-2 data-drop:ring-primary/50",
+      "hover:bg-muted data-selected:bg-primary/10 data-selected:hover:bg-primary/15",
+      "data-focus:ring-[3px] data-focus:ring-ring/50",
+      "data-drop:bg-primary/10 data-drop:ring-1 data-drop:ring-primary",
       h.cutIds.has(item.id) && "opacity-50",
       off && "opacity-45"
     ),
@@ -172,13 +172,13 @@ export function GridView({
             className={cn(attrs.className, "flex min-w-0 flex-col items-center gap-1.5", roomy ? "p-2" : "p-1")}
             title={item.name}
           >
-            <Thumb item={item} crop={crop} className="aspect-square w-full rounded-md bg-muted/40" />
+            <Thumb item={item} crop={crop} className="aspect-square w-full rounded-lg bg-muted" />
             {h.renamingId === item.id ? (
               <RenameInput item={item} onRename={h.onRename} className="w-full text-center" />
             ) : (
-              labels && <span className="line-clamp-2 w-full text-center text-xs break-all">{item.name}</span>
+              labels && <span className="line-clamp-2 w-full text-center text-sm break-all">{item.name}</span>
             )}
-            {labels && roomy && <span className="-mt-1 text-[10px] text-muted-foreground tabular-nums">{sizeText(item)}</span>}
+            {labels && roomy && <span className="-mt-1 text-xs text-muted-foreground tabular-nums">{sizeText(item)}</span>}
           </div>
         )
       })}
@@ -267,26 +267,26 @@ export function ListView({
       case "location": {
         const where = item.path?.map((p) => p.name).join(" / ") || "Library"
         return (
-          <span key={id} className="truncate text-xs text-muted-foreground" title={where}>
+          <span key={id} className="truncate text-sm text-muted-foreground" title={where}>
             {where}
           </span>
         )
       }
       case "updatedAt":
         return (
-          <span key={id} className="truncate text-xs text-muted-foreground tabular-nums">
+          <span key={id} className="truncate text-sm text-muted-foreground tabular-nums">
             {formatDate(item.updatedAt)}
           </span>
         )
       case "kind":
         return (
-          <span key={id} className="truncate text-xs text-muted-foreground">
+          <span key={id} className="truncate text-sm text-muted-foreground">
             {kindLabel(item)}
           </span>
         )
       case "size":
         return (
-          <span key={id} className="truncate text-right text-xs text-muted-foreground tabular-nums">
+          <span key={id} className="truncate text-right text-sm text-muted-foreground tabular-nums">
             {sizeText(item)}
           </span>
         )
@@ -296,7 +296,7 @@ export function ListView({
   return (
     <div ref={ref} className="flex flex-col">
       <div
-        className="sticky top-0 z-10 grid gap-3 border-b bg-background/95 px-3 py-1.5 text-[11px] font-medium text-muted-foreground backdrop-blur"
+        className="sticky top-0 z-10 grid gap-3 border-b bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground"
         style={{ gridTemplateColumns: template }}
       >
         <SortHead id="name" label="Name" sort={sort} desc={desc} onSort={onSort} />
@@ -336,7 +336,7 @@ export function ListView({
             >
               <span className="flex min-w-0 items-center gap-2">
                 {thumbs && item.kind === "file" ? (
-                  <Thumb item={item} className="size-6 shrink-0 rounded bg-muted/50" />
+                  <Thumb item={item} className="size-6 shrink-0 rounded-md bg-muted" />
                 ) : (
                   <Icon
                     className={cn("size-4 shrink-0", item.kind === "folder" ? "text-primary" : "text-muted-foreground")}

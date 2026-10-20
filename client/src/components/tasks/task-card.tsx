@@ -1,9 +1,11 @@
 import * as React from "react"
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { CornerDownRight, ListTree, MessageSquare } from "lucide-react"
+import { ChevronDown, CornerDownRight, ListTree, MessageSquare } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent } from "@/components/ui/card"
 import type { BoardStatus } from "@/lib/boards"
 import { PRIORITY_LABEL, type Task, type TaskPriority } from "@/lib/tasks-board"
 import { checklistProgress } from "@/lib/tasks-view"
@@ -22,11 +24,11 @@ import {
 const MAX_LABELS = 3
 
 const PRIORITY_DOT: Record<TaskPriority, string> = {
-  urgent: "bg-red-500",
-  high: "bg-orange-500",
-  medium: "bg-amber-500",
-  low: "bg-sky-500",
-  lowest: "bg-slate-400",
+  urgent: "bg-destructive",
+  high: "bg-warning",
+  medium: "bg-muted-foreground/40",
+  low: "bg-primary",
+  lowest: "bg-muted-foreground/40",
 }
 
 /** Turn a markdown body into a one-line plain-text preview for a clipped card:
@@ -54,7 +56,7 @@ export interface CardContext {
 }
 
 const CARD =
-  "group w-full cursor-pointer rounded-xl border bg-card text-left text-sm text-card-foreground shadow-xs transition-colors hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  "group w-full cursor-pointer text-left outline-none transition-shadow hover:ring-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 /** The card's face, with no dnd-kit inside: the sortable card and the drag
     overlay both draw it (dnd-kit: overlay children must not be draggables). */
@@ -63,9 +65,9 @@ function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
   const parent = ctx.parentOf(task)
   const children = ctx.childCount(task)
   return (
-    <div className="space-y-2 p-3">
+    <CardContent className="space-y-2">
       {parent && (
-        <p className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+        <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
           <CornerDownRight className="size-3 shrink-0" />
           <TypeIcon type={parent.type} className="size-3" />
           <span className="truncate">{parent.title}</span>
@@ -84,7 +86,7 @@ function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
             <LabelChip key={label} label={label} />
           ))}
           {task.labels.length > MAX_LABELS && (
-            <span className="text-[10px] text-muted-foreground">+{task.labels.length - MAX_LABELS}</span>
+            <span className="text-xs text-muted-foreground">+{task.labels.length - MAX_LABELS}</span>
           )}
         </div>
       )}
@@ -92,7 +94,7 @@ function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
         <TypeIcon type={task.type} />
         <KeyBadge task={task} boardKey={ctx.boardKey} />
         {children > 0 && (
-          <span className="inline-flex items-center gap-0.5 text-[10px]" title={`${children} subtasks`}>
+          <span className="inline-flex items-center gap-0.5 text-xs" title={`${children} subtasks`}>
             <ListTree className="size-3" />
             {children}
           </span>
@@ -104,7 +106,7 @@ function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
           <AssigneeAvatar name={task.assignee} size="xs" />
         </span>
       </div>
-    </div>
+    </CardContent>
   )
 }
 
@@ -124,7 +126,8 @@ export function TaskCard({
   const selected = ctx.selected.has(task.id)
 
   return (
-    <div
+    <Card
+      size="sm"
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       {...attributes}
@@ -147,21 +150,21 @@ export function TaskCard({
       className={cn(
         CARD,
         isDragging && "opacity-40",
-        selected && "border-primary/50 bg-primary/5",
+        selected && "ring-2 ring-primary",
         task.archived && "opacity-60",
       )}
     >
       <TaskCardBody task={task} ctx={ctx} />
-    </div>
+    </Card>
   )
 }
 
 /** What follows the pointer during a drag: the same face, lifted. */
 export function TaskCardOverlay({ task, ctx }: { task: Task; ctx: CardContext }) {
   return (
-    <div className={cn(CARD, "cursor-grabbing border-primary/30 shadow-lg ring-1 ring-primary/20")}>
+    <Card size="sm" className={cn(CARD, "cursor-grabbing ring-2 ring-primary/40")}>
       <TaskCardBody task={task} ctx={ctx} />
-    </div>
+    </Card>
   )
 }
 
@@ -187,8 +190,8 @@ export function TaskRow({
     <div
       role="row"
       className={cn(
-        "group flex min-h-10 w-full items-center gap-2 border-b px-2 text-left text-sm transition-colors hover:bg-accent/40 last:border-b-0",
-        selected && "bg-primary/5",
+        "group flex min-h-10 w-full items-center gap-2 border-b px-2 text-left text-sm transition-colors hover:bg-muted last:border-b-0",
+        selected && "bg-muted",
         task.archived && "opacity-60",
       )}
       style={{ paddingLeft: `${0.5 + depth * 1.25}rem` }}
@@ -217,7 +220,7 @@ export function TaskRow({
       ))}
       {progress.total > 0 && <ProgressBar done={progress.done} total={progress.total} className="hidden sm:inline-flex" />}
       {commentCount ? (
-        <span className="hidden items-center gap-0.5 text-[10px] text-muted-foreground sm:inline-flex">
+        <span className="hidden items-center gap-0.5 text-xs text-muted-foreground sm:inline-flex">
           <MessageSquare className="size-3" />
           {commentCount}
         </span>
@@ -251,23 +254,23 @@ export function GroupSection({
 }) {
   const [open, setOpen] = React.useState(defaultOpen)
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <header className="flex items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
+    <Card className="gap-0 py-0">
+      <header className="flex items-center gap-2 border-b bg-muted/50 px-2 py-1.5">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-muted-foreground"
         >
-          <CornerDownRight className={cn("size-3 shrink-0 transition-transform", open ? "rotate-0" : "-rotate-90")} />
+          <ChevronDown className={cn("size-3.5 shrink-0 transition-transform", !open && "-rotate-90")} />
           {color && <span className={cn("size-2 shrink-0 rounded-full", color)} />}
           <span className="truncate">{title}</span>
-          <span className="rounded-pill bg-muted px-1.5 text-[10px] tabular-nums">{count}</span>
-          {points != null && points > 0 && <span className="text-[10px] tabular-nums">{points} pts</span>}
+          <Badge variant="secondary" className="tabular-nums">{count}</Badge>
+          {points != null && points > 0 && <span className="text-xs tabular-nums">{points} pts</span>}
         </button>
         {action}
       </header>
       {open && <div>{children}</div>}
-    </section>
+    </Card>
   )
 }

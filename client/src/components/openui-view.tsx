@@ -42,7 +42,7 @@ const WHY: Record<Verdict, React.ReactNode> = {
     <>
       This OpenUI Lang block drew nothing, so it is shown as source. The usual cause is{" "}
       <span className="font-medium">named arguments</span> (
-      <code className="rounded bg-muted/60 px-1">Stat(label="…", value="…")</code>) — this
+      <code className="rounded-md bg-muted px-1 font-mono">Stat(label="…", value="…")</code>) — this
       language takes positional arguments only, so every prop is dropped and the layout comes
       out empty.
     </>

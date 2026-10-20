@@ -106,14 +106,14 @@ export function MultiSelect({
                     <Badge
                       key={value}
                       variant="secondary"
-                      className="text-xs px-2 py-0 h-5 flex items-center gap-1"
+                      className="gap-1"
                     >
                       <span className="truncate max-w-[100px]">{label}</span>
                       <span
                         role="button"
                         tabIndex={0}
                         aria-label={`Remove ${label}`}
-                        className="ring-offset-background rounded-full outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer"
+                        className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 cursor-pointer"
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             handleRemove(value, e as any);
@@ -131,7 +131,7 @@ export function MultiSelect({
                   );
                 })}
                 {selected.length > maxDisplay && (
-                  <Badge variant="secondary" className="text-xs px-2 py-0 h-5">
+                  <Badge variant="secondary">
                     +{selected.length - maxDisplay}
                   </Badge>
                 )}

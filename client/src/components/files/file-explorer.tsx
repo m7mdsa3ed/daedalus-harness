@@ -77,9 +77,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
+import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -724,7 +726,7 @@ export function FileExplorer({
   const totalSize = selectedItems.reduce((sum, item) => sum + (item.kind === "file" ? item.size : 0), 0)
 
   return (
-    <div ref={root} className={cn("@container flex min-h-0 flex-col overflow-hidden rounded-xl border bg-background", className)}>
+    <div ref={root} className={cn("@container flex min-h-0 flex-col overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10", className)}>
       {/* ── Toolbar ── */}
       <div className="flex flex-wrap items-center gap-1 border-b px-2 py-1.5">
         <Button type="button" variant="ghost" size="icon-sm" title="Back (Alt+←)" disabled={!nav.back.length} onClick={back}>
@@ -736,7 +738,7 @@ export function FileExplorer({
         <Button type="button" variant="ghost" size="icon-sm" title="Up a folder (Alt+↑)" disabled={!nav.cwd} onClick={up}>
           <ArrowUpIcon />
         </Button>
-        <div className="mx-1 h-5 w-px bg-border" />
+        <Separator orientation="vertical" className="mx-1 h-5" />
         <Button type="button" variant="ghost" size="sm" title="New folder" disabled={searching} onClick={() => void newFolder()}>
           <FolderPlusIcon data-icon="inline-start" /> <span className="hidden @panel-sm:inline">New folder</span>
         </Button>
@@ -754,9 +756,11 @@ export function FileExplorer({
           </DropdownMenuContent>
         </DropdownMenu>
         <div className="flex-1" />
-        <div className="relative order-last w-full @min-[34rem]:order-none @min-[34rem]:w-56">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
+        <InputGroup className="order-last w-full @min-[34rem]:order-none @min-[34rem]:w-56">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
             ref={searchInput}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -772,48 +776,40 @@ export function FileExplorer({
             }}
             placeholder="Search the library"
             aria-label="Search the library"
-            className="h-8 pr-7 pl-8 text-sm"
           />
           {query && (
-            <button
-              type="button"
-              title="Clear search"
-              onClick={() => setQuery("")}
-              className="absolute top-1/2 right-1.5 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-            >
-              <XIcon className="size-3.5" />
-            </button>
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" title="Clear search" onClick={() => setQuery("")}>
+                <XIcon />
+              </InputGroupButton>
+            </InputGroupAddon>
           )}
-        </div>
+        </InputGroup>
         {/* The view, as two toggles rather than a menu: it is changed often. */}
-        <div role="radiogroup" aria-label="View" className="flex items-center rounded-md bg-muted p-0.5">
+        <ToggleGroup
+          aria-label="View"
+          size="sm"
+          spacing={0}
+          variant="outline"
+          value={[prefs.view]}
+          onValueChange={(next) => next[0] && setPrefs({ view: next[0] as "list" | "grid" })}
+        >
           {(
             [
               ["list", ListIcon, "List"],
               ["grid", LayoutGridIcon, "Grid"],
             ] as const
           ).map(([view, Icon, label]) => (
-            <button
-              key={view}
-              type="button"
-              role="radio"
-              aria-checked={prefs.view === view}
-              title={`${label} view`}
-              onClick={() => setPrefs({ view })}
-              className={cn(
-                "flex size-7 items-center justify-center rounded",
-                prefs.view === view ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <Icon className="size-4" />
-            </button>
+            <ToggleGroupItem key={view} value={view} title={`${label} view`}>
+              <Icon />
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
         {prefs.view === "grid" && (
           <div className="hidden items-center gap-1.5 px-1 @min-[40rem]:flex" title={`Tile size (${MOD}+scroll, ${MOD}= / ${MOD}−)`}>
-            <button type="button" tabIndex={-1} aria-label="Smaller tiles" className="text-muted-foreground hover:text-foreground" onClick={() => zoomGrid(-GRID_SIZES.step * 2)}>
-              <ZoomOutIcon className="size-3.5" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-xs" tabIndex={-1} aria-label="Smaller tiles" onClick={() => zoomGrid(-GRID_SIZES.step * 2)}>
+              <ZoomOutIcon />
+            </Button>
             <Slider
               className="w-24"
               aria-label="Tile size"
@@ -823,9 +819,9 @@ export function FileExplorer({
               value={[prefs.gridSize]}
               onValueChange={(value) => setPrefs({ gridSize: Array.isArray(value) ? value[0] : (value as number) })}
             />
-            <button type="button" tabIndex={-1} aria-label="Larger tiles" className="text-muted-foreground hover:text-foreground" onClick={() => zoomGrid(GRID_SIZES.step * 2)}>
-              <ZoomInIcon className="size-3.5" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-xs" tabIndex={-1} aria-label="Larger tiles" onClick={() => zoomGrid(GRID_SIZES.step * 2)}>
+              <ZoomInIcon />
+            </Button>
           </div>
         )}
         <DropdownMenu>
@@ -930,7 +926,7 @@ export function FileExplorer({
       </div>
 
       {/* ── Address bar ── */}
-      <nav aria-label="Folder path" className="flex min-w-0 items-center gap-0.5 border-b bg-muted/30 px-2 py-1 text-sm">
+      <nav aria-label="Folder path" className="flex min-w-0 items-center gap-0.5 border-b bg-muted/50 px-2 py-1 text-sm">
         {searching ? (
           <span className="truncate px-1.5 text-muted-foreground">
             Search results for “{debounced.trim()}” across the library
@@ -944,7 +940,7 @@ export function FileExplorer({
                 {...dropFor(step.id, `@crumb:${step.id ?? "root"}`)}
                 onClick={() => go(step.id)}
                 className={cn(
-                  "flex min-w-0 shrink items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-muted data-drop:bg-primary/20",
+                  "flex min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-muted data-drop:bg-primary/10",
                   i === all.length - 1 ? "font-medium text-foreground" : "text-muted-foreground"
                 )}
               >
@@ -1016,7 +1012,7 @@ export function FileExplorer({
             }}
             {...paneDrop}
             className={cn(
-              "@container relative size-full min-w-0 overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
+              "@container relative size-full min-w-0 overflow-y-auto outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset",
               "data-drop:bg-primary/5"
             )}
           >
@@ -1053,7 +1049,7 @@ export function FileExplorer({
               />
             )}
             {dropTarget === "@pane" && (
-              <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/50 bg-background/70 text-sm font-medium text-primary">
+              <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-background/80 text-sm font-medium text-primary">
                 Drop into {folderName}
               </div>
             )}
@@ -1093,7 +1089,7 @@ export function FileExplorer({
       )}
 
       {/* ── Status bar / pick footer ── */}
-      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-t bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
+      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-t bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
         <span className="tabular-nums">
           {items.length} {items.length === 1 ? "item" : "items"}
           {selectedItems.length > 0 &&
@@ -1107,9 +1103,9 @@ export function FileExplorer({
         {clipboard && (
           <span className="flex items-center gap-1">
             {clipboard.items.length} {clipboard.mode === "cut" ? "cut" : "copied"} — paste with {MOD}V
-            <button type="button" title="Clear the clipboard" className="rounded hover:text-foreground" onClick={() => setClipboard(null)}>
-              <XIcon className="size-3" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-xs" title="Clear the clipboard" onClick={() => setClipboard(null)}>
+              <XIcon />
+            </Button>
           </span>
         )}
         {onPick && (
@@ -1208,7 +1204,7 @@ function DestinationDialog({
           </ResponsiveDialogTitle>
           <ResponsiveDialogDescription>Choose the folder to {verb.toLowerCase()} into.</ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <div className="max-h-[min(50svh,24rem)] overflow-y-auto rounded-lg border p-1.5">
+        <div className="max-h-[min(50svh,24rem)] overflow-y-auto rounded-xl border p-1.5">
           <FolderTree folders={folders} value={into} onSelect={setInto} disabled={blocked} />
         </div>
         <ResponsiveDialogFooter>

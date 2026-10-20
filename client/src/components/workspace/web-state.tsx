@@ -18,10 +18,10 @@
    `Empty` is for the one state that is not a failure — no address typed yet,
    which is instruction rather than news. Everything else is a `Notice`. */
 import * as React from "react"
+import { Spinner } from "@/components/ui/spinner"
 import {
   ExternalLinkIcon,
   GlobeIcon,
-  LoaderCircleIcon,
   PencilIcon,
   PlayIcon,
   RefreshCwIcon,
@@ -73,7 +73,7 @@ function reportOf(problem: WebProblem, where: string): string {
     being diagnosed. */
 function Address({ url }: { url: string }) {
   return (
-    <p className="font-mono text-[11px] break-all text-foreground/80">{url}</p>
+    <p className="font-mono text-xs break-all text-foreground">{url}</p>
   )
 }
 
@@ -178,7 +178,7 @@ export function WebProblemView({
           action={
             previewHelperName && onStartPreview ? (
               <Button size="sm" variant="outline" onClick={onStartPreview} loading={starting}>
-                {starting ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
+                {starting ? <Spinner /> : <PlayIcon />}
                 {starting ? "Starting…" : `Start ${previewHelperName}`}
               </Button>
             ) : undefined
@@ -255,7 +255,7 @@ export function WebFrameHint({ onDismiss }: { onDismiss: () => void }) {
       <Notice
         icon={<ShieldAlertIcon />}
         action={
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onDismiss}>
+          <Button type="button" variant="ghost" size="xs" onClick={onDismiss}>
             Got it
           </Button>
         }

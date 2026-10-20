@@ -170,7 +170,7 @@ export function ThreadStatus({
   const last = React.useRef<React.ReactNode>(null)
   if (hasBody) {
     last.current = (
-      <div className="min-w-0 space-y-1 pl-6 pt-1 text-xs">
+      <div className="min-w-0 space-y-1 pl-6 pt-1 text-sm">
           {retry && (
             <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
               {retry.of && (
@@ -213,7 +213,7 @@ export function ThreadStatus({
             </div>
           )}
           {status.install && (
-            <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-sm bg-background/60 px-1.5 py-0.5 font-mono text-[11px] break-all text-foreground select-text">
+            <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs break-all text-foreground select-text">
               {status.install}
             </code>
           )}
@@ -223,7 +223,7 @@ export function ThreadStatus({
             </Disclosure>
           )}
           {open && status.more && (
-            <pre className="max-h-56 overflow-auto rounded-sm border border-destructive/20 bg-background/50 p-2 font-mono text-[11px] whitespace-pre-wrap text-foreground">
+            <pre className="max-h-56 overflow-auto rounded-lg bg-muted p-2 font-mono text-xs whitespace-pre-wrap text-foreground">
               {status.more}
             </pre>
           )}
@@ -252,7 +252,7 @@ export function ThreadStatus({
                 <CopyButton
                   text={copyText}
                   size="icon-xs"
-                  className="text-muted-foreground/80 hover:text-foreground"
+                  className="text-muted-foreground hover:text-foreground"
                 />
               )}
             </div>
@@ -288,7 +288,7 @@ export function ThreadStatus({
         />
       </button>
       {showLog && (
-        <ul className="max-h-48 space-y-0.5 overflow-auto pl-6 pt-1 text-xs text-muted-foreground">
+        <ul className="max-h-48 space-y-0.5 overflow-auto pl-6 pt-1 text-sm text-muted-foreground">
           {[...log].reverse().map((e, i) => (
             <li key={i} className="flex gap-2">
               <time className="shrink-0 tabular-nums">{clock(e.at)}</time>

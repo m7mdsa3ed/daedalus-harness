@@ -19,6 +19,8 @@
 import * as React from "react"
 
 import { Empty } from "@/components/empty"
+import { Badge } from "@/components/ui/badge"
+import { Card } from "@/components/ui/card"
 import {
   BILLED_PARTS,
   PROMPT_PARTS,
@@ -48,18 +50,18 @@ const CHART_MAX = 48
 
 function Block({ title, hint, children }: { title: string; hint?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-border/60 bg-card/55 p-2.5">
+    <Card size="sm" className="gap-0 p-3">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h2 className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{title}</h2>
-        {hint && <span className="text-[10px] text-muted-foreground">{hint}</span>}
+        <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
+        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
       </div>
       {children}
-    </section>
+    </Card>
   )
 }
 
 function Tag({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-full bg-muted px-1.5 py-px text-[9px] font-medium text-muted-foreground">{children}</span>
+  return <Badge variant="secondary">{children}</Badge>
 }
 
 /** Segments in one line, each its share of `total`. A part with nothing in it
@@ -87,7 +89,7 @@ function StackBar({
 /** A thin bar for a share of a whole, under a row's name. */
 function ShareBar({ swatch, value, total }: { swatch: string; value: number; total: number }) {
   return (
-    <span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted/70" aria-hidden>
+    <span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
       <span className={cn("block h-full rounded-full", swatch)} style={{ width: `${total > 0 ? Math.max(2, (value / total) * 100) : 0}%` }} />
     </span>
   )
@@ -105,7 +107,7 @@ interface Row {
     percentage. A row with nothing in it is not drawn. */
 function Rows({ rows, total }: { rows: Row[]; total: number }) {
   return (
-    <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-start gap-x-2.5 gap-y-2 text-[11px] tabular-nums">
+    <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-start gap-x-2.5 gap-y-2 text-xs tabular-nums">
       {rows
         .filter((row) => row.value > 0)
         .map((row) => (
@@ -129,24 +131,24 @@ function Rows({ rows, total }: { rows: Row[]; total: number }) {
 
 type Tone = "ok" | "warn" | "bad"
 const TONE_TEXT: Record<Tone, string> = {
-  ok: "text-emerald-600 dark:text-emerald-400",
-  warn: "text-amber-600 dark:text-amber-400",
+  ok: "text-success",
+  warn: "text-warning",
   bad: "text-destructive",
 }
-const TONE_FILL: Record<Tone, string> = { ok: "bg-emerald-500", warn: "bg-amber-500", bad: "bg-destructive" }
+const TONE_FILL: Record<Tone, string> = { ok: "bg-success", warn: "bg-warning", bad: "bg-destructive" }
 
 /** One headline figure: label, value, and a line of what it is made of. */
 function Tile({ label, value, hint, tone, fill }: { label: string; value: string; hint?: string; tone?: Tone; fill?: number }) {
   return (
-    <div className="min-w-0 rounded-md bg-muted/45 px-2 py-1.5">
-      <p className="truncate text-[9px] text-muted-foreground">{label}</p>
-      <p className={cn("mt-0.5 text-base font-semibold leading-none tabular-nums", tone && TONE_TEXT[tone])}>{value}</p>
+    <div className="min-w-0 rounded-xl bg-muted px-2.5 py-2">
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className={cn("mt-0.5 text-base font-medium leading-none tabular-nums", tone && TONE_TEXT[tone])}>{value}</p>
       {fill !== undefined && (
-        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-background" aria-hidden>
           <span className={cn("block h-full rounded-full", TONE_FILL[tone ?? "ok"])} style={{ width: `${Math.min(100, fill)}%` }} />
         </span>
       )}
-      {hint && <p className="mt-1 truncate text-[9px] text-muted-foreground" title={hint}>{hint}</p>}
+      {hint && <p className="mt-1 truncate text-xs text-muted-foreground" title={hint}>{hint}</p>}
     </div>
   )
 }
@@ -181,7 +183,7 @@ function ItemList({ items, part }: { items: { name: string; tokens: number }[]; 
 /** One part's contents: its items, a group opening onto its children. */
 function PartItems({ items, part }: { items: DetailItem[]; part: number }) {
   return (
-    <div className="space-y-0.5 py-1 pl-4 text-[10px]">
+    <div className="space-y-0.5 py-1 pl-4 text-xs">
       {items.map((item, i) =>
         item.children ? (
           <details key={i} className="group/item">
@@ -193,7 +195,7 @@ function PartItems({ items, part }: { items: DetailItem[]; part: number }) {
               <span className="text-right">{about(item.tokens)}</span>
               <span className="text-right text-muted-foreground">{pct(item.tokens, part)}</span>
             </summary>
-            <div className="mt-0.5 border-l border-border/60 pl-2.5 text-muted-foreground">
+            <div className="mt-0.5 border-l pl-2.5 text-muted-foreground">
               <ItemList items={item.children} part={part} />
             </div>
           </details>
@@ -221,8 +223,8 @@ function PromptRows({
 }) {
   const cols = "grid grid-cols-[0.75rem_auto_1fr_auto_auto] items-start gap-x-2.5"
   return (
-    <div className="mt-3 space-y-1.5 text-[11px] tabular-nums">
-      <div className={cn(cols, "text-[10px] text-muted-foreground")}>
+    <div className="mt-3 space-y-1.5 text-xs tabular-nums">
+      <div className={cn(cols, "text-xs text-muted-foreground")}>
         <span />
         <span />
         <span />
@@ -233,7 +235,7 @@ function PromptRows({
         const items = details[part.key] ?? []
         const row = (
           <>
-            <span className="text-[9px] text-muted-foreground transition-transform group-open/part:rotate-90">{items.length ? "›" : ""}</span>
+            <span className="text-xs text-muted-foreground transition-transform group-open/part:rotate-90">{items.length ? "›" : ""}</span>
             <span className={cn("mt-[3px] size-2 rounded-sm", part.swatch)} />
             <span className="min-w-0">
               <span className="block truncate">{part.label}</span>
@@ -247,14 +249,14 @@ function PromptRows({
         )
         return items.length ? (
           <details key={part.key} className="group/part">
-            <summary className={cn(cols, "cursor-pointer list-none rounded hover:bg-muted/50")}>{row}</summary>
+            <summary className={cn(cols, "cursor-pointer list-none rounded-md hover:bg-muted")}>{row}</summary>
             <PartItems items={items} part={parts[part.key]} />
           </details>
         ) : (
           <div key={part.key} className={cols}>{row}</div>
         )
       })}
-      <div className={cn(cols, "border-t border-border/50 pt-1 font-medium")}>
+      <div className={cn(cols, "border-t pt-1 font-medium")}>
         <span />
         <span />
         <span>Total</span>
@@ -291,7 +293,7 @@ function RequestChart({
   const max = Math.max(1, ...shown.map((r) => r.step.update.used))
   return (
     <div className="relative pt-3">
-      <span className="absolute inset-x-0 top-0 flex items-center gap-1.5 text-[9px] tabular-nums text-muted-foreground" aria-hidden>
+      <span className="absolute inset-x-0 top-0 flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground" aria-hidden>
         <span>{formatTokens(max)}</span>
         <span className="flex-1 border-t border-dashed border-border" />
       </span>
@@ -379,8 +381,8 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
       {billed && billedRows && (
         <Block title="Billed" hint={`${steps.length} steps · ${billedTurns} turns`}>
-          <p className="text-2xl font-semibold leading-none tabular-nums">{formatTokens(billed.totalTokens)}</p>
-          <p className="mt-1 text-[10px] text-muted-foreground">tokens in total · {formatTokens(prompt)} sent, {formatTokens(billed.outputTokens)} generated</p>
+          <p className="text-2xl font-medium leading-none tabular-nums">{formatTokens(billed.totalTokens)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">tokens in total · {formatTokens(prompt)} sent, {formatTokens(billed.outputTokens)} generated</p>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
             {windowPercent !== null && context && (
@@ -429,7 +431,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
         {selected && all ? (
           <>
             <RequestChart requests={requests} picked={selected.number} onPick={setPicked} />
-            <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 text-[11px]">
+            <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 text-xs">
               <span className="font-medium">Step {selected.number}</span>
               <span className="tabular-nums text-muted-foreground">
                 {formatTokens(selected.step.update.used)} in the prompt
@@ -442,7 +444,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
               </span>
             </div>
             {largest && selectedTotal > 0 && (
-              <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className={cn("size-1.5 rounded-full", largest.swatch)} />
                 {largest.label} lead at {pct(selected.parts[largest.key], selectedTotal)}
                 {selected.step.update.size > 0 && !windowEstimated(selected.step.update) && ` · ${pct(selected.step.update.used, selected.step.update.size)} of the window`}
@@ -461,7 +463,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
               all={all.parts}
               details={details}
             />
-            <details className="group/notes mt-3 text-[10px] leading-4 text-muted-foreground">
+            <details className="group/notes mt-3 text-xs text-muted-foreground">
               <summary className="cursor-pointer list-none hover:text-foreground">
                 <span className="mr-1 inline-block transition-transform group-open/notes:rotate-90">›</span>How these are measured
               </summary>
@@ -493,7 +495,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
             </details>
           </>
         ) : (
-          <p className="text-[11px] leading-4 text-muted-foreground">
+          <p className="text-xs leading-4 text-muted-foreground">
             This agent doesn't report a prompt size per step, so only the billed figures above can be shown.
           </p>
         )}
@@ -509,7 +511,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
 /** Children's own bills — subagents, workflow steps, background runs. Kept out
     of Billed: some runtimes already count a child in the parent's turn, others
     run it as a session of its own, so adding the two would double some. */
-const CHILD_SWATCHES = ["bg-violet-500", "bg-sky-500", "bg-teal-500", "bg-amber-500", "bg-rose-500", "bg-lime-500"]
+const CHILD_SWATCHES = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5", "bg-muted-foreground"]
 
 function SubagentsBlock({ spend }: { spend: SubagentSpend[] }) {
   const total = spend.reduce((n, child) => n + child.tokens, 0)
@@ -521,11 +523,11 @@ function SubagentsBlock({ spend }: { spend: SubagentSpend[] }) {
   }))
   return (
     <Block title="Subagents" hint={`${spend.length} ${spend.length === 1 ? "child" : "children"}`}>
-      <p className="text-2xl font-semibold leading-none tabular-nums">{formatTokens(total)}</p>
-      <p className="mt-1 text-[10px] text-muted-foreground">tokens billed by subagents and workflow steps</p>
+      <p className="text-2xl font-medium leading-none tabular-nums">{formatTokens(total)}</p>
+      <p className="mt-1 text-xs text-muted-foreground">tokens billed by subagents and workflow steps</p>
       <StackBar className="mt-3 h-2.5" label="Subagent tokens by child" total={total} parts={rows.map((r) => ({ swatch: r.swatch, tokens: r.value }))} />
       <Rows total={total} rows={rows} />
-      <p className="mt-3 text-[10px] leading-4 text-muted-foreground">
+      <p className="mt-3 text-xs leading-4 text-muted-foreground">
         Shown apart from Billed: depending on the agent, a child's tokens may already be counted in the turn that launched it.
       </p>
     </Block>
@@ -555,7 +557,7 @@ function StepList({
         <li>
           <button
             type="button"
-            className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
             onClick={() => setAll(true)}
           >
             Show {start} earlier
@@ -601,8 +603,8 @@ function StepRow({
         aria-pressed={picked}
         onClick={() => onPick(number)}
         className={cn(
-          "block w-full rounded-md px-2 py-1.5 text-start text-[11px] transition-colors hover:bg-muted/60",
-          picked ? "bg-muted ring-1 ring-foreground/20" : "bg-muted/35"
+          "block w-full rounded-lg px-2.5 py-2 text-start text-xs transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          picked ? "bg-muted ring-1 ring-foreground/10" : "bg-muted/50"
         )}
       >
         <span className="flex items-baseline gap-2">
@@ -616,11 +618,11 @@ function StepRow({
             label={`Step ${number} prompt by part`}
             total={used}
             parts={
-              one ? PROMPT_PARTS.map((part) => ({ swatch: part.swatch, tokens: one.parts[part.key] })) : [{ swatch: "bg-zinc-400", tokens: used }]
+              one ? PROMPT_PARTS.map((part) => ({ swatch: part.swatch, tokens: one.parts[part.key] })) : [{ swatch: "bg-muted-foreground", tokens: used }]
             }
           />
         </span>
-        <span className="mt-1 flex flex-wrap gap-x-2.5 text-[9px] tabular-nums text-muted-foreground">
+        <span className="mt-1 flex flex-wrap gap-x-2.5 text-xs tabular-nums text-muted-foreground">
           <span>turn {step.turn}</span>
           {step.durationMs !== undefined && (
             <span title="Time since the step before it, tool calls included">{formatDuration(step.durationMs)}</span>

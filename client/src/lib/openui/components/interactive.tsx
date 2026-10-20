@@ -49,11 +49,13 @@ import {
 } from "@openuidev/react-lang"
 import { Button as UiButton } from "@/components/ui/button"
 import { Checkbox as UiCheckbox } from "@/components/ui/checkbox"
+import { Field, FieldDescription, FieldError, FieldTitle } from "@/components/ui/field"
 import { Input as UiInput } from "@/components/ui/input"
 import { Select as UiSelect, SelectContent, SelectItem as UiSelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider as UiSlider } from "@/components/ui/slider"
 import { Textarea as UiTextarea } from "@/components/ui/textarea"
-import { BODY, FLOW, LABEL, META } from "@/lib/openui/kit"
+import { BODY, FLOW, META } from "@/lib/openui/kit"
+import { cn } from "@/lib/utils"
 
 /* Both are tagged rather than spelled out: a signature carrying
    `Record<string, any>` teaches nothing, and `ActionExpression` is the name the
@@ -104,12 +106,6 @@ function useField(name: string, binding: unknown, rules?: unknown) {
     error: validation?.errors[name],
     check: () => (validation ? validation.validateField(name, valueRef.current, parsed) : true),
   }
-}
-
-/** The one line under a field, drawn only when the last submit said no. */
-function FieldError({ error }: { error?: string }) {
-  if (!error) return null
-  return <p className="text-xs leading-snug text-destructive">{error}</p>
 }
 
 /* ── The trigger ── */
@@ -190,11 +186,11 @@ const FormControl = defineComponent({
     /* Not a `<label>`: a Checkbox draws one of its own, and a label inside a
        label is not a thing HTML has. The field names itself for a screen
        reader with its `name`. */
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <span className={LABEL}>{props.label}</span>
+    <Field className="min-w-0 gap-2">
+      <FieldTitle>{props.label}</FieldTitle>
       {renderNode(props.children)}
-      {props.hint && <span className={META}>{props.hint}</span>}
-    </div>
+      {props.hint && <FieldDescription>{props.hint}</FieldDescription>}
+    </Field>
   ),
 })
 
@@ -224,7 +220,7 @@ const Input = defineComponent({
           onChange={(event) => field.set(event.target.value)}
           onBlur={() => field.check()}
         />
-        <FieldError error={field.error} />
+        <FieldError>{field.error}</FieldError>
       </div>
     )
   },
@@ -253,7 +249,7 @@ const Textarea = defineComponent({
           onChange={(event) => field.set(event.target.value)}
           onBlur={() => field.check()}
         />
-        <FieldError error={field.error} />
+        <FieldError>{field.error}</FieldError>
       </div>
     )
   },
@@ -305,7 +301,7 @@ const Select = defineComponent({
           </SelectTrigger>
           <SelectContent>{renderNode(props.items)}</SelectContent>
         </UiSelect>
-        <FieldError error={field.error} />
+        <FieldError>{field.error}</FieldError>
       </div>
     )
   },
@@ -354,7 +350,7 @@ const Slider = defineComponent({
           value={[value]}
           onValueChange={(next) => field.set(Array.isArray(next) ? next[0] : next)}
         />
-        <span className={META + " w-10 shrink-0 text-right tabular-nums"}>{value}</span>
+        <span className={cn(META, "w-10 shrink-0 text-right tabular-nums")}>{value}</span>
       </div>
     )
   },

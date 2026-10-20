@@ -32,6 +32,8 @@ import {
 import { ErrorBoundary } from "@/components/error-boundary"
 import { Notice } from "@/components/notice"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -85,33 +87,19 @@ export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string
   switch_mode: ToggleLeftIcon,
 }
 
-/* One accent per tool kind, shared by the step rows and grouped avatars. Keep
-   each hue distinct so a mixed group can be scanned by icon color alone. */
+/* One mark colour per tool kind, shared by the step rows and grouped avatars.
+   Stock tokens only: the kind's icon tells kinds apart, and the one colour
+   that means something is a delete's destructive. */
+const MUTED_KINDS = ["read", "edit", "move", "search", "execute", "think", "fetch", "switch_mode", "other"]
 export const KIND_COLORS: Record<string, string> = {
-  read: "text-cyan-600 dark:text-cyan-400",
-  edit: "text-orange-600 dark:text-orange-400",
-  delete: "text-red-600 dark:text-red-400",
-  move: "text-amber-600 dark:text-amber-400",
-  search: "text-blue-600 dark:text-blue-400",
-  execute: "text-emerald-600 dark:text-emerald-400",
-  think: "text-violet-600 dark:text-violet-400",
-  fetch: "text-teal-600 dark:text-teal-400",
-  switch_mode: "text-indigo-600 dark:text-indigo-400",
-  other: "text-slate-600 dark:text-slate-400",
+  ...Object.fromEntries(MUTED_KINDS.map((kind) => [kind, "text-muted-foreground"])),
+  delete: "text-destructive",
 }
 
-/* The matching tinted avatar tile for each kind's foreground accent. */
+/* The matching tile behind each kind's mark. */
 export const KIND_CHIPS: Record<string, string> = {
-  read: "bg-cyan-500/12",
-  edit: "bg-orange-500/12",
-  delete: "bg-red-500/12",
-  move: "bg-amber-500/12",
-  search: "bg-blue-500/12",
-  execute: "bg-emerald-500/12",
-  think: "bg-violet-500/12",
-  fetch: "bg-teal-500/12",
-  switch_mode: "bg-indigo-500/12",
-  other: "bg-slate-500/12",
+  ...Object.fromEntries(MUTED_KINDS.map((kind) => [kind, "bg-muted"])),
+  delete: "bg-destructive/10",
 }
 
 /* Prose palette + code/table styling live in index.css, so both themes come
@@ -165,7 +153,7 @@ export const THOUGHT_MAX_H =
 
 /* ── The transcript's shared shapes ──
    One spelling each for a pane, a card, a caption and a disclosure, because
-   the alternative is what was here: two washes for the same box (`bg-muted/30`
+   the alternative is what was here: two washes for the same box (`bg-muted`
    and `/40`), three card geometries (`rounded-xl px-3 py-2.5`, `rounded-lg
    px-4 py-3`, `my-1.5` vs `my-2`) and three section labels. A row that adds
    one of these reaches for the constant; a theme that moves `--radius` moves
@@ -173,14 +161,14 @@ export const THOUGHT_MAX_H =
    no default radius from this theme) never did. */
 
 /** A payload's box: rows drawn inside it supply their own padding. */
-export const PANE = "overflow-hidden rounded-md border border-border/50 bg-muted/40"
+export const PANE = "overflow-hidden rounded-lg bg-muted"
 
 /** The same box with its own padding, for a pane holding one thing rather than
     a list of rows (a brief, a plan, tool prose, a code block). */
-export const PANE_PAD = "rounded-md border border-border/50 bg-muted/40 px-2.5 py-2"
+export const PANE_PAD = "rounded-lg bg-muted px-2.5 py-2"
 
 /** A recessed block inside a pane — a heredoc body, an unfolded stack trace. */
-export const INSET = "rounded-sm border border-border/50 bg-background/50"
+export const INSET = "rounded-md bg-background"
 
 /** A notice that is its own object in the flow rather than a step: an error, a
     task reporting back, an agent's demarcated block, a pasted blob. The tone
@@ -190,7 +178,7 @@ export const CARD = "my-2 rounded-xl border px-3 py-2.5"
 /** The caption over a section of a step's detail, and over anything else that
     is a group of rows with a name. */
 export const LABEL =
-  "text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50"
+  "text-xs font-medium text-muted-foreground"
 
 /** The "Show details" / "Hide result" line every card folds its payload behind.
     One component rather than three copies of the same flex row, so the chevron
@@ -211,7 +199,7 @@ export function Disclosure({
       type="button"
       onClick={onToggle}
       className={cn(
-        "flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground",
+        "flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",
         className
       )}
     >
@@ -300,18 +288,20 @@ const MarkdownPre = ({
   return (
     <div className="group/code relative">
       <pre ref={ref} {...props} />
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="icon-xs"
         aria-label={copied ? "Copied" : "Copy code"}
         title={copied ? "Copied" : "Copy"}
         onClick={() => void copy()}
         className={cn(
-          "absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-md border border-border/60 bg-popover/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:text-foreground focus-visible:outline-hidden",
+          "absolute top-1.5 right-1.5 bg-popover",
           coarse ? "opacity-100" : "opacity-0 group-hover/code:opacity-100 focus-visible:opacity-100",
         )}
       >
-        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-      </button>
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </Button>
     </div>
   )
 }
@@ -470,7 +460,7 @@ export function PlanFullscreen({
           <button
             type="button"
             className={cn(
-              "flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground",
+              "flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",
               className
             )}
           />
@@ -483,10 +473,10 @@ export function PlanFullscreen({
           reading it was the room, and `pr-12` clears the dialog's own close
           button the way the workflow dialog's header does. */}
       <DialogContent className="flex h-[calc(var(--float-h)-2rem)] w-[min(64rem,calc(var(--float-w)-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[calc(var(--float-w)-2rem)]">
-        <div className="flex shrink-0 items-center gap-2.5 border-b border-border/40 py-3 pr-12 pl-4">
+        <div className="flex shrink-0 items-center gap-2.5 border-b py-3 pr-12 pl-4">
           <span
             aria-hidden
-            className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground/70"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
           >
             <ClipboardListIcon className="size-4" />
           </span>
@@ -571,13 +561,13 @@ export function ToolInput({ item }: { item: ToolItem }) {
   if (entries && entries.length > 0 && entries.every(([, value]) => isScalar(value))) {
     return (
       /* Body tier, not caption tier: these are the tool's actual arguments —
-         the thing you read — so they match message prose. `text-[11px]` is for
+         the thing you read — so they match message prose. `text-xs` is for
          labels and counters. */
-      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-xs">
+      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-sm">
         {entries.map(([key, value]) => (
           <React.Fragment key={key}>
-            <dt className="text-muted-foreground/60">{key}</dt>
-            <dd className="min-w-0 break-words whitespace-pre-wrap text-foreground/80">
+            <dt className="text-muted-foreground">{key}</dt>
+            <dd className="min-w-0 break-words whitespace-pre-wrap text-foreground">
               {value === null ? "null" : String(value)}
             </dd>
           </React.Fragment>
@@ -599,7 +589,7 @@ export function ToolInput({ item }: { item: ToolItem }) {
  */
 export function ToolLocations({ item }: { item: ToolItem }) {
   return (
-    <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
+    <ul className="space-y-0.5 font-mono text-xs text-muted-foreground">
       {item.locations.map((location, index) => {
         const range = fileRangeOf(item, location)
         const label = `${location.path}${range ? `:${formatRange(range)}` : ""}`
@@ -743,7 +733,7 @@ export function ToolProse({ text }: { text: string }) {
     <div className={cn(PANE_MAX_H, PANE_PAD, "min-w-0 overflow-auto")}>
       {/* No size utility: the unlayered `.prose` rule in index.css sets the body
           size and outranks any `text-*` utility on this element — the
-          `text-[11px]` that used to be here never applied, which is half of why
+          `text-xs` that used to be here never applied, which is half of why
           tool output and message prose disagreed. Same <Prose> as a message for
           the other half: one component means a table or a link cannot render
           one way in a turn and another way in tool output. */}
@@ -768,7 +758,7 @@ export function Highlighted({
   className?: string
 }) {
   if (!language) {
-    return <pre className={cn("font-mono text-xs whitespace-pre-wrap", className)}>{code}</pre>
+    return <pre className={cn("font-mono text-sm whitespace-pre-wrap", className)}>{code}</pre>
   }
   /* A fence closes only on a run at least as long as the one that opened it,
      so one longer than any run in the payload cannot be broken out of. */
@@ -799,7 +789,7 @@ export function ShellScript({ command, className }: { command: string; className
           <Highlighted key={index} code={segment.text} language="bash" />
         ) : (
           <div key={index} className={cn(INSET, "overflow-hidden")}>
-            <div className="flex items-center gap-1.5 border-b border-border/50 px-2 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+            <div className="flex items-center gap-1.5 border-b px-2 py-0.5 font-mono text-xs text-muted-foreground">
               <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
               <span>{segment.label}</span>
               {segment.language && <span className="opacity-70">· {segment.language}</span>}
@@ -832,7 +822,7 @@ export function CodeBlock({
           ? /* `pr-9` reserves the corner the copy below floats in, so a long
                single-line stack trace is not read with its tail under a
                button. */
-            "rounded-md border border-destructive/40 bg-destructive/5 py-2 pl-2.5 pr-9 text-destructive"
+            "rounded-lg bg-destructive/10 py-2 pl-2.5 pr-9 text-destructive"
           : PANE_PAD
       )}
     >
@@ -860,7 +850,7 @@ export function CodeBlock({
       <CopyButton
         text={children}
         size="icon-xs"
-        className="absolute top-1 right-1 bg-destructive/5 text-destructive/70 backdrop-blur-sm hover:bg-destructive/15 hover:text-destructive"
+        className="absolute top-1 right-1 text-destructive hover:bg-destructive/20 hover:text-destructive"
       />
     </div>
   )
@@ -911,13 +901,9 @@ export function useShowAll(text: string, limit = OUTPUT_LIMIT): [string, boolean
 
 export function ShowAll({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-    >
+    <Button type="button" variant="ghost" size="xs" onClick={onClick} className="m-1 text-muted-foreground">
       Show everything
-    </button>
+    </Button>
   )
 }
 
@@ -1050,9 +1036,9 @@ function JsonNode({
      that is the difference between reading a column and reading a staircase. */
   if (!composite || entries.length === 0) {
     return (
-      <div className="flex flex-wrap items-baseline gap-x-1 font-mono text-[11px] leading-5">
+      <div className="flex flex-wrap items-baseline gap-x-1 font-mono text-xs leading-5">
         <ChevronRightIcon aria-hidden className="invisible size-3 shrink-0" />
-        {index !== null && <span className="text-muted-foreground/50">{index}</span>}
+        {index !== null && <span className="text-muted-foreground">{index}</span>}
         {name !== null && <span className="text-code-key">{name}</span>}
         {name !== null && <span className="text-code-punctuation">:</span>}
         {composite ? (
@@ -1077,16 +1063,16 @@ function JsonNode({
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="flex w-full items-baseline gap-1 rounded-sm text-left font-mono text-[11px] leading-5 outline-hidden hover:bg-muted/60 focus-visible:bg-muted/60"
+        className="flex w-full items-baseline gap-1 rounded-md text-left font-mono text-xs leading-5 outline-hidden hover:bg-muted focus-visible:bg-muted"
       >
         <ChevronRightIcon
           aria-hidden
           className={cn(
-            "size-3 shrink-0 translate-y-[3px] text-muted-foreground/50 transition-transform",
+            "size-3 shrink-0 translate-y-[3px] text-muted-foreground transition-transform",
             open && "rotate-90"
           )}
         />
-        {index !== null && <span className="text-muted-foreground/50">{index}</span>}
+        {index !== null && <span className="text-muted-foreground">{index}</span>}
         {name !== null && <span className="text-code-key">{name}</span>}
         {name !== null && <span className="text-code-punctuation">:</span>}
         <span className="text-code-punctuation">{brackets[0]}</span>
@@ -1094,7 +1080,7 @@ function JsonNode({
             reads as the whole value rather than as an opening brace. */}
         {!open && (
           <span className="min-w-0 truncate">
-            <span className="text-muted-foreground/70">{jsonSummary(value)}</span>
+            <span className="text-muted-foreground">{jsonSummary(value)}</span>
             <span className="text-code-punctuation">{brackets[1]}</span>
           </span>
         )}
@@ -1105,7 +1091,7 @@ function JsonNode({
           {/* The rail is the child container's own edge rather than a drawn
               line, so every level of the tree hangs off the last by one
               indent — `ms-1.5` puts it under the chevron it belongs to. */}
-          <div className="ms-1.5 border-s border-border/50 ps-2">
+          <div className="ms-1.5 border-s ps-2">
             {visible.map((entry, position) => (
               <JsonNode
                 key={entry.key}
@@ -1121,13 +1107,13 @@ function JsonNode({
               <button
                 type="button"
                 onClick={() => setShowAll(true)}
-                className="font-mono text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
+                className="font-mono text-xs leading-5 text-muted-foreground transition-colors hover:text-foreground"
               >
                 {entries.length - JSON_CHILD_LIMIT} more …
               </button>
             )}
           </div>
-          <div className="flex gap-1 font-mono text-[11px] leading-5 ps-4">
+          <div className="flex gap-1 font-mono text-xs leading-5 ps-4">
             <span className="text-code-punctuation">{brackets[1]}</span>
             {comma}
           </div>
@@ -1167,7 +1153,7 @@ export function JsonView({
         text={text}
         size="icon-xs"
         className={cn(
-          "absolute top-1 right-1 bg-popover/90 text-muted-foreground/70 backdrop-blur-sm transition-opacity hover:text-foreground",
+          "absolute top-1 right-1 bg-popover text-muted-foreground transition-opacity hover:text-foreground",
           coarse ? "opacity-100" : "opacity-0 group-hover/json:opacity-100 focus-visible:opacity-100"
         )}
       />
@@ -1214,9 +1200,9 @@ export function ShellPane({
 }) {
   const [out, over, showAll] = useShowAll(output, 200_000)
   return (
-    <div className={cn(PANE, failed && "border-destructive/40 bg-destructive/5")}>
-      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed">
-        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground/60">
+    <div className={cn(PANE, failed && "bg-destructive/10")}>
+      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-xs leading-relaxed">
+        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground">
           $
         </span>
         <ShellScript command={command} className="min-w-0 flex-1" />
@@ -1225,7 +1211,7 @@ export function ShellPane({
         <pre
           className={cn(
             PANE_MAX_H,
-            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
+            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap",
             failed ? "text-destructive" : "text-muted-foreground"
           )}
         >
@@ -1235,7 +1221,7 @@ export function ShellPane({
       {/* Running with nothing printed yet: breathing lines, not an empty pane. */}
       {!out.trim() && running && <ToolCallSkeleton className="border-t border-inherit p-2.5" />}
       {!out.trim() && !running && emptyNote && (
-        <p className="border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] text-muted-foreground">
+        <p className="border-t border-inherit px-2.5 py-1.5 font-mono text-xs text-muted-foreground">
           {emptyNote}
         </p>
       )}
@@ -1289,7 +1275,7 @@ export function FileBadge({
      lands with the title it belongs to — it inherits that part's `--part-i`,
      so it is the same 45ms, not a slot of its own. */
   const cls =
-    "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
+    "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-px font-mono text-xs leading-4 text-muted-foreground"
   if (!ctx || !target) return <span className={cls} title={filePath ?? file}>{inner}</span>
   return (
     <span
@@ -1312,7 +1298,7 @@ export function FileBadge({
       title={`Preview ${target}`}
       className={cn(
         cls,
-        "cursor-pointer transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        "cursor-pointer transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
       )}
     >
       {inner}
@@ -1330,7 +1316,7 @@ export function FileBadge({
 export function Favicon({ url, className }: { url: string; className?: string }) {
   const host = hostOf(url)
   const [failed, setFailed] = React.useState(false)
-  if (!host || failed) return <GlobeIcon aria-hidden className={cn("size-3.5 shrink-0 text-muted-foreground/60", className)} />
+  if (!host || failed) return <GlobeIcon aria-hidden className={cn("size-3.5 shrink-0 text-muted-foreground", className)} />
   return (
     <img
       src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
@@ -1340,7 +1326,7 @@ export function Favicon({ url, className }: { url: string; className?: string })
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className={cn("size-3.5 shrink-0 rounded-sm bg-background/50", className)}
+      className={cn("size-3.5 shrink-0 rounded-md bg-background", className)}
     />
   )
 }
@@ -1359,17 +1345,22 @@ export function Favicon({ url, className }: { url: string; className?: string })
 export function SourceChip({ url, title }: { url: string; title?: string }) {
   const open = useSourceOpener()
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer noopener"
-      onClick={(event) => open(event, url)}
-      title={title ? `${title}\n${url}` : url}
-      className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
+    <Badge
+      variant="outline"
+      className="max-w-full min-w-0 justify-start text-muted-foreground hover:text-foreground"
+      render={
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer noopener"
+          onClick={(event) => open(event, url)}
+          title={title ? `${title}\n${url}` : url}
+        />
+      }
     >
       <Favicon url={url} className="size-3" />
       <span className="truncate">{hostOf(url) || url}</span>
-    </a>
+    </Badge>
   )
 }
 
@@ -1423,7 +1414,7 @@ export function ToolContentView({ content }: { content: acp.ToolCallContent }) {
     )
   }
   if (content.type === "content") return <ContentBlockView block={content.content} />
-  return <div className="text-[11px] text-muted-foreground">[{content.type}]</div>
+  return <div className="text-xs text-muted-foreground">[{content.type}]</div>
 }
 
 /** The non-text halves of an ACP ContentBlock. These used to fall through to a
@@ -1437,7 +1428,7 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
         <img
           src={`data:${block.mimeType};base64,${block.data}`}
           alt=""
-          className="max-h-64 w-fit max-w-full rounded-md border border-border/50 object-contain"
+          className="max-h-64 w-fit max-w-full rounded-lg border object-contain"
         />
       )
     case "audio":
@@ -1455,7 +1446,7 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
         return (
           <FileLink
             path={block.uri}
-            className="block truncate text-start font-mono text-[11px]"
+            className="block truncate text-start font-mono text-xs"
           >
             {block.name || block.uri}
           </FileLink>
@@ -1465,7 +1456,7 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
           href={block.uri}
           target="_blank"
           rel="noreferrer"
-          className="block truncate font-mono text-[11px] text-primary underline-offset-2 hover:underline"
+          className="block truncate font-mono text-xs text-primary underline-offset-2 hover:underline"
           title={block.description ?? block.uri}
         >
           {block.name || block.uri}
@@ -1476,13 +1467,13 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
       // line saying what it is rather than a screenful of base64.
       return "text" in block.resource ? (
         <div className="min-w-0 space-y-1">
-          <p className="truncate font-mono text-[10px] text-muted-foreground/60">
+          <p className="truncate font-mono text-xs text-muted-foreground">
             {block.resource.uri}
           </p>
           <CodeBlock>{block.resource.text}</CodeBlock>
         </div>
       ) : (
-        <p className="truncate font-mono text-[11px] text-muted-foreground/80">
+        <p className="truncate font-mono text-xs text-muted-foreground">
           {block.resource.uri}
           {block.resource.mimeType ? ` · ${block.resource.mimeType}` : ""}
         </p>
@@ -1575,7 +1566,7 @@ export function Timestamp({ at, className }: { at?: number; className?: string }
               // misalignment rather than as a quieter voice; the colour is what
               // makes it quiet. Callers wanting the smaller one still say so
               // (the queue's rows).
-              "shrink-0 cursor-default whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/50 transition-colors hover:text-muted-foreground",
+              "shrink-0 cursor-default whitespace-nowrap text-xs tabular-nums text-muted-foreground",
               className
             )}
           />
@@ -1583,7 +1574,7 @@ export function Timestamp({ at, className }: { at?: number; className?: string }
       >
         {formatStamp(at, now)}
       </TooltipTrigger>
-      <TooltipContent className="flex-col items-start gap-0 text-[11px]">
+      <TooltipContent className="flex-col items-start gap-0 text-xs">
         <span className="tabular-nums">
           {date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
         </span>

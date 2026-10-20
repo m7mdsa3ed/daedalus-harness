@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 const TONES: Record<Exclude<PanelTone, "running">, string> = {
   /* Waiting on the user — the one reading worth interrupting for. The same
      amber every other surface uses for it (the sidebar row, the composer). */
-  attention: "bg-amber-500",
+  attention: "bg-warning",
   warn: "bg-destructive",
   /* Unsaved work: present, not urgent. Hollow, like every other dirty mark. */
   dirty: "border border-current bg-transparent",

@@ -32,6 +32,7 @@ import {
   ComboboxSeparator,
   ComboboxTrigger,
 } from "@/components/ui/combobox"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { canUseAi, gitPick } from "@/lib/ai-picks"
 import { describeError } from "@/lib/errors"
@@ -235,7 +236,7 @@ export function BranchPicker({
                   ) : (
                     <GitBranchIcon className="text-muted-foreground" />
                   )}
-                  <span className="min-w-0 truncate font-mono text-xs">{name}</span>
+                  <span className="min-w-0 truncate font-mono text-sm">{name}</span>
                 </ComboboxItem>
               ))}
             </ComboboxGroup>
@@ -252,14 +253,14 @@ export function BranchPicker({
                   onClick={() => pick({ branch: name, track: true })}
                 >
                   <CloudDownloadIcon className="text-muted-foreground" />
-                  <span className="min-w-0 truncate font-mono text-xs">{name}</span>
+                  <span className="min-w-0 truncate font-mono text-sm">{name}</span>
                 </ComboboxItem>
               ))}
             </ComboboxGroup>
           )}
 
           {hidden > 0 && (
-            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
               {hidden} more — type to narrow
             </p>
           )}
@@ -273,7 +274,7 @@ export function BranchPicker({
               >
                 <PlusIcon className="text-muted-foreground" />
                 <span className="min-w-0 truncate">
-                  Create <span className="font-mono text-xs">{typedName}</span>
+                  Create <span className="font-mono text-sm">{typedName}</span>
                 </span>
               </ComboboxItem>
             </>
@@ -285,23 +286,20 @@ export function BranchPicker({
             something typed, since "name this properly" is most wanted once you
             have tried and not liked what you wrote. */}
         {namer && (
-          <div className="border-t border-border/60 p-1">
-            <button
-              type="button"
+          <div className="border-t p-1">
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={naming}
               onClick={() => void suggestName()}
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+              className="w-full justify-start text-muted-foreground"
             >
-              {naming ? (
-                <Spinner className="size-3.5 shrink-0" />
-              ) : (
-                <SparklesIcon className="size-3.5 shrink-0" />
-              )}
+              {naming ? <Spinner /> : <SparklesIcon />}
               <span className="min-w-0 truncate">
                 {naming ? "Reading the changes…" : "Name it from the changes"}
               </span>
-            </button>
-            {nameError && <p className="px-2 py-1 text-[11px] text-destructive">{nameError}</p>}
+            </Button>
+            {nameError && <p className="px-2 py-1 text-xs text-destructive">{nameError}</p>}
           </div>
         )}
 

@@ -28,11 +28,11 @@ import { HugeiconsIcon } from "@hugeicons/react"
 
 import { CommitGraph } from "@/components/workspace/scm/commit-graph"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { CopyButton } from "@/components/ui/copy-button"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConfirm } from "@/components/confirm-dialog"
 import { describeError } from "@/lib/errors"
 import { idePrefs, setIdePref } from "@/lib/ide/prefs"
@@ -89,10 +89,10 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <div className={cn(!fixed && "border-t border-border/40")}>
+    <div className={cn(!fixed && "border-t")}>
       <div
         className={cn(
-          "group flex items-center gap-1 px-1 text-[11px] font-medium text-muted-foreground",
+          "group flex items-center gap-1 px-1 text-xs font-medium text-muted-foreground",
           coarse ? "min-h-10" : "min-h-7"
         )}
       >
@@ -111,7 +111,7 @@ function Section({
           )}
           <span className="min-w-0 truncate">{title}</span>
           {count !== null && count > 0 && (
-            <span className="font-mono tabular-nums opacity-70">{count}</span>
+            <span className="tabular-nums">{count}</span>
           )}
         </button>
         {open && actions}
@@ -126,11 +126,11 @@ function Section({
                it is usually the porcelain's own multi-line complaint, and the
                next thing anyone does with it is paste it somewhere. */
             <div className="flex items-start gap-1 px-2 py-1">
-              <p className="min-w-0 flex-1 text-[11px] text-destructive">{error}</p>
+              <p className="min-w-0 flex-1 text-xs text-destructive">{error}</p>
               <CopyButton
                 text={error}
                 size="icon-xs"
-                className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+                className="shrink-0 text-destructive"
               />
             </div>
           ) : (
@@ -159,23 +159,17 @@ function SmallAction({
   className?: string
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            disabled={disabled}
-            onClick={onClick}
-            aria-label={label}
-            className={cn(coarse ? "size-11" : "size-6", "shrink-0", className)}
-          >
-            <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
-          </Button>
-        }
-      />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <Button
+      title={label}
+      variant="ghost"
+      size="icon-xs"
+      disabled={disabled}
+      onClick={onClick}
+      aria-label={label}
+      className={cn(coarse ? "size-11" : "size-6", "shrink-0", className)}
+    >
+      <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
+    </Button>
   )
 }
 
@@ -300,14 +294,14 @@ export function StashSection({
       {list.items === null ? (
         <PanelRowsSkeleton rows={3} className="space-y-1.5 p-1" />
       ) : list.items.length === 0 ? (
-        <p className="px-2 py-1 text-[11px] text-muted-foreground">Nothing is stashed.</p>
+        <p className="px-2 py-1 text-xs text-muted-foreground">Nothing is stashed.</p>
       ) : (
         list.items.map((entry) => (
           <ContextMenu key={entry.ref}>
           <ContextMenuTrigger
             render={<div
             className={cn(
-              "group flex items-center gap-1 rounded-md pr-1 pl-2 text-xs hover:bg-accent/40",
+              "group flex items-center gap-1 rounded-md pr-1 pl-2 text-sm hover:bg-muted",
               coarse ? "min-h-11" : "min-h-7"
             )}
           />}
@@ -316,7 +310,7 @@ export function StashSection({
               {entry.message}
             </span>
             {entry.at !== null && (
-              <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                 {shortAge(entry.at * 1000)}
               </span>
             )}
@@ -455,7 +449,7 @@ export function HistorySection({
       {list.items === null ? (
         <PanelRowsSkeleton rows={4} className="space-y-1.5 p-1" />
       ) : list.items.length === 0 ? (
-        <p className="px-2 py-1 text-[11px] text-muted-foreground">No commits yet.</p>
+        <p className="px-2 py-1 text-xs text-muted-foreground">No commits yet.</p>
       ) : layout === "graph" ? (
         <div className="py-1 pr-1">
           <CommitGraph commits={list.items} onCopy={copy} coarse={coarse} hint={hint} />
@@ -468,24 +462,24 @@ export function HistorySection({
             onClick={() => copy(commit)}
             title={`${commit.short} · ${commit.author} · ${new Date(commit.at * 1000).toLocaleString()}\n${commit.subject}\n${commit.filesChanged} files changed\n\n${hint}`}
             className={cn(
-              "flex w-full items-center gap-2 rounded-md pr-1 pl-2 text-left text-xs hover:bg-accent/40",
+              "flex w-full items-center gap-2 rounded-md pr-1 pl-2 text-left text-sm hover:bg-muted",
               coarse ? "min-h-11" : "min-h-7"
             )}
           >
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">
               {commit.short}
             </span>
             <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
             {commit.refs.length > 0 && (
-              <span className="hidden max-w-24 shrink-0 truncate rounded border border-border/70 px-1 text-[10px] text-muted-foreground @panel-sm:inline">
+              <Badge variant="outline" className="hidden max-w-24 shrink-0 truncate @panel-sm:inline-flex">
                 {commit.refs[0]}
-              </span>
+              </Badge>
             )}
-            <span className="hidden shrink-0 font-mono text-[10px] tabular-nums @panel-sm:inline">
-              <span className="text-emerald-600 dark:text-emerald-400">+{commit.insertions}</span>{" "}
-              <span className="text-red-600 dark:text-red-400">−{commit.deletions}</span>
+            <span className="hidden shrink-0 font-mono text-xs tabular-nums @panel-sm:inline">
+              <span className="text-success">+{commit.insertions}</span>{" "}
+              <span className="text-destructive">−{commit.deletions}</span>
             </span>
-            <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
               {shortAge(commit.at * 1000)}
             </span>
           </button>
@@ -495,7 +489,7 @@ export function HistorySection({
         <Button
           variant="ghost"
           size="xs"
-          className="mt-1 w-full text-[11px] text-muted-foreground"
+          className="mt-1 w-full text-muted-foreground"
           disabled={list.busy}
           onClick={() => setLimit((current) => Math.min(LOG_MAX, current + LOG_LIMIT))}
         >

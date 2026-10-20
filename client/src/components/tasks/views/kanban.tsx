@@ -33,6 +33,9 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Empty } from "@/components/empty"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -125,46 +128,42 @@ function Column({
         /* On a phone a column is nearly the viewport and snaps into place, so
            the horizontal scroller reads as a pager rather than as a strip of
            half-visible columns; from `sm` up it is the fixed width it was. */
-        "flex max-h-full w-[85vw] max-w-[19rem] shrink-0 snap-start flex-col rounded-2xl bg-muted/50 sm:w-72 sm:max-w-none",
-        isOver && "border-primary/40 bg-muted/60",
-        over && "border-destructive/40",
+        "flex max-h-full w-[85vw] max-w-[19rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 sm:max-w-none",
+        isOver && "ring-1 ring-primary/40",
+        over && "ring-1 ring-destructive/40",
       )}
     >
       <div className="flex items-center justify-between gap-1 px-3 py-2.5">
-        <span className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+        <span className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
           <span className={cn("size-2 shrink-0 rounded-full", status.color ? COLOR_DOT[status.color] : "bg-muted-foreground/40")} />
           <span className="truncate">{status.name}</span>
-          <span
-            className={cn(
-              "text-xs font-normal tabular-nums text-muted-foreground",
-              over && "bg-destructive/15 text-destructive",
-            )}
+          <Badge
+            variant={over ? "destructive" : "secondary"}
+            className="tabular-nums"
             title={status.wipLimit != null ? `Work-in-progress limit ${status.wipLimit}` : undefined}
           >
             {count}
             {status.wipLimit != null && `/${status.wipLimit}`}
-          </span>
-          {points > 0 && <span className="text-[10px] tabular-nums normal-case">{points} pts</span>}
+          </Badge>
+          {points > 0 && <span className="text-xs font-normal tabular-nums text-muted-foreground">{points} pts</span>}
         </span>
         <span className="flex shrink-0 items-center">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setAdding(true)}
             aria-label={`Add task to ${status.name}`}
-            className="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:size-7"
+            className="text-muted-foreground"
           >
-            <Plus className="size-4" />
-          </button>
+            <Plus />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <button
-                  type="button"
-                  aria-label={`${status.name} column options`}
-                  className="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:size-7"
-                >
-                  <MoreHorizontal className="size-4" />
-                </button>
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={`${status.name} column options`} className="text-muted-foreground">
+                  <MoreHorizontal />
+                </Button>
               }
             />
             <DropdownMenuContent align="end" className="w-52">
@@ -183,7 +182,7 @@ function Column({
                 // board with no columns has nothing to draw.
                 disabled={total <= 1}
                 onClick={() => ops.onDelete(status)}
-                className="text-destructive"
+                variant="destructive"
               >
                 <Trash2 className="size-4" /> Delete column…
               </DropdownMenuItem>
@@ -198,10 +197,9 @@ function Column({
           ))}
         </SortableContext>
         {tasks.length === 0 && (
-          <div className="flex flex-col items-center justify-center gap-2 px-3 py-6 text-center text-xs text-muted-foreground">
-            <SquareKanban className="size-5 opacity-50" />
-            <p>Drop tasks here</p>
-          </div>
+          <Empty icon={SquareKanban}>
+            Drop tasks here
+          </Empty>
         )}
       </div>
       <div className="p-2 pt-0">
@@ -439,13 +437,9 @@ export function KanbanView({
           document.body,
         )}
       </DndContext>
-      <button
-        type="button"
-        onClick={columns.onAdd}
-        className="flex h-fit w-40 shrink-0 snap-start items-center gap-2 rounded-2xl border border-dashed px-3 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-56 sm:py-2.5"
-      >
-        <Plus className="size-4" /> Add column
-      </button>
+      <Button type="button" variant="outline" onClick={columns.onAdd} className="w-40 shrink-0 snap-start justify-start border-dashed text-muted-foreground sm:w-56">
+        <Plus /> Add column
+      </Button>
     </div>
   )
 }

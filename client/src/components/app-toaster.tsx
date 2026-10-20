@@ -41,7 +41,6 @@ import {
 } from "@hugeicons/core-free-icons"
 
 import { useIsMobile } from "@/hooks/use-device"
-import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { cn } from "@/lib/utils"
 import {
   Toast,
@@ -70,15 +69,6 @@ const VIEWPORT_TOP =
    spacing that lives on the card rather than inside it. */
 const TOAST_TIGHT = "[--gap:0.5rem] [--peek:0.5rem]"
 
-/* The third departure, and the one that is not spacing: the registry's card is
-   an opaque `bg-popover`, which is right for a component that could land
-   anywhere and wrong for this app, where every other surface raised over the
-   content — the header's capsules, the bell's glance — is frosted. An opaque
-   slab dropping in over a transcript reads as a second window. `GLASS_SURFACE`
-   is the same recipe those use (`lib/header-chrome`), stated once so a frosted
-   surface is never frosted *differently*. */
-const TOAST_GLASS = GLASS_SURFACE
-
 /* The mirror of the registry's bottom-anchored stack. Every string whose
    modifiers match one of its own replaces that one through tailwind-merge. */
 const TOAST_TOP = [
@@ -98,9 +88,9 @@ const SWIPE_TOP: ToastPrimitive.Root.Props["swipeDirection"] = ["up", "right"]
    rather than a bare title — the icon is what makes the header a header. */
 const TYPE_ICONS = {
   default: { icon: Notification03Icon, className: "text-muted-foreground" },
-  success: { icon: CheckmarkCircle02Icon, className: "text-emerald-600 dark:text-emerald-400" },
+  success: { icon: CheckmarkCircle02Icon, className: "text-success" },
   info: { icon: InformationCircleIcon, className: "text-foreground" },
-  warning: { icon: Alert02Icon, className: "text-amber-600 dark:text-amber-400" },
+  warning: { icon: Alert02Icon, className: "text-warning" },
   error: { icon: MultiplicationSignCircleIcon, className: "text-destructive" },
   loading: { icon: Loading03Icon, className: "animate-spin text-muted-foreground" },
 } as const
@@ -125,7 +115,7 @@ function ToastList({ top }: { top: boolean }) {
     <Toast
       key={toastItem.id}
       toast={toastItem}
-      className={cn(TOAST_TIGHT, TOAST_GLASS, top && TOAST_TOP)}
+      className={cn(TOAST_TIGHT, top && TOAST_TOP)}
       swipeDirection={top ? SWIPE_TOP : undefined}
     >
       <ToastContent className="flex-col items-stretch gap-1 p-3">
@@ -134,7 +124,7 @@ function ToastList({ top }: { top: boolean }) {
           <ToastTitle className="min-w-0 flex-1 leading-5" />
           <ToastClose className="-my-1 -me-1" />
         </div>
-        {toastItem.description ? <ToastDescription className="ps-6 text-xs" /> : null}
+        {toastItem.description ? <ToastDescription className="ps-6" /> : null}
         {toastItem.actionProps ? (
           <div className="mt-1.5 flex justify-end gap-2">
             <ToastAction />

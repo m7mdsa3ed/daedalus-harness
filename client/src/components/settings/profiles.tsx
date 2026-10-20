@@ -202,7 +202,7 @@ const kindsOf = (profile: Profile): { kind: ModelKind; count: number }[] => {
 /** One kind a profile holds, with how many of it. */
 function KindChip({ kind, count }: { kind: ModelKind; count: number }) {
   return (
-    <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px] font-normal text-muted-foreground">
+    <Badge variant="outline" className="font-normal text-muted-foreground">
       <span className="tabular-nums text-foreground">{count}</span>
       {KIND_LABEL[kind].toLowerCase()}
     </Badge>
@@ -477,18 +477,18 @@ export function ProfilesPage() {
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-1">
                 {kinds.length === 0 ? (
-                  <span className="text-xs text-muted-foreground">No models</span>
+                  <span className="text-sm text-muted-foreground">No models</span>
                 ) : (
                   kinds.map(({ kind, count }) => <KindChip key={kind} kind={kind} count={count} />)
                 )}
                 {hasPlanUsage(p) && (
-                  <Badge variant="ghost" className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
+                  <Badge variant="ghost" className="font-normal text-muted-foreground">
                     plan usage
                   </Badge>
                 )}
               </div>
               {p.defaultModel && (
-                <div className="truncate font-mono text-[11px] text-muted-foreground" title={p.defaultModel}>
+                <div className="truncate font-mono text-xs text-muted-foreground" title={p.defaultModel}>
                   {p.defaultModel}
                 </div>
               )}
@@ -560,7 +560,7 @@ export function ProfilesPage() {
                   <KeyStatus profile={p} />
                 </span>
               </div>
-              <div className="truncate text-xs text-muted-foreground">
+              <div className="truncate text-sm text-muted-foreground">
                 {p.baseUrl ? hostOf(p.baseUrl) : "No endpoint"}
               </div>
               {/* The kinds on their own line, as chips: a card has the width for
@@ -568,12 +568,12 @@ export function ProfilesPage() {
                   row exists to answer. */}
               <div className="flex flex-wrap items-center gap-1">
                 {kinds.length === 0 ? (
-                  <span className="text-xs text-muted-foreground">No models</span>
+                  <span className="text-sm text-muted-foreground">No models</span>
                 ) : (
                   kinds.map(({ kind, count }) => <KindChip key={kind} kind={kind} count={count} />)
                 )}
                 {hasPlanUsage(p) && (
-                  <Badge variant="ghost" className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
+                  <Badge variant="ghost" className="font-normal text-muted-foreground">
                     plan usage
                   </Badge>
                 )}
@@ -612,7 +612,7 @@ export function ProfilesPage() {
         filtering={stored.length > 0 ? f.filtering : undefined}
         toolbar={
           hiddenCount > 0 ? (
-            <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground @panel-sm:min-h-0">
+            <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 text-sm text-muted-foreground @panel-sm:min-h-0">
               <Switch checked={showHidden} onCheckedChange={setShowHidden} />
               Show {hiddenCount} hidden
             </label>
@@ -652,7 +652,7 @@ export function ProfilesPage() {
             <Checkbox checked={includeSecrets} onCheckedChange={(checked) => setIncludeSecrets(checked === true)} />
             <span>
               Include API keys
-              <span className="mt-0.5 block text-xs text-muted-foreground">
+              <span className="mt-0.5 block text-sm text-muted-foreground">
                 Transfers the profile key and separate usage key. Off by default; existing destination keys are preserved.
               </span>
             </span>
@@ -748,14 +748,14 @@ function AgentToggle({ agent }: { agent: AgentRowData }) {
 function AgentOverride({ agent }: { agent: AgentRowData }) {
   const { links, placeholder, setBaseUrl } = useAgentLinks()
   const link = links[agent.id]
-  if (!link) return <span className="text-xs text-muted-foreground">Not served</span>
+  if (!link) return <span className="text-sm text-muted-foreground">Not served</span>
   return (
     <Input
       value={link.baseUrl}
       onChange={(e) => setBaseUrl(agent.id, e.target.value)}
       placeholder={placeholder}
       aria-label={`${agent.name} base URL override`}
-      className="w-full min-w-0 font-mono text-xs"
+      className="w-full min-w-0 font-mono text-sm"
     />
   )
 }
@@ -978,7 +978,7 @@ export function ProfileForm({
   ]
   const aside = (text?: string) =>
     text ? (
-      <Badge variant="secondary" className="max-w-[40vw] truncate text-[11px] font-normal">
+      <Badge variant="secondary" className="max-w-[40vw] truncate font-normal">
         {text}
       </Badge>
     ) : undefined
@@ -1008,7 +1008,7 @@ export function ProfileForm({
                   value={form.baseUrl}
                   onChange={(e) => set({ baseUrl: e.target.value })}
                   placeholder="https://api.anthropic.com"
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                 />
               </Field>
               <Field label="API key" hint={profile?.hasApiKey ? "Stored — leave empty to keep it." : "Never sent back to clients."}>
@@ -1018,7 +1018,7 @@ export function ProfileForm({
                     href={preset.keyUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline break-words max-w-full"
+                    className="mt-1 inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:underline break-words max-w-full"
                   >
                     Get a {preset.name} key <ExternalLink className="size-3" />
                   </a>
@@ -1040,7 +1040,7 @@ export function ProfileForm({
                     value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
                     onChange={(e) => set({ logoUrl: e.target.value })}
                     placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://models.dev/logos/openrouter.svg"}
-                    className="font-mono text-xs min-w-0 flex-1"
+                    className="font-mono text-sm min-w-0 flex-1"
                   />
                   <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
                 </div>
@@ -1135,7 +1135,7 @@ export function ProfileForm({
                     value={form.usageBaseUrl}
                     onChange={(e) => set({ usageBaseUrl: e.target.value })}
                     placeholder={usageProvider?.hostPlaceholder}
-                    className="font-mono text-xs"
+                    className="font-mono text-sm"
                   />
                 </Field>
                 <Field
@@ -1177,7 +1177,7 @@ export function ProfileForm({
             hint="Where the profile is offered, and the limits and notices every thread on it lives with."
             action={aside(form.disabled ? "Disabled" : form.hidden ? "Hidden" : undefined)}
           >
-            <div className="divide-y divide-border/60 *:py-3 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
+            <div className="divide-y *:py-3 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
               <ToggleRow
                 title="Shown"
                 hint="Off, this profile is kept but not offered when starting a new thread. Its credentials, catalog and linked tools stay, the threads already on it keep running, and the usage page keeps tracking its plan — it is only out of the pickers."
@@ -1223,7 +1223,7 @@ export function ProfileForm({
                   onChange={(e) => set({ headers: e.target.value })}
                   rows={3}
                   placeholder="User-Agent: claude-cli/2.1.158 (external, sdk-cli)"
-                  className="font-mono text-xs"
+                  className="font-mono text-sm"
                 />
               </Field>
             </div>
@@ -1255,7 +1255,7 @@ function ToggleRow({
     <label className="flex cursor-pointer items-start justify-between gap-4 pointer-coarse:min-h-11">
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{title}</span>
-        <span className="mt-0.5 block max-w-[68ch] text-xs/relaxed text-muted-foreground">{hint}</span>
+        <span className="mt-0.5 block max-w-[68ch] text-sm/relaxed text-muted-foreground">{hint}</span>
       </span>
       <Switch className="mt-0.5 shrink-0" checked={checked} onCheckedChange={onChange} aria-label={label} />
     </label>

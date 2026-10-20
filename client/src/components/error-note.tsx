@@ -59,7 +59,7 @@ export function ErrorNote({
            or the server wrote are part of the message. */
         <p
           className={cn(
-            "text-xs whitespace-pre-wrap text-destructive/85 [overflow-wrap:anywhere]",
+            "text-sm whitespace-pre-wrap text-destructive/90 [overflow-wrap:anywhere]",
             !expanded && "line-clamp-3"
           )}
         >
@@ -70,9 +70,8 @@ export function ErrorNote({
         {onRetry && (
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs hover:bg-destructive/10"
+            variant="outline"
+            size="xs"
             onClick={onRetry}
           >
             {retryLabel}
@@ -81,9 +80,8 @@ export function ErrorNote({
         {long && (
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs hover:bg-destructive/10"
+            variant="outline"
+            size="xs"
             onClick={() => setExpanded((open) => !open)}
           >
             {expanded ? "Less" : "More"}
@@ -92,7 +90,8 @@ export function ErrorNote({
         <CopyButton
           text={error.text}
           label="Copy"
-          className="h-7 px-2 text-xs hover:bg-destructive/10"
+          variant="outline"
+          size="xs"
         />
       </div>
     </Notice>

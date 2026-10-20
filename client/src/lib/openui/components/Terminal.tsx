@@ -3,7 +3,7 @@
 import { z } from "zod/v4"
 import { defineComponent } from "@openuidev/react-lang"
 import { cn } from "@/lib/utils"
-import { Box, HAIRLINE, META, PAD, PAD_ROW, TONE_DOT } from "@/lib/openui/kit"
+import { Box, META, PAD, PAD_ROW, TONE_DOT } from "@/lib/openui/kit"
 
 /** Zero is the only success; anything else is the command saying it failed. */
 function ExitBadge({ code }: { code: number }) {
@@ -34,10 +34,9 @@ export const Terminal = defineComponent({
           {hasBand && (
             <div
               className={cn(
-                "flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b bg-muted/40",
-                HAIRLINE,
+                "flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b bg-muted/50",
                 PAD_ROW,
-                "py-1.5"
+                "py-1.5 @panel-sm:py-1.5"
               )}
             >
               {/* The path is the long thing: it takes the line and wraps, the badge keeps its width. */}
@@ -48,7 +47,7 @@ export const Terminal = defineComponent({
           {/* Wraps rather than scrolls, so a long line cannot widen a phone panel. */}
           <pre
             className={cn(
-              "overflow-auto font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90",
+              "overflow-auto font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground",
               PAD
             )}
           >

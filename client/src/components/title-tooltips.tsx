@@ -97,7 +97,7 @@ export function TitleTooltips() {
           anchor={tip.el}
           side="bottom"
           sideOffset={6}
-          className="pointer-events-none w-fit max-w-[min(24rem,calc(var(--float-w)-1.5rem))] gap-0 rounded-lg bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg ring-1 ring-foreground/10 whitespace-pre-line"
+          className="pointer-events-none w-fit max-w-[min(24rem,calc(var(--float-w)-1.5rem))] gap-0 px-3 py-1.5 text-xs whitespace-pre-line"
         >
           {tip.text}
         </PopoverContent>

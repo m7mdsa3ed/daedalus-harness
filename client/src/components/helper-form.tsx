@@ -43,8 +43,8 @@ function ToggleRow({
   return (
     <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5 pointer-coarse:min-h-14">
       <span className="min-w-0">
-        <span className="block text-sm font-medium md:text-xs">{title}</span>
-        <span className="block text-xs text-muted-foreground md:text-[11px]">{hint}</span>
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
       </span>
       <Switch checked={checked} onCheckedChange={onChange} aria-label={title} />
     </label>
@@ -177,7 +177,7 @@ export function HelperForm({
           placeholder="npm run db:migrate"
           rows={1}
           enterKeyHint="done"
-          className="min-h-0 py-2 font-mono break-all md:text-xs"
+          className="min-h-0 py-2 font-mono break-all"
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
@@ -189,14 +189,14 @@ export function HelperForm({
           <ChevronRight
             className={cn("size-4 shrink-0 text-muted-foreground transition-transform", more && "rotate-90")}
           />
-          <span className="text-sm font-medium md:text-xs">More options</span>
+          <span className="text-sm font-medium">More options</span>
           {!more && extras.length > 0 && (
-            <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground md:text-[11px]">
+            <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
               {extras.join(" · ")}
             </span>
           )}
         </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-4 border-t border-border/60 px-3 pt-3 pb-1">
+        <CollapsibleContent className="space-y-4 border-t px-3 pt-3 pb-1">
           <Field label="Description" hint="Shown in the Run menu and before the command runs.">
             <Input
               value={description}
@@ -209,7 +209,7 @@ export function HelperForm({
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
               placeholder="packages/server"
-              className="font-mono md:text-xs"
+              className="font-mono"
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -222,14 +222,14 @@ export function HelperForm({
               placeholder={"DATABASE_URL=postgres://localhost/app\nNODE_ENV=development"}
               rows={2}
               aria-invalid={envProblem ? true : undefined}
-              className="min-h-0 font-mono md:text-xs"
+              className="min-h-0 font-mono"
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
             />
-            {envProblem && <p className="text-xs text-destructive">{envProblem}</p>}
+            {envProblem && <p className="text-sm text-destructive">{envProblem}</p>}
           </Field>
-          <div className="-mx-3 divide-y divide-border/60 border-t border-border/60">
+          <div className="-mx-3 divide-y border-t">
             <ToggleRow
               title="Ask before running"
               hint="Confirm before its terminal opens — for the destructive ones."

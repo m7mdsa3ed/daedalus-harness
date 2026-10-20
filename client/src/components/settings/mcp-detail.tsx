@@ -213,7 +213,7 @@ function Offering({
         id: "takes",
         header: "Takes",
         meta: { align: "end" },
-        cell: ({ row }) => <span className="text-xs text-muted-foreground tabular-nums">{takesOf(row.original)}</span>,
+        cell: ({ row }) => <span className="text-sm text-muted-foreground tabular-nums">{takesOf(row.original)}</span>,
       },
     ] as ColumnDef<EntryRow, unknown>[]).filter((column) => tab === "resource" || column.id !== "kind"),
     [tab]
@@ -230,7 +230,7 @@ function Offering({
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{row.entry.name}</div>
-              <div className="truncate text-xs text-muted-foreground">
+              <div className="truncate text-sm text-muted-foreground">
                 {KIND_LABEL[row.kind]} · {takesOf(row)}
               </div>
             </div>
@@ -257,7 +257,7 @@ function Offering({
           </>
         }
       >
-        <Row title="Endpoint" subtitle={<span className="font-mono text-[11px] break-all">{mcpSubtitle(server)}</span>} />
+        <Row title="Endpoint" subtitle={<span className="font-mono text-xs break-all">{mcpSubtitle(server)}</span>} />
         {/* What the server declared it can do — the protocol's own words,
             so "no prompts" and "prompts it has not listed yet" read apart. */}
         {result?.ok && (
@@ -285,7 +285,7 @@ function Offering({
         {result?.ok && result.instructions && (
           <div className="py-3">
             <p className="mb-1 text-xs font-medium text-muted-foreground">Instructions</p>
-            <p className="max-h-48 overflow-y-auto text-xs/relaxed break-words whitespace-pre-wrap">
+            <p className="max-h-48 overflow-y-auto text-sm/relaxed break-words whitespace-pre-wrap">
               {result.instructions}
             </p>
           </div>
@@ -301,7 +301,7 @@ function Offering({
         /* A stdio child's stderr rides the error, so it is a well to select
            from rather than a headline. */
         <Notice tone="error" title="Didn't connect">
-          <pre className="font-mono text-xs whitespace-pre-wrap">
+          <pre className="font-mono text-sm whitespace-pre-wrap">
             {result.error ?? "The server refused the connection."}
           </pre>
         </Notice>
@@ -482,11 +482,11 @@ function Fields({
     <div>
       <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
       {fields.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{empty}</p>
+        <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
-        <ul className={cn("divide-y divide-border/60", INSET)}>
+        <ul className={cn("divide-y", INSET)}>
           {fields.map((field) => (
-            <li key={field.name} className="px-3 py-2 text-xs">
+            <li key={field.name} className="px-3 py-2 text-sm">
               <span className="font-mono">{field.name}</span>
               <span className="ml-1.5 text-muted-foreground">{field.type}</span>
               {field.required && <span className="ml-1 text-destructive" title="required">*</span>}
@@ -499,7 +499,7 @@ function Fields({
       )}
       {schema != null && (
         <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-muted-foreground">Schema</summary>
+          <summary className="cursor-pointer text-sm text-muted-foreground">Schema</summary>
           <Pane text={JSON.stringify(schema, null, 2)} />
         </details>
       )}
@@ -512,7 +512,7 @@ function Fields({
 function Pane({ text, className }: { text: string; className?: string }) {
   return (
     <div className="relative">
-      <pre className={cn("overflow-auto rounded-md bg-muted/50 p-2.5 pr-9 font-mono text-xs", className ?? "max-h-80")}>
+      <pre className={cn("overflow-auto rounded-xl border bg-muted/50 p-2.5 pr-9 font-mono text-sm", className ?? "max-h-80")}>
         {text}
       </pre>
       <CopyButton text={text} variant="ghost" size="icon" className="absolute top-1 right-1" />

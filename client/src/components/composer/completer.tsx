@@ -92,32 +92,32 @@ export function CompleterRow({
       }}
       onMouseMove={onHover}
       className={cn(
-        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-2 py-2 text-left sm:py-1.5",
-        selected && "bg-accent text-accent-foreground"
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-2 py-2 text-left text-sm sm:py-1.5",
+        selected && "bg-muted text-foreground"
       )}
     >
       {mark ?? (
         <Icon
           className={cn(
-            "size-3.5 shrink-0",
-            selected ? "text-accent-foreground" : "text-muted-foreground"
+            "size-4 shrink-0",
+            selected ? "text-foreground" : "text-muted-foreground"
           )}
         />
       )}
       <span className="col-start-2 flex min-w-0 flex-col">
-        <span className="flex min-w-0 items-baseline gap-1 font-mono text-xs">
+        <span className="flex min-w-0 items-baseline gap-1 font-mono text-sm">
           {prefix && (
-            <span className="min-w-0 shrink truncate text-muted-foreground/60">{prefix}</span>
+            <span className="min-w-0 shrink truncate text-muted-foreground">{prefix}</span>
           )}
           <span className="min-w-0 truncate">{label}</span>
           {meta && (
-            <span className="min-w-0 shrink truncate text-[11px] text-muted-foreground/70">
+            <span className="min-w-0 shrink truncate text-xs text-muted-foreground">
               {meta}
             </span>
           )}
         </span>
         {description && (
-          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate text-xs text-muted-foreground">
             {description}
           </span>
         )}
@@ -125,18 +125,12 @@ export function CompleterRow({
       {(aside || badge || trailing) && (
         <span
           className={cn(
-            "col-start-3 flex shrink-0 items-center gap-1.5 text-[10px]",
-            selected ? "text-accent-foreground/70" : "text-muted-foreground/70"
+            "col-start-3 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
           )}
         >
           {aside && <span className="font-mono tabular-nums">{aside}</span>}
           {badge && (
-            <Badge
-              variant="secondary"
-              className="px-1 py-0 text-[10px] font-normal tracking-wide uppercase"
-            >
-              {badge}
-            </Badge>
+            <Badge variant="secondary">{badge}</Badge>
           )}
           {trailing}
         </span>
@@ -149,7 +143,7 @@ export function CompleterRow({
     group instead of as a badge on every row of it. */
 export function CompleterSection({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wider text-muted-foreground/60 uppercase first:pt-1">
+    <div className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground first:pt-1">
       {children}
     </div>
   )
@@ -192,21 +186,21 @@ export function CompleterList({
           12px, so the hint and the keys that drive the list line up with the
           rows above them rather than sitting 2px inboard. */}
       {(hint || !coarse) && (
-        <div className={cn(SHELF_PAD, "flex items-center gap-3 border-t py-1 text-[10px] text-muted-foreground/70")}>
+        <div className={cn(SHELF_PAD, "flex items-center gap-3 border-t py-1 text-xs text-muted-foreground")}>
           {hint && <span className="mr-auto min-w-0 truncate font-mono">{hint}</span>}
           {coarse ? null : (
             <>
           <span className="flex items-center gap-1">
-            <Kbd className="h-4 min-w-4 px-0.5 text-[10px]">↑</Kbd>
-            <Kbd className="h-4 min-w-4 px-0.5 text-[10px]">↓</Kbd>
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd>
             navigate
           </span>
           <span className="flex items-center gap-1">
-            <Kbd className="h-4 min-w-4 px-0.5 text-[10px]">↵</Kbd>
+            <Kbd>↵</Kbd>
             select
           </span>
           <span className="flex items-center gap-1">
-            <Kbd className="h-4 px-1 text-[10px]">esc</Kbd>
+            <Kbd>esc</Kbd>
             dismiss
           </span>
             </>
@@ -220,8 +214,8 @@ export function CompleterList({
 /** The one-line "nothing yet" / hint row the menus draw instead of a list. */
 export function CompleterNote({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
   return (
-    <ComposerStripItem className={cn(SHELF_PAD, "flex items-center gap-2 py-1.5 text-[11px] text-muted-foreground")}>
-      <Icon className="size-3 shrink-0" />
+    <ComposerStripItem className={cn(SHELF_PAD, "flex items-center gap-2 py-1.5 text-xs text-muted-foreground")}>
+      <Icon className="size-3.5 shrink-0" />
       <span className="min-w-0 truncate">{children}</span>
     </ComposerStripItem>
   )

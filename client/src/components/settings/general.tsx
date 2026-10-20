@@ -140,7 +140,7 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
         meta: { className: "hidden @panel-md:table-cell" },
         cell: ({ row }) =>
           row.original.id === active.id && version ? (
-            <span className="font-mono text-xs">{version}</span>
+            <span className="font-mono text-sm">{version}</span>
           ) : (
             <span className="hidden text-muted-foreground @panel-md:inline">—</span>
           ),
@@ -190,7 +190,7 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
           getRowId={(s) => s.id}
           mark={() => <Server />}
           actions={actions}
-          rowClassName={(s) => (s.id === active.id ? "bg-primary/5 [&>td:first-child]:bg-[color-mix(in_oklab,var(--card),var(--primary)_5%)]" : undefined)}
+          rowClassName={(s) => (s.id === active.id ? "bg-muted [&>td:first-child]:bg-muted" : undefined)}
           emptyIcon={<Server />}
           emptyMessage={f.narrowed ? "No servers match." : "No servers stored on this device."}
           emptyAction={
@@ -246,7 +246,7 @@ function AboutStrip() {
           {meta.data ? (
             <StatusBadge tone="info" dot={false}>{meta.data.version}</StatusBadge>
           ) : meta.isError ? (
-            <span className="text-xs text-muted-foreground">{errorText(meta.error)}</span>
+            <span className="text-sm text-muted-foreground">{errorText(meta.error)}</span>
           ) : null}
         </Row>
         <Row title="Client" subtitle="The build this device is running.">
@@ -254,7 +254,7 @@ function AboutStrip() {
         </Row>
         <Row title="Update the server" subtitle="Run on the server host, in the harness checkout.">
           <span className="flex min-w-0 items-center gap-1">
-            <code className="min-w-0 truncate rounded-md bg-muted px-2 py-0.5 font-mono text-xs">{SERVER_UPDATE_COMMAND}</code>
+            <code className="min-w-0 truncate rounded-md bg-muted px-2 py-0.5 font-mono text-sm">{SERVER_UPDATE_COMMAND}</code>
             <CopyButton text={SERVER_UPDATE_COMMAND} size="icon-sm" className="shrink-0 pointer-coarse:size-11" />
           </span>
         </Row>

@@ -62,10 +62,10 @@ export function TypeSection({ base, onChange }: SectionProps) {
     <>
       <FieldSet className="gap-3">
         <div>
-          <FieldLegend variant="label" className="mb-0 text-xs">
+          <FieldLegend variant="label" className="mb-0 text-sm">
             Typeface
           </FieldLegend>
-          <FieldDescription className="text-[11px]">
+          <FieldDescription className="text-xs">
             Three roles. Pick a bundled family, or name any family on Google Fonts.
           </FieldDescription>
         </div>
@@ -73,8 +73,8 @@ export function TypeSection({ base, onChange }: SectionProps) {
           {FONT_SLOTS.map((slot) => (
             <Item key={slot.key} size="xs" className="gap-2 rounded-lg py-1.5">
               <ItemContent>
-                <ItemTitle className="text-xs font-normal">{slot.label}</ItemTitle>
-                <p className="text-[11px] text-muted-foreground">{slot.hint}</p>
+                <ItemTitle className="text-sm font-normal">{slot.label}</ItemTitle>
+                <p className="text-xs text-muted-foreground">{slot.hint}</p>
               </ItemContent>
               <ItemActions>
                 <FontPicker
@@ -114,7 +114,7 @@ export function TypeSection({ base, onChange }: SectionProps) {
         onChange={(id) => onChange({ tracking: id })}
         renderSwatch={(id) => (
           <span
-            className="block text-[11px] leading-5 font-medium opacity-70"
+            className="block text-xs leading-5 font-medium opacity-70"
             style={{ letterSpacing: TRACKING_PRESETS.find((p) => p.id === id)?.value }}
           >
             Aa
@@ -223,7 +223,7 @@ export function SurfacesSection({ base, onChange }: SectionProps) {
               } as React.CSSProperties
             }
           >
-            <span className="block size-3 rounded-sm border border-border bg-card" />
+            <span className="block size-3 rounded-sm border bg-card" />
           </span>
         )}
       />
@@ -244,7 +244,7 @@ export function SurfacesSection({ base, onChange }: SectionProps) {
               }}
             />
             <span
-              className="absolute inset-x-0 bottom-0 h-1/2 border-t border-border/50 bg-card/50"
+              className="absolute inset-x-0 bottom-0 h-1/2 border-t bg-card/50"
               style={{
                 backdropFilter: `blur(${BLUR_PRESETS.find((p) => p.id === id)?.value ?? "0px"})`,
               }}
@@ -272,7 +272,7 @@ export function SurfacesSection({ base, onChange }: SectionProps) {
               }}
             />
             <span
-              className="absolute inset-x-0 bottom-0 h-1/2 border-t border-border/50 bg-card"
+              className="absolute inset-x-0 bottom-0 h-1/2 border-t bg-card"
               style={{
                 opacity: 0.5 + 0.5 * Number(SOLID_PRESETS.find((p) => p.id === id)?.value ?? 0),
               }}
@@ -297,7 +297,7 @@ export function SurfacesSection({ base, onChange }: SectionProps) {
               }}
             />
             <span
-              className="absolute inset-x-0 bottom-0 h-1/2 border-t border-border/50 bg-card/40"
+              className="absolute inset-x-0 bottom-0 h-1/2 border-t bg-card/40"
               style={{
                 backdropFilter: `blur(4px) saturate(calc(1.3 * ${VIBRANCY_PRESETS.find((p) => p.id === id)?.value ?? "1"}))`,
               }}
@@ -374,10 +374,10 @@ export function PresetField({
   return (
     <FieldSet className="gap-3">
       <div>
-        <FieldLegend variant="label" className="mb-0 text-xs">
+        <FieldLegend variant="label" className="mb-0 text-sm">
           {legend}
         </FieldLegend>
-        <FieldDescription className="text-[11px]">{hint}</FieldDescription>
+        <FieldDescription className="text-xs">{hint}</FieldDescription>
       </div>
       <ChoiceTiles
         label={legend}

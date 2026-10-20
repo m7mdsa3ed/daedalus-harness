@@ -4,14 +4,15 @@
    these was a JSON dump before it had a view, and most of them carry their
    whole content in the call's *input* — which is why `toolHasDetail` in
    `./index.tsx` cannot just ask whether there was output. */
+import { Spinner } from "@/components/ui/spinner"
 import {
   CheckIcon,
   FileWarningIcon,
-  LoaderCircleIcon,
   MessageCircleQuestionIcon,
   PlugZapIcon,
   SparklesIcon,
 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { TodoChecklist } from "@/components/todo-checklist"
 import {
   LABEL,
@@ -87,15 +88,13 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
         const spelled = question.options.length === 0 ? answer : custom
         return (
           <div key={index} className="space-y-1.5">
-            <div className="flex items-start gap-1.5 text-xs">
-              <MessageCircleQuestionIcon className="mt-1 size-3 shrink-0 text-muted-foreground/60" />
+            <div className="flex items-start gap-1.5 text-sm">
+              <MessageCircleQuestionIcon className="mt-1 size-3 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 text-foreground">
                 <ProsePreview text={question.question} />
               </span>
               {question.multiSelect && (
-                <span className="shrink-0 rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  multi-select
-                </span>
+                <Badge variant="secondary">multi-select</Badge>
               )}
             </div>
             {question.options.length > 0 && (
@@ -106,8 +105,8 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
                     <li
                       key={optionIndex}
                       className={cn(
-                        "flex items-start gap-2 rounded-lg px-2 py-1 text-[11.5px]",
-                        chosen ? "bg-primary/10 ring-1 ring-primary/25" : "bg-background/50"
+                        "flex items-start gap-2 rounded-lg px-2 py-1 text-sm",
+                        chosen ? "bg-primary/10" : "bg-muted"
                       )}
                     >
                       {chosen ? (
@@ -121,10 +120,10 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
                       <span className="min-w-0">
                         <ProsePreview
                           text={option.label}
-                          className={cn("font-medium", chosen ? "text-foreground" : "text-foreground/90")}
+                          className="font-medium text-foreground"
                         />
                         {option.description && (
-                          <span className="block text-muted-foreground/70">
+                          <span className="block text-muted-foreground">
                             <ProsePreview text={option.description} />
                           </span>
                         )}
@@ -139,7 +138,7 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
                 options at all (a free-text question) the mark has nothing to sit
                 on, and a long list makes the one tinted row easy to miss. */}
             {(spelled.length > 0 || question.notes) && (
-              <div className="ms-5 space-y-0.5 text-[11.5px]">
+              <div className="ms-5 space-y-0.5 text-sm">
                 {spelled.map((picked, pickedIndex) => (
                   <p key={pickedIndex} className="flex items-start gap-1.5">
                     <CheckIcon className="mt-[0.15em] size-3 shrink-0 text-primary" />
@@ -149,7 +148,7 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
                   </p>
                 ))}
                 {question.notes && (
-                  <p className="text-muted-foreground/80">
+                  <p className="text-muted-foreground">
                     <ProsePreview text={question.notes} />
                   </p>
                 )}
@@ -188,13 +187,13 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
       {answered.map((question, index) => (
         <div
           key={index}
-          className="min-w-0 space-y-1.5 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-2"
+          className={cn(PANE_PAD, "min-w-0 space-y-1.5")}
         >
           <div className="flex min-w-0 items-start gap-1.5">
-            <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 text-primary/80" />
+            <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
               {question.header && <div className={cn(LABEL, "mb-0.5")}>{question.header}</div>}
-              <div className="text-[11.5px] leading-4 text-foreground/80">
+              <div className="text-sm text-foreground">
                 <ProsePreview text={question.question} />
               </div>
             </div>
@@ -202,25 +201,21 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
           {(question.answer?.length ?? 0) > 0 && (
             <div className="flex min-w-0 flex-wrap gap-1.5 ps-5">
               {(question.answer ?? []).map((picked, pickedIndex) => (
-                <span
-                  key={pickedIndex}
-                  title={picked}
-                  className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] leading-4 text-primary ring-1 ring-inset ring-primary/15"
-                >
-                  <CheckIcon className="size-3 shrink-0" />
-                  <span className="min-w-0 max-w-[22rem] truncate">{picked}</span>
-                </span>
+                <Badge key={pickedIndex} title={picked} variant="secondary" className="max-w-full">
+                  <CheckIcon />
+                  <span className="min-w-0 truncate">{picked}</span>
+                </Badge>
               ))}
             </div>
           )}
           {question.notes && (
             <div
               className={cn(
-                "rounded-md bg-background/60 px-2 py-1.5 text-[11px] leading-4 text-muted-foreground",
+                "rounded-md bg-background px-2 py-1.5 text-xs text-muted-foreground",
                 (question.answer?.length ?? 0) > 0 && "ms-5"
               )}
             >
-              <span className="me-1 font-medium text-foreground/70">Note</span>
+              <span className="me-1 font-medium text-foreground">Note</span>
               <span className="break-words">{question.notes}</span>
             </div>
           )}
@@ -238,31 +233,29 @@ export function FindingsDetail({ item }: { item: ToolItem }) {
   const findings = extractFindings(item)
   if (!findings) return null
   if (findings.length === 0) {
-    return <p className="text-[11px] text-muted-foreground">No findings.</p>
+    return <p className="text-xs text-muted-foreground">No findings.</p>
   }
   return (
-    <ul className={cn(PANE, "max-h-80 divide-y divide-border/40 overflow-auto")}>
+    <ul className={cn(PANE, "max-h-80 divide-y overflow-auto")}>
       {findings.map((finding, index) => {
         const where = `${shortPath(finding.file, 48)}${finding.line != null ? `:${finding.line}` : ""}`
         return (
-          <li key={index} className="space-y-0.5 px-2.5 py-1.5 text-[11.5px]">
+          <li key={index} className="space-y-0.5 px-2.5 py-1.5 text-sm">
             <div className="flex items-center gap-1.5">
-              <FileWarningIcon className="size-3 shrink-0 text-muted-foreground/50" />
-              <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+              <FileWarningIcon className="size-3 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
                 {where}
               </span>
               {finding.category && (
-                <span className="shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground/70">
-                  {finding.category}
-                </span>
+                <Badge variant="outline">{finding.category}</Badge>
               )}
               {finding.verdict && (
-                <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                <span className="shrink-0 text-xs text-muted-foreground">
                   {finding.verdict.toLowerCase()}
                 </span>
               )}
             </div>
-            <p className="text-foreground/85">{finding.summary}</p>
+            <p className="text-foreground">{finding.summary}</p>
           </li>
         )
       })}
@@ -312,44 +305,40 @@ export function SkillDetail({ item, active }: { item: ToolItem; active: boolean 
   return (
     <div
       className={cn(
-        "relative isolate overflow-hidden rounded-md border border-purple-500/20 bg-purple-500/[0.035] p-3",
-        active && "border-dashed border-purple-500/35 bg-purple-500/[0.06]"
+        "relative isolate overflow-hidden rounded-xl border p-3",
+        active && "border-dashed"
       )}
     >
       {active && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-y-0 start-0 w-1 overflow-hidden bg-purple-500/10"
+          className="pointer-events-none absolute inset-y-0 start-0 w-1 overflow-hidden bg-primary/10"
         >
-          <span className="skill-load-rail absolute inset-x-0 top-0 h-1/2 rounded-full bg-purple-500/70" />
+          <span className="skill-load-rail absolute inset-x-0 top-0 h-1/2 rounded-full bg-primary" />
         </div>
       )}
       <div className="flex items-start gap-2.5">
-        <span className="relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400">
+        <span className="relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
           {active ? (
-            <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" />
+            <Spinner aria-hidden className="size-3.5" />
           ) : (
             <SparklesIcon aria-hidden className="size-3.5" />
           )}
         </span>
         <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
             <span className="font-medium text-foreground">{skill.name}</span>
             {active && (
-              <span className="rounded-sm bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-purple-700 dark:text-purple-300">
-                Loading
-              </span>
+              <Badge variant="secondary">Loading</Badge>
             )}
             {skill.args && (
-              <span className="rounded-sm bg-muted/80 px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-                {skill.args}
-              </span>
+              <Badge variant="outline" className="font-mono">{skill.args}</Badge>
             )}
           </div>
           {skill.description ? (
-            <p className="text-[11.5px] leading-4 text-muted-foreground">{skill.description}</p>
+            <p className="text-xs leading-4 text-muted-foreground">{skill.description}</p>
           ) : active ? (
-            <p className="text-[11px] leading-4 text-muted-foreground/75">Preparing skill instructions for this turn</p>
+            <p className="text-xs leading-4 text-muted-foreground">Preparing skill instructions for this turn</p>
           ) : null}
           {body && <ToolProse text={body} />}
         </div>
@@ -378,30 +367,28 @@ export function ToolSearchDetail({ item }: { item: ToolItem }) {
   if (!search) return null
   if (search.tools.length === 0) {
     if (item.status !== "completed") return null
-    return <p className="text-[11px] text-muted-foreground">No tool matched.</p>
+    return <p className="text-xs text-muted-foreground">No tool matched.</p>
   }
   return <LoadedToolList tools={search.tools} />
 }
 
 function LoadedToolList({ tools }: { tools: LoadedTool[] }) {
   return (
-    <ul className={cn(PANE, "max-h-80 divide-y divide-border/40 overflow-auto")}>
+    <ul className={cn(PANE, "max-h-80 divide-y overflow-auto")}>
       {tools.map((tool) => {
         const mcp = parseMcpToolName(tool.name)
         return (
-          <li key={tool.name} className="space-y-0.5 px-2.5 py-1.5 text-[11.5px]">
+          <li key={tool.name} className="space-y-0.5 px-2.5 py-1.5 text-sm">
             <div className="flex min-w-0 items-center gap-1.5">
-              <PlugZapIcon className="size-3 shrink-0 text-muted-foreground/50" />
+              <PlugZapIcon className="size-3 shrink-0 text-muted-foreground" />
               <span className="min-w-0 truncate font-mono text-foreground" title={tool.name}>
                 {mcp?.tool ? formatMcpName(mcp.tool) : tool.name}
               </span>
               {mcp && (
-                <span className="shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground/70">
-                  {formatMcpName(mcp.server)}
-                </span>
+                <Badge variant="outline">{formatMcpName(mcp.server)}</Badge>
               )}
             </div>
-            {tool.description && <p className="line-clamp-2 text-muted-foreground">{tool.description}</p>}
+            {tool.description && <p className="line-clamp-2 text-xs text-muted-foreground">{tool.description}</p>}
           </li>
         )
       })}

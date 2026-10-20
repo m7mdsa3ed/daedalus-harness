@@ -13,7 +13,7 @@ interface SegmentedControlProps<T extends string> {
 }
 
 /**
- * iOS-style segmented control — a pill track with a sliding active segment.
+ * Segmented control in the registry `Tabs` default look — a muted track, the pick on the background.
  * Use for 2–4 mutually exclusive view/filter options on mobile.
  */
 export function SegmentedControl<T extends string>({
@@ -26,7 +26,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="tablist"
       className={cn(
-        "flex w-full items-center gap-1 frame-xl bg-muted frame-p-1",
+        "flex w-full items-center rounded-4xl bg-muted p-[3px] text-muted-foreground",
         className,
       )}
     >
@@ -42,10 +42,10 @@ export function SegmentedControl<T extends string>({
               if (!active) onChange(seg.value)
             }}
             className={cn(
-              "flex-1 rounded-inner px-3 py-1.5 text-sm font-medium transition-all",
+              "flex-1 rounded-4xl border border-transparent px-3 py-1.5 text-sm font-medium transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
               active
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground active:scale-95",
+                ? "bg-background text-foreground dark:border-input dark:bg-input/30"
+                : "text-foreground/60 hover:text-foreground dark:text-muted-foreground",
             )}
           >
             {seg.label}

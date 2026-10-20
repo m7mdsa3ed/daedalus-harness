@@ -6,7 +6,10 @@ import { McpIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
-import { formatCount } from "@/components/composer-strip"
+import { ChipBadge, formatCount } from "@/components/composer-strip"
+import { Empty } from "@/components/empty"
+import { Badge } from "@/components/ui/badge"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { PILL, menuFilter } from "@/components/config-menu"
 import { useThreadToolLinks } from "@/components/thread-tools/menu"
 import { useMenuShortcut } from "@/hooks/use-hotkey"
@@ -19,8 +22,8 @@ import { cn } from "@/lib/utils"
 type Status = { tone: "ok" | "warn" | "error" | "idle"; label: string; detail?: string }
 
 const DOT: Record<Status["tone"], string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
+  ok: "bg-success",
+  warn: "bg-warning",
   error: "bg-destructive",
   idle: "bg-muted-foreground/40",
 }
@@ -69,15 +72,15 @@ function McpRow({
   return (
     <label
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors has-[:focus-visible]:bg-accent",
-        locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-accent/60",
+        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors has-[:focus-visible]:bg-muted",
+        locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted",
       )}
     >
-      <span className="grid size-7 shrink-0 place-items-center rounded-md bg-muted/60">
+      <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted">
         <McpIcon server={server} className="size-4" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4 font-medium">
+        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
           <span className="truncate">{server.name}</span>
           {/* An OAuth server nobody has connected is not advertised at spawn, so
               it is marked here rather than listed as though the thread had it. */}
@@ -90,7 +93,7 @@ function McpRow({
         </span>
         <span
           className={cn(
-            "truncate font-mono text-[10px] leading-3",
+            "truncate font-mono text-xs",
             status.tone === "error" ? "text-destructive" : "text-muted-foreground",
           )}
           title={second}
@@ -99,12 +102,9 @@ function McpRow({
         </span>
       </span>
       {tools > 0 && (
-        <span
-          title={`${tools} tool${tools === 1 ? "" : "s"}`}
-          className="shrink-0 rounded-pill bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground tabular-nums"
-        >
+        <Badge variant="secondary" title={`${tools} tool${tools === 1 ? "" : "s"}`} className="tabular-nums">
           {formatCount(tools)}
-        </span>
+        </Badge>
       )}
       <Switch size="sm" checked={on} disabled={locked} onCheckedChange={onChange} aria-label={server.name} />
     </label>
@@ -182,46 +182,45 @@ export function McpPicker({
             <ServerIcon className="size-3.5" />
             {/* The count is the whole reading: a badge, no frame around the chip. */}
             {selected.length > 0 && (
-              <span className="min-w-4 rounded-pill bg-primary px-1 text-center text-[10px] leading-4 font-medium text-primary-foreground tabular-nums">
-                {formatCount(selected.length)}
-              </span>
+              <ChipBadge>{formatCount(selected.length)}</ChipBadge>
             )}
             {pending && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />}
           </Button>
         }
       />
-      <PopoverContent align="start" className="w-80 gap-0 rounded-xl p-0" finalFocus={finalFocus}>
+      <PopoverContent align="start" className="w-80 gap-0 p-0" finalFocus={finalFocus}>
         <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
-          <span className="text-[13px] font-semibold">MCP servers</span>
-          <span className="rounded-pill bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground tabular-nums">
+          <span className="text-sm font-medium">MCP servers</span>
+          <Badge variant="secondary" className="tabular-nums">
             {selected.length} of {mcpServers.length}
-          </span>
-          {pending && <span className="ml-auto text-[10px] text-primary">applies on next send</span>}
+          </Badge>
+          {pending && <span className="ml-auto text-xs text-primary">applies on next send</span>}
         </div>
         {searchable && (
-          <div className="relative px-2 pb-2">
-            <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-4.5 size-3.5 -translate-y-[70%] text-muted-foreground" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search servers…"
-              aria-label="Search MCP servers"
-              className="h-8 w-full rounded-md border bg-muted/30 pr-2 pl-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-            />
+          <div className="px-2 pb-2">
+            <InputGroup className="h-8">
+              <InputGroupAddon>
+                <SearchIcon aria-hidden />
+              </InputGroupAddon>
+              <InputGroupInput
+                autoFocus
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search servers…"
+                aria-label="Search MCP servers"
+              />
+            </InputGroup>
           </div>
         )}
         <div className="max-h-[min(20rem,var(--available-height,20rem))] overflow-y-auto border-t px-1.5 py-1.5">
           {mcpServers.length === 0 ? (
-            <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-              No MCP servers in the library yet. Add one in Settings › MCP servers.
-            </p>
+            <Empty className="border-0">No MCP servers in the library yet. Add one in Settings › MCP servers.</Empty>
           ) : groups.length === 0 ? (
-            <p className="px-2 py-4 text-center text-xs text-muted-foreground">No server matches “{query.trim()}”.</p>
+            <Empty className="border-0">No server matches “{query.trim()}”.</Empty>
           ) : (
             groups.map((group) => (
               <div key={group.label} className="mb-1 last:mb-0">
-                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                <div className="px-2 pt-1 pb-0.5 text-xs font-medium text-muted-foreground">
                   {group.label}
                 </div>
                 {group.items.map((server) => {
