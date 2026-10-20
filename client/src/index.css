@@ -896,21 +896,6 @@
   animation: harness-shimmer 1.8s linear infinite;
 }
 
-/* The transcript's working line: the same "working", as a wave (ShimmerWave).
-   The crest is a rise and full strength; rest is the text at 55%. Opacity and
-   transform only, so each letter composites — the sweep above repaints. The
-   crest crosses in 1.2s whatever the length, then rests until the next cycle. */
-@keyframes harness-wave {
-  0%, 30%, 100% { opacity: 0.55; transform: none; }
-  12% { opacity: 1; transform: translateY(-1.5px); }
-}
-.harness-wave > [aria-hidden] {
-  display: inline-block;
-  white-space: pre;
-  animation: harness-wave 2.2s ease-in-out infinite;
-  animation-delay: calc(var(--i) / var(--n) * 1.2s);
-}
-
 /* A button whose click is running (`actionClass`): an arc travels its border.
    morphin's animated-border-button, as a masked conic gradient on a registered
    angle — `inherits: false`, so only the ring's own box restyles per frame. */
@@ -1834,9 +1819,6 @@ html[data-window-controls-overlay="true"] {
    blank. `@starting-style` is what gives a transition a from-state on the frame
    an element first renders, which is the whole of what the animation was for.
 
-   (The working line now waves per letter — `ShimmerWave` animates the letters,
-   not this span — so the transition stays because it is right, not forced.)
-
    `translate`, not `transform`: the independent property composes with anything
    else that wants this element's transform rather than replacing it. */
 /* No blur in it: a filter transition is painted on the CPU, and two
@@ -1912,10 +1894,6 @@ html[data-window-controls-overlay="true"] {
     background-image: none;
     animation: none;
   }
-  .harness-wave > [aria-hidden] {
-    opacity: 1;
-    animation: none;
-  }
   .harness-busy-ring::after {
     animation: none;
   }
@@ -1971,10 +1949,6 @@ html[data-window-controls-overlay="true"] {
   opacity: 1;
   filter: none;
   transition: none;
-}
-[data-slot="message-scroller-content"][data-motion="calm"] .harness-wave > [aria-hidden] {
-  opacity: 1;
-  animation: none;
 }
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-shimmer {
   background-image: none;

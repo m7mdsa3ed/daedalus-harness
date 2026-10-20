@@ -127,7 +127,6 @@ import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import type { SubagentCall } from "@/lib/tools"
 import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
-import { ShimmerWave } from "@/components/ui/shimmer-wave"
 import { BranchGutter, gutterWidth } from "@/components/thread-items/branch-gutter"
 import { layoutRun } from "@/lib/tool-graph"
 
@@ -938,7 +937,7 @@ function SubagentTranscript({
           <span className="flex h-6 w-5 shrink-0 items-center justify-center">
             <Logo working className="size-4" />
           </span>
-          <ShimmerWave text={rows.length === 0 ? "Starting…" : "Working…"} />
+          <span className="harness-shimmer">{rows.length === 0 ? "Starting…" : "Working…"}</span>
         </div>
       )}
     </div>

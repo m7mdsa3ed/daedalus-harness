@@ -4,7 +4,6 @@
    `ThreadStatus` is the turn's caller. Not a reading in the footer's
    cluster — this one lives in the transcript, where the turn is. */
 import { Logo } from "@/components/ui/logo"
-import { ShimmerWave } from "@/components/ui/shimmer-wave"
 import { runningAgents } from "@/components/composer/agents-indicator"
 import { toolHeading, toolKindOf } from "@/lib/tools"
 import { type ThreadState } from "@/lib/store"
@@ -179,18 +178,18 @@ export function PhaseLine({
       <span className="flex h-6 w-5 shrink-0 items-center justify-center">
         <Logo working={!still && tone === "normal"} className="size-4" />
       </span>
-      {/* The wave animates each letter, never this span, so the swap below keeps
-          this span's transition to itself (`harness-phase-swap` in index.css — written
-          when the sweep owned `animation` here and a nested span went blank).
-          leading-6 matches a step row's line box, so the line keeps the
-          transcript's vertical rhythm. */}
+      {/* The app's one busy sweep (`harness-shimmer`, an animation) beside the
+          sentence swap (`harness-phase-swap`, a transition) — the two never
+          contend. No per-letter wave: the letters do not move. leading-6
+          matches a step row's line box, so the line keeps the transcript's
+          vertical rhythm. */}
       <span
         key={text}
         aria-hidden
-        className="harness-phase-swap min-w-0 truncate text-sm leading-6"
+        className={cn("harness-phase-swap min-w-0 truncate text-sm leading-6", !still && "harness-shimmer")}
         title={still ? text : undefined}
       >
-        {still ? text : <ShimmerWave text={text} />}
+        {text}
       </span>
     </div>
   )
