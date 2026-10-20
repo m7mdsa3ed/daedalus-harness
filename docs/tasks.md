@@ -36,8 +36,8 @@ the routine `task` action, and a thread started on a task (below).
   compatibility — the first entry in `assignees` is the primary. Both are
   writable through the API; `assignees` wins when both are set on create.
 - **Time tracking.** `tasks.timeEstimate` and `tasks.timeTracked` are integer
-  minutes. Null = none. The detail panel and table view show these as
-  `1h 30m` formatted values.
+  minutes. Null = none. Stored and writable through the API; the client draws
+  neither yet.
 - **The tree is one column.** `tasks.parent_id` is an epic's children or a
   task's subtasks, read either way by the parent's `type`. A parent must be on
   the same board and never a descendant (`assertParent` walks up). Deleting a
@@ -127,11 +127,19 @@ Lists: `POST /api/boards/:id/lists`, `PATCH /api/lists/:id`,
   group), table (columns are the view's, every cell is a picker), calendar
   (by due date), timeline (bars from start to due, children under their
   parent), sprints (active, planned, backlog, closed).
+- **The shell reflows on the workspace's width, never the window's.** The
+  workspace root is the `@container`: the board rail appears from `@panel-lg`,
+  labels and the count from `@panel-sm`, and `useIsNarrow(root)` picks the few
+  different trees (filters as a sheet, the table's rows, the calendar agenda).
+  The mode switch is the kit `TabBar`; filters are `FiltersBar`; group, sort and
+  table columns share one Display popover. A selection's verbs float over the
+  view's foot, which pads by `--tasks-foot` so nothing hides under them.
 - **The atoms and the pickers are one file** (`fields.tsx`) so the card, the
   row, the table cell, the detail panel and the bulk bar agree on what a
   priority looks like and how a status is chosen.
-- **The detail dialog is one column, and the description saves itself.** Status, priority and
-  assignee chips, inline tags, then an always-on Tiptap editor (H1-H3, GFM task lists, code
+- **The detail dialog is one column on a narrow panel, properties beside it from `@panel-md`,
+  and the description saves itself.** Status, priority and
+  assignee pickers, inline tags, then an always-on Tiptap editor (H1-H3, GFM task lists, code
   block, a markdown-source toggle) whose value stays markdown. A draft is written after a
   700ms pause and flushed on Done, close or opening another task — never on a Save button.
 - **The open task is a search param** (`?task=<id>`), so a task is a URL that
