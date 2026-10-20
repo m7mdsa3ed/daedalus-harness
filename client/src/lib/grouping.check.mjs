@@ -5,7 +5,7 @@
 */
 import assert from "node:assert"
 
-import { buildRows, rowTailId } from "./transcript-rows.ts"
+import { buildRows, rowTailId, shareRows } from "./transcript-rows.ts"
 
 const tool = (id) => ({ kind: "tool", id, title: id, status: "completed", toolKind: "read", content: [] })
 const thought = (id) => ({ kind: "thought", id, text: "thinking" })
@@ -60,6 +60,20 @@ assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls f
 {
   const out = buildRows([tool("a"), notice("n1"), tool("b")], false)
   assert.equal(kinds(out), "tool,notice,tool")
+}
+
+// A rebuild keeps every group whose parts did not move, and only those.
+{
+  const a = tool("a"), b = tool("b"), c = tool("c"), d = tool("d")
+  const first = buildRows([a, b, prose("p"), c, d], true)
+  const p = first[1]
+  assert.strictEqual(shareRows(first, buildRows([a, b, p, c, d], true)), first, "nothing moved: the same array")
+  const d2 = { ...d, status: "failed" }
+  const shared = shareRows(first, buildRows([a, b, p, c, d2], true))
+  assert.strictEqual(shared[0], first[0], "an untouched run keeps its object")
+  assert.notStrictEqual(shared[2], first[2], "a changed run is new")
+  assert.strictEqual(shared[2].items[1], d2, "and carries the new item")
+  assert.strictEqual(shared[2].items[0], c, "beside the old one")
 }
 
 console.log("grouping.check: ok")

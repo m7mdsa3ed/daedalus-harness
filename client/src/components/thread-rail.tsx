@@ -40,7 +40,7 @@
    message's id (`MessageScrollerItem messageId=…` in thread-view) and which one
    the reader is currently anchored on. Two hooks replace its DOM archaeology. */
 import * as React from "react"
-import { useMessageScroller, useMessageScrollerVisibility } from "@/components/ui/message-scroller"
+import { useTranscriptJump } from "@/components/thread-view/dormant"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useCoarsePointer } from "@/hooks/use-device"
 import type { TurnTick } from "@daedalus/protocol"
@@ -180,7 +180,9 @@ function buildTicks(server: TurnTick[], items: ThreadItem[]): Tick[] {
   return ticks
 }
 
-export function ThreadRail({
+/* Memoized: the transcript re-renders per streamed token and none of these
+   props move with one (`items` is deferred, `onEnsureTurn` a stable callback). */
+export const ThreadRail = React.memo(function ThreadRail({
   items,
   turns,
   onEnsureTurn,
@@ -198,8 +200,7 @@ export function ThreadRail({
   /* The side the rail rides — see the header: a finger's rail is the right
      edge, clear of the OS back-swipe. The preview opens toward the text. */
   const edge = coarse ? "right" : "left"
-  const { scrollToMessage } = useMessageScroller()
-  const { currentAnchorId } = useMessageScrollerVisibility()
+  const scrollToMessage = useTranscriptJump()
   const hostRef = React.useRef<HTMLDivElement>(null)
   const stripRef = React.useRef<HTMLDivElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
@@ -222,28 +223,13 @@ export function ThreadRail({
   const startYRef = React.useRef(0)
   const movedRef = React.useRef(false)
 
-  /* Which tick the reader is inside: the last loaded one at or above the
-     anchor. The anchor is any row — a tool step, the activity line — so it is
-     resolved through the item order rather than looked up among the ticks,
-     and an anchor that is not an item at all (`working`, `permission`) leaves
-     the reader at the bottom, which is the last turn. Ticks with no row yet
-     are never active: the reader cannot be inside what is not on screen. */
-  const order = React.useMemo(
-    () => new Map(items.map((item, index) => [item.id, index])),
-    [items]
-  )
-  const activeIndex = React.useMemo(() => {
-    if (ticks.length === 0 || currentAnchorId === null) return -1
-    const at = order.get(currentAnchorId)
-    if (at === undefined) return ticks.length - 1
-    let index = -1
-    ticks.forEach((tick, i) => {
-      if (!tick.id) return
-      if ((order.get(tick.id) ?? Infinity) > at) return
-      index = i
-    })
-    return index
-  }, [ticks, order, currentAnchorId])
+  /* Which tick the reader is inside — none, for now. It was read off the
+     scroller's `currentAnchorId`, which the primitive sets only from items
+     marked `scrollAnchor`, and no transcript row is (thread-view says why), so
+     it was always -1 — while subscribing put an IntersectionObserver on every
+     row and re-rendered the rail on each crossing. A real reading needs its
+     own source (the first visible user row); until then, no active tick. */
+  const activeIndex: number = -1
 
   /* Map a pointer's Y to the tick under it — clamped to the end it has been
      dragged past. The content wrapper is measured rather than the strip so
@@ -507,4 +493,4 @@ export function ThreadRail({
       </PopoverContent>
     </Popover>
   )
-}
+})

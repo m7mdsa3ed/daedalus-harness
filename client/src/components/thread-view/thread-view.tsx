@@ -21,7 +21,6 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
-  useMessageScroller,
 } from "@/components/ui/message-scroller"
 import type { Actions } from "@/lib/actions"
 import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/lib/keyboard-inset"
@@ -42,7 +41,7 @@ import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn, stagger } from "@/lib/utils"
 import { ThreadIdContext } from "@/lib/thread-id-context"
 import { OpenuiActionsContext } from "@/lib/openui/actions"
-import { StepTokensProvider } from "@/components/token-usage"
+import { StepTokensProvider, createStepTokensStore } from "@/components/token-usage"
 import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
 import { InlineApproval } from "@/components/tool-approval"
@@ -52,7 +51,7 @@ import { PendingSettings } from "@/components/thread-view/pending-settings"
 import { useThreadStatus } from "@/lib/thread/status"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
-import { buildRows, rowTailId, type Row } from "@/lib/transcript-rows"
+import { buildRows, rowTailId, shareRows, type Row } from "@/lib/transcript-rows"
 import { Composer, type ComposerHandle } from "@/components/composer/composer"
 import { ThreadRail } from "@/components/thread-rail"
 import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
@@ -87,12 +86,29 @@ import { ThreadInspector } from "@/components/thread-view/thread-inspector"
 import { QuoteSelection } from "@/components/thread-view/quote-selection"
 import { AsideWindow, type AsideAt } from "@/components/thread-view/aside-window"
 import { useAsideHighlights } from "@/components/thread-view/aside-highlights"
+import {
+  Dormant,
+  DormancyProvider,
+  JumpPrepProvider,
+  useDormancyRoot,
+  useTranscriptJump,
+} from "@/components/thread-view/dormant"
+import { RowMemoryContext, clearSettled, type RowMemory } from "@/lib/row-open"
 
 /** How wide the *panel* must be for the inspector to dock beside the
     transcript (`--container-panel-lg`, 64rem); below it the column is a sheet. */
 const INSPECTOR_WIDE = 1024
 /** What the transcript keeps when the inspector is dragged wider. */
 const INSPECTOR_TRANSCRIPT_MIN = 480
+/* Dormancy (`dormant.tsx`) starts past this many rows — a thread shorter than
+   it costs little enough mounted whole, and keeps find-in-page over all of it
+   — and never reaches the newest `DORMANT_KEEP_TURNS` turns, which hold the
+   live tail and everything a reply is read against. */
+const DORMANT_MIN_ROWS = 120
+const DORMANT_KEEP_TURNS = 2
+/* One empty list, so a thread with no scripts does not hand `definedCommands`
+   — and the suggestion cache keyed on it — a new set every render. */
+const NO_SCRIPTS: readonly never[] = []
 
 /** Whether an item is drawn inside this row — the row itself, or a group any
     level down (a subagent, tool group, workflow, or batch). */
@@ -220,6 +236,19 @@ export function ThreadView({
      Deferring the value is the only side of this that works. */
   const options = React.useDeferredValue(useLayoutOptions())
   const follow = useFollowStream(options.autoScroll)
+  const dormancy = useDormancyRoot(follow.viewport)
+  const jumpPrep = React.useMemo(
+    () => ({ release: follow.release, wake: dormancy?.wake }),
+    [follow.release, dormancy]
+  )
+  /* The reader's open/closed answers for rows that went dormant — this view's,
+     not the thread's (`lib/row-open`). */
+  const [rowMemory] = React.useState<RowMemory>(() => new Map())
+  /* Every option a row's `openSetting` is built from: when one moves, a
+     mounted row resets itself, and a dormant one would come back holding an
+     answer given under the old value — even once the option is flipped back. */
+  const openSettings = `${options.showToolDetails}:${options.expandEdits}:${options.showThinking}`
+  React.useEffect(() => clearSettled(rowMemory), [openSettings, rowMemory])
   /* Paging back costs a round trip and then a re-fold of the whole widened
      window. Only the round trip can be paid before it is asked for, so it is:
      when the top of the transcript comes within a screenful of the viewport,
@@ -287,16 +316,24 @@ export function ThreadView({
      into one expandable line. All are computed here, not in the reducer: they
      are ways of looking at the transcript, not changes to it, and toggling the
      option must not touch a single item. See lib/transcript-rows. */
+  /* Shared against the last build (`shareRows`): every group `buildRows`
+     forms is a new object per call, and without this each subagent, workflow,
+     run and fold re-rendered on every streamed token. The ref is written in
+     render, which is safe because what it holds is always equal to the build. */
+  const prevRows = React.useRef<Row[]>([])
   const rows = React.useMemo(
     () =>
-      buildRows(
-        visible,
-        options.groupTools,
-        thread.turnActive,
-        options.groupShellCommands,
-        !options.expandEdits,
-        options.answersOnly
-      ),
+      (prevRows.current = shareRows(
+        prevRows.current,
+        buildRows(
+          visible,
+          options.groupTools,
+          thread.turnActive,
+          options.groupShellCommands,
+          !options.expandEdits,
+          options.answersOnly
+        )
+      )),
     [
       options.answersOnly,
       options.expandEdits,
@@ -371,13 +408,42 @@ export function ThreadView({
      a `usage_update` really marks a new step (`markStepUsage`) — so both inputs
      are stable between chunks and the transcript's memo boundaries hold. An
      object literal here is what made all five of them ornamental. */
-  const stepTokens = React.useMemo(
-    () => ({ step: thread.stepUsage, turn: stepTurnAfter }),
-    [thread.stepUsage, stepTurnAfter]
-  )
+  /* And even a stable value was one transcript-wide re-render per model step,
+     because a context value change reaches every reader through every memo:
+     the provider holds a store for the view's life instead, published after
+     each commit, and a row re-renders only when its own entry moves. */
+  const [stepTokens] = React.useState(createStepTokensStore)
+  stepTokens.prime({ step: thread.stepUsage, turn: stepTurnAfter })
+  React.useLayoutEffect(() => stepTokens.publish(), [stepTokens, thread.stepUsage, stepTurnAfter])
   /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
      render, re-scanned on every streamed token. */
   const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
+  /* Rows before this index may sleep: the user row that opens the newest
+     `DORMANT_KEEP_TURNS` turns, or 0 — none — in a thread too short to bother. */
+  const settledBefore = React.useMemo(() => {
+    if (rows.length <= DORMANT_MIN_ROWS) return 0
+    let turns = 0
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].kind === "user" && ++turns === DORMANT_KEEP_TURNS) return i
+    }
+    return 0
+  }, [rows])
+  /* Which rows are news: those after the last row of the previous commit. A
+     row that mounts anywhere else is not arriving — a `load_earlier` re-fold
+     or a replaced transcript mints new keys for rows the reader has already
+     seen (the old last row is gone, so nothing counts), and a page prepended
+     above lands before it — and rising in would be a replay of history. */
+  const prevLast = React.useRef<string | undefined>(undefined)
+  const freshFrom = React.useMemo(() => {
+    if (prevLast.current === undefined) return 0
+    const at = rows.findIndex((row) => row.id === prevLast.current)
+    return at === -1 ? rows.length : at + 1
+    // Read against the last *commit*, which the effect below records.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows])
+  React.useEffect(() => {
+    prevLast.current = rows[rows.length - 1]?.id
+  }, [rows])
   /* Turn ordinals for the rewind dialog ("Turn 4"): the journal's list when
      present — it names withheld turns too — else the order on screen. The
      same numbering the rail shows. */
@@ -586,7 +652,7 @@ export function ThreadView({
      defined never becomes a command the user could click and watch fail. */
   const suggestionProject = useProjects().find((candidate) => candidate.id === meta?.projectId)
   const suggestionScripts =
-    useProjectScripts(meta?.projectId ?? "", Boolean(meta?.projectId)).data ?? []
+    useProjectScripts(meta?.projectId ?? "", Boolean(meta?.projectId)).data ?? NO_SCRIPTS
   const definedCommands = React.useMemo(
     () =>
       new Set([
@@ -672,6 +738,10 @@ export function ThreadView({
   )
   /* The rail's ticks are turn boundaries, which a streamed token never moves. */
   const railItems = React.useDeferredValue(visible)
+  const ensureTurn = React.useCallback(
+    (turnId: string, seq: number) => actions.loadUntilTurn(sessionId, turnId, seq),
+    [actions, sessionId]
+  )
   /* The docked composer is an overlay of unknown height — shelf rows, the
      queue, attachments and textarea growth all move it — so its pixel height
      is measured and published as `--composer-dock-h` on the grid root for the
@@ -721,6 +791,7 @@ export function ThreadView({
         as much as the transcript does. The provider renders no DOM of its own
         — context only — so this changes nothing about the layout. */}
     <ThreadIdContext.Provider value={sessionId}>
+    <JumpPrepProvider value={jumpPrep}>
     <FilePreviewContext.Provider value={filePreview}>
     <InspectorContext.Provider value={docked ? dockOpen : meta ? openInspector : null}>
     {docked && <PublishJump locate={locate} sessionId={sessionId} actions={actions} />}
@@ -791,6 +862,8 @@ export function ThreadView({
           >
             <LayoutOptionsContext.Provider value={options}>
             <StepTokensProvider value={stepTokens}>
+            <DormancyProvider value={dormancy}>
+            <RowMemoryContext.Provider value={rowMemory}>
             <MessageScrollerContent
               ref={follow.contentRef}
               data-density={options.compactDensity ? "compact" : undefined}
@@ -872,6 +945,10 @@ export function ThreadView({
                     containment, which clips to the item's box — and step rows
                     hang their hover ground 4px past it on both sides. */
                 <MessageScrollerItem key={row.id} messageId={row.id} className="-mx-1 px-1">
+                  {/* Everything the row draws sits in one box that can go
+                      dormant once the row is settled history — see dormant.tsx.
+                      The item itself stays, in flow, at its height. */}
+                  <Dormant eligible={i < settledBefore}>
                   {/* No `first:hidden`: the divider is always its item's first
                       child, so that hid every one. `firstUserIndex` already
                       skips the first turn. */}
@@ -890,7 +967,7 @@ export function ThreadView({
                       token figure, the changes chip and the follow-ups all
                       resolve on one frame, and a replay, where the whole row is
                       one mount. Both used to land as a single block. */}
-                  <Entrance animate={animateEntrance}>
+                  <Entrance animate={animateEntrance && i >= freshFrom}>
                     <RowView
                       row={row}
                       onContinue={resumable === row.id ? handlers.resume : undefined}
@@ -927,6 +1004,7 @@ export function ThreadView({
                     suggestions={suggestionsFor(row)}
                     onPick={pickSuggestion}
                   />
+                  </Dormant>
                 </MessageScrollerItem>
                 )
               })}
@@ -1057,6 +1135,8 @@ export function ThreadView({
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>
+            </RowMemoryContext.Provider>
+            </DormancyProvider>
             </StepTokensProvider>
             </LayoutOptionsContext.Provider>
           </MessageScrollerViewport>
@@ -1073,7 +1153,7 @@ export function ThreadView({
             <ThreadRail
               items={railItems}
               turns={thread.turns}
-              onEnsureTurn={(turnId, seq) => actions.loadUntilTurn(sessionId, turnId, seq)}
+              onEnsureTurn={ensureTurn}
             />
           )}
         </MessageScroller>
@@ -1185,6 +1265,7 @@ export function ThreadView({
     </div>
     </InspectorContext.Provider>
     </FilePreviewContext.Provider>
+    </JumpPrepProvider>
     </ThreadIdContext.Provider>
     {rewindTarget && (
       <RewindDialog
@@ -1231,7 +1312,7 @@ function PublishJump({
   actions: Actions
 }) {
   const target = React.useContext(ThreadJumpContext)
-  const { scrollToMessage } = useMessageScroller()
+  const scrollToMessage = useTranscriptJump()
   React.useEffect(() => {
     if (!target) return
     target.current = (id, turn) => {

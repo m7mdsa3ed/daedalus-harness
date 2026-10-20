@@ -47,6 +47,7 @@ import { TodoList } from "@/components/tool-views"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Message, MessageContent } from "@/components/ui/message"
 import { copyText, formatElapsed, StepMeta, StepRow, yieldToTextSelection } from "@/components/step-row"
+import { useRowState } from "@/lib/row-open"
 import { useStreamedText } from "@/hooks/use-streamed-text"
 import type { StreamEffect } from "@/lib/stream-words"
 import { resolveStreamEffect, useLayoutOptionsContext } from "@/lib/layout-options"
@@ -333,15 +334,18 @@ AlertCard.displayName = "AlertCard"
  * only honest way to show that is to say so.
  */
 export const TaskNotificationCard = React.memo(function TaskNotificationCard({
+  id,
   task,
   at,
   showTimestamp,
 }: {
+  /** The item it is drawn for, so an opened card survives dormancy. */
+  id?: string
   task: TaskNotification
   at?: number
   showTimestamp?: boolean
 }) {
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = useRowState(id, false)
   const failed = task.failures.length > 0
   /* Every stage of a fan-out usually fails for ONE reason (a rate limit, a
      dead endpoint). Listing it five times buries the sentence; the stages that
@@ -447,7 +451,7 @@ export const ErrorRow = React.memo(function ErrorRow({
   onDismiss?: () => void
   showTimestamp?: boolean
 }) {
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = useRowState(item.id, false)
   const navigate = useNavigate()
   /* A missing binary is a setup step, not a fault in the turn: amber, with
      the line that fixes it where it can be copied. */
@@ -634,6 +638,7 @@ export const CompactionStep = React.memo(function CompactionStep({
       target={label}
       metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
       detail={detail}
+      persistKey={item.id}
     />
   )
 })
@@ -670,6 +675,7 @@ export const AutonomyStep = React.memo(function AutonomyStep({
       target={line.title}
       metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
       detail={<p className="text-sm leading-relaxed text-muted-foreground">{line.detail}</p>}
+      persistKey={item.id}
     />
   )
 })
@@ -775,6 +781,7 @@ export const ShellStep = React.memo(function ShellStep({
         </>
       }
       defaultOpen
+      persistKey={item.id}
     />
   )
 })
@@ -801,7 +808,7 @@ export const ShellRun = React.memo(function ShellRun({
   /* Derived, never seeded — the `useState` trap the view options document: a run
      that mounted live would stay open for ever, one rebuilt from the journal
      would stay shut. The reader's choice, once made, outranks both. */
-  const [choice, setChoice] = React.useState<boolean | null>(null)
+  const [choice, setChoice] = useRowState<boolean | null>(items[0] && `shells:${items[0].id}`, null)
   const open = choice ?? running
   return (
     <div>
@@ -912,6 +919,7 @@ export const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem 
             <span className="font-mono text-sm text-muted-foreground">{item.uri}</span>
           )
         }
+        persistKey={item.id}
       />
     )
   }
@@ -934,6 +942,7 @@ export const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem 
          was read from is `lib/tools`' problem, not a difference in how a
          checklist looks. */
       detail={<TodoList todos={item.entries.map(toTodo)} />}
+      persistKey={item.id}
     />
   )
 })

@@ -7,10 +7,11 @@
    the transcript needs to draw a tool view, and a cycle between those two is
    what splitting this file out of the middle avoids. */
 import * as React from "react"
+import { splitBlocks } from "@/lib/markdown-blocks"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { rehypeHighlight } from "@/lib/highlight"
-import { needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
+import { TAIL_WORDS, needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
 import type * as acp from "@daedalus/acp"
 import {
   ArrowLeftRightIcon,
@@ -412,22 +413,67 @@ export const Prose = React.memo(function Prose({
       user bubble's, where the syntax is the person's. */
   mentions?: boolean;
 }) {
+  /* While the row is being written (`stream` set, `"none"` included) it is
+     drawn a block at a time, so a painted word re-parses only the block it
+     landed in — see `lib/markdown-blocks`. Each block is a fragment, so its
+     elements are still direct children of `.prose` and the typography's
+     sibling and first/last-child rules read them as one document. Only the
+     tail carries the reveal: it is the only block whose words are new.
+     Latched for the instance's life: a row that was ever drawn in blocks stays
+     in blocks when it settles, so the settle reconciles in place rather than
+     swapping the tree for a single <Markdown> — which rebuilt the whole answer
+     and dropped any selection or focus in it. A row mounted settled (a replay)
+     never streamed and keeps the one parse. */
+  const streamed = React.useRef(false)
+  if (stream !== undefined) streamed.current = true
+  const blocks = streamed.current && !mentions ? splitBlocks(text) : null
+  /* A tail shorter than the sweep's ramp folds back into the block before it:
+     the ramp is the last `TAIL_WORDS` words of the document, and cutting a new
+     paragraph's first word off as the tail snapped the previous one's still-
+     fading words to rest all at once. Kept after the settle, so the blocks are
+     the same shape either side of it. */
+  if (blocks) {
+    while (blocks.length > 1 && (blocks[blocks.length - 1].match(/\S+/g)?.length ?? 0) < TAIL_WORDS) {
+      const tail = blocks.pop()!
+      blocks[blocks.length - 1] += tail
+    }
+  }
   return (
     <div
       className={cn("prose prose-sm max-w-none", className)}
       data-stream={stream && stream !== "none" ? stream : undefined}
     >
-      <Markdown
-        remarkPlugins={mentions ? REMARK_MENTIONS : REMARK}
-        rehypePlugins={rehypeFor(stream)}
-        components={mentions ? MENTION_COMPONENTS : MARKDOWN_COMPONENTS}
-      >
-        {text}
-      </Markdown>
+      {blocks ? (
+        blocks.map((block, index) => (
+          <MarkdownBlock
+            key={index}
+            text={block}
+            rehype={index === blocks.length - 1 ? rehypeFor(stream) : REHYPE}
+          />
+        ))
+      ) : (
+        <Markdown
+          remarkPlugins={mentions ? REMARK_MENTIONS : REMARK}
+          rehypePlugins={rehypeFor(stream)}
+          components={mentions ? MENTION_COMPONENTS : MARKDOWN_COMPONENTS}
+        >
+          {text}
+        </Markdown>
+      )}
     </div>
   )
 })
 Prose.displayName = "Prose"
+
+/* One settled block of a streaming answer: the memo is the whole point — a
+   block behind the tail is the same string on every word. */
+const MarkdownBlock = React.memo(function MarkdownBlock({ text, rehype }: { text: string; rehype: never }) {
+  return (
+    <Markdown remarkPlugins={REMARK} rehypePlugins={rehype} components={MARKDOWN_COMPONENTS}>
+      {text}
+    </Markdown>
+  )
+})
 
 /** Markdown for a single-line step preview. Block syntax is unwrapped so the
     row keeps its compact geometry while inline emphasis, code and links render
@@ -1516,8 +1562,15 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
    carries its day in front of the clock: the weekday inside a week ("Fri
    14:03"), the date beyond it ("4 Mar 14:03"), the year beyond that. */
 
-const clockOf = (date: Date) =>
-  date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+/* Formatters built once: a `toLocale*String` with options constructs a fresh
+   `Intl.DateTimeFormat` per call, and a transcript draws a stamp per row. */
+const CLOCK = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" })
+const WEEKDAY = new Intl.DateTimeFormat(undefined, { weekday: "short" })
+const DAY_MONTH = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" })
+const DAY_MONTH_YEAR = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" })
+const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
+
+const clockOf = (date: Date) => CLOCK.format(date)
 
 const startOfDay = (ms: number) => {
   const d = new Date(ms)
@@ -1534,12 +1587,10 @@ export function formatStamp(at: number, now = Date.now()): string {
   // Inside the last week the weekday is both shorter and easier to place than
   // a date — "Fri 14:03" needs no arithmetic to read as "yesterday-ish".
   if (days > 0 && days < 7) {
-    return `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`
+    return `${WEEKDAY.format(date)} ${time}`
   }
   const sameYear = date.getFullYear() === new Date(now).getFullYear()
-  return sameYear
-    ? `${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`
-    : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+  return sameYear ? `${DAY_MONTH.format(date)} ${time}` : DAY_MONTH_YEAR.format(date)
 }
 
 const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
@@ -1573,7 +1624,7 @@ export function formatRelative(at: number, now = Date.now()): string {
  * timestamps down a transcript should be legible when looked for and invisible
  * when not.
  */
-export function Timestamp({ at, className }: { at?: number; className?: string }) {
+export const Timestamp = React.memo(function Timestamp({ at, className }: { at?: number; className?: string }) {
   if (!at) return null
   const date = new Date(at)
   const now = Date.now()
@@ -1599,11 +1650,19 @@ export function Timestamp({ at, className }: { at?: number; className?: string }
         {formatStamp(at, now)}
       </TooltipTrigger>
       <TooltipContent className="flex-col items-start gap-0 text-xs">
-        <span className="tabular-nums">
-          {date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-        </span>
-        <span className="text-background/60">{formatRelative(at, now)}</span>
+        <FullTime at={at} />
       </TooltipContent>
     </Tooltip>
+  )
+})
+
+/* The hover's two lines, a component of their own so they are formatted when
+   the popup mounts — not on every row's render while it is closed. */
+function FullTime({ at }: { at: number }) {
+  return (
+    <>
+      <span className="tabular-nums">{FULL.format(at)}</span>
+      <span className="text-background/60">{formatRelative(at)}</span>
+    </>
   )
 }

@@ -305,11 +305,43 @@ export function withTurnSuggestions(
 ): Map<string, { itemId: string; groups: SuggestGroup[] }> {
   const after = new Map<string, { itemId: string; groups: SuggestGroup[] }>()
   if (enabled.length === 0) return after
+  const kinds = enabled.join(",")
   for (const { turn } of finishedTurns(items, turnActive)) {
-    const entry = turnSuggestions(turn, enabled, ctx)
+    const entry = cachedTurnSuggestions(turn, enabled, kinds, ctx)
     if (entry) after.set(entry.itemId, entry)
   }
   return after
+}
+
+/* Remembered per finished turn, as the sources are: re-parsing every answer on
+   every streamed token handed each `TurnFooter` a new `groups` array, which
+   is what broke its memo under every turn with suggestions. The kinds and the
+   project's commands are part of the key — either changes what is drawn. */
+const TURN_SUGGESTIONS_CACHE = new WeakMap<
+  ThreadItem,
+  {
+    len: number
+    last: ThreadItem
+    kinds: string
+    commands: SuggestCtx["definedCommands"]
+    entry: ReturnType<typeof turnSuggestions>
+  }
+>()
+
+function cachedTurnSuggestions(
+  turn: ThreadItem[],
+  enabled: readonly string[],
+  kinds: string,
+  ctx: SuggestCtx
+): ReturnType<typeof turnSuggestions> {
+  const first = turn[0]
+  const last = turn[turn.length - 1]
+  const hit = TURN_SUGGESTIONS_CACHE.get(first)
+  if (hit && hit.len === turn.length && hit.last === last && hit.kinds === kinds && hit.commands === ctx.definedCommands)
+    return hit.entry
+  const entry = turnSuggestions(turn, enabled, ctx)
+  TURN_SUGGESTIONS_CACHE.set(first, { len: turn.length, last, kinds, commands: ctx.definedCommands, entry })
+  return entry
 }
 
 /** Every row's turn, keyed by the row's own id. A step's popover reads the

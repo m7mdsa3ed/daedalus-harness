@@ -12,6 +12,7 @@ import { FileBadge } from "@/components/tool-parts"
 import type { FileRange } from "@/lib/tools"
 import { toolVariantOf, useLayoutOptionsContext, type ToolLayout, type ToolVariant } from "@/lib/layout-options"
 import { cn } from "@/lib/utils"
+import { useRowState } from "@/lib/row-open"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
    native Copy works there. Ours only claims clicks on unselected content.
@@ -148,6 +149,7 @@ export const StepRow = React.memo(function StepRow({
   openSetting,
   autoOpen,
   plain = false,
+  persistKey,
   icon: Icon,
   iconAccent,
   iconChip,
@@ -227,6 +229,9 @@ export const StepRow = React.memo(function StepRow({
   autoOpen?: boolean
   /** Draw the row like plain transcript prose, without step chrome or gutter. */
   plain?: boolean
+  /** The item this row draws, so the reader's open/closed answer survives the
+      row going dormant and coming back (`lib/row-open`). */
+  persistKey?: string
   /** Leading mark. On an expandable row it swaps for a chevron on hover, so
       the disclosure affordance appears where the eye already is instead of at
       the far end of the line. */
@@ -246,7 +251,9 @@ export const StepRow = React.memo(function StepRow({
 }) {
   /* The reader's own answer, or `null` while they have not given one. Whatever
      they last clicked outranks everything below until the view option moves. */
-  const [chosen, setChosen] = React.useState<boolean | null>(null)
+  /* Through `useRowState`: a dormant row's revival starts from the answer the
+     reader gave before it went (`lib/row-open`), every other mount from null. */
+  const [chosen, setChosen] = useRowState<boolean | null>(persistKey, null, openSetting)
 
   /* "This row opens by itself" is a fact that becomes true and then stays true:
      a streamed call mounts before there is any input to read, so `toolViewOf`
@@ -257,7 +264,7 @@ export const StepRow = React.memo(function StepRow({
      one that raised `defaultOpen`, which is exactly what memo boundaries and
      StrictMode make unreliable). Latched only *toward* opening: a view that
      stops opening by default never closes a row the reader is reading. */
-  const [latched, setLatched] = React.useState(defaultOpen)
+  const [latched, setLatched] = useRowState(persistKey && `${persistKey}:latched`, defaultOpen, openSetting)
   if (defaultOpen && !latched) setLatched(true)
   /* `autoOpen` is a two-way switch where `defaultOpen` is one-way: a live row is
      open while it is being written and folds the moment it stops, and only a
@@ -279,11 +286,15 @@ export const StepRow = React.memo(function StepRow({
      back to showing its diff, a read goes back to folded. */
   const latestDefault = React.useRef(defaultOpen)
   latestDefault.current = defaultOpen
+  /* Skipped on mount rather than relying on it being a no-op there: a revived
+     row mounts holding the reader's remembered answer, which this would undo. */
+  const appliedSetting = React.useRef(openSetting)
   React.useEffect(() => {
-    // Same values on mount, so React bails out without a second render.
+    if (Object.is(appliedSetting.current, openSetting)) return
+    appliedSetting.current = openSetting
     setLatched(latestDefault.current)
     setChosen(null)
-  }, [openSetting])
+  }, [openSetting, setChosen, setLatched])
   const expandable = detail !== undefined && detail !== null && detail !== false
   const { calmMotion } = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()

@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useRowState } from "@/lib/row-open"
 import type * as acp from "@daedalus/acp"
 import {
   BotIcon,
@@ -1149,7 +1150,14 @@ function RunRow({
 
   /* A run that is running when it mounts opens itself, and then stays where
      the reader leaves it; the view option re-applies the default. */
-  const [open, setOpen] = React.useState(active || view.showToolDetails)
+  /* Remembered across the row going dormant (`lib/row-open`), keyed by the
+     run's first step: a revived card that opened itself while it ran must not
+     come back closed because it is no longer running. */
+  const [open, setOpen] = useRowState(
+    runSteps[0] && `wf:${runSteps[0].id}`,
+    active || view.showToolDetails,
+    view.showToolDetails
+  )
   const firstSetting = React.useRef(view.showToolDetails)
   React.useEffect(() => {
     if (firstSetting.current === view.showToolDetails) return

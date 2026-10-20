@@ -1046,3 +1046,67 @@ export function foldWork(rows: Row[]): Row[] {
   flush()
   return out
 }
+
+/* ── Keeping a row's identity through a rebuild ──
+   `buildRows` runs on every streamed chunk and hands back a new object for
+   every *group* it forms — a run, a subagent, a workflow, a fold — even when
+   nothing in it moved, so each one re-rendered under `RowView`'s memo on every
+   token. Items already keep theirs (the reducer replaces only what changed);
+   this does the same for the groups: a rebuilt group whose every part is the
+   same as last time is last time's object, and one that changed still shares
+   the parts that did not (a fold's untouched runs, a subagent's older steps).
+
+   Items are atoms — compared by identity, never opened — so the only work is
+   walking the group structure, and what comes back is always equal to `next`
+   with the same item objects in it. Top-level rows are matched by id, so a
+   page prepended above does not set every row against a stranger. */
+const GROUP_KINDS: ReadonlySet<string> = new Set<Row["kind"]>([
+  "run",
+  "tool-group",
+  "subagent-group",
+  "workflow-group",
+  "subagent-batch",
+  "shell-run",
+  "work-fold",
+])
+
+/** A plain object that is not an item: a group row, or data inside one. */
+function isStructure(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) return false
+  const kind = (value as { kind?: unknown }).kind
+  return typeof kind !== "string" || GROUP_KINDS.has(kind)
+}
+
+function share<T>(prev: T, next: T): T {
+  if (prev === next) return prev
+  if (Array.isArray(prev) && Array.isArray(next)) {
+    let same = prev.length === next.length
+    const out = next.map((value, index) => {
+      const kept = share(prev[index], value)
+      if (kept !== prev[index]) same = false
+      return kept
+    })
+    return (same ? prev : out) as T
+  }
+  if (!isStructure(prev) || !isStructure(next)) return next
+  const keys = Object.keys(next)
+  let same = keys.length === Object.keys(prev).length
+  const out: Record<string, unknown> = {}
+  for (const key of keys) {
+    out[key] = share(prev[key], next[key])
+    if (out[key] !== prev[key] || !(key in prev)) same = false
+  }
+  return (same ? prev : out) as T
+}
+
+export function shareRows(prev: Row[], next: Row[]): Row[] {
+  const byId = new Map(prev.map((row) => [row.id, row]))
+  let same = prev.length === next.length
+  const out = next.map((row, index) => {
+    const old = byId.get(row.id)
+    const kept = old ? share(old, row) : row
+    if (kept !== prev[index]) same = false
+    return kept
+  })
+  return same ? prev : out
+}

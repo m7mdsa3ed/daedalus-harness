@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Notice } from "@/components/notice"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useMessageScroller } from "@/components/ui/message-scroller"
+import { useTranscriptJump } from "@/components/thread-view/dormant"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { Empty } from "@/components/empty"
 import { TodoChecklist } from "@/components/todo-checklist"
@@ -525,7 +525,7 @@ export function ThreadInspector({
   const prefs = inspectorPrefs.use()
   /* Rendered inside `ThreadView`'s scroller provider, so a jump is the rail's
      own gesture; a sheet gets out of the way of what it jumped to. */
-  const { scrollToMessage } = useMessageScroller()
+  const scrollToMessage = useTranscriptJump()
   const onJump = (id: string) => {
     const row = locate(id)
     if (!row) return

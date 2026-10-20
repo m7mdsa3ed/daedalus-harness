@@ -69,16 +69,59 @@ type StepTokensValue = {
   turn: Record<string, acp.Usage>
 }
 
-const StepTokensContext = React.createContext<StepTokensValue>({ step: {}, turn: {} })
+/* A store, not a context *value*: `stepUsage` is replaced once per model step,
+   and a context value change re-renders every row that reads it — memo or not
+   — so each tool call in an agentic turn re-rendered the whole transcript.
+   The context carries one store per view for its life; a row subscribes to
+   its own entry, and only rows whose entry moved re-render. */
+export type StepTokensStore = {
+  get: () => StepTokensValue
+  /** Write without telling anyone — from the provider's render, so a row
+      mounting in the same commit reads the new value on its first render
+      (a subscription only starts after paint, and a later notify would be a
+      second commit for every step of a replay). */
+  prime: (value: StepTokensValue) => void
+  /** Tell the rows already subscribed; each re-renders only if its entry moved. */
+  publish: () => void
+  subscribe: (listener: () => void) => () => void
+}
+
+export function createStepTokensStore(): StepTokensStore {
+  let value: StepTokensValue = { step: {}, turn: {} }
+  let published = value
+  const listeners = new Set<() => void>()
+  return {
+    get: () => value,
+    prime: (next) => {
+      if (next.step !== value.step || next.turn !== value.turn) value = next
+    },
+    publish: () => {
+      if (published === value) return
+      published = value
+      listeners.forEach((listener) => listener())
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+}
+
+const StepTokensContext = React.createContext<StepTokensStore>(createStepTokensStore())
 
 export const StepTokensProvider = StepTokensContext.Provider
+
+function useStepTokensEntry<T>(read: (value: StepTokensValue) => T): T {
+  const store = React.useContext(StepTokensContext)
+  return React.useSyncExternalStore(store.subscribe, () => read(store.get()))
+}
 
 /** The reading the model request that ended on this item filed, or undefined
     where none ever was — which is most items, since one request writes
     several. The whole `UsageUpdate`, not its figure: `StepTokens` draws the
     window and the cost behind the number. */
 export function useStepTokens(itemId: string): acp.UsageUpdate | undefined {
-  return React.useContext(StepTokensContext).step[itemId]
+  return useStepTokensEntry((value) => value.step[itemId])
 }
 
 /** The turn a step sits in, keyed the same way `useStepTokens` is — a step
@@ -86,7 +129,7 @@ export function useStepTokens(itemId: string): acp.UsageUpdate | undefined {
     request), but its turn does, and that is what the breakdown is drawn
     from. */
 export function useStepTurnUsage(itemId: string): acp.Usage | undefined {
-  return React.useContext(StepTokensContext).turn[itemId]
+  return useStepTokensEntry((value) => value.turn[itemId])
 }
 
 /**

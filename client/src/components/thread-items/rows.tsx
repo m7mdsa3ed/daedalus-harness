@@ -131,6 +131,7 @@ import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
 import { BranchGutter, gutterWidth } from "@/components/thread-items/branch-gutter"
 import { layoutRun } from "@/lib/tool-graph"
+import { useRowState } from "@/lib/row-open"
 
 
 export const ToolRun = React.memo(function ToolRun({
@@ -186,7 +187,9 @@ export const ToolRun = React.memo(function ToolRun({
      journal would stay shut. `open` is the reader's answer when they have
      given one and the run's own state otherwise, so a hand-opened group stays
      open through the turn that follows it and a hand-closed one stays closed. */
-  const [choice, setChoice] = React.useState<boolean | null>(null)
+  /* Remembered across a dormant row's revival (`lib/row-open`), keyed by the
+     run's first item — the id the run's row carries. */
+  const [choice, setChoice] = useRowState<boolean | null>(items[0]?.id && `run:${items[0].id}`, null)
   const railRef = React.useRef<HTMLDivElement>(null)
   const isRun = tools.length > 1 || nestedRows !== undefined
   const [showRunHeader] = React.useState(isRun)
@@ -487,7 +490,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
   const view = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
   const reduceMotion = view.calmMotion || systemReducedMotion
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = useRowState(row.id, false)
   const railRef = React.useRef<HTMLDivElement>(null)
   const rows = row.rows
   const tools = surfaceTools(rows)
@@ -726,6 +729,7 @@ export const SubagentStep = React.memo(function SubagentStep({
          its own option and never a reason to open the row. */
       defaultOpen={view.showToolDetails}
       openSetting={view.showToolDetails}
+      persistKey={group.id}
     />
   )
 })
@@ -1112,7 +1116,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       // becomes one or the other.
       const task = parseTaskNotification(item.text)
       if (task) {
-        return <TaskNotificationCard task={task} at={item.at} showTimestamp={showTimestamps} />
+        return <TaskNotificationCard id={item.id} task={task} at={item.at} showTimestamp={showTimestamps} />
       }
       // A break in the conversation, so it reads as one: hairline across the
       // column with the reason inline. An interrupt you can still resume gets
@@ -1168,6 +1172,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
              view: off, the excerpt stays folded while the thought streams. */
           autoOpen={view.showThinking && !view.thoughtOneLine && streaming}
           openSetting={view.showThinking}
+          persistKey={item.id}
           target=""
           foldedTarget={
             view.thoughtOneLine ? (
@@ -1402,6 +1407,7 @@ const ToolStep = React.memo(function ToolStep({
       }
       defaultOpen={view.showToolDetails || toolOpensByDefault(item, view.expandEdits)}
       openSetting={`${view.showToolDetails}:${view.expandEdits}`}
+      persistKey={item.id}
     />
   )
 })

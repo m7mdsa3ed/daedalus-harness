@@ -2006,6 +2006,15 @@ html[data-window-controls-overlay="true"] {
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-rail-draw::after {
   animation: none;
 }
+/* A row woken from dormancy (`thread-view/dormant.tsx`) is history coming
+   back into view, not news: its contents mount fresh, and every entrance they
+   carry would play again. The attribute is set for the whole of that mount and
+   never taken off — removing an `animation: none` is what starts one. */
+[data-revived] :is(.harness-item-in, .harness-fade-in, .harness-part-in),
+[data-revived] .harness-rail-draw::before,
+[data-revived] .harness-rail-draw::after {
+  animation: none;
+}
 /* Belt and braces for the reveal: `resolveStreamEffect` already stops the
    attribute being written while calm motion is on, so nothing below matches in
    practice — but a row mounted on the frame the option is flipped would
