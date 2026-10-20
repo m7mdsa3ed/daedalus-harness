@@ -62,12 +62,11 @@ import {
 } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
-import { CopyButton } from "@/components/ui/copy-button"
 import { Notice } from "@/components/notice"
 import { QUICK_ENTRY_DEFAULT, useQuickEntry } from "@/lib/desktop"
 import { DataTable, TitleCell, type DataTableSort, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
-import { Group, INSET, PageHeader, Row, Section, StatusBadge } from "./primitives"
+import { Group, INSET, PageHeader, ROW_CONTROL, Row, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** The desktop shell is the one place a browser-reserved chord is free: the
@@ -199,7 +198,7 @@ function RecordDialog({
             changing anything.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <div className="pb-2">
+        <>
           <div
             className={cn(
               "flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border border-dashed",
@@ -213,13 +212,13 @@ function RecordDialog({
             )}
           </div>
           {warnings.length > 0 && (
-            <div className="mt-3 space-y-1.5">
+            <div className="space-y-1.5">
               {warnings.map((warning) => (
                 <WarningLine key={warning.kind + warning.text} warning={warning} />
               ))}
             </div>
           )}
-          <div className={cn(INSET, "mt-4 space-y-2 p-3")}>
+          <div className={cn(INSET, "space-y-2 p-3")}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm text-muted-foreground">Now</span>
               <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
@@ -244,9 +243,9 @@ function RecordDialog({
               </label>
             )}
           </div>
-        </div>
+        </>
         <ResponsiveDialogFooter>
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button type="button" disabled={!chord} onClick={save}>
@@ -419,7 +418,7 @@ function QuickEntryGroup() {
         subtitle={`Starts a new thread from any application. An Electron accelerator such as ${QUICK_ENTRY_DEFAULT} or CommandOrControl+Shift+Space; empty turns it off.`}
       >
         <form
-          className="flex items-center gap-2"
+          className="flex w-full items-center gap-2 @panel-sm:w-auto"
           onSubmit={(event) => {
             event.preventDefault()
             void save(value)
@@ -427,7 +426,7 @@ function QuickEntryGroup() {
         >
           <Input
             aria-label="Quick entry shortcut"
-            className="h-11 w-40 min-w-0 font-mono text-sm @panel-sm:h-9 @panel-sm:w-48"
+            className={cn(ROW_CONTROL, "font-mono pointer-coarse:h-11")}
             value={value}
             placeholder="Off"
             onChange={(event) => setValue(event.target.value)}
@@ -435,7 +434,8 @@ function QuickEntryGroup() {
           <Button
             type="submit"
             variant="outline"
-            className="h-11 @panel-sm:h-9"
+            size="sm"
+            className="pointer-coarse:h-11"
             disabled={saving || value.trim() === quick.accelerator}
           >
             Save
@@ -444,9 +444,7 @@ function QuickEntryGroup() {
       </Row>
       {quick.error && (
         <div className="py-3">
-          <Notice tone="error" action={<CopyButton text={quick.error} />}>
-            {quick.error}
-          </Notice>
+          <Notice tone="error">{quick.error}</Notice>
         </div>
       )}
     </Group>
@@ -569,9 +567,9 @@ export function KeyboardPage() {
         hidePageSize
         maxHeight="min(70dvh, 52rem)"
         emptyIcon={<SearchIcon />}
-        emptyMessage={needle ? `No shortcut matches “${query.trim()}”.` : "No shortcuts match these filters."}
+        emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "Nothing matches these filters."}
         emptyAction={
-          <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={clearFilters}>
+          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={clearFilters}>
             Clear filters
           </Button>
         }
@@ -594,19 +592,19 @@ export function KeyboardPage() {
           <Button
             type="button"
             variant="outline"
-            className="h-11 @panel-sm:h-9"
+            className="pointer-coarse:h-11"
             disabled={!anyCustom}
             title={anyCustom ? `${customCount} customized` : "Nothing is customized"}
             onClick={() => void resetAll()}
           >
-            <RotateCcwIcon />
+            <RotateCcwIcon data-icon="inline-start" />
             Reset all
           </Button>
         }
       />
       {window.desktop?.setQuickEntry && <QuickEntryGroup />}
       <Section>
-        <Notice size="md" icon={<KeyboardIcon className="size-4" />}>
+        <Notice size="md" icon={<KeyboardIcon />}>
           Shortcuts are stored on this device and never synced.{" "}
           {DESKTOP
             ? "In the desktop app the page receives every chord the operating system does not take first, so a binding here wins over the browser defaults it names."

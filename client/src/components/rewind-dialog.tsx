@@ -11,7 +11,6 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { Spinner } from "@/components/ui/spinner"
 
 export type RewindScope = "conversation" | "files" | "both"
 
@@ -96,7 +95,7 @@ export function RewindDialog({
         <RadioGroup
           value={scope}
           onValueChange={(v) => setScope(v as RewindScope)}
-          className="gap-3 px-1 py-1"
+          className="gap-3"
         >
           {canRewindConversation && (
             <label className="flex cursor-pointer items-start gap-3">
@@ -155,7 +154,7 @@ export function RewindDialog({
             disabled={confirmDisabled}
             loading={busy}
           >
-            {busy ? <Spinner /> : <History className="size-4" />}
+            <History data-icon="inline-start" />
             Rewind
           </Button>
         </ResponsiveDialogFooter>

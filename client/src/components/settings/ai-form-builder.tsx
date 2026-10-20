@@ -4,17 +4,25 @@ import { DefaultChatTransport } from "ai"
 import { Bot, Send, Sparkles, WandSparkles } from "lucide-react"
 
 import { Empty } from "@/components/empty"
-import { Notice } from "@/components/notice"
+import { ErrorNote } from "@/components/error-note"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import type { ServerSettings } from "@/lib/settings"
 import { useProfiles } from "@/lib/queries/catalog"
 import { aiCapable, formBuilderPick } from "@/lib/ai-picks"
 import { useServer } from "@/lib/server-context"
+import { captureError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 
 type JsonSchema = Record<string, unknown>
@@ -70,7 +78,7 @@ export function AiFormBuilder({ title, schema, value, onApply }: FormBuilderProp
   return (
     <>
       <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={() => setOpen(true)} disabled={!profile}>
-        <WandSparkles /> Fill with AI
+        <WandSparkles data-icon="inline-start" /> Fill with AI
       </Button>
       <BuilderDialog
         open={open}
@@ -172,21 +180,39 @@ function BuilderDialog({
     if (candidate && schemaErrors.length === 0) onApply(candidate)
   }
 
+  /* Captured once per failure, not per render: `captureError` logs. */
+  const chatError = React.useMemo(
+    () => (chat.error ? captureError(chat.error, "The assistant couldn't answer") : null),
+    [chat.error],
+  )
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[min(calc(var(--float-h)-2rem),54rem)] flex-col gap-4 overflow-hidden sm:max-w-6xl">
-        <DialogHeader className="pr-8">
-          <DialogTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" /> Build {title}</DialogTitle>
-          <DialogDescription>Describe what you want. The assistant uses this form's schema and current values; review the JSON before applying it. Change the model in Settings, AI helpers.</DialogDescription>
-        </DialogHeader>
-        <div className="@container flex min-h-0 flex-1 flex-col"><div className="flex min-h-0 flex-1 flex-col gap-4 @2xl:flex-row">
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl bg-card ring-1 ring-foreground/10">
-            <div className="flex items-center gap-2 border-b px-3 py-2">
-              <span className="text-sm font-medium">Conversation</span>
-            </div>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} tall>
+      <ResponsiveDialogContent
+        className="h-[min(calc(var(--float-h)-2rem),54rem)] sm:max-w-5xl"
+        bodyClassName="gap-0 overflow-hidden p-0"
+      >
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle className="flex items-center gap-2">
+            <Sparkles className="size-4 text-primary" /> Build {title}
+          </ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            Describe what you want, review the JSON, then apply it to the form.
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col @2xl/panel:flex-row">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <PanelToolbar>
+              <h3 className="text-xs font-medium text-muted-foreground">Conversation</h3>
+            </PanelToolbar>
             <ScrollArea className="min-h-0 flex-1 p-3">
               <div className="space-y-3">
-                {chat.messages.length === 0 && <Empty size="sm">Tell the assistant what you are trying to configure. For example, describe the intended behavior and any constraints.</Empty>}
+                {chat.messages.length === 0 && (
+                  <Empty size="sm">
+                    Tell the assistant what you are trying to configure — the intended behaviour and any constraints.
+                    It reads this form's schema and current values. Change its model in Settings › AI helpers.
+                  </Empty>
+                )}
                 {chat.messages.map((message) => (
                   <div key={message.id} className={cn("flex gap-2", message.role === "user" && "justify-end")}>
                     {message.role !== "user" && <Bot className="mt-1 size-4 shrink-0 text-muted-foreground" />}
@@ -195,30 +221,36 @@ function BuilderDialog({
                     </div>
                   </div>
                 ))}
-                {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-3" /> Updating the form…</div>}
-                {chat.error && <Notice tone="error" size="sm">{chat.error.message}</Notice>}
+                {busy && <p aria-live="polite" className="animate-pulse text-sm text-muted-foreground">Updating the form…</p>}
+                <ErrorNote error={chatError} />
               </div>
             </ScrollArea>
             <form onSubmit={send} className="flex items-end gap-2 border-t p-3">
               <Textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Describe the values or ask for a change…" className="max-h-28 min-h-10 resize-y" />
-              {busy ? <Button type="button" variant="outline" onClick={() => void chat.stop()}>Stop</Button> : <Button type="submit" size="icon" aria-label="Send message" disabled={!input.trim()}><Send /></Button>}
+              {busy ? (
+                <Button type="button" variant="outline" className="pointer-coarse:h-11" onClick={() => void chat.stop()}>Stop</Button>
+              ) : (
+                <Button type="submit" size="icon" className="pointer-coarse:size-11" aria-label="Send message" disabled={!input.trim()}><Send /></Button>
+              )}
             </form>
           </section>
-          <section className="@container flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl bg-card ring-1 ring-foreground/10">
-            <div className="flex items-center justify-between border-b px-3 py-2">
-              <div><div className="text-sm font-medium">Live JSON preview</div><div className="text-xs text-muted-foreground">Current form contract</div></div>
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col border-t @2xl/panel:border-t-0 @2xl/panel:border-l">
+            <PanelToolbar className="justify-between">
+              <h3 className="text-xs font-medium text-muted-foreground">Live JSON preview</h3>
               {generated && <Badge variant="secondary">Generated</Badge>}
-            </div>
-            <ScrollArea className="min-h-0 flex-1 p-3"><pre className="min-h-full whitespace-pre-wrap break-words rounded-xl border bg-muted/50 p-3 font-mono text-sm leading-relaxed">{JSON.stringify(preview, null, 2)}</pre></ScrollArea>
-            <div className="flex flex-col gap-2 border-t p-3 @sm:flex-row @sm:items-center @sm:justify-between">
-              <div className="min-w-0 text-sm text-muted-foreground">
-                {schemaErrors.length > 0 ? <span className="text-destructive">{schemaErrors[0]}</span> : "Apply replaces the draft only; saving is still yours."}
-              </div>
-              <Button type="button" onClick={apply} disabled={!canApply || schemaErrors.length > 0}>Apply values</Button>
-            </div>
+            </PanelToolbar>
+            <ScrollArea className="min-h-0 flex-1 p-3">
+              <pre className="min-h-full whitespace-pre-wrap break-words rounded-xl border bg-muted/50 p-3 font-mono text-xs leading-relaxed">{JSON.stringify(preview, null, 2)}</pre>
+            </ScrollArea>
           </section>
-        </div></div>
-      </DialogContent>
-    </Dialog>
+        </div>
+        <ResponsiveDialogFooter>
+          <p className="min-w-0 self-center text-sm text-muted-foreground sm:mr-auto">
+            {schemaErrors.length > 0 ? <span className="text-destructive">{schemaErrors[0]}</span> : "Apply replaces the draft only; saving is still yours."}
+          </p>
+          <Button type="button" onClick={apply} disabled={!canApply || schemaErrors.length > 0}>Apply values</Button>
+        </ResponsiveDialogFooter>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }

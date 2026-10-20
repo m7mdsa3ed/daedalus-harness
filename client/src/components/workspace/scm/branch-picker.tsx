@@ -260,7 +260,7 @@ export function BranchPicker({
           )}
 
           {hidden > 0 && (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            <p className="px-2 py-2 text-xs text-muted-foreground">
               {hidden} more — type to narrow
             </p>
           )}

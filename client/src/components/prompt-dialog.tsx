@@ -76,7 +76,6 @@ export function PromptProvider({ children }: { children: React.ReactNode }) {
             <ResponsiveDialogDescription>{pending.description}</ResponsiveDialogDescription>
           )}
           <form
-            className="px-4 sm:px-0"
             onSubmit={(e) => {
               e.preventDefault()
               submit()

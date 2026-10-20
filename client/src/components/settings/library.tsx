@@ -11,7 +11,7 @@ import * as React from "react"
 import { Download, Pencil, Plus, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router"
 import { ErrorNote } from "@/components/error-note"
-import { captureError, reportError, reportPromise, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, reportError, reportPromise, type InlineError } from "@/lib/errors"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useTableFilter, type TableFilterField } from "@/lib/use-table-filter"
@@ -21,20 +21,11 @@ import { useConfirm } from "@/components/confirm-dialog"
 import type { ColumnDef } from "@/lib/table"
 import { api, type ImportCandidates, type ServerSettings } from "@/lib/settings"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-import {
-  EmptyCard,
-  FormActions,
-  FormPageHeader,
-  FormSection,
-  FormShell,
-  PageForm,
-  PageHeader,
-  Toolbar,
-} from "./primitives"
+import { Empty } from "@/components/empty"
+import { useCatalogState, type CatalogSlice } from "@/lib/queries/catalog"
+import { FormActions, FormPageHeader, FormSection, PageForm, PageHeader, Section } from "./primitives"
 import { type SectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-
-const NEW_BTN = "h-11 @panel-sm:h-9"
 
 /** Library registry: a table of entries with create / edit / delete. */
 export function LibrarySection<T extends { id: string; name: string }>({
@@ -55,8 +46,8 @@ export function LibrarySection<T extends { id: string; name: string }>({
   badgesLabel = "Details",
   editable = () => true,
   importable = true,
-  renderRows,
   filterFields,
+  slice,
 }: {
   meta: SectionMeta
   items: T[]
@@ -90,18 +81,15 @@ export function LibrarySection<T extends { id: string; name: string }>({
   importable?: boolean
   /** Category filters beside the search box (a row's kind, source, scope…). */
   filterFields?: TableFilterField<T>[]
-  /** Replaces the table for a library whose rows want a shape of their own
-      (MCP's expandable cards). Header, actions, the empty state and the delete
-      confirmation stay this component's. */
-  renderRows?: (ctx: {
-    items: T[]
-    canEdit: (item: T) => boolean
-    edit: (item: T) => void
-    remove: (item: T) => void
-  }) => React.ReactNode
+  /** The catalog slice `items` is read from, so the page can tell "not yet"
+      and "could not read" from "no rows". */
+  slice: CatalogSlice
 }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
+  const state = useCatalogState(slice)
+  const pending = state.isPending
+  const loadError = state.error
 
   const remove = async (item: T) => {
     if (
@@ -196,7 +184,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
       {
         id: "edit",
         label: "Edit",
-        icon: <Pencil className="size-4" />,
+        icon: <Pencil />,
         position: "left",
         hidden: (item) => !live.current.editable(item),
         onClick: (item) => live.current.edit(item),
@@ -204,7 +192,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
       {
         id: "delete",
         label: "Delete",
-        icon: <Trash2 className="size-4" />,
+        icon: <Trash2 />,
         tone: "danger",
         position: "right",
         onClick: (item) => void live.current.remove(item),
@@ -222,84 +210,66 @@ export function LibrarySection<T extends { id: string; name: string }>({
   )
 
   const newButton = (
-    <Button className={NEW_BTN} onClick={() => void navigate(settingsFormPath(meta.id))}>
-      <Plus className="size-4" /> New {noun}
+    <Button onClick={() => void navigate(settingsFormPath(meta.id))}>
+      <Plus data-icon="inline-start" /> New {noun}
     </Button>
   )
   const importButton = importable ? (
-    <Button variant="outline" className={NEW_BTN} onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
-      <Download className="size-4" /> Import
+    <Button
+      variant="outline"
+      className="pointer-coarse:h-11"
+      onClick={() => void navigate(settingsFormPath(meta.id, "import"))}
+    >
+      <Download data-icon="inline-start" /> Import
     </Button>
   ) : null
   const emptyText = importable
     ? `No ${noun}s yet — add one, or import from the agents' own configs.`
     : `No ${noun}s yet.`
 
-  /* A library whose rows draw themselves (MCP) keeps the page header's New and
-     its own toolbar; everything else is the one table. */
-  if (renderRows) {
-    return (
-      <>
-        <PageHeader meta={meta} action={newButton} />
-        {items.length === 0 ? (
-          <EmptyCard
-            icon={meta.icon}
-            text={emptyText}
-            action={
-              <div className="flex flex-wrap justify-center gap-2">
-                {extraActions}
-                {importButton}
-                {newButton}
-              </div>
-            }
-          />
-        ) : (
-          <>
-            <Toolbar placeholder={`Search ${noun}s…`}>
-              {extraActions}
-              {importButton}
-            </Toolbar>
-            {renderRows({ items, canEdit: editable, edit, remove: (item) => void remove(item) })}
-          </>
-        )}
-      </>
-    )
-  }
-
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      <DataTable
-        columns={columns}
-        data={f.rows}
-        getRowId={(item) => item.id}
-        pageSize={25}
-        mark={mark}
-        actions={actions}
-        onRowClick={(item) => {
-          if (editable(item)) edit(item)
-        }}
-        filtering={items.length > 0 ? f.filtering : undefined}
-        toolbar={
-          items.length > 0 ? (
-            <>
-              {extraActions}
-              {importButton}
-            </>
-          ) : undefined
-        }
-        emptyIcon={React.createElement(meta.icon)}
-        emptyMessage={items.length === 0 ? emptyText : `Nothing matches “${f.query.trim()}”.`}
-        emptyAction={
-          items.length === 0 ? (
-            <div className="flex flex-wrap justify-center gap-2">
+      {loadError ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(loadError, `Couldn't read the ${noun}s`)} onRetry={state.refetch} />
+        </Section>
+      ) : items.length === 0 && !pending ? (
+        <Empty
+          size="lg"
+          icon={meta.icon}
+          action={
+            <div className="flex flex-wrap justify-center gap-2 [&_[data-slot=button]]:pointer-coarse:h-11">
               {extraActions}
               {importButton}
               {newButton}
             </div>
-          ) : undefined
-        }
-      />
+          }
+        >
+          {emptyText}
+        </Empty>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={f.rows}
+          getRowId={(item) => item.id}
+          isLoading={pending}
+          pageSize={25}
+          mark={mark}
+          actions={actions}
+          onRowClick={(item) => {
+            if (editable(item)) edit(item)
+          }}
+          filtering={f.filtering}
+          toolbar={
+            <>
+              {extraActions}
+              {importButton}
+            </>
+          }
+          emptyIcon={React.createElement(meta.icon)}
+        />
+      )}
     </>
   )
 }
@@ -422,7 +392,6 @@ export function LibraryImportPage({
         onBack={() => void navigate(settingsPath(meta.id))}
       />
       <PageForm onSubmit={save}>
-        <FormShell sections={[{ id: "import", label: "Found on the server" }]}>
           <FormSection
             id="import"
             label="Found on the server"
@@ -470,12 +439,11 @@ export function LibraryImportPage({
                 emptyMessage={
                   found.length === 0
                     ? `Nothing left to import — the library already has every ${noun} found on the server.`
-                    : `Nothing matches “${f.query.trim()}”.`
+                    : undefined
                 }
               />
             )}
           </FormSection>
-        </FormShell>
         <FormActions busy={busy} onCancel={() => void navigate(settingsPath(meta.id))} />
       </PageForm>
     </>

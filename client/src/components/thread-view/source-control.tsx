@@ -21,10 +21,13 @@ import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Spinner } from "@/components/ui/spinner"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CopyButton } from "@/components/ui/copy-button"
+import { Empty } from "@/components/empty"
+import { ErrorNote } from "@/components/error-note"
+import { Notice } from "@/components/notice"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { ActionIcon, actionClass, useActionState } from "@/components/ui/action-state"
 import type { WebDiff } from "@/lib/workspace/panels"
 import { DockContext } from "@/components/workspace/dock-context"
@@ -46,7 +49,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tracking } from "@/components/workspace/scm/branch-menu"
 import { useConfirm } from "@/components/confirm-dialog"
-import { describeError } from "@/lib/errors"
+import { captureError, inlineFromQuery, type InlineError } from "@/lib/errors"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { projectGitBranchesKey, projectGitRefsKey, projectGitLogKey, projectGitStatusKey, projectReposKey } from "@/lib/queries/keys"
 import { useGitStatus } from "@/lib/queries/surfaces"
@@ -100,11 +103,11 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   const coarse = useCoarsePointer()
   const confirm = useConfirm()
   const [repos, setRepos] = React.useState<GitRepo[] | null>(null)
-  const [repoError, setRepoError] = React.useState<string | null>(null)
+  const [repoError, setRepoError] = React.useState<InlineError | null>(null)
   const [repoPath, setRepoPath] = React.useState(pinnedRepo ?? "")
   const [busy, setBusy] = React.useState(false)
   const act = useActionState<"fetch" | "pull" | "push" | "commit">()
-  const [error, setError] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<InlineError | null>(null)
   const [notice, setNotice] = React.useState<string | null>(null)
   const [stashGeneration, setStashGeneration] = React.useState(0)
   /* A commit, or null for the Working Directory. */
@@ -153,7 +156,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
       setRepoPath((current) => found.some((repo) => repo.path === current) ? current : (found[0]?.path ?? ""))
       queryClient.setQueryData(projectReposKey(settings, projectId), found)
     }).catch((err: unknown) => {
-      if (active) setRepoError(describeError(err).title)
+      if (active) setRepoError(captureError(err, "Repository scan failed"))
     })
     return () => { active = false }
   }, [projectId, pinnedRepo, queryClient, settings])
@@ -170,7 +173,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
               setRepos(found)
               queryClient.setQueryData(projectReposKey(settings, projectId), found)
               setRepoPath((current) => found.some((repo) => repo.path === current) ? current : (found[0]?.path ?? ""))
-            }).catch((err: unknown) => setRepoError(describeError(err).title))
+            }).catch((err: unknown) => setRepoError(captureError(err, "Repository scan failed")))
           }
         }
         void queryClient.invalidateQueries({ queryKey: projectGitStatusKey(settings, projectId, repoPath) })
@@ -269,8 +272,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
       }
       return true
     } catch (err) {
-      const { title, detail } = describeError(err)
-      setError(detail ? `${title}: ${detail}` : title)
+      setError(captureError(err, "Git operation failed"))
       void queryClient.invalidateQueries({ queryKey: projectGitStatusKey(settings, projectId, repoPath) })
       return false
     } finally {
@@ -332,7 +334,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
         setStashGeneration((current) => current + 1)
       }
     } catch (err) {
-      setError(describeError(err).title)
+      setError(captureError(err, "Git operation failed"))
     } finally {
       setBusy(false)
     }
@@ -377,20 +379,20 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   if (diff) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
-          <Button variant="ghost" size="xs" className="gap-1" onClick={() => setDiff(null)}>
-            <ArrowLeftIcon className="size-3.5" /> Back
+        <PanelToolbar className="gap-2">
+          <Button variant="ghost" size="xs" onClick={() => setDiff(null)}>
+            <ArrowLeftIcon data-icon="inline-start" /> Back
           </Button>
           <span className="truncate font-mono text-xs text-muted-foreground">{diff.path}</span>
-        </div>
+        </PanelToolbar>
         <div className="min-h-0 flex-1"><DiffTab projectId={projectId} path={diff.path} left={diff.left} right={diff.right} repo={diff.repo} active /></div>
       </div>
     )
   }
 
-  if (repoError) return <PanelMessage title="Repository scan failed" text={repoError} />
-  if (!repos) return <div className="grid h-full place-items-center"><Spinner /></div>
-  if (repos.length === 0) return <PanelMessage title="No repository found" text="This project does not contain a Git repository." />
+  if (repoError) return <ErrorNote error={repoError} className="m-2" />
+  if (!repos) return <PanelRowsSkeleton />
+  if (repos.length === 0) return <Empty className="m-3" icon={GitBranchIcon}>No repository found. This project does not contain a Git repository.</Empty>
   if (!repo) return null
 
   const remote = !!status?.repository && !status.unborn
@@ -442,12 +444,12 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
   ) : (
     <>
           <div className="min-h-0 flex-1 overflow-auto">
-            {statusQuery.isLoading && !status ? (
-              <div className="grid h-24 place-items-center"><Spinner /></div>
-            ) : statusQuery.error ? (
-              <PanelMessage title="Status unavailable" text={describeError(statusQuery.error).title} compact />
+            {statusQuery.error ? (
+              <ErrorNote error={inlineFromQuery(statusQuery.error, "Status unavailable")} onRetry={() => void statusQuery.refetch()} className="m-2" />
+            ) : statusQuery.isLoading && !status ? (
+              <PanelRowsSkeleton />
             ) : groups.length === 0 ? (
-              <div className="grid min-h-24 place-items-center px-4 text-center"><div><FileIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-sm font-medium">Working tree is clean</p><p className="mt-1 text-xs text-muted-foreground">Changes will appear here as the project moves.</p></div></div>
+              <Empty className="m-3" icon={FileIcon}>Working tree is clean. Changes will appear here as the project moves.</Empty>
             ) : (
               groups.map((group) => {
                 const shut = collapsed.has(group.id)
@@ -532,7 +534,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             canAmend={remote}
             prefill={prefill}
             onCommit={commitWith}
-            onError={setError}
+            onError={(message) => setError(message ? { title: message, kind: "unknown", context: "Git operation failed", text: `Git operation failed\n${message}` } : null)}
           />
     </>
   )
@@ -570,7 +572,8 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header title={standing ?? undefined} className="flex shrink-0 flex-wrap items-center gap-1 border-b bg-muted px-2 py-1">
+      <header title={standing ?? undefined} className="contents">
+      <PanelToolbar className="flex-wrap">
         <div className="contents">
           {repos.length > 1 ? (
             <Select value={repoPath} onValueChange={(value) => { setRepoPath(value as string); setPicks(new Set()); setDiff(null); setSelected(null); setOpenFile(null) }}>
@@ -594,11 +597,11 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             </Select>
           ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-1.5 text-sm font-medium"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
           <Button variant="ghost" size="icon-xs" title="Refresh repository status" aria-label="Refresh repository status" loading={statusQuery.isFetching} onClick={() => void statusQuery.refetch()} className={cn(iconButton, "order-5")}>
-            <RefreshCwIcon className={cn("size-3.5", statusQuery.isFetching && "animate-spin")} />
+            <RefreshCwIcon className={cn(statusQuery.isFetching && "animate-spin")} />
           </Button>
           {status?.repository && (
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`More for ${repo.name}`} className={cn(iconButton, "order-6")}><MoreHorizontalIcon className="size-3.5" /></Button>} />
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`More for ${repo.name}`} className={cn(iconButton, "order-6")}><MoreHorizontalIcon /></Button>} />
               <DropdownMenuContent align="end" className="w-auto min-w-52">
                 <DropdownMenuItem disabled={busy} onClick={() => void write({ action: "fetch" })}><CloudDownloadIcon />Fetch all remotes</DropdownMenuItem>
                 <DropdownMenuItem disabled={busy || counts.staged === 0} onClick={() => void write({ action: "unstage", paths: files.filter((file) => file.staged !== "no").map((file) => file.path) })}><MinusIcon />Unstage everything</DropdownMenuItem>
@@ -624,27 +627,38 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
           <div className="order-3"><Tracking status={status} /></div>
           <div className="order-4 ml-auto flex shrink-0 gap-1">
             <Button variant="ghost" size="icon-xs" disabled={busy || !status?.repository} onClick={() => void act.run("fetch", () => write({ action: "fetch" }))} title="Fetch all remotes (updates ahead/behind)" aria-label="Fetch" className={cn(iconButton, actionClass(act.phase("fetch")))}>
-              <ActionIcon phase={act.phase("fetch")}><CloudDownloadIcon className="size-3.5" /></ActionIcon>
+              <ActionIcon phase={act.phase("fetch")}><CloudDownloadIcon /></ActionIcon>
             </Button>
             <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("pull", () => write({ action: "pull" }))} title={status?.upstream ? `Pull from ${status.upstream} (fast-forward only)` : "Pull"} className={cn(coarse && "min-h-10", actionClass(act.phase("pull")))}>
-              <ActionIcon phase={act.phase("pull")}><ArrowDownToLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">Pull{status?.behind ? ` ${status.behind}` : ""}</span>
+              <ActionIcon phase={act.phase("pull")}><ArrowDownToLineIcon data-icon="inline-start" /></ActionIcon><span className="hidden @panel-sm:inline">Pull{status?.behind ? ` ${status.behind}` : ""}</span>
             </Button>
             <Button variant="outline" size="xs" disabled={busy || !remote} onClick={() => void act.run("push", () => write({ action: "push" }))} title={status?.upstream ? `Push to ${status.upstream}` : "Publish this branch to origin"} className={cn(coarse && "min-h-10", actionClass(act.phase("push")))}>
-              <ActionIcon phase={act.phase("push")}><ArrowUpFromLineIcon className="size-3.5" /></ActionIcon><span className="hidden @panel-sm:inline">{status?.upstream ? `Push${status.ahead ? ` ${status.ahead}` : ""}` : "Publish"}</span>
+              <ActionIcon phase={act.phase("push")}><ArrowUpFromLineIcon data-icon="inline-start" /></ActionIcon><span className="hidden @panel-sm:inline">{status?.upstream ? `Push${status.ahead ? ` ${status.ahead}` : ""}` : "Publish"}</span>
             </Button>
           </div>
         </div>
+      </PanelToolbar>
       </header>
 
-      {error && <PanelMessage title="Git operation failed" text={error} compact />}
-      {notice && <div role="status" className="flex items-center gap-2 border-b bg-success/10 px-3 py-2 text-sm text-success"><CheckIcon className="size-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate" title={notice}>{notice}</span><button type="button" aria-label="Dismiss message" onClick={() => setNotice(null)}><XIcon className="size-3.5" /></button></div>}
+      <ErrorNote error={error} className="m-2" />
+      {notice && (
+        <Notice
+          tone="info"
+          role="status"
+          icon={<CheckIcon className="text-success" />}
+          className="m-2"
+          action={<Button variant="ghost" size="icon-xs" aria-label="Dismiss message" title="Dismiss message" onClick={() => setNotice(null)}><XIcon /></Button>}
+        >
+          <p className="truncate" title={notice}>{notice}</p>
+        </Notice>
+      )}
 
       <ScmDock
         panes={{
           locations: locationsPane,
           history: historyPane,
           files: filesPane,
-          diff: diffPane || <p className="px-3 py-6 text-center text-sm text-muted-foreground">Pick a file to see its changes.</p>,
+          diff: diffPane || <Empty className="m-3">Pick a file to see its changes.</Empty>,
         }}
       />
     </div>
@@ -698,9 +712,9 @@ function FileRow({ file, group, active, picked, selecting, onPick, busy, coarse,
         <LineCounts insertions={file.insertions} deletions={file.deletions} />
       </button>
       <RowVerbs coarse={coarse}>
-        {group === "changes" && !file.untracked && <Verb label={`Discard ${name}`} destructive disabled={busy} onClick={onDiscard}><Undo2Icon className="size-3.5" /></Verb>}
+        {group === "changes" && !file.untracked && <Verb label={`Discard ${name}`} destructive disabled={busy} onClick={onDiscard}><Undo2Icon /></Verb>}
         <Verb label={group === "staged" ? `Unstage ${name}` : group === "merge" ? `Mark ${name} resolved` : `Stage ${name}`} disabled={busy} onClick={onStage}>
-          {group === "staged" ? <MinusIcon className="size-3.5" /> : <PlusIcon className="size-3.5" />}
+          {group === "staged" ? <MinusIcon /> : <PlusIcon />}
         </Verb>
       </RowVerbs>
     </div>
@@ -712,8 +726,4 @@ function toggled<T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> {
   if (next.has(value)) next.delete(value)
   else next.add(value)
   return next
-}
-
-function PanelMessage({ title, text, compact = false }: { title: string; text: string; compact?: boolean }) {
-  return <div className={cn("text-center", compact ? "flex items-start gap-2 px-3 py-2" : "grid h-full place-content-center px-5")}><div className="min-w-0 flex-1"><p className="text-sm font-medium">{title}</p><p className="mt-1 break-words text-xs text-muted-foreground">{text}</p></div>{compact && <CopyButton text={`${title}: ${text}`} size="icon-xs" className="shrink-0" />}</div>
 }

@@ -8,11 +8,9 @@ import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { MARKDOWN_COMPONENTS } from "@/components/tool-parts"
-import { Button } from "@/components/ui/button"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
-  ResponsiveDialogFooter,
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
@@ -26,20 +24,16 @@ export function ChangelogDialog({ open, onOpenChange }: { open: boolean; onOpenC
   }, [open, meta.data])
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent>
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Changelog</ResponsiveDialogTitle>
         </ResponsiveDialogHeader>
-        <div className="max-h-[60vh] overflow-y-auto pr-1">
+        {/* The dialog's body is the scroller; a second one inside it traps the wheel. */}
+        <div>
           {(meta.data?.changelog ?? []).map((entry) => (
             <ChangelogEntryView key={entry.version} entry={entry} />
           ))}
         </div>
-        <ResponsiveDialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
-        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

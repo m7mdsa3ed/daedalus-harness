@@ -53,7 +53,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { inlineFromQuery } from "@/lib/errors"
@@ -90,7 +90,7 @@ import {
 } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { cn } from "@/lib/utils"
-import { EmptyCard, INSET, PageHeader, Section, StatStrip, StatusBadge, type StatusTone } from "./primitives"
+import { INSET, PageHeader, ROW_CONTROL, Section, StatStrip, StatusBadge, type StatusTone } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** The id of an agent's virtual Default profile — the server mints the same
@@ -101,15 +101,9 @@ const defaultProfileId = (agentId: string) => `default:${agentId}`
 function RefreshAction({ busy, onClick, label }: { busy: boolean; onClick: () => void; label: string }) {
   return (
     <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-11" loading={busy} onClick={onClick} aria-label={label} title={label}>
-      <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
+      <RefreshCwIcon className={cn(busy && "animate-spin")} />
     </Button>
   )
-}
-
-/** A body with no rows says why in words, centred where the rows would be.
-    Never a zeroed bar: "no plan here" is a different statement from "0% used". */
-function EmptyNote({ children }: { children: React.ReactNode }) {
-  return <Empty icon={GaugeIcon}>{children}</Empty>
 }
 
 /** One row of a usage table: a window, or — for an account that reported none —
@@ -408,7 +402,7 @@ function UsageTable({ quota, loading }: { quota: QuotaSnapshot | null; loading?:
       grouping={grouping}
       mobile={MOBILE}
       emptyIcon={<GaugeIcon />}
-      emptyMessage={f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No quotas reported."}
+      emptyMessage={f.narrowed ? undefined : "No quotas reported."}
       filtering={f.filtering}
     />
   )
@@ -489,7 +483,7 @@ function UsageBlock({
   rawLabel,
 }: {
   icon: React.ReactNode
-  name: React.ReactNode
+  name: string
   subtitle?: React.ReactNode
   plan?: string | null
   controls?: React.ReactNode
@@ -498,29 +492,35 @@ function UsageBlock({
   rawLabel: string
 }) {
   return (
-    <section data-kit-block aria-busy={!quota && !failure ? true : undefined} className="@container min-w-0 space-y-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-1">
-        <div className="flex min-w-0 flex-1 basis-48 items-center gap-3">
+    <Section
+      label={name}
+      hint={
+        <span className="flex min-w-0 items-center gap-2">
           {icon}
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <h3 className="min-w-0 truncate text-sm font-medium">{name}</h3>
-              <PlanBadge plan={plan} />
-            </div>
-            <div className="mt-0.5 truncate text-sm text-muted-foreground">{subtitle}</div>
-          </div>
-        </div>
-        {controls && <div className="ml-auto flex shrink-0 items-center gap-1.5">{controls}</div>}
+          <span className="min-w-0 truncate">{subtitle}</span>
+        </span>
+      }
+      action={
+        (plan || controls) && (
+          <>
+            <PlanBadge plan={plan} />
+            {controls}
+          </>
+        )
+      }
+    >
+      {/* Not "no plan here" as a zeroed bar: a body with no rows says why. */}
+      <div aria-busy={!quota && !failure ? true : undefined} className="@container min-w-0 space-y-3">
+        {failure ? (
+          failure
+        ) : quota && quota.windows.length === 0 ? (
+          <Empty icon={GaugeIcon}>{quotaStatusText(quota)}</Empty>
+        ) : (
+          <UsageTable quota={quota} loading={!quota} />
+        )}
+        {quota && <ReadingExtras quota={quota} rawLabel={rawLabel} />}
       </div>
-      {failure ? (
-        failure
-      ) : quota && quota.windows.length === 0 ? (
-        <EmptyNote>{quotaStatusText(quota)}</EmptyNote>
-      ) : (
-        <UsageTable quota={quota} loading={!quota} />
-      )}
-      {quota && <ReadingExtras quota={quota} rawLabel={rawLabel} />}
-    </section>
+    </Section>
   )
 }
 
@@ -531,18 +531,10 @@ const countOf = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`
     anonymous blocks. */
 function UsageSkeleton() {
   return (
-    <div className="space-y-8">
-      {[0, 1].map((block) => (
-        <UsageBlock
-          key={block}
-          icon={<Skeleton className="size-7 shrink-0 rounded-md" />}
-          name={<Skeleton className="h-4 w-32 max-w-full" />}
-          subtitle={<Skeleton className="h-3 w-44 max-w-full" />}
-          quota={null}
-          rawLabel=""
-        />
-      ))}
-    </div>
+    <>
+      <GroupRowsSkeleton rows={3} label />
+      <GroupRowsSkeleton rows={3} label />
+    </>
   )
 }
 
@@ -563,7 +555,7 @@ function ProfileUsage({ profile, initial }: { profile: Profile; initial: QuotaSn
 
   return (
     <UsageBlock
-      icon={<ProfileIcon profile={profile} className="size-7 shrink-0" />}
+      icon={<ProfileIcon profile={profile} className="size-4 shrink-0" />}
       name={profile.name}
       subtitle={[kind, accounts > 0 ? countOf(accounts, "account") : null, quota ? readAt(quota) : null].filter(Boolean).join(" · ")}
       plan={quota?.planName}
@@ -599,7 +591,7 @@ function AgentUsage({
 
   return (
     <UsageBlock
-      icon={<AgentIcon agentId={agentId} className="size-7 shrink-0" />}
+      icon={<AgentIcon agentId={agentId} className="size-4 shrink-0" />}
       name={agentName}
       subtitle={quota ? `${profileName} · ${readAt(quota)}` : undefined}
       plan={quota?.planName}
@@ -607,7 +599,7 @@ function AgentUsage({
         <>
           {profiles.length > 1 && (
             <Select value={profileId} onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}>
-              <SelectTrigger size="sm" className="w-28 text-sm pointer-coarse:h-11" aria-label={`Profile ${agentName} is read through`}>
+              <SelectTrigger size="sm" className={cn(ROW_CONTROL, "pointer-coarse:h-11")} aria-label={`Profile ${agentName} is read through`}>
                 <SelectValue>{profileName}</SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -758,8 +750,8 @@ export function QuotaPage() {
       <PageHeader
         meta={meta}
         action={
-          <Button variant="outline" className="h-11 @panel-sm:h-9" loading={busy} onClick={() => reload(true)}>
-            <RefreshCwIcon className={cn("size-4", busy && "animate-spin")} />
+          <Button variant="outline" loading={busy} onClick={() => reload(true)}>
+            <RefreshCwIcon data-icon="inline-start" className={cn(busy && "animate-spin")} />
             Refresh all
           </Button>
         }
@@ -769,32 +761,29 @@ export function QuotaPage() {
         /* Nothing to draw, and the list is the only thing that could still name
            something the catalog has not caught up with — so a wait until it
            answers, and an empty page after. */
-        <EmptyCard
-          icon={GaugeIcon}
-          text="Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that sells a coding plan reports it when the profile names a usage provider in Settings › Profiles."
-        />
+        <Empty size="lg" icon={GaugeIcon}>
+          Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that
+          sells a coding plan reports it when the profile names a usage provider in Settings › Profiles.
+        </Empty>
       ) : (
         /* Providers first — somebody configured them on purpose — then the
            runtime logins. */
-        <div>
+        <>
           {providerProfiles.length + probeAgents.length === 0 && <UsageSkeleton />}
           {providerProfiles.length > 0 && (
             <Section label="Providers" hint="Plans read from a profile's own provider account.">
-              <div className="space-y-8">
-                {providerProfiles.map((profile) => (
-                  <ProfileUsage
-                    key={`profile:${profile.id}`}
-                    profile={profile}
-                    initial={readingFor((quota) => quota.source === "profile" && quota.profileId === profile.id)}
-                  />
-                ))}
-              </div>
+              {providerProfiles.map((profile) => (
+                <ProfileUsage
+                  key={`profile:${profile.id}`}
+                  profile={profile}
+                  initial={readingFor((quota) => quota.source === "profile" && quota.profileId === profile.id)}
+                />
+              ))}
             </Section>
           )}
           {probeAgents.length > 0 && (
             <Section label="Runtime logins" hint="What each agent's own subscription has left on this machine.">
-              <div className="space-y-8">
-                {probeAgents.map((agent) => (
+              {probeAgents.map((agent) => (
                   <AgentUsage
                     key={`agent:${agent.id}`}
                     agentId={agent.id}
@@ -806,10 +795,9 @@ export function QuotaPage() {
                     profiles={profilesFor(agent.id)}
                   />
                 ))}
-              </div>
             </Section>
           )}
-        </div>
+        </>
       )}
     </>
   )

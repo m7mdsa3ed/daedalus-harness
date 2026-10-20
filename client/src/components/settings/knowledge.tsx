@@ -31,11 +31,12 @@ import {
 } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { cn } from "@/lib/utils"
+import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
-import { captureError, reportError, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, reportError, type InlineError } from "@/lib/errors"
 import { useAddKnowledge, useAllKnowledge, useDeleteKnowledge } from "@/lib/queries/surfaces"
 import type { KnowledgeEntryAcross } from "@/lib/workspace/knowledge-api"
-import { Field, PageHeader, StatStrip } from "./primitives"
+import { Field, PageHeader, ROW_CONTROL, Section, StatStrip } from "./primitives"
 import { sectionMeta } from "./sections"
 
 const ALL = "__all__"
@@ -85,7 +86,7 @@ export function KnowledgePage() {
   const confirm = useConfirm()
   /* The cache owns the read; the delete's invalidation is the refresh, and
      `busy` only covers the await so a double click cannot fire twice. */
-  const { data: entries, refetch } = useAllKnowledge()
+  const { data: entries, error: loadError, refetch } = useAllKnowledge()
   const addEntry = useAddKnowledge()
   const deleteEntry = useDeleteKnowledge()
   const [pickedId, setProjectId] = React.useState(ALL)
@@ -134,20 +135,20 @@ export function KnowledgePage() {
   const countOf = (id: string) => (entries ?? []).filter((e) => e.projectId === id).length
   const total = entries?.length ?? 0
   const stats = [
-    { label: "Entries", value: entries ? total : "—" },
-    { label: "Projects", value: entries ? new Set(entries.map((e) => e.projectId)).size : "—", hint: "with entries" },
-    { label: "Tags", value: entries ? new Set(entries.flatMap((e) => e.tags)).size : "—" },
+    { label: "Entries", value: total, loading: !entries && !loadError },
+    { label: "Projects", value: new Set((entries ?? []).map((e) => e.projectId)).size, hint: "with entries", loading: !entries && !loadError },
+    { label: "Tags", value: new Set((entries ?? []).flatMap((e) => e.tags)).size, loading: !entries && !loadError },
   ]
 
   const actions = (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      <Button variant="ghost" size="icon-sm" className="pointer-coarse:size-11" title="Refresh" disabled={busy} onClick={() => void refetch()}>
+    <>
+      <Button variant="outline" size="icon" title="Refresh" disabled={busy} onClick={() => void refetch()}>
         <RefreshCwIcon />
       </Button>
-      <Button className="h-11 @panel-sm:h-9" onClick={() => setAdding(true)} disabled={projects.length === 0}>
-        <Plus className="size-4" /> New entry
+      <Button onClick={() => setAdding(true)} disabled={projects.length === 0}>
+        <Plus data-icon="inline-start" /> New entry
       </Button>
-    </div>
+    </>
   )
 
   const columns = React.useMemo<ColumnDef<KnowledgeEntryAcross, unknown>[]>(
@@ -194,7 +195,7 @@ export function KnowledgePage() {
       {
         id: "delete",
         label: "Delete",
-        icon: <Trash2 className="size-4" />,
+        icon: <Trash2 />,
         tone: "danger",
         disabled: () => busy,
         onClick: (entry) => void removeRef.current(entry),
@@ -258,7 +259,7 @@ export function KnowledgePage() {
 
   const projectFilter = (
     <Select value={projectId} onValueChange={(value) => setProjectId(value ?? ALL)}>
-      <SelectTrigger className="w-full min-w-0 max-w-full data-[size=default]:pointer-coarse:h-11 @panel-sm:w-48" aria-label="Project">
+      <SelectTrigger className={cn(ROW_CONTROL, "pointer-coarse:h-11")} aria-label="Project">
         <SelectValue>
           {projectId === ALL
             ? `All projects (${total})`
@@ -276,45 +277,53 @@ export function KnowledgePage() {
     </Select>
   )
 
-  const emptyText = needle
-    ? "No entries match that search."
-    : projectId === ALL
-      ? "Nothing in the knowledge base yet. Link the built-in knowledge MCP server to a profile or a thread and the agent can start writing to it — or add an entry by hand."
-      : "Nothing recorded for this project yet."
-
   return (
     <>
       <PageHeader meta={meta} action={actions} />
       <StatStrip stats={stats} />
-      <DataTable
-        columns={columns}
-        data={shown}
-        getRowId={(entry) => entry.id}
-        isLoading={entries === undefined}
-        skeletonRows={5}
-        pageSize={25}
-        mark={() => <BookOpen />}
-        actions={tableActions}
-        expand={expand}
-        onRowClick={onRowClick}
-        mobile={mobile}
-        toolbar={projectFilter}
-        filtering={{
-          search: { value: search, onChange: setSearch, placeholder: "Search entries..." },
-          // The project pick narrows too, so the toolbar says "n of N" for it.
-          count: projectId === ALL ? 0 : 1,
-          totalCount: total,
-        }}
-        emptyIcon={<BookOpen />}
-        emptyMessage={emptyText}
-        emptyAction={
-          projects.length > 0 && !needle ? (
-            <Button className="h-11 @panel-sm:h-9" onClick={() => setAdding(true)}>
-              <Plus className="size-4" /> New entry
-            </Button>
-          ) : undefined
-        }
-      />
+      {loadError ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(loadError, "Couldn't read the knowledge base")} onRetry={() => void refetch()} />
+        </Section>
+      ) : entries && total === 0 ? (
+        <Empty
+          size="lg"
+          icon={BookOpen}
+          action={
+            projects.length > 0 ? (
+              <Button className="pointer-coarse:h-11" onClick={() => setAdding(true)}>
+                <Plus data-icon="inline-start" /> New entry
+              </Button>
+            ) : undefined
+          }
+        >
+          Nothing in the knowledge base yet. Link the built-in knowledge MCP server to a profile or a thread
+          and the agent can start writing to it — or add an entry by hand.
+        </Empty>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={shown}
+          getRowId={(entry) => entry.id}
+          isLoading={entries === undefined}
+          skeletonRows={5}
+          pageSize={25}
+          mark={() => <BookOpen />}
+          actions={tableActions}
+          expand={expand}
+          onRowClick={onRowClick}
+          mobile={mobile}
+          toolbar={projectFilter}
+          filtering={{
+            search: { value: search, onChange: setSearch, placeholder: "Search entries..." },
+            // The project pick narrows too, so the toolbar says "n of N" for it.
+            count: projectId === ALL ? 0 : 1,
+            totalCount: total,
+          }}
+          emptyIcon={<BookOpen />}
+          emptyMessage={!needle && projectId !== ALL ? "Nothing recorded for this project yet." : undefined}
+        />
+      )}
       {adding && (
         <AddEntryDialog
           projects={projects}
@@ -372,17 +381,17 @@ function AddEntryDialog({
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent>
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Add knowledge entry</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
             Written to the project's knowledge base, where the agent's own entries go.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <div className="space-y-4">
+        <>
           <Field label="Project">
             <Select value={projectId} onValueChange={(value) => setProjectId(value ?? "")}>
-              <SelectTrigger className="w-full data-[size=default]:pointer-coarse:h-11">
+              <SelectTrigger className="w-full">
                 <SelectValue>{projects.find((p) => p.id === projectId)?.name ?? "Pick a project"}</SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -403,14 +412,14 @@ function AddEntryDialog({
           <Field label="Tags" hint="Optional — comma-separated.">
             <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="architecture, decisions" />
           </Field>
-        </div>
+        </>
         <ErrorNote error={error} />
         <ResponsiveDialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void save()} disabled={!canSave}>
-            {saving ? "Saving…" : "Add entry"}
+          <Button onClick={() => void save()} disabled={!canSave} loading={saving}>
+            Add entry
           </Button>
         </ResponsiveDialogFooter>
       </ResponsiveDialogContent>

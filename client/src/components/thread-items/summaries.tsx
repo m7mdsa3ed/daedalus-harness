@@ -99,21 +99,28 @@ export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> })
         {shown.map((item, index) => {
           const Icon = KIND_ICONS[item.kind] ?? WrenchIcon
           return (
+            /* The kind tints are translucent, so each mark stands on an opaque
+               disc of the page's ground — an overlapped neighbour must not
+               show through. */
             <span
               key={`${item.id}-${index}`}
               title={item.title}
-              className={cn(
-                "grid size-5 shrink-0 place-items-center rounded-full ring-2 ring-background",
-                KIND_CHIPS[item.colorKind] ?? KIND_CHIPS.other,
-                KIND_COLORS[item.colorKind] ?? KIND_COLORS.other
-              )}
+              className="relative size-5 shrink-0 rounded-full bg-background ring-1 ring-background transition-colors duration-150 group-hover/fold:bg-muted group-hover/fold:ring-muted"
             >
-              <Icon className="size-3" />
+              <span
+                className={cn(
+                  "grid size-full place-items-center rounded-full",
+                  KIND_CHIPS[item.colorKind] ?? KIND_CHIPS.other,
+                  KIND_COLORS[item.colorKind] ?? KIND_COLORS.other
+                )}
+              >
+                <Icon className="size-3" />
+              </span>
             </span>
           )
         })}
         {hidden > 0 && (
-          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-foreground ring-2 ring-background">
+          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-foreground ring-1 ring-background transition-colors duration-150 group-hover/fold:bg-background group-hover/fold:ring-muted">
             +{hidden}
           </span>
         )}

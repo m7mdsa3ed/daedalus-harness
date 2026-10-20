@@ -40,6 +40,7 @@ import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { ProjectIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
+import { PageFrame } from "@/components/page-primitives"
 import {
   automationsPath,
   boardPath,
@@ -73,16 +74,14 @@ export function LandingPage({
        things standing in the way. Its own container, because the setup list is
        a document to read and the composer below is a box to be centred. */
     return (
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <main className="mx-auto w-full max-w-3xl px-4 pt-[calc(var(--app-header-h)+1.5rem)] pb-16 @panel-sm:px-8 @panel-sm:pt-[calc(var(--app-header-h)+2.5rem)]">
-          <LandingSetup
-            projects={projects.length}
-            profiles={profiles.length}
-            onOpenProjects={() => onOpenSettings("projects")}
-            onOpenProfiles={() => onOpenSettings("profiles")}
-          />
-        </main>
-      </div>
+      <PageFrame width="form">
+        <LandingSetup
+          projects={projects.length}
+          profiles={profiles.length}
+          onOpenProjects={() => onOpenSettings("projects")}
+          onOpenProfiles={() => onOpenSettings("profiles")}
+        />
+      </PageFrame>
     )
   }
   /* A component of its own, and this is the only reason: the draft-minting
@@ -247,11 +246,11 @@ function QuickActions({
   )
   return (
     <div className="flex flex-wrap content-start items-start justify-center gap-2 px-4 pt-6">
-      {chip(onThread, <MessageSquarePlusIcon />, "New thread")}
-      {chip(go(boardPath()), <SquareKanbanIcon />, "Tasks")}
-      {chip(go(automationsPath()), <RepeatIcon />, "Automations")}
-      {chip(go("/notifications"), <BellIcon />, "Inbox")}
-      {chip(go(settingsRootPath()), <SettingsIcon />, "Settings")}
+      {chip(onThread, <MessageSquarePlusIcon data-icon="inline-start" />, "New thread")}
+      {chip(go(boardPath()), <SquareKanbanIcon data-icon="inline-start" />, "Tasks")}
+      {chip(go(automationsPath()), <RepeatIcon data-icon="inline-start" />, "Automations")}
+      {chip(go("/notifications"), <BellIcon data-icon="inline-start" />, "Inbox")}
+      {chip(go(settingsRootPath()), <SettingsIcon data-icon="inline-start" />, "Settings")}
       {projects.slice(0, 4).map((project) =>
         chip(go(projectPath(project.id)), <ProjectIcon project={project} className="size-4" />, project.name, project.id)
       )}

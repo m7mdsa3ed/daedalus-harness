@@ -248,12 +248,12 @@ export function HelperForm({
       {actions && (
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           {onCancel && (
-            <Button type="button" variant="ghost" onClick={onCancel} disabled={saving}>
+            <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
               Cancel
             </Button>
           )}
-          <Button type="submit" disabled={saving || !name.trim() || !command.trim()}>
-            <Plus /> {saving ? "Saving…" : editingId ? "Save changes" : "Add command"}
+          <Button type="submit" loading={saving} disabled={!name.trim() || !command.trim()}>
+            <Plus data-icon="inline-start" /> {editingId ? "Save changes" : "Add command"}
           </Button>
         </div>
       )}

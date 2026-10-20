@@ -810,11 +810,11 @@ export function LayoutSettings({ scope = "transcript" }: { scope?: "transcript" 
         <Button
           variant="outline"
           size="sm"
-          className="h-11 @panel-sm:h-9"
+          className="pointer-coarse:h-11"
           disabled={changedKeys.size === 0}
           onClick={() => resetLayoutOptions(scope)}
         >
-          <RotateCcw />
+          <RotateCcw data-icon="inline-start" />
           {changedKeys.size === 0
             ? "All at defaults"
             : `Reset ${changedKeys.size} change${changedKeys.size === 1 ? "" : "s"}`}

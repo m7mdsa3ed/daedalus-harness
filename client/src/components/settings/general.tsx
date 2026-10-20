@@ -2,14 +2,8 @@ import * as React from "react"
 import { Plus, Server, Trash2, Pencil, ArrowRightLeft, Unplug } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogFooter,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
+import { Empty } from "@/components/empty"
+import { usePrompt } from "@/components/prompt-dialog"
 import { teardownPush } from "@/lib/push"
 import {
   loadServers,
@@ -47,8 +41,8 @@ export function GeneralPage() {
       <PageHeader
         meta={meta}
         action={
-          <Button className="h-11 @panel-sm:h-9" onClick={onAddServer}>
-            <Plus className="size-4" /> Add server
+          <Button onClick={onAddServer}>
+            <Plus data-icon="inline-start" /> Add server
           </Button>
         }
       />
@@ -68,30 +62,28 @@ export function GeneralPage() {
    throughout the app. */
 function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => void }) {
   const confirm = useConfirm()
+  const prompt = usePrompt()
   const [servers, setServers] = React.useState(loadServers)
-  const [renaming, setRenaming] = React.useState<ServerSettings | null>(null)
-  const [renameValue, setRenameValue] = React.useState("")
 
   const switchTo = (server: ServerSettings) => {
     if (server.id === active.id) return
     setActiveServer(server.id)
   }
-  const startRename = (server: ServerSettings) => {
-    setRenaming(server)
-    setRenameValue(server.name)
-  }
-  const saveRename = () => {
-    if (!renaming) return
-    const name = renameValue.trim()
-    if (name && name !== renaming.name) {
-      renameServer(renaming.id, name)
-      if (renaming.id === active.id) {
+  const startRename = async (server: ServerSettings) => {
+    const name = await prompt({
+      title: "Rename server",
+      value: server.name,
+      placeholder: serverName(server.url),
+      confirmLabel: "Save",
+    })
+    if (name && name !== server.name) {
+      renameServer(server.id, name)
+      if (server.id === active.id) {
         location.assign("/")
         return
       }
       setServers(loadServers())
     }
-    setRenaming(null)
   }
   /* Forgetting the active server has to drop this device from its push list
      first — the token outlives the connection, so a server nobody is connected
@@ -165,10 +157,10 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
   /* eslint-disable react-hooks/exhaustive-deps */
   const actions = React.useMemo<TableAction<ServerSettings>[]>(() => [
     { id: "switch", label: "Switch", icon: <ArrowRightLeft />, onClick: switchTo, hidden: (s) => s.id === active.id, position: "left" },
-    { id: "rename", label: "Rename", icon: <Pencil />, onClick: startRename, position: "left" },
+    { id: "rename", label: "Rename", icon: <Pencil />, onClick: (s) => void startRename(s), position: "left" },
     { id: "disconnect", label: "Disconnect", icon: <Unplug />, tone: "danger", onClick: (s) => void forget(s), hidden: (s) => s.id !== active.id },
     { id: "forget", label: "Forget", icon: <Trash2 />, tone: "danger", onClick: (s) => void forget(s), hidden: (s) => s.id === active.id },
-  ], [active, confirm])
+  ], [active, confirm, prompt])
   /* eslint-enable react-hooks/exhaustive-deps */
 
   const f = useTableFilter(servers, {
@@ -178,11 +170,24 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
   })
 
   return (
-    <>
-      <Section
-        label={`Servers (${servers.length})`}
-        hint="Each server keeps its own threads; this device stores the URL and token of every one it knows."
-      >
+    <Section
+      label="Servers"
+      count={servers.length}
+      hint="Each server keeps its own threads; this device stores the URL and token of every one it knows."
+    >
+      {servers.length === 0 ? (
+        <Empty
+          size="lg"
+          icon={Server}
+          action={
+            <Button className="pointer-coarse:h-11" onClick={onAdd}>
+              <Plus data-icon="inline-start" /> Add server
+            </Button>
+          }
+        >
+          No servers stored on this device.
+        </Empty>
+      ) : (
         <DataTable
           columns={columns}
           data={f.rows}
@@ -192,41 +197,9 @@ function ServersGroup({ active, onAdd }: { active: ServerSettings; onAdd: () => 
           actions={actions}
           rowClassName={(s) => (s.id === active.id ? "bg-muted [&>td:first-child]:bg-muted" : undefined)}
           emptyIcon={<Server />}
-          emptyMessage={f.narrowed ? "No servers match." : "No servers stored on this device."}
-          emptyAction={
-            <Button className="pointer-coarse:h-11" onClick={onAdd}>
-              <Plus className="size-4" /> Add server
-            </Button>
-          }
         />
-      </Section>
-      <ResponsiveDialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
-        <ResponsiveDialogContent className="sm:max-w-sm">
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle>Rename server</ResponsiveDialogTitle>
-          </ResponsiveDialogHeader>
-          <Input
-            autoFocus
-            aria-label="Server name"
-            className="pointer-coarse:h-11"
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") saveRename()
-            }}
-            placeholder={renaming ? serverName(renaming.url) : undefined}
-          />
-          <ResponsiveDialogFooter>
-            <Button variant="outline" className="pointer-coarse:h-11" onClick={() => setRenaming(null)}>
-              Cancel
-            </Button>
-            <Button className="pointer-coarse:h-11" onClick={saveRename} disabled={!renameValue.trim()}>
-              Save
-            </Button>
-          </ResponsiveDialogFooter>
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
-    </>
+      )}
+    </Section>
   )
 }
 
@@ -246,7 +219,9 @@ function AboutStrip() {
           {meta.data ? (
             <StatusBadge tone="info" dot={false}>{meta.data.version}</StatusBadge>
           ) : meta.isError ? (
-            <span className="text-sm text-muted-foreground">{errorText(meta.error)}</span>
+            <span title={errorText(meta.error)}>
+              <StatusBadge tone="bad">Unavailable</StatusBadge>
+            </span>
           ) : null}
         </Row>
         <Row title="Client" subtitle="The build this device is running.">

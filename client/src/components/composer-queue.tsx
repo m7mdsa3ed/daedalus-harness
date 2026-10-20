@@ -19,7 +19,6 @@ import { UserMessageText } from "@/components/thread-items/user-message"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
-import { Spinner } from "@/components/ui/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -113,7 +112,6 @@ export function ComposerQueue({
               } together as one`}
               onClick={() => sendMany(pickedIds)}
             >
-              {busy && <Spinner className="size-3" />}
               {pickedIds.length > 0 ? `Send ${pickedIds.length} selected` : "Send all"}
             </Button>
           )}
@@ -205,7 +203,10 @@ function QueuedMessageRow({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       aria-busy={busy || undefined}
       className={cn(
-        "group/queued relative flex min-w-0 flex-col gap-1 rounded-xl border border-dashed bg-muted/50 px-3 py-2",
+        /* Every row is waiting on the agent — a steer for the step boundary, a
+           queued one for the turn's end — so it wears the busy ring a loading
+           Button does (push/pull). */
+        "group/queued harness-busy-ring relative flex min-w-0 flex-col gap-1 rounded-xl border border-dashed bg-muted/50 px-3 py-2",
         "transition-colors hover:bg-muted",
         busy && "opacity-50",
         isDragging && "z-10 bg-muted"
@@ -256,7 +257,7 @@ function QueuedMessageRow({
                 title="Steer: send this into the running turn without stopping it"
                 onClick={() => run("steer", actions.queueSteer(sessionId, item.id))}
               >
-                {action === "steer" ? <Spinner className="size-3" /> : <CornerDownRightIcon className="size-3" />}
+                <CornerDownRightIcon data-icon="inline-start" />
                 Steer
               </Button>
             )}
@@ -269,7 +270,7 @@ function QueuedMessageRow({
               title={running ? "Stop the running turn and send this now" : "Send this now"}
               onClick={() => run("send", actions.queueSendNow(sessionId, [item.id]))}
             >
-              {action === "send" ? <Spinner className="size-3" /> : <SendHorizontalIcon className="size-3" />}
+              <SendHorizontalIcon data-icon="inline-start" />
               Send now
             </Button>
             <Button
@@ -281,7 +282,7 @@ function QueuedMessageRow({
               title="Take it back to the composer — this removes it from the queue"
               onClick={edit}
             >
-              {action === "edit" ? <Spinner className="size-3" /> : <PencilIcon className="size-3" />}
+              <PencilIcon data-icon="inline-start" />
               Edit
             </Button>
             <Button
@@ -293,7 +294,7 @@ function QueuedMessageRow({
               title="Remove from queue"
               onClick={() => run("remove", actions.queueRemove(sessionId, item.id))}
             >
-              {action === "remove" ? <Spinner className="size-3" /> : <XIcon className="size-3" />}
+              <XIcon data-icon="inline-start" />
               Remove
             </Button>
           </div>

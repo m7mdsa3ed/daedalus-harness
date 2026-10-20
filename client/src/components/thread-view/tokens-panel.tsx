@@ -48,14 +48,30 @@ const sum = (parts: PromptParts) => Object.values(parts).reduce((n, v) => n + v,
 /** The columns the request chart draws, newest last — more would be slivers. */
 const CHART_MAX = 48
 
-function Block({ title, hint, children }: { title: string; hint?: React.ReactNode; children: React.ReactNode }) {
+/** One card of an inspector reading (Details, Tokens): a caption strip — its
+    mark, its title and a hint at the end — over the card's body. The one
+    shape, so every reading's cards are the same card. */
+export function InspectorCard({
+  title,
+  icon,
+  hint,
+  children,
+}: {
+  title: React.ReactNode
+  icon?: React.ReactNode
+  hint?: React.ReactNode
+  children: React.ReactNode
+}) {
   return (
-    <Card size="sm" className="gap-0 p-3">
-      <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
-        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+    <Card size="sm" className="gap-0 py-0">
+      <div className="flex min-w-0 items-center gap-2 border-b px-3 py-2">
+        <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium text-muted-foreground [&_svg:not([class*='size-'])]:size-3.5">
+          {icon}
+          {title}
+        </h2>
+        {hint && <span className="shrink-0 truncate text-xs text-muted-foreground">{hint}</span>}
       </div>
-      {children}
+      <div className="p-3">{children}</div>
     </Card>
   )
 }
@@ -378,9 +394,9 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
   const peak = steps.reduce((best, step, i) => (step.update.used > best.used ? { used: step.update.used, number: i + 1 } : best), { used: 0, number: 0 })
 
   return (
-    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
+    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-2.5">
       {billed && billedRows && (
-        <Block title="Billed" hint={`${steps.length} steps · ${billedTurns} turns`}>
+        <InspectorCard title="Billed" hint={`${steps.length} steps · ${billedTurns} turns`}>
           <p className="text-2xl font-medium leading-none tabular-nums">{formatTokens(billed.totalTokens)}</p>
           <p className="mt-1 text-xs text-muted-foreground">tokens in total · {formatTokens(prompt)} sent, {formatTokens(billed.outputTokens)} generated</p>
 
@@ -422,12 +438,12 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
             parts={BILLED_PARTS.map((part) => ({ swatch: part.swatch, tokens: billedRows[part.key] }))}
           />
           <Rows total={billed.totalTokens} rows={BILLED_PARTS.map((part) => ({ label: part.label, swatch: part.swatch, value: billedRows[part.key] }))} />
-        </Block>
+        </InspectorCard>
       )}
 
       {spend.length > 0 && <SubagentsBlock spend={spend} />}
 
-      <Block title="Prompt" hint={selected ? <Tag>{selected.source === "agent" ? "agent breakdown" : selected.source === "gateway" ? "gateway estimate" : "transcript estimate"}</Tag> : undefined}>
+      <InspectorCard title="Prompt" hint={selected ? <Tag>{selected.source === "agent" ? "agent breakdown" : selected.source === "gateway" ? "gateway estimate" : "transcript estimate"}</Tag> : undefined}>
         {selected && all ? (
           <>
             <RequestChart requests={requests} picked={selected.number} onPick={setPicked} />
@@ -499,11 +515,11 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
             This agent doesn't report a prompt size per step, so only the billed figures above can be shown.
           </p>
         )}
-      </Block>
+      </InspectorCard>
 
-      <Block title="By step" hint={`${steps.length} ${steps.length === 1 ? "step" : "steps"} · ${turns.length} ${turns.length === 1 ? "turn" : "turns"}`}>
+      <InspectorCard title="By step" hint={`${steps.length} ${steps.length === 1 ? "step" : "steps"} · ${turns.length} ${turns.length === 1 ? "turn" : "turns"}`}>
         <StepList steps={steps} picked={selected?.number} onPick={setPicked} max={maxUsed} />
-      </Block>
+      </InspectorCard>
     </div>
   )
 }
@@ -522,7 +538,7 @@ function SubagentsBlock({ spend }: { spend: SubagentSpend[] }) {
     value: child.tokens,
   }))
   return (
-    <Block title="Subagents" hint={`${spend.length} ${spend.length === 1 ? "child" : "children"}`}>
+    <InspectorCard title="Subagents" hint={`${spend.length} ${spend.length === 1 ? "child" : "children"}`}>
       <p className="text-2xl font-medium leading-none tabular-nums">{formatTokens(total)}</p>
       <p className="mt-1 text-xs text-muted-foreground">tokens billed by subagents and workflow steps</p>
       <StackBar className="mt-3 h-2.5" label="Subagent tokens by child" total={total} parts={rows.map((r) => ({ swatch: r.swatch, tokens: r.value }))} />
@@ -530,7 +546,7 @@ function SubagentsBlock({ spend }: { spend: SubagentSpend[] }) {
       <p className="mt-3 text-xs leading-4 text-muted-foreground">
         Shown apart from Billed: depending on the agent, a child's tokens may already be counted in the turn that launched it.
       </p>
-    </Block>
+    </InspectorCard>
   )
 }
 

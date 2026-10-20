@@ -43,7 +43,7 @@ export function copyText(text: string) {
     inside a subagent (`SubagentTranscript`) and the steps inside a run
     (`workflow-run`) hang off it, and those two files may not import each other
     (see the header comment on workflow-run). */
-export const RAIL_CLASS = "mt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 border-s ps-2.5"
+export const RAIL_CLASS = "mt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 ps-2.5"
 
 /* ── Direction ── a step reads in the direction of its own text: an Arabic
    title puts the mark on the right and the title flush beside it, as one unit,
@@ -352,7 +352,7 @@ export const StepRow = React.memo(function StepRow({
           // cancels on BOTH sides: a `w-full` box only shifts left under a
           // negative start margin, which left the row's content edge 12px shy
           // of the right edge that messages run to.
-          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-150",
+          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-xl px-1.5 py-0.5 transition-colors duration-150",
           plain && "mx-0 w-full px-0 py-0 hover:bg-transparent",
           expandable && !plain && "hover:bg-muted",
           compact && "py-0",

@@ -18,13 +18,16 @@
    that is only explaining something. The glyph follows the tone unless a caller names
    its own (`icon={false}` for a box that reads better bare). A `title` is the
    one bold line saying what the box is about; the children are the body and any
-   controls; `action` is a control anchored to the end, against the first line.
+   controls; `action` is a control anchored to the end, against the first line
+   (an error's Copy, by default). A Notice carries no margin of its own: on a
+   page it is a `Section`'s child, in a card the card's spacing places it.
    Role is derived too (`alert` for the two tones that are news, `status` for the
    rest) so nothing has to remember to say it. */
 import * as React from "react"
 import { InfoIcon, TriangleAlertIcon } from "lucide-react"
 
 import { Alert } from "@/components/ui/alert"
+import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 
 type Tone = "neutral" | "info" | "warn" | "error"
@@ -54,6 +57,10 @@ export interface NoticeProps extends Omit<React.ComponentProps<"div">, "title"> 
   title?: React.ReactNode
   /** A control anchored to the end, against the first line. */
   action?: React.ReactNode
+  /** The text a Copy button at the end copies. An `error` whose body is a
+      plain string gets one for that string without asking. Ignored when an
+      `action` is given. */
+  copy?: string
 }
 
 export function Notice({
@@ -62,11 +69,14 @@ export function Notice({
   icon,
   title,
   action,
+  copy,
   className,
   children,
   ...props
 }: NoticeProps) {
   const t = tone ?? "neutral"
+  const copyText = copy ?? (t === "error" && typeof children === "string" ? children : undefined)
+  const end = action ?? (copyText ? <CopyButton text={copyText} size="icon-xs" /> : null)
   const Icon = TONE_ICON[t]
   const glyph = icon === false ? null : (icon ?? <Icon />)
   return (
@@ -86,7 +96,7 @@ export function Notice({
         {title && <p className="font-medium text-pretty">{title}</p>}
         {children}
       </div>
-      {action && <div className="shrink-0 self-center">{action}</div>}
+      {end && <div className="shrink-0 self-center">{end}</div>}
     </Alert>
   )
 }

@@ -20,6 +20,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
+import { Count } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -170,22 +171,22 @@ export function FilterPopover({
       <PopoverTrigger
         render={
           <Button type="button" variant={count > 0 ? "secondary" : "outline"} size="sm" className={cn(count === 0 && "border-dashed text-muted-foreground")}>
-            <Filter />
+            <Filter data-icon="inline-start" />
             <span className="hidden @panel-sm:inline">Filter</span>
-            {count > 0 && <Badge className="tabular-nums">{count}</Badge>}
+            {count > 0 && <Count>{count}</Count>}
           </Button>
         }
       />
-      <PopoverContent align="start" className="w-[22rem] gap-4 p-3">
+      <PopoverContent align="start" className="w-[min(22rem,calc(var(--float-w)-2rem))] gap-3 p-3">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">Filters</p>
           {count > 0 && (
             <Button type="button" variant="ghost" size="xs" onClick={() => onChange({ ...EMPTY_FILTERS, query: filters.query })} className="text-muted-foreground">
-              <X /> Clear all
+              <X data-icon="inline-start" /> Clear all
             </Button>
           )}
         </div>
-        <div className="grid max-h-[60vh] gap-4 overflow-y-auto">
+        <div className="grid max-h-[min(28rem,var(--available-height))] gap-4 overflow-y-auto">
           <Facet
             title="Status"
             options={statuses.map((s) => ({ id: s.id, label: s.name }))}
@@ -367,7 +368,7 @@ function SortButton({
       <DropdownMenuTrigger
         render={
           <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
-            <ArrowUpDown className="size-3.5" />
+            <ArrowUpDown data-icon="inline-start" />
             <span className="hidden @panel-sm:inline">
               {SORT_LABEL[view.sortBy]}
               {active && (view.sortDir === "asc" ? " ↑" : " ↓")}
@@ -411,7 +412,7 @@ function GroupButton({
       <DropdownMenuTrigger
         render={
           <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
-            <Group className="size-3.5" />
+            <Group data-icon="inline-start" />
             <span className="hidden @panel-sm:inline">{GROUP_LABEL[view.groupBy]}</span>
           </Button>
         }
@@ -443,7 +444,7 @@ function ColumnsButton({
       <DropdownMenuTrigger
         render={
           <Button type="button" variant="outline" size="sm" className="text-muted-foreground">
-            <Columns3 />
+            <Columns3 data-icon="inline-start" />
             <span className="hidden @panel-sm:inline">Columns</span>
           </Button>
         }
@@ -492,7 +493,7 @@ function SavedViewsButton({
       <DropdownMenuTrigger
         render={
           <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
-            <Bookmark className="size-3.5" />
+            <Bookmark data-icon="inline-start" />
             <span className="hidden @panel-sm:inline">{savedViews.find((v) => v.id === activeViewId)?.name ?? "Views"}</span>
           </Button>
         }
@@ -575,11 +576,11 @@ export function Toolbar({
   const groupable = mode === "list"
   const sortable = mode !== "board" && mode !== "calendar" && mode !== "timeline"
   return (
-    <div className="flex flex-col gap-2 border-b px-3 py-2 sm:px-4">
+    <div className="flex flex-col gap-2 border-b px-3 py-2 @panel-sm:px-4">
       {/* Row 1: View tabs + search + new task */}
       <div className="flex flex-wrap items-center gap-2">
         <ViewTabs mode={mode} onChange={onMode} />
-        <InputGroup className="h-8 min-w-0 flex-1 sm:max-w-xs">
+        <InputGroup className="h-8 min-w-0 flex-1 @panel-sm:max-w-xs">
           <InputGroupAddon>
             <SearchIcon />
           </InputGroupAddon>
@@ -607,7 +608,7 @@ export function Toolbar({
       </div>
 
       {/* Row 2: Filter pill bar + group/sort/columns + saved views */}
-      <div className="flex flex-wrap items-center gap-1.5 max-sm:flex-nowrap max-sm:overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-1.5 @max-panel-sm:flex-nowrap @max-panel-sm:overflow-x-auto">
         <FilterPopover filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} sprints={sprints} epics={epics} facets={facets} boardKey={boardKey} />
         <ActiveFilterPills filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} />
         <Separator orientation="vertical" className="h-4" />

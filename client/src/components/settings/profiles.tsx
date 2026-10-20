@@ -2,7 +2,7 @@ import * as React from "react"
 import { Copy, Cpu, ExternalLink, Eye, EyeOff, KeyRound, Pencil, Plus, Power, PowerOff, RefreshCw, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
-import { reportError } from "@/lib/errors"
+import { inlineFromQuery, reportError } from "@/lib/errors"
 import { VoiceBackendField } from "./voice"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { Button } from "@/components/ui/button"
@@ -44,6 +44,7 @@ import {
 } from "@/lib/settings"
 import {
   useAgents,
+  useCatalogState,
   useInvalidateProfileCatalog,
   useProfilePresets,
   useProfiles,
@@ -51,7 +52,10 @@ import {
 } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { ErrorNote } from "@/components/error-note"
 import {
+  Count,
+  FIELD_GRID,
   Field,
   FormActions,
   FormPageHeader,
@@ -60,10 +64,12 @@ import {
   LogoUpload,
   PageForm,
   PageHeader,
+  Section,
   StatStrip,
   StatusBadge,
   pairs,
 } from "./primitives"
+import { Empty } from "@/components/empty"
 import {
   ModelsSection,
   blankModelRow,
@@ -214,6 +220,7 @@ export function ProfilesPage() {
   const invalidate = useInvalidateProfileCatalog()
   const meta = sectionMeta("profiles")
   const profiles = useProfiles()
+  const state = useCatalogState("profiles")
   const agents = useAgents()
   const confirm = useConfirm()
   const navigate = useNavigate()
@@ -301,8 +308,8 @@ export function ProfilesPage() {
   }
 
   const newButton = (
-    <Button className="h-11 @panel-sm:h-9" onClick={() => void navigate(settingsFormPath("profiles"))}>
-      <Plus className="size-4" /> New profile
+    <Button onClick={() => void navigate(settingsFormPath("profiles"))}>
+      <Plus data-icon="inline-start" /> New profile
     </Button>
   )
 
@@ -590,44 +597,53 @@ export function ProfilesPage() {
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      {stored.length > 0 && (
-        <StatStrip
-          stats={[
-            { label: "Profiles", value: stored.length },
-            { label: "Offered", value: live },
-            { label: "Models", value: totalModels },
-            { label: "Need a key", value: needKey, tone: needKey > 0 ? "warn" : "default" },
-          ]}
-        />
+      {state.error ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(state.error, "Couldn't read the profiles")} onRetry={state.refetch} />
+        </Section>
+      ) : stored.length === 0 && !state.isPending ? (
+        <Empty size="lg" icon={KeyRound} action={<div className="[&_[data-slot=button]]:pointer-coarse:h-11">{newButton}</div>}>
+          No profiles yet. Every agent already runs on its own defaults — add a profile to point one at your
+          own gateway, key or model catalog.
+        </Empty>
+      ) : (
+        <>
+          <StatStrip
+            stats={[
+              { label: "Profiles", value: stored.length, loading: state.isPending },
+              { label: "Offered", value: live, loading: state.isPending },
+              { label: "Models", value: totalModels, loading: state.isPending },
+              { label: "Need a key", value: needKey, tone: needKey > 0 ? "warn" : "default", loading: state.isPending },
+            ]}
+          />
+          <DataTable
+            columns={columns}
+            data={shown}
+            getRowId={profileRowId}
+            isLoading={state.isPending}
+            actions={rowActions}
+            mobile={mobile}
+            mark={profileMark}
+            pageSize={25}
+            onRowClick={editRow}
+            filtering={f.filtering}
+            toolbar={
+              hiddenCount > 0 ? (
+                <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-muted-foreground pointer-coarse:min-h-11">
+                  <Switch checked={showHidden} onCheckedChange={setShowHidden} />
+                  Show {hiddenCount} hidden
+                </label>
+              ) : undefined
+            }
+            emptyIcon={<KeyRound />}
+            emptyMessage={
+              f.narrowed
+                ? undefined
+                : `Every profile is hidden. Turn on “Show ${hiddenCount} hidden” to see ${hiddenCount === 1 ? "it" : "them"}.`
+            }
+          />
+        </>
       )}
-      <DataTable
-        columns={columns}
-        data={shown}
-        getRowId={profileRowId}
-        actions={rowActions}
-        mobile={mobile}
-        mark={profileMark}
-        pageSize={25}
-        onRowClick={editRow}
-        filtering={stored.length > 0 ? f.filtering : undefined}
-        toolbar={
-          hiddenCount > 0 ? (
-            <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 text-sm text-muted-foreground @panel-sm:min-h-0">
-              <Switch checked={showHidden} onCheckedChange={setShowHidden} />
-              Show {hiddenCount} hidden
-            </label>
-          ) : undefined
-        }
-        emptyIcon={<KeyRound />}
-        emptyMessage={
-          stored.length === 0
-            ? "No profiles yet. Every agent already runs on its own defaults — add a profile to point one at your own gateway, key or model catalog."
-            : f.narrowed
-              ? "No profile matches."
-              : `Every profile is hidden. Turn on “Show ${hiddenCount} hidden” to see ${hiddenCount === 1 ? "it" : "them"}.`
-        }
-        emptyAction={stored.length === 0 ? newButton : undefined}
-      />
       <ResponsiveDialog open={syncProfileRow !== null} onOpenChange={(open) => !open && setSyncProfileRow(null)}>
         <ResponsiveDialogContent className="sm:max-w-md">
           <ResponsiveDialogHeader>
@@ -661,8 +677,8 @@ export function ProfilesPage() {
             <Button variant="outline" onClick={() => setSyncProfileRow(null)} disabled={syncing !== null}>
               Cancel
             </Button>
-            <Button onClick={() => void syncProfileTo()} disabled={!syncDestination || syncing !== null}>
-              {syncing ? "Syncing…" : "Sync profile"}
+            <Button onClick={() => void syncProfileTo()} disabled={!syncDestination} loading={syncing !== null}>
+              Sync profile
             </Button>
           </ResponsiveDialogFooter>
         </ResponsiveDialogContent>
@@ -755,7 +771,7 @@ function AgentOverride({ agent }: { agent: AgentRowData }) {
       onChange={(e) => setBaseUrl(agent.id, e.target.value)}
       placeholder={placeholder}
       aria-label={`${agent.name} base URL override`}
-      className="w-full min-w-0 font-mono text-sm"
+      className="w-full min-w-0 font-mono pointer-coarse:h-11"
     />
   )
 }
@@ -791,6 +807,8 @@ export function ProfileForm({
   settings,
   onDone,
   dialog = false,
+  formId,
+  onBusyChange,
 }: {
   profile: Profile | null
   agents: { id: string; name: string }[]
@@ -799,8 +817,11 @@ export function ProfileForm({
       select what it just made; null when the form was cancelled. */
   onDone: (saved: Profile | null) => void
   /** Drawn inside a dialog rather than as a settings route — the page header
-      is the dialog's own. */
+      and the footer are the dialog's own: its footer submits this form by
+      `formId`, and hears whether a save is running through `onBusyChange`. */
   dialog?: boolean
+  formId?: string
+  onBusyChange?: (busy: boolean) => void
 }) {
   // The library the pickers below draw from.
   const [form, setForm] = React.useState(() => ({
@@ -873,6 +894,7 @@ export function ProfileForm({
      stored key and catalog is not "start from". */
   const [preset, setPreset] = React.useState<ProfilePreset | null>(null)
   const { busy, error: saveError, run } = useAsyncAction()
+  React.useEffect(() => onBusyChange?.(busy), [busy, onBusyChange])
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const patchRow = (uid: string, patch: Partial<ModelRow>) =>
     setRows((r) => r.map((row) => (row.uid === uid ? { ...row, ...patch } : row)))
@@ -978,9 +1000,7 @@ export function ProfileForm({
   ]
   const aside = (text?: string) =>
     text ? (
-      <Badge variant="secondary" className="max-w-[40vw] truncate font-normal">
-        {text}
-      </Badge>
+      <Count className="max-w-48 truncate">{text}</Count>
     ) : undefined
 
   const Shell = dialog ? PlainShell : FormShell
@@ -993,13 +1013,13 @@ export function ProfileForm({
           onBack={() => onDone(null)}
         />
       )}
-      <PageForm onSubmit={save}>
+      <PageForm id={formId} onSubmit={save}>
         {/* A dialog gets no jump rail — it is a pick-and-go surface, and a rail
             in a modal is chrome on top of chrome. */}
         <Shell sections={sections}>
           <FormSection id="profile-provider" label="Provider" hint="Where requests go and the key they carry.">
             {!profile && <PresetPicker value={preset} onPick={applyPreset} />}
-            <div className="grid gap-4 @panel-sm:grid-cols-2">
+            <div className={FIELD_GRID}>
               <Field label="Name">
                 <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
               </Field>
@@ -1008,7 +1028,7 @@ export function ProfileForm({
                   value={form.baseUrl}
                   onChange={(e) => set({ baseUrl: e.target.value })}
                   placeholder="https://api.anthropic.com"
-                  className="font-mono text-sm"
+                  className="font-mono"
                 />
               </Field>
               <Field label="API key" hint={profile?.hasApiKey ? "Stored — leave empty to keep it." : "Never sent back to clients."}>
@@ -1040,7 +1060,7 @@ export function ProfileForm({
                     value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
                     onChange={(e) => set({ logoUrl: e.target.value })}
                     placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://models.dev/logos/openrouter.svg"}
-                    className="font-mono text-sm min-w-0 flex-1"
+                    className="min-w-0 flex-1 font-mono"
                   />
                   <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
                 </div>
@@ -1071,7 +1091,7 @@ export function ProfileForm({
                 filtering={agentFilter.filtering}
                 pageSize={50}
                 emptyIcon={<Cpu />}
-                emptyMessage={agentFilter.narrowed ? "No agent matches." : "No agents are registered on this server."}
+                emptyMessage={agentFilter.narrowed ? undefined : "No agents are registered on this server."}
               />
             </AgentLinksContext.Provider>
           </FormSection>
@@ -1080,7 +1100,7 @@ export function ProfileForm({
             id="profile-models"
             label="Models"
             hint="What the provider behind this profile serves. A model with no efforts has no reasoning-effort setting."
-            action={aside(rows.length > 0 ? `${rows.length} model${rows.length === 1 ? "" : "s"}` : undefined)}
+            count={rows.length > 0 ? rows.length : undefined}
           >
             <ModelsSection
               rows={rows}
@@ -1129,13 +1149,13 @@ export function ProfileForm({
               </Select>
             </Field>
             {form.usageKind !== "none" && (
-              <div className="grid gap-4 @panel-sm:grid-cols-2">
+              <div className={FIELD_GRID}>
                 <Field label="Usage host" hint="Optional — the provider's default unless it is served somewhere else.">
                   <Input
                     value={form.usageBaseUrl}
                     onChange={(e) => set({ usageBaseUrl: e.target.value })}
                     placeholder={usageProvider?.hostPlaceholder}
-                    className="font-mono text-sm"
+                    className="font-mono"
                   />
                 </Field>
                 <Field
@@ -1223,13 +1243,17 @@ export function ProfileForm({
                   onChange={(e) => set({ headers: e.target.value })}
                   rows={3}
                   placeholder="User-Agent: claude-cli/2.1.158 (external, sdk-cli)"
-                  className="font-mono text-sm"
+                  className="font-mono"
                 />
               </Field>
             </div>
           </FormSection>
         </Shell>
-        <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
+        {dialog ? (
+          <ErrorNote error={saveError} />
+        ) : (
+          <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
+        )}
       </PageForm>
     </>
   )

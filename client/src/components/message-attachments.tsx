@@ -186,7 +186,7 @@ function Lightbox({
   return (
     <Dialog open={image !== undefined} onOpenChange={(open) => !open && onIndex(null)}>
       <DialogContent
-        className="w-auto max-w-[min(64rem,calc(var(--float-w)-2rem))] gap-2 p-2"
+        className="w-auto max-w-[min(64rem,calc(var(--float-w)-2rem))] gap-2 p-2 ring-edge-float"
         onKeyDown={(event) => {
           if (!many) return
           if (event.key === "ArrowLeft") step(-1)

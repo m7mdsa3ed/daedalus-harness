@@ -26,7 +26,9 @@ import {
 import { useConfirm } from "@/components/confirm-dialog"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
-import { EmptyCard, Field, FormSection, INSET, lines, Toolbar } from "@/components/settings/primitives"
+import { Empty } from "@/components/empty"
+import { Field, FormSection, INSET, lines, Toolbar } from "@/components/settings/primitives"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -37,7 +39,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { Skeleton } from "@/components/ui/skeleton"
 import { captureError, type InlineError } from "@/lib/errors"
 import type { RoutineTrigger, RoutineTriggerKind, RoutineTriggerPatch } from "@/lib/settings"
 import {
@@ -210,16 +211,12 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
           is what the user sees, rather than a confident empty state. */}
       {triggers === null ? (
         error ? null : (
-          <div className="space-y-2">
-            <Skeleton className="h-20 w-full rounded-xl" />
-          </div>
+          <GroupRowsSkeleton rows={2} />
         )
       ) : triggers.length === 0 ? (
-        <EmptyCard
-          icon={CalendarClockIcon}
-          text="No triggers — this automation only fires when you run it by hand."
-          action={addMenu}
-        />
+        <Empty size="lg" icon={CalendarClockIcon} action={addMenu}>
+          No triggers — this automation only fires when you run it by hand.
+        </Empty>
       ) : (
         <>
           <Toolbar>{addMenu}</Toolbar>
@@ -287,7 +284,11 @@ function TriggerCard({
         </>
       }
     >
-      {trigger.lastError && <Notice tone="error">Last evaluation: {trigger.lastError}</Notice>}
+      {trigger.lastError && (
+        <Notice tone="error" copy={trigger.lastError}>
+          Last evaluation: {trigger.lastError}
+        </Notice>
+      )}
 
       {trigger.kind === "schedule" && <ScheduleFields trigger={trigger} onPatch={onPatch} />}
       {trigger.kind === "api" && (
@@ -435,7 +436,7 @@ function GitFields({
       </div>
       <Field label="Paths" hint="One glob per line. Empty means any path in the project.">
         <Textarea
-          className="font-mono text-sm"
+          className="font-mono"
           rows={3}
           placeholder={"src/**\ndocs/*.md"}
           value={paths}

@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import { ChipBadge, formatCount } from "@/components/composer-strip"
-import { Empty } from "@/components/empty"
 import { Badge } from "@/components/ui/badge"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { PILL, menuFilter } from "@/components/config-menu"
@@ -189,7 +188,7 @@ export function McpPicker({
         }
       />
       <PopoverContent align="start" className="w-80 gap-0 p-0" finalFocus={finalFocus}>
-        <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
+        <div className="flex items-center gap-2 border-b px-3 py-2.5">
           <span className="text-sm font-medium">MCP servers</span>
           <Badge variant="secondary" className="tabular-nums">
             {selected.length} of {mcpServers.length}
@@ -197,7 +196,7 @@ export function McpPicker({
           {pending && <span className="ml-auto text-xs text-primary">applies on next send</span>}
         </div>
         {searchable && (
-          <div className="px-2 pb-2">
+          <div className="px-2 pt-2">
             <InputGroup className="h-8">
               <InputGroupAddon>
                 <SearchIcon aria-hidden />
@@ -212,11 +211,13 @@ export function McpPicker({
             </InputGroup>
           </div>
         )}
-        <div className="max-h-[min(20rem,var(--available-height,20rem))] overflow-y-auto border-t px-1.5 py-1.5">
+        <div className="max-h-[min(20rem,var(--available-height,20rem))] overflow-y-auto px-1.5 py-1.5">
           {mcpServers.length === 0 ? (
-            <Empty className="border-0">No MCP servers in the library yet. Add one in Settings › MCP servers.</Empty>
+            <p className="px-2 py-2 text-xs text-muted-foreground">
+              No MCP servers in the library yet. Add one in Settings › MCP servers.
+            </p>
           ) : groups.length === 0 ? (
-            <Empty className="border-0">No server matches “{query.trim()}”.</Empty>
+            <p className="px-2 py-2 text-xs text-muted-foreground">No server matches “{query.trim()}”.</p>
           ) : (
             groups.map((group) => (
               <div key={group.label} className="mb-1 last:mb-0">
@@ -257,7 +258,7 @@ export function McpPicker({
               void navigate(settingsPath("mcp"))
             }}
           >
-            <SettingsIcon /> Manage
+            <SettingsIcon data-icon="inline-start" /> Manage
           </Button>
         </div>
       </PopoverContent>

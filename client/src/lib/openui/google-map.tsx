@@ -21,6 +21,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent, ItemMedia } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { errorText } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
@@ -202,9 +203,7 @@ export default function GoogleMap(props: Props) {
   return (
     <>
       {phase.kind === "loading" ? (
-        <div className="flex h-24 items-center justify-center gap-2 text-sm text-muted-foreground">
-          <Spinner className="size-3.5" /> Loading map...
-        </div>
+        <Skeleton aria-busy="true" className="h-24 w-full rounded-none" />
       ) : (
         <div className="p-3">
           {phase.kind === "unconfigured" ? (
@@ -213,7 +212,9 @@ export default function GoogleMap(props: Props) {
               <code>geo.googleServerKey</code>), then restart the server.
             </Notice>
           ) : (
-            <Notice tone="error">{phase.message}</Notice>
+            <Notice tone="error" copy={phase.message}>
+              {phase.message}
+            </Notice>
           )}
         </div>
       )}
@@ -539,7 +540,11 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
                 <Spinner className="size-3.5" /> Finding a route...
               </p>
             )}
-            {state.error && <Notice tone="error">{state.error}</Notice>}
+            {state.error && (
+              <Notice tone="error" copy={state.error}>
+                {state.error}
+              </Notice>
+            )}
             {state.none && <p className="text-xs text-muted-foreground">No {PROFILES.find((p) => p.id === profile)!.label.toLowerCase()} route between these points.</p>}
             {roads.length > 1 && (
               <ToggleGroup
@@ -591,7 +596,11 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
-              {foundState.error && <Notice tone="error">{foundState.error}</Notice>}
+              {foundState.error && (
+                <Notice tone="error" copy={foundState.error}>
+                  {foundState.error}
+                </Notice>
+              )}
               {cats.length > 0 && !foundState.busy && !foundState.error && found.length === 0 && (
                 <p className="text-xs text-muted-foreground">Nothing found {road ? "along this route" : "near here"}.</p>
               )}
@@ -625,9 +634,9 @@ function LoadedMap({ locations, routes, colors, focus, onFocus, label, children,
   )
 }
 
-function IconButton({ title, onClick, icon, disabled, pressed }: { title: string; onClick: () => void; icon: ReactNode; disabled?: boolean; pressed?: boolean }) {
+function IconButton({ title, onClick, icon, loading, pressed }: { title: string; onClick: () => void; icon: ReactNode; loading?: boolean; pressed?: boolean }) {
   return (
-    <Button type="button" variant={pressed ? "default" : "outline"} size="icon-sm" title={title} aria-pressed={pressed} disabled={disabled} onClick={onClick}>
+    <Button type="button" variant={pressed ? "default" : "outline"} size="icon-sm" title={title} aria-pressed={pressed} loading={loading} onClick={onClick}>
       {icon}
     </Button>
   )
@@ -687,7 +696,7 @@ function WaypointField({
           aria-label={name}
           className="h-8"
         />
-        <IconButton title="Search" onClick={() => void search()} icon={state.busy ? <Spinner /> : <Search />} disabled={state.busy} />
+        <IconButton title="Search" onClick={() => void search()} icon={<Search />} loading={state.busy} />
         <IconButton title="Pick on the map" onClick={onPick} icon={<Crosshair />} pressed={picking} />
         <IconButton title={count > 2 ? "Remove this stop" : "Clear"} onClick={onClear} icon={<X />} />
       </div>

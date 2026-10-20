@@ -190,7 +190,7 @@ export function DiffTab({
           aria-label="Read both sides again"
           onClick={() => setGeneration((current) => current + 1)}
         >
-          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} className="size-3.5" />
+          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
         </Button>
       </PanelToolbar>
       {hunks && original.text !== null && modified.text !== null && changes.length > 0 && (

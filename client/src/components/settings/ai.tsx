@@ -33,14 +33,14 @@ import {
 } from "@/components/ui/select"
 import { DataTable, TitleCell } from "@/components/ui/data-table"
 import { useTableFilter } from "@/lib/use-table-filter"
-import { Notice } from "@/components/notice"
+import { Empty } from "@/components/empty"
 import { aiCapable, enhancePick, formBuilderPick, gitPick, modelPickLabel, type AiPick } from "@/lib/ai-picks"
 import { useSetSideModel, useSideModel, type SideLane } from "@/lib/queries/side-models"
 import { useProfiles } from "@/lib/queries/catalog"
 import type { ColumnDef } from "@/lib/table"
 import { cn } from "@/lib/utils"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-import { Field, FormActions, FormPageHeader, FormSection, PageForm, PageHeader, StatusBadge } from "./primitives"
+import { Field, FormActions, FormPageHeader, FormSection, PageForm, PageHeader, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /** One helper: where it shows up, what it does, and the pick that decides what
@@ -394,12 +394,12 @@ export function AiPage() {
         /* Absence with a reason, not an empty page: these need a profile with a
            real endpoint behind them, and a virtual Default has none — which is
            also why the buttons themselves stay hidden until one exists. */
-        <Notice tone="neutral" title="No profile can run these yet">
-          They run against a stored profile's own OpenAI-compatible endpoint. Add one under
-          Settings › Profiles and it will be offered here.
-        </Notice>
+        <Empty size="lg" icon={meta.icon}>
+          No profile can run these yet. They run against a stored profile's own OpenAI-compatible
+          endpoint. Add one under Settings › Profiles and it will be offered here.
+        </Empty>
       ) : (
-        <>
+        <Section hint="Device picks are remembered on this device; the composer and decision models are stored on the server, so every device uses the same pair. The API key never leaves the server.">
           <DataTable
             columns={COLUMNS}
             data={f.rows}
@@ -408,14 +408,9 @@ export function AiPage() {
             mobile={mobile}
             pageSize={25}
             emptyIcon={<meta.icon />}
-            emptyMessage="No helper matches."
             filtering={f.filtering}
           />
-          <p className="mt-3 text-sm/relaxed text-muted-foreground">
-            Device picks are remembered on this device; the composer and decision models are stored
-            on the server, so every device uses the same pair. The API key never leaves the server.
-          </p>
-        </>
+        </Section>
       )}
     </>
   )
@@ -444,7 +439,7 @@ export function AiHelperPage() {
           }
         >
           <Field label="Profile">
-            <ProfileSelect helper={helper} className="h-11 @panel-sm:h-9" />
+            <ProfileSelect helper={helper} />
           </Field>
           <Field
             label="Model"
@@ -454,10 +449,10 @@ export function AiHelperPage() {
                 : "Or the profile's own default when nothing is picked."
             }
           >
-            <ModelSelect helper={helper} className="h-11 @panel-sm:h-9" />
+            <ModelSelect helper={helper} />
           </Field>
         </FormSection>
-        <FormActions busy={false} />
+        <FormActions busy={false} done={back} />
       </PageForm>
     </>
   )

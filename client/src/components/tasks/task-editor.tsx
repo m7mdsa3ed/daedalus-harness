@@ -20,7 +20,6 @@ import {
   Minus,
   Sparkles,
 } from "lucide-react"
-import { Spinner } from "@/components/ui/spinner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -236,8 +235,8 @@ export function TaskEditor({ value, onChange, placeholder, className, title }: T
               title={value.trim() ? "Restructure with AI" : "Draft with AI"}
               className="text-muted-foreground"
             >
-              {drafting ? <Spinner /> : <Sparkles />}
-              {drafting ? "Writing…" : "AI"}
+              <Sparkles data-icon="inline-start" />
+              AI
             </Button>
           )}
           <ToolbarButton title={source ? "Rich text" : "Markdown source"} active={source} onClick={toggleSource}>

@@ -26,10 +26,10 @@
    Layout is the **panel's**, so everything that reflows is a `@panel-sm:`
    container query and never `sm:`: settings can be half a window wide beside a
    terminal, and a media query would draw the desktop row there. Touch targets
-   are the **device's**, so rows and controls carry `min-h-11` outright rather
+   are the **device's**, so controls grow to 44px on `pointer-coarse:` rather
    than asking a width about a finger. */
 import * as React from "react"
-import { ArrowLeft, Search, type LucideIcon } from "lucide-react"
+import { Search, type LucideIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
 import { Badge } from "@/components/ui/badge"
@@ -42,6 +42,8 @@ import { logoFromFile } from "@/lib/logo-file"
 import { reportError } from "@/lib/errors"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { SurfaceHeader } from "@/components/page-primitives"
 import type { InlineError } from "@/lib/errors"
 import { KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { cn } from "@/lib/utils"
@@ -50,61 +52,52 @@ import { type PageMeta } from "./sections"
 import { AiFormBuilder } from "./ai-form-builder"
 
 
-/** Page title block: the section's mark, title and description, with room for
-    one action. The action stacks full-width under the title on a narrow panel
-    so it never crowds the text; at `@panel-sm` it sits to the right.
-
-    A hairline closes the header off from the groups: a group's label is a
-    plain heading now, not a small-caps caption on a rule, so without one the
-    page's own title and the first group's read as one block of headings. The
-    prose is clamped at 68ch — the descriptions in `sections.ts` are long. */
+/** A settings section's header: the section's mark, title and description,
+    with room for one action and a line of facts. It is `SurfaceHeader` — the
+    one header every page draws — fed from the section's `PageMeta`. */
 export function PageHeader({
   meta,
   action,
+  facts,
   flush = false,
 }: {
   /** `sectionMeta(...)` carries the section's icon; a page that passes a bare
       `PageMeta` simply gets no mark. */
   meta: PageMeta & { icon?: LucideIcon }
   action?: React.ReactNode
-  /** A `TabBar` follows: the track is what separates the header from the page
-      below it, so the header draws no rule of its own. */
+  /** Small facts and states under the description. */
+  facts?: React.ReactNode
+  /** Kept for old callers; the rule drops by itself when a track follows. */
   flush?: boolean
 }) {
-  const Icon = meta.icon
   return (
-    <header
-      className={cn(
-        "flex flex-col gap-4 @panel-sm:flex-row @panel-sm:items-start @panel-sm:justify-between",
-        flush ? "mb-4" : "mb-8 border-b pb-6"
-      )}
-    >
-      <div className="flex min-w-0 flex-1 items-start gap-4">
-        {Icon && (
-          <span
-            aria-hidden
-            className="hidden size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground @panel-sm:flex"
-          >
-            <Icon className="size-5" />
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">
-            {meta.title}
-          </h1>
-          <p className="mt-1.5 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
-            {meta.description}
-          </p>
-        </div>
-      </div>
-      {action && (
-        <div className="w-full shrink-0 [&>*]:w-full @panel-sm:ml-auto @panel-sm:w-auto @panel-sm:[&>*]:w-auto">
-          {action}
-        </div>
-      )}
-    </header>
+    <SurfaceHeader
+      icon={meta.icon}
+      title={meta.title}
+      description={meta.description}
+      meta={facts}
+      actions={action}
+      flush={flush}
+    />
   )
 }
+
+/** A count beside a label: a section's rows, a tab's items. One chip, so a
+    number reads the same wherever the kit draws one. */
+export function Count({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <Badge variant="secondary" className={cn("tabular-nums", className)}>
+      {children}
+    </Badge>
+  )
+}
+
+/** A control in a `Row`'s slot (a select, an input): the row's width on a
+    narrow panel, a fixed column from `@panel-sm`. */
+export const ROW_CONTROL = "w-full min-w-0 @panel-sm:w-56"
+
+/** Two fields side by side where the panel has room. */
+export const FIELD_GRID = "grid gap-4 @panel-sm:grid-cols-2"
 
 /** The heading every block of a settings page opens with: a title, an optional
     hint, and an optional action at the end (a "New" button, a Reset). One
@@ -116,24 +109,35 @@ export function SectionHead({
   label,
   hint,
   action,
+  count,
 }: {
   label?: string
   hint?: React.ReactNode
   action?: React.ReactNode
+  /** How many rows the block holds, as a `Count` after the label. */
+  count?: number
 }) {
   if (!label && !hint && !action) return null
   return (
     <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 px-1">
       <div className="min-w-0 flex-1 basis-56">
-        {label && <h2 className="font-heading text-base font-medium">{label}</h2>}
+        {label && (
+          <h2 className="flex items-center gap-2 font-heading text-base font-medium">
+            {label}
+            {count !== undefined && <Count>{count}</Count>}
+          </h2>
+        )}
         {hint && (
           <p className="mt-1 max-w-[68ch] text-sm text-pretty text-muted-foreground">{hint}</p>
         )}
       </div>
-      {action && <div className="flex shrink-0 items-center gap-1.5">{action}</div>}
+      {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
     </div>
   )
 }
+
+/** An anchored block lands clear of the app header. */
+const SCROLL_MT = "scroll-mt-[calc(var(--app-header-h)+1rem)]"
 
 /** The page's vertical rhythm, in one place: every block is `Section`, and
     every `Section` is 32px from the next. */
@@ -141,16 +145,21 @@ export function Section({
   label,
   hint,
   action,
+  count,
+  id,
   children,
 }: {
   label?: string
   hint?: React.ReactNode
   action?: React.ReactNode
+  count?: number
+  /** An anchor target (a `FormShell` bar, a link); clears the app header. */
+  id?: string
   children: React.ReactNode
 }) {
   return (
-    <section data-kit-block className="mt-8 first:mt-0">
-      <SectionHead label={label} hint={hint} action={action} />
+    <section id={id} data-kit-block className={cn("mt-8 first:mt-0", id && SCROLL_MT)}>
+      <SectionHead label={label} hint={hint} action={action} count={count} />
       {children}
     </section>
   )
@@ -168,15 +177,17 @@ export function Group({
   label,
   hint,
   action,
+  count,
   children,
 }: {
   label?: string
   hint?: React.ReactNode
   action?: React.ReactNode
+  count?: number
   children: React.ReactNode
 }) {
   return (
-    <Section label={label} hint={hint} action={action}>
+    <Section label={label} hint={hint} action={action} count={count}>
       <div className={cn(CARD, "divide-y px-3 @panel-sm:px-4")}>{children}</div>
     </Section>
   )
@@ -228,7 +239,7 @@ export function Row({
           all end on one line is scannable, and a Switch on the left of a wide
           empty row reads as a bullet. */}
       {children && (
-        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">{children}</div>
+        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">{children}</div>
       )}
     </div>
   )
@@ -242,18 +253,21 @@ export function Row({
     so every nested box in every page agrees. */
 export const INSET = "rounded-xl border bg-muted/50"
 
-export function EmptyCard({ icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
+export function Field({
+  label,
+  hint,
+  htmlFor,
+  children,
+}: {
+  label: string
+  hint?: React.ReactNode
+  /** Ties the label to its control's id, where the control has one. */
+  htmlFor?: string
+  children: React.ReactNode
+}) {
   return (
-    <Empty size="lg" icon={icon} action={action}>
-      {text}
-    </Empty>
-  )
-}
-
-export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <FieldRoot>
-      <FieldLabel>{label}</FieldLabel>
+    <FieldRoot className="[&_[data-slot=input]]:pointer-coarse:h-11 [&_[data-slot=select-trigger]]:pointer-coarse:h-11">
+      <FieldLabel htmlFor={htmlFor}>{label}</FieldLabel>
       {children}
       {hint && <FieldDescription className="max-w-[68ch]">{hint}</FieldDescription>}
     </FieldRoot>
@@ -267,63 +281,52 @@ export function FormSection({
   label,
   hint,
   action,
+  count,
   id,
   children,
 }: {
   label: string
   hint?: React.ReactNode
   action?: React.ReactNode
+  count?: number
   id?: string
   children: React.ReactNode
 }) {
   return (
-    <div id={id} data-kit-block className="scroll-mt-[calc(var(--app-header-h)+1rem)] mt-8 first:mt-0">
-      <SectionHead label={label} hint={hint} action={action} />
+    <div id={id} data-kit-block className={cn("mt-8 first:mt-0", SCROLL_MT)}>
+      <SectionHead label={label} hint={hint} action={action} count={count} />
       <div className={cn(CARD, "space-y-4 p-3 @panel-sm:p-4")}>{children}</div>
     </div>
   )
 }
 
+/** A drill-down page's header (a form, a detail, a run): `SurfaceHeader`
+    with its way back. `meta`/`actions` are for the read-only detail pages. */
 export function FormPageHeader({
   title,
   description,
   onBack,
+  meta,
+  actions,
   flush = false,
 }: {
-  title: string
-  description?: string
+  title: React.ReactNode
+  description?: React.ReactNode
   onBack: () => void
-  /** A `TabBar` / `FormShell` bar follows: the track takes the rule's place. */
+  meta?: React.ReactNode
+  actions?: React.ReactNode
+  /** Kept for old callers; the rule drops by itself when a track follows. */
   flush?: boolean
 }) {
   return (
-    /* A `FormShell` bar right after the header takes the rule's place (`:has`), so
-        no form has to remember `flush` and none can stack a rule over a track. */
-    <header
-      className={cn(
-        flush ? "mb-4" : "mb-8 border-b pb-6",
-        "[&:has(+div>nav[aria-label='Form sections'])]:mb-4 [&:has(+div>nav[aria-label='Form sections'])]:border-b-0 [&:has(+div>nav[aria-label='Form sections'])]:pb-0"
-      )}
-    >
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="-ml-2 mb-3 h-11 text-muted-foreground @panel-sm:h-8"
-        onClick={onBack}
-      >
-        <ArrowLeft />
-        Back
-      </Button>
-      <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">{title}</h1>
-        {description && (
-          <p className="mt-1.5 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
-            {description}
-          </p>
-        )}
-      </div>
-    </header>
+    <SurfaceHeader
+      onBack={onBack}
+      title={title}
+      description={description}
+      meta={meta}
+      actions={actions}
+      flush={flush}
+    />
   )
 }
 
@@ -365,7 +368,9 @@ const TONE_TEXT: Record<Tone, string> = {
 export function StatStrip({
   stats,
 }: {
-  stats: { label: string; value: React.ReactNode; hint?: string; tone?: Tone }[]
+  /** `loading` skeletons the value rather than zeroing it: a 0 that turns
+      into 400 is a statement the page made and then took back. */
+  stats: { label: string; value: React.ReactNode; hint?: string; tone?: Tone; loading?: boolean }[]
 }) {
   return (
     <dl
@@ -378,7 +383,7 @@ export function StatStrip({
         <div key={stat.label} className="min-w-0 rounded-2xl bg-card px-4 py-3 text-card-foreground ring-1 ring-foreground/10">
           <dt className="truncate text-sm text-muted-foreground">{stat.label}</dt>
           <dd className={cn("mt-1 truncate text-2xl font-semibold tabular-nums", TONE_TEXT[stat.tone ?? "default"])}>
-            {stat.value}
+            {stat.loading ? <Skeleton className="h-8 w-16" /> : stat.value}
           </dd>
           {stat.hint && <p className="mt-0.5 truncate text-xs text-muted-foreground">{stat.hint}</p>}
         </div>
@@ -413,7 +418,7 @@ export function Toolbar({
   return (
     <div className="mb-4 flex flex-col gap-3 @panel-sm:flex-row @panel-sm:items-center">
       {onSearch && (
-        <InputGroup className="h-11 min-w-0 flex-1 @panel-sm:h-9 @panel-sm:max-w-sm">
+        <InputGroup className="h-9 min-w-0 flex-1 pointer-coarse:h-11 @panel-sm:max-w-sm">
           <InputGroupAddon>
             <Search aria-hidden />
           </InputGroupAddon>
@@ -433,100 +438,8 @@ export function Toolbar({
           options={chips.map((entry) => ({ value: entry.id, label: entry.label, count: entry.count }))}
         />
       )}
-      {children && <div className="flex shrink-0 items-center gap-1.5 @panel-sm:ml-auto">{children}</div>}
+      {children && <div className="flex shrink-0 items-center gap-2 @panel-sm:ml-auto">{children}</div>}
     </div>
-  )
-}
-
-/** The one grid: 1 column on a phone, as many 18rem-plus columns as fit. */
-export function CardGrid({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={cn("grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18rem),1fr))]", className)}>
-      {children}
-    </div>
-  )
-}
-
-/** The one card of a collection: a mark, a title and subtitle, badges, a
-    preview, an optional body (pickers, meters), and a footer of actions.
-    `onOpen` makes the head the click target (a link into the item); `active`
-    tints it (the server you are on, the agent being read). Actions are in the
-    footer, never over the head, so a card is one target and one row of
-    buttons - not a button inside a button. */
-export function ItemCard({
-  icon,
-  title,
-  subtitle,
-  badges,
-  preview,
-  active,
-  onOpen,
-  actions,
-  handle,
-  children,
-}: {
-  /** A Lucide component or an already-rendered element (a profile's logo). */
-  icon?: LucideIcon | React.ReactElement
-  title: React.ReactNode
-  subtitle?: React.ReactNode
-  badges?: React.ReactNode
-  preview?: React.ReactNode
-  active?: boolean
-  onOpen?: () => void
-  actions?: React.ReactNode
-  /** A drag grip, for a list whose order is the user's. */
-  handle?: React.ReactNode
-  children?: React.ReactNode
-}) {
-  const head = (
-    <>
-      {icon && (
-        <span
-          aria-hidden
-          className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-lg",
-            active ? "bg-primary/10 text-primary" : "bg-muted text-foreground"
-          )}
-        >
-          {React.isValidElement(icon) ? icon : (() => { const Icon = icon as LucideIcon; return <Icon className="size-4" /> })()}
-        </span>
-      )}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{title}</span>
-        {subtitle && <span className="mt-0.5 block truncate text-sm text-muted-foreground">{subtitle}</span>}
-      </span>
-    </>
-  )
-  return (
-    <article
-      className={cn(
-        "@container flex min-w-0 flex-col overflow-hidden rounded-2xl bg-card text-card-foreground ring-1 ring-foreground/10 transition-colors",
-        active && "ring-2 ring-primary/40"
-      )}
-    >
-      <div className="flex flex-1 flex-col gap-3 p-4">
-        <div className="flex items-start gap-3">
-          {handle}
-          {onOpen ? (
-            <button
-              type="button"
-              onClick={onOpen}
-              className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            >
-              {head}
-            </button>
-          ) : (
-            <div className="flex min-w-0 flex-1 items-center gap-3">{head}</div>
-          )}
-        </div>
-        {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
-        {preview && <div className="line-clamp-2 text-sm text-muted-foreground">{preview}</div>}
-        {children}
-      </div>
-      {actions && (
-        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t bg-muted/50 px-3 py-2">{actions}</div>
-      )}
-    </article>
   )
 }
 
@@ -570,8 +483,8 @@ export interface TabItem {
     Overflow scrolls sideways rather than wrapping or turning into a dropdown - a
     phone shows the same tabs the desktop does. `nav` mode is for anchors
     (`FormShell`): same look, `aria-current` instead of `role=tab`, because
-    jumping to a section is not switching a panel. Pair with `PageHeader flush`,
-    which drops the header's rule: the track is the break. */
+    jumping to a section is not switching a panel. A header right above it
+    drops its own rule by itself (`data-kit-track`): the track is the break. */
 export function TabBar({
   items,
   value,
@@ -613,6 +526,7 @@ export function TabBar({
   const Root = nav ? "nav" : "div"
   return (
     <Root
+      data-kit-track
       ref={(node: HTMLElement | null) => {
         barRef.current = node
       }}
@@ -639,18 +553,14 @@ export function TabBar({
             onClick={() => onChange(item.id)}
             title={item.hint}
             className={cn(
-              "relative inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 @panel-sm:h-9",
+              "relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11",
               "after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
               active ? "text-foreground after:opacity-100" : "text-muted-foreground hover:text-foreground"
             )}
           >
             {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
             {item.label}
-            {item.count !== undefined && (
-              <Badge variant="secondary" className="px-1.5 tabular-nums">
-                {item.count}
-              </Badge>
-            )}
+            {item.count !== undefined && <Count>{item.count}</Count>}
             {item.dot && <span aria-hidden className="size-1.5 rounded-full bg-destructive" />}
           </button>
         )
@@ -689,7 +599,9 @@ export function FormShell({
     return () => observer.disconnect()
   }, [sections])
   return (
-    <div>
+    /* A track only when it draws one: a single-section form has no bar, and
+       the header above it keeps its rule. */
+    <div data-kit-track={sections.length > 1 ? "" : undefined}>
       {sections.length > 1 && (
         <TabBar
           nav
@@ -760,7 +672,7 @@ export function Segmented<T extends string>({
             disabled={disabled || option.disabled}
             onClick={() => onChange(option.value)}
             className={cn(
-              "inline-flex h-10 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-4xl border border-transparent px-3 text-sm font-medium whitespace-nowrap outline-none transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 @panel-sm:h-7.5",
+              "inline-flex h-7.5 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-4xl border border-transparent px-3 text-sm font-medium whitespace-nowrap outline-none transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-10",
               selected
                 ? "bg-background text-foreground dark:border-input dark:bg-input/30"
                 : "text-foreground/60 hover:text-foreground dark:text-muted-foreground dark:hover:text-foreground"
@@ -768,7 +680,7 @@ export function Segmented<T extends string>({
           >
             {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
             {option.label}
-            {option.count !== undefined && <span className="tabular-nums text-muted-foreground">{option.count}</span>}
+            {option.count !== undefined && <Count>{option.count}</Count>}
           </button>
         )
       })}
@@ -980,8 +892,8 @@ export function Picker<T extends { id: string; name: string }>({
         <Button
           type="button"
           variant="link"
-          size="sm"
-          className="ml-auto h-auto p-0 text-xs"
+          size="xs"
+          className="ml-auto h-auto px-0"
           disabled={shown.length === 0 || allShownSelected}
           onClick={selectAll}
         >
@@ -991,8 +903,8 @@ export function Picker<T extends { id: string; name: string }>({
         <Button
           type="button"
           variant="link"
-          size="sm"
-          className="h-auto p-0 text-xs"
+          size="xs"
+          className="h-auto px-0"
           disabled={selectedShown === 0}
           onClick={selectNone}
         >
@@ -1013,6 +925,9 @@ export function FormActions({
   busy,
   onCancel,
   error,
+  submitLabel = "Save",
+  leading,
+  done,
 }: {
   busy: boolean
   /** Omitted where the form has nothing to go back to — the Rules page is a
@@ -1021,14 +936,22 @@ export function FormActions({
       button, so there is no button. */
   onCancel?: () => void
   error?: InlineError | null
+  /** The primary's label. Busy keeps it and spins (`loading`), so the button
+      does not change width under the pointer. */
+  submitLabel?: string
+  /** At the start of the row: a Delete, a Move, a Revert, a saved state. */
+  leading?: React.ReactNode
+  /** An autosaving form: one primary "Done" (a button, never a submit). */
+  done?: () => void
 }) {
   return (
     /* Stuck to the foot of the frame rather than sitting at the end of the
        document: a profile's form is four screens on a phone, and Save was
        something you scrolled to find after every edit. `-mx`/`px` bleeds the
-       bar's ground to the column's edges so the rows scrolling under it are
-       covered; `KEYBOARD_RISE` puts it above the soft keys, since the page does
-       not resize when one opens and `bottom-0` would be behind them. */
+       bar's ground to the column's edges (the `PageFrame` gutter) so the rows
+       scrolling under it are covered; `KEYBOARD_RISE` puts it above the soft
+       keys, since the page does not resize when one opens and `bottom-0` would
+       be behind them. */
     <footer
       className={cn(
         "sticky z-20 -mx-4 mt-2 flex flex-col gap-3 border-t bg-background px-4 pt-3 pb-[max(0.75rem,var(--safe-bottom))] @panel-sm:-mx-8 @panel-sm:px-8",
@@ -1036,15 +959,24 @@ export function FormActions({
       )}
     >
       <ErrorNote error={error ?? null} />
-      <div className="flex flex-col-reverse gap-2 @panel-sm:flex-row @panel-sm:justify-end">
+      <div className="flex flex-col-reverse gap-2 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-end [&_[data-slot=button]]:pointer-coarse:h-11">
+        {leading && (
+          <div className="flex flex-wrap items-center gap-2 @panel-sm:mr-auto">{leading}</div>
+        )}
         {onCancel && (
-          <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={onCancel}>
+          <Button type="button" variant="outline" onClick={onCancel}>
             Cancel
           </Button>
         )}
-        <Button type="submit" className="h-11 @panel-sm:h-9" disabled={busy}>
-          {busy ? "Saving…" : "Save"}
-        </Button>
+        {done ? (
+          <Button type="button" onClick={done}>
+            Done
+          </Button>
+        ) : (
+          <Button type="submit" disabled={busy} loading={busy}>
+            {submitLabel}
+          </Button>
+        )}
       </div>
     </footer>
   )

@@ -17,9 +17,12 @@ import {
 import type { ColumnDef } from "@/lib/table"
 import { useConfirm } from "@/components/confirm-dialog"
 import { api, type ModelPrompt, type ServerSettings } from "@/lib/settings"
-import { reportError } from "@/lib/errors"
-import { useInvalidateCatalog, useModelPrompts } from "@/lib/queries/catalog"
+import { inlineFromQuery, reportError } from "@/lib/errors"
+import { useCatalogState, useInvalidateCatalog, useModelPrompts } from "@/lib/queries/catalog"
+import { Empty } from "@/components/empty"
+import { ErrorNote } from "@/components/error-note"
 import {
+  FIELD_GRID,
   Field,
   FormActions,
   FormPageHeader,
@@ -28,6 +31,7 @@ import {
   INSET,
   PageForm,
   PageHeader,
+  Section,
   StatStrip,
   StatusBadge,
 } from "./primitives"
@@ -82,6 +86,7 @@ export function ModelPromptsPage() {
   const { settings } = useSettingsPage()
   const meta = sectionMeta("model-prompts")
   const prompts = useModelPrompts()
+  const state = useCatalogState("model-prompts")
   const invalidate = useInvalidateCatalog()
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -175,11 +180,11 @@ export function ModelPromptsPage() {
 
   const tableActions = React.useMemo<TableAction<ModelPrompt>[]>(
     () => [
-      { id: "edit", label: "Edit", icon: <Pencil className="size-4" />, onClick: (item) => edit(item), position: "left" },
+      { id: "edit", label: "Edit", icon: <Pencil />, onClick: (item) => edit(item), position: "left" },
       {
         id: "delete",
         label: "Delete",
-        icon: <Trash2 className="size-4" />,
+        icon: <Trash2 />,
         tone: "danger",
         onClick: (item) => void removeRef.current(item),
       },
@@ -217,37 +222,46 @@ export function ModelPromptsPage() {
   )
 
   const newButton = (
-    <Button className="h-11 @panel-sm:h-9" onClick={() => edit()}>
-      <Plus className="size-4" /> New model prompt
+    <Button onClick={() => edit()}>
+      <Plus data-icon="inline-start" /> New model prompt
     </Button>
   )
 
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      {rows.length > 0 && (
-        <StatStrip
-          stats={[
-            { label: "Rules", value: rows.length, hint: "Read in order, ties by name" },
-            { label: "On", value: enabled, hint: enabled === rows.length ? "All matching" : `${rows.length - enabled} off`, tone: enabled ? "ok" : "default" },
-            { label: "Families", value: families, hint: "Globs, not exact ids" },
-          ]}
-        />
+      {state.error ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(state.error, "Couldn't read the model prompts")} onRetry={state.refetch} />
+        </Section>
+      ) : rows.length === 0 && !state.isPending ? (
+        <Empty size="lg" icon={meta.icon} action={<div className="[&_[data-slot=button]]:pointer-coarse:h-11">{newButton}</div>}>
+          No model prompts yet.
+        </Empty>
+      ) : (
+        <>
+          <StatStrip
+            stats={[
+              { label: "Rules", value: rows.length, hint: "Read in order, ties by name", loading: state.isPending },
+              { label: "On", value: enabled, hint: state.isPending ? undefined : enabled === rows.length ? "All matching" : `${rows.length - enabled} off`, tone: enabled ? "ok" : "default", loading: state.isPending },
+              { label: "Families", value: families, hint: "Globs, not exact ids", loading: state.isPending },
+            ]}
+          />
+          <DataTable
+            columns={columns}
+            data={f.rows}
+            getRowId={(item) => item.id}
+            isLoading={state.isPending}
+            pageSize={25}
+            mark={() => <meta.icon />}
+            actions={tableActions}
+            onRowClick={onRowClick}
+            mobile={mobile}
+            filtering={f.filtering}
+            emptyIcon={<meta.icon />}
+          />
+        </>
       )}
-      <DataTable
-        columns={columns}
-        data={f.rows}
-        getRowId={(item) => item.id}
-        pageSize={25}
-        mark={() => <meta.icon />}
-        actions={tableActions}
-        onRowClick={onRowClick}
-        mobile={mobile}
-        filtering={f.filtering}
-        emptyIcon={<meta.icon />}
-        emptyMessage={f.narrowed ? "No model prompts match that search." : "No model prompts yet."}
-        emptyAction={f.narrowed ? undefined : newButton}
-      />
     </>
   )
 }
@@ -345,7 +359,7 @@ function ModelPromptForm({
           ]}
         >
           <FormSection id="rule" label="Rule" hint="Which models it reaches.">
-            <div className="grid gap-4 @panel-md:grid-cols-2">
+            <div className={FIELD_GRID}>
               <Field label="Name" hint="What this prompt is called in the list.">
                 <Input
                   value={form.name}
@@ -362,7 +376,7 @@ function ModelPromptForm({
                   value={form.match}
                   onChange={(e) => set({ match: e.target.value })}
                   placeholder="qwen*"
-                  className="font-mono text-sm"
+                  className="font-mono"
                   required
                 />
               </Field>
@@ -396,7 +410,7 @@ function ModelPromptForm({
                     className="pointer-coarse:h-11"
                     onClick={() => set({ prompt: saved })}
                   >
-                    <RotateCcw className="size-3.5" /> Reset
+                    <RotateCcw data-icon="inline-start" /> Reset
                   </Button>
                 )}
               </div>
@@ -439,7 +453,7 @@ function ModelPromptForm({
                 step={10}
                 value={form.sortOrder}
                 onChange={(e) => set({ sortOrder: e.target.value })}
-                className="font-mono text-sm"
+                className="font-mono"
               />
             </Field>
           </FormSection>

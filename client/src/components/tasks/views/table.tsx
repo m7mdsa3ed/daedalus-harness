@@ -2,6 +2,7 @@ import * as React from "react"
 import { ArrowDown, ArrowUp, CalendarIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Empty } from "@/components/empty"
 import type { Task } from "@/lib/tasks-board"
 import { PRIORITY_LABEL, TYPE_LABEL, taskKey } from "@/lib/tasks-board"
@@ -70,6 +71,8 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
   const statusOf = (id: string) => statuses.find((s) => s.id === id)
   const sprintOf = (id: string | null) => (id ? sprints.find((s) => s.id === id) : undefined)
   const allSelected = tasks.length > 0 && tasks.every((t) => ctx.selected.has(t.id))
+  /** Whether the press that toggled a row's box held shift: a range select. */
+  const shift = React.useRef(false)
 
   const toggleSort = (col: TableColumn) => {
     const sortBy = SORT_OF[col]
@@ -231,12 +234,10 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
         <thead className="sticky top-0 z-10 bg-background">
           <tr className="text-left text-xs font-medium text-muted-foreground">
             <th className="w-8 border-b px-2 py-2">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={allSelected}
-                onChange={() => ctx.onToggleSelect?.(allSelected ? "!none" : "!all", false)}
+                onCheckedChange={() => ctx.onToggleSelect?.(allSelected ? "!none" : "!all", false)}
                 aria-label="Select all"
-                className="size-3.5 accent-primary"
               />
             </th>
             <th className="@panel-sm:sticky left-8 z-20 w-20 border-b bg-background px-2 py-2">Key</th>
@@ -264,13 +265,21 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
             const selected = ctx.selected.has(task.id)
             return (
               <tr key={task.id} className={cn("group hover:bg-muted", selected && "bg-muted", task.archived && "opacity-60")}>
-                <td className="border-b px-2 py-1">
-                  <input
-                    type="checkbox"
+                <td
+                  className={cn(
+                    "relative border-b px-2 py-1 before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
+                    selected && "before:opacity-100"
+                  )}
+                >
+                  <Checkbox
                     checked={selected}
-                    onChange={(e) => ctx.onToggleSelect?.(task.id, (e.nativeEvent as MouseEvent).shiftKey)}
+                    /* The change arrives from the control's hidden input, which
+                       carries no modifier keys — the shift is read off the
+                       press that caused it. */
+                    onPointerDown={(e) => (shift.current = e.shiftKey)}
+                    onKeyDown={(e) => (shift.current = e.shiftKey)}
+                    onCheckedChange={() => ctx.onToggleSelect?.(task.id, shift.current)}
                     aria-label={`Select ${task.title}`}
-                    className="size-3.5 accent-primary"
                   />
                 </td>
                 <td className={cn("left-8 z-10 border-b px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground", STUCK, selected && STUCK_SELECTED)}>{taskKey(task, board.key)}</td>

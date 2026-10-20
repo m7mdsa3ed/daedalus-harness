@@ -9,7 +9,8 @@ import * as React from "react"
 import { BotIcon } from "lucide-react"
 import { useLocation, useNavigate, useSearchParams } from "react-router"
 
-import { EmptyCard, FormPageHeader, Section, ChoiceTiles } from "@/components/settings/primitives"
+import { Empty } from "@/components/empty"
+import { FormPageHeader, Group, ChoiceTiles } from "@/components/settings/primitives"
 import type { Actions } from "@/lib/actions"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -110,11 +111,10 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
   if (projects.length === 0 || agents.length === 0) {
     return (
       <>
-        <FormPageHeader title="New automation" description="" onBack={back} />
-        <EmptyCard
-          icon={BotIcon}
-          text="An automation needs a project to run in and an agent to run it. Add those in Settings first."
-        />
+        <FormPageHeader title="New automation" onBack={back} />
+        <Empty size="lg" icon={BotIcon}>
+          An automation needs a project to run in and an agent to run it. Add those in Settings first.
+        </Empty>
       </>
     )
   }
@@ -127,16 +127,16 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
           description="Start from a template and review it, or start blank. Nothing is saved until you press Create."
           onBack={back}
         />
-        <Section>
+        <Group>
           <ChoiceTiles
             label="Blank automation"
             value=""
             onChange={choose}
             choices={[{ value: BLANK_TEMPLATE.id, label: BLANK_TEMPLATE.label, hint: BLANK_TEMPLATE.blurb, icon: BLANK_TEMPLATE.icon }]}
           />
-        </Section>
+        </Group>
         {TEMPLATE_GROUPS.map((group) => (
-          <Section key={group.id} label={group.label}>
+          <Group key={group.id} label={group.label}>
             <ChoiceTiles
               label={group.label}
               value=""
@@ -148,7 +148,7 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
                 icon: t.icon,
               }))}
             />
-          </Section>
+          </Group>
         ))}
       </>
     )

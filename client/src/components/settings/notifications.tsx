@@ -160,7 +160,7 @@ const EVENT_ACTIONS: TableAction<EventRow>[] = [
   {
     id: "test",
     label: "Send test",
-    icon: <BellIcon className="size-4" />,
+    icon: <BellIcon />,
     onClick: (row) => testThreadNotification(row.key),
   },
 ]
@@ -236,8 +236,8 @@ export function NotificationsPage() {
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button variant="outline" size="sm" className="h-11 @panel-sm:h-9">
-                  <BellIcon />
+                <Button variant="outline" size="sm" className="pointer-coarse:h-11">
+                  <BellIcon data-icon="inline-start" />
                   Send test
                 </Button>
               }
@@ -274,7 +274,6 @@ export function NotificationsPage() {
           mark={eventMark}
           mobile={{ renderRow: eventPhoneRow }}
           emptyIcon={<BellIcon />}
-          emptyMessage={f.narrowed ? "No events match." : undefined}
           toolbar={
             <span className="text-sm text-muted-foreground tabular-nums">
               {eventsOn} of {rows.length} announced
@@ -293,14 +292,16 @@ export function NotificationsPage() {
             </Row>
           ))}
       </Group>
-      <Notice className="mt-8" size="md">
-        <p className="text-pretty">
-          Events on a thread you are currently reading are never announced — the transcript already
-          shows them — except by sound, when it is on. When no client is connected to a thread at
-          all, the server delivers the same events as push notifications to registered devices, if
-          it has FCM configured.
-        </p>
-      </Notice>
+      <Section>
+        <Notice size="md">
+          <p className="text-pretty">
+            Events on a thread you are currently reading are never announced — the transcript already
+            shows them — except by sound, when it is on. When no client is connected to a thread at
+            all, the server delivers the same events as push notifications to registered devices, if
+            it has FCM configured.
+          </p>
+        </Notice>
+      </Section>
     </>
   )
 }

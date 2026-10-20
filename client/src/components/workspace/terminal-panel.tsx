@@ -677,10 +677,10 @@ export function TerminalPanel({
           aria-label="Search the scrollback"
           aria-pressed={finding}
           title="Search (⌘F)"
-          className={cn("size-6", finding && "bg-muted text-foreground")}
+          className={cn(finding && "bg-muted text-foreground")}
           onClick={() => setFinding((current) => !current)}
         >
-          <SearchIcon className="size-3.5" />
+          <SearchIcon />
         </Button>
         {status === "exited" || status === "failed" ? (
           <Button
@@ -693,9 +693,9 @@ export function TerminalPanel({
             }
           >
             {status === "exited" ? (
-              <SquarePlusIcon className="size-3.5" />
+              <SquarePlusIcon />
             ) : (
-              <RotateCwIcon className="size-3.5" />
+              <RotateCwIcon />
             )}
           </Button>
         ) : null}
@@ -708,7 +708,7 @@ export function TerminalPanel({
                 aria-label="Terminal actions"
                 title="Terminal actions"
               >
-                <MoreHorizontal className="size-3.5" />
+                <MoreHorizontal />
               </Button>
             }
           />
@@ -742,7 +742,7 @@ export function TerminalPanel({
                   zoom(-1)
                 }}
               >
-                <MinusIcon className="size-3.5" />
+                <MinusIcon />
               </Button>
               <span className="w-6 text-center text-sm tabular-nums">{prefs.fontSize}</span>
               <Button
@@ -756,7 +756,7 @@ export function TerminalPanel({
                   zoom(1)
                 }}
               >
-                <PlusIcon className="size-3.5" />
+                <PlusIcon />
               </Button>
             </div>
             <DropdownMenuItem
@@ -899,7 +899,7 @@ function TerminalFindBar({
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+    <PanelToolbar>
       <Input
         autoFocus
         value={term}
@@ -946,7 +946,7 @@ function TerminalFindBar({
         title="Previous match (⇧↵)"
         onClick={() => run("previous")}
       >
-        <ChevronUpIcon className="size-3.5" />
+        <ChevronUpIcon />
       </Button>
       <Button
         size="icon-xs"
@@ -955,7 +955,7 @@ function TerminalFindBar({
         title="Next match (↵)"
         onClick={() => run("next")}
       >
-        <ChevronDownIcon className="size-3.5" />
+        <ChevronDownIcon />
       </Button>
       <Button
         size="icon-xs"
@@ -964,9 +964,9 @@ function TerminalFindBar({
         title="Close find (Esc)"
         onClick={onClose}
       >
-        <XIcon className="size-3.5" />
+        <XIcon />
       </Button>
-    </div>
+    </PanelToolbar>
   )
 }
 

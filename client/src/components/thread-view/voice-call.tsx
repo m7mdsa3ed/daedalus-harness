@@ -558,15 +558,15 @@ export function VoiceCall({
      the call (the composer places it): the box is away for the whole call, so
      this is the whole of the call's chrome. The caption is the label while the
      voice model speaks; the failure sits over the bar, where it is read. */
-  const btn = "size-7 shrink-0 [&_svg]:size-3.5"
+  const btn = "shrink-0"
   return (
     <div className="flex flex-col items-end gap-2">
-      <ErrorNote error={error} className="w-[min(24rem,calc(100vw-2rem))] text-left" />
+      <ErrorNote error={error} className="w-[min(24rem,calc(var(--float-w)-2rem))] text-left" />
       {(heard || caption) && (
         <p
           dir="auto"
           className={cn(
-            "line-clamp-3 w-fit max-w-[min(24rem,calc(100vw-2rem))] rounded-3xl px-3.5 py-2.5 text-start text-sm",
+            "line-clamp-3 w-fit max-w-[min(24rem,calc(var(--float-w)-2rem))] rounded-3xl px-3.5 py-2.5 text-start text-sm",
             caption ? "bg-muted" : "bg-primary/10"
           )}
         >
@@ -586,7 +586,7 @@ export function VoiceCall({
         )}
         <Button
           variant={ptt ? "secondary" : "ghost"}
-          size="icon-xs"
+          size="icon-sm"
           className={btn}
           disabled={realtime.status !== "connected"}
           onClick={togglePtt}
@@ -598,8 +598,8 @@ export function VoiceCall({
         {ptt && realtime.status === "connected" ? (
           <Button
             variant={realtime.isCapturing ? "default" : "outline"}
-            size="xs"
-            className="h-7 touch-none select-none"
+            size="sm"
+            className="touch-none select-none"
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId)
               talkDown()
@@ -612,7 +612,7 @@ export function VoiceCall({
         ) : (
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             className={btn}
             disabled={realtime.status !== "connected"}
             onClick={() => void (realtime.isCapturing ? realtime.stopAudioCapture() : realtime.resumeAudioCapture())}

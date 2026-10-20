@@ -4,7 +4,7 @@
    it fires. Controlled over a `SchedulePlan` (lib/automation-schedule.ts), so
    the create form holds one in its draft and the Triggers tab holds one per
    schedule trigger and writes it back as a patch. */
-import { Field, INSET, Segmented } from "@/components/settings/primitives"
+import { FIELD_GRID, Field, INSET, Segmented } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -46,7 +46,7 @@ export function SchedulePicker({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 @panel-sm:grid-cols-2">
+      <div className={FIELD_GRID}>
         <Field label="Repeats">
           <Select value={plan.preset} onValueChange={(v) => v && patch({ preset: v as Preset })}>
             <SelectTrigger className="w-full">
@@ -120,7 +120,7 @@ export function SchedulePicker({
         )}
         {plan.preset === "custom" && (
           <Field label="Cron" hint="Five fields, minute first.">
-            <Input className="font-mono text-sm" value={plan.cron} onChange={(e) => patch({ cron: e.target.value })} />
+            <Input className="font-mono" value={plan.cron} onChange={(e) => patch({ cron: e.target.value })} />
           </Field>
         )}
       </div>

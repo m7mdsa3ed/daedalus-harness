@@ -16,16 +16,16 @@ import {
   ShieldCheckIcon,
   Trash2Icon,
   WorkflowIcon,
-  ZapIcon,
 } from "lucide-react"
-import { Link, useNavigate, useSearchParams } from "react-router"
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router"
 
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
 import { MetaFact, SurfaceHeader } from "@/components/page-primitives"
+import { Empty } from "@/components/empty"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import {
-  EmptyCard,
   FormPageHeader,
   Group,
   Row,
@@ -43,10 +43,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import type { Actions } from "@/lib/actions"
-import { captureError, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, type InlineError } from "@/lib/errors"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import {
   useAutomationRuns,
@@ -79,7 +78,8 @@ const TAB_LABEL: Record<Tab, string> = {
 }
 
 export function AutomationDetailPage({ automationId, actions }: { automationId: string; actions: Actions }) {
-  const automations = useAutomations().data
+  const automationsQuery = useAutomations()
+  const automations = automationsQuery.data
   const projects = useProjects()
   const agents = useAgents()
   const profiles = useProfiles()
@@ -93,9 +93,20 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
      `data` undefined — skeletons, not "has never run". */
   const runsQuery = useAutomationRuns(automationId)
   const runs = runsQuery.data
-  const runsError = runsQuery.error ? captureError(runsQuery.error, "Couldn't read this automation's runs") : null
+  const runsError = React.useMemo(
+    () => inlineFromQuery(runsQuery.error, "Couldn't read this automation's runs"),
+    [runsQuery.error]
+  )
   const triggersQuery = useAutomationTriggers(automationId)
   const triggers = triggersQuery.data
+  const triggersError = React.useMemo(
+    () => inlineFromQuery(triggersQuery.error, "Couldn't read the triggers"),
+    [triggersQuery.error]
+  )
+  const listError = React.useMemo(
+    () => inlineFromQuery(automationsQuery.error, "Couldn't read the automations"),
+    [automationsQuery.error]
+  )
   const cancelRun = useCancelAutomationRun()
   const update = useUpdateAutomation()
   const fire = useFire()
@@ -127,17 +138,28 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
 
   const back = () => void navigate(automationsPath())
 
-  if (!routine)
+  if (!routine) {
+    /* A row the list does not hold is a deleted automation or a stale link:
+       the list is the honest destination. */
+    if (automations !== undefined) return <Navigate to={automationsPath()} replace />
     return (
       <>
-        <FormPageHeader title="Automation" description="" onBack={back} />
-        {automations === undefined ? (
-          <Skeleton className="h-32 w-full" />
+        <FormPageHeader title="Automation" onBack={back} />
+        {listError ? (
+          <Section>
+            <ErrorNote error={listError} onRetry={() => void automationsQuery.refetch()} />
+          </Section>
         ) : (
-          <EmptyCard icon={ZapIcon} text="This automation no longer exists." />
+          <>
+            <StatStrip
+              stats={["Last run", "Next run", "Runs", "Tokens"].map((label) => ({ label, value: null, loading: true }))}
+            />
+            <GroupRowsSkeleton label />
+          </>
         )}
       </>
     )
+  }
 
   const session = routine.runsIn === "session"
   const pinnedThread = sessions.find((s) => s.id === routine.sessionId)
@@ -197,11 +219,11 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
     return badge === "bad" || badge === "warn" ? badge : undefined
   }
   const loadingRuns = runs === undefined && !runsError
-  const skeleton = <Skeleton className="h-7 w-16" />
   const stats = [
     {
       label: "Last run",
-      value: loadingRuns ? skeleton : last ? runStatus(last.status).label : "—",
+      value: last ? runStatus(last.status).label : "—",
+      loading: loadingRuns,
       tone: last ? statTone(last.status) : undefined,
       hint: last
         ? `${shortAge(last.startedAt)} ago · ${SOURCE_LABEL[last.source] ?? last.source}`
@@ -211,7 +233,8 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
     },
     {
       label: "Next run",
-      value: triggers === undefined && !triggersQuery.error ? skeleton : nextFire ? untilLabel(nextFire) : "—",
+      value: nextFire ? untilLabel(nextFire) : "—",
+      loading: triggers === undefined && !triggersQuery.error,
       hint: nextFire
         ? new Date(nextFire).toLocaleString()
         : !routine.enabled
@@ -224,7 +247,8 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
     },
     {
       label: "Runs",
-      value: loadingRuns ? skeleton : runs ? (runs.length >= 50 ? "50+" : runs.length) : "—",
+      value: runs ? (runs.length >= 50 ? "50+" : runs.length) : "—",
+      loading: loadingRuns,
       hint:
         running > 0
           ? `${running} running now`
@@ -234,7 +258,8 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
     },
     {
       label: "Tokens",
-      value: loadingRuns ? skeleton : tokens === undefined ? "—" : tokens.toLocaleString(),
+      value: tokens === undefined ? "—" : tokens.toLocaleString(),
+      loading: loadingRuns,
       hint: runs && runs.length >= 50 ? "across the newest 50 runs" : "across every run",
     },
   ]
@@ -252,17 +277,8 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
   return (
     <>
       <SurfaceHeader
-        flush
         onBack={back}
-        icon={
-          session ? (
-            <span className="flex size-11 items-center justify-center rounded-lg bg-muted text-primary">
-              <MessagesSquareIcon className="size-5" />
-            </span>
-          ) : (
-            <ProjectIcon project={project} className="size-11" />
-          )
-        }
+        icon={session ? MessagesSquareIcon : <ProjectIcon project={project} className="size-10" />}
         title={
           <span className="inline-flex min-w-0 items-center gap-2">
             <span className="truncate">{routine.name}</span>
@@ -313,7 +329,7 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
         }
         actions={
           <>
-            <div className="mr-1 flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Switch
                 checked={routine.enabled}
                 onCheckedChange={(on) => toggle(routine, on)}
@@ -370,12 +386,14 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
       {tab !== "settings" && <StatStrip stats={stats} />}
 
       {!session && !routine.dryRunCompleted && (
-        <Notice className="mb-8">
-          This automation has not completed a run yet, so it cannot be granted a blanket{" "}
-          <strong className="font-medium text-foreground">Allow</strong>. Press{" "}
-          <strong className="font-medium text-foreground">Run, forced to ask</strong> and watch what it does first — the
-          per-kind answers in Access are available either way.
-        </Notice>
+        <Section>
+          <Notice>
+            This automation has not completed a run yet, so it cannot be granted a blanket{" "}
+            <strong className="font-medium text-foreground">Allow</strong>. Press{" "}
+            <strong className="font-medium text-foreground">Run, forced to ask</strong> and watch what it does first — the
+            per-kind answers in Access are available either way.
+          </Notice>
+        </Section>
       )}
 
       <div role="tabpanel" aria-label={TAB_LABEL[tab]}>
@@ -385,7 +403,7 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
               label="Recent runs"
               action={
                 runs && runs.length > 5 ? (
-                  <Button variant="ghost" size="xs" onClick={() => setTab("runs")}>
+                  <Button variant="ghost" size="sm" onClick={() => setTab("runs")}>
                     All runs
                     <ChevronRightIcon data-icon="inline-end" />
                   </Button>
@@ -411,12 +429,12 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
 
             {(() => {
               const manage = (
-                <Button variant="ghost" size="xs" onClick={() => setTab("triggers")}>
+                <Button variant="ghost" size="sm" onClick={() => setTab("triggers")}>
                   Manage
                   <ChevronRightIcon data-icon="inline-end" />
                 </Button>
               )
-              if (triggers !== undefined && triggers.length > 0 && !triggersQuery.error)
+              if (triggers !== undefined && triggers.length > 0 && !triggersError)
                 return (
                   <Group label="Triggers" action={manage}>
                     {triggers.map((t) => {
@@ -453,18 +471,12 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
                 )
               return (
                 <Section label="Triggers" action={manage}>
-                  {triggersQuery.error ? (
-                    <ErrorNote
-                      error={captureError(triggersQuery.error, "Couldn't read the triggers")}
-                      onRetry={() => void triggersQuery.refetch()}
-                    />
+                  {triggersError ? (
+                    <ErrorNote error={triggersError} onRetry={() => void triggersQuery.refetch()} />
                   ) : triggers === undefined ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-10 w-full rounded-lg" />
-                      <Skeleton className="h-10 w-full rounded-lg" />
-                    </div>
+                    <GroupRowsSkeleton rows={2} className="mt-0" />
                   ) : (
-                    <EmptyCard icon={CalendarClockIcon} text="No triggers. This automation only runs when you press Run now." />
+                    <Empty icon={CalendarClockIcon}>No triggers. This automation only runs when you press Run now.</Empty>
                   )}
                 </Section>
               )

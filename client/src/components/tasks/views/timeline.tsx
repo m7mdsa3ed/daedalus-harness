@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Empty } from "@/components/empty"
 import { useIsMobile } from "@/hooks/use-device"
 import { COLOR_DOT } from "@/lib/boards"
 import { taskKey, type Task } from "@/lib/tasks-board"
@@ -169,9 +170,9 @@ export function TimelineView({ board, statuses, tasks, ctx, onOpen }: ViewProps)
             )
           })}
           {ordered.length === 0 && (
-            <p className="sticky left-0 px-4 py-8 text-center text-sm text-muted-foreground">
+            <Empty className="sticky left-0 m-3">
               Nothing scheduled — give a task a start or due date to see it here.
-            </p>
+            </Empty>
           )}
         </div>
       </div>

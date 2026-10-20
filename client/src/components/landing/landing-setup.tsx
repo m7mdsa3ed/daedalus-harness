@@ -3,7 +3,7 @@
    is these two setup steps instead of the recent-threads/features grid. */
 import { Check, ChevronRight, FolderKanban, Server } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
+import { Count, Section } from "@/components/settings/primitives"
 import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { cn } from "@/lib/utils"
 
@@ -38,18 +38,12 @@ export function LandingSetup({
   ]
 
   return (
-    <section aria-labelledby="landing-setup-title">
-      <div>
-        <h2 id="landing-setup-title" className="font-heading text-base font-medium">
-          Finish the setup
-        </h2>
-        <p className="mt-1 max-w-md text-sm text-pretty text-muted-foreground">
-          Two things stand between you and a running thread. Either is one
-          settings page away.
-        </p>
-      </div>
-
-      <ol className="mt-6 grid gap-3 @panel-sm:grid-cols-2">
+    <section aria-label="Finish the setup">
+    <Section
+      label="Finish the setup"
+      hint="Two things stand between you and a running thread. Either is one settings page away."
+    >
+      <ol className="grid gap-3 @panel-sm:grid-cols-2">
         {steps.map((step, index) => {
           const Icon = step.icon
           return (
@@ -76,17 +70,16 @@ export function LandingSetup({
                   <ItemDescription>{step.description}</ItemDescription>
                   <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
                     {step.done ? "Reopened in settings" : "Set it up"}
-                    <ChevronRight className="size-3.5" />
+                    <ChevronRight aria-hidden className="size-3.5" />
                   </span>
                 </ItemContent>
-                <Badge variant="secondary" className="tabular-nums">
-                  Step {index + 1} of 2
-                </Badge>
+                <Count>Step {index + 1} of 2</Count>
               </Item>
             </li>
           )
         })}
       </ol>
+    </Section>
     </section>
   )
 }

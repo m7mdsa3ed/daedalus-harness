@@ -264,7 +264,7 @@ export function CommitBox({
         disabled={busy || !summary.trim() || (changeCount === 0 && !amend)}
         title={`${amend ? "Amend the last commit" : "Commit"} on ${branch} (⌘Enter)`}
       >
-        <ActionIcon phase={commitPhase}><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" /></ActionIcon>
+        <ActionIcon phase={commitPhase}><HugeiconsIcon icon={Tick02Icon} strokeWidth={2} /></ActionIcon>
         <span className="truncate">
           {amend
             ? stagedCount > 0

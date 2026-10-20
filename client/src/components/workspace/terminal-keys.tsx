@@ -214,15 +214,15 @@ export function TerminalKeyRow({
       <div className="flex shrink-0 items-center gap-0.5">
         <Button
           variant="ghost"
-          size="icon-xs"
+          size="icon-sm"
           aria-label={keysExpanded ? "Collapse the key row" : "Show every key"}
           aria-pressed={keysExpanded}
           title={keysExpanded ? "One row" : "Show every key"}
-          className="size-7 shrink-0 text-muted-foreground"
+          className="shrink-0 text-muted-foreground"
           onPointerDown={(event: React.PointerEvent) => event.preventDefault()}
           onClick={() => setTerminalPrefs({ keysExpanded: !keysExpanded })}
         >
-          {keysExpanded ? <ChevronDown className="size-3.5" /> : <ChevronUp className="size-3.5" />}
+          {keysExpanded ? <ChevronDown /> : <ChevronUp />}
         </Button>
         <CustomKeyButton />
       </div>
@@ -246,18 +246,18 @@ function CustomKeyButton() {
         render={
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label="Manage custom keys"
             title="Custom keys"
-            className="size-7 shrink-0 text-muted-foreground"
+            className="shrink-0 text-muted-foreground"
           />
         }
       >
-        <Plus className="size-3.5" />
+        <Plus />
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-3">
+      <PopoverContent align="end" className="w-80 gap-3 p-3">
         <PopoverHeader>
-          <PopoverTitle>Custom terminal keys</PopoverTitle>
+          <PopoverTitle className="text-sm font-medium">Custom terminal keys</PopoverTitle>
           <PopoverDescription>
             Add a key your soft keyboard can't produce. Use a name ("tab", "ctrl+c",
             "f5") or a raw "\x1b…" sequence.
@@ -320,44 +320,44 @@ function CustomKeyRow({
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground"
+        className="text-muted-foreground"
         aria-label={`Move ${entry.label} left`}
         title="Move left"
         disabled={first}
         onClick={() => moveTerminalKey(entry.id, -1)}
       >
-        <ChevronLeft className="size-3" />
+        <ChevronLeft />
       </Button>
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground"
+        className="text-muted-foreground"
         aria-label={`Move ${entry.label} right`}
         title="Move right"
         disabled={last}
         onClick={() => moveTerminalKey(entry.id, 1)}
       >
-        <ChevronRight className="size-3" />
+        <ChevronRight />
       </Button>
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground"
+        className="text-muted-foreground"
         aria-label={`Edit ${entry.label}`}
         title="Edit"
         onClick={() => setEditing(true)}
       >
-        <Pencil className="size-3" />
+        <Pencil />
       </Button>
       <Button
         variant="ghost"
         size="icon-xs"
-        className="size-5 text-muted-foreground hover:text-destructive"
+        className="text-muted-foreground hover:text-destructive"
         aria-label={`Remove ${entry.label}`}
         title="Remove"
         onClick={() => removeTerminalKey(entry.id)}
       >
-        <Trash2 className="size-3" />
+        <Trash2 />
       </Button>
     </li>
   )
@@ -414,8 +414,8 @@ function KeyForm({ entry, onDone }: { entry?: TerminalKey; onDone: () => void })
           {entry ? "Save" : "Add key"}
         </Button>
         {entry && (
-          <Button size="sm" variant="ghost" aria-label="Cancel" title="Cancel" onClick={onDone}>
-            <X className="size-3.5" />
+          <Button size="icon-sm" variant="ghost" aria-label="Cancel" title="Cancel" onClick={onDone}>
+            <X />
           </Button>
         )}
       </div>

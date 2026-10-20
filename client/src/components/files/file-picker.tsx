@@ -45,7 +45,7 @@ export function FilePicker({
           accept={accept}
           multiple={multiple}
           pickLabel={pickLabel}
-          className="h-[min(70svh,36rem)]"
+          className="h-[min(calc(var(--float-h)*0.7),36rem)]"
           onCancel={() => onOpenChange(false)}
           onPick={(files) => {
             onOpenChange(false)

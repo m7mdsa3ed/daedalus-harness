@@ -14,7 +14,7 @@ import { useRules, useCreateRule, useUpdateRule, useDeleteRule, type Rule } from
 import { useInvalidate } from "@/lib/queries/helpers"
 import { rulesKey } from "@/lib/queries/keys"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-import { captureError, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, type InlineError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -24,7 +24,9 @@ import { useTableFilter } from "@/lib/use-table-filter"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { ErrorNote } from "@/components/error-note"
-import { Field, FormPageHeader, FormSection, PageHeader } from "./primitives"
+import { Field, FormActions, FormPageHeader, FormSection, PageForm, PageHeader, Section } from "./primitives"
+import { Empty } from "@/components/empty"
+import { useApiQuery } from "@/lib/queries/helpers"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -77,7 +79,6 @@ function Fields({
           onChange={(e) => onField("title", e.target.value)}
           placeholder="Rule title"
           aria-label="Rule title"
-          className="pointer-coarse:h-11"
         />
       </Field>
       <Field
@@ -88,7 +89,7 @@ function Fields({
           value={rule.content}
           onChange={(e) => onField("content", e.target.value)}
           aria-label="Rule content"
-          className="max-h-[50dvh] min-h-56 resize-y overflow-y-auto font-mono text-sm"
+          className="max-h-[50dvh] min-h-56 resize-y overflow-y-auto font-mono"
           placeholder="Standing instruction for the agent…"
         />
       </Field>
@@ -106,6 +107,10 @@ export function RulesPage() {
   const navigate = useNavigate()
   const invalidate = useInvalidate()
   const { settings } = useSettingsPage()
+  /* "Not yet" and "could not read" for the list `useRules` returns bare: the
+     same key and route, so it shares that request.
+     ponytail: rules are not a `useCatalogState` slice; 60s mirrors its stale time. */
+  const state = useApiQuery<Rule[]>(rulesKey(settings), "/api/rules", { staleTime: 60_000 })
 
   /* Rules autosave, so a new one exists on the server before its page does:
      the list is re-read first, or the page would find no such id and bounce. */
@@ -188,7 +193,7 @@ export function RulesPage() {
       {
         id: "up",
         label: "Move up",
-        icon: <ChevronUp className="size-4" />,
+        icon: <ChevronUp />,
         position: "left",
         disabled: (r) => r.n === 1,
         onClick: (r) => handlers.current.moveRule(r.id, "up"),
@@ -196,7 +201,7 @@ export function RulesPage() {
       {
         id: "down",
         label: "Move down",
-        icon: <ChevronDown className="size-4" />,
+        icon: <ChevronDown />,
         position: "left",
         disabled: (r) => r.n === total,
         onClick: (r) => handlers.current.moveRule(r.id, "down"),
@@ -204,7 +209,7 @@ export function RulesPage() {
       {
         id: "delete",
         label: "Delete rule",
-        icon: <Trash2 className="size-4" />,
+        icon: <Trash2 />,
         tone: "danger",
         onClick: (r) => {
           handlers.current.removeRule(r.id)
@@ -215,34 +220,47 @@ export function RulesPage() {
   )
 
   const addButton = (
-    <Button className="h-11 @panel-sm:h-9" onClick={addRule} disabled={createRule.isPending}>
-      <Plus className="size-4" /> New rule
+    <Button onClick={addRule} disabled={createRule.isPending}>
+      <Plus data-icon="inline-start" /> New rule
     </Button>
   )
 
   return (
     <>
       <PageHeader meta={meta} action={addButton} />
-      <div className="space-y-4">
-        <ErrorNote error={error} />
-        <DataTable<RuleRow, unknown>
-          className="min-w-0"
-          columns={columns}
-          data={f.rows}
-          getRowId={(r) => r.id}
-          pageSize={50}
-          actions={actions}
-          mark={() => <Globe aria-hidden />}
-          onRowClick={(r) => void navigate(settingsFormPath("rules", r.id))}
-          filtering={f.filtering}
-          emptyIcon={<ScrollText />}
-          emptyMessage={
-            f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No rules yet."
-          }
-          emptyAction={f.narrowed ? undefined : addButton}
+      {state.error ? (
+        <ErrorNote
+          error={inlineFromQuery(state.error, "Couldn't load the rules")}
+          onRetry={() => void state.refetch()}
         />
-      </div>
-
+      ) : !state.isPending && total === 0 ? (
+        <Empty size="lg" icon={ScrollText} action={addButton}>
+          No rules yet.
+        </Empty>
+      ) : (
+        <>
+          {error && (
+            <Section>
+              <ErrorNote error={error} />
+            </Section>
+          )}
+          <Section>
+            <DataTable<RuleRow, unknown>
+              className="min-w-0"
+              columns={columns}
+              data={f.rows}
+              getRowId={(r) => r.id}
+              isLoading={state.isPending}
+              pageSize={50}
+              actions={actions}
+              mark={() => <Globe aria-hidden />}
+              onRowClick={(r) => void navigate(settingsFormPath("rules", r.id))}
+              filtering={f.filtering}
+              emptyIcon={<ScrollText />}
+            />
+          </Section>
+        </>
+      )}
     </>
   )
 }
@@ -280,36 +298,37 @@ export function RuleFormPage() {
   return (
     <>
       <FormPageHeader title={`Rule ${idx + 1} of ${total}`} onBack={back} />
-      <div className="space-y-6">
-        <ErrorNote error={error} />
-        <FormSection
-          label="Rule"
-          action={
-            <SaveState pending={updateRule.isPending} failed={updateRule.isError} saved={updateRule.isSuccess} />
-          }
-        >
+      {/* Autosaving: the form only gives the fields the kit's rhythm; Enter
+          in the title submits nothing. */}
+      <PageForm onSubmit={(e) => e.preventDefault()}>
+        <FormSection label="Rule">
           <Fields rule={rule} onField={onField} />
         </FormSection>
-        <div className="flex items-center justify-between gap-2">
-          <EditorActions
-            idx={idx}
-            total={total}
-            onMove={move}
-            onDelete={() =>
-              deleteRule.mutate(
-                { id: rule.id },
-                {
-                  onSuccess: back,
-                  onError: (err) => setError(captureError(err, "Couldn't delete the rule")),
-                },
-              )
-            }
-          />
-          <Button className="h-11 @panel-sm:h-9" onClick={back}>
-            Done
-          </Button>
-        </div>
-      </div>
+        <FormActions
+          busy={false}
+          error={error}
+          done={back}
+          leading={
+            <>
+              <EditorActions
+                idx={idx}
+                total={total}
+                onMove={move}
+                onDelete={() =>
+                  deleteRule.mutate(
+                    { id: rule.id },
+                    {
+                      onSuccess: back,
+                      onError: (err) => setError(captureError(err, "Couldn't delete the rule")),
+                    },
+                  )
+                }
+              />
+              <SaveState pending={updateRule.isPending} failed={updateRule.isError} saved={updateRule.isSuccess} />
+            </>
+          }
+        />
+      </PageForm>
     </>
   )
 }
@@ -337,7 +356,7 @@ function EditorActions({
         title="Move up"
         aria-label="Move up"
       >
-        <ChevronUp className="size-4" />
+        <ChevronUp />
       </Button>
       <Button
         type="button"
@@ -349,7 +368,7 @@ function EditorActions({
         title="Move down"
         aria-label="Move down"
       >
-        <ChevronDown className="size-4" />
+        <ChevronDown />
       </Button>
       <Button
         type="button"
@@ -360,7 +379,7 @@ function EditorActions({
         title="Delete rule"
         aria-label="Delete rule"
       >
-        <Trash2 className="size-4" />
+        <Trash2 />
       </Button>
     </div>
   )

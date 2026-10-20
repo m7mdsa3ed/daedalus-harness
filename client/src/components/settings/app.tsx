@@ -203,11 +203,12 @@ export function SiteDataGroup() {
           variant="outline"
           className="w-full pointer-coarse:h-11 @panel-sm:w-auto"
           disabled={busy !== null}
+          loading={busy === "cache"}
           onClick={() => {
             void run("cache")
           }}
         >
-          {busy === "cache" ? "Clearing…" : "Clear cache"}
+          Clear cache
         </Button>
       </div>
       <div className="space-y-2 border-t pt-3">
@@ -222,6 +223,7 @@ export function SiteDataGroup() {
           variant="destructive"
           className="w-full pointer-coarse:h-11 @panel-sm:w-auto"
           disabled={busy !== null}
+          loading={busy === "all"}
           onClick={() => {
             void confirm({
               title: "Clear all site data?",
@@ -234,7 +236,7 @@ export function SiteDataGroup() {
             })
           }}
         >
-          {busy === "all" ? "Clearing…" : "Clear all"}
+          Clear all
         </Button>
       </div>
     </DevicePanel>

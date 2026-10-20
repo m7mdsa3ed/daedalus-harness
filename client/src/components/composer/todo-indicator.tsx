@@ -7,7 +7,7 @@ import { useMemo, useState } from "react"
 
 import { TodoChecklist } from "@/components/todo-checklist"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import {
   READING_MARK,
   READING_TRIGGER,
@@ -15,6 +15,8 @@ import {
   ReadingFace,
   Ring,
   OpenInInspector,
+  READING_LIST,
+  ReadingPopoverContent,
 } from "@/components/composer/indicator"
 import { extractTodos, toolViewOf } from "@/lib/tools"
 import { type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
@@ -106,20 +108,17 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
           </Button>
         }
       />
-      <PopoverContent align="end" side="top" className="w-72 gap-2">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="font-medium">Checklist</p>
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {completed}/{total}
-          </span>
-        </div>
+      <ReadingPopoverContent
+        heading="Checklist"
+        meta={`${completed}/${total}`}
+        action={<OpenInInspector tab="plan" onOpen={() => setOpen(false)} />}
+      >
         {/* The fixed popover owns the scroll; long checklists never take room
             from the transcript, and the same row design appears in plan details. */}
-        <div className="-mx-1 max-h-[min(50svh,20rem)] overflow-y-auto overscroll-contain px-1">
+        <div className={cn("-mx-1 px-1", READING_LIST)}>
           <TodoChecklist items={todos} />
         </div>
-        <OpenInInspector tab="plan" onOpen={() => setOpen(false)} />
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }

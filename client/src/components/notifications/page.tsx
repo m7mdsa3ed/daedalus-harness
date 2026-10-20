@@ -23,8 +23,8 @@ import { Empty } from "@/components/empty"
 import { KIND_META, NotificationRow } from "@/components/notifications/items"
 import { NeedsYou } from "@/components/notifications/needs-you"
 import { SurfaceHeader } from "@/components/page-primitives"
-import { EmptyCard, Group, TabBar } from "@/components/settings/primitives"
-import { Badge } from "@/components/ui/badge"
+import { ErrorNote } from "@/components/error-note"
+import { Group, Section, TabBar } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
 import type { AppNotification } from "@/lib/notifications-inbox"
@@ -34,6 +34,7 @@ import {
   useMarkNotificationsRead,
 } from "@/lib/queries/surfaces"
 import { settingsPath } from "@/lib/router"
+import { inlineFromQuery } from "@/lib/errors"
 import { periodLabel } from "@/lib/time"
 
 type Filter = "all" | "unread" | "needs_you" | "turn_finished" | "turn_failed"
@@ -62,7 +63,8 @@ function groupByPeriod(items: AppNotification[]) {
 export function NotificationsInboxPage() {
   /* Landing on the page is the one moment the list has to be current — the
      cache otherwise refreshes only on return to the window. */
-  const { inbox, isPending, refetch } = useInbox()
+  const { inbox, isPending, error: readError, refetch } = useInbox()
+  const error = React.useMemo(() => inlineFromQuery(readError, "Couldn't read the inbox"), [readError])
   const markRead = useMarkNotificationsRead()
   const clearInbox = useClearInbox()
   const navigate = useNavigate()
@@ -93,7 +95,6 @@ export function NotificationsInboxPage() {
         title="Notifications"
         description="What the harness recorded while you were elsewhere: a turn that finished or failed, a permission the agent is blocked on, a question it asked. Opening one goes to its thread and marks it read."
         onBack={() => void navigate("/")}
-        flush={items.length > 0}
         actions={
           items.length > 0 ? (
             <>
@@ -144,32 +145,29 @@ export function NotificationsInboxPage() {
 
       <NeedsYou />
 
-      {!inbox && isPending ? (
+      {!inbox && error ? (
+        <Section>
+          <ErrorNote error={error} onRetry={refetch} />
+        </Section>
+      ) : !inbox && isPending ? (
         /* A read in flight is not an empty inbox. The card below says "nothing
            here yet", and it would say it while the list is still arriving. */
         <Group>
           <NotificationRowsSkeleton rows={5} detailed className="-mx-3 @panel-sm:-mx-4" />
         </Group>
       ) : items.length === 0 ? (
-        <EmptyCard
+        <Empty
+          size="lg"
           icon={BellIcon}
-          text={
-            inbox
-              ? "Nothing here yet. A notice is recorded when a turn ends, fails, or stops to ask you something — turn the ones you want delivered to this device on in Settings."
-              : "Loading…"
-          }
           action={
-            inbox ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void navigate(settingsPath("notifications"))}
-              >
-                Notification settings
-              </Button>
-            ) : undefined
+            <Button size="sm" variant="outline" onClick={() => void navigate(settingsPath("notifications"))}>
+              Notification settings
+            </Button>
           }
-        />
+        >
+          Nothing here yet. A notice is recorded when a turn ends, fails, or stops to ask you something — turn the
+          ones you want delivered to this device on in Settings.
+        </Empty>
       ) : (
         <>
           {shown.length === 0 ? (
@@ -188,11 +186,7 @@ export function NotificationsInboxPage() {
             </Empty>
           ) : (
             groups.map((g) => (
-              <Group
-                key={g.label}
-                label={g.label}
-                action={<Badge variant="secondary" className="tabular-nums">{g.items.length}</Badge>}
-              >
+              <Group key={g.label} label={g.label} count={g.items.length}>
                 <ul className="-mx-3 divide-y @panel-sm:-mx-4">
                   {g.items.map((n) => (
                     <li key={n.id}>

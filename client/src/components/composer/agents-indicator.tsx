@@ -7,13 +7,15 @@ import { useEffect, useMemo, useState } from "react"
 import { NetworkIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import {
   READING_MARK,
   READING_TRIGGER,
   ReadingBubble,
   ReadingFace,
   OpenInInspector,
+  READING_LIST,
+  ReadingPopoverContent,
 } from "@/components/composer/indicator"
 import { extractSubagent } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
@@ -113,9 +115,12 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
           </Button>
         }
       />
-      <PopoverContent align="end" side="top" className="w-72 gap-2">
-        <p className="harness-shimmer font-medium text-primary">{label}</p>
-        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+      <ReadingPopoverContent
+        heading={label}
+        headingClassName="harness-shimmer text-primary"
+        action={<OpenInInspector tab="agents" onOpen={() => setOpen(false)} />}
+      >
+        <ul className={cn("-mx-1 space-y-0.5 px-1", READING_LIST)}>
           {agents.map((agent) => (
             <li key={agent.id} className="flex items-start gap-2 text-sm">
               <span className="grid size-5 shrink-0 place-items-center">
@@ -131,8 +136,7 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
             </li>
           ))}
         </ul>
-        <OpenInInspector tab="agents" onOpen={() => setOpen(false)} />
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }

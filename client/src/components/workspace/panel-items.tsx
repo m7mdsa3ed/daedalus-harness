@@ -226,7 +226,8 @@ export function WorkspaceLayoutItems({ dock }: { dock: WorkspaceDock }) {
                     size="icon-xs"
                     variant="ghost"
                     aria-label={`Delete ${layout.name}`}
-                    className="-mr-1 size-5 shrink-0 opacity-60 hover:opacity-100"
+                    title={`Delete ${layout.name}`}
+                    className="-mr-1 shrink-0 opacity-60 hover:opacity-100"
                     onClick={(event) => {
                       event.stopPropagation()
                       event.preventDefault()
@@ -234,7 +235,7 @@ export function WorkspaceLayoutItems({ dock }: { dock: WorkspaceDock }) {
                       setRevision((current) => current + 1)
                     }}
                   >
-                    <Trash2 className="size-3" />
+                    <Trash2 />
                   </Button>
                 }
               />

@@ -203,7 +203,7 @@ export function TaskRow({
           onChange={(e) => ctx.onToggleSelect?.(task.id, (e.nativeEvent as MouseEvent).shiftKey)}
           onClick={(e) => e.stopPropagation()}
           aria-label={`Select ${task.title}`}
-          className={cn("size-3.5 shrink-0 accent-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100", selected && "opacity-100")}
+          className={cn("size-3.5 shrink-0 accent-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100", selected && "opacity-100")}
         />
       )}
       <TypeIcon type={task.type} />

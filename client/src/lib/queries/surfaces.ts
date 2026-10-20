@@ -426,7 +426,12 @@ export function useInbox() {
   const query = useApiQuery<Inbox>(notificationsKey(settings), "/api/notifications", {
     staleTime: 0,
   })
-  return { inbox: query.data, isPending: query.isPending, refetch: () => void query.refetch() }
+  return {
+    inbox: query.data,
+    isPending: query.isPending,
+    error: query.error,
+    refetch: () => void query.refetch(),
+  }
 }
 
 /** Mark one (or all) read. The server answers the authoritative unread count;

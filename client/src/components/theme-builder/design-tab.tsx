@@ -8,9 +8,7 @@
    mount. */
 import * as React from "react"
 
-import { ChoiceTiles } from "@/components/settings/primitives"
-import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field"
-import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { ChoiceTiles, Group, Row } from "@/components/settings/primitives"
 import {
   BLUR_PRESETS,
   COMPOSER_PRESETS,
@@ -60,33 +58,17 @@ interface SectionProps {
 export function TypeSection({ base, onChange }: SectionProps) {
   return (
     <>
-      <FieldSet className="gap-3">
-        <div>
-          <FieldLegend variant="label" className="mb-0 text-sm">
-            Typeface
-          </FieldLegend>
-          <FieldDescription className="text-xs">
-            Three roles. Pick a bundled family, or name any family on Google Fonts.
-          </FieldDescription>
-        </div>
-        <ItemGroup className="gap-0.5 rounded-xl border p-1">
-          {FONT_SLOTS.map((slot) => (
-            <Item key={slot.key} size="xs" className="gap-2 rounded-lg py-1.5">
-              <ItemContent>
-                <ItemTitle className="text-sm font-normal">{slot.label}</ItemTitle>
-                <p className="text-xs text-muted-foreground">{slot.hint}</p>
-              </ItemContent>
-              <ItemActions>
-                <FontPicker
-                  value={base[slot.key]}
-                  role={slot.role}
-                  onChange={(value) => onChange({ [slot.key]: value })}
-                />
-              </ItemActions>
-            </Item>
-          ))}
-        </ItemGroup>
-      </FieldSet>
+      <Group label="Typeface" hint="Three roles. Pick a bundled family, or name any family on Google Fonts.">
+        {FONT_SLOTS.map((slot) => (
+          <Row key={slot.key} title={slot.label} subtitle={slot.hint}>
+            <FontPicker
+              value={base[slot.key]}
+              role={slot.role}
+              onChange={(value) => onChange({ [slot.key]: value })}
+            />
+          </Row>
+        ))}
+      </Group>
 
 <PresetField
         legend="Text size"
@@ -372,13 +354,7 @@ export function PresetField({
   renderSwatch: (id: string) => React.ReactNode
 }) {
   return (
-    <FieldSet className="gap-3">
-      <div>
-        <FieldLegend variant="label" className="mb-0 text-sm">
-          {legend}
-        </FieldLegend>
-        <FieldDescription className="text-xs">{hint}</FieldDescription>
-      </div>
+    <Group label={legend} hint={hint}>
       <ChoiceTiles
         label={legend}
         value={value ?? ""}
@@ -393,6 +369,6 @@ export function PresetField({
           ),
         }))}
       />
-    </FieldSet>
+    </Group>
   )
 }

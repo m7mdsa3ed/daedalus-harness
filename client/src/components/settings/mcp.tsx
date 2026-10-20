@@ -46,6 +46,7 @@ import { EntityIcon, McpIcon } from "@/components/entity-icon"
 import { ImageIcon } from "lucide-react"
 import { ErrorNote } from "@/components/error-note"
 import { Empty } from "@/components/empty"
+import { PickerSkeleton, SkeletonText } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
 import {
   DropdownMenu,
@@ -55,20 +56,24 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
-import { useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
+import { useCatalogState, useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
 import { mcpCatalogKey } from "@/lib/queries/keys"
 import { useQueries, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { useTableFilter } from "@/lib/use-table-filter"
 import {
+  FIELD_GRID,
   Field,
   FormActions,
   FormPageHeader,
   FormSection,
   FormShell,
+  Group,
+  INSET,
   LogoUpload,
   PageForm,
   PageHeader,
+  Row,
   Section,
   Segmented,
   StatStrip,
@@ -187,6 +192,7 @@ export function McpPage() {
   const qc = useQueryClient()
   const meta = sectionMeta("mcp")
   const mcpServers = useMcpServers()
+  const catalog = useCatalogState("mcp-servers")
 
   /* The harness's own servers, added from one menu rather than typed in:
      there is nothing to type — the row is a handle, and the command, env and
@@ -260,7 +266,7 @@ export function McpPage() {
       {
         id: "check",
         label: "Check now",
-        icon: <SearchCheckIcon className="size-4" />,
+        icon: <SearchCheckIcon />,
         position: "left",
         hidden: (r) => isThreadScoped(r.server),
         disabled: (r) => checking.has(r.server.id) || r.fetching,
@@ -285,7 +291,7 @@ export function McpPage() {
       {
         id: "edit",
         label: "Edit",
-        icon: <PencilIcon className="size-4" />,
+        icon: <PencilIcon />,
         position: "left",
         // A built-in has nothing to edit — it is resolved at spawn, not stored.
         hidden: (r) => r.server.type === "builtin",
@@ -294,14 +300,14 @@ export function McpPage() {
       {
         id: "tools",
         label: "What it offers",
-        icon: <WrenchIcon className="size-4" />,
+        icon: <WrenchIcon />,
         hidden: (r) => !r.data?.ok,
         onClick: ({ server }) => void latest.current.navigate(mcpDetailPath(server.id)),
       },
       {
         id: "delete",
         label: "Delete",
-        icon: <Trash2Icon className="size-4" />,
+        icon: <Trash2Icon />,
         tone: "danger",
         onClick: async ({ server }) => {
           const { settings, confirm, invalidate } = latest.current
@@ -382,27 +388,27 @@ export function McpPage() {
      two places — what is already on this machine, and what the world has
      published. Neither writes a row without the form. */
   const newButton = (
-    <Button className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" onClick={() => void navigate(settingsFormPath(meta.id))}>
-      <PlusIcon className="size-4" /> New MCP server
+    <Button onClick={() => void navigate(settingsFormPath(meta.id))}>
+      <PlusIcon data-icon="inline-start" /> New MCP server
     </Button>
   )
   const browseButton = (
-    <Button variant="outline" className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" onClick={() => void navigate(settingsFormPath(meta.id, "browse"))}>
-      <StoreIcon className="size-4" /> Browse
+    <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "browse"))}>
+      <StoreIcon data-icon="inline-start" /> Browse
     </Button>
   )
   const importButton = (
-    <Button variant="outline" className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
-      <DownloadIcon className="size-4" /> Import
+    <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
+      <DownloadIcon data-icon="inline-start" /> Import
     </Button>
   )
   const builtins = missing.length > 0 && (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" className="h-11 grow @panel-sm:h-9 @panel-sm:grow-0" title="Add one of the harness's own MCP servers">
-            <PlusIcon className="size-4" /> Add built-in
-            <ChevronDownIcon className="size-3.5 opacity-60" />
+          <Button variant="outline" title="Add one of the harness's own MCP servers">
+            <PlusIcon data-icon="inline-start" /> Add built-in
+            <ChevronDownIcon data-icon="inline-end" className="opacity-60" />
           </Button>
         }
       />
@@ -421,15 +427,19 @@ export function McpPage() {
       <PageHeader
         meta={meta}
         action={
-          <div className="flex flex-wrap gap-2">
+          <>
             {newButton}
             {browseButton}
             {importButton}
             {builtins}
-          </div>
+          </>
         }
       />
-      {rows.length === 0 ? (
+      {catalog.error ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(catalog.error, "Couldn't read the MCP servers")} onRetry={catalog.refetch} />
+        </Section>
+      ) : rows.length === 0 && !catalog.isPending ? (
         <Empty size="lg" icon={meta.icon} action={newButton}>
           No MCP servers yet — add one, browse the registry, or import from the agents' own configs.
         </Empty>
@@ -437,23 +447,23 @@ export function McpPage() {
         <>
           <StatStrip
             stats={[
-              { label: "Servers", value: rows.length },
-              { label: "Connected", value: count("connected"), tone: count("connected") > 0 ? "ok" : "default" },
-              { label: "Need attention", value: count("auth") + count("error"), tone: count("error") > 0 ? "bad" : count("auth") > 0 ? "warn" : "default" },
-              { label: "Tools offered", value: offered },
+              { label: "Servers", value: rows.length, loading: catalog.isPending },
+              { label: "Connected", value: count("connected"), tone: count("connected") > 0 ? "ok" : "default", loading: catalog.isPending },
+              { label: "Need attention", value: count("auth") + count("error"), tone: count("error") > 0 ? "bad" : count("auth") > 0 ? "warn" : "default", loading: catalog.isPending },
+              { label: "Tools offered", value: offered, loading: catalog.isPending },
             ]}
           />
           <DataTable
             columns={columns}
             data={shown}
             getRowId={(r) => r.server.id}
+            isLoading={catalog.isPending}
             actions={actions}
             mark={(r) => <McpIcon server={r.server} className="size-5" />}
             mobile={{ renderRow }}
             expand={{ render: renderExpanded }}
             pageSize={50}
             emptyIcon={<PlugIcon />}
-            emptyMessage={needle || status !== "all" ? "No server matches." : "No MCP servers yet."}
             filtering={{
               search: { value: query, onChange: setQuery, placeholder: "Search MCP servers…" },
               fields: [
@@ -758,12 +768,12 @@ function McpConnection({
       <Badge variant={connected ? "secondary" : "destructive"} title={state?.error ?? undefined}>
         <KeyRoundIcon /> {authSummary(server.authState)}
       </Badge>
-      <Button variant="outline" size="sm" className="h-11 @panel-sm:h-9" disabled={busy || waiting} onClick={() => void connect()}>
-        <PlugIcon className="size-4" /> {waiting ? "Waiting…" : connected ? "Reconnect" : "Connect"}
+      <Button variant="outline" size="sm" className="pointer-coarse:h-11" disabled={busy || waiting} onClick={() => void connect()}>
+        <PlugIcon data-icon="inline-start" /> {waiting ? "Waiting…" : connected ? "Reconnect" : "Connect"}
       </Button>
       {state && state.state !== "disconnected" && (
-        <Button variant="ghost" size="sm" className="h-11 @panel-sm:h-9" disabled={busy} onClick={() => void disconnect()} title="Revoke and forget these tokens">
-          <UnplugIcon className="size-4" /> Disconnect
+        <Button variant="ghost" size="sm" className="pointer-coarse:h-11" disabled={busy} onClick={() => void disconnect()} title="Revoke and forget these tokens">
+          <UnplugIcon data-icon="inline-start" /> Disconnect
         </Button>
       )}
     </div>
@@ -954,7 +964,7 @@ export function McpBrowsePage() {
               </a>
             )}
             {have.has(row.original.server.name) && <Badge variant="secondary">In library</Badge>}
-            <Button type="button" variant="ghost" size="sm" onClick={() => details(row.original)}>
+            <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={() => details(row.original)}>
               Details
             </Button>
             <Button
@@ -965,7 +975,7 @@ export function McpBrowsePage() {
               aria-label={`Install ${row.original.server.name}`}
               onClick={() => install(row.original)}
             >
-              <PlusIcon className="size-4" /> Install
+              <PlusIcon data-icon="inline-start" /> Install
             </Button>
           </span>
         ),
@@ -999,15 +1009,15 @@ export function McpBrowsePage() {
           </p>
         )}
         <div className="flex gap-2">
-          <Button type="button" variant="outline" className="h-11 grow" aria-label={`Install ${entry.server.name}`} onClick={() => install(entry)}>
-            <PlusIcon className="size-4" /> Install
+          <Button type="button" variant="outline" className="grow pointer-coarse:h-11" aria-label={`Install ${entry.server.name}`} onClick={() => install(entry)}>
+            <PlusIcon data-icon="inline-start" /> Install
           </Button>
-          <Button type="button" variant="outline" className="h-11" onClick={() => details(entry)}>
+          <Button type="button" variant="outline" className="pointer-coarse:h-11" onClick={() => details(entry)}>
             Details
           </Button>
           {entry.repositoryUrl && (
-            <Button type="button" variant="outline" className="h-11" aria-label="Open the source" render={<a href={entry.repositoryUrl} target="_blank" rel="noreferrer" />}>
-              <ExternalLinkIcon className="size-4" />
+            <Button type="button" variant="outline" size="icon" className="pointer-coarse:size-11" aria-label="Open the source" render={<a href={entry.repositoryUrl} target="_blank" rel="noreferrer" />}>
+              <ExternalLinkIcon />
             </Button>
           )}
         </div>
@@ -1024,7 +1034,6 @@ export function McpBrowsePage() {
         onBack={() => void navigate(settingsPath(meta.id))}
       />
       <PageForm onSubmit={(e) => e.preventDefault()}>
-        <FormShell sections={[{ id: "search", label: "Search" }]}>
           <FormSection id="search" label="Search" hint={active?.hint ?? "Leave empty for the newest."}>
             <Segmented
               label="Source"
@@ -1035,7 +1044,7 @@ export function McpBrowsePage() {
                 label: x.label,
               }))}
             />
-            <InputGroup className="h-11">
+            <InputGroup className="h-9 pointer-coarse:h-11">
               <InputGroupAddon>
                 <SearchIcon />
               </InputGroupAddon>
@@ -1074,16 +1083,15 @@ export function McpBrowsePage() {
               mobile={{ renderRow }}
               pageSize={50}
               emptyIcon={<meta.icon />}
-              emptyMessage={query || f.narrowed ? "Nothing published matches." : "This source answered with nothing."}
+              emptyMessage={query || f.narrowed ? undefined : "This source answered with nothing."}
               filtering={{ ...f.filtering, search: undefined }}
             />
             {cursor && (
-              <Button type="button" variant="outline" className="h-11 w-full @panel-sm:h-9" disabled={more} onClick={() => void loadMore()}>
-                {more ? "Loading…" : "Load more"}
+              <Button type="button" variant="outline" className="mt-3 w-full pointer-coarse:h-11" loading={more} onClick={() => void loadMore()}>
+                Load more
               </Button>
             )}
           </Section>
-        </FormShell>
       </PageForm>
     </>
   )
@@ -1128,71 +1136,83 @@ export function McpRegistryDetailPage() {
         title={server.name}
         description={entry.description}
         onBack={() => void navigate(browse)}
+        meta={
+          <>
+            <RegistryMark entry={entry} className="size-5" />
+            <ViaCell entry={entry} />
+            <PopularityCell entry={entry} />
+            {entry.verified && (
+              <Badge variant="secondary">
+                <BadgeCheckIcon /> Verified
+              </Badge>
+            )}
+            {entry.repositoryUrl && (
+              <a
+                href={entry.repositoryUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 hover:text-foreground"
+              >
+                Source <ExternalLinkIcon className="size-3.5" />
+              </a>
+            )}
+          </>
+        }
+        actions={
+          <Button type="button" onClick={() => void navigate(settingsFormPath("mcp"), { state: { prefill: entry.server } })}>
+            <PlusIcon data-icon="inline-start" /> Install
+          </Button>
+        }
       />
-      <PageForm onSubmit={(e) => e.preventDefault()}>
-        <FormShell sections={[{ id: "about", label: "About" }, { id: "tools", label: "Tools" }, { id: "readme", label: "README" }]}>
-          <FormSection id="about" label="About" hint="What installing would add to your library.">
-            <div className="flex flex-wrap items-center gap-2">
-              <RegistryMark entry={entry} className="size-8" />
-              <ViaCell entry={entry} />
-              <PopularityCell entry={entry} />
-              {entry.verified && <Badge variant="secondary"><BadgeCheckIcon className="size-3" /> Verified</Badge>}
-              {entry.repositoryUrl && (
-                <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-                  Source <ExternalLinkIcon className="size-3.5" />
-                </a>
-              )}
-            </div>
-            <pre className="overflow-x-auto rounded-xl border bg-muted/50 p-3 font-mono text-sm">{run}</pre>
-            {entry.needs.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
-              </p>
-            )}
-            <Button
-              type="button"
-              className="h-11 @panel-sm:h-9 @panel-sm:self-start"
-              onClick={() => void navigate(settingsFormPath("mcp"), { state: { prefill: entry.server } })}
-            >
-              <PlusIcon className="size-4" /> Install
-            </Button>
-            <ErrorNote error={error} />
-          </FormSection>
-          <FormSection id="tools" label="Tools" hint={detail?.tools ? `${detail.tools.length} published` : undefined}>
-            {detail === null ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : detail.tools === null ? (
-              <p className="text-sm text-muted-foreground">
-                {entry.source === "smithery"
-                  ? "Smithery lists no tools for this server."
-                  : "This source does not publish a tool list. Install it, then Check it in the library to see exactly what it offers."}
-              </p>
-            ) : (
-              <ul className="divide-y rounded-xl border">
-                {detail.tools.map((t) => (
-                  <li key={t.name} className="px-3 py-2">
-                    <div className="font-mono text-sm font-medium">{t.name}</div>
-                    {t.description && <div className="line-clamp-2 text-sm text-muted-foreground">{t.description}</div>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </FormSection>
-          <FormSection id="readme" label="README">
-            {detail === null ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : detail.readme ? (
-              <div className="prose prose-sm max-w-none">
-                <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                  {detail.readme}
-                </Markdown>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No README could be read from the source.</p>
-            )}
-          </FormSection>
-        </FormShell>
-      </PageForm>
+      {error && (
+        <Section>
+          <ErrorNote error={error} />
+        </Section>
+      )}
+      <Group label="About" hint="What installing would add to your library.">
+        <Row
+          title={server.type === "http" ? "Endpoint" : "Command"}
+          subtitle={<span className="font-mono text-xs break-all">{run}</span>}
+        />
+        {entry.needs.length > 0 && (
+          <Row title="Needs" subtitle={<span className="font-mono text-xs break-all">{entry.needs.join(", ")}</span>} />
+        )}
+      </Group>
+      <Section label="Tools" count={detail?.tools ? detail.tools.length : undefined}>
+        {detail === null ? (
+          <PickerSkeleton rows={3} />
+        ) : detail.tools === null ? (
+          <Empty>
+            {entry.source === "smithery"
+              ? "Smithery lists no tools for this server."
+              : "This source does not publish a tool list. Install it, then Check it in the library to see exactly what it offers."}
+          </Empty>
+        ) : detail.tools.length === 0 ? (
+          <Empty>This source lists no tools for this server.</Empty>
+        ) : (
+          <ul className={cn("divide-y", INSET)}>
+            {detail.tools.map((t) => (
+              <li key={t.name} className="px-3 py-2">
+                <div className="font-mono text-sm font-medium">{t.name}</div>
+                {t.description && <div className="line-clamp-2 text-sm text-muted-foreground">{t.description}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+      <Section label="README">
+        {detail === null ? (
+          <SkeletonText lines={6} />
+        ) : detail.readme ? (
+          <div className="prose prose-sm max-w-none">
+            <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+              {detail.readme}
+            </Markdown>
+          </div>
+        ) : (
+          <Empty>No README could be read from the source.</Empty>
+        )}
+      </Section>
     </>
   )
 }
@@ -1369,7 +1389,7 @@ function McpForm({
         ]}
       >
       <FormSection id="identity" label="Identity" hint="What the agent calls it and how it is drawn.">
-      <div className="grid gap-4 @panel-sm:grid-cols-2">
+      <div className={FIELD_GRID}>
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>
@@ -1385,7 +1405,7 @@ function McpForm({
               value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
               onChange={(e) => set({ logoUrl: e.target.value })}
               placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.png"}
-              className="min-w-0 flex-1 font-mono text-sm"
+              className="min-w-0 flex-1 font-mono"
             />
             <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
           </div>
@@ -1419,17 +1439,18 @@ function McpForm({
                 value={form.url}
                 onChange={(e) => set({ url: e.target.value, auth: "none" })}
                 placeholder="https://mcp.example.com/mcp"
-                className="min-w-0 flex-1 basis-full font-mono text-sm @panel-sm:basis-0"
+                className="min-w-0 flex-1 basis-full font-mono @panel-sm:basis-0"
                 required
               />
               <Button
                 type="button"
                 variant="outline"
-                className="h-11 @panel-sm:h-9"
-                disabled={!form.url || checking}
+                className="pointer-coarse:h-11"
+                disabled={!form.url}
+                loading={checking}
                 onClick={() => void check("Couldn't check the MCP server", async () => void (await runProbe()))}
               >
-                <SearchCheckIcon className="size-4" /> Check
+                <SearchCheckIcon data-icon="inline-start" /> Check
               </Button>
             </div>
           </Field>
@@ -1460,7 +1481,7 @@ function McpForm({
               value={form.headers}
               onChange={(e) => set({ headers: e.target.value })}
               rows={3}
-              className="font-mono text-sm"
+              className="font-mono"
             />
           </Field>
         </>
@@ -1471,7 +1492,7 @@ function McpForm({
               value={form.command}
               onChange={(e) => set({ command: e.target.value })}
               placeholder="npx"
-              className="font-mono text-sm"
+              className="font-mono"
               required
             />
           </Field>
@@ -1480,7 +1501,7 @@ function McpForm({
               value={form.args}
               onChange={(e) => set({ args: e.target.value })}
               rows={3}
-              className="font-mono text-sm"
+              className="font-mono"
             />
           </Field>
           <Field label="Environment" hint="One per line: NAME=value">
@@ -1488,7 +1509,7 @@ function McpForm({
               value={form.env}
               onChange={(e) => set({ env: e.target.value })}
               rows={2}
-              className="font-mono text-sm"
+              className="font-mono"
             />
           </Field>
         </>

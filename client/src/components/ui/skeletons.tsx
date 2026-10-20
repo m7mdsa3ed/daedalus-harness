@@ -20,28 +20,6 @@ export function SkeletonText({
   )
 }
 
-export function TranscriptSkeleton() {
-  return (
-    <div aria-busy="true" className="space-y-4">
-      <div className="flex justify-end">
-        <div className="w-1/3 space-y-2 rounded-lg bg-muted/50 p-3">
-          <SkeletonText lines={2} />
-        </div>
-      </div>
-      {/* Mirrors a real step row: flush left column, no gutter — so the
-          transcript doesn't jump when it swaps in. */}
-      {[3, 2, 4].map((lines, index) => (
-        <div key={index}>
-          <div className="min-w-0 space-y-2 pt-0.5">
-            <Skeleton className="h-3 w-28" />
-            <SkeletonText lines={lines} />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export function ToolCallSkeleton({ className }: { className?: string }) {
   return (
     <div aria-hidden className={className}>
@@ -86,38 +64,35 @@ export function SidebarGroupsSkeleton() {
   )
 }
 
+/** A settings section before its page has loaded: the header's shape (mark,
+    title, description, rule) over a card of rows, so the frame is already laid
+    out when the page lands. */
 export function SettingsSectionSkeleton() {
   return (
-    <div aria-busy="true" className="space-y-4">
-      <div className="space-y-1.5">
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-3 w-72" />
+    <div aria-busy="true">
+      <div className="mb-8 flex items-start gap-4 border-b pb-6">
+        <Skeleton className="hidden size-10 shrink-0 rounded-lg @panel-sm:block" />
+        <div className="min-w-0 flex-1">
+          <Skeleton className="h-8 w-48 max-w-full" />
+          <Skeleton className="mt-2 h-4 w-2/3" />
+        </div>
       </div>
-      <div className="rounded-lg border">
-        {[0, 1, 2].map((index) => (
-          <div key={index} className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
-            <Skeleton className="size-8 shrink-0 rounded-md" />
-            <div className="min-w-0 flex-1">
-              <Skeleton className="h-3 w-32" />
-              <Skeleton className="mt-1.5 h-3 w-48" />
-            </div>
-            <Skeleton className="size-7 shrink-0 rounded-full" />
-          </div>
-        ))}
-      </div>
+      <GroupRowsSkeleton label />
     </div>
   )
 }
 
+/** The rows of a `Picker` — the same inset list, checkbox and two lines. */
 export function PickerSkeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div aria-busy="true" className="divide-y rounded-lg border">
+    /* `INSET` from settings/primitives, spelled here: importing it would cycle. */
+    <div aria-busy="true" className="divide-y rounded-xl border bg-muted/50">
       {[...Array(rows).keys()].map((index) => (
-        <div key={index} className="flex items-center gap-3 p-3">
-          <Skeleton className="size-4 shrink-0 rounded-sm" />
+        <div key={index} className="flex items-start gap-3 px-3 py-2">
+          <Skeleton className="mt-0.5 size-4 shrink-0 rounded-sm" />
           <div className="min-w-0 flex-1">
-            <Skeleton className="h-3 w-36" />
-            <Skeleton className="mt-1.5 h-3 w-52" />
+            <Skeleton className="h-3.5 w-36 max-w-full" />
+            <Skeleton className="mt-1.5 h-3 w-52 max-w-full" />
           </div>
         </div>
       ))}
@@ -125,8 +100,9 @@ export function PickerSkeleton({ rows = 3 }: { rows?: number }) {
   )
 }
 
-/** Rows in a settings `Group`, in the shape `Row` draws them: an optional group
-    caption, then a bordered card of icon/title/subtitle lines. */
+/** A `Group` before its rows have landed, in `Row`'s shape: an optional
+    heading, then the kit's card of icon/title/subtitle lines. Spaced like a
+    `Section`, so it stands in a page's flow of blocks where the real one will. */
 export function GroupRowsSkeleton({
   rows = 4,
   label = false,
@@ -137,11 +113,11 @@ export function GroupRowsSkeleton({
   className?: string
 }) {
   return (
-    <section aria-busy="true" className={cn("mb-6 last:mb-0", className)}>
-      {label && <Skeleton className="mb-2 ml-1 h-3 w-16" />}
-      <div className="divide-y overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10">
+    <section aria-busy="true" className={cn("mt-8 first:mt-0", className)}>
+      {label && <Skeleton className="mb-3 ml-1 h-5 w-32" />}
+      <div className="divide-y overflow-hidden rounded-2xl bg-card px-3 ring-1 ring-foreground/10 @panel-sm:px-4">
         {[...Array(rows).keys()].map((index) => (
-          <div key={index} className="flex items-center gap-3 px-3.5 py-3 sm:px-4">
+          <div key={index} className="flex min-h-12 items-center gap-3 py-3">
             <Skeleton className="mt-0.5 size-4 shrink-0 self-start rounded-sm" />
             <div className="min-w-0 flex-1">
               <Skeleton className="h-3.5 w-40 max-w-full" />
@@ -172,7 +148,7 @@ export function NotificationRowsSkeleton({
       {[...Array(rows).keys()].map((index) => (
         <li
           key={index}
-          className={cn("flex items-start gap-3", detailed ? "min-h-[116px] px-4 py-3.5" : "px-3 py-2.5")}
+          className={cn("flex items-start gap-3", detailed ? "min-h-12 px-3 py-3 @panel-sm:px-4" : "px-3 py-2.5")}
         >
           <Skeleton className={cn("shrink-0 rounded-full", detailed ? "mt-0.5 size-8" : "size-7")} />
           <div className="min-w-0 flex-1">
@@ -250,20 +226,6 @@ export function PanelRowsSkeleton({
             style={split ? undefined : { width: `${45 + ((index * 23) % 45)}%` }}
           />
           {split && <Skeleton className="h-3 flex-1 opacity-60" />}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-export function SetupCardsSkeleton() {
-  return (
-    <div aria-busy="true" className="mt-8 grid gap-2 text-left sm:grid-cols-2">
-      {[0, 1].map((index) => (
-        <div key={index} className="rounded-2xl bg-card p-4 ring-1 ring-foreground/10">
-          <Skeleton className="h-3 w-20" />
-          <Skeleton className="mt-2 h-3 w-full" />
-          <Skeleton className="mt-1.5 h-3 w-3/4" />
         </div>
       ))}
     </div>

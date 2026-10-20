@@ -207,7 +207,7 @@ function ResponsiveDialogContent({
               {header}
               <div
                 className={cn(
-                  "flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-4",
+                  "@container/panel flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4",
                   !footer && "pb-[max(1rem,env(safe-area-inset-bottom))]",
                   bodyClassName
                 )}
@@ -249,7 +249,9 @@ function ResponsiveDialogContent({
         {...props}
       >
         {header}
-        <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5", bodyClassName)}>{body}</div>
+        <div className={cn("@container/panel flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5", bodyClassName)}>
+          {body}
+        </div>
         {footer}
         {showCloseButton && <CloseButton Close={DialogPrimitive.Close} />}
       </DialogPrimitive.Popup>
@@ -280,7 +282,7 @@ function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<"f
       className={cn(
         "flex shrink-0 gap-2 border-t",
         isMobile
-          ? "flex-col px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+          ? "flex-col-reverse px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] [&_[data-slot=button]]:pointer-coarse:h-11"
           : "flex-row justify-end px-6 py-4",
         className
       )}
@@ -319,7 +321,44 @@ function ResponsiveDialogDescription({
   )
 }
 
+/** A whole-window reading surface (a plan, a run's board, a flowchart) on
+    `ui/dialog`'s `DialogContent` — not a centred modal and not a sheet. */
+export const VIEWER =
+  "flex h-[calc(var(--float-h)-2rem)] w-[min(64rem,calc(var(--float-w)-1rem))] max-w-none flex-col gap-0 overflow-hidden p-0 ring-edge-float sm:max-w-[calc(var(--float-w)-2rem)]"
+
+/** A `VIEWER`'s title bar: its mark and title, `pr-12` clearing the corner X.
+    `children` trails (a toggle, a count). */
+function ViewerHeader({
+  icon,
+  title,
+  children,
+  className,
+}: {
+  icon?: React.ReactNode
+  title: React.ReactNode
+  children?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("flex h-12 shrink-0 items-center gap-2.5 border-b px-4 pr-12", className)}>
+      {icon && (
+        <span
+          aria-hidden
+          className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-4"
+        >
+          {icon}
+        </span>
+      )}
+      <DialogPrimitive.Title data-slot="dialog-title" className="min-w-0 flex-1 truncate text-sm font-medium">
+        {title}
+      </DialogPrimitive.Title>
+      {children}
+    </div>
+  )
+}
+
 export {
+  ViewerHeader,
   ResponsiveDialog,
   ResponsiveDialogContent,
   ResponsiveDialogHeader,

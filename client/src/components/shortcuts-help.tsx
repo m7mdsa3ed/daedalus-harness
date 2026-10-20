@@ -13,6 +13,7 @@ import {
   ResponsiveDialog,
   ResponsiveDialogContent,
   ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
@@ -80,7 +81,7 @@ export function ShortcutsHelp({
   const navigate = useNavigate()
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent>
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Keyboard shortcuts</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
@@ -89,40 +90,38 @@ export function ShortcutsHelp({
         </ResponsiveDialogHeader>
         {/* The content element already scrolls (dialog) or is the scroll region
             (drawer) — a second one here would trap the wheel inside it. */}
-        <div className="pt-1">
-          {SHORTCUT_SCOPES.map((scope) => {
-            const rows = SHORTCUTS.filter((shortcut) => shortcut.scope === scope)
-            if (rows.length === 0) return null
-            return (
-              <section key={scope} className="mb-3 last:mb-0">
-                <h3 className="mb-1 text-xs font-medium text-muted-foreground">
-                  {scope}
-                </h3>
-                <div className="divide-y">
-                  {rows.map((shortcut) => (
-                    <Row key={`${scope}:${shortcut.label}`} shortcut={shortcut} />
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-          {/* The sheet says what the keys are; changing them is a page, not a
-              dialog — one link rather than an editor inside a reference. */}
-          <div className="mt-4 border-t pt-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                onOpenChange(false)
-                void navigate("/settings/keyboard")
-              }}
-            >
-              <SlidersHorizontalIcon />
-              Change these shortcuts
-            </Button>
-          </div>
-        </div>
+        {SHORTCUT_SCOPES.map((scope) => {
+          const rows = SHORTCUTS.filter((shortcut) => shortcut.scope === scope)
+          if (rows.length === 0) return null
+          return (
+            <section key={scope}>
+              <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+                {scope}
+              </h3>
+              <div className="divide-y">
+                {rows.map((shortcut) => (
+                  <Row key={`${scope}:${shortcut.label}`} shortcut={shortcut} />
+                ))}
+              </div>
+            </section>
+          )
+        })}
+        {/* The sheet says what the keys are; changing them is a page, not a
+            dialog — one link rather than an editor inside a reference. */}
+        <ResponsiveDialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="sm:mr-auto"
+            onClick={() => {
+              onOpenChange(false)
+              void navigate("/settings/keyboard")
+            }}
+          >
+            <SlidersHorizontalIcon data-icon="inline-start" />
+            Change these shortcuts
+          </Button>
+        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

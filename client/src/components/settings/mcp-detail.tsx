@@ -30,12 +30,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DataTable, TitleCell } from "@/components/ui/data-table"
 import type { ColumnDef } from "@/lib/table"
 import { useAsyncAction } from "@/hooks/use-async-action"
-import { useMcpCatalog, useMcpServers, useProjects } from "@/lib/queries/catalog"
+import { useCatalogState, useMcpCatalog, useMcpServers, useProjects } from "@/lib/queries/catalog"
+import { inlineFromQuery } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { mcpCatalogKey } from "@/lib/queries/keys"
 import { mcpDetailPath, mcpEntryPath, settingsPath } from "@/lib/router"
 import { api, mcpSubtitle, type McpCheckEntry, type McpCheckResult, type McpServerDef } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { FormPageHeader, Group, INSET, Row, TabBar } from "./primitives"
+import { FormPageHeader, Group, INSET, ROW_CONTROL, Row, Section, TabBar } from "./primitives"
 import { useSettingsPage } from "./layout"
 
 /** The row and its stored listing — shared by the list page and an entry's page. */
@@ -46,17 +49,30 @@ function useMcpListing(entryId: string) {
      these pages never read one — they explain, like the row they were opened from. */
   const scoped = server?.type === "builtin" && !!server.threadScoped
   const query = useMcpCatalog(entryId, !scoped)
-  return { servers, server, scoped, query, result: query.data?.deferred ? null : (query.data ?? null) }
+  const rowsState = useCatalogState("mcp-servers")
+  return { servers, server, scoped, query, rowsState, result: query.data?.deferred ? null : (query.data ?? null) }
 }
 
 /** One entry's page: the contract of a single tool, prompt or resource. */
 export function McpEntryPage() {
   const { entryId = "", itemKey = "" } = useParams()
   const navigate = useNavigate()
-  const { servers, server, scoped, query, result } = useMcpListing(entryId)
-  // A row or listing still loading is not a missing one.
-  if (!server) return servers.length === 0 ? null : <Navigate to={settingsPath("mcp")} replace />
-  if (!scoped && query.isPending) return null
+  const { server, scoped, query, result, rowsState } = useMcpListing(entryId)
+  const back = () => void navigate(mcpDetailPath(entryId))
+  /* A row or listing still loading is not a missing one: the page's header
+     (the entry's name is in its key) over the shape of what is coming. */
+  const pendingPage = (
+    <>
+      <FormPageHeader title={itemKey.slice(itemKey.indexOf(":") + 1)} onBack={back} />
+      <GroupRowsSkeleton rows={3} label />
+    </>
+  )
+  if (!server) {
+    if (rowsState.isPending) return pendingPage
+    if (rowsState.error) return <ListingError error={rowsState.error} onRetry={rowsState.refetch} back={back} />
+    return <Navigate to={settingsPath("mcp")} replace />
+  }
+  if (!scoped && query.isPending) return pendingPage
   const row = entryRows(result).find((r) => r.key === itemKey)
   if (!row) return <Navigate to={mcpDetailPath(entryId)} replace />
   return (
@@ -64,9 +80,33 @@ export function McpEntryPage() {
       <FormPageHeader
         title={row.entry.uri ?? row.entry.name}
         description={row.entry.description}
-        onBack={() => void navigate(mcpDetailPath(entryId))}
+        meta={
+          <>
+            <Badge variant="secondary" className="font-normal">
+              {KIND_LABEL[row.kind]}
+            </Badge>
+            {row.entry.mimeType && (
+              <Badge variant="outline" className="font-normal">
+                {row.entry.mimeType}
+              </Badge>
+            )}
+          </>
+        }
+        onBack={back}
       />
       <EntryDetail kind={row.kind} entry={row.entry} />
+    </>
+  )
+}
+
+/** The library itself could not be read, so there is no row to draw. */
+function ListingError({ error, onRetry, back }: { error: Error; onRetry: () => void; back: () => void }) {
+  return (
+    <>
+      <FormPageHeader title="MCP server" onBack={back} />
+      <Section>
+        <ErrorNote error={inlineFromQuery(error, "Couldn't read the MCP servers")} onRetry={onRetry} />
+      </Section>
     </>
   )
 }
@@ -76,7 +116,7 @@ export function McpDetailPage() {
   const { settings } = useSettingsPage()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { servers, server, scoped, query, result } = useMcpListing(entryId)
+  const { server, scoped, query, result, rowsState } = useMcpListing(entryId)
   const projects = useProjects()
   const { busy, run } = useAsyncAction({ toast: true })
 
@@ -98,8 +138,20 @@ export function McpDetailPage() {
       )
     })
 
+  const back = () => void navigate(settingsPath("mcp"))
   // A row still loading is an empty list, not a missing server.
-  if (!server) return servers.length === 0 ? null : <Navigate to={settingsPath("mcp")} replace />
+  if (!server) {
+    if (rowsState.isPending) {
+      return (
+        <>
+          <FormPageHeader title="MCP server" onBack={back} />
+          <GroupRowsSkeleton rows={2} label />
+        </>
+      )
+    }
+    if (rowsState.error) return <ListingError error={rowsState.error} onRetry={rowsState.refetch} back={back} />
+    return <Navigate to={settingsPath("mcp")} replace />
+  }
 
   /* Reached by a direct URL, normally: nothing links here for a thread-scoped
      built-in. There is nothing to list, so the page says why rather than
@@ -107,16 +159,14 @@ export function McpDetailPage() {
   if (scoped) {
     return (
       <>
-        <FormPageHeader
-          title={server.name}
-          description={mcpSubtitle(server)}
-          onBack={() => void navigate(settingsPath("mcp"))}
-        />
-        <Notice tone="info" title="Listed on the thread that links it">
-          This built-in is resolved at spawn, on the calling thread — its connection is that thread's own,
-          so there is no server here to connect to. Link it to a profile or a thread to give an agent its
-          tools, and read what it offers from that thread.
-        </Notice>
+        <FormPageHeader title={server.name} description={mcpSubtitle(server)} onBack={back} />
+        <Section>
+          <Notice tone="info" title="Listed on the thread that links it">
+            This built-in is resolved at spawn, on the calling thread — its connection is that thread's own,
+            so there is no server here to connect to. Link it to a profile or a thread to give an agent its
+            tools, and read what it offers from that thread.
+          </Notice>
+        </Section>
       </>
     )
   }
@@ -126,39 +176,43 @@ export function McpDetailPage() {
       <FormPageHeader
         title={server.name}
         description={mcpSubtitle(server)}
-        onBack={() => void navigate(settingsPath("mcp"))}
+        onBack={back}
+        actions={
+          <>
+            {server.type === "builtin" && projects.length > 1 && (
+              <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>
+                <SelectTrigger className={ROW_CONTROL} title="Which project a listing is read against">
+                  <SelectValue>{projects.find((p) => p.id === project)?.name ?? "Project"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button
+              variant="outline"
+              loading={busy || query.isFetching}
+              onClick={check}
+              title="Connect now and list what this server offers"
+            >
+              <SearchCheckIcon data-icon="inline-start" /> Check
+            </Button>
+          </>
+        }
       />
       {query.error && (
-        <Notice tone="error" className="mb-8" title="Couldn't read what this server offers">
-          {query.error.message}
-        </Notice>
+        <Section>
+          <ErrorNote
+            error={inlineFromQuery(query.error, "Couldn't read what this server offers")}
+            onRetry={() => void query.refetch()}
+          />
+        </Section>
       )}
-      <Offering server={server} result={result}>
-        {server.type === "builtin" && projects.length > 1 && (
-          <Select value={project} onValueChange={(value) => setProjectId(value ?? "")}>
-            <SelectTrigger size="sm" className="w-40 min-w-0 @panel-sm:w-56 pointer-coarse:h-11" title="Which project a listing is read against">
-              <SelectValue>{projects.find((p) => p.id === project)?.name ?? "Project"}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {projects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-11 @panel-sm:h-9"
-          disabled={busy || query.isFetching}
-          onClick={check}
-          title="Connect now and list what this server offers"
-        >
-          <SearchCheckIcon className="size-4" /> {busy || query.isFetching ? "Checking…" : "Check"}
-        </Button>
-      </Offering>
+      <Offering server={server} result={result} pending={query.isPending} failed={!!query.error} />
     </>
   )
 }
@@ -166,17 +220,20 @@ export function McpDetailPage() {
 /**
  * A connected server's surface: what it called itself and declared, its
  * instructions, and every tool, prompt, resource and template as a row of the
- * table. `children` are the page's own controls (the project, Check), drawn at
- * the end of the summary's heading.
+ * table. The page's own controls (the project, Check) are its header's.
  */
 function Offering({
   server,
   result,
-  children,
+  pending,
+  failed,
 }: {
   server: McpServerDef
   result: McpCheckResult | null
-  children?: React.ReactNode
+  /** The stored listing has not answered yet. */
+  pending: boolean
+  /** It could not be read (said above, by the page). */
+  failed: boolean
 }) {
   const navigate = useNavigate()
   const rows = React.useMemo(() => entryRows(result), [result])
@@ -245,16 +302,13 @@ function Offering({
     <>
       <Group
         label={result?.serverInfo?.name ?? server.name}
-        hint={result ? (result.ok ? `Listed in ${result.ms}ms.` : undefined) : "Not listed yet."}
+        hint={result ? (result.ok ? `Listed in ${result.ms}ms.` : undefined) : pending || failed ? undefined : "Not listed yet."}
         action={
-          <>
-            {result?.serverInfo?.version && (
-              <Badge variant="outline" className="font-normal">
-                {result.serverInfo.version}
-              </Badge>
-            )}
-            {children}
-          </>
+          result?.serverInfo?.version && (
+            <Badge variant="outline" className="font-normal">
+              {result.serverInfo.version}
+            </Badge>
+          )
         }
       >
         <Row title="Endpoint" subtitle={<span className="font-mono text-xs break-all">{mcpSubtitle(server)}</span>} />
@@ -295,20 +349,31 @@ function Offering({
       {/* `result` is null both while the listing is being read and when the
           server defers its first connection until Check, so the line says
           neither — it just says there is nothing to show yet. */}
-      {!result && <Empty size="lg">Not listed yet.</Empty>}
+      {!result && pending && <GroupRowsSkeleton rows={4} />}
+      {!result && !pending && !failed && (
+        <Section>
+          <Empty size="lg">Not listed yet.</Empty>
+        </Section>
+      )}
 
       {result && !result.ok && (
         /* A stdio child's stderr rides the error, so it is a well to select
            from rather than a headline. */
-        <Notice tone="error" title="Didn't connect">
-          <pre className="font-mono text-sm whitespace-pre-wrap">
-            {result.error ?? "The server refused the connection."}
-          </pre>
-        </Notice>
+        <Section>
+          <Notice
+            tone="error"
+            title="Didn't connect"
+            copy={result.error ?? "The server refused the connection."}
+          >
+            <pre className="font-mono text-sm whitespace-pre-wrap">
+              {result.error ?? "The server refused the connection."}
+            </pre>
+          </Notice>
+        </Section>
       )}
 
       {result?.ok && (
-        <>
+        <Section>
           <TabBar
             label="What it offers"
             value={tab}
@@ -328,9 +393,8 @@ function Offering({
               onRowClick={(row) => void navigate(mcpEntryPath(server.id, row.key))}
               pageSize={100}
               maxHeight="30rem"
-             
               emptyIcon={<WrenchIcon />}
-              emptyMessage={needle ? `Nothing matches “${query.trim()}”.` : "Nothing of this kind."}
+              emptyMessage={needle ? undefined : "Nothing of this kind."}
               filtering={{
                 search: { value: query, onChange: setQuery, placeholder: "Filter by name or description…" },
                 totalCount: tabCount(tab),
@@ -339,7 +403,7 @@ function Offering({
           ) : (
             <Empty size="lg">{NOTHING_TO_RUN}</Empty>
           )}
-        </>
+        </Section>
       )}
     </>
   )
@@ -423,19 +487,9 @@ function EntryDetail({ kind, entry }: { kind: EntryKind; entry: McpCheckEntry })
   const outputs = schemaFields(entry.outputSchema)
 
   /* The page title says the thing that will be requested (a resource's
-     URI), so here: the kind, the type, then the contract. */
+     URI) and its header the kind and type, so here: the contract. */
   return (
     <>
-      <div className="flex flex-wrap gap-1.5">
-        <Badge variant="secondary" className="font-normal">
-          {KIND_LABEL[kind]}
-        </Badge>
-        {entry.mimeType && (
-          <Badge variant="outline" className="font-normal">
-            {entry.mimeType}
-          </Badge>
-        )}
-      </div>
       <Fields
         label={kind === "resource" ? "Reads" : "Input"}
         fields={inputs}
@@ -479,10 +533,9 @@ function Fields({
   empty: string
 }) {
   return (
-    <div>
-      <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
+    <Section label={label}>
       {fields.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{empty}</p>
+        <Empty>{empty}</Empty>
       ) : (
         <ul className={cn("divide-y", INSET)}>
           {fields.map((field) => (
@@ -503,7 +556,7 @@ function Fields({
           <Pane text={JSON.stringify(schema, null, 2)} />
         </details>
       )}
-    </div>
+    </Section>
   )
 }
 
@@ -515,7 +568,7 @@ function Pane({ text, className }: { text: string; className?: string }) {
       <pre className={cn("overflow-auto rounded-xl border bg-muted/50 p-2.5 pr-9 font-mono text-sm", className ?? "max-h-80")}>
         {text}
       </pre>
-      <CopyButton text={text} variant="ghost" size="icon" className="absolute top-1 right-1" />
+      <CopyButton text={text} variant="ghost" size="icon-sm" className="absolute top-1 right-1 pointer-coarse:size-11" />
     </div>
   )
 }

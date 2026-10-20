@@ -33,9 +33,19 @@ import * as React from "react"
 import { ChevronRightIcon } from "lucide-react"
 
 import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
-import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
-import { Field, FormSection, FormShell, INSET, PageForm, Segmented, StatusBadge } from "@/components/settings/primitives"
+import {
+  FIELD_GRID,
+  Field,
+  FormActions,
+  FormSection,
+  FormShell,
+  INSET,
+  PageForm,
+  Section,
+  Segmented,
+  StatusBadge,
+} from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
@@ -432,8 +442,8 @@ export function AutomationForm({
   const body = (
     <>
       {onBrowseTemplates && (
-        <div className="mb-4 flex justify-end">
-          <Button type="button" variant="ghost" size="sm" onClick={onBrowseTemplates}>
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={onBrowseTemplates}>
             Browse templates
           </Button>
         </div>
@@ -476,7 +486,7 @@ export function AutomationForm({
               hint="Named steps or phases, with dependsOn edges and {{inputs}} templates. The server validates it on save and says what is wrong."
             >
               <Textarea
-                className="font-mono text-sm"
+                className="font-mono"
                 rows={16}
                 value={draft.workflowText}
                 onChange={(e) => patch({ workflowText: e.target.value })}
@@ -541,9 +551,9 @@ export function AutomationForm({
         <SchedulePicker plan={draft.plan} onChange={(plan) => patch({ plan })} />
       )}
       {mode === "edit" && (
-        <Notice tone="info" className="mt-8 first:mt-0">
-          When it fires — the schedule, a webhook, a commit — is edited in the Triggers tab.
-        </Notice>
+        <Section>
+          <Notice tone="info">When it fires — the schedule, a webhook, a commit — is edited in the Triggers tab.</Notice>
+        </Section>
       )}
 
       {section(
@@ -611,7 +621,7 @@ export function AutomationForm({
             <ChevronRightIcon className="size-4 transition-transform group-data-[panel-open]:rotate-90" aria-hidden />
             {advancedOpen ? "Hide" : "Show"} overlap, catch-up, webhook and commit triggers
           </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-5 pt-4">
+          <CollapsibleContent className="space-y-4 pt-4">
             <label className="flex items-center gap-2.5">
               <Switch checked={draft.enabled} onCheckedChange={(on) => patch({ enabled: on })} />
               <span className="text-sm">
@@ -678,7 +688,7 @@ export function AutomationForm({
                       </span>
                     </label>
                     {draft.git.on && (
-                      <div className="grid gap-3 @panel-sm:grid-cols-2">
+                      <div className={FIELD_GRID}>
                         <Field label="Branch" hint="Blank fires on any branch.">
                           <Input
                             placeholder="any branch"
@@ -688,7 +698,7 @@ export function AutomationForm({
                         </Field>
                         <Field label="Paths" hint="One glob per line. Empty means any path.">
                           <Textarea
-                            className="font-mono text-sm"
+                            className="font-mono"
                             rows={2}
                             value={draft.git.paths}
                             onChange={(e) => patch({ git: { ...draft.git, paths: e.target.value } })}
@@ -706,7 +716,7 @@ export function AutomationForm({
                 hint="Declaring one buys the run a repair turn and a structured verdict, which is what the run list leads with. Blank, a run says only that its turn ended."
               >
                 <Textarea
-                  className="font-mono text-sm"
+                  className="font-mono"
                   rows={8}
                   value={draft.outputText}
                   onChange={(e) => patch({ outputText: e.target.value })}
@@ -726,24 +736,19 @@ export function AutomationForm({
 
       {/* Sticky, so the distance between changing a setting and committing it is
           zero from every section. */}
-      <footer className="sticky bottom-0 z-10 mt-6 flex flex-col gap-3 border-t bg-background pt-3 pb-3">
-        <ErrorNote error={error} />
-        <div className="flex flex-wrap items-center gap-2">
-          {!session && (
+      <FormActions
+        busy={busy}
+        onCancel={onCancel}
+        error={error}
+        submitLabel={submitLabel}
+        leading={
+          !session && (
             <StatusBadge tone={grants > 0 ? "warn" : "neutral"}>
               {grants === 0 ? "Asks a person for everything" : `Acts without asking for ${grants} kind${grants === 1 ? "" : "s"}`}
             </StatusBadge>
-          )}
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Saving…" : submitLabel}
-            </Button>
-          </div>
-        </div>
-      </footer>
+          )
+        }
+      />
     </PageForm>
   )
 }

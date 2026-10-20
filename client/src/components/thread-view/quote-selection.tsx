@@ -103,7 +103,7 @@ export function QuoteSelection({
             setAnchor(null)
           }}
         >
-          <MessageSquareQuoteIcon aria-hidden className="size-3.5" />
+          <MessageSquareQuoteIcon aria-hidden data-icon="inline-start" />
           Ask about this
         </Button>
         {onAside && (
@@ -119,7 +119,7 @@ export function QuoteSelection({
               setAnchor(null)
             }}
           >
-            <MessageSquareTextIcon aria-hidden className="size-3.5" />
+            <MessageSquareTextIcon aria-hidden data-icon="inline-start" />
             Aside
           </Button>
         )}

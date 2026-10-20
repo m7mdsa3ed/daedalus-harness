@@ -9,6 +9,7 @@
    kind (never by name), and the answer goes through the same first-answer-wins
    door a thread's own card does. A question (a form or a URL) is answered in
    its thread, where its fields are drawn — the card only opens it. */
+import * as React from "react"
 import { ArrowUpRightIcon } from "lucide-react"
 
 import type * as acp from "@daedalus/acp"
@@ -16,7 +17,6 @@ import { ErrorNote } from "@/components/error-note"
 import { Group, StatusBadge } from "@/components/settings/primitives"
 import { KindGlyph } from "@/components/notifications/items"
 import { Button } from "@/components/ui/button"
-import { useCoarsePointer } from "@/hooks/use-device"
 import { captureError, inlineFromQuery } from "@/lib/errors"
 import { useAnswerPending, usePending, type PendingItem } from "@/lib/queries/pending"
 import { useProjects } from "@/lib/queries/catalog"
@@ -40,11 +40,18 @@ function summary(item: PendingItem): string {
 export function NeedsYou() {
   const query = usePending()
   const items = query.data ?? []
-  const loadError = inlineFromQuery(query.error, "Could not read what the agents are waiting on")
+  const loadError = React.useMemo(
+    () => inlineFromQuery(query.error, "Could not read what the agents are waiting on"),
+    [query.error]
+  )
   if (!items.length && !loadError) return null
   return (
     <Group label="Needs you" action={<StatusBadge tone="warn" dot={false}>{items.length}</StatusBadge>}>
-      <ErrorNote error={loadError} onRetry={() => void query.refetch()} className="my-3" />
+      {loadError && (
+        <div className="py-3">
+          <ErrorNote error={loadError} onRetry={() => void query.refetch()} />
+        </div>
+      )}
       {items.length > 0 && (
         <ul className="-mx-3 divide-y @panel-sm:-mx-4">
           {items.map((item) => (
@@ -60,7 +67,6 @@ export function NeedsYou() {
 
 function PendingCard({ item }: { item: PendingItem }) {
   const answer = useAnswerPending()
-  const coarse = useCoarsePointer()
   const projects = useProjects()
   const project = projects.find((p) => p.id === item.projectId)?.name
   const allow = item.kind === "permission" ? pick(item.request.options, "allow") : undefined
@@ -68,14 +74,16 @@ function PendingCard({ item }: { item: PendingItem }) {
   /* A lost race is not a failure: somebody answered first and the row is
      leaving on the invalidation that follows. */
   const lost = answer.error instanceof ApiError && answer.error.status === 409
-  const error = answer.error && !lost ? captureError(answer.error, "Could not send the answer") : null
-  const size = coarse ? "default" : "sm"
+  const error = React.useMemo(
+    () => (answer.error && !lost ? captureError(answer.error, "Could not send the answer") : null),
+    [answer.error, lost]
+  )
   const open = () => navigateTo(threadPath(item.sessionId))
   const send = (optionId: string) =>
     answer.mutate({ sessionId: item.sessionId, requestId: item.requestId, optionId })
 
   return (
-    <article className="flex items-start gap-3 px-4 py-3.5">
+    <article className="flex min-h-12 items-start gap-3 px-3 py-3 @panel-sm:px-4">
       <KindGlyph
         kind={item.kind === "permission" ? "permission" : "question"}
         read={false}
@@ -94,19 +102,19 @@ function PendingCard({ item }: { item: PendingItem }) {
           {summary(item)}
         </p>
         {project && <p className="mt-1 truncate text-xs text-muted-foreground">{project}</p>}
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 [&_[data-slot=button]]:pointer-coarse:h-11">
           {allow && (
-            <Button size={size} disabled={answer.isPending} onClick={() => send(allow.optionId)}>
+            <Button size="sm" disabled={answer.isPending} onClick={() => send(allow.optionId)}>
               {allow.kind === "allow_always" ? "Always allow" : "Allow"}
             </Button>
           )}
           {deny && (
-            <Button size={size} variant="outline" disabled={answer.isPending} onClick={() => send(deny.optionId)}>
+            <Button size="sm" variant="outline" disabled={answer.isPending} onClick={() => send(deny.optionId)}>
               Deny
             </Button>
           )}
           <Button
-            size={size}
+            size="sm"
             variant={allow || deny ? "ghost" : "outline"}
             className={cn(allow || deny ? "text-muted-foreground" : undefined)}
             onClick={open}
@@ -115,7 +123,11 @@ function PendingCard({ item }: { item: PendingItem }) {
             <ArrowUpRightIcon data-icon="inline-end" />
           </Button>
         </div>
-        <ErrorNote error={error} className="mt-2" />
+        {error && (
+          <div className="mt-2">
+            <ErrorNote error={error} />
+          </div>
+        )}
       </div>
     </article>
   )

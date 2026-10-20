@@ -294,42 +294,35 @@ export const sectionOf = (segment: string): SettingsSectionId | null =>
 /* ── How wide a settings page may get ──
    One column width for the whole section, set by the layout, because a page
    choosing its own would mean the frame jumping width as you move between
-   them. The default is the reading width for a form: wide enough for a label
-   beside its control and a two-up grid, narrow enough that a line of body copy
-   does not run past what an eye tracks back from (page headers additionally
-   clamp their prose at 65ch).
+   them. The default is `PageFrame`'s `wide` (max-w-5xl), the width every list,
+   detail and form in the app shares; page headers clamp their prose at 68ch.
 
-   A handful of pages are not forms. The theme studio is two columns — controls
-   beside a sticky preview of the app — and at a form's width neither half has
-   room: the preview shrinks to a thumbnail and the colour grid wraps its
+   Two pages are several panes side by side and get `xl` (max-w-7xl): the theme
+   studio is controls beside a sticky preview of the app, and at the default
+   width the preview shrinks to a thumbnail and the colour grid wraps its
    light/dark pair onto separate lines, which is the one comparison the whole
-   screen exists to make. The MCP server's own page is a rail of what it offers
-   beside one entry's contract (`mcp-detail.tsx`), and at a form's width the
-   rail leaves the field list a column too narrow to read. Those get the full
-   width of the frame; the pages themselves clamp to `max-w-7xl`, so the noise
-   of a very wide window does not land on the pane.
+   screen exists to make; the file library is a tree, a listing and a details
+   pane.
 
    Matched on the pathname rather than declared per route because the layout is
    what renders the container and it only knows the location; keeping the list
    here rather than in layout.tsx keeps route facts in the module that already
    owns them. */
-const FULL_WIDTH_SETTINGS: readonly RegExp[] = [
+
+/* Pages with a Back button of their own, so the phone's "Settings" back link
+   would be a second way up: the theme studio and the MCP server's own page. */
+const BARE_SETTINGS: readonly RegExp[] = [
   /^\/settings\/appearance\/themes\//,
-  /* The MCP server's own page: a rail of what it offers beside one entry's
-     contract, which is what the row's badge links to (`…/:entryId/tools`). */
   /^\/settings\/mcp\/[^/]+\/tools$/,
 ]
 
-/** A settings page that takes the whole frame — and, with it, no section rail:
-    the studio is already two columns and a third is what makes neither fit. */
-export const isFullWidthSettings = (pathname: string): boolean =>
-  FULL_WIDTH_SETTINGS.some((pattern) => pattern.test(pathname))
+/** A settings page that brings its own way back. */
+export const isBareSettings = (pathname: string): boolean =>
+  BARE_SETTINGS.some((pattern) => pattern.test(pathname))
 
-/** The full width *without* going bare: the file library is a tree, a listing
-    and a details pane side by side, but it has no Back button of its own, so
-    it keeps the section picker a phone reaches the other sections by. */
+/** A settings page at `xl`: the theme studio and the file library. */
 export const isWideSettings = (pathname: string): boolean =>
-  isFullWidthSettings(pathname) || /^\/settings\/files\/?$/.test(pathname)
+  /^\/settings\/appearance\/themes\//.test(pathname) || /^\/settings\/files\/?$/.test(pathname)
 
 export const SETTINGS_NAV_GROUPS: readonly {
   label: string

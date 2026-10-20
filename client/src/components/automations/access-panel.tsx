@@ -9,7 +9,7 @@
 import { ShieldAlertIcon, ShieldCheckIcon } from "lucide-react"
 
 import { Notice } from "@/components/notice"
-import { Group, Row, StatusBadge } from "@/components/settings/primitives"
+import { Group, Row, Section, StatusBadge } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import { reportError } from "@/lib/errors"
 import { useUpdateAutomation } from "@/lib/queries/automations"
@@ -45,16 +45,18 @@ export function AccessPanel({ routine, onEdit }: { routine: Routine; onEdit: () 
   return (
     <>
       {blanket && (
-        <Notice tone="warn" className="mb-8" title="Full access">
-          Anything the agent asks for that has no narrower answer below is allowed with nobody watching, in the
-          project&rsquo;s working directory.
-        </Notice>
+        <Section>
+          <Notice tone="warn" title="Full access">
+            Anything the agent asks for that has no narrower answer below is allowed with nobody watching, in the
+            project&rsquo;s working directory.
+          </Notice>
+        </Section>
       )}
       <Group
         label="Always allowed"
         hint="Answered yes without asking a person. Revoking puts the question back to a human."
         action={
-          <Button variant="outline" size="xs" onClick={onEdit}>
+          <Button variant="outline" size="sm" onClick={onEdit}>
             Edit all access
           </Button>
         }
@@ -66,7 +68,7 @@ export function AccessPanel({ routine, onEdit }: { routine: Routine; onEdit: () 
             {allowed.map((k) => (
               <Row key={k.kind} icon={ShieldAlertIcon} title={k.label} subtitle={k.blurb}>
                 {k.grave && <StatusBadge tone="warn" dot={false}>Powerful</StatusBadge>}
-                <Button variant="ghost" size="xs" disabled={update.isPending} onClick={() => revoke(k.kind)}>
+                <Button variant="outline" size="sm" disabled={update.isPending} onClick={() => revoke(k.kind)}>
                   Revoke
                 </Button>
               </Row>
@@ -74,7 +76,7 @@ export function AccessPanel({ routine, onEdit }: { routine: Routine; onEdit: () 
             {blanket && (
               <Row icon={ShieldAlertIcon} title="Everything else" subtitle="The blanket answer for any tool not listed.">
                 <StatusBadge tone="warn" dot={false}>Blanket allow</StatusBadge>
-                <Button variant="ghost" size="xs" disabled={update.isPending} onClick={() => revoke("default")}>
+                <Button variant="outline" size="sm" disabled={update.isPending} onClick={() => revoke("default")}>
                   Revoke
                 </Button>
               </Row>

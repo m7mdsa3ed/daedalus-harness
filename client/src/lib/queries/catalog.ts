@@ -382,6 +382,22 @@ export type CatalogSlice =
   | "commands"
   | "model-prompts"
 
+/** Whether one catalog slice has answered, and how it failed — for a page
+    that has to tell "no rows" from "not yet" and from "could not read". The
+    list hooks above return the array alone; this reads the same query (same
+    key, same route: every slice is `/api/<slice>`), so it adds no request. */
+export function useCatalogState(slice: CatalogSlice): {
+  isPending: boolean
+  error: Error | null
+  refetch: () => void
+} {
+  const settings = useServer()
+  const query = useApiQuery<unknown[]>(scope(settings).concat([slice]), `/api/${slice}`, {
+    staleTime: CATALOG_STALE_MS,
+  })
+  return { isPending: query.isPending, error: query.error, refetch: () => void query.refetch() }
+}
+
 /** Invalidate catalog slices after an out-of-band write — the same job the
     `refreshX` actions did, without the round trip when nobody is looking.
     Profiles and agents are one logical read (the virtual Default profiles are

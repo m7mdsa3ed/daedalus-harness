@@ -18,7 +18,6 @@
    `Empty` is for the one state that is not a failure — no address typed yet,
    which is instruction rather than news. Everything else is a `Notice`. */
 import * as React from "react"
-import { Spinner } from "@/components/ui/spinner"
 import {
   ExternalLinkIcon,
   GlobeIcon,
@@ -178,8 +177,8 @@ export function WebProblemView({
           action={
             previewHelperName && onStartPreview ? (
               <Button size="sm" variant="outline" onClick={onStartPreview} loading={starting}>
-                {starting ? <Spinner /> : <PlayIcon />}
-                {starting ? "Starting…" : `Start ${previewHelperName}`}
+                <PlayIcon data-icon="inline-start" />
+                {`Start ${previewHelperName}`}
               </Button>
             ) : undefined
           }

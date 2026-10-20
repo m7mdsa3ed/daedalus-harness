@@ -10,6 +10,7 @@
 import * as React from "react"
 
 import { fillOf, strokeOf } from "@/components/workspace/scm/commit-graph"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import type { GitCommit } from "@/lib/workspace/git-api"
@@ -121,7 +122,7 @@ export function CommitTable({
           </li>
         ))}
       </ol>
-      {onMore && <div ref={foot} className="h-6 pl-3 text-xs leading-6 text-muted-foreground">{loading ? "Loading…" : ""}</div>}
+      {onMore && <div ref={foot} className="h-6">{loading && <PanelRowsSkeleton rows={1} className="px-2 py-1.5" />}</div>}
     </div>
     </div>
   )

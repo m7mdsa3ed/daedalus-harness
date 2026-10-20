@@ -23,7 +23,8 @@ import * as React from "react"
 import { CoinsIcon, TimerIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverTrigger } from "@/components/ui/popover"
+import { ReadingPopoverContent } from "@/components/composer/indicator"
 import { formatDuration, formatRate, formatTokens, promptTokens, windowEstimated } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -140,8 +141,7 @@ export function StepTokens({
           </button>
         }
       />
-      <PopoverContent align="start" side="top" className="w-56 gap-2">
-        <p className="font-medium">This step</p>
+      <ReadingPopoverContent align="start" heading="This step">
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
           <Stat label="Request" value={formatTokens(usage.used)} />
           <Stat label="Window" value={`${about}${formatTokens(usage.size)}`} />
@@ -181,7 +181,7 @@ export function StepTokens({
           wrote. The split is the whole turn's: runtimes report a per-step total, and the
           prompt/output/cache breakdown only when a turn ends.
         </p>
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }
@@ -258,8 +258,7 @@ export function TokenSummary({
           </button>
         }
       />
-      <PopoverContent align="start" side="top" className="w-56 gap-2">
-        <p className="font-medium">{label}</p>
+      <ReadingPopoverContent align="start" heading={label}>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
           <Stat label="Prompt" value={formatTokens(prompt)} />
           <Stat label="Output" value={formatTokens(usage.outputTokens)} />
@@ -299,7 +298,7 @@ export function TokenSummary({
         <p className="text-xs text-muted-foreground">
           Billed across every model request in it — a turn re-sends the context once per tool call.
         </p>
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }

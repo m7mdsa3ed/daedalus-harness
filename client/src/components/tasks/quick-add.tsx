@@ -99,8 +99,8 @@ export function QuickAdd({
       />
       <div className="flex items-center justify-between px-1 pt-1 text-xs text-muted-foreground">
         <span>Enter to add · Esc to close</span>
-        <Button type="submit" size="xs" disabled={!title.trim() || busy}>
-          {busy ? "Adding…" : "Add"}
+        <Button type="submit" size="xs" loading={busy} disabled={!title.trim()}>
+          Add
         </Button>
       </div>
     </form>

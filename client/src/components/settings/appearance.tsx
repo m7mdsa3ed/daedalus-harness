@@ -200,7 +200,7 @@ function SliderRow({
           <div className="text-sm font-medium">{title}</div>
           <div className="mt-0.5 text-sm text-muted-foreground">{subtitle}</div>
         </div>
-        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-mono text-sm tabular-nums">
+        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-mono text-xs tabular-nums">
           {value}
           {unit}
         </span>
@@ -251,7 +251,7 @@ export function AppearancePage() {
 
   return (
     <>
-      <PageHeader meta={meta} flush />
+      <PageHeader meta={meta} />
       <TabBar
         label="Appearance sections"
         items={TABS.map(({ id, label, hint, icon }) => ({ id, label, hint, icon }))}

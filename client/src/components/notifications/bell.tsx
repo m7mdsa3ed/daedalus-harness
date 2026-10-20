@@ -21,7 +21,8 @@ import {
   useMarkNotificationsRead,
 } from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
-import { Empty } from "@/components/empty"
+import { ErrorNote } from "@/components/error-note"
+import { inlineFromQuery } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { FOOTER_ICON } from "@/components/sidebar/scale"
 
@@ -32,7 +33,8 @@ export function NotificationIconButton() {
   /* The query cache owns the read: the badge fetches on mount, opening
      re-fetches, and returning to the window re-fetches via focus — the three
      moments the old module store asked for by hand. */
-  const { inbox, isPending, refetch } = useInbox()
+  const { inbox, isPending, error: readError, refetch } = useInbox()
+  const error = React.useMemo(() => inlineFromQuery(readError, "Couldn't read the inbox"), [readError])
   const markRead = useMarkNotificationsRead()
   const navigate = useNavigate()
   const { isMobile } = useSidebar()
@@ -107,7 +109,7 @@ export function NotificationIconButton() {
               ) : (
                 <p className="text-xs text-muted-foreground tabular-nums">
                   {!inbox
-                    ? "Loading…"
+                    ? "Not read"
                     : items.length === 0
                       ? "Nothing recorded"
                       : unread > 0
@@ -127,21 +129,23 @@ export function NotificationIconButton() {
                 onClick={() => markRead.mutate(undefined)}
                 title="Mark all read"
               >
-                <CheckCheckIcon />
+                <CheckCheckIcon data-icon="inline-start" />
                 Mark all read
               </Button>
             )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {!inbox && isPending ? (
+            {!inbox && error ? (
+              <div className="p-2">
+                <ErrorNote error={error} onRetry={refetch} />
+              </div>
+            ) : !inbox ? (
               /* "You're all caught up" is a fact about a list, and it is not
                  one yet while the list is still arriving. */
               <NotificationRowsSkeleton rows={5} />
             ) : shown.length === 0 ? (
-              <Empty icon={BellIcon} className="m-3">
-                {inbox ? "You're all caught up." : "Loading…"}
-              </Empty>
+              <p className="px-3 py-2.5 text-xs text-muted-foreground">You&rsquo;re all caught up.</p>
             ) : (
               <ul className="divide-y">
                 {shown.map((n) => (

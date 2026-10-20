@@ -21,7 +21,6 @@
 import * as React from "react"
 import {
   ActivityIcon,
-  AlertTriangleIcon,
   AppWindowIcon,
   BotIcon,
   CheckIcon,
@@ -30,7 +29,6 @@ import {
   FolderIcon,
   GitBranchIcon,
   MessagesSquareIcon,
-  MoreHorizontal,
   RocketIcon,
   Pencil,
   Play,
@@ -45,12 +43,13 @@ import {
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { PageFrame, SurfaceHeader } from "@/components/page-primitives"
-import { Group, StatStrip, StatusBadge } from "@/components/settings/primitives"
+import { Count, Group, Row, Section, StatStrip, StatusBadge } from "@/components/settings/primitives"
+import { ErrorNote } from "@/components/error-note"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { Empty } from "@/components/empty"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,7 +65,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { useStartThreadIn } from "@/components/thread-sidebar"
 import type { Actions } from "@/lib/actions"
-import { errorText, reportError } from "@/lib/errors"
+import { inlineFromQuery, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { automationPath, automationsPath, settingsFormPath, settingsPath, threadPath } from "@/lib/router"
 import { activityAt, isListed, type HelperCommand, type Project, type Routine, type SessionMeta } from "@/lib/settings"
@@ -92,6 +91,11 @@ const ACTIVITY_DAYS = 30
     the overview is a summary with a way in, not the sidebar again. */
 const THREAD_PAGE = 12
 
+/** The selected row's start bar — the DataTable's, so a picked row reads the
+    same in every list. */
+const SELECTED_BAR =
+  "before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0"
+
 export function ProjectPage({ actions }: { actions: Actions }) {
   const { projectId = "" } = useParams()
   const project = useProjects().find((entry) => entry.id === projectId)
@@ -113,6 +117,10 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
   const { stats, error, loading, refresh } = useProjectStats(project.id)
+  const statsError = React.useMemo(
+    () => inlineFromQuery(error, "Couldn't read this project's numbers"),
+    [error]
+  )
   const [importing, setImporting] = React.useState(false)
 
   /* Somewhere for a queued *panel* to land. A helper's terminal and the rules
@@ -180,33 +188,6 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           projectId={project.id}
         />
 
-        {/* Quick helpers bar: 1-click execution chips right below the header */}
-        <QuickHelpersBar project={project} onRunHelper={(helper) => void runHelper(helper)} />
-
-        {/* The one health answer the page can give. A project whose directory
-            has moved or is not mounted spawns nothing, and the failure it
-            produces otherwise arrives as an ENOENT inside a thread. */}
-        {stats && !stats.cwdExists && (
-          <Notice tone="error" className="mt-4">
-            The working directory does not exist on the server. Threads started here will fail to
-            spawn — check the path in the project's settings.
-          </Notice>
-        )}
-        {error && (
-          <Notice
-            tone="neutral"
-            icon={<AlertTriangleIcon />}
-            className="mt-4"
-            action={
-              <Button type="button" variant="outline" size="xs" onClick={refresh}>
-                Try again
-              </Button>
-            }
-          >
-            {error}
-          </Notice>
-        )}
-
         <StatStrip
           stats={[
             {
@@ -232,27 +213,49 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             },
             {
               label: "Turns",
-              value: stats ? stats.turns : <Skeleton className="h-6 w-16" />,
+              value: stats?.turns ?? "—",
+              loading: !stats && !error,
               hint: "across every thread",
             },
             {
               label: "Last active",
-              value: !stats ? <Skeleton className="h-6 w-16" /> : stats.lastActivityAt ? shortAge(stats.lastActivityAt) : "—",
+              value: stats?.lastActivityAt ? shortAge(stats.lastActivityAt) : "—",
+              loading: !stats && !error,
               hint: stats?.lastActivityAt
                 ? new Date(stats.lastActivityAt).toLocaleString()
                 : "nothing has run here yet",
             },
             {
               label: "Knowledge",
-              value: stats ? stats.knowledge : <Skeleton className="h-6 w-16" />,
+              value: stats?.knowledge ?? "—",
+              loading: !stats && !error,
               hint: stats?.knowledge === 1 ? "entry saved" : "entries saved",
             },
           ]}
         />
 
+        {/* The one health answer the page can give. A project whose directory
+            has moved or is not mounted spawns nothing, and the failure it
+            produces otherwise arrives as an ENOENT inside a thread. */}
+        {stats && !stats.cwdExists && (
+          <Section>
+            <Notice tone="error">
+              The working directory does not exist on the server. Threads started here will fail to
+              spawn — check the path in the project's settings.
+            </Notice>
+          </Section>
+        )}
+        {statsError && (
+          <Section>
+            <ErrorNote error={statsError} onRetry={refresh} />
+          </Section>
+        )}
+
+        <QuickHelpersBar project={project} onRunHelper={(helper) => void runHelper(helper)} />
+
         <ActivityStrip stats={stats} />
 
-        <div className="mt-8 grid gap-8 @panel-lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div data-kit-block className="mt-8 grid gap-8 @panel-lg:grid-cols-[minmax(0,1fr)_18rem]">
           <ThreadsCard
             threads={threads}
             trashed={trashed}
@@ -262,14 +265,14 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             onNewThread={() => startIn(project)}
           />
           <div className="min-w-0">
-            <RuntimesCard stats={stats} />
+            <RuntimesCard stats={stats} failed={!!error} />
             <AutomationsCard
               automations={automations}
               sessions={sessions}
               onOpen={(id) => void navigate(automationPath(id))}
               onManage={() => void navigate(automationsPath())}
             />
-            <GlanceCard stats={stats} trashed={trashed} />
+            <GlanceCard stats={stats} trashed={trashed} failed={!!error} />
           </div>
         </div>
     </PageFrame>
@@ -338,9 +341,7 @@ function HelpersMenu({
             <SquareTerminal data-icon="inline-start" />
             <span>Run</span>
             {helpers.length > 0 && (
-              <Badge variant="secondary" className="tabular-nums">
-                {helpers.length}
-              </Badge>
+              <Count>{helpers.length}</Count>
             )}
           </Button>
         }
@@ -395,40 +396,40 @@ function QuickHelpersBar({
   if (helpers.length === 0) return null
 
   return (
-    <div className="mt-4 flex items-center gap-2 overflow-x-auto py-1 no-scrollbar">
-      <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        <SquareTerminal className="size-3.5" />
-        Quick actions
-      </span>
-      {helpers.map((helper) => (
+    <Section
+      label="Quick actions"
+      action={
         <Button
-          key={helper.id}
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          onClick={() => onRunHelper(helper)}
-          title={helper.description ?? helper.command}
-          className="shrink-0"
+          onClick={() => void navigate(settingsFormPath("projects", project.id))}
+          title="Configure helper commands"
         >
-          <Play data-icon="inline-start" className="text-primary" />
-          <span>{helper.name}</span>
-          {/* The same mark the Run menu carries: a chip is one tap from a
-              destructive command, so "asks first" has to be visible before it. */}
-          {helper.confirm && <TriangleAlert className="text-warning" aria-hidden />}
+          <Pencil data-icon="inline-start" />
+          Edit
         </Button>
-      ))}
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        onClick={() => void navigate(settingsFormPath("projects", project.id))}
-        className="shrink-0 text-muted-foreground"
-        title="Configure helper commands"
-      >
-        <Pencil data-icon="inline-start" />
-        <span>Edit</span>
-      </Button>
-    </div>
+      }
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {helpers.map((helper) => (
+          <Button
+            key={helper.id}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onRunHelper(helper)}
+            title={helper.description ?? helper.command}
+          >
+            <Play data-icon="inline-start" className="text-primary" />
+            <span>{helper.name}</span>
+            {/* The same mark the Run menu carries: a chip is one tap from a
+                destructive command, so "asks first" has to be visible before it. */}
+            {helper.confirm && <TriangleAlert data-icon="inline-end" className="text-warning" aria-hidden />}
+          </Button>
+        ))}
+      </div>
+    </Section>
   )
 }
 
@@ -484,55 +485,20 @@ function ProjectHeader({
       }
       actions={
         <>
-          {/* Wide panel: every action in the row. */}
-          <div className="hidden items-center gap-2 @panel-sm:flex">
-            <Button variant="ghost" size="icon" title="Refresh" loading={refreshing} onClick={onRefresh}>
-              <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
-              <span className="sr-only">Refresh</span>
-            </Button>
-            <HelpersMenu project={project} onRunHelper={onRunHelper} />
-            <Button variant="outline" onClick={onImport} size="sm">
-              <DownloadIcon data-icon="inline-start" /> Import
-            </Button>
-            <Button variant="outline" onClick={onEdit} size="sm">
-              <Pencil data-icon="inline-start" /> Edit
-            </Button>
-            <Button onClick={onNewThread} size="sm">
-              <Plus data-icon="inline-start" /> New thread
-            </Button>
-          </div>
-
-          {/* Narrow panel: the primary action, Run, and an overflow menu. */}
-          <div className="flex w-full items-center gap-2 @panel-sm:hidden">
-            <Button onClick={onNewThread} className="flex-1">
-              <Plus data-icon="inline-start" /> New thread
-            </Button>
-            <HelpersMenu project={project} onRunHelper={onRunHelper} />
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button variant="outline" size="icon" title="More options" aria-label="More options">
-                    <MoreHorizontal />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={onImport}>
-                  <DownloadIcon className="size-4 text-muted-foreground" />
-                  <span>Import threads</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onEdit}>
-                  <Pencil className="size-4 text-muted-foreground" />
-                  <span>Edit project</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onRefresh} disabled={refreshing}>
-                  <RefreshCwIcon className={cn("size-4 text-muted-foreground", refreshing && "animate-spin")} />
-                  <span>Refresh data</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <Button variant="ghost" size="icon" title="Refresh" loading={refreshing} onClick={onRefresh}>
+            <RefreshCwIcon className={cn(refreshing && "animate-spin")} />
+            <span className="sr-only">Refresh</span>
+          </Button>
+          <HelpersMenu project={project} onRunHelper={onRunHelper} />
+          <Button variant="outline" onClick={onImport}>
+            <DownloadIcon data-icon="inline-start" /> Import
+          </Button>
+          <Button variant="outline" onClick={onEdit}>
+            <Pencil data-icon="inline-start" /> Edit
+          </Button>
+          <Button onClick={onNewThread}>
+            <Plus data-icon="inline-start" /> New thread
+          </Button>
         </>
       }
     />
@@ -553,15 +519,10 @@ function ActivityStrip({ stats }: { stats: ProjectStats | null }) {
   return (
     <Group
       label="Activity"
-      action={
-        <>
-          {stats && (
-            <StatusBadge dot={false}>
-              {total} {total === 1 ? "turn" : "turns"}
-            </StatusBadge>
-          )}
-          <span className="text-xs text-muted-foreground tabular-nums">last {ACTIVITY_DAYS} days</span>
-        </>
+      hint={
+        stats
+          ? `${total} ${total === 1 ? "turn" : "turns"} in the last ${ACTIVITY_DAYS} days`
+          : `The last ${ACTIVITY_DAYS} days`
       }
     >
       <div className="py-4">
@@ -587,24 +548,6 @@ function ActivityStrip({ stats }: { stats: ProjectStats | null }) {
           <span>today</span>
         </div>
       </div>
-    </Group>
-  )
-}
-
-function CardShell({
-  title,
-  count,
-  action,
-  children,
-}: {
-  title: string
-  count?: number
-  action?: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <Group label={count != null ? `${title} · ${count}` : title} action={action}>
-      {children}
     </Group>
   )
 }
@@ -638,13 +581,13 @@ function ThreadsCard({
   } = useThreadSelection(threads, shown, actions)
 
   return (
-    <CardShell
-      title="Threads"
+    <Group
+      label="Threads"
       count={threads.length}
       action={
         selecting ? (
-          <div className="flex items-center gap-1">
-            <span className="mr-1 text-xs text-muted-foreground tabular-nums">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {selected.size} selected
             </span>
             <Button variant="ghost" size="sm" onClick={selectAll} disabled={busy}>
@@ -654,24 +597,25 @@ function ThreadsCard({
               variant="ghost"
               size="sm"
               onClick={() => void deleteSelected()}
-              disabled={busy || selected.size === 0}
+              disabled={selected.size === 0}
+              loading={busy}
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
-              <Trash2 /> {busy ? "Deleting…" : "Delete"}
+              <Trash2 data-icon="inline-start" /> Delete
             </Button>
             <Button variant="ghost" size="icon-sm" onClick={cancel} disabled={busy} aria-label="Cancel selection">
               <XIcon />
             </Button>
           </div>
         ) : (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {threads.length > 0 && (
               <Button variant="ghost" size="sm" onClick={startSelecting}>
                 Select
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={onNewThread}>
-              <Plus /> New
+              <Plus data-icon="inline-start" /> New
             </Button>
           </div>
         )
@@ -679,7 +623,7 @@ function ThreadsCard({
     >
       {threads.length === 0 ? (
         <Empty
-          size="lg"
+          size="sm"
           icon={MessagesSquareIcon}
           className="my-3"
           action={
@@ -699,8 +643,9 @@ function ThreadsCard({
               <li key={session.id}>
                 <div
                   className={cn(
-                    "-mx-2 flex items-center gap-3 rounded-lg px-2 transition-colors hover:bg-muted",
-                    selecting && checked && "bg-muted"
+                    "relative -mx-3 flex items-center gap-3 px-3 transition-colors hover:bg-muted/50 @panel-sm:-mx-4 @panel-sm:px-4",
+                    SELECTED_BAR,
+                    selecting && checked && "bg-primary/5 before:opacity-100 hover:bg-primary/5"
                   )}
                 >
                   {selecting && (
@@ -715,7 +660,7 @@ function ThreadsCard({
                     type="button"
                     onClick={() => (selecting ? toggle(session.id) : onOpen(session.id))}
                     disabled={busy}
-                    className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2.5 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
+                    className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-lg py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
                   >
                     {!selecting && <StatusDot status={status} />}
                     <span className="min-w-0 flex-1">
@@ -750,7 +695,7 @@ function ThreadsCard({
       {(threads.length > THREAD_PAGE || trashed > 0) && (
         <footer className="flex items-center justify-between gap-2 py-2 text-xs text-muted-foreground">
           {threads.length > THREAD_PAGE ? (
-            <Button type="button" variant="link" size="xs" className="px-0" onClick={() => setAll((v) => !v)}>
+            <Button type="button" variant="link" size="xs" className="h-auto px-0" onClick={() => setAll((v) => !v)}>
               {all ? "Show fewer" : `Show all ${threads.length}`}
             </Button>
           ) : (
@@ -758,12 +703,12 @@ function ThreadsCard({
           )}
           {trashed > 0 && (
             <span className="flex items-center gap-1">
-              <Trash2 className="size-3" /> {trashed} in trash
+              <Trash2 aria-hidden className="size-3" /> {trashed} in trash
             </span>
           )}
         </footer>
       )}
-    </CardShell>
+    </Group>
   )
 }
 
@@ -856,15 +801,15 @@ function useThreadSelection(threads: SessionMeta[], shown: SessionMeta[], action
 
 /** What this project is actually worked on with — threads per agent and per
     profile. Ids come down from the server; the names are in the store. */
-function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
+function RuntimesCard({ stats, failed }: { stats: ProjectStats | null; failed: boolean }) {
   const agents = useAgents()
   const profiles = useProfiles()
-  if (!stats) return <CardShell title="Worked on with"><CardSkeleton rows={2} /></CardShell>
+  // A failed read is said once, above; a skeleton here would wait forever.
+  if (!stats) return failed ? null : <GroupRowsSkeleton rows={2} label />
   if (stats.byAgent.length === 0 && stats.byProfile.length === 0) return null
 
   return (
-    <CardShell title="Worked on with">
-      <ul className="divide-y">
+    <Group label="Worked on with">
         {stats.byAgent.map((entry) => (
           <MiniRow
             key={`agent:${entry.id}`}
@@ -884,8 +829,7 @@ function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
             />
           )
         })}
-      </ul>
-    </CardShell>
+    </Group>
   )
 }
 
@@ -903,8 +847,8 @@ function AutomationsCard({
   const { triggers } = useAutomationReads(automations)
   if (automations.length === 0) return null
   return (
-    <CardShell
-      title="Automations"
+    <Group
+      label="Automations"
       count={automations.length}
       action={
         <Button variant="ghost" size="sm" onClick={onManage}>
@@ -916,9 +860,13 @@ function AutomationsCard({
         {automations.slice(0, 4).map((row) => {
           const next = row.enabled ? nextFireOf(triggers[row.id]) : null
           return (
-            <li key={row.id} className="py-2">
-              <button type="button" className="group block w-full rounded-lg text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50" onClick={() => onOpen(row.id)}>
-                <p className="truncate text-sm group-hover:underline" title={row.name}>
+            <li key={row.id} className="-mx-3 @panel-sm:-mx-4">
+              <button
+                type="button"
+                className="block min-h-12 w-full px-3 py-3 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 @panel-sm:px-4"
+                onClick={() => onOpen(row.id)}
+              >
+                <p className="truncate text-sm font-medium" title={row.name}>
                   {row.name}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -932,17 +880,17 @@ function AutomationsCard({
           )
         })}
       </ul>
-    </CardShell>
+    </Group>
   )
 }
 
 /** The counts that are worth having but not worth a tile: what the workspace
     has accumulated beside its threads. Rows with nothing in them are left out
     — a column of zeroes says "this feature is off", which is not the reading. */
-function GlanceCard({ stats, trashed }: { stats: ProjectStats | null; trashed: number }) {
-  if (!stats) return <CardShell title="At a glance"><CardSkeleton rows={3} /></CardShell>
+function GlanceCard({ stats, trashed, failed }: { stats: ProjectStats | null; trashed: number; failed: boolean }) {
+  if (!stats) return failed ? null : <GroupRowsSkeleton rows={3} label />
 
-  const rows: { icon: React.ReactNode; label: string; value: React.ReactNode }[] = []
+  const rows: { icon: React.ReactElement; label: string; value: React.ReactNode }[] = []
   if (stats.threads.firstAt)
     rows.push({
       icon: <FolderIcon className="size-4 text-muted-foreground" />,
@@ -978,13 +926,11 @@ function GlanceCard({ stats, trashed }: { stats: ProjectStats | null; trashed: n
   if (rows.length === 0) return null
 
   return (
-    <CardShell title="At a glance">
-      <ul className="divide-y">
-        {rows.map((row) => (
-          <MiniRow key={row.label} icon={row.icon} label={row.label} value={row.value} />
-        ))}
-      </ul>
-    </CardShell>
+    <Group label="At a glance">
+      {rows.map((row) => (
+        <MiniRow key={row.label} icon={row.icon} label={row.label} value={row.value} />
+      ))}
+    </Group>
   )
 }
 
@@ -993,26 +939,15 @@ function MiniRow({
   label,
   value,
 }: {
-  icon: React.ReactNode
+  icon: React.ReactElement
   label: string
   value: React.ReactNode
 }) {
   return (
-    <li className="flex items-center gap-2 py-2">
-      {icon}
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-      <span className="shrink-0 text-sm font-medium tabular-nums">{value}</span>
-    </li>
+    <Row icon={icon} title={label}>
+      <span className="text-sm font-medium tabular-nums">{value}</span>
+    </Row>
   )
 }
 
-function CardSkeleton({ rows }: { rows: number }) {
-  return (
-    <div className="space-y-2 py-4">
-      {Array.from({ length: rows }, (_, i) => (
-        <Skeleton key={i} className="h-4 w-full" />
-      ))}
-    </div>
-  )
-}
 import { writeClipboard } from "@/lib/clipboard"

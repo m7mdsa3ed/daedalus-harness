@@ -13,7 +13,7 @@ export function PanelToolbar({ className, ...props }: React.ComponentProps<"div"
   return (
     <div
       className={cn(
-        "flex min-h-8 shrink-0 items-center gap-1 border-b px-2 py-1",
+        "flex min-h-8 shrink-0 items-center gap-1 border-b px-2 py-1 [&_svg:not([class*='size-'])]:size-3.5",
         className
       )}
       {...props}

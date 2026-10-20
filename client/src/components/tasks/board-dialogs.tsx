@@ -5,7 +5,8 @@ import { ChevronDown, ChevronUp, GripVertical, Plus, Trash2 } from "lucide-react
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Field as FieldRoot, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Field } from "@/components/settings/primitives"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
@@ -233,14 +234,12 @@ export function BoardDialog({
         </ResponsiveDialogHeader>
         {/* The footer is partitioned out of the children, so the buttons hang
             off the form by id rather than by nesting. */}
-        <form id="board-dialog-form" onSubmit={submit} className="grid content-start gap-6">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_7rem]">
-              <div className="grid gap-2">
-                <Label htmlFor="board-name">Name</Label>
+        <form id="board-dialog-form" onSubmit={submit} className="grid content-start gap-4">
+            <div className="grid gap-4 @panel-sm:grid-cols-[minmax(0,1fr)_7rem]">
+              <Field htmlFor="board-name" label="Name">
                 <Input id="board-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Web platform" maxLength={120} />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="board-key">Key</Label>
+              </Field>
+              <Field htmlFor="board-key" label="Key">
                 <Input
                   id="board-key"
                   value={key}
@@ -251,21 +250,18 @@ export function BoardDialog({
                   placeholder="WEB"
                   className="font-mono"
                 />
-              </div>
+              </Field>
+              <p className="text-xs text-muted-foreground @panel-sm:col-span-2">
+                Every task on the board is <span className="font-mono">{key || "KEY"}-1</span>, <span className="font-mono">{key || "KEY"}-2</span>… Changing the key renames them all.
+              </p>
             </div>
-            <p className="-mt-3 text-xs text-muted-foreground">
-              Every task on the board is <span className="font-mono">{key || "KEY"}-1</span>, <span className="font-mono">{key || "KEY"}-2</span>… Changing the key renames them all.
-            </p>
-            <div className="grid gap-2">
-              <Label>Colour</Label>
+            <Field label="Colour">
               <ColorPicker value={color} onChange={setColor} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="board-desc">Description</Label>
+            </Field>
+            <Field htmlFor="board-desc" label="Description">
               <Textarea id="board-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this board is for" className="min-h-16" />
-            </div>
-            <div className="grid gap-2">
-              <Label>Project</Label>
+            </Field>
+            <Field label="Project">
               <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
                 <SelectTrigger className="w-full">
                   <SelectValue>{projects.find((p) => p.id === projectId)?.name ?? "No project"}</SelectValue>
@@ -279,15 +275,16 @@ export function BoardDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </Field>
 
             {board && (
-              <div className="grid gap-2">
-                <Label>Columns</Label>
-                <p className="text-xs text-muted-foreground">A task entering a <em>Done</em> column is completed. A WIP limit is shown, never enforced. Column edits save immediately.</p>
+              <Field
+                label="Columns"
+                hint="A task entering a Done column is completed. A WIP limit is shown, never enforced. Column edits save immediately."
+              >
                 <ul className="grid gap-1 rounded-xl border p-1">
                   {statuses.map((s, i) => (
-                    <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-muted sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto]">
+                    <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-muted @panel-sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto]">
                       <GripVertical className="size-3.5 text-muted-foreground" />
                       <Input
                         defaultValue={s.name}
@@ -310,7 +307,7 @@ export function BoardDialog({
                         </Button>
                       </span>
                       {/* The three controls rejoin the flat grid on desktop. */}
-                      <div className="col-span-full grid grid-cols-[minmax(0,1fr)_4.5rem_minmax(0,1fr)] gap-1.5 sm:contents">
+                      <div className="col-span-full grid grid-cols-[minmax(0,1fr)_4.5rem_minmax(0,1fr)] gap-1.5 @panel-sm:contents">
                         <NativeSelect size="sm" className="w-full" value={s.category} onChange={(e) => void patchStatus(s, { category: e.target.value as StatusCategory })} aria-label="Category">
                           {STATUS_CATEGORIES.map((c) => (
                             <NativeSelectOption key={c} value={c}>
@@ -354,27 +351,25 @@ export function BoardDialog({
                       placeholder="New column name…"
                       className="h-8"
                     />
-                    <Button type="button" size="xs" variant="outline" onClick={addColumn} disabled={!newColumn.trim()}>
-                      <Plus /> Add
+                    <Button type="button" size="sm" variant="outline" onClick={addColumn} disabled={!newColumn.trim()}>
+                      <Plus data-icon="inline-start" /> Add
                     </Button>
                   </li>
                 </ul>
-              </div>
+              </Field>
             )}
 
             {board && (
-              <div className="grid gap-2">
-                <Label>Custom fields</Label>
-                <p className="text-xs text-muted-foreground">Extra properties every task on this board can carry. Saved with the board.</p>
+              <Field label="Custom fields" hint="Extra properties every task on this board can carry. Saved with the board.">
                 <ul className="grid gap-1 rounded-xl border p-1">
                   {fields.map((f) => (
-                    <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto]">
+                    <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 @panel-sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto]">
                       <Input value={f.name} onChange={(e) => setField(f.id, { name: e.target.value })} placeholder="Field name" className="h-8" aria-label="Field name" />
                       <Button type="button" variant="ghost" size="icon-sm" onClick={() => setFields((fs) => fs.filter((x) => x.id !== f.id))} aria-label="Remove field" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
                         <Trash2 />
                       </Button>
                       {/* Type and options rejoin the flat grid on desktop. */}
-                      <div className="col-span-full grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5 sm:contents">
+                      <div className="col-span-full grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5 @panel-sm:contents">
                         <NativeSelect size="sm" className="w-full" value={f.type} onChange={(e) => setField(f.id, { type: e.target.value as CustomFieldDef["type"] })} aria-label="Field type">
                           {FIELD_TYPES.map((t) => (
                             <NativeSelectOption key={t} value={t}>
@@ -404,23 +399,23 @@ export function BoardDialog({
                     </li>
                   ))}
                   <li className="px-1 py-1">
-                    <Button type="button" size="xs" variant="outline" onClick={() => setFields((fs) => [...fs, { id: uuid(), name: "", type: "text" }])}>
-                      <Plus /> Add field
+                    <Button type="button" size="sm" variant="outline" onClick={() => setFields((fs) => [...fs, { id: uuid(), name: "", type: "text" }])}>
+                      <Plus data-icon="inline-start" /> Add field
                     </Button>
                   </li>
                 </ul>
-              </div>
+              </Field>
             )}
           <ErrorNote error={error} />
-          <ResponsiveDialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="board-dialog-form" disabled={busy || !name.trim() || fields.some((f) => !f.name.trim())}>
-              {busy ? "Saving…" : board ? "Save" : "Create board"}
-            </Button>
-          </ResponsiveDialogFooter>
         </form>
+        <ResponsiveDialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="board-dialog-form" loading={busy} disabled={!name.trim() || fields.some((f) => !f.name.trim())}>
+            {board ? "Save" : "Create board"}
+          </Button>
+        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
@@ -450,7 +445,8 @@ export function DeleteBoardDialog({ open, onOpenChange, board, taskCount, onDele
           <Button
             type="button"
             variant="destructive"
-            disabled={busy || !board}
+            loading={busy}
+            disabled={!board}
             onClick={() =>
               void run(async () => {
                 await del.mutateAsync(board!.id)
@@ -458,7 +454,7 @@ export function DeleteBoardDialog({ open, onOpenChange, board, taskCount, onDele
               })
             }
           >
-            {busy ? "Deleting…" : "Delete board"}
+            Delete board
           </Button>
         </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
@@ -487,8 +483,13 @@ export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; o
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="sm:max-w-md">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>New column</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>A column is a status a task can be in. It is added at the end.</ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           id="column-dialog-form"
+          className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault()
             if (!name.trim()) return
@@ -497,17 +498,10 @@ export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; o
             })
           }}
         >
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle>New column</ResponsiveDialogTitle>
-            <ResponsiveDialogDescription>A column is a status a task can be in. It is added at the end.</ResponsiveDialogDescription>
-          </ResponsiveDialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="col-name">Name</Label>
+            <Field htmlFor="col-name" label="Name">
               <Input id="col-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. In review" maxLength={60} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Category</Label>
+            </Field>
+            <Field label="Category">
               <ToggleGroup aria-label="Category" variant="outline" size="sm" spacing={0} value={[category]} onValueChange={(next) => next[0] && setCategory(next[0] as StatusCategory)}>
                 {STATUS_CATEGORIES.map((c) => (
                   <ToggleGroupItem key={c} value={c}>
@@ -515,26 +509,23 @@ export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; o
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="col-wip">WIP limit</Label>
+            </Field>
+            <Field htmlFor="col-wip" label="WIP limit">
               <Input id="col-wip" type="number" min={1} value={wip} onChange={(e) => setWip(e.target.value)} placeholder="Optional" className="w-28" />
-            </div>
-            <div className="grid gap-2">
-              <Label>Colour</Label>
+            </Field>
+            <Field label="Colour">
               <ColorPicker value={color} onChange={setColor} />
-            </div>
-          </div>
+            </Field>
           <ErrorNote error={error} />
-          <ResponsiveDialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="column-dialog-form" disabled={busy || !name.trim()}>
-              {busy ? "Adding…" : "Add column"}
-            </Button>
-          </ResponsiveDialogFooter>
         </form>
+        <ResponsiveDialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="column-dialog-form" loading={busy} disabled={!name.trim()}>
+            Add column
+          </Button>
+        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
@@ -564,8 +555,7 @@ export function DeleteStatusDialog({ open, onOpenChange, status, siblings, taskC
           {taskCount === 0 ? "The column is empty, so nothing moves." : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} will move to another column — nothing is deleted.`}
         </ResponsiveDialogDescription>
         {taskCount > 0 && siblings.length > 0 && (
-          <div className="grid gap-2 py-2">
-            <Label>Move its tasks to</Label>
+          <Field label="Move its tasks to">
             <Select value={moveTo} onValueChange={(v) => setMoveTo(v ?? "")}>
               <SelectTrigger className="w-full">
                 <SelectValue>{siblings.find((s) => s.id === moveTo)?.name ?? "Choose a column"}</SelectValue>
@@ -578,15 +568,15 @@ export function DeleteStatusDialog({ open, onOpenChange, status, siblings, taskC
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </Field>
         )}
         <ErrorNote error={error} />
         <ResponsiveDialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="button" variant="destructive" disabled={busy || !status} onClick={() => void run(() => del.mutateAsync({ id: status!.id, moveTo: moveTo || undefined }).then(() => undefined))}>
-            {busy ? "Deleting…" : "Delete column"}
+          <Button type="button" variant="destructive" loading={busy} disabled={!status} onClick={() => void run(() => del.mutateAsync({ id: status!.id, moveTo: moveTo || undefined }).then(() => undefined))}>
+            Delete column
           </Button>
         </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
@@ -614,8 +604,13 @@ export function SprintDialog({ open, onOpenChange, boardId, sprint }: { open: bo
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="sm:max-w-md">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>{sprint ? "Edit sprint" : "New sprint"}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>A dated window of work. Start it when the team commits; complete it to roll open work forward.</ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           id="sprint-dialog-form"
+          className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault()
             if (!name.trim()) return
@@ -626,40 +621,30 @@ export function SprintDialog({ open, onOpenChange, boardId, sprint }: { open: bo
             })
           }}
         >
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle>{sprint ? "Edit sprint" : "New sprint"}</ResponsiveDialogTitle>
-            <ResponsiveDialogDescription>A dated window of work. Start it when the team commits; complete it to roll open work forward.</ResponsiveDialogDescription>
-          </ResponsiveDialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="sprint-name">Name</Label>
+            <Field htmlFor="sprint-name" label="Name">
               <Input id="sprint-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Sprint 1" maxLength={120} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="sprint-goal">Goal</Label>
+            </Field>
+            <Field htmlFor="sprint-goal" label="Goal">
               <Textarea id="sprint-goal" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="What done looks like" className="min-h-14" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2">
-                <Label htmlFor="sprint-start">Start</Label>
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field htmlFor="sprint-start" label="Start">
                 <Input id="sprint-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="sprint-end">End</Label>
+              </Field>
+              <Field htmlFor="sprint-end" label="End">
                 <Input id="sprint-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-              </div>
+              </Field>
             </div>
-          </div>
           <ErrorNote error={error} />
-          <ResponsiveDialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="sprint-dialog-form" disabled={busy || !name.trim()}>
-              {busy ? "Saving…" : sprint ? "Save" : "Create sprint"}
-            </Button>
-          </ResponsiveDialogFooter>
         </form>
+        <ResponsiveDialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="sprint-dialog-form" loading={busy} disabled={!name.trim()}>
+            {sprint ? "Save" : "Create sprint"}
+          </Button>
+        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
@@ -681,10 +666,10 @@ export function CompleteSprintDialog({ open, onOpenChange, sprint, openCount, do
           {openCount > 0 ? `${openCount} ${openCount === 1 ? "task is" : "tasks are"} still open — choose where they go.` : "Nothing is left open."}
         </ResponsiveDialogDescription>
         {openCount > 0 && (
-          <RadioGroup value={moveTo} onValueChange={(v) => setMoveTo(v as typeof moveTo)} className="gap-1 py-2">
+          <RadioGroup value={moveTo} onValueChange={(v) => setMoveTo(v as typeof moveTo)} className="gap-3">
             {(["next", "backlog"] as const).map((opt) => (
-              <label key={opt} className={cn("flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm", moveTo === opt && "border-primary bg-muted")}>
-                <RadioGroupItem value={opt} />
+              <label key={opt} className="flex cursor-pointer items-start gap-3 text-sm">
+                <RadioGroupItem value={opt} className="mt-0.5" />
                 {opt === "next" ? "Move to the next sprint (created if there is none)" : "Return to the backlog"}
               </label>
             ))}
@@ -697,7 +682,8 @@ export function CompleteSprintDialog({ open, onOpenChange, sprint, openCount, do
           </Button>
           <Button
             type="button"
-            disabled={busy || !sprint}
+            loading={busy}
+            disabled={!sprint}
             onClick={() =>
               void run(async () => {
                 const result = await complete.mutateAsync({ id: sprint!.id, moveTo })
@@ -705,7 +691,7 @@ export function CompleteSprintDialog({ open, onOpenChange, sprint, openCount, do
               })
             }
           >
-            {busy ? "Completing…" : "Complete sprint"}
+            Complete sprint
           </Button>
         </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
@@ -731,8 +717,13 @@ export function SaveViewDialog({ open, onOpenChange, boardId, state, existing, o
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="sm:max-w-md">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>{existing && !asNew ? "Update view" : "Save view"}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>The current layout, filters, grouping and sort, under a name in the Views menu.</ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           id="save-view-dialog-form"
+          className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault()
             if (!name.trim()) return
@@ -743,17 +734,10 @@ export function SaveViewDialog({ open, onOpenChange, boardId, state, existing, o
             })
           }}
         >
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle>{existing && !asNew ? "Update view" : "Save view"}</ResponsiveDialogTitle>
-            <ResponsiveDialogDescription>The current layout, filters, grouping and sort, under a name in the Views menu.</ResponsiveDialogDescription>
-          </ResponsiveDialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="view-name">Name</Label>
+            <Field htmlFor="view-name" label="Name">
               <Input id="view-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. My open bugs" maxLength={80} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Layout</Label>
+            </Field>
+            <Field label="Layout">
               <ToggleGroup aria-label="Layout" variant="outline" size="sm" value={[kind]} onValueChange={(next) => next[0] && setKind(next[0] as ViewKind)} className="flex-wrap">
                 {VIEW_KINDS.map((k) => (
                   <ToggleGroupItem key={k} value={k} className="capitalize">
@@ -761,24 +745,23 @@ export function SaveViewDialog({ open, onOpenChange, boardId, state, existing, o
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
-            </div>
+            </Field>
             {existing && (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={asNew} onCheckedChange={(checked) => setAsNew(checked)} />
                 Save as a new view instead of updating “{existing.name}”
               </label>
             )}
-          </div>
           <ErrorNote error={error} />
-          <ResponsiveDialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="save-view-dialog-form" disabled={busy || !name.trim()}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-          </ResponsiveDialogFooter>
         </form>
+        <ResponsiveDialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="save-view-dialog-form" loading={busy} disabled={!name.trim()}>
+            Save
+          </Button>
+        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

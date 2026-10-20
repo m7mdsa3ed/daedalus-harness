@@ -45,18 +45,16 @@ export const PEEK = 3
    moment overflow is restored, so the rail shrank 2px after every open. */
 export const RUN_RAIL_CLASS = "pt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 ps-2.5"
 
-export const RAIL_ELBOW =
-  "harness-rail-draw relative before:absolute before:-top-0.5 before:-start-[11px] before:h-4 before:w-[24px] before:rounded-es-[6px] before:border-b before:border-s before:border-border"
+/* The rail is no longer drawn: nested steps keep the indent under the parent
+   row's icon column and nothing else. The three names stay, empty, so the row
+   tree that places them is unchanged. */
+export const RAIL_ELBOW = "relative"
 
-/** The rail continuing past a step to the one under it — every step but the
-    last, which is what makes the run's line end on its own last elbow. */
-export const RAIL_TAIL =
-  "after:absolute after:top-[0.875rem] after:-bottom-0.5 after:-start-[11px] after:w-px after:bg-border/60"
+/** The rail continuing past a step to the one under it — not drawn. */
+export const RAIL_TAIL = ""
 
-/** A straight length of the same rail, for a row in it that is not a step (the
-    "N earlier steps" line) — it passes the line on without claiming an elbow. */
-export const RAIL_THROUGH =
-  "harness-rail-draw relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-start-[11px] before:w-px before:bg-border/60"
+/** A straight length of the rail, for a row in it that is not a step — not drawn. */
+export const RAIL_THROUGH = "relative"
 
 /** "N earlier steps" — the top of a peeking rail. */
 export function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }) {

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type CommandDef, type ServerSettings } from "@/lib/settings"
 import { useCommands, useInvalidateCatalog } from "@/lib/queries/catalog"
-import { FormPageHeader, PageForm, Field, FormActions, FormSection } from "./primitives"
+import { FIELD_GRID, FormPageHeader, PageForm, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
@@ -36,6 +36,7 @@ export function CommandsPage() {
       rowDetail={(c) => c.description || c.content}
       settings={settings}
       refresh={() => invalidate("commands")}
+      slice="commands"
     />
   )
 }
@@ -120,8 +121,8 @@ function CommandForm({
           },
         }}
       >
-          <FormSection label="Identity">
-            <div className="grid gap-4 @panel-sm:grid-cols-2">
+          <FormSection id="identity" label="Identity">
+            <div className={FIELD_GRID}>
               <Field label="Name" hint="Typed as /name in the composer; also the filename on disk.">
                 <Input
                   value={form.name}
@@ -129,7 +130,7 @@ function CommandForm({
                   placeholder="review-pr"
                   pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]*"
                   title="Letters, digits, . _ - only"
-                  className="font-mono text-sm"
+                  className="font-mono"
                   required
                 />
               </Field>
@@ -137,7 +138,7 @@ function CommandForm({
                 <Input
                   value={form.argumentHint}
                   onChange={(e) => set({ argumentHint: e.target.value })}
-                  className="font-mono text-sm"
+                  className="font-mono"
                 />
               </Field>
             </div>
@@ -145,7 +146,7 @@ function CommandForm({
               <Input value={form.description} onChange={(e) => set({ description: e.target.value })} required />
             </Field>
           </FormSection>
-          <FormSection label="Prompt">
+          <FormSection id="prompt" label="Prompt">
             <Field
               label="Prompt"
               hint="Markdown the agent receives when the command runs. $ARGUMENTS is replaced with whatever was typed after the name."
@@ -154,7 +155,7 @@ function CommandForm({
                 value={form.content}
                 onChange={(e) => set({ content: e.target.value })}
                 rows={8}
-                className="font-mono text-sm"
+                className="font-mono"
                 required
               />
             </Field>

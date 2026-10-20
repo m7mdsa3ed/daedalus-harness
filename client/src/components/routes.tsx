@@ -228,7 +228,7 @@ export function pageRoutes({
       <Route
         path="/notifications"
         element={
-          <PageFrame width="form">
+          <PageFrame width="wide">
             <NotificationsInboxPage />
           </PageFrame>
         }

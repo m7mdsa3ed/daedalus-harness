@@ -1,5 +1,4 @@
 import * as React from "react"
-import { useIsMobile } from "@/hooks/use-device"
 import { ArrowDown, ArrowUp, BotIcon, Download, PlugZap, Plus, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
@@ -38,7 +37,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { cn } from "@/lib/utils"
-import { Field, INSET, LogoUpload, Picker } from "./primitives"
+import { FIELD_GRID, Field, INSET, LogoUpload, Picker } from "./primitives"
 
 /* ── model rows (reference: profile-models.ts) ──
    The form edits rows and converts to ModelOption[] on save. Numbers live as
@@ -512,7 +511,7 @@ export function ModelsSection({
         emptyIcon={<BotIcon />}
         emptyMessage={
           f.narrowed
-            ? "No model matches."
+            ? undefined
             : "No models — this profile lets the agent use its own catalog. Add or fetch models to override it."
         }
         toolbar={
@@ -529,7 +528,7 @@ export function ModelsSection({
                 onAdd()
               }}
             >
-              <Plus className="size-4" /> Add
+              <Plus data-icon="inline-start" /> Add
             </Button>
             {/* Opens the panel below, which fetches at once — there is no source
                 to choose: the only one is the provider behind this profile's
@@ -544,13 +543,13 @@ export function ModelsSection({
               aria-label="Fetch models"
               onClick={() => setImporting(true)}
             >
-              <Download className="size-4" /> Fetch
+              <Download data-icon="inline-start" /> Fetch
             </Button>
           </div>
         }
       />
       <ResponsiveDialog open={editing !== undefined} onOpenChange={(open) => !open && setEditingUid(null)}>
-        <ResponsiveDialogContent className="sm:max-w-3xl">
+        <ResponsiveDialogContent className="sm:max-w-2xl">
           <ResponsiveDialogHeader>
             <ResponsiveDialogTitle>Edit model</ResponsiveDialogTitle>
             <ResponsiveDialogDescription>
@@ -649,13 +648,13 @@ function ModelEditorFields({
           {isDefault ? "Default model" : "Set as default"}
         </Button>
       </div>
-      <div className="grid gap-3 @panel-sm:grid-cols-2">
+      <div className={FIELD_GRID}>
         <Field label="Model id">
           <Input
             value={row.id}
             onChange={(e) => onPatch({ id: e.target.value })}
             placeholder="claude-opus-5"
-            className="font-mono text-sm"
+            className="font-mono"
           />
         </Field>
         <Field label="Display name" hint="Empty = the id.">
@@ -663,7 +662,6 @@ function ModelEditorFields({
             value={row.label}
             onChange={(e) => onPatch({ label: e.target.value })}
             placeholder="Claude Opus 5"
-            className="text-sm"
           />
         </Field>
         <Field
@@ -717,7 +715,7 @@ function ModelEditorFields({
             value={row.contextWindow}
             onChange={(e) => onPatch({ contextWindow: e.target.value })}
             placeholder="200000"
-            className="text-left @panel-sm:text-right font-mono text-sm"
+            className="text-left @panel-sm:text-right font-mono"
           />
         </Field>
         <Field label="Max output tokens">
@@ -726,7 +724,7 @@ function ModelEditorFields({
             value={row.maxOutputTokens}
             onChange={(e) => onPatch({ maxOutputTokens: e.target.value })}
             placeholder="64000"
-            className="text-left @panel-sm:text-right font-mono text-sm"
+            className="text-left @panel-sm:text-right font-mono"
           />
         </Field>
         <Field label="Reasoning efforts" hint="Comma-separated; empty = no effort control.">
@@ -734,7 +732,7 @@ function ModelEditorFields({
             value={row.efforts}
             onChange={(e) => onPatch({ efforts: e.target.value })}
             placeholder="low, medium, high"
-            className="font-mono text-sm"
+            className="font-mono"
           />
         </Field>
         <Field label="Input modalities" hint="Comma-separated.">
@@ -742,7 +740,7 @@ function ModelEditorFields({
             value={row.modalities}
             onChange={(e) => onPatch({ modalities: e.target.value })}
             placeholder="text, image"
-            className="font-mono text-sm"
+            className="font-mono"
           />
         </Field>
         <Field label="Price in (USD / Mtok)">
@@ -753,7 +751,7 @@ function ModelEditorFields({
             value={row.pricingInput}
             onChange={(e) => onPatch({ pricingInput: e.target.value })}
             placeholder="3"
-            className="text-left @panel-sm:text-right font-mono text-sm"
+            className="text-left @panel-sm:text-right font-mono"
           />
         </Field>
         <Field label="Price out (USD / Mtok)">
@@ -764,7 +762,7 @@ function ModelEditorFields({
             value={row.pricingOutput}
             onChange={(e) => onPatch({ pricingOutput: e.target.value })}
             placeholder="15"
-            className="text-left @panel-sm:text-right font-mono text-sm"
+            className="text-left @panel-sm:text-right font-mono"
           />
         </Field>
         <div className="@panel-sm:col-span-2">
@@ -779,7 +777,7 @@ function ModelEditorFields({
                 value={row.iconUrl.startsWith("data:") ? "" : row.iconUrl}
                 onChange={(e) => onPatch({ iconUrl: e.target.value })}
                 placeholder={row.iconUrl.startsWith("data:") ? "Uploaded image" : "https://models.dev/logos/anthropic.svg"}
-                className="font-mono text-sm min-w-0 flex-1"
+                className="min-w-0 flex-1 font-mono"
               />
               <LogoUpload value={row.iconUrl} onChange={(iconUrl) => onPatch({ iconUrl })} />
             </div>
@@ -890,12 +888,13 @@ function ModelTest({
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 text-sm pointer-coarse:h-11"
-          disabled={testing || !id || !baseUrl.trim()}
+          className="pointer-coarse:h-11"
+          disabled={!id || !baseUrl.trim()}
+          loading={testing}
           title={baseUrl.trim() ? undefined : "Add a base URL first"}
           onClick={() => void run()}
         >
-          <PlugZap className="size-4" /> {testing ? "Testing…" : "Test model"}
+          <PlugZap data-icon="inline-start" /> Test model
         </Button>
         <span className="text-xs text-muted-foreground">
           {completion
@@ -1105,7 +1104,7 @@ function ModelsDevMatch({
             ))}
           </ComboboxList>
           {state !== "ready" || results.length === 0 ? (
-            <div className="px-3 py-3 text-center text-sm text-pretty text-muted-foreground">
+            <div className="px-2 py-2 text-xs text-pretty text-muted-foreground">
               {state === "loading" ? (
                 "Searching…"
               ) : state === "failed" ? (
@@ -1208,7 +1207,6 @@ function FetchModelsDialog({
   onImport: (rows: ModelRow[]) => void
   onClose: () => void
 }) {
-  const isMobile = useIsMobile()
   const [step, setStep] = React.useState<"pick" | "fill">("pick")
   const [fetching, setFetching] = React.useState(true)
   const [fetched, setFetched] = React.useState<ModelCandidate[] | null>(null)
@@ -1283,7 +1281,7 @@ function FetchModelsDialog({
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent>
         {step === "pick" ? (
           <>
             <ResponsiveDialogHeader>
@@ -1303,7 +1301,7 @@ function FetchModelsDialog({
               <Button
                 type="button"
                 variant="ghost"
-                className={isMobile ? undefined : "mr-auto"}
+                className="sm:mr-auto"
                 disabled={fetching}
                 onClick={fetchModels}
               >
@@ -1326,7 +1324,7 @@ function FetchModelsDialog({
                 to get the name, context window, pricing and efforts.
               </ResponsiveDialogDescription>
             </ResponsiveDialogHeader>
-            <div className={cn("max-h-[50vh] divide-y overflow-y-auto @panel-sm:max-h-[60vh]", INSET)}>
+            <div className={cn("divide-y", INSET)}>
               {picked.map((c) => {
                 const row = drafts[c.id]
                 if (!row) return null

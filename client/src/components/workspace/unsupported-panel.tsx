@@ -20,7 +20,7 @@ export function UnsupportedPanel({ api }: IDockviewPanelProps) {
   const name = isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : kind
 
   return (
-    <div className="flex h-full min-h-0 items-center justify-center p-3">
+    <div className="flex h-full min-h-0 items-center justify-center p-2.5">
       <Empty
         size="lg"
         icon={PackageOpenIcon}

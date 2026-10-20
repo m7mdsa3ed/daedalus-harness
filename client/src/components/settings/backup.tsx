@@ -3,12 +3,11 @@ import { Download, FileJson, Upload } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
-import { Spinner } from "@/components/ui/spinner"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
 import { captureError, reportPromise, type InlineError } from "@/lib/errors"
 import { ApiError, api, type ServerSettings } from "@/lib/settings"
-import { Group, PageHeader, Row, Section, Segmented, StatusBadge, TabBar } from "./primitives"
+import { FormActions, Group, PageForm, PageHeader, Row, Section, Segmented, StatusBadge, TabBar } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -128,7 +127,7 @@ export function BackupPage() {
   const [side, setSide] = React.useState<Side>("export")
   return (
     <>
-      <PageHeader meta={meta} flush />
+      <PageHeader meta={meta} />
       <TabBar items={SIDES} value={side} onChange={(id) => setSide(id as Side)} label="Backup" />
       <div hidden={side !== "export"}>
         <ExportPanel settings={settings} />
@@ -137,16 +136,6 @@ export function BackupPage() {
         <ImportPanel settings={settings} />
       </div>
     </>
-  )
-}
-
-/** The foot of a panel: a hint and the one action. */
-function Foot({ hint, children }: { hint: string; children?: React.ReactNode }) {
-  return (
-    <div className="mt-8 flex flex-col gap-2 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between">
-      <span className="text-sm text-muted-foreground">{hint}</span>
-      {children}
-    </div>
   )
 }
 
@@ -186,7 +175,12 @@ function ExportPanel({ settings }: { settings: ServerSettings }) {
   }
 
   return (
-    <>
+    <PageForm
+      onSubmit={(e) => {
+        e.preventDefault()
+        run()
+      }}
+    >
       <Group
         label="Export"
         hint="One JSON file with everything on this server. Not included: the server's own token, host and port."
@@ -211,13 +205,12 @@ function ExportPanel({ settings }: { settings: ServerSettings }) {
         <Check on label="Web-search backend" />
         <Check on={secrets} label="Credentials" />
       </Group>
-      <Foot hint="Downloads to this device.">
-        <Button className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => void run()} loading={busy}>
-          {busy ? <Spinner /> : <Download className="size-4" />}
-          Export
-        </Button>
-      </Foot>
-    </>
+      <FormActions
+        busy={busy}
+        submitLabel="Export"
+        leading={<span className="text-sm text-muted-foreground">Downloads to this device.</span>}
+      />
+    </PageForm>
   )
 }
 
@@ -288,7 +281,12 @@ function ImportPanel({ settings }: { settings: ServerSettings }) {
   const replace = mode === "replace"
   const redacted = file?.peek.redacted
   return (
-    <>
+    <PageForm
+      onSubmit={(e) => {
+        e.preventDefault()
+        void run()
+      }}
+    >
       <input
         ref={inputRef}
         type="file"
@@ -309,8 +307,15 @@ function ImportPanel({ settings }: { settings: ServerSettings }) {
               : "Nothing is read until you pick a file; you confirm before anything changes."
           }
         >
-          <Button variant="outline" className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => inputRef.current?.click()} disabled={busy}>
-            <Upload className="size-4" />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="pointer-coarse:h-11"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+          >
+            <Upload data-icon="inline-start" />
             {file ? "Choose another" : "Choose file"}
           </Button>
         </Row>
@@ -359,16 +364,13 @@ function ImportPanel({ settings }: { settings: ServerSettings }) {
               <Notice tone="error">Deletes this server's data first, and stops running agents. This cannot be undone.</Notice>
             </Section>
           )}
-          <Foot hint="The app reloads when the import finishes.">
-            <Button variant={replace ? "destructive" : "default"} className="w-full pointer-coarse:h-11 @panel-sm:w-auto" onClick={() => void run()} loading={busy}>
-              {busy ? <Spinner /> : <Upload className="size-4" />}
-              {replace ? "Replace and import" : "Merge and import"}
-            </Button>
-          </Foot>
+          <FormActions
+            busy={busy}
+            submitLabel={replace ? "Replace and import" : "Merge and import"}
+            leading={<span className="text-sm text-muted-foreground">The app reloads when the import finishes.</span>}
+          />
         </>
-      ) : (
-        <Foot hint="Pick a file to choose how it comes in." />
-      )}
-    </>
+      ) : null}
+    </PageForm>
   )
 }

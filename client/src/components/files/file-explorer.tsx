@@ -54,6 +54,7 @@ import {
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { Empty } from "@/components/empty"
+import { ErrorNote } from "@/components/error-note"
 import { GridView, ListView, useWidth, type ItemHandlers, type ListedItem } from "@/components/files/file-items"
 import { FileDetails, PreviewPanel } from "@/components/files/file-preview"
 import { FolderTree, type DropProps } from "@/components/files/file-tree"
@@ -94,7 +95,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { formatBytes } from "@/lib/attachments"
-import { reportError } from "@/lib/errors"
+import { inlineFromQuery, reportError } from "@/lib/errors"
 import {
   entriesFromDrop,
   entriesFromInput,
@@ -1016,14 +1017,21 @@ export function FileExplorer({
               "data-drop:bg-primary/5"
             )}
           >
-            {pending ? (
+            {(searching ? search.error : listing.error) ? (
+              <ErrorNote
+                error={inlineFromQuery(
+                  searching ? search.error : listing.error,
+                  searching ? "Couldn’t search the library" : "Couldn’t read this folder"
+                )}
+                onRetry={() => void (searching ? search.refetch() : listing.refetch())}
+                className="m-3"
+              />
+            ) : pending ? (
               <div className="flex flex-col gap-1 p-2">
                 {[0, 1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-7" />
                 ))}
               </div>
-            ) : (searching ? search.error : listing.error) ? (
-              <Empty className="m-3">Couldn’t read this folder.</Empty>
             ) : items.length === 0 ? (
               <Empty className="m-3" icon={searching ? SearchIcon : UploadIcon}>
                 {searching
@@ -1118,7 +1126,7 @@ export function FileExplorer({
                   : `Choose ${multiple ? "files" : "a file"}${accept ? ` (${accept})` : ""}`}
             </span>
             {onCancel && (
-              <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+              <Button type="button" size="sm" variant="outline" onClick={onCancel}>
                 Cancel
               </Button>
             )}
@@ -1204,11 +1212,11 @@ function DestinationDialog({
           </ResponsiveDialogTitle>
           <ResponsiveDialogDescription>Choose the folder to {verb.toLowerCase()} into.</ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <div className="max-h-[min(50svh,24rem)] overflow-y-auto rounded-xl border p-1.5">
+        <div className="max-h-[min(calc(var(--float-h)*0.5),24rem)] overflow-y-auto rounded-xl border p-1.5">
           <FolderTree folders={folders} value={into} onSelect={setInto} disabled={blocked} />
         </div>
         <ResponsiveDialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button

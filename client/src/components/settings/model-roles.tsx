@@ -7,7 +7,11 @@ import {
   useUpdateModelRole,
   useDeleteModelRole,
 } from "@/lib/queries/model-roles"
-import { captureError, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, type InlineError } from "@/lib/errors"
+import { useServer } from "@/lib/server-context"
+import { modelRolesKey } from "@/lib/queries/keys"
+import { useApiQuery } from "@/lib/queries/helpers"
+import { Empty } from "@/components/empty"
 import type { ModelRole } from "@/lib/settings"
 import type { ColumnDef } from "@/lib/table"
 import { useIsNarrow } from "@/hooks/use-device"
@@ -19,7 +23,7 @@ import { DataTable, type TableAction } from "@/components/ui/data-table"
 import { useTableFilter } from "@/lib/use-table-filter"
 import { ErrorNote } from "@/components/error-note"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-import { Field, FormPageHeader, FormSection, PageHeader, Section, StatusBadge } from "./primitives"
+import { Field, FormActions, FormPageHeader, FormSection, PageForm, PageHeader, Section, StatusBadge } from "./primitives"
 import { sectionMeta } from "./sections"
 
 /* ── Model roles ──
@@ -42,12 +46,15 @@ import { sectionMeta } from "./sections"
    add) a phone row opens to edit, where the inline inputs would be too small to
    aim at. Label and description save on change, as they always did. */
 
-const INPUT = "text-sm pointer-coarse:h-11"
+const INPUT = "pointer-coarse:h-11"
 const UNSET = "border-dashed"
 
 export function ModelRolesPage() {
   const meta = sectionMeta("model-roles")
   const roles = useModelRoles()
+  /* The same key and route the list hook reads, so this is its state, not a
+     second request: "not yet" and "could not read" are not "no roles". */
+  const state = useApiQuery<ModelRole[]>(modelRolesKey(useServer()), "/api/model-roles", { staleTime: 60_000 })
   const updateRole = useUpdateModelRole()
   const deleteRole = useDeleteModelRole()
   const [error, setError] = React.useState<InlineError | null>(null)
@@ -143,7 +150,7 @@ export function ModelRolesPage() {
       {
         id: "delete",
         label: "Delete role",
-        icon: <Trash2 className="size-4" />,
+        icon: <Trash2 />,
         tone: "danger",
         onClick: (role) => removeRole(role.id),
       },
@@ -152,36 +159,48 @@ export function ModelRolesPage() {
   )
 
   const addButton = (
-    <Button type="button" className="h-11 @panel-sm:h-9" onClick={() => void navigate(settingsFormPath("model-roles"))}>
-      <Plus className="size-4" /> New role
+    <Button type="button" onClick={() => void navigate(settingsFormPath("model-roles"))}>
+      <Plus data-icon="inline-start" /> New role
     </Button>
   )
 
   return (
     <div ref={rootRef}>
       <PageHeader meta={meta} action={addButton} />
-      <ErrorNote error={error} />
-
-      <Section
-        label="Roles"
-        hint={`${roles.length} ${roles.length === 1 ? "role" : "roles"}${unset ? `, ${unset} without a description` : ""}. A role with no description has a dashed edge — the agent has nothing to choose it by.`}
-      >
-        <DataTable
-          columns={columns}
-          data={f.rows}
-          getRowId={(r) => r.id}
-          pageSize={25}
-          actions={actions}
-          mark={() => <Tag />}
-          filtering={f.filtering}
-          emptyIcon={<Tag />}
-          emptyMessage={f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No roles yet."}
-          emptyAction={f.narrowed ? undefined : addButton}
-          onRowClick={narrow ? (r) => void navigate(settingsFormPath("model-roles", r.id)) : undefined}
-          mobile={{ renderRow: (role) => <RoleRow role={role} /> }}
-        />
-      </Section>
-
+      {error && (
+        <Section>
+          <ErrorNote error={error} />
+        </Section>
+      )}
+      {state.error ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(state.error, "Couldn't read the model roles")} onRetry={() => void state.refetch()} />
+        </Section>
+      ) : roles.length === 0 && !state.isPending ? (
+        <Empty size="lg" icon={Tag} action={<div className="[&_[data-slot=button]]:pointer-coarse:h-11">{addButton}</div>}>
+          No roles yet.
+        </Empty>
+      ) : (
+        <Section
+          label="Roles"
+          count={state.isPending ? undefined : roles.length}
+          hint={`${unset ? `${unset} without a description. ` : ""}A role with no description has a dashed edge — the agent has nothing to choose it by.`}
+        >
+          <DataTable
+            columns={columns}
+            data={f.rows}
+            getRowId={(r) => r.id}
+            isLoading={state.isPending}
+            pageSize={25}
+            actions={actions}
+            mark={() => <Tag />}
+            filtering={f.filtering}
+            emptyIcon={<Tag />}
+            onRowClick={narrow ? (r) => void navigate(settingsFormPath("model-roles", r.id)) : undefined}
+            mobile={{ renderRow: (role) => <RoleRow role={role} /> }}
+          />
+        </Section>
+      )}
     </div>
   )
 }
@@ -237,31 +256,33 @@ export function ModelRoleFormPage() {
         }
         onBack={back}
       />
-      <div className="space-y-6">
-        <ErrorNote error={error} />
-        {editing ? (
-          <>
-            <FormSection label="Role">
-              <Field label="Label">
-                <SavedInput
-                  value={editing.label}
-                  onSave={(v) => save(editing.id, "label", v)}
-                  placeholder="Role label"
-                  aria-label={`Label for ${editing.id}`}
-                  className={cn(INPUT, "font-medium")}
-                />
-              </Field>
-              <Field label="Description">
-                <SavedInput
-                  value={editing.description}
-                  onSave={(v) => save(editing.id, "description", v)}
-                  placeholder="One line for the agent — e.g. Cheap side-jobs"
-                  aria-label={`Description for ${editing.id}`}
-                  className={cn(INPUT, !editing.description.trim() && UNSET)}
-                />
-              </Field>
-            </FormSection>
-            <div className="flex items-center justify-between gap-2">
+      {editing ? (
+        <PageForm onSubmit={(e) => e.preventDefault()}>
+          <FormSection label="Role">
+            <Field label="Label">
+              <SavedInput
+                value={editing.label}
+                onSave={(v) => save(editing.id, "label", v)}
+                placeholder="Role label"
+                aria-label={`Label for ${editing.id}`}
+                className={cn(INPUT, "font-medium")}
+              />
+            </Field>
+            <Field label="Description">
+              <SavedInput
+                value={editing.description}
+                onSave={(v) => save(editing.id, "description", v)}
+                placeholder="One line for the agent — e.g. Cheap side-jobs"
+                aria-label={`Description for ${editing.id}`}
+                className={cn(INPUT, !editing.description.trim() && UNSET)}
+              />
+            </Field>
+          </FormSection>
+          <FormActions
+            busy={false}
+            error={error}
+            done={back}
+            leading={
               <Button
                 variant="outline"
                 type="button"
@@ -277,64 +298,53 @@ export function ModelRoleFormPage() {
                 }
                 aria-label={`Delete role ${editing.id}`}
               >
-                <Trash2 className="size-4" />
+                <Trash2 data-icon="inline-start" />
                 Delete role
               </Button>
-              <Button type="button" onClick={back}>
-                Done
-              </Button>
-            </div>
-          </>
-        ) : (
-          <form
-            className="space-y-6"
-            onSubmit={(e) => {
-              e.preventDefault()
-              addRole()
-            }}
-          >
-            <FormSection label="Role">
-              <Field label="Id">
-                <Input
-                  value={draftId}
-                  onChange={(e) => setDraftId(e.target.value)}
-                  placeholder="Id (optional) — small"
-                  title="Optional. What a model's assignment points at; it cannot be changed once the role exists. Leave empty and the server mints one."
-                  aria-label="Id"
-                  className={cn(INPUT, "font-mono")}
-                />
-              </Field>
-              <Field label="Label">
-                <Input
-                  value={draftLabel}
-                  onChange={(e) => setDraftLabel(e.target.value)}
-                  placeholder="Label — Small"
-                  aria-label="Label"
-                  className={INPUT}
-                />
-              </Field>
-              <Field label="Description">
-                <Input
-                  value={draftDescription}
-                  onChange={(e) => setDraftDescription(e.target.value)}
-                  placeholder="Description — Cheap side-jobs"
-                  aria-label="Description"
-                  className={INPUT}
-                />
-              </Field>
-            </FormSection>
-            <div className="flex flex-col-reverse gap-2 @panel-sm:flex-row @panel-sm:justify-end">
-              <Button variant="outline" type="button" onClick={back}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={createRole.isPending || !draftLabel.trim()} title="Add role">
-                <Plus className="size-4" />
-                Add role
-              </Button>
-            </div>
-          </form>
-        )}
-      </div>
+            }
+          />
+        </PageForm>
+      ) : (
+        <PageForm
+          onSubmit={(e) => {
+            e.preventDefault()
+            addRole()
+          }}
+        >
+          <FormSection label="Role">
+            <Field label="Id">
+              <Input
+                value={draftId}
+                onChange={(e) => setDraftId(e.target.value)}
+                placeholder="Id (optional) — small"
+                title="Optional. What a model's assignment points at; it cannot be changed once the role exists. Leave empty and the server mints one."
+                aria-label="Id"
+                className={cn(INPUT, "font-mono")}
+              />
+            </Field>
+            <Field label="Label">
+              <Input
+                value={draftLabel}
+                onChange={(e) => setDraftLabel(e.target.value)}
+                placeholder="Label — Small"
+                aria-label="Label"
+                className={INPUT}
+                required
+              />
+            </Field>
+            <Field label="Description">
+              <Input
+                value={draftDescription}
+                onChange={(e) => setDraftDescription(e.target.value)}
+                placeholder="Description — Cheap side-jobs"
+                aria-label="Description"
+                className={INPUT}
+              />
+            </Field>
+          </FormSection>
+          <FormActions busy={createRole.isPending} onCancel={back} error={error} submitLabel="Add role" />
+        </PageForm>
+      )}
     </>
   )
 }

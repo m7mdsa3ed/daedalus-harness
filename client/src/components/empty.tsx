@@ -5,13 +5,17 @@
 
    It is the registry's `Empty` with its dashed edge switched on (`border`):
 
-   — `sm` is the inline one, inside a settings form or a picker: a compact
-     line of text with a dashed edge, no glyph. It is a placeholder *in a
-     layout* rather than a destination, so it stays small;
-   — `lg` is the page one: the stock padding, the stock icon tile, room to breathe and, where the
-     emptiness is a dead end, an action to get out of it (`EmptyCard` is this
-     size, and has been for a while — it now delegates here rather than being a
-     second spelling of the same box).
+   — `sm` is the one *inside a surface* — a card, a panel, a section's body,
+     a picker: a compact line of text with a dashed edge, no glyph. It is a
+     placeholder in a layout rather than a destination, so it stays small;
+   — `lg` is the one *on the page ground*, standing alone where a list with no
+     rows at all would be (no table, no toolbar, never inside a card): the
+     stock padding, the stock icon tile, and, where the emptiness is a dead
+     end, an action to get out of it.
+
+   A filter that matched nothing is neither: it is `DataTableEmpty`, inside
+   the table. A popover or menu says it in a muted line. Pass no `border-0`:
+   the dashed edge is what makes it an absence.
 
    The dashed edge is the whole vocabulary: a solid box is content, a dashed one
    is the absence of it. Nothing here is an alert — an empty state says "there is

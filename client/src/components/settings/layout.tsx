@@ -34,7 +34,7 @@ import type { Actions } from "@/lib/actions"
 import { settingsPath, settingsRootPath } from "@/lib/router"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
 import type { ServerSettings } from "@/lib/settings"
-import { isFullWidthSettings, isWideSettings, type SettingsSectionId } from "./sections"
+import { isBareSettings, isWideSettings, type SettingsSectionId } from "./sections"
 
 export interface SettingsPageContext {
   settings: ServerSettings
@@ -58,10 +58,10 @@ function BackToSettings({ go }: { go: () => void }) {
       type="button"
       variant="ghost"
       size="sm"
-      className="-ml-2 mb-3 h-11 text-muted-foreground"
+      className="-ml-2 mb-3 text-muted-foreground pointer-coarse:h-11"
       onClick={go}
     >
-      <ArrowLeft />
+      <ArrowLeft data-icon="inline-start" />
       Settings
     </Button>
   )
@@ -86,9 +86,9 @@ export function SettingsLayout({
     [navigate]
   )
 
-  /* The theme studio is two columns of its own and takes the whole frame. It
-     keeps its Back button, so nothing is unreachable. */
-  const bare = isFullWidthSettings(location.pathname)
+  /* The theme studio and the MCP server's page have a Back button of their
+     own, so the phone's way up would be a second one. */
+  const bare = isBareSettings(location.pathname)
 
   const page = loading ? (
     <SettingsSectionSkeleton />
@@ -99,12 +99,7 @@ export function SettingsLayout({
   )
 
   return (
-    <PageFrame
-      scrollRef={scrollRef}
-      width={isWideSettings(location.pathname) ? "full" : "settings"}
-      gutter="panel"
-      className={bare ? undefined : "pb-24"}
-    >
+    <PageFrame scrollRef={scrollRef} width={isWideSettings(location.pathname) ? "xl" : "wide"}>
       {!bare && !loading && isMobile && section !== null && <BackToSettings go={() => go(null)} />}
       {page}
     </PageFrame>

@@ -252,7 +252,7 @@ export function ProjectCommandMenu({
   )
   const dialog = projectId && (
     <ResponsiveDialog open={saving !== null} onOpenChange={(open) => !open && setSaving(null)}>
-      <ResponsiveDialogContent className="sm:max-w-md">
+      <ResponsiveDialogContent>
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Save as project command</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
@@ -283,8 +283,8 @@ export function ProjectCommandMenu({
           <Button type="button" variant="outline" onClick={() => setSaving(null)} disabled={busy}>
             Cancel
           </Button>
-          <Button type="submit" form="save-helper-form" disabled={busy}>
-            <BookmarkPlus /> {busy ? "Saving…" : "Save command"}
+          <Button type="submit" form="save-helper-form" loading={busy}>
+            <BookmarkPlus data-icon="inline-start" /> Save command
           </Button>
         </ResponsiveDialogFooter>
       </ResponsiveDialogContent>

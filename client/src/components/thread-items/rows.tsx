@@ -256,7 +256,7 @@ export const ToolRun = React.memo(function ToolRun({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className="group/fold -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-xl px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
         <ChevronRightIcon
           aria-hidden
@@ -301,7 +301,11 @@ export const ToolRun = React.memo(function ToolRun({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
             }}
-            className="overflow-hidden"
+            /* `-mx-1.5 px-1.5`: a nested row's hover ground bleeds 6px past its
+               box on both sides, and this clip stays `hidden` whenever the
+               opening animation did not run (a run already open on mount) —
+               so the clip carries the bleed's room itself. */
+            className="-mx-1.5 overflow-hidden px-1.5"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={branch ? "ms-[calc(0.75rem-1px)] space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
@@ -472,7 +476,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className="group/fold -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-xl px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
         <ChevronRightIcon
           aria-hidden
@@ -516,7 +520,11 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
             }}
-            className="overflow-hidden"
+            /* `-mx-1.5 px-1.5`: a nested row's hover ground bleeds 6px past its
+               box on both sides, and this clip stays `hidden` whenever the
+               opening animation did not run (a run already open on mount) —
+               so the clip carries the bleed's room itself. */
+            className="-mx-1.5 overflow-hidden px-1.5"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={RUN_RAIL_CLASS}>
@@ -1312,10 +1320,22 @@ const ToolStep = React.memo(function ToolStep({
       status={item.status}
       icon={KindIcon}
       iconAccent={
-        harnessMark ? harnessMark.accent : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other
+        harnessMark
+          ? harnessMark.accent
+          : isTodoTool
+            ? "text-primary"
+            : isSkillTool
+              ? "text-purple-600 dark:text-purple-400"
+              : KIND_COLORS[webSearch ? "search" : kind] ?? KIND_COLORS.other
       }
       iconChip={
-        harnessMark ? harnessMark.chip : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
+        harnessMark
+          ? harnessMark.chip
+          : isTodoTool
+            ? "bg-primary/12"
+            : isSkillTool
+              ? "bg-purple-500/12"
+              : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
       }
       toolLayout={view.toolLayout}
       toolVariant={view.toolVariant}

@@ -6,13 +6,15 @@ import { useState } from "react"
 import { FileDiffIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import {
   READING_MARK,
   READING_TRIGGER,
   ReadingBubble,
   ReadingFace,
   OpenInInspector,
+  READING_LIST,
+  ReadingPopoverContent,
 } from "@/components/composer/indicator"
 import { shortPath } from "@/lib/tools"
 import type { ChangedFile, TurnChanges } from "@/lib/workspace/git-api"
@@ -91,16 +93,17 @@ export function ChangesIndicator({
           </Button>
         }
       />
-      <PopoverContent align="end" side="top" className="w-80 gap-2">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="font-medium">{label}</p>
-          <DiffCount added={added} removed={removed} />
-        </div>
+      <ReadingPopoverContent
+        wide
+        heading={label}
+        meta={<DiffCount added={added} removed={removed} />}
+        action={<OpenInInspector tab="changes" onOpen={() => setOpen(false)} />}
+      >
         <p className="text-xs text-muted-foreground">
           What the last turn that wrote anything did to the worktree — git's count, not the
           transcript's, so a shell command that edited a file is in it.
         </p>
-        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+        <ul className={cn("-mx-1 space-y-0.5 px-1", READING_LIST)}>
           {changes.files.map((file) => (
             <li key={file.path} className="flex items-baseline gap-2 text-sm">
               <span
@@ -125,8 +128,7 @@ export function ChangesIndicator({
             </li>
           ))}
         </ul>
-        <OpenInInspector tab="changes" onOpen={() => setOpen(false)} />
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }

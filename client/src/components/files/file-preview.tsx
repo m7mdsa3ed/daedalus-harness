@@ -42,9 +42,11 @@ import { copyText } from "@/components/step-row"
 import { Highlighted, Prose } from "@/components/tool-parts"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
+import { CodeLinesSkeleton } from "@/components/ui/skeletons"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Slides } from "@/components/workspace/file-preview"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { formatBytes } from "@/lib/attachments"
 import { captureError, reportError } from "@/lib/errors"
 import { previewKind as kindByName } from "@/lib/file-preview"
@@ -108,8 +110,9 @@ function Tool({ active, ...props }: React.ComponentProps<typeof Button> & { acti
   )
 }
 
-/** Two or three named states, as one control: Rendered / Source, a background. */
-function Segmented<T extends string>({
+/** Two or three named states, as one control: Rendered / Source, a background.
+    A ToggleGroup, not the kit's `Segmented` (whose name it used to shadow). */
+function ViewToggle<T extends string>({
   value,
   options,
   onChange,
@@ -199,7 +202,7 @@ function ImageViewer({ url, name }: { url: string; name: string }) {
           <ShrinkIcon />
         </Tool>
         <Separator orientation="vertical" className="mx-1 h-4" />
-        <Segmented
+        <ViewToggle
           value={ground}
           onChange={setGround}
           options={[
@@ -255,7 +258,7 @@ function TextViewer({ file, text, kind }: { file: FileRecord; text: string; kind
     <div className="flex min-h-0 flex-1 flex-col">
       <Bar>
         {rendered && (
-          <Segmented
+          <ViewToggle
             value={mode}
             onChange={setMode}
             options={[
@@ -324,7 +327,12 @@ function OfficeViewer({ file, blob }: { file: FileRecord; blob: Blob }) {
       dead = true
     }
   }, [blob, ext])
-  if (state.state === "loading") return <Centered><Spinner /></Centered>
+  if (state.state === "loading")
+    return (
+      <Centered className="p-2.5">
+        <Skeleton className="size-full max-h-64 max-w-md rounded-xl" />
+      </Centered>
+    )
   if (state.state === "error") return <ErrorNote error={state.error} className="m-4" />
   if (state.state === "slides") return <Slides data={state.data} name={file.name} />
   // Empty sandbox: no scripts, no origin — a document's content can do nothing.
@@ -360,9 +368,11 @@ export function FilePreview({ file, className }: { file: FileRecord; className?:
     )
   else if (blob.error) body = <ErrorNote error={captureError(blob.error, "Couldn't load a preview")} className="m-3" />
   else if (blob.loading || !blob.url)
-    body = (
-      <Centered>
-        <Spinner />
+    body = isTextual(kind) ? (
+      <CodeLinesSkeleton />
+    ) : (
+      <Centered className="p-2.5">
+        <Skeleton className="size-full max-h-64 max-w-md rounded-xl" />
       </Centered>
     )
   else
@@ -567,7 +577,7 @@ export function PreviewPanel({
       }}
       className="flex size-full min-h-0 flex-col bg-background outline-none"
     >
-      <header className="flex min-h-10 shrink-0 items-center gap-0.5 border-b px-2">
+      <PanelToolbar>
         <span className="min-w-0 flex-1 truncate px-1 text-sm font-medium" title={file.name}>
           {file.name}
         </span>
@@ -628,7 +638,7 @@ export function PreviewPanel({
             <XIcon />
           </Button>
         )}
-      </header>
+      </PanelToolbar>
 
       <div className="group/stage relative flex min-h-0 flex-1 flex-col">
         <FilePreview key={file.id} file={file} />

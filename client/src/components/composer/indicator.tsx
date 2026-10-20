@@ -1,13 +1,12 @@
 /* ── The shape every reading of the thread wears ──
-   `StripIndicator` — the 24px trigger over a popover that the composer
-   footer's end cluster is made of — and `Ring`, the dial two of those
-   readings print a number inside. Everything else in this folder that draws a
+   The 24px trigger (`READING_TRIGGER`, `ReadingFace`) over a popover
+   (`ReadingPopoverContent`) that the composer footer's end cluster is made
+   of — and `Ring`, the dial two of those readings print a number inside. Everything else in this folder that draws a
    reading is one of them; nothing here knows what is being read. */
 import * as React from "react"
-import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { PopoverContent } from "@/components/ui/popover"
 import { ChipBadge } from "@/components/composer-strip"
 import { PanelRightOpenIcon } from "lucide-react"
 import { useOpenInspector, type InspectorTab } from "@/lib/inspector"
@@ -40,6 +39,51 @@ export function OpenInInspector({
       <PanelRightOpenIcon aria-hidden data-icon="inline-start" />
       {label}
     </Button>
+  )
+}
+
+/** A reading's list inside its popover: capped by the room the popover has
+    (`--available-height`), never by the viewport. */
+export const READING_LIST = "max-h-[min(20rem,var(--available-height))] overflow-y-auto overscroll-contain"
+
+/** The popover every reading opens: one width (`w-72`, `w-80` for a list of
+    paths), one heading row (the title, a count or fact at its end), the body,
+    and the one thing to do about it at the foot. */
+export function ReadingPopoverContent({
+  heading,
+  headingClassName,
+  meta,
+  action,
+  wide = false,
+  align = "end",
+  side = "top",
+  className,
+  children,
+}: {
+  heading: React.ReactNode
+  /** Extra classes on the title (a live reading's shimmer). */
+  headingClassName?: string
+  /** A count or a fact at the heading's end. */
+  meta?: React.ReactNode
+  action?: React.ReactNode
+  /** `w-80`, for a list of paths. */
+  wide?: boolean
+  align?: "start" | "center" | "end"
+  side?: "top" | "bottom"
+  className?: string
+  children?: React.ReactNode
+}) {
+  return (
+    <PopoverContent align={align} side={side} className={cn(wide ? "w-80" : "w-72", "gap-2", className)}>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className={cn("min-w-0 text-sm font-medium", headingClassName)}>{heading}</p>
+        {meta !== undefined && meta !== null && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{meta}</span>
+        )}
+      </div>
+      {children}
+      {action}
+    </PopoverContent>
   )
 }
 
@@ -235,97 +279,5 @@ export function ReadingFace({
       </ReadingBadge>
       {after}
     </>
-  )
-}
-
-/**
- * A reading in the composer footer's end cluster.
- *
- * One shape for every reading of this kind: the icon alone where the panel is
- * narrow, the icon beside its label where there is room for words, and a
- * popover carrying the detail. The label's breakpoint is the *panel's*
- * (`@panel-sm`), never the viewport's — a chat squeezed beside a terminal is
- * narrow for the same reason a phone is, and it is the width that decides
- * whether there is room to write in. The square stays 24px either way, so a
- * cluster of these still reads as a row of marks rather than as a row of
- * buttons that grew a word.
- *
- * New readings belong here rather than as another row above the composer: a
- * thing that is true of the thread right now is one number, glanced at
- * constantly and read in full rarely, which is what a trigger over a popover
- * is for.
- */
-export function StripIndicator({
-  icon,
-  label,
-  heading,
-  title,
-  tone,
-  labelClass,
-  labelAlways = false,
-  side = "top",
-  width = "w-72",
-  action,
-  children,
-}: {
-  icon: React.ReactNode
-  /** Written beside the icon where the panel has room, and the accessible
-      name everywhere. Short: it sits in a row of marks that are all short. */
-  label: string
-  /** The popover's title, where the label is too clipped to carry it. */
-  heading?: string
-  /** Overrides the tooltip when the label alone is not the whole answer. */
-  title?: string
-  /** The trigger's text tone. A reading that wants attention says so; the
-      default is a settled fact. */
-  tone?: string
-  /** Extra classes on the label pill (a `max-w`, say), merged over its own. */
-  labelClass?: string
-  /** Keep the words on a narrow panel too — the one reading whose colour *is*
-      the news cannot go quiet, and this is the same `always` `ReadingFace`
-      gives it, so the mark rides inside the pill there as well. */
-  labelAlways?: boolean
-  side?: "top" | "bottom"
-  width?: string
-  /** The one thing to do about it, at the foot of the popover. */
-  action?: React.ReactNode
-  children: React.ReactNode
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            /* w-auto on a wide panel is what lets the label in; `!` because
-               `size-6` sets width too and the two are one property apart. A
-               reading that keeps its words on every width needs that width on
-               every width, so it takes the always-geometry instead. */
-            className={cn(
-              READING_TRIGGER,
-              labelAlways && READING_TRIGGER_ALWAYS,
-              "text-muted-foreground hover:text-foreground",
-              tone
-            )}
-            title={title ?? label}
-            aria-label={title ?? label}
-          >
-            <ReadingFace
-              icon={icon}
-              label={label}
-              labelClass={labelClass}
-              always={labelAlways}
-            />
-          </Button>
-        }
-      />
-      <PopoverContent align="end" side={side} className={cn(width, "gap-2")}>
-        <p className="font-medium">{heading ?? label}</p>
-        {children}
-        {action}
-      </PopoverContent>
-    </Popover>
   )
 }

@@ -29,6 +29,7 @@ import { useNavigate } from "react-router"
 import {
   ChevronRightIcon,
   FolderPlus,
+  HistoryIcon,
   RefreshCwIcon,
   RotateCcwIcon,
   SearchIcon,
@@ -38,7 +39,8 @@ import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
-import { Spinner } from "@/components/ui/spinner"
+import { PickerSkeleton } from "@/components/ui/skeletons"
+import { Empty } from "@/components/empty"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -474,7 +476,7 @@ export function ImportThreadsDialog({
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
-        <div className="flex min-h-0 flex-col gap-3">
+        <>
           <div className="flex flex-wrap items-center gap-2">
             <Select value={agentId} onValueChange={(value) => value && pickAgent(value)}>
               <SelectTrigger className="w-full sm:w-44">
@@ -533,7 +535,7 @@ export function ImportThreadsDialog({
               loading={scanning}
               onClick={() => void scan()}
             >
-              {scanning ? <Spinner /> : <RefreshCwIcon />}
+              <RefreshCwIcon data-icon="inline-start" />
               {sessions ? "Scan again" : "Scan"}
             </Button>
           </div>
@@ -587,7 +589,7 @@ export function ImportThreadsDialog({
                 {visibleNew.length > 0 && (
                   <>
                     <span className="tabular-nums">{visibleNew.length} can be imported</span>
-                    <Button type="button" variant="link" size="xs" className="h-auto p-0" onClick={() => setMany(visibleNew, !allVisiblePicked)}>
+                    <Button type="button" variant="link" size="xs" className="h-auto px-0" onClick={() => setMany(visibleNew, !allVisiblePicked)}>
                       {allVisiblePicked ? "Clear selection" : `Select all ${visibleNew.length}`}
                     </Button>
                   </>
@@ -596,44 +598,47 @@ export function ImportThreadsDialog({
             </>
           )}
 
-          <div className="min-h-24 flex-1 space-y-3 overflow-y-auto">
+          <div className="flex min-h-24 flex-1 flex-col gap-4 overflow-y-auto">
             {/* Above whatever else the region holds: after a failed scan there
                 is nothing else, and after a failed "Add project" the rows it
                 was about are right underneath it. */}
             <ErrorNote error={scanError} onRetry={() => void scan()} retryLabel="Scan again" />
             {scanning ? (
-              <Note>Asking {agentName(agentId)} what it has…</Note>
+              <PickerSkeleton rows={4} />
             ) : scanError && !sessions ? null : unsupported ? (
-              <Note>
+              <Empty>
                 {agentName(agentId)} on this machine can't list its past sessions, so there
                 is nothing to import from it.
-              </Note>
+              </Empty>
             ) : !scanProject ? (
               /* The agent has to be spawned somewhere, and an imported thread
                  has to land somewhere. Both are a project. */
-              <Note>Make a project first — a thread needs a directory to run in.</Note>
+              <Empty>Make a project first — a thread needs a directory to run in.</Empty>
             ) : !sessions ? (
-              <Note>
+              <Empty>
                 Scan to see what {agentName(agentId)} has worked on. It runs the agent once
                 to ask — nothing is changed.
-              </Note>
+              </Empty>
             ) : groups.length === 0 ? (
               /* An empty list under a filter is a filter's answer, not the
                  store's, and it says which — with the way out attached. */
-              <div className="flex flex-col items-center gap-2 py-6">
-                <Note>
-                  {total === 0
-                    ? "No past sessions."
-                    : status === "new"
-                      ? "Every session here is already a thread."
-                      : "Nothing matches those filters."}
-                </Note>
-                {isFiltered && total > 0 && (
-                  <Button variant="outline" size="sm" onClick={clearFilters}>
-                    Show everything
-                  </Button>
-                )}
-              </div>
+              <Empty
+                size="lg"
+                icon={isFiltered && total > 0 ? SearchIcon : HistoryIcon}
+                action={
+                  isFiltered && total > 0 ? (
+                    <Button variant="outline" size="sm" onClick={clearFilters}>
+                      Show everything
+                    </Button>
+                  ) : undefined
+                }
+              >
+                {total === 0
+                  ? "No past sessions."
+                  : status === "new"
+                    ? "Every session here is already a thread."
+                    : "Nothing matches those filters."}
+              </Empty>
             ) : (
               <div className="flex flex-col gap-4">
                 {groups.map((group) => (
@@ -655,15 +660,15 @@ export function ImportThreadsDialog({
                   />
                 ))}
                 {truncated && (
-                  <Note>
+                  <Empty>
                     Only the most recent sessions are listed — narrow the search or import
                     what you need.
-                  </Note>
+                  </Empty>
                 )}
               </div>
             )}
           </div>
-        </div>
+        </>
 
         {/* Not in the scrolling list: the button that failed is in the footer,
             and a note that can scroll out of sight is one the user can miss
@@ -675,7 +680,6 @@ export function ImportThreadsDialog({
             Cancel
           </Button>
           <Button disabled={picked.size === 0} loading={importing} onClick={() => void run()}>
-            {importing && <Spinner />}
             {picked.size ? `Import ${picked.size}` : "Import"}
           </Button>
         </ResponsiveDialogFooter>
@@ -712,10 +716,6 @@ function FilterSelect<T extends string>({
       </SelectContent>
     </Select>
   )
-}
-
-function Note({ children }: { children: React.ReactNode }) {
-  return <p className="px-1 py-6 text-center text-sm text-muted-foreground">{children}</p>
 }
 
 /** One directory: its project (or the offer to make one), then its rows. */
@@ -777,11 +777,11 @@ function Group({
         </button>
         {group.project ? (
           <Button
-            variant="ghost"
-            size="sm"
+            variant="link"
+            size="xs"
             disabled={rows.length === 0}
             onClick={onToggleAll}
-            className="shrink-0"
+            className="h-auto shrink-0 px-0"
           >
             {allPicked ? "Clear" : "Select all"}
           </Button>
@@ -789,8 +789,8 @@ function Group({
           /* A conversation needs a directory to run in, and that is what a
              project is — so an unknown cwd is one click from being importable
              rather than being hidden. */
-          <Button variant="ghost" size="sm" onClick={onAddProject} className="shrink-0">
-            <FolderPlus /> Add project
+          <Button variant="outline" size="sm" onClick={onAddProject} className="shrink-0">
+            <FolderPlus data-icon="inline-start" /> Add project
           </Button>
         )}
       </header>
@@ -845,7 +845,7 @@ function Row({
     <li
       className={cn(
         "flex items-center gap-2 rounded-md px-1 py-1.5",
-        !taken && "hover:bg-muted"
+        !taken && "hover:bg-muted/50"
       )}
     >
       <Checkbox
@@ -877,12 +877,12 @@ function Row({
              second row on one conversation. Bringing its own row back is the
              thing that was actually meant. */
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             className="shrink-0"
             onClick={() => onRestore(existing.sessionId)}
           >
-            <RotateCcwIcon /> Restore
+            <RotateCcwIcon data-icon="inline-start" /> Restore
           </Button>
         ) : (
           <Button

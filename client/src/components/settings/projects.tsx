@@ -14,7 +14,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
-import { captureError, reportError, type InlineError, errorText } from "@/lib/errors"
+import { captureError, inlineFromQuery, reportError, type InlineError } from "@/lib/errors"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DataTable, TitleCell, type TableAction } from "@/components/ui/data-table"
@@ -22,7 +22,7 @@ import type { ColumnDef } from "@/lib/table"
 import { Empty } from "@/components/empty"
 import { ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
-import { Notice } from "@/components/notice"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -32,6 +32,7 @@ import { api, type HelperCommand, type Project, type ServerSettings } from "@/li
 import type { KnowledgeEntry } from "@/lib/workspace/knowledge-api"
 import {
   useActiveSpace,
+  useCatalogState,
   useCreateRule,
   useDeleteRule,
   useInvalidateCatalog,
@@ -48,6 +49,7 @@ import {
 } from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
 import {
+  FIELD_GRID,
   Field,
   FormActions,
   FormPageHeader,
@@ -58,7 +60,7 @@ import {
   PageForm,
   Picker,
   PageHeader,
-  SectionHead,
+  Section,
   StatStrip,
 } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -134,6 +136,7 @@ export function ProjectsPage() {
   const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("projects")
   const projects = useProjects()
+  const state = useCatalogState("projects")
   const confirm = useConfirm()
   const navigate = useNavigate()
   const reorder = useReorderProjects()
@@ -241,19 +244,23 @@ export function ProjectsPage() {
   )
 
   const newButton = (
-    <Button className="h-11 @panel-sm:h-9" onClick={() => void navigate(settingsFormPath("projects"))}>
-      <Plus className="size-4" /> New project
+    <Button onClick={() => void navigate(settingsFormPath("projects"))}>
+      <Plus data-icon="inline-start" /> New project
     </Button>
   )
 
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      {projects.length === 0 ? (
+      {state.error ? (
+        <Section>
+          <ErrorNote error={inlineFromQuery(state.error, "Couldn't read the projects")} onRetry={state.refetch} />
+        </Section>
+      ) : projects.length === 0 && !state.isPending ? (
         <Empty
           size="lg"
           icon={FolderIcon}
-          action={newButton}
+          action={<div className="[&_[data-slot=button]]:pointer-coarse:h-11">{newButton}</div>}
         >
           No projects yet — a thread needs one to know where to run.
         </Empty>
@@ -262,12 +269,12 @@ export function ProjectsPage() {
           columns={PROJECT_COLUMNS}
           data={f.rows}
           getRowId={(p) => p.id}
+          isLoading={state.isPending}
           pageSize={50}
           mark={(p) => <ProjectIcon project={p} className="size-5" />}
           actions={actions}
           onRowClick={(p) => void navigate(settingsFormPath("projects", p.id))}
           emptyIcon={<FolderIcon />}
-          emptyMessage="Nothing matches."
           filtering={f.filtering}
         />
       )}
@@ -300,6 +307,8 @@ export function ProjectForm({
   settings,
   onDone,
   dialog = false,
+  formId,
+  onBusyChange,
 }: {
   project: Project | null
   settings: ServerSettings
@@ -308,8 +317,12 @@ export function ProjectForm({
   onDone: (saved: Project | null) => void
   /** Drawn inside a dialog rather than as a settings route: the page header is
       the dialog's own, and the sections that need a saved id (helpers,
-      knowledge) have nothing to say about a project being created. */
+      knowledge) have nothing to say about a project being created. Its
+      footer is the dialog's, which submits this form by `formId` and hears a
+      save running through `onBusyChange`. */
   dialog?: boolean
+  formId?: string
+  onBusyChange?: (busy: boolean) => void
 }) {
   const [form, setForm] = React.useState(() => ({
     name: project?.name ?? "",
@@ -323,6 +336,7 @@ export function ProjectForm({
   const qc = useQueryClient()
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
+  React.useEffect(() => onBusyChange?.(busy), [busy, onBusyChange])
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   /* The spaces this project is filed under — one or several. A new project
      defaults to the space you are in ("make a project while working in Work"
@@ -364,7 +378,7 @@ export function ProjectForm({
      rest take the row — the pair answers to the panel (`@panel-sm`), so the
      dialog (no panel above it) stays one column. A card is not a container and does not clip: the path picker's popup hangs below its field. */
   const fields = (
-    <div className="grid gap-4 @panel-sm:grid-cols-2">
+    <div className={FIELD_GRID}>
         <div className="@panel-sm:col-span-2">
           <Field label="Name">
             <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -415,7 +429,7 @@ export function ProjectForm({
                 onChange={(e) => set({ logoUrl: e.target.value })}
                 value={form.logoUrl.startsWith("data:") ? "" : form.logoUrl}
                 placeholder={form.logoUrl.startsWith("data:") ? "Uploaded image" : "https://example.com/logo.svg"}
-                className="min-w-0 flex-1 font-mono text-sm"
+                className="min-w-0 flex-1 font-mono"
               />
               <LogoUpload value={form.logoUrl} onChange={(logoUrl) => set({ logoUrl })} />
             </div>
@@ -432,7 +446,7 @@ export function ProjectForm({
                 value={form.previewUrl}
                 onChange={(e) => set({ previewUrl: e.target.value })}
                 placeholder="http://localhost:5173"
-                className="min-w-0 flex-1 font-mono text-sm"
+                className="min-w-0 flex-1 font-mono"
               />
             </div>
           </Field>
@@ -452,14 +466,13 @@ export function ProjectForm({
         )}
     </div>
   )
-  const actions = <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
-
-  /* A dialog has no room for a rail and nothing to jump to: just the one card. */
+  /* A dialog has no room for a rail and nothing to jump to: just the one card,
+     with the buttons in the dialog's own footer. */
   if (dialog) {
     return (
-      <PageForm onSubmit={save}>
+      <PageForm id={formId} onSubmit={save}>
         <FormSection label="Workspace">{fields}</FormSection>
-        {actions}
+        <ErrorNote error={saveError} />
       </PageForm>
     )
   }
@@ -481,16 +494,16 @@ export function ProjectForm({
             stats={[
               { label: "Rules", value: ruleCount },
               { label: "Helpers", value: project.helpers?.length ?? 0 },
-              { label: "Knowledge", value: knowledgeCount ?? "—" },
+              { label: "Knowledge", value: knowledgeCount ?? 0, loading: knowledgeCount === undefined },
               { label: "Preview", value: project.previewUrl ? "Set" : "None", tone: project.previewUrl ? "ok" : "default" },
             ]}
           />
         )}
-        <PageForm onSubmit={save} className="@panel-lg:[&>footer]:mx-0 @panel-lg:[&>footer]:px-0">
+        <PageForm onSubmit={save}>
           <FormSection id="workspace" label="Workspace" hint="Name, where it lives on the server, and how it looks in the sidebar.">
             {fields}
           </FormSection>
-          {actions}
+          <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
         </PageForm>
         <RulesSection project={project} />
         <HelpersSection project={project} />
@@ -506,32 +519,6 @@ const SECTIONS = [
   { id: "helpers", label: "Helper commands" },
   { id: "knowledge", label: "Knowledge base" },
 ]
-
-/** A form block whose content is a table: the kit's heading without the card
-    `FormSection` would wrap it in, because the table is already a surface and
-    a frame inside a frame is two identical borders. */
-function Block({
-  id,
-  label,
-  hint,
-  action,
-  children,
-}: {
-  id: string
-  label: string
-  hint: string
-  action?: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <section id={id} data-kit-block className="mt-8 scroll-mt-[calc(var(--app-header-h)+1rem)]">
-      <SectionHead label={label} hint={hint} action={action} />
-      <div className="min-w-0 space-y-3">{children}</div>
-    </section>
-  )
-}
-
-const Count = ({ n }: { n: number }) => <Badge variant="secondary" className="tabular-nums">{n}</Badge>
 
 /**
  * Standing instructions for threads started in this project, spawned after the
@@ -570,12 +557,12 @@ function RulesSection({ project }: { project: Project | null }) {
       id="rules"
       label="Rules"
       hint="Standing instructions for every thread started in this project, after the global rules."
-      action={projectId ? <Count n={rules.length} /> : undefined}
+      count={projectId ? rules.length : undefined}
     >
       {!projectId ? (
-        <p className="text-sm text-muted-foreground">Save the project first to manage its rules.</p>
+        <Empty>Save the project first to manage its rules.</Empty>
       ) : (
-        <div className="space-y-3">
+        <>
           <ErrorNote error={error} />
           {rules.length === 0 ? (
             <Empty>No rules for this project yet — add one below.</Empty>
@@ -597,7 +584,7 @@ function RulesSection({ project }: { project: Project | null }) {
                   value={rule.content}
                   onChange={(e) => updateField(rule.id, "content", e.target.value)}
                   rows={3}
-                  className="font-mono text-sm"
+                  className="font-mono"
                   placeholder="Standing instruction for the agent…"
                 />
               </div>
@@ -605,10 +592,10 @@ function RulesSection({ project }: { project: Project | null }) {
           )}
           <div className="flex justify-end">
             <Button type="button" size="sm" className="pointer-coarse:h-11" onClick={add} disabled={createRule.isPending}>
-              <Plus /> Add rule
+              <Plus data-icon="inline-start" /> Add rule
             </Button>
           </div>
-        </div>
+        </>
       )}
     </FormSection>
   )
@@ -666,16 +653,16 @@ function HelpersSection({ project }: { project: Project | null }) {
   })
 
   return (
-    <Block
+    <Section
       id="helpers"
       label="Helper commands"
       hint="Commands you can run from the project page’s header dropdown, in the project’s working directory."
-      action={projectId ? <Count n={helpers.length} /> : undefined}
+      count={projectId ? helpers.length : undefined}
     >
       {!projectId ? (
-        <p className="text-sm text-muted-foreground">Save the project first to manage helper commands.</p>
+        <Empty>Save the project first to manage helper commands.</Empty>
       ) : (
-        <>
+        <div className="min-w-0 space-y-4">
           {helpers.length === 0 ? (
             <Empty>No helper commands yet — add one below.</Empty>
           ) : (
@@ -689,7 +676,6 @@ function HelpersSection({ project }: { project: Project | null }) {
               mark={() => <SquareTerminal />}
               actions={actions}
               emptyIcon={<SquareTerminal />}
-              emptyMessage={f.narrowed ? "Nothing matches." : "No helper commands."}
             />
           )}
           <div ref={formRef} className={cn("space-y-3 p-3", INSET)}>
@@ -704,9 +690,9 @@ function HelpersSection({ project }: { project: Project | null }) {
               onCancel={editing ? () => setEditing(null) : undefined}
             />
           </div>
-        </>
+        </div>
       )}
-    </Block>
+    </Section>
   )
 }
 
@@ -774,7 +760,6 @@ function KnowledgeSection({ project }: { project: Project | null }) {
   const [title, setTitle] = React.useState("")
   const [content, setContent] = React.useState("")
   const [tags, setTags] = React.useState("")
-  const error = queryError ? errorText(queryError) : null
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -833,38 +818,30 @@ function KnowledgeSection({ project }: { project: Project | null }) {
   )
 
   return (
-    <Block
+    <Section
       id="knowledge"
       label="Knowledge base"
       hint="What the project has learned — the agent reads and writes the same entries."
+      count={projectId && entries ? rows.length : undefined}
       action={
         projectId ? (
-          <>
-            <Count n={rows.length} />
-            <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={() => void refetch()} disabled={busy}>
-              <RefreshCwIcon /> Refresh
-            </Button>
-          </>
+          <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-11" onClick={() => void refetch()} disabled={busy}>
+            <RefreshCwIcon data-icon="inline-start" /> Refresh
+          </Button>
         ) : undefined
       }
     >
       {!projectId ? (
-        <p className="text-sm text-muted-foreground">Save the project first to manage its knowledge base.</p>
+        <Empty>Save the project first to manage its knowledge base.</Empty>
       ) : (
-        <>
-          {error && (
-            <Notice
-              tone="error"
-              action={
-                <Button type="button" size="xs" variant="outline" onClick={() => void refetch()}>
-                  Try again
-                </Button>
-              }
-            >
-              {error}
-            </Notice>
-          )}
-          {rows.length === 0 ? (
+        <div className="min-w-0 space-y-4">
+          <ErrorNote
+            error={inlineFromQuery(queryError, "Couldn't read the knowledge base")}
+            onRetry={() => void refetch()}
+          />
+          {!entries && !queryError ? (
+            <GroupRowsSkeleton rows={3} />
+          ) : rows.length === 0 ? (
             <Empty>No knowledge entries yet — add the first one below.</Empty>
           ) : (
             <DataTable
@@ -876,12 +853,11 @@ function KnowledgeSection({ project }: { project: Project | null }) {
               mark={() => <BookOpenIcon />}
               actions={actions}
               emptyIcon={<BookOpenIcon />}
-              emptyMessage="Nothing matches."
               filtering={f.filtering}
             />
           )}
           <form onSubmit={add} className={cn("space-y-4 p-3", INSET)}>
-            <div className="grid gap-4 @panel-sm:grid-cols-2">
+            <div className={FIELD_GRID}>
               <Field label="Title">
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What this is about" required />
               </Field>
@@ -899,14 +875,14 @@ function KnowledgeSection({ project }: { project: Project | null }) {
               />
             </Field>
             <div className="flex justify-end">
-              <Button type="submit" size="sm" className="pointer-coarse:h-11" disabled={saving || busy}>
-                <Plus /> {saving ? "Adding…" : "Add entry"}
+              <Button type="submit" size="sm" className="pointer-coarse:h-11" disabled={busy} loading={saving}>
+                <Plus data-icon="inline-start" /> Add entry
               </Button>
             </div>
           </form>
-        </>
+        </div>
       )}
-    </Block>
+    </Section>
   )
 }
 

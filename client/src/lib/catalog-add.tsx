@@ -30,13 +30,16 @@
 import * as React from "react"
 
 import { usePrompt } from "@/components/prompt-dialog"
+import { Button } from "@/components/ui/button"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
   ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
 import {
@@ -57,6 +60,9 @@ const ProfileForm = React.lazy(() =>
 /** Opens the form and resolves with the new row's id, or null if cancelled. */
 type CatalogFormFn = (kind: "project" | "profile") => Promise<string | null>
 
+/** The dialog's form, which its footer's Save submits. */
+const FORM_ID = "catalog-form"
+
 const CatalogFormCtx = React.createContext<CatalogFormFn>(() => Promise.resolve(null))
 
 const COPY = {
@@ -76,6 +82,9 @@ export function CatalogFormProvider({ children }: { children: React.ReactNode })
     kind: "project" | "profile"
     resolve: (id: string | null) => void
   } | null>(null)
+  /* The form's own save is running: the footer's Save is this form's submit
+     (`form=FORM_ID`), so it says so and refuses a second click. */
+  const [busy, setBusy] = React.useState(false)
   const settings = useServer()
   const agents = useAgents()
   const invalidate = useInvalidateCatalog()
@@ -89,6 +98,7 @@ export function CatalogFormProvider({ children }: { children: React.ReactNode })
   const settle = (id: string | null) => {
     pending?.resolve(id)
     setPending(null)
+    setBusy(false)
   }
 
   /* The catalog is refreshed before the caller is told, so the picker that
@@ -111,12 +121,14 @@ export function CatalogFormProvider({ children }: { children: React.ReactNode })
             <ResponsiveDialogTitle>{copy?.title}</ResponsiveDialogTitle>
             <ResponsiveDialogDescription>{copy?.description}</ResponsiveDialogDescription>
           </ResponsiveDialogHeader>
-          <React.Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+          <React.Suspense fallback={<GroupRowsSkeleton rows={4} />}>
             {pending?.kind === "project" && (
               <ProjectForm
                 project={null}
                 settings={settings}
                 dialog
+                formId={FORM_ID}
+                onBusyChange={setBusy}
                 onDone={(saved) => void done(saved?.id ?? null)}
               />
             )}
@@ -126,6 +138,8 @@ export function CatalogFormProvider({ children }: { children: React.ReactNode })
                 agents={agents}
                 settings={settings}
                 dialog
+                formId={FORM_ID}
+                onBusyChange={setBusy}
                 onDone={(saved) => {
                   /* Same eviction the settings route makes: what this device
                      remembered about a profile's agents was read from its
@@ -137,6 +151,14 @@ export function CatalogFormProvider({ children }: { children: React.ReactNode })
               />
             )}
           </React.Suspense>
+          <ResponsiveDialogFooter>
+            <Button type="button" variant="outline" onClick={() => settle(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" form={FORM_ID} loading={busy}>
+              Save
+            </Button>
+          </ResponsiveDialogFooter>
         </ResponsiveDialogContent>
       </ResponsiveDialog>
     </CatalogFormCtx.Provider>

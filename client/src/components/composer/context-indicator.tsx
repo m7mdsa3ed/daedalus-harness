@@ -9,7 +9,7 @@ import { ChevronDownIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { Notice } from "@/components/notice"
 import {
   READING_MARK,
@@ -17,6 +17,7 @@ import {
   ReadingBubble,
   ReadingFace,
   OpenInInspector,
+  ReadingPopoverContent,
   Ring,
 } from "@/components/composer/indicator"
 import {
@@ -244,7 +245,10 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
             <WindowBar key={window.id} window={window} label={windowTitle(window)} />
           ))}
           {peak && peak.usedPercent >= 90 && (
-            <Notice tone="error">
+            <Notice
+              tone="error"
+              copy={`Nearly out of plan — ${windowTitle(peak).toLowerCase()} is ${Math.round(peak.usedPercent)}% used.`}
+            >
               Nearly out of plan — {windowTitle(peak).toLowerCase()} is {Math.round(peak.usedPercent)}% used.
             </Notice>
           )}
@@ -366,25 +370,18 @@ export function ContextIndicator({
           </Button>
         }
       />
-      <PopoverContent align="end" side={side} className="w-72 gap-2.5">
-        {/* The window: one headline figure and a plain fill. What the prompt is
+      <ReadingPopoverContent
+        side={side}
+        heading="Context window"
+        meta={context ? `${about}${percent}%` : undefined}
+      >
+        {/* The window: one figure in the heading and a plain fill. What the prompt is
             made of is the inspector's Tokens panel's to say, estimates included. */}
-        <div>
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="font-medium">Context window</p>
-            {context && (
-              <p className="text-base font-medium leading-none tabular-nums">
-                {about}
-                {percent}%
-              </p>
-            )}
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-            {context
-              ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
-              : "Not reported by this agent"}
-          </p>
-        </div>
+        <p className="-mt-1.5 text-xs text-muted-foreground tabular-nums">
+          {context
+            ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
+            : "Not reported by this agent"}
+        </p>
         {context && (
           <div
             className="flex h-2 w-full gap-px overflow-hidden rounded-pill bg-muted"
@@ -461,7 +458,7 @@ export function ContextIndicator({
           </Section>
         )}
         <PlanUsage thread={thread} meta={meta} actions={actions} />
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }

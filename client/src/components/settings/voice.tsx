@@ -27,7 +27,9 @@ import { Switch } from "@/components/ui/switch"
 import { ErrorNote } from "@/components/error-note"
 import { cn } from "@/lib/utils"
 import { Notice } from "@/components/notice"
-import { PageHeader, FormPageHeader, FormActions, PageForm, Field, Group, Row, StatStrip, StatusBadge } from "./primitives"
+import { PageHeader, FormPageHeader, FormActions, PageForm, Field, Group, Row, ROW_CONTROL, Section, StatStrip, StatusBadge } from "./primitives"
+import { Empty } from "@/components/empty"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { SettingsList, type ListAction, type ListColumn } from "./list"
 import { sectionMeta } from "./sections"
 import { settingsFormPath, settingsPath } from "@/lib/router"
@@ -130,7 +132,7 @@ function SuggestInput({
         if (next !== null) onChange(next)
       }}
     >
-      <ComboboxInput placeholder={placeholder} aria-label={ariaLabel} className="w-full font-mono text-sm" required={required} />
+      <ComboboxInput placeholder={placeholder} aria-label={ariaLabel} className="w-full font-mono" required={required} />
       <ComboboxContent>
         <ComboboxList>
           {options.map(([v, note]) => (
@@ -173,7 +175,7 @@ export function VoiceBackendField({
   return (
     <Field label="Voice backend" hint={hint ?? "Which realtime model a voice call on these threads uses."}>
       <Select value={value || "default"} onValueChange={(v) => onChange(!v || v === "default" ? "" : v)}>
-        <SelectTrigger className="w-full @panel-sm:w-56">
+        <SelectTrigger className={ROW_CONTROL}>
           <SelectValue>{value ? labelOf(value) : "Default"}</SelectValue>
         </SelectTrigger>
         <SelectContent>
@@ -282,42 +284,52 @@ export function VoicePage() {
   const configured = rows?.filter((r) => r.hasKey).length ?? 0
 
   return (
-    <div>
+    <>
       <PageHeader meta={meta} />
-      {loadError && <ErrorNote error={captureError(loadError, "Couldn't load the voice backends")} />}
-      {!isLoading && rows?.length === 0 && (
-        <Notice tone="neutral" className="mb-8">
-          No voice backend yet — add a key for either provider to turn on voice mode in the composer.
-        </Notice>
-      )}
-      {rows && (
+      {!loadError && (
         <StatStrip
           stats={[
-            { label: "Voice mode uses", value: defaultLabel ? labelOf(defaultLabel.provider) : "None chosen" },
-            { label: "Backends with a key", value: `${configured} of ${PROVIDERS.length}` },
+            { label: "Voice mode uses", value: defaultLabel ? labelOf(defaultLabel.provider) : "None chosen", loading: isLoading },
+            { label: "Backends with a key", value: `${configured} of ${PROVIDERS.length}`, loading: isLoading },
           ]}
         />
       )}
-      <ErrorNote error={removeError} />
+      {loadError && (
+        <Section>
+          <ErrorNote error={captureError(loadError, "Couldn't load the voice backends")} />
+        </Section>
+      )}
+      {!isLoading && rows?.length === 0 && (
+        <Section>
+          <Notice tone="neutral">
+            No voice backend yet — add a key for either provider to turn on voice mode in the composer.
+          </Notice>
+        </Section>
+      )}
+      {removeError && (
+        <Section>
+          <ErrorNote error={removeError} />
+        </Section>
+      )}
       {(rows || isLoading) && (
-        <div className="mb-8">
-          <SettingsList
-            columns={columns}
-            rows={backends}
-            loading={isLoading}
-            rowId={({ preset }) => preset.id}
-            actions={actions}
-            mark={({ preset }) => {
-              const Mark = MARKS[preset.id]
-              return <Mark className="size-4 text-muted-foreground" />
-            }}
-            onRowClick={({ preset }) => configure(preset.id)}
-            emptyIcon={AudioLines}
-            emptyText="No voice backends."
-            search={{ placeholder: "Search backends…", matches: ({ preset, row }, n) => `${preset.label} ${row?.model ?? preset.model} ${row?.voice || preset.voice}`.toLowerCase().includes(n) }}
-            fields={[{ id: "status", label: "Status", of: ({ row }) => (row?.hasKey ? "Key stored" : "No key") }]}
-          />
-        </div>
+        <Section>
+        <SettingsList
+          columns={columns}
+          rows={backends}
+          loading={isLoading}
+          rowId={({ preset }) => preset.id}
+          actions={actions}
+          mark={({ preset }) => {
+            const Mark = MARKS[preset.id]
+            return <Mark className="size-4 text-muted-foreground" />
+          }}
+          onRowClick={({ preset }) => configure(preset.id)}
+          emptyIcon={AudioLines}
+          emptyText="No voice backends."
+          search={{ placeholder: "Search backends…", matches: ({ preset, row }, n) => `${preset.label} ${row?.model ?? preset.model} ${row?.voice || preset.voice}`.toLowerCase().includes(n) }}
+          fields={[{ id: "status", label: "Status", of: ({ row }) => (row?.hasKey ? "Key stored" : "No key") }]}
+        />
+        </Section>
       )}
       <Group label="How it works">
         <Row
@@ -333,7 +345,7 @@ export function VoicePage() {
           subtitle="Realtime audio is billed by the provider per token, on what the model hears and says. The agent's own work is billed by its profile, not here."
         />
       </Group>
-    </div>
+    </>
   )
 }
 
@@ -343,9 +355,22 @@ export function VoicePage() {
 export function VoiceFormPage() {
   const { entryId } = useParams()
   const p = PROVIDERS.find((x) => x.id === entryId)
-  const { data: rows, isLoading } = useVoiceProviders()
+  const navigate = useNavigate()
+  const { data: rows, isLoading, error } = useVoiceProviders()
   if (!p) return <Navigate to={settingsPath("voice")} replace />
-  if (isLoading || !rows) return null
+  if (isLoading || !rows) {
+    const back = () => void navigate(settingsPath("voice"))
+    return (
+      <>
+        <FormPageHeader title={p.label} description="Key, model and voice for this backend." onBack={back} />
+        {error ? (
+          <ErrorNote error={captureError(error, "Couldn't load the voice backends")} />
+        ) : (
+          <GroupRowsSkeleton rows={6} />
+        )}
+      </>
+    )
+  }
   return <VoiceForm preset={p} row={rows.find((r) => r.provider === p.id)} />
 }
 
@@ -370,7 +395,7 @@ function VoiceForm({ preset: p, row }: { preset: (typeof PROVIDERS)[number]; row
         : [...draft.mcpServerIds, id],
     })
   const back = () => void navigate(settingsPath("voice"))
-  const control = "w-60 max-w-full @panel-sm:w-72"
+  const control = ROW_CONTROL
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -405,7 +430,7 @@ function VoiceForm({ preset: p, row }: { preset: (typeof PROVIDERS)[number]; row
               type="password"
               autoComplete="off"
               aria-label={`${p.label} API key`}
-              className={cn(control, "h-11 @panel-sm:h-9")}
+              className={cn(control, "pointer-coarse:h-11")}
               value={draft.apiKey}
               required={!row?.hasKey}
               onChange={(e) => set({ apiKey: e.target.value })}
@@ -463,7 +488,7 @@ function VoiceForm({ preset: p, row }: { preset: (typeof PROVIDERS)[number]; row
                 )
               })}
               {mcpServers.length === 0 && (
-                <p className="text-sm text-muted-foreground">No MCP servers in the library yet — add one in Settings › MCP.</p>
+                <Empty>No MCP servers in the library yet — add one in Settings › MCP.</Empty>
               )}
             </div>
           </Row>

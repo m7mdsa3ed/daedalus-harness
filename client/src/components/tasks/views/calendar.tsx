@@ -110,7 +110,7 @@ export function CalendarView({ statuses, tasks, ctx, onOpen, onCreate }: ViewPro
                     const title = window.prompt("New task title")
                     if (title?.trim()) void onCreate({ title: title.trim(), dueAt: day + 12 * 60 * 60_000 })
                   }}
-                  className="grid size-5 place-items-center rounded-md opacity-0 outline-none hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="grid size-5 place-items-center rounded-md opacity-0 outline-none hover:bg-muted group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >
                   <Plus className="size-3" />
                 </button>

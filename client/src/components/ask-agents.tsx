@@ -365,7 +365,7 @@ export function AskAgentPicker({
           disabled={!agent || !profile}
           onClick={submit}
         >
-          <CheckIcon aria-hidden className="size-3.5" />
+          <CheckIcon aria-hidden data-icon="inline-start" />
           Ask {agent?.name ?? "agent"}
         </Button>
       </AgentRequestActions>

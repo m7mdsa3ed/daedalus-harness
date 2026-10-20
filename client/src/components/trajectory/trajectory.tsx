@@ -103,7 +103,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
       .finally(() => setExporting(false))
   }
 
-  const failure = inlineFromQuery(query.error, "Couldn't read the trajectory")
+  const failure = React.useMemo(() => inlineFromQuery(query.error, "Couldn't read the trajectory"), [query.error])
 
   return (
     <div
@@ -113,7 +113,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
       )}
     >
       {/* Toolbar: search, turn jump, follow, refresh, export. */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b px-3 py-2">
+      <div className="flex min-h-8 flex-wrap items-center gap-1 border-b px-2 py-1">
         {variant === "page" && (
           <h1 className="mr-2 flex items-center gap-1.5 text-sm font-medium">
             <RouteIcon className="size-4 text-muted-foreground" />
@@ -179,7 +179,11 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
         </Button>
       </div>
 
-      {failure && <ErrorNote className="m-3" error={failure} onRetry={() => void query.refetch()} />}
+      {failure && (
+        <div className="p-3">
+          <ErrorNote error={failure} onRetry={() => void query.refetch()} />
+        </div>
+      )}
 
       {query.isPending ? (
         <div className="space-y-2 p-3">

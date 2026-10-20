@@ -7,7 +7,6 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
-import { Spinner } from "@/components/ui/spinner"
 import { describeError } from "@/lib/errors"
 import { saveSettings, serverName, type ServerSettings } from "@/lib/settings"
 
@@ -161,8 +160,7 @@ export function ConnectScreen({
                   </Button>
                 )}
                 <Button type="submit" className="flex-1" loading={busy}>
-                  {busy && <Spinner />}
-                  {busy ? "Connecting…" : "Connect"}
+                  Connect
                 </Button>
               </Field>
             </FieldGroup>

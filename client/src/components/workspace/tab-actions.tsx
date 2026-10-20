@@ -25,7 +25,7 @@ import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
 import { ChevronDownIcon, HistoryIcon, LayoutGrid, PinIcon, PlusIcon, XIcon } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
+import { Count } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -127,11 +127,9 @@ function TabGrid({
       </Button>
       <ResponsiveDialog open={open} onOpenChange={setOpen}>
         <ResponsiveDialogContent bodyClassName="gap-0.5 px-2 py-2" className="sm:max-w-md">
-          <ResponsiveDialogHeader className="flex-row items-center gap-2 py-3">
+          <ResponsiveDialogHeader className="flex-row items-center gap-2">
             <ResponsiveDialogTitle>Tabs</ResponsiveDialogTitle>
-            <Badge variant="secondary" className="tabular-nums">
-              {panels.length}
-            </Badge>
+            <Count>{panels.length}</Count>
             {/* The group's own tidy-up. Closing the panel first keeps it from
                 standing over a dock that is now empty. */}
             {panels.length > 1 && (
@@ -184,7 +182,7 @@ function TabGrid({
                   setOpen(false)
                   onNew()
                 }}
-                className="w-full pointer-coarse:min-h-11"
+                className="w-full"
               >
                 <PlusIcon />
                 New tab

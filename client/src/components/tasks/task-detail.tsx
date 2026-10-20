@@ -38,9 +38,10 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { ErrorNote } from "@/components/error-note"
-import { Notice } from "@/components/notice"
 import { Checkbox } from "@/components/ui/checkbox"
-import { captureError, reportError, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, reportError, type InlineError } from "@/lib/errors"
+import { Empty } from "@/components/empty"
+import { SkeletonText } from "@/components/ui/skeletons"
 import { toast } from "@/lib/toast"
 import type { Board, BoardStatus, CustomFieldDef, Sprint } from "@/lib/boards"
 import {
@@ -118,7 +119,7 @@ function Section({ icon: Icon, title, count, action, children }: { icon: React.C
 
 function Property({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[6rem_minmax(0,1fr)]">
+    <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 @panel-sm:grid-cols-[6rem_minmax(0,1fr)]">
       <span className="text-xs text-muted-foreground">{label}</span>
       <div className="min-w-0">{children}</div>
     </div>
@@ -323,6 +324,7 @@ export function TaskDetailDialog({
     [sessions, taskId],
   )
   const task = detail.data?.task ?? allTasks.find((t) => t.id === taskId) ?? null
+  const loadError = React.useMemo(() => inlineFromQuery(detail.error, "Couldn't load this task"), [detail.error])
   const addComment = useAddComment()
   const updateComment = useUpdateComment()
   const deleteComment = useDeleteComment()
@@ -373,12 +375,12 @@ export function TaskDetailDialog({
 
   if (!task) {
     return (
-      <ResponsiveDialog open={!!taskId} onOpenChange={(open) => !open && onClose()}>
-        <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialog open={!!taskId} onOpenChange={(open) => !open && onClose()} tall>
+        <ResponsiveDialogContent className="sm:max-w-3xl">
           <ResponsiveDialogTitle className="sr-only">Task</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="sr-only">Loading</ResponsiveDialogDescription>
-          {detail.isError ? (
-            <Notice tone="error">This task could not be loaded.</Notice>
+          {loadError ? (
+            <ErrorNote error={loadError} onRetry={() => void detail.refetch()} />
           ) : (
             <TaskDetailSkeleton />
           )}
@@ -462,7 +464,7 @@ export function TaskDetailDialog({
         </ResponsiveDialogHeader>
 
         {/* Title block spans full width above the two panes. */}
-        <div className="w-full px-4 pt-4 sm:px-6">
+        <div className="w-full px-4 pt-4 @panel-sm:px-6">
           {editingTitle ? (
             <input
               autoFocus
@@ -474,7 +476,7 @@ export function TaskDetailDialog({
                 if (e.key === "Escape") setEditingTitle(false)
               }}
               aria-label="Title"
-              className="w-full rounded-lg border border-input bg-transparent px-2 py-1 text-xl font-medium leading-snug outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              className="w-full rounded-lg border border-input bg-transparent px-2 py-1 font-heading text-base font-medium leading-snug outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />
           ) : (
             <ResponsiveDialogTitle
@@ -485,7 +487,7 @@ export function TaskDetailDialog({
                     setTitle(task.title)
                     setEditingTitle(true)
                   }}
-                  className={cn("-mx-2 rounded-lg px-2 py-1 text-left text-xl font-medium leading-snug hover:bg-muted", task.completedAt != null && "text-muted-foreground line-through")}
+                  className={cn("-mx-2 rounded-lg px-2 py-1 text-left font-heading text-base font-medium leading-snug hover:bg-muted", task.completedAt != null && "text-muted-foreground line-through")}
                   title="Click to rename"
                 />
               }
@@ -498,7 +500,7 @@ export function TaskDetailDialog({
         </div>
 
         {/* The task itself, as one column: the three facts that place it, its tags, its text. */}
-        <div className="grid gap-3 px-4 pt-3 pb-4 sm:px-6">
+        <div className="grid gap-3 px-4 pt-3 pb-4 @panel-sm:px-6">
           <div className="flex flex-wrap gap-2">
             <StatusPicker
               value={task.statusId}
@@ -575,7 +577,7 @@ export function TaskDetailDialog({
 
         <div className="grid w-full content-start border-t md:grid-cols-[minmax(0,1fr)_17rem]">
           {/* Main column. */}
-          <div className="grid content-start gap-6 px-4 py-4 sm:px-6">
+          <div className="grid content-start gap-6 px-4 py-4 @panel-sm:px-6">
             <Section icon={ListChecks} title="Checklist" count={progress.total} action={progress.total > 0 ? <span className="text-xs tabular-nums text-muted-foreground">{progress.done}/{progress.total}</span> : null}>
               {progress.total > 0 && (
                 <div className="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -587,7 +589,7 @@ export function TaskDetailDialog({
                   <li key={item.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-muted">
                     <Checkbox checked={item.done} onCheckedChange={() => void toggleChecklist(item.id)} aria-label={item.text} />
                     <span className={cn("flex-1 text-sm", item.done && "text-muted-foreground line-through")}>{item.text}</span>
-                    <Button type="button" variant="ghost" size="icon-xs" onClick={() => void removeChecklist(item.id)} aria-label="Remove item" className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100">
+                    <Button type="button" variant="ghost" size="icon-xs" onClick={() => void removeChecklist(item.id)} aria-label="Remove item" className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100">
                       <X />
                     </Button>
                   </li>
@@ -637,7 +639,7 @@ export function TaskDetailDialog({
               count={threads.length}
               action={
                 <Button
-                  size="xs"
+                  size="sm"
                   variant="outline"
                   onClick={() => {
                     /* A draft on this task, in the board's project when it has
@@ -653,7 +655,7 @@ export function TaskDetailDialog({
                     void navigate(threadPath(id))
                   }}
                 >
-                  <Bot /> Work on this
+                  <Bot data-icon="inline-start" /> Work on this
                 </Button>
               }
             >
@@ -669,12 +671,16 @@ export function TaskDetailDialog({
                       className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-left text-sm hover:bg-muted"
                     >
                       <AgentIcon agentId={s.agentId} className="size-4 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate hover:underline">{s.title}</span>
+                      <span className="min-w-0 flex-1 truncate">{s.title}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">{fmtWhen(s.createdAt)}</span>
                     </button>
                   </li>
                 ))}
-                {threads.length === 0 && <li className="text-xs text-muted-foreground">No agent has worked on this yet.</li>}
+                {threads.length === 0 && (
+                  <li>
+                    <Empty>No agent has worked on this yet.</Empty>
+                  </li>
+                )}
               </ul>
             </Section>
 
@@ -701,8 +707,8 @@ export function TaskDetailDialog({
                       addLink.mutateAsync({ fromId: task.id, toId, kind: linkKind }).catch((err) => reportError(err, "Couldn't link the task"))
                     }}
                     trigger={
-                      <Button type="button" variant="outline" size="xs">
-                        <Plus /> Link
+                      <Button type="button" variant="outline" size="sm">
+                        <Plus data-icon="inline-start" /> Link
                       </Button>
                     }
                   />
@@ -736,14 +742,18 @@ export function TaskDetailDialog({
                         size="icon-xs"
                         aria-label="Remove link"
                         onClick={() => deleteLink.mutateAsync({ id: link.id, fromId: link.fromId, toId: link.toId }).catch((err) => reportError(err, "Couldn't remove the link"))}
-                        className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+                        className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
                       >
                         <X />
                       </Button>
                     </li>
                   )
                 })}
-                {links.length === 0 && <li className="text-xs text-muted-foreground">No links yet.</li>}
+                {links.length === 0 && (
+                  <li>
+                    <Empty>No links yet.</Empty>
+                  </li>
+                )}
               </ul>
             </Section>
 
@@ -756,7 +766,7 @@ export function TaskDetailDialog({
                       <span className="font-medium text-foreground">{c.author ?? "You"}</span>
                       <span>{fmtWhen(c.createdAt)}</span>
                       {c.updatedAt !== c.createdAt && <span>(edited)</span>}
-                      <span className="ml-auto inline-flex gap-1 opacity-0 group-hover:opacity-100">
+                      <span className="ml-auto inline-flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100">
                         <Button type="button" variant="ghost" size="icon-xs" onClick={() => setEditingComment({ id: c.id, body: c.body })} aria-label="Edit comment">
                           <Pencil />
                         </Button>
@@ -840,7 +850,16 @@ export function TaskDetailDialog({
                     </span>
                   </li>
                 ))}
-                {activity.length === 0 && !detail.isLoading && <li>No history recorded.</li>}
+                {activity.length === 0 &&
+                  (detail.isLoading ? (
+                    <li>
+                      <SkeletonText lines={3} />
+                    </li>
+                  ) : (
+                    <li>
+                      <Empty>No history recorded.</Empty>
+                    </li>
+                  ))}
               </ul>
             </Section>
 
@@ -950,7 +969,7 @@ export function TaskDetailDialog({
           </PropertiesDisclosure>
         </div>
 
-        <footer className="sticky bottom-0 flex items-center gap-2 border-t bg-background px-4 py-3 sm:px-6">
+        <footer className="sticky bottom-0 flex items-center gap-2 border-t bg-background px-4 py-3 @panel-sm:px-6">
           {confirmDelete ? (
             <>
               <span className="text-xs text-muted-foreground">Delete {key}?</span>
@@ -978,7 +997,7 @@ export function TaskDetailDialog({
               Delete
             </Button>
           )}
-          <span className="ml-auto mr-2 hidden text-xs text-muted-foreground sm:inline">
+          <span className="ml-auto mr-2 hidden text-xs text-muted-foreground @panel-sm:inline">
             {comments.length} comment{comments.length === 1 ? "" : "s"}
           </span>
           <Button size="sm" onClick={close}>

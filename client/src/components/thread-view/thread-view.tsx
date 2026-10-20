@@ -832,11 +832,11 @@ export function ThreadView({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={thread.loadingEarlier}
+                      loading={thread.loadingEarlier}
                       onClick={loadEarlier}
                     >
-                      <ChevronUp className={cn("size-4", thread.loadingEarlier && "animate-pulse")} />
-                      {thread.loadingEarlier ? "Loading…" : "Load earlier steps"}
+                      <ChevronUp data-icon="inline-start" />
+                      Load earlier steps
                     </Button>
                     <span>{thread.earlier} earlier step{thread.earlier === 1 ? "" : "s"}</span>
                   </div>
@@ -864,7 +864,10 @@ export function ThreadView({
                     `contain-intrinsic-size: auto` remembers each row's last
                     real height, and only the on-screen tail grows, so the
                     autoscroll target does not drift. */
-                <MessageScrollerItem key={row.id} messageId={row.id}>
+                /* `-mx-1.5 px-1.5`: `content-visibility: auto` is paint
+                    containment, which clips to the item's box — and step rows
+                    hang their hover ground 6px past it on both sides. */
+                <MessageScrollerItem key={row.id} messageId={row.id} className="-mx-1.5 px-1.5">
                   {/* No `first:hidden`: the divider is always its item's first
                       child, so that hid every one. `firstUserIndex` already
                       skips the first turn. */}
@@ -1031,7 +1034,7 @@ export function ThreadView({
                 </MessageScrollerItem>
               )}
               {thread.queue.length > 0 && (
-                <MessageScrollerItem messageId="queue">
+                <MessageScrollerItem messageId="queue" className="-mx-1.5 px-1.5">
                   <ComposerQueue
                     sessionId={sessionId}
                     thread={thread}

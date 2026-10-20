@@ -13,11 +13,12 @@ import { ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { SurfaceHeader } from "@/components/page-primitives"
 import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
-import { EmptyCard, StatStrip, StatusBadge } from "@/components/settings/primitives"
+import { Section, StatStrip, StatusBadge } from "@/components/settings/primitives"
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
-import { captureError } from "@/lib/errors"
+import { inlineFromQuery } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { useAutomationReads, useAutomations } from "@/lib/queries/automations"
 import { automationPath, newAutomationPath, threadPath } from "@/lib/router"
@@ -63,7 +64,7 @@ export function AutomationsListPage() {
 
   const newAutomation = () => void navigate(newAutomationPath())
   const pending = query.isPending
-  const skeleton = <Skeleton className="h-7 w-16" />
+  const error = React.useMemo(() => inlineFromQuery(query.error, "Couldn't read the automations"), [query.error])
 
   const projectName = React.useCallback(
     (r: Routine) => projects.find((p) => p.id === r.projectId)?.name ?? "Project missing",
@@ -197,19 +198,22 @@ export function AutomationsListPage() {
   const stats = [
     {
       label: "Automations",
-      value: pending ? skeleton : automations.length,
+      value: automations.length,
+      loading: pending,
       hint: enabled === automations.length ? "all active" : `${automations.length - enabled} paused`,
     },
-    { label: "Running now", value: pending ? skeleton : runningNow, hint: runningNow === 1 ? "run in progress" : "runs in progress" },
+    { label: "Running now", value: runningNow, loading: pending, hint: runningNow === 1 ? "run in progress" : "runs in progress" },
     {
       label: "Need you",
-      value: pending ? skeleton : attention,
+      value: attention,
+      loading: pending,
       tone: attention > 0 ? ("warn" as const) : undefined,
       hint: attention > 0 ? "last run blocked or failed" : "nothing waiting on you",
     },
     {
       label: "Next run",
-      value: pending ? skeleton : soonest ? untilLabel(soonest.at) : "—",
+      value: soonest ? untilLabel(soonest.at) : "—",
+      loading: pending,
       hint: soonest ? soonest.name : "nothing is scheduled",
     },
   ]
@@ -228,21 +232,23 @@ export function AutomationsListPage() {
         }
       />
 
-      {query.error && (
-        <ErrorNote error={captureError(query.error, "Couldn't read the automations")} onRetry={() => void query.refetch()} />
-      )}
-
-      {automations.length === 0 && !pending ? (
-        <EmptyCard
+      {error ? (
+        <Section>
+          <ErrorNote error={error} onRetry={() => void query.refetch()} />
+        </Section>
+      ) : automations.length === 0 && !pending ? (
+        <Empty
+          size="lg"
           icon={ZapIcon}
-          text="No automations yet. Pick a template, or start blank — an automation runs a prompt for you on a schedule."
           action={
             <Button size="sm" onClick={newAutomation}>
               <PlusIcon data-icon="inline-start" />
               New automation
             </Button>
           }
-        />
+        >
+          No automations yet. Pick a template, or start blank — an automation runs a prompt for you on a schedule.
+        </Empty>
       ) : (
         <>
           <StatStrip stats={stats} />

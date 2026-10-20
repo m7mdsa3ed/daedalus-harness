@@ -10,9 +10,16 @@ import { useNavigate } from "react-router"
 
 import { nextFireOf, triggersLine, untilLabel } from "@/components/automations/trigger-summary"
 import { formatCount } from "@/components/composer-strip"
-import { READING_MARK, READING_TRIGGER, ReadingBubble, ReadingFace } from "@/components/composer/indicator"
+import {
+  READING_LIST,
+  READING_MARK,
+  READING_TRIGGER,
+  ReadingBubble,
+  ReadingFace,
+  ReadingPopoverContent,
+} from "@/components/composer/indicator"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { useAutomationReads, useAutomations } from "@/lib/queries/automations"
 import { automationPath, automationsPath, newAutomationPath } from "@/lib/router"
 import { cn } from "@/lib/utils"
@@ -53,9 +60,20 @@ export function AutomationsIndicator({ sessionId }: { sessionId: string }) {
           </Button>
         }
       />
-      <PopoverContent align="end" side="top" className="w-72 gap-2">
-        <p className="font-medium">Automations in this thread</p>
-        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+      <ReadingPopoverContent
+        heading="Automations in this thread"
+        action={
+          <div className="flex items-center justify-between gap-2">
+            <Button variant="ghost" size="xs" onClick={() => go(newAutomationPath(sessionId))}>
+              Add
+            </Button>
+            <Button variant="outline" size="xs" onClick={() => go(automationsPath())}>
+              Manage
+            </Button>
+          </div>
+        }
+      >
+        <ul className={cn("-mx-1 space-y-0.5 px-1", READING_LIST)}>
           {mine.map((a) => {
             const next = a.enabled ? nextFireOf(triggers[a.id]) : null
             return (
@@ -74,15 +92,7 @@ export function AutomationsIndicator({ sessionId }: { sessionId: string }) {
             )
           })}
         </ul>
-        <div className="flex items-center justify-between gap-2">
-          <Button variant="ghost" size="xs" onClick={() => go(newAutomationPath(sessionId))}>
-            Add
-          </Button>
-          <Button variant="outline" size="xs" onClick={() => go(automationsPath())}>
-            Manage
-          </Button>
-        </div>
-      </PopoverContent>
+      </ReadingPopoverContent>
     </Popover>
   )
 }

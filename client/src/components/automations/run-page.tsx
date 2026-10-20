@@ -1,11 +1,13 @@
 /* ── /automations/:id/runs/:runId — one run ── */
+import * as React from "react"
 import { HistoryIcon } from "lucide-react"
-import { useNavigate } from "react-router"
+import { Navigate, useNavigate } from "react-router"
 
 import { ErrorNote } from "@/components/error-note"
-import { EmptyCard, FormPageHeader } from "@/components/settings/primitives"
-import { Skeleton } from "@/components/ui/skeleton"
-import { captureError } from "@/lib/errors"
+import { MetaFact } from "@/components/page-primitives"
+import { FormPageHeader, Section } from "@/components/settings/primitives"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
+import { inlineFromQuery } from "@/lib/errors"
 import { useAutomationRuns, useAutomations, useCancelAutomationRun } from "@/lib/queries/automations"
 import { automationPath } from "@/lib/router"
 import { RunPage } from "./runs"
@@ -17,18 +19,24 @@ export function AutomationRunPage({ automationId, runId }: { automationId: strin
   const navigate = useNavigate()
   const back = () => void navigate(automationPath(automationId))
   const run = runsQuery.data?.find((r) => r.id === runId)
-  const error = runsQuery.error ? captureError(runsQuery.error, "Couldn't read this automation's runs") : null
+  const error = React.useMemo(
+    () => inlineFromQuery(runsQuery.error, "Couldn't read this automation's runs"),
+    [runsQuery.error]
+  )
 
   if (!run) {
+    /* A run the list does not hold is gone or a stale link: its automation's
+       runs are the honest destination. */
+    if (!error && runsQuery.data !== undefined) return <Navigate to={automationPath(automationId)} replace />
     return (
       <>
         <FormPageHeader title="Run" onBack={back} />
         {error ? (
-          <ErrorNote error={error} onRetry={() => void runsQuery.refetch()} />
-        ) : runsQuery.data === undefined ? (
-          <Skeleton className="h-32 w-full" />
+          <Section>
+            <ErrorNote error={error} onRetry={() => void runsQuery.refetch()} />
+          </Section>
         ) : (
-          <EmptyCard icon={HistoryIcon} text="This run no longer exists." />
+          <GroupRowsSkeleton label />
         )}
       </>
     )
@@ -37,7 +45,14 @@ export function AutomationRunPage({ automationId, runId }: { automationId: strin
     <>
       <FormPageHeader
         title={automation ? `${automation.name} — run` : "Run"}
-        description={`${new Date(run.startedAt).toLocaleString()}${run.tokens !== null ? ` · ${run.tokens.toLocaleString()} tokens` : ""}`}
+        meta={
+          <>
+            <MetaFact icon={HistoryIcon} title="Started">
+              {new Date(run.startedAt).toLocaleString()}
+            </MetaFact>
+            {run.tokens !== null && <MetaFact title="Tokens">{run.tokens.toLocaleString()} tokens</MetaFact>}
+          </>
+        }
         onBack={back}
       />
       <RunPage

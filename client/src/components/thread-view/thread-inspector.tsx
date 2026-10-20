@@ -1,7 +1,6 @@
 /* ── The thread inspector ── the column beside a transcript (`ThreadView`),
    with the thread's readings in full: Changes, Plan, Agents, Details. */
 import * as React from "react"
-import type { ReactNode } from "react"
 import {
   ActivityIcon,
   BotIcon,
@@ -54,7 +53,11 @@ import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
 import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
-import { TokensPanel } from "./tokens-panel"
+import { InspectorCard, TokensPanel } from "./tokens-panel"
+import { Count } from "@/components/settings/primitives"
+import { PanelToolbar } from "@/components/workspace/primitives"
+
+export { InspectorCard }
 import { buildRows, type Row, type SubagentGroup, type WorkflowGroup } from "@/lib/transcript-rows"
 import { extractSubagent, formatMcpName, loadedTools, parseMcpToolName, toolHeading, type LoadedTool } from "@/lib/tools"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -101,18 +104,6 @@ function activityGroups(rows: Row[]): SubagentGroup[] {
   return groups
 }
 
-function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
-  return (
-    <Card size="sm" className="gap-0 py-0">
-      <h2 className="flex items-center gap-1.5 border-b px-3 py-2 text-xs font-medium text-muted-foreground">
-        {icon}
-        {title}
-      </h2>
-      <div className="p-3">{children}</div>
-    </Card>
-  )
-}
-
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 items-baseline justify-between gap-2 border-b py-1 last:border-0">
@@ -157,10 +148,10 @@ function LocatableStep(props: React.ComponentProps<StepRowComponent>) {
         variant="ghost"
         size="icon-xs"
         onClick={() => jump(props.group.id)}
-        className="opacity-0 group-hover/agent:opacity-100 focus-visible:opacity-100"
+        className="opacity-0 group-hover/agent:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
         title="Show in the transcript"
       >
-        <LocateIcon aria-hidden className="size-3.5" />
+        <LocateIcon aria-hidden />
       </Button>
     </div>
   )
@@ -188,7 +179,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
   )
   if (rows.length === 0)
     return (
-      <div className="p-3">
+      <div className="p-2.5">
         <Empty>No subagents in this thread yet.</Empty>
       </div>
     )
@@ -213,7 +204,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
     <LayoutOptionsContext.Provider value={options}>
       <AgentJumpContext.Provider value={onJump}>
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="space-y-1.5 border-b px-2 py-1.5">
+          <PanelToolbar className="flex-col items-stretch gap-1.5">
             <RunViewTabs views={RUN_VIEWS} value={view} onChange={(next) => setInspectorPref("agentsView", next)} label="Agents layout" />
             <div className="flex flex-wrap items-center gap-1 text-xs tabular-nums">
               {(Object.keys(AGENT_FILTERS) as AgentFilter[]).map((key) => {
@@ -236,7 +227,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
               })}
               {tokens && <span className="ml-auto text-muted-foreground">{formatTokens(tokens.totalTokens)} tokens</span>}
             </div>
-          </div>
+          </PanelToolbar>
           <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
             {shownEntries.length === 0 ? (
               <Empty>No {filter} agents.</Empty>
@@ -287,7 +278,7 @@ function LoadedToolRows({ tools }: { tools: LoadedTool[] }) {
 
 function WorkflowPreview({ workflows }: { workflows: WorkflowGroup[] }) {
   const recent = [...workflows].reverse().slice(0, 3)
-  if (recent.length === 0) return <p className="text-sm text-muted-foreground">No workflow runs yet.</p>
+  if (recent.length === 0) return <Empty>No workflow runs yet.</Empty>
 
   return (
     <ul className="space-y-1.5">
@@ -389,7 +380,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
         </div>
       </div>
 
-      <div className="space-y-2.5 px-2.5 py-2.5">
+      <div className="space-y-2.5 p-2.5">
         <Card size="sm" className="gap-0 py-0">
           <div className="flex items-center gap-2 border-b p-3">
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
@@ -407,7 +398,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
         </Card>
 
         {project && (
-          <Section title="Workspace" icon={<FolderIcon aria-hidden className="size-3.5" />}>
+          <InspectorCard title="Workspace" icon={<FolderIcon aria-hidden />}>
             <div className="flex min-w-0 items-start gap-2">
               <ProjectIcon project={project} className="size-7 rounded-lg" />
               <div className="min-w-0 pt-0.5">
@@ -416,17 +407,17 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
                 {project.description && <p className="mt-1.5 line-clamp-3 text-xs text-muted-foreground">{project.description}</p>}
               </div>
             </div>
-          </Section>
+          </InspectorCard>
         )}
 
         {loaded.length > 0 && (
-          <Section title={`Loaded tools · ${loaded.length}`} icon={<PlugZapIcon aria-hidden className="size-3.5" />}>
+          <InspectorCard title={<>Loaded tools <Count>{loaded.length}</Count></>} icon={<PlugZapIcon aria-hidden />}>
             <LoadedToolRows tools={loaded} />
             <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><PlugZapIcon aria-hidden className="size-3" /> Loaded by tool searches in this thread</p>
-          </Section>
+          </InspectorCard>
         )}
 
-        <Section title="Usage & performance" icon={<GaugeIcon aria-hidden className="size-3.5" />}>
+        <InspectorCard title="Usage & performance" icon={<GaugeIcon aria-hidden />}>
           <div className="grid grid-cols-2 gap-2">
             <div className="col-span-2 grid grid-cols-2 gap-2">
               <div className="rounded-xl bg-muted px-2.5 py-2">
@@ -458,9 +449,9 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
             {context?.cost && <Metric label="Reported cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />}
           </dl>
           {thread.usage && <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><CoinsIcon aria-hidden className="size-3" /> Runtime-reported totals</p>}
-        </Section>
+        </InspectorCard>
 
-        <Section title="Workflow runs" icon={<WorkflowIcon aria-hidden className="size-3.5" />}>
+        <InspectorCard title="Workflow runs" icon={<WorkflowIcon aria-hidden />}>
           {activeWorkflow && activeWorkflowStep && (
             <div className="mb-2 rounded-xl bg-muted px-2.5 py-2">
               <p className="text-xs font-medium text-primary">Now running</p>
@@ -469,20 +460,22 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
             </div>
           )}
           <WorkflowPreview workflows={workflows} />
-        </Section>
+        </InspectorCard>
 
-        <Section title="Thread history" icon={<ActivityIcon aria-hidden className="size-3.5" />}>
+        <InspectorCard title="Thread history" icon={<ActivityIcon aria-hidden />}>
+          <div className="space-y-2">
           <dl className="divide-y">
             <Metric label="Created" value={new Date(meta.createdAt).toLocaleDateString()} />
             <Metric label="Last activity" value={new Date(meta.lastActivityAt ?? meta.createdAt).toLocaleString()} />
             {meta.peerCount !== undefined && <Metric label="Connected devices" value={String(meta.peerCount)} />}
           </dl>
           {meta.lastTurnError && (
-            <Notice tone="error" size="sm" className="mt-2">
+            <Notice tone="error" size="sm" copy={meta.lastTurnError}>
               <span className="line-clamp-3">{meta.lastTurnError}</span>
             </Notice>
           )}
-        </Section>
+          </div>
+        </InspectorCard>
       </div>
     </div>
   )
@@ -616,16 +609,16 @@ export function ThreadInspector({
           <TabsList variant="line" className="my-1 min-w-0 flex-1 justify-start overflow-x-auto">
             <TabsTrigger value="changes" className="text-sm">
               Source Control
-              {changes && changes.files.length > 0 && <TabCount>{changes.files.length}</TabCount>}
+              {changes && changes.files.length > 0 && <Count>{changes.files.length}</Count>}
             </TabsTrigger>
             <TabsTrigger value="plan" className="text-sm">
               Plan
-              {todos && <TabCount>{`${done}/${todos.length}`}</TabCount>}
+              {todos && <Count>{`${done}/${todos.length}`}</Count>}
             </TabsTrigger>
             <TabsTrigger value="agents" className="text-sm">
               Agents
               {groups.length > 0 && (
-                <TabCount>{running > 0 ? `${running}/${groups.length}` : groups.length}</TabCount>
+                <Count>{running > 0 ? `${running}/${groups.length}` : groups.length}</Count>
               )}
             </TabsTrigger>
             <TabsTrigger value="details" className="text-sm">
@@ -642,7 +635,7 @@ export function ThreadInspector({
             aria-label="Hide the inspector"
             title="Hide the inspector"
           >
-            <PanelRightCloseIcon aria-hidden className="size-4" />
+            <PanelRightCloseIcon aria-hidden />
           </Button>
         </header>
 
@@ -683,7 +676,7 @@ export function ThreadSection({
 
   if (section === "changes")
     return !meta.projectId ? (
-      <div className="p-3">
+      <div className="p-2.5">
         <Empty>This thread has no project, so there is no worktree to measure.</Empty>
       </div>
     ) : (
@@ -703,8 +696,4 @@ export function ThreadSection({
   if (section === "agents") return <AgentsTab thread={thread} groups={groups} onJump={onJump} />
   if (section === "tokens") return <TokensPanel thread={thread} />
   return <DetailsTab thread={thread} meta={meta} rows={rows} />
-}
-
-function TabCount({ children }: { children: ReactNode }) {
-  return <Badge variant="secondary" className="ml-1 tabular-nums">{children}</Badge>
 }

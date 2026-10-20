@@ -11,6 +11,7 @@
 import * as React from "react"
 import { BellIcon, BookTextIcon, KanbanIcon, PlusIcon, RepeatIcon, Trash2Icon } from "lucide-react"
 
+import { Empty } from "@/components/empty"
 import { INSET } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
@@ -176,9 +177,7 @@ export function OnFinishEditor({
 
             {action.kind === "routine" &&
               (routines.length === 0 ? (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  There is no other routine to fire yet.
-                </p>
+                <Empty className="mt-3">There is no other routine to fire yet.</Empty>
               ) : (
                 <Select
                   value={action.routineId}

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { Notice } from "@/components/notice"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { LineCounts } from "@/components/workspace/scm/shared"
 import { describeError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
@@ -79,15 +80,15 @@ export function CommitDetailView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+      <PanelToolbar>
         {onBack && (
           <Button variant="ghost" size="xs" onClick={onBack}>
-            <ArrowLeftIcon /> History
+            <ArrowLeftIcon data-icon="inline-start" /> History
           </Button>
         )}
         <span className="ml-auto font-mono text-xs text-muted-foreground">{commit.short}</span>
         <CopyButton text={commit.hash} size="icon-xs" />
-      </div>
+      </PanelToolbar>
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="flex flex-col gap-2 border-b px-3 py-2.5">
@@ -145,7 +146,7 @@ export function CommitDetailView({
 
         {error ? (
           <div className="px-2 py-1">
-            <Notice tone="error">{error}</Notice>
+            <Notice tone="error" copy={error}>{error}</Notice>
           </div>
         ) : !detail ? (
           <PanelRowsSkeleton rows={Math.min(6, commit.filesChanged || 3)} className="space-y-1.5 p-2" />

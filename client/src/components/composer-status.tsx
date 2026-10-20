@@ -4,7 +4,7 @@
    four answers of the same *kind* and not one component:
 
    — `composer/indicator.tsx`         the shared 24px-trigger-over-a-popover
-                                      shape (`StripIndicator`) and the `Ring`
+                                      shape (`ReadingPopoverContent`) and the `Ring`
                                       two of the readings print a number in;
    — `composer/context-indicator.tsx` the context ring, the turn's numbers and
                                       the plan behind them;
@@ -20,7 +20,6 @@
    connection is not among them: it was a reading on the shelf's floor, which
    made the shelf's own ground wear its tone, and it is a `Notice` at the foot
    of the transcript now (`components/thread-view/thread-status.tsx`). */
-export { StripIndicator } from "@/components/composer/indicator"
 export { ContextIndicator } from "@/components/composer/context-indicator"
 export { TodoIndicator } from "@/components/composer/todo-indicator"
 export { AgentsIndicator, runningAgents } from "@/components/composer/agents-indicator"

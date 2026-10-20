@@ -113,7 +113,7 @@ export function PendingSettings({
                   .finally(() => setApplyingNow(false))
               }}
             >
-              <CheckIcon className="size-3.5" />
+              <CheckIcon data-icon="inline-start" />
               {action}
             </Button>
             <Button
@@ -122,7 +122,7 @@ export function PendingSettings({
               className="flex-1"
               onClick={() => void actions.cancelStagedConfig(sessionId)}
             >
-              <XIcon className="size-3.5" />
+              <XIcon data-icon="inline-start" />
               Cancel
             </Button>
           </div>

@@ -270,7 +270,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
           className="ms-auto"
           render={
             <a href={url.url} target="_blank" rel="noreferrer noopener">
-              <ExternalLinkIcon aria-hidden className="size-3" />
+              <ExternalLinkIcon aria-hidden data-icon="inline-start" />
               Open
             </a>
           }
@@ -399,7 +399,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
             )}
             <QuestionnaireNext size="sm" />
             <QuestionnaireSubmit size="sm">
-              <CheckIcon aria-hidden className="size-3.5" />
+              <CheckIcon aria-hidden data-icon="inline-start" />
               {single ? "Answer" : "Submit"}
             </QuestionnaireSubmit>
           </div>

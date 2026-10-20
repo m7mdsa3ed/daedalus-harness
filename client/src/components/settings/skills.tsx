@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { type ServerSettings, type SkillDef } from "@/lib/settings"
 import { useInvalidateCatalog, useSkills } from "@/lib/queries/catalog"
-import { FormPageHeader, PageForm, Field, FormActions, FormSection, FormShell } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
@@ -26,6 +26,7 @@ export function SkillsPage() {
       rowHandle={(s) => s.path.replace(/\/+$/, "").split("/").pop() || s.path}
       settings={settings}
       refresh={() => invalidate("skills")}
+      slice="skills"
     />
   )
 }
@@ -84,7 +85,6 @@ function SkillForm({
         onBack={() => onDone(false)}
       />
       <PageForm onSubmit={save}>
-        <FormShell sections={[{ id: "skill", label: "Skill" }]}>
           <FormSection id="skill" label="Skill">
             <Field label="Name">
               <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -94,12 +94,11 @@ function SkillForm({
                 value={form.path}
                 onChange={(e) => set({ path: e.target.value })}
                 placeholder="/home/me/.claude/skills/my-skill"
-                className="font-mono text-sm"
+                className="font-mono"
                 required
               />
             </Field>
           </FormSection>
-        </FormShell>
         <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>

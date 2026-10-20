@@ -212,7 +212,7 @@ function Section({ title, copy, children }: { title: string; copy?: string; chil
   return (
     <section className="space-y-1.5">
       <div className="flex items-center gap-1">
-        <h4 className="text-xs font-medium text-muted-foreground">{title}</h4>
+        <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
         {copy !== undefined && <CopyButton size="icon-xs" className="ml-auto" text={copy} />}
       </div>
       {children}
@@ -369,7 +369,7 @@ function PromptChange({
   return (
     <section className="space-y-1.5">
       <div className="flex items-center gap-1">
-        <h4 className="text-xs font-medium text-muted-foreground">Prompt change</h4>
+        <h3 className="text-xs font-medium text-muted-foreground">Prompt change</h3>
         {picker}
       </div>
       {body}
@@ -407,7 +407,7 @@ function PromptPart({
           {diff.removed.length > 0 && <span className="text-destructive"> −{diff.removed.length}</span>}
         </PartHeading>
         {diff.removed.length > 0 && (
-          <Notice tone="warn" className="px-2 py-1.5 text-xs">
+          <Notice tone="warn">
             The history was rewritten between the two calls — {diff.removed.length} earlier{" "}
             {diff.removed.length === 1 ? "message is" : "messages are"} no longer sent (a compaction or a rewind).
           </Notice>

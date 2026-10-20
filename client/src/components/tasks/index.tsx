@@ -233,7 +233,7 @@ function BoardRail({
 /** The bar that appears over a multi-select: the bulk verbs. */
 function BulkBar({ count, statuses, sprints, facets, onPatch, onDelete, onClear }: { count: number; statuses: BoardStatus[]; sprints: Sprint[]; facets: { assignees: string[]; labels: string[] }; onPatch: (patch: Parameters<ReturnType<typeof useBulkUpdateTasks>["mutateAsync"]>[0]["patch"]) => void; onDelete: () => void; onClear: () => void }) {
   return (
-    <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/50 px-3 py-1.5 text-sm sm:px-4">
+    <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/50 px-3 py-1.5 text-sm @panel-sm:px-4">
       <span className="mr-1 shrink-0 font-medium">{count} selected</span>
       <StatusPicker value="" statuses={statuses} onChange={(statusId) => onPatch({ statusId })} trigger={<button type="button" className={CHIP}><StatusPill status={undefined} /> Status <ChevronDown className="size-3" /></button>} />
       <PriorityPicker value="medium" onChange={(priority) => onPatch({ priority })} trigger={<button type="button" className={CHIP}><PriorityIcon priority="medium" /> Priority <ChevronDown className="size-3" /></button>} />
@@ -319,7 +319,7 @@ function BoardSkeleton() {
         ))}
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 border-b px-3 py-2 sm:px-4">
+        <div className="flex items-center gap-2 border-b px-3 py-2 @panel-sm:px-4">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="ml-auto h-7 w-32" />
         </div>
@@ -347,6 +347,7 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
 
   const tasksQuery = useTasksQuery()
   const tasks = React.useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
+  const tasksError = React.useMemo(() => inlineFromQuery(tasksQuery.error, "Couldn't read the tasks"), [tasksQuery.error])
   const { boards, statuses: allStatuses, sprints: allSprints, views: allViews, lists: allLists, loaded, error: boardsError } = useBoards()
   const createTaskMut = useCreateTask()
   const updateTaskMut = useUpdateTask()
@@ -595,18 +596,22 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
       />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Board header. */}
-        <header className="flex items-center gap-2 border-b px-3 py-2 sm:px-4">
+        <header className="flex items-center gap-2 border-b px-3 py-2 @panel-sm:px-4">
           <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button type="button" className="flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                  <span className={cn("size-2.5 shrink-0 rounded-full", board.color ? COLOR_DOT[board.color] : "bg-muted-foreground/40")} />
-                  <span className="truncate text-sm font-medium">{board.name}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{board.key}</span>
-                  <ChevronDown className="size-3.5 text-muted-foreground @panel-md:hidden" />
-                </button>
-              }
-            />
+            {/* The board is the page: its name is the page's heading, and the
+                switcher it opens is the heading's own control. */}
+            <h1 className="flex min-w-0 text-sm font-medium">
+              <DropdownMenuTrigger
+                render={
+                  <button type="button" className="flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                    <span className={cn("size-2.5 shrink-0 rounded-full", board.color ? COLOR_DOT[board.color] : "bg-muted-foreground/40")} />
+                    <span className="truncate">{board.name}</span>
+                    <span className="font-mono text-xs font-normal text-muted-foreground">{board.key}</span>
+                    <ChevronDown className="size-3.5 text-muted-foreground @panel-md:hidden" />
+                  </button>
+                }
+              />
+            </h1>
             <DropdownMenuContent align="start" className="w-56 @panel-md:hidden">
               {boards.map((b) => (
                 <DropdownMenuItem key={b.id} onClick={() => openBoard(b.id)}>
@@ -625,12 +630,12 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
           {board.projectId && (() => {
             const project = projects.find((p) => p.id === board.projectId)
             return project ? (
-              <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:inline-flex">
+              <span className="hidden items-center gap-1 text-xs text-muted-foreground @panel-sm:inline-flex">
                 <ProjectIcon project={project} className="size-4" /> {project.name}
               </span>
             ) : null
           })()}
-          {board.description && <span className="hidden truncate text-xs text-muted-foreground md:inline">{board.description}</span>}
+          {board.description && <span className="hidden truncate text-xs text-muted-foreground @panel-md:inline">{board.description}</span>}
           <span className="ml-auto flex items-center gap-1">
             <Button type="button" variant="ghost" size="icon-sm" onClick={() => setBoardDialog({ open: true, board })} aria-label="Board settings" title="Board settings" className="text-muted-foreground">
               <Settings2 />
@@ -714,7 +719,11 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
           />
         )}
 
-        {tasksQuery.isPending ? (
+        {tasksError && !tasksQuery.data ? (
+          <div className="p-3">
+            <ErrorNote error={tasksError} onRetry={() => void tasksQuery.refetch()} />
+          </div>
+        ) : tasksQuery.isPending ? (
           /* The board and its columns are known; the cards are not. Drawing
              them empty says "no tasks", which is the one thing it must not. */
           mode === "board" ? (

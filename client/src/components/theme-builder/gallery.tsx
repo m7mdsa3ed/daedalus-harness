@@ -69,19 +69,21 @@ export function ThemeGallery() {
         <Button
           variant="outline"
           size="sm"
+          className="pointer-coarse:h-11"
           onClick={() => create(colorTheme)}
           title="Copy the current theme into a new editable one"
         >
-          <Plus className="size-4" />
+          <Plus data-icon="inline-start" />
           New theme
         </Button>
         {isCustomTheme(colorTheme) && (
           <Button
             variant="outline"
             size="sm"
+            className="pointer-coarse:h-11"
             onClick={() => void navigate(`/settings/appearance/themes/${encodeURIComponent(customThemeId(colorTheme))}`)}
           >
-            <Pencil className="size-3.5" />
+            <Pencil data-icon="inline-start" />
             Edit theme
           </Button>
         )}

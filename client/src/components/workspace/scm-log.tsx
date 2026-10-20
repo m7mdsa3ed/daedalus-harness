@@ -31,8 +31,10 @@ import { CommitGraph } from "@/components/workspace/scm/commit-graph"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
-import { CopyButton } from "@/components/ui/copy-button"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
+import { Empty } from "@/components/empty"
+import { Notice } from "@/components/notice"
+import { Count } from "@/components/settings/primitives"
 import { useConfirm } from "@/components/confirm-dialog"
 import { describeError } from "@/lib/errors"
 import { idePrefs, setIdePref } from "@/lib/ide/prefs"
@@ -111,7 +113,7 @@ function Section({
           )}
           <span className="min-w-0 truncate">{title}</span>
           {count !== null && count > 0 && (
-            <span className="tabular-nums">{count}</span>
+            <Count>{count}</Count>
           )}
         </button>
         {open && actions}
@@ -125,14 +127,9 @@ function Section({
             /* A git failure is the one error in this panel worth a clipboard:
                it is usually the porcelain's own multi-line complaint, and the
                next thing anyone does with it is paste it somewhere. */
-            <div className="flex items-start gap-1 px-2 py-1">
-              <p className="min-w-0 flex-1 text-xs text-destructive">{error}</p>
-              <CopyButton
-                text={error}
-                size="icon-xs"
-                className="shrink-0 text-destructive"
-              />
-            </div>
+            <Notice tone="error" className="m-1" copy={error}>
+              <p className="text-xs [overflow-wrap:anywhere]">{error}</p>
+            </Notice>
           ) : (
             children
           )}
@@ -168,7 +165,7 @@ function SmallAction({
       aria-label={label}
       className={cn(coarse ? "size-11" : "size-6", "shrink-0", className)}
     >
-      <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
+      <HugeiconsIcon icon={icon} strokeWidth={2} />
     </Button>
   )
 }
@@ -294,7 +291,7 @@ export function StashSection({
       {list.items === null ? (
         <PanelRowsSkeleton rows={3} className="space-y-1.5 p-1" />
       ) : list.items.length === 0 ? (
-        <p className="px-2 py-1 text-xs text-muted-foreground">Nothing is stashed.</p>
+        <Empty className="m-1">Nothing is stashed.</Empty>
       ) : (
         list.items.map((entry) => (
           <ContextMenu key={entry.ref}>
@@ -449,7 +446,7 @@ export function HistorySection({
       {list.items === null ? (
         <PanelRowsSkeleton rows={4} className="space-y-1.5 p-1" />
       ) : list.items.length === 0 ? (
-        <p className="px-2 py-1 text-xs text-muted-foreground">No commits yet.</p>
+        <Empty className="m-1">No commits yet.</Empty>
       ) : layout === "graph" ? (
         <div className="py-1 pr-1">
           <CommitGraph commits={list.items} onCopy={copy} coarse={coarse} hint={hint} />

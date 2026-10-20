@@ -46,8 +46,10 @@ import {
   FormActions,
   FormPageHeader,
   FormSection,
+  FormShell,
   PageForm,
   PageHeader,
+  Section,
   StatStrip,
   StatusBadge,
   lines,
@@ -207,7 +209,7 @@ export function AgentsPage() {
         cell: ({ row }) => {
           const s = byAgent.get(row.original.id)
           return s?.installed && !s.error ? (
-            <span className="font-mono text-sm">{s.agent?.version ? `v${s.agent.version}` : "unknown"}</span>
+            <span className="font-mono">{s.agent?.version ? `v${s.agent.version}` : "unknown"}</span>
           ) : (
             <span className="text-muted-foreground">—</span>
           )
@@ -317,36 +319,34 @@ export function AgentsPage() {
     <>
       <PageHeader
         meta={meta}
+        facts={
+          status ? (
+            <span>
+              Harness speaks ACP protocol v{status.acp.protocolVersion} through SDK{" "}
+              <span className="font-mono">{status.acp.sdkVersion}</span>
+              {" · "}checked {new Date(Math.max(...status.agents.map((s) => s.checkedAt), 0)).toLocaleTimeString()}
+            </span>
+          ) : loading ? (
+            <span>Checking which agents are installed…</span>
+          ) : null
+        }
         action={
-          <div className="flex flex-col gap-2 @panel-sm:flex-row">
+          <>
             <Button
               variant="outline"
-              className="h-11 @panel-sm:h-9"
               title="Forget every agent's probed models, modes and options; each is asked again on next use"
               onClick={() => void clearOptions()}
             >
-              <EraserIcon className="size-4" />
+              <EraserIcon data-icon="inline-start" />
               Clear cached options
             </Button>
-            <Button variant="outline" className="h-11 @panel-sm:h-9" loading={checking} onClick={() => void recheck()}>
-              <RefreshCwIcon className={`size-4 ${checking ? "animate-spin" : ""}`} />
-              {checking ? "Checking…" : "Check again"}
+            <Button variant="outline" loading={checking} onClick={() => void recheck()}>
+              <RefreshCwIcon data-icon="inline-start" />
+              Check again
             </Button>
-          </div>
+          </>
         }
       />
-      <p className="-mt-5 mb-8 text-sm text-muted-foreground">
-        {status ? (
-          <>
-            Harness speaks ACP protocol v{status.acp.protocolVersion} through SDK{" "}
-            <span className="font-mono">{status.acp.sdkVersion}</span>
-            {" · "}checked {new Date(Math.max(...status.agents.map((s) => s.checkedAt), 0)).toLocaleTimeString()}
-          </>
-        ) : loading ? (
-          "Checking which agents are installed…"
-        ) : null}
-      </p>
-      <ErrorNote error={inlineFromQuery(error, "Couldn't check the agents")} />
       <StatStrip
         stats={[
           { label: "Registered", value: String(agents.length) },
@@ -355,11 +355,17 @@ export function AgentsPage() {
           { label: "Updates", value: dash(updates) },
         ]}
       />
+      {error && (
+        <Section>
+          <ErrorNote error={inlineFromQuery(error, "Couldn't check the agents")} />
+        </Section>
+      )}
       {agents.length === 0 && !loading ? (
         <Empty size="lg" icon={Cpu}>
           The server has no agents registered.
         </Empty>
       ) : (
+        <Section>
         <DataTable
           columns={columns}
           data={f.rows}
@@ -371,9 +377,10 @@ export function AgentsPage() {
           expand={expand}
           mobile={mobile}
           emptyIcon={<Cpu />}
-          emptyMessage={f.narrowed ? `Nothing matches “${f.query.trim()}”.` : "No runtimes."}
+          emptyMessage={f.narrowed ? undefined : "No runtimes."}
           filtering={f.filtering}
         />
+        </Section>
       )}
     </>
   )
@@ -546,6 +553,18 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
   const { busy, error, run } = useAsyncAction()
   const confirm = useConfirm()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
+  /* A section bar only once there are three sections to jump between. */
+  const formSections = React.useMemo(
+    () =>
+      agent.builtIn
+        ? [
+            { id: "launch", label: "Launch" },
+            { id: "appearance", label: "Install and icon" },
+            { id: "reset", label: "Defaults" },
+          ]
+        : [],
+    [agent.builtIn],
+  )
 
   /* Both writes end the same way: the server's probe cache is evicted for this
      agent on its side, and the device-local option store on ours — the answers
@@ -605,6 +624,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
         onBack={onClose}
       />
       <PageForm onSubmit={save}>
+        <FormShell sections={formSections}>
         <FormSection id="launch" label="Launch" hint="The command the server spawns, and the environment it gets.">
           <Field label="Name" hint="What the pickers call it.">
             <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -613,7 +633,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Input
               value={form.command}
               onChange={(e) => set({ command: e.target.value })}
-              className="font-mono text-sm"
+              className="font-mono"
               required
             />
           </Field>
@@ -622,7 +642,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
               value={form.args}
               onChange={(e) => set({ args: e.target.value })}
               rows={2}
-              className="font-mono text-sm"
+              className="font-mono"
             />
           </Field>
           <Field
@@ -633,7 +653,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
               value={form.env}
               onChange={(e) => set({ env: e.target.value })}
               rows={8}
-              className="font-mono text-sm"
+              className="font-mono"
               spellCheck={false}
             />
           </Field>
@@ -648,7 +668,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Input
               value={form.install}
               onChange={(e) => set({ install: e.target.value })}
-              className="font-mono text-sm"
+              className="font-mono"
               placeholder="npm install -g …"
             />
           </Field>
@@ -656,7 +676,7 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Input
               value={form.icon}
               onChange={(e) => set({ icon: e.target.value })}
-              className="font-mono text-sm"
+              className="font-mono"
               placeholder="https://… or data:image/png;base64,…"
             />
           </Field>
@@ -666,14 +686,15 @@ function AgentForm({ agent, onClose }: { agent: AgentDef; onClose: () => void })
             <Button
               type="button"
               variant="outline"
-              className="h-11 @panel-sm:h-9"
+              className="pointer-coarse:h-11"
               disabled={busy}
               onClick={() => void reset()}
             >
-              <RotateCcwIcon className="size-4" /> Reset to default
+              <RotateCcwIcon data-icon="inline-start" /> Reset to default
             </Button>
           </FormSection>
         )}
+        </FormShell>
         <FormActions busy={busy} onCancel={onClose} error={error} />
       </PageForm>
     </>

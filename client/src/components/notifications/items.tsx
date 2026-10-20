@@ -13,7 +13,7 @@
    the kind only to someone who had learned four colours), then the thread's
    name with the age on the same baseline, the body under it, and — on the page
    — the kind spelled out as a small caption. Unread is said three ways that
-   agree: a tinted glyph, a bolder title, and a dot on the age. Read rows keep
+   agree: a tinted glyph, the row's tint and start bar, and a dot on the age. Read rows keep
    the layout and lose the colour, so the eye lands on what is new. */
 import {
   CheckIcon,
@@ -76,7 +76,7 @@ export function UnreadCount({ count, className }: { count: number; className?: s
   return (
     <span
       className={cn(
-        "grid h-[18px] min-w-[18px] place-items-center rounded-pill bg-foreground px-1.5 text-[10px] leading-none font-semibold text-background tabular-nums",
+        "grid h-4 min-w-4 place-items-center rounded-pill bg-foreground px-1 text-[10px] leading-none font-semibold text-background tabular-nums",
         className
       )}
     >
@@ -143,10 +143,11 @@ export function NotificationRow({
   return (
     <article
       className={cn(
-        "group/notice relative flex w-full items-start gap-3 transition-colors hover:bg-muted has-[[data-open]:focus-visible]:bg-muted",
-        detailed ? "px-4 py-3.5" : "px-3 py-2.5",
-        !n.read && "bg-primary/5",
-        detailed && "min-h-28"
+        "group/notice relative flex min-h-12 w-full items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50 has-[[data-open]:focus-visible]:bg-muted/50 @panel-sm:px-4",
+        /* Unread is the selected-row look every list uses: a tint and a bar
+           at the start edge. */
+        "before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
+        !n.read && "bg-primary/5 before:opacity-100"
       )}
     >
       <KindGlyph
@@ -162,14 +163,7 @@ export function NotificationRow({
         className="min-w-0 flex-1 self-stretch text-left focus-visible:outline-none"
       >
         <span className="flex items-baseline gap-2">
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-sm",
-              n.read ? "font-normal" : "font-medium"
-            )}
-          >
-            {title}
-          </span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
           <span
             className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-muted-foreground"
             title={exactStamp(n.createdAt)}
@@ -206,7 +200,7 @@ export function NotificationRow({
           className="text-muted-foreground"
         >
           {detailed && <span>Visit thread</span>}
-          <ArrowUpRightIcon />
+          <ArrowUpRightIcon data-icon={detailed ? "inline-end" : undefined} />
         </Button>
 
         {!n.read && (

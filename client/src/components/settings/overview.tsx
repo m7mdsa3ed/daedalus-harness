@@ -11,7 +11,6 @@ import { ChevronRight, SearchX } from "lucide-react"
 import { useNavigate } from "react-router"
 import { Empty } from "@/components/empty"
 import { settingsPath } from "@/lib/router"
-import { cn } from "@/lib/utils"
 import { Group, PageHeader, Toolbar } from "./primitives"
 import { SETTINGS_NAV_GROUPS, SETTINGS_OVERVIEW, sectionMeta, type SettingsSectionId } from "./sections"
 
@@ -29,7 +28,7 @@ function NavRow({ id, group }: { id: SettingsSectionId; group?: string }) {
     <button
       type="button"
       onClick={() => void navigate(settingsPath(id))}
-      className="-mx-3 flex min-h-14 w-[calc(100%+1.5rem)] items-center gap-3 px-3 py-2 text-left @panel-sm:-mx-4 @panel-sm:w-[calc(100%+2rem)] @panel-sm:px-4 transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset active:bg-muted pointer-coarse:min-h-16"
+      className="-mx-3 flex min-h-14 w-[calc(100%+1.5rem)] items-center gap-3 px-3 py-2 text-left @panel-sm:-mx-4 @panel-sm:w-[calc(100%+2rem)] @panel-sm:px-4 transition-colors outline-none hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset active:bg-muted/50 pointer-coarse:min-h-16"
     >
       <span
         aria-hidden
@@ -69,7 +68,7 @@ export function SettingsOverviewPage() {
       <Toolbar search={query} onSearch={setQuery} placeholder="Search settings" />
       {groups.length === 0 && (
         <Empty size="lg" icon={SearchX} role="status">
-          No settings match "{query.trim()}".
+          Nothing matches “{query.trim()}”.
         </Empty>
       )}
       {needle && groups.length > 0 && (
@@ -82,15 +81,13 @@ export function SettingsOverviewPage() {
       {/* Groups flow in two columns once the panel is wide; a column break
           never splits a group's card. */}
       {!needle && (
-        <div className={cn("gap-x-6 @panel-lg:columns-2")}>
+        <div className="gap-x-6 @panel-lg:columns-2 [&>[data-kit-block]]:break-inside-avoid">
           {groups.map((group) => (
-            <div key={group.label} className="mb-8 break-inside-avoid">
-              <Group label={group.label} hint={GROUP_HINT[group.label]}>
-                {group.sections.map((id) => (
-                  <NavRow key={id} id={id} />
-                ))}
-              </Group>
-            </div>
+            <Group key={group.label} label={group.label} hint={GROUP_HINT[group.label]}>
+              {group.sections.map((id) => (
+                <NavRow key={id} id={id} />
+              ))}
+            </Group>
           ))}
         </div>
       )}

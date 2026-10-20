@@ -87,8 +87,9 @@ export interface SettingsListProps<T extends RowData> {
     matches: (row: T, needle: string) => boolean
   }
   /** Drawn instead of the table when there are no rows at all — a page's own
-      `EmptyCard`, with its wording and its call to action. A search that
-      matches nothing is a different sentence and stays inside the table. */
+      `<Empty size="lg">`, with its wording and its call to action. A search
+      that matches nothing is a different sentence and stays inside the table
+      (`DataTableEmpty`'s own "Nothing matches …"). */
   empty?: React.ReactNode
   emptyIcon?: LucideIcon
   emptyText?: string
@@ -192,7 +193,7 @@ export function SettingsList<T extends RowData>({
       isLoading={loading}
       skeletonRows={skeletonRows}
       emptyIcon={emptyIcon ? React.createElement(emptyIcon) : undefined}
-      emptyMessage={filter.narrowed ? "Nothing matches that." : (emptyText ?? "No results.")}
+      emptyMessage={filter.narrowed ? undefined : (emptyText ?? "No results.")}
       pageSize={pageSize}
       actions={tableActions}
       onRowClick={onRowClick}

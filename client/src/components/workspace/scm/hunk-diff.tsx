@@ -9,8 +9,10 @@ import * as React from "react"
 import { ExternalLinkIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
+import { DiffRowsSkeleton } from "@/components/ui/skeletons"
+import { Empty } from "@/components/empty"
 import { Notice } from "@/components/notice"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { describeError } from "@/lib/errors"
 import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
@@ -107,23 +109,26 @@ export function HunkDiff({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="sticky top-0 z-20 flex h-8 items-center gap-2 border-b bg-background px-3">
+      <PanelToolbar className="sticky top-0 z-20 gap-2 bg-background px-3">
         <span className="min-w-0 flex-1 truncate font-mono text-xs" title={from ? `${from} -> ${path}` : path}>{path}</span>
         {onOpenFull && (
           <Button variant="ghost" size="xs" onClick={onOpenFull} title="Open the whole file as a side-by-side diff">
-            <ExternalLinkIcon /> Full diff
+            <ExternalLinkIcon data-icon="inline-start" /> Full diff
           </Button>
         )}
-      </div>
+      </PanelToolbar>
       {error ? (
-        <div className="p-3"><Notice tone="error">{error}</Notice></div>
+        <Notice tone="error" className="m-3" copy={error}>{error}</Notice>
       ) : !file ? (
-        <div className="grid h-24 place-items-center"><Spinner /></div>
+        <DiffRowsSkeleton hunks={1} />
       ) : file.hunks.length === 0 ? (
-        <p className="px-3 py-4 text-center text-xs text-muted-foreground">
-          {file.binary ? "Binary file - no text to show." : file.head.length === 0 ? "No changes." : null}
-          {!file.binary && file.head.length > 0 && <pre className="text-left font-mono text-xs whitespace-pre-wrap">{file.head.join("\n")}</pre>}
-        </p>
+        file.binary ? (
+          <Empty className="m-3">Binary file - no text to show.</Empty>
+        ) : file.head.length === 0 ? (
+          <Empty className="m-3">No changes.</Empty>
+        ) : (
+          <pre className="px-3 py-4 font-mono text-xs whitespace-pre-wrap text-muted-foreground">{file.head.join("\n")}</pre>
+        )
       ) : (
         file.hunks.map((hunk, h) => {
           const count = picked.get(h)?.size ?? 0

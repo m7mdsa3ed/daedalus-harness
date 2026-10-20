@@ -21,6 +21,8 @@ import { ArrowLeftIcon, CopyIcon, FileIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Empty } from "@/components/empty"
+import { Skeleton } from "@/components/ui/skeleton"
+import { CodeLinesSkeleton } from "@/components/ui/skeletons"
 import { Highlighted, Prose } from "@/components/tool-parts"
 import { copyText } from "@/components/step-row"
 import { PanelToolbar } from "@/components/workspace/primitives"
@@ -91,16 +93,16 @@ export function FilePreview({
       <PanelToolbar>
         {onBack && (
           <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" onClick={onBack}>
-            <ArrowLeftIcon className="size-3.5" />
+            <ArrowLeftIcon />
           </Button>
         )}
-        <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <FileIcon className="shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate font-mono text-sm" title={path}>
           <span className="text-foreground">{name}</span>
           {name !== path && <span className="ml-2 text-muted-foreground">{path.slice(0, -name.length - 1)}</span>}
         </span>
         <Button size="icon-xs" variant="ghost" aria-label="Copy path" title="Copy path" onClick={() => void copyText(path)}>
-          <CopyIcon className="size-3.5" />
+          <CopyIcon />
         </Button>
       </PanelToolbar>
       <div className="min-h-0 flex-1 overflow-auto bg-muted/50">
@@ -111,8 +113,15 @@ export function FilePreview({
 }
 
 function Body({ kind, loaded, name, ext }: { kind: ReturnType<typeof previewKind>; loaded: Loaded; name: string; ext: string }) {
-  if (loaded.state === "loading") return null
-  if (loaded.state === "error") return <ErrorNote error={loaded.error} className="m-4" />
+  if (loaded.state === "loading")
+    return kind === "image" || kind === "video" || kind === "pdf" || kind === "office" ? (
+      <div className="flex min-h-full items-center justify-center p-2.5">
+        <Skeleton className="h-64 w-full max-w-md rounded-xl" />
+      </div>
+    ) : (
+      <CodeLinesSkeleton />
+    )
+  if (loaded.state === "error") return <ErrorNote error={loaded.error} className="m-2.5" />
   if (loaded.state === "slides") return <Slides data={loaded.data} name={name} />
   if (loaded.state === "office")
     // Empty sandbox: no scripts, no origin — a document's content can do nothing.
@@ -135,7 +144,7 @@ function Body({ kind, loaded, name, ext }: { kind: ReturnType<typeof previewKind
   const { file } = loaded
   if (file.content === undefined)
     return (
-      <div className="p-4">
+      <div className="p-2.5">
         <Empty size="sm">{file.tooLarge ? "This file is too large to preview." : "This is a binary file, so there is nothing to show."}</Empty>
       </div>
     )
@@ -184,7 +193,7 @@ export function Slides({ data, name }: { data: ArrayBuffer; name: string }) {
   }, [data, ready])
   return (
     <>
-      {error && <ErrorNote error={error} className="m-4" />}
+      {error && <ErrorNote error={error} className="m-2.5" />}
       <iframe ref={ref} srcDoc="<!doctype html>" onLoad={() => setReady(true)} title={name} sandbox="allow-same-origin" className="h-full w-full border-0" />
     </>
   )

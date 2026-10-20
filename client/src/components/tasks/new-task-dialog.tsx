@@ -150,8 +150,9 @@ export function NewTaskDialog({
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         {/* The footer is partitioned out of the children, so the buttons hang
-            off the form by id rather than by nesting. */}
-        <form id="new-task-form" onSubmit={(e) => void submit(e)} className="grid content-start gap-4">
+            off the form by id rather than by nesting. `contents`, so the
+            fields stand in the dialog body's own rhythm. */}
+        <form id="new-task-form" onSubmit={(e) => void submit(e)} className="contents">
             <div className="flex justify-end">
               <AiFormBuilder
                 title="task"
@@ -314,14 +315,21 @@ export function NewTaskDialog({
           </form>
 
           <ResponsiveDialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              className="sm:mr-auto"
+              form="new-task-form"
+              disabled={busy || !draft.title?.trim()}
+              onClick={(e) => void submit(e, true)}
+            >
+              Create another
+            </Button>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="button" variant="outline" form="new-task-form" disabled={busy || !draft.title?.trim()} onClick={(e) => void submit(e, true)}>
-              Create another
-            </Button>
-            <Button type="submit" form="new-task-form" disabled={busy || !draft.title?.trim()}>
-              {busy ? "Creating…" : "Create task"}
+            <Button type="submit" form="new-task-form" loading={busy} disabled={!draft.title?.trim()}>
+              Create task
             </Button>
           </ResponsiveDialogFooter>
       </ResponsiveDialogContent>

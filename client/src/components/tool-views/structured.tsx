@@ -305,20 +305,20 @@ export function SkillDetail({ item, active }: { item: ToolItem; active: boolean 
   return (
     <div
       className={cn(
-        "relative isolate overflow-hidden rounded-xl border p-3",
-        active && "border-dashed"
+        "relative isolate overflow-hidden rounded-xl border border-purple-500/20 bg-purple-500/[0.035] p-3",
+        active && "border-dashed border-purple-500/35 bg-purple-500/[0.06]"
       )}
     >
       {active && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-y-0 start-0 w-1 overflow-hidden bg-primary/10"
+          className="pointer-events-none absolute inset-y-0 start-0 w-1 overflow-hidden bg-purple-500/10"
         >
-          <span className="skill-load-rail absolute inset-x-0 top-0 h-1/2 rounded-full bg-primary" />
+          <span className="skill-load-rail absolute inset-x-0 top-0 h-1/2 rounded-full bg-purple-500/70" />
         </div>
       )}
       <div className="flex items-start gap-2.5">
-        <span className="relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+        <span className="relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
           {active ? (
             <Spinner aria-hidden className="size-3.5" />
           ) : (
@@ -329,7 +329,7 @@ export function SkillDetail({ item, active }: { item: ToolItem; active: boolean 
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
             <span className="font-medium text-foreground">{skill.name}</span>
             {active && (
-              <Badge variant="secondary">Loading</Badge>
+              <Badge variant="secondary" className="bg-purple-500/10 text-purple-700 dark:text-purple-300">Loading</Badge>
             )}
             {skill.args && (
               <Badge variant="outline" className="font-mono">{skill.args}</Badge>

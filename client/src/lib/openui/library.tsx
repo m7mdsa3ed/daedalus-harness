@@ -62,6 +62,8 @@ import { Button as UiButton, buttonVariants } from "@/components/ui/button"
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel"
 import { DiffView } from "@/components/ui/diff-view"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { VIEWER } from "@/components/ui/responsive-dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Progress as UiProgress, ProgressLabel, ProgressValue } from "@/components/ui/progress"
@@ -915,7 +917,7 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
                 <X aria-hidden />
               </UiButton>
             </div>
-            <Suspense fallback={<div className={cn(META, PAD)}>Loading map...</div>}>
+            <Suspense fallback={<Skeleton aria-busy="true" className="h-24 w-full rounded-none" />}>
               <GoogleMap locations={locations} routes={routes} colors={MAP_COLORS} focus={focus >= 0 ? focus : null} onFocus={noop} label={pick.title} />
             </Suspense>
           </Box>
@@ -1061,7 +1063,7 @@ function GraphFigure({ props }: { props: z.infer<typeof graphProps> }) {
             <span className="sr-only">Full screen</span>
           </DialogTrigger>
         </div>
-        <DialogContent className="flex h-[calc(var(--float-h)-2rem)] w-[min(64rem,calc(var(--float-w)-1rem))] max-w-none flex-col gap-0 overflow-hidden p-2 sm:max-w-[calc(var(--float-w)-2rem)]">
+        <DialogContent className={VIEWER}>
           <DialogTitle className="sr-only">{props.caption ?? "Flowchart"}</DialogTitle>
           <InteractiveFlowchart key={chartKey} {...chart} fill />
         </DialogContent>
@@ -1521,7 +1523,7 @@ function MapView(props: {
   return (
     <Box className="w-full overflow-hidden">
       {open ? (
-        <Suspense fallback={<div className={cn(META, PAD)}>Loading map...</div>}>
+        <Suspense fallback={<Skeleton aria-busy="true" className="h-24 w-full rounded-none" />}>
           <GoogleMap locations={locations} routes={routes} colors={MAP_COLORS} focus={focus} onFocus={onFocus} label={props.title}>
             {list}
           </GoogleMap>

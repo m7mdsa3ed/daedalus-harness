@@ -13,6 +13,11 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Input } from "@/components/ui/input"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { useConfirm } from "@/components/confirm-dialog"
+import { Empty } from "@/components/empty"
+import { Notice } from "@/components/notice"
+import { Count } from "@/components/settings/primitives"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
+import { errorText } from "@/lib/errors"
 import { usePrompt } from "@/components/prompt-dialog"
 import { StashSection } from "@/components/workspace/scm-log"
 import { setBranchPinned, usePinnedBranches } from "@/lib/pinned-branches"
@@ -74,15 +79,23 @@ function RefGroup({
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex h-7 w-full items-center gap-1 bg-muted/50 px-2 text-left text-xs font-medium text-muted-foreground outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset">
         {open ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
         <span className="flex-1 truncate">{title}</span>
-        {total !== undefined && <span className="tabular-nums font-normal">{total}</span>}
+        {total !== undefined && <Count>{total}</Count>}
       </button>
       {open && (
         <ul className="pb-1">
           {names.map((name) => <React.Fragment key={name}>{children(name)}</React.Fragment>)}
-          {query.isPending && <li className="px-6 py-1 text-xs text-muted-foreground">Loading…</li>}
-          {query.isError && <li className="px-6 py-1 text-xs text-destructive">Could not load</li>}
-          {!query.isPending && names.length === 0 && !query.isError && <li className="px-6 py-1 text-xs text-muted-foreground">{q ? "No match" : "None"}</li>}
-          {hasNextPage && <li ref={sentinel} className="px-6 py-1 text-xs text-muted-foreground">{isFetchingNextPage ? "Loading…" : ""}</li>}
+          {query.isError ? (
+            <li className="p-1">
+              <Notice size="sm" tone="error" copy={errorText(query.error, `Could not load ${title.toLowerCase()}`)}>
+                Could not load {title.toLowerCase()}.
+              </Notice>
+            </li>
+          ) : query.isPending ? (
+            <li><PanelRowsSkeleton rows={3} className="space-y-1.5 p-1" /></li>
+          ) : names.length === 0 ? (
+            <li><Empty className="m-1">{q ? "No match" : "None"}</Empty></li>
+          ) : null}
+          {hasNextPage && <li ref={sentinel} className="min-h-2">{isFetchingNextPage && <PanelRowsSkeleton rows={1} className="p-1" />}</li>}
         </ul>
       )}
     </section>

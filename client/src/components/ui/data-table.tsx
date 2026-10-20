@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Empty, EmptyContent, EmptyDescription, EmptyMedia } from "@/components/ui/empty";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
 
@@ -493,7 +494,7 @@ function ActionMenu<TData>({
         render={
           <Button
             variant="ghost"
-            size="icon"
+            size="icon-sm"
             title="More actions"
             aria-label="More actions"
             className={cn("text-muted-foreground hover:text-foreground", className)}
@@ -586,7 +587,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
                 : undefined
             }
             className={cn(
-              "group/row h-14 outline-none hover:bg-muted/50 data-[state=selected]:bg-muted data-[state=selected]:hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring/70",
+              "group/row h-14 outline-none hover:bg-muted/50 data-[state=selected]:bg-primary/5 data-[state=selected]:hover:bg-primary/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring/70",
               interactive && "cursor-pointer",
               rowClassName?.(row.original, index),
             )}
@@ -1312,12 +1313,12 @@ export function DataTable<TData extends RowData, TValue>({
             <Button
               key={a.id}
               variant="ghost"
-              size="icon"
+              size="icon-sm"
               title={actionLabel(a, row)}
               aria-label={actionLabel(a, row)}
               disabled={a.disabled?.(row)}
               className={cn(
-                "size-8 pointer-coarse:size-11",
+                "pointer-coarse:size-11",
                 REVEAL,
                 a.tone && a.tone !== "neutral"
                   ? ACTION_TONE_TEXT[a.tone]
@@ -1335,7 +1336,7 @@ export function DataTable<TData extends RowData, TValue>({
             <ActionMenu
               actions={overflow}
               row={row}
-              className={cn("size-8 pointer-coarse:size-11", REVEAL)}
+              className={cn("pointer-coarse:size-11", REVEAL)}
             />
           )}
         </div>
@@ -1542,10 +1543,10 @@ export function DataTable<TData extends RowData, TValue>({
           }
           disabled={a.disabled?.(liveSelected)}
           onClick={() => a.onClick(liveSelected)}
-          className={cn("gap-1.5", narrow && "h-11 min-w-28 flex-1 shrink-0")}
+          className={cn("gap-1.5", narrow && "min-w-28 flex-1 shrink-0 pointer-coarse:h-11")}
         >
           {a.icon}
-          <span className={narrow ? "text-sm" : "text-xs"}>{a.label}</span>
+          {a.label}
         </Button>
       ));
 
@@ -1616,9 +1617,9 @@ export function DataTable<TData extends RowData, TValue>({
                 </span>
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="xs"
                   onClick={() => table.resetRowSelection()}
-                  className="h-8 px-2 text-xs pointer-coarse:h-11 pointer-coarse:px-3"
+                  className="pointer-coarse:h-11 pointer-coarse:px-3"
                 >
                   {"Clear"}
                 </Button>
@@ -1626,13 +1627,15 @@ export function DataTable<TData extends RowData, TValue>({
                   onSelectAllMatching &&
                   !allSelected &&
                   selectionTotalCount > selectedCount && (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
+                      size="xs"
                       onClick={onSelectAllMatching}
-                      className="rounded-md px-1 text-xs text-primary hover:underline pointer-coarse:min-h-11 pointer-coarse:px-2"
+                      className="h-auto px-0 pointer-coarse:min-h-11"
                     >
                       {`Select all ${selectionTotalCount}`}
-                    </button>
+                    </Button>
                   )}
                 {!isNarrow && (
                   <div className="ms-auto flex items-center gap-2">{buttons}</div>
@@ -1722,11 +1725,11 @@ export function DataTable<TData extends RowData, TValue>({
       </span>
       {pagination ? (
         <div className="grid grid-cols-2 gap-2">
-          <Button variant="outline" className="h-11" disabled={!canPrev} onClick={goPrev}>
+          <Button variant="outline" className="pointer-coarse:h-11" disabled={!canPrev} onClick={goPrev}>
             <ChevronLeft className="size-4 rtl:rotate-180" />
             {"Previous"}
           </Button>
-          <Button variant="outline" className="h-11" disabled={!canNext} onClick={goNext}>
+          <Button variant="outline" className="pointer-coarse:h-11" disabled={!canNext} onClick={goNext}>
             {"Next"}
             <ChevronRight className="size-4 rtl:rotate-180" />
           </Button>
@@ -1735,7 +1738,7 @@ export function DataTable<TData extends RowData, TValue>({
         canNext && (
           <Button
             variant="outline"
-            className="h-11"
+            className="pointer-coarse:h-11"
             onClick={() => {
               table.setPageIndex(0);
               table.setPageSize(size + loadStep);
@@ -1759,10 +1762,10 @@ export function DataTable<TData extends RowData, TValue>({
             <div className="flex items-center gap-1">
               <Button
                 variant="outline"
-                size="icon"
+                size="icon-sm"
                 title="Previous page"
                 aria-label="Previous page"
-                className="size-8 pointer-coarse:size-11"
+                className="pointer-coarse:size-11"
                 disabled={!canPrev}
                 onClick={goPrev}
               >
@@ -1770,10 +1773,10 @@ export function DataTable<TData extends RowData, TValue>({
               </Button>
               <Button
                 variant="outline"
-                size="icon"
+                size="icon-sm"
                 title="Next page"
                 aria-label="Next page"
-                className="size-8 pointer-coarse:size-11"
+                className="pointer-coarse:size-11"
                 disabled={!canNext}
                 onClick={goNext}
               >
@@ -1786,8 +1789,36 @@ export function DataTable<TData extends RowData, TValue>({
     </div>
   );
 
+  /* A search or a filter that matched nothing is a different sentence from a
+     list with no rows, and it carries the way back out of it. */
+  const searchQuery = search?.value.trim() ?? "";
   const emptyNode = (
-    <DataTableEmpty message={emptyMessage} icon={emptyIcon} action={emptyAction} />
+    <DataTableEmpty
+      message={
+        emptyMessage ??
+        (narrowed
+          ? searchQuery
+            ? `Nothing matches “${searchQuery}”.`
+            : "Nothing matches these filters."
+          : undefined)
+      }
+      icon={emptyIcon}
+      action={
+        emptyAction ??
+        (narrowed ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              search?.onChange("");
+              onClearFilters?.();
+            }}
+          >
+            {"Clear filters"}
+          </Button>
+        ) : undefined)
+      }
+    />
   );
   const rows = table.getRowModel().rows;
 
@@ -2168,10 +2199,10 @@ export function DataTable<TData extends RowData, TValue>({
   );
 }
 
-/** Centred icon + message (+ action) for "nothing here", drawn inside the
- *  surface at row height instead of as a bare line. A non-string message is
- *  the caller's own markup and is drawn as is. */
-function DataTableEmpty({
+/** "Nothing here", inside the surface: the page `Empty`'s icon tile and type
+ *  without its dashed edge (the table is already the frame), so the two read
+ *  as one family. A non-string message is the caller's own markup. */
+export function DataTableEmpty({
   message,
   icon,
   action,
@@ -2181,19 +2212,17 @@ function DataTableEmpty({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-      <div className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-5">
+    <Empty className="min-h-56 flex-none gap-3">
+      <EmptyMedia variant="icon" className="mb-0">
         {icon ?? <Inbox />}
-      </div>
+      </EmptyMedia>
       {typeof message === "string" || !message ? (
-        <p className="max-w-xs text-pretty text-sm text-muted-foreground">
-          {message ?? "No results."}
-        </p>
+        <EmptyDescription className="text-pretty">{message ?? "No results."}</EmptyDescription>
       ) : (
         message
       )}
-      {action}
-    </div>
+      {action && <EmptyContent>{action}</EmptyContent>}
+    </Empty>
   );
 }
 
@@ -2301,9 +2330,9 @@ export function RowsPerPageSelect({
           variant="outline"
           size="sm"
           className={cn("gap-1.5", className)} />}>
-          <Rows3 className="h-3.5 w-3.5 opacity-60" />
+          <Rows3 className="size-3.5 opacity-60" />
           {`${value} rows`}
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+          <ChevronDown className="size-3.5 opacity-60" />
         
       </DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="w-32">

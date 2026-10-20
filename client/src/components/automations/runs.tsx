@@ -16,7 +16,8 @@ import * as React from "react"
 import { ExternalLinkIcon, HistoryIcon, SquareIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { EmptyCard, StatusBadge } from "@/components/settings/primitives"
+import { Empty } from "@/components/empty"
+import { StatusBadge } from "@/components/settings/primitives"
 import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
 import { Button } from "@/components/ui/button"
 import { reportError } from "@/lib/errors"
@@ -134,7 +135,11 @@ export function RunList({
           { id: "source", label: "Source", of: (run) => run.source, optionLabel: (v) => SOURCE_LABEL[v as RoutineRun["source"]] ?? v },
         ]}
         onRowClick={(run) => void navigate(automationRunPath(routineId, run.id))}
-        empty={<EmptyCard icon={HistoryIcon} text="This automation has not run yet." />}
+        empty={
+          <Empty size="lg" icon={HistoryIcon}>
+            This automation has not run yet.
+          </Empty>
+        }
       />
   )
 }
@@ -231,7 +236,7 @@ function RunDetail({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
       )}
       {run.verdict != null && (
         <div>
-          <h4 className="text-xs font-medium text-muted-foreground">Verdict</h4>
+          <h3 className="text-xs font-medium text-muted-foreground">Verdict</h3>
           <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap">
             {JSON.stringify(run.verdict, null, 2)}
           </pre>
@@ -239,15 +244,13 @@ function RunDetail({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
       )}
       {run.output && (
         <div>
-          <h4 className="text-xs font-medium text-muted-foreground">Answer</h4>
+          <h3 className="text-xs font-medium text-muted-foreground">Answer</h3>
           <p className="mt-1 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">{run.output}</p>
         </div>
       )}
       {run.actions.length > 0 && (
         <div>
-          <h4 className="text-xs font-medium text-muted-foreground">
-            Follow-up actions
-          </h4>
+          <h3 className="text-xs font-medium text-muted-foreground">Follow-up actions</h3>
           <ul className="mt-1 space-y-0.5 text-sm">
             {run.actions.map((action, i) => (
               <li key={i} className={action.ok ? "text-muted-foreground" : "text-destructive"}>

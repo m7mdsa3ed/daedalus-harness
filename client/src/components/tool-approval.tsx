@@ -93,9 +93,9 @@ function CodeBlock({ value }: { value: string }) {
     means the same thing wherever it appears. */
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-xs font-medium text-muted-foreground">
+    <h3 className="text-xs font-medium text-muted-foreground">
       {children}
-    </h4>
+    </h3>
   )
 }
 

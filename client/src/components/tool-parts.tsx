@@ -31,7 +31,8 @@ import {
 } from "lucide-react"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { Notice } from "@/components/notice"
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"
+import { VIEWER, ViewerHeader } from "@/components/ui/responsive-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
@@ -87,19 +88,35 @@ export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string
   switch_mode: ToggleLeftIcon,
 }
 
-/* One mark colour per tool kind, shared by the step rows and grouped avatars.
-   Stock tokens only: the kind's icon tells kinds apart, and the one colour
-   that means something is a delete's destructive. */
-const MUTED_KINDS = ["read", "edit", "move", "search", "execute", "think", "fetch", "switch_mode", "other"]
+/* One accent per tool kind, shared by the step rows and grouped avatars. Keep
+   each hue distinct so a mixed group can be scanned by icon color alone.
+   These are categories, not status, so they keep their own hues rather than
+   the success/warning/destructive tokens. */
 export const KIND_COLORS: Record<string, string> = {
-  ...Object.fromEntries(MUTED_KINDS.map((kind) => [kind, "text-muted-foreground"])),
-  delete: "text-destructive",
+  read: "text-cyan-600 dark:text-cyan-400",
+  edit: "text-orange-600 dark:text-orange-400",
+  delete: "text-red-600 dark:text-red-400",
+  move: "text-amber-600 dark:text-amber-400",
+  search: "text-blue-600 dark:text-blue-400",
+  execute: "text-emerald-600 dark:text-emerald-400",
+  think: "text-violet-600 dark:text-violet-400",
+  fetch: "text-teal-600 dark:text-teal-400",
+  switch_mode: "text-indigo-600 dark:text-indigo-400",
+  other: "text-slate-600 dark:text-slate-400",
 }
 
-/* The matching tile behind each kind's mark. */
+/* The matching tinted avatar tile for each kind's foreground accent. */
 export const KIND_CHIPS: Record<string, string> = {
-  ...Object.fromEntries(MUTED_KINDS.map((kind) => [kind, "bg-muted"])),
-  delete: "bg-destructive/10",
+  read: "bg-cyan-500/12",
+  edit: "bg-orange-500/12",
+  delete: "bg-red-500/12",
+  move: "bg-amber-500/12",
+  search: "bg-blue-500/12",
+  execute: "bg-emerald-500/12",
+  think: "bg-violet-500/12",
+  fetch: "bg-teal-500/12",
+  switch_mode: "bg-indigo-500/12",
+  other: "bg-slate-500/12",
 }
 
 /* Prose palette + code/table styling live in index.css, so both themes come
@@ -470,21 +487,10 @@ export function PlanFullscreen({
         Full screen
       </DialogTrigger>
       {/* Nearly the whole window: a plan is the one payload where the limit on
-          reading it was the room, and `pr-12` clears the dialog's own close
-          button the way the workflow dialog's header does. */}
-      <DialogContent className="flex h-[calc(var(--float-h)-2rem)] w-[min(64rem,calc(var(--float-w)-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[calc(var(--float-w)-2rem)]">
-        <div className="flex shrink-0 items-center gap-2.5 border-b py-3 pr-12 pl-4">
-          <span
-            aria-hidden
-            className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
-          >
-            <ClipboardListIcon className="size-4" />
-          </span>
-          <DialogTitle className="min-w-0 flex-1 truncate text-sm leading-4 font-medium">
-            {title || "Plan"}
-          </DialogTitle>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-5 py-4">
+          reading it was the room. */}
+      <DialogContent className={VIEWER}>
+        <ViewerHeader icon={<ClipboardListIcon />} title={title || "Plan"} />
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-6 py-5">
           <Prose text={plan} />
         </div>
       </DialogContent>

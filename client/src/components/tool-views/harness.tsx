@@ -57,8 +57,8 @@ export function harnessMark(item: ToolItem): {
   const action = call?.verb === "run" ? harnessAction(call.operation) : null
   return {
     Icon: action ? ACTION_ICONS[action] : BoxesIcon,
-    accent: action === "delete" ? "text-destructive" : "text-muted-foreground",
-    chip: action === "delete" ? "bg-destructive/10" : "bg-muted",
+    accent: action === "delete" ? "text-destructive" : "text-fuchsia-600 dark:text-fuchsia-400",
+    chip: action === "delete" ? "bg-destructive/12" : "bg-fuchsia-500/12",
   }
 }
 

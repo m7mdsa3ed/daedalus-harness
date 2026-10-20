@@ -42,6 +42,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
+import { Empty } from "@/components/empty"
 import { PanelToolbar } from "@/components/workspace/primitives"
 import { WebFrameHint, WebProblemView, type WebProblem } from "@/components/workspace/web-state"
 import { useServer } from "@/lib/server-context"
@@ -506,7 +507,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
       <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
         <PanelToolbar>
           <Button size="icon-xs" variant="ghost" aria-label="Back to the page" title="Back to the page" onClick={() => api.updateParameters({ diff: undefined })}>
-            <ArrowLeftIcon className="size-3.5" />
+            <ArrowLeftIcon />
           </Button>
           <span className="truncate font-mono text-xs text-muted-foreground">{params.diff.path}</span>
         </PanelToolbar>
@@ -536,7 +537,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           title={GUEST ? "Back" : "A sandboxed frame does not expose its history"}
           onClick={() => viewRef.current?.goBack()}
         >
-          <ArrowLeftIcon className="size-3.5" />
+          <ArrowLeftIcon />
         </Button>
         <Button
           size="icon-xs"
@@ -546,7 +547,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           title={GUEST ? "Forward" : "A sandboxed frame does not expose its history"}
           onClick={() => viewRef.current?.goForward()}
         >
-          <ArrowRightIcon className="size-3.5" />
+          <ArrowRightIcon />
         </Button>
         <Button
           size="icon-xs"
@@ -554,7 +555,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           aria-label="Reload"
           onClick={() => setReloadKey((current) => current + 1)}
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon />
         </Button>
 
         <form
@@ -570,7 +571,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             onChange={(event) => setTyped(event.target.value)}
             placeholder="localhost:5173"
             aria-label="Address"
-            className="h-7 font-mono text-sm"
+            className="h-7 font-mono"
           />
         </form>
 
@@ -598,10 +599,10 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             variant="ghost"
             aria-label={entry.label}
             title={entry.label}
-            className={cn("size-6", viewport === entry.id && "text-primary")}
+            className={cn(viewport === entry.id && "text-primary")}
             onClick={() => setViewport(entry.id)}
           >
-            <entry.icon className="size-3.5" />
+            <entry.icon />
           </Button>
         ))}
 
@@ -612,10 +613,10 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             aria-label="Pick an element"
             aria-pressed={picking}
             title={picking ? "Click an element on the page (Escape to cancel)" : "Pick an element to tell the agent about"}
-            className={cn("size-6", picking && "text-primary")}
+            className={cn(picking && "text-primary")}
             onClick={() => setPicking((on) => !on)}
           >
-            <CrosshairIcon className="size-3.5" />
+            <CrosshairIcon />
           </Button>
         )}
 
@@ -626,10 +627,10 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             aria-label="Console"
             aria-pressed={consoleOpen}
             title={consoleOpen ? "Hide the page console" : "Show the page console"}
-            className={cn("relative size-6", consoleOpen && "text-primary")}
+            className={cn("relative", consoleOpen && "text-primary")}
             onClick={() => setConsoleOpen((on) => !on)}
           >
-            <TerminalIcon className="size-3.5" />
+            <TerminalIcon />
             {problems > 0 && (
               <span
                 aria-hidden
@@ -647,7 +648,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           disabled={!url}
           onClick={() => url && window.open(url, "_blank", "noopener")}
         >
-          <ExternalLinkIcon className="size-3.5" />
+          <ExternalLinkIcon />
         </Button>
       </PanelToolbar>
 
@@ -679,9 +680,10 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
             size="icon-xs"
             variant="ghost"
             aria-label="Dismiss"
+            title="Dismiss"
             onClick={() => setPicked(null)}
           >
-            <XIcon className="size-3.5" />
+            <XIcon />
           </Button>
         </div>
       )}
@@ -784,8 +786,8 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           the ink they earn. */}
       {consoleOpen && GUEST && (
         <div className="flex h-44 shrink-0 flex-col border-t bg-muted/50">
-          <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1">
-            <TerminalIcon className="size-3.5 text-muted-foreground" />
+          <PanelToolbar className="gap-2">
+            <TerminalIcon className="text-muted-foreground" />
             <span className="text-xs font-medium">Console</span>
             <span className="text-xs text-muted-foreground">
               {consoleEntries.entries.length === 0
@@ -800,7 +802,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
               title="Clear"
               onClick={consoleEntries.clear}
             >
-              <EraserIcon className="size-3.5" />
+              <EraserIcon />
             </Button>
             <Button
               size="icon-xs"
@@ -809,12 +811,12 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
               title="Hide"
               onClick={() => setConsoleOpen(false)}
             >
-              <XIcon className="size-3.5" />
+              <XIcon />
             </Button>
-          </div>
+          </PanelToolbar>
           <div className="min-h-0 flex-1 overflow-auto py-1 font-mono text-xs leading-relaxed">
             {consoleEntries.entries.length === 0 ? (
-              <p className="px-2 py-0.5 text-muted-foreground">Nothing logged yet.</p>
+              <Empty className="m-2">Nothing logged yet.</Empty>
             ) : (
               consoleEntries.entries.map((entry, index) => <ConsoleLine key={index} entry={entry} />)
             )}

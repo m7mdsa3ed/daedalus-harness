@@ -50,13 +50,13 @@ import {
 import { Navigate, useNavigate, useParams } from "react-router"
 
 import { useConfirm } from "@/components/confirm-dialog"
-import { FormPageHeader, TabBar, type TabItem } from "@/components/settings/primitives"
+import { FormActions, FormPageHeader, Group, SectionHead, TabBar, type TabItem } from "@/components/settings/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup, ButtonGroupSeparator } from "@/components/ui/button-group"
-import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Field as FieldRoot, FieldLabel } from "@/components/ui/field"
+import { Item, ItemActions, ItemContent, ItemTitle } from "@/components/ui/item"
 import { subscribeSyncStatus, syncStatusSnapshot, type SyncStatus } from "@/lib/custom-theme-sync"
 import {
   contrastRatio,
@@ -214,18 +214,36 @@ function ThemeEditor({
   }
 
   const warnings = theme ? countWarnings(theme) : 0
+  const current = SECTIONS.find((item) => item.id === section)
   const worn = !!theme && colorTheme === customThemeValue(theme.id)
 
   if (!theme) return null
 
   return (
     <>
-      {/* `flush`: the section track below is the break, not the header's rule. */}
+      {/* The meta line is the theme's live state, at a glance: whether the
+          server has the latest edit, and how many contrast pairs fall short of
+          AA — the two things that are true of the theme no matter which
+          section you are on, so they live in the header rather than under the
+          preview. The section track below is the header's break. */}
       <FormPageHeader
         title={`Edit ${theme.name}`}
         description="Type, shape and colour, for light and dark together. Changes apply immediately and are saved to this server."
         onBack={onClose}
-        flush
+        meta={
+          <>
+            <ThemeSyncChip />
+            {warnings > 0 && (
+              <Badge
+                variant="destructive"
+                title={`${warnings} foreground/surface pair${warnings === 1 ? "" : "s"} fall below WCAG AA body-text contrast in one mode or the other.`}
+              >
+                <TriangleAlert data-icon="inline-start" />
+                {warnings} pair{warnings === 1 ? "" : "s"} below AA
+              </Badge>
+            )}
+          </>
+        }
       />
 
       <TabBar
@@ -240,24 +258,6 @@ function ThemeEditor({
         onChange={(id) => setSection(id as SectionId)}
       />
 
-      {/* The theme's live state, at a glance: whether the server has the latest
-          edit, and how many contrast pairs fall short of AA — the two things
-          that are true of the theme no matter which section you are on. Warnings
-          live here rather than under the preview so they survive the scroll. */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <ThemeSyncChip />
-        {warnings > 0 && (
-          <Badge
-            variant="destructive"
-            className="w-fit"
-            title={`${warnings} foreground/surface pair${warnings === 1 ? "" : "s"} fall below WCAG AA body-text contrast in one mode or the other.`}
-          >
-            <TriangleAlert className="size-3" />
-            {warnings} pair{warnings === 1 ? "" : "s"} below AA
-          </Badge>
-        )}
-      </div>
-
       {/* The preview column grows with the frame rather than staying a fixed
           thumbnail: this page runs at the settings frame's full width
           (isFullWidthSettings in settings/sections.ts), and the mock is the half
@@ -265,17 +265,20 @@ function ThemeEditor({
       <div className="grid gap-4 @panel-lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)] @panel-lg:items-start @panel-xl:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] @panel-xl:gap-6">
         {/* Controls */}
         <div className="flex min-w-0 flex-col gap-4">
-          <Field>
+          <FieldRoot>
             <FieldLabel htmlFor="theme-name">Name</FieldLabel>
             <Input
               id="theme-name"
               value={theme.name}
               onChange={(event) => write({ ...theme, name: event.target.value })}
             />
-          </Field>
+          </FieldRoot>
 
-          <SectionHeader section={section} />
-          <div className="flex flex-col gap-4">
+          <div>
+            <SectionHead label={current?.label} hint={current?.hint} />
+            {/* The design sections are kit blocks and keep the kit's rhythm;
+                the presets tab is a stack of its own. */}
+            <div className={section === "presets" ? "flex flex-col gap-4" : undefined}>
             {section === "presets" && (
               <PresetsTab base={theme.base} onBase={setBase} onPalette={setPalette} />
             )}
@@ -290,25 +293,24 @@ function ThemeEditor({
             {section === "color" && (
               <div className="grid items-start gap-4 @panel-xl:grid-cols-2">
               {THEME_TOKEN_GROUPS.map((group) => (
-                <FieldSet key={group.label} className="gap-3">
-                  <div className="flex items-end justify-between gap-3">
-                    <div className="min-w-0">
-                      <FieldLegend variant="label" className="mb-0 text-sm">
-                        {group.label}
-                      </FieldLegend>
-                      <FieldDescription className="text-xs">{group.hint}</FieldDescription>
-                    </div>
-                    {/* Column headers, once per group: the two fields on every
-                        row below are the same token in the two modes. */}
-                    <div className="hidden shrink-0 gap-2 text-xs font-medium text-muted-foreground @panel-sm:flex">
-                      {MODES.map((mode) => (
-                        <span key={mode} className="w-32 text-center">
-                          {mode}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <ItemGroup className="gap-0.5 rounded-xl border p-1">
+                /* A wrapper per group, so each card is its block's first child
+                   and the grid's gap is the only space between them. */
+                <div key={group.label} className="min-w-0">
+                  <Group
+                    label={group.label}
+                    hint={group.hint}
+                    action={
+                      /* Column headers, once per group: the two fields on
+                         every row below are the same token in the two modes. */
+                      <div className="hidden shrink-0 gap-2 text-xs font-medium text-muted-foreground @panel-sm:flex">
+                        {MODES.map((mode) => (
+                          <span key={mode} className="w-32 text-center">
+                            {mode}
+                          </span>
+                        ))}
+                      </div>
+                    }
+                  >
                     {group.tokens.map(({ token, label }) => (
                       <Item
                         key={token}
@@ -316,10 +318,10 @@ function ThemeEditor({
                         // Stacked below the split: the label over the pair,
                         // each field filling half the row. Side by side the
                         // moment there is room for a name plus two swatches.
-                        className="flex-col items-stretch gap-1.5 rounded-lg py-2 @panel-sm:flex-row @panel-sm:items-center @panel-sm:gap-2 @panel-sm:py-1.5"
+                        className="flex-col items-stretch gap-1.5 rounded-none px-0 py-3 @panel-sm:flex-row @panel-sm:items-center @panel-sm:gap-2 @panel-sm:py-2"
                       >
                         <ItemContent className="min-w-0">
-                          <ItemTitle className="text-sm font-normal" title={`--${token}`}>
+                          <ItemTitle className="text-sm font-medium" title={`--${token}`}>
                             {label}
                           </ItemTitle>
                         </ItemContent>
@@ -336,49 +338,14 @@ function ThemeEditor({
                         </ItemActions>
                       </Item>
                     ))}
-                  </ItemGroup>
-                </FieldSet>
+                  </Group>
+                </div>
               ))}
             </div>
             )}
+            </div>
           </div>
-
-          <footer className="flex flex-wrap items-center gap-2 border-t pt-4">
-            <ButtonGroup>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!snapshot.current}
-                title="Undo every change made since this editor was opened"
-                onClick={() => snapshot.current && write(snapshot.current)}
-              >
-                <RotateCcw /> Revert
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => onDuplicate(theme.id)}>
-                <Copy /> Duplicate
-              </Button>
-              {!worn && (
-                <>
-                  <ButtonGroupSeparator />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setColorTheme(customThemeValue(theme.id))}
-                  >
-                    <Palette /> Apply
-                  </Button>
-                </>
-              )}
-            </ButtonGroup>
-            <Button variant="ghost" size="sm" className="text-destructive" onClick={remove}>
-              <Trash2 /> Delete
-            </Button>
-            <Button size="sm" className="ml-auto" onClick={onClose}>
-              <Check /> Done
-            </Button>
-          </footer>
         </div>
-
         {/* Preview. Beside the controls and sticky from the split up, where it
             stays in view for the whole length of the Color section.
 
@@ -399,19 +366,42 @@ function ThemeEditor({
           <PreviewPane theme={theme} worn={worn} />
         </aside>
       </div>
-    </>
-  )
-}
 
-/** The section's name and what it is for, over its controls. */
-function SectionHeader({ section }: { section: SectionId }) {
-  const entry = SECTIONS.find((item) => item.id === section)
-  if (!entry) return null
-  return (
-    <div className="flex items-baseline gap-2 border-b pb-2">
-      <h3 className="text-sm font-medium">{entry.label}</h3>
-      <p className="text-xs text-muted-foreground">{entry.hint}</p>
-    </div>
+      {/* Edits write through as they are made, so the footer is Done and the
+          theme's own verbs, never a Save. */}
+      <FormActions
+        busy={false}
+        done={onClose}
+        leading={
+          <>
+            <ButtonGroup>
+              <Button
+                variant="outline"
+                disabled={!snapshot.current}
+                title="Undo every change made since this editor was opened"
+                onClick={() => snapshot.current && write(snapshot.current)}
+              >
+                <RotateCcw data-icon="inline-start" /> Revert
+              </Button>
+              <Button variant="outline" onClick={() => onDuplicate(theme.id)}>
+                <Copy data-icon="inline-start" /> Duplicate
+              </Button>
+              {!worn && (
+                <>
+                  <ButtonGroupSeparator />
+                  <Button variant="outline" onClick={() => setColorTheme(customThemeValue(theme.id))}>
+                    <Palette data-icon="inline-start" /> Apply
+                  </Button>
+                </>
+              )}
+            </ButtonGroup>
+            <Button variant="ghost" className="text-destructive" onClick={remove}>
+              <Trash2 data-icon="inline-start" /> Delete
+            </Button>
+          </>
+        }
+      />
+    </>
   )
 }
 

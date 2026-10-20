@@ -27,7 +27,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog";
-import { useCoarsePointer, useIsMobile } from "@/hooks/use-device";
+import { useIsMobile } from "@/hooks/use-device";
 
 /** One option for select / multi-select / segmented fields. */
 export interface FilterOption {
@@ -173,7 +173,7 @@ function FilterFieldControl({
           placeholder={field.placeholder}
           value={(value as string) ?? ""}
           onChange={(e) => onChange(field.id, e.target.value)}
-          className="h-10 md:h-9"
+          className="h-9 pointer-coarse:h-11"
         />
       );
     case "custom":
@@ -207,7 +207,6 @@ export function FiltersBar({
 }: FiltersBarProps) {
   const windowNarrow = useIsMobile();
   const isMobile = narrow ?? windowNarrow;
-  const coarse = useCoarsePointer();
   const hasFilters = Boolean(fields && fields.length);
   const [mobileFiltersOpen, setMobileFiltersOpen] = React.useState(false);
 
@@ -216,19 +215,17 @@ export function FiltersBar({
       type="button"
       variant="outline"
       size={isMobile ? "icon" : "default"}
-      className={cn("relative shrink-0 gap-2", coarse ? "h-11 min-w-11" : "h-9")}
+      className="relative shrink-0 gap-2 pointer-coarse:h-11 pointer-coarse:min-w-11"
       onClick={isMobile ? () => setMobileFiltersOpen(true) : undefined}
     >
-      <SlidersHorizontal className="size-4" />
+      <SlidersHorizontal data-icon="inline-start" />
       {!isMobile && <span>{"Filters"}</span>}
       {filterCount > 0 && (
         <Badge
           variant="secondary"
           className={cn(
-            "justify-center",
-            isMobile
-              ? "pointer-events-none absolute -end-1.5 -top-1.5 h-4 min-w-4 px-1"
-              : "ms-0.5 h-5 min-w-5 px-1",
+            "justify-center tabular-nums",
+            isMobile && "pointer-events-none absolute -end-1.5 -top-1.5",
           )}
         >
           {filterCount}
@@ -241,9 +238,9 @@ export function FiltersBar({
   // popover roots, and rebuilding it on every keystroke in the search box (the
   // bar re-renders per character) is wasted work the docked panel pays for.
   const buildFilterContent = () => (
-    <div className="w-full space-y-4">
+    <div className="flex w-full flex-col gap-3">
       <div className="flex items-center justify-between">
-        <p className="font-heading text-base font-medium">{"Filters"}</p>
+        <p className="text-sm font-medium">{"Filters"}</p>
         {filterCount > 0 && onClearFilters && (
           <Button
             variant="ghost"
@@ -251,7 +248,7 @@ export function FiltersBar({
             className="pointer-coarse:h-11 pointer-coarse:px-3"
             onClick={clearFilters}
           >
-            <X className="size-3" />
+            <X data-icon="inline-start" />
             {"Clear all"}
           </Button>
         )}
@@ -313,10 +310,7 @@ export function FiltersBar({
             onChange={(e) => search.onChange(e.target.value)}
             placeholder={search.placeholder}
             aria-label={search.placeholder ?? "Search"}
-            className={cn(
-              "ps-9 pe-9 [&::-webkit-search-cancel-button]:hidden",
-              coarse ? "h-11" : "h-9",
-            )}
+            className="h-9 ps-9 pe-9 pointer-coarse:h-11 [&::-webkit-search-cancel-button]:hidden"
           />
           {search.value && (
             <button
@@ -324,10 +318,7 @@ export function FiltersBar({
               title="Clear search"
               aria-label="Clear search"
               onClick={() => search.onChange("")}
-              className={cn(
-                "absolute top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
-                coarse ? "end-0 size-11" : "end-1 size-7",
-              )}
+              className="absolute end-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:end-0 pointer-coarse:size-11"
             >
               <X className="size-3.5" />
             </button>
@@ -344,13 +335,17 @@ export function FiltersBar({
             variant="outline"
             size="icon"
             title="Filters"
-            className={cn("relative shrink-0 gap-2", coarse ? "size-11" : "size-9")}
+            className="relative shrink-0 gap-2 pointer-coarse:size-11"
             onClick={() => setMobileFiltersOpen(true)}
           >
-            <SlidersHorizontal className="size-4" />
-            {filterCount > 0 && <Badge variant="secondary" className="pointer-events-none absolute -end-1.5 -top-1.5 h-4 min-w-4 px-1">{filterCount}</Badge>}
+            <SlidersHorizontal />
+            {filterCount > 0 && (
+              <Badge variant="secondary" className="pointer-events-none absolute -end-1.5 -top-1.5 tabular-nums">
+                {filterCount}
+              </Badge>
+            )}
           </Button>
-          <ResponsiveDialogContent className="max-h-[85dvh]">
+          <ResponsiveDialogContent>
             <ResponsiveDialogHeader>
               <ResponsiveDialogTitle>{"Filters"}</ResponsiveDialogTitle>
             </ResponsiveDialogHeader>
@@ -360,7 +355,7 @@ export function FiltersBar({
       ) : (
         <Popover>
           <PopoverTrigger render={filterButton!} />
-          <PopoverContent align="start" sideOffset={8} className="w-[min(20rem,calc(100vw-2rem))] p-4">
+          <PopoverContent align="start" sideOffset={8} className="w-[min(20rem,calc(var(--float-w)-2rem))] gap-3 p-3">
             {filterContent}
           </PopoverContent>
         </Popover>
