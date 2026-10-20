@@ -43,6 +43,11 @@ interface RunningAgent {
 export function runningAgents(thread: Pick<ThreadState, "items" | "turnActive">): RunningAgent[] {
   return activeSubagents(buildRows(thread.items, false, thread.turnActive)).map(({ head }) => {
     if (head.kind === "subagent") {
+      /* A workflow step is titled by its step and kinded by its workflow; an
+         ask's `task` is the description its caller gave it. */
+      if (head.workflow) {
+        return { id: head.id, task: head.workflow.step || head.task || head.name, name: head.workflow.name, startedAt: head.startedAt }
+      }
       return { id: head.id, task: head.task || head.name, name: head.name, startedAt: head.startedAt }
     }
     const call = extractSubagent(head)
@@ -67,9 +72,15 @@ export function useNow(active: boolean): number {
   return now
 }
 
-/** Who it is: the runtime's name for it, else its brief's first words — a
-    worker with no name is still one line, never a paragraph. */
-const agentName = (agent: RunningAgent): string => agent.name || agent.task.split(/[.\n]/)[0] || "Agent"
+/** What it is doing, in one line: the description its caller gave it (a
+    Task's few words), or the first line of a longer brief. The runtime's own
+    name for a worker is often a type or a slug (`general-purpose`, `fix`),
+    which says what kind of worker it is, not what it was sent to do. */
+const agentTitle = (agent: RunningAgent): string => agent.task.split("\n")[0].trim() || agent.name || "Agent"
+/** The worker's kind, as a quiet label beside the title — when it adds
+    something the title does not already say. */
+const agentKind = (agent: RunningAgent): string | undefined =>
+  agent.name && agent.name !== agentTitle(agent) ? agent.name : undefined
 
 const formatElapsed = (ms: number): string =>
   ms < 60_000 ? `${Math.max(0, Math.round(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
@@ -102,7 +113,7 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
             variant="ghost"
             size="icon-xs"
             className={cn(READING_TRIGGER, "text-primary hover:text-primary")}
-            title={`${label} — ${agents.map(agentName).join(", ")}`}
+            title={`${label} — ${agents.map(agentTitle).join(", ")}`}
             aria-label={label}
           >
             {/* The mark rides inside the pill — one face, not a glyph beside a
@@ -126,14 +137,19 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
       >
         <ul className={cn("-mx-1 space-y-1 px-1", READING_LIST)}>
           {agents.map((agent) => (
-            /* The name only: the brief is a paragraph, and a list of them
-               buried the one fact the count is about — who is out. It stays
-               a hover away (`title`), and whole in the Agents panel. */
+            /* One line each: what the worker is doing (its description), its
+               kind beside it, its clock. The whole brief is a hover away
+               (`title`), and whole in the Agents panel. */
             <li key={agent.id} className="flex items-center gap-2 text-sm" title={agent.task}>
               <span className="grid size-5 shrink-0 place-items-center">
                 <Spinner aria-hidden className="size-3.5 text-primary" />
               </span>
-              <span className="min-w-0 flex-1 truncate leading-5 text-foreground">{agentName(agent)}</span>
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5 leading-5">
+                {agentKind(agent) && (
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">{agentKind(agent)}</span>
+                )}
+                <span className="min-w-0 truncate text-foreground">{agentTitle(agent)}</span>
+              </span>
               <span className="shrink-0 text-xs leading-5 tabular-nums text-muted-foreground">
                 {formatElapsed(now - agent.startedAt)}
               </span>
