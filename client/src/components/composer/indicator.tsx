@@ -30,7 +30,7 @@ export function OpenInInspector({
     <Button
       variant="ghost"
       size="xs"
-      className="-mx-1 -mb-1 justify-start text-muted-foreground hover:text-foreground"
+      className="-mx-2 last:-mb-2 justify-start text-muted-foreground hover:text-foreground"
       onClick={() => {
         onOpen?.()
         open(tab)
@@ -127,7 +127,7 @@ export const READING_MARK = "size-4"
 
 /** The button geometry, minus the mark's own colour. */
 export const READING_TRIGGER =
-  "relative shrink-0 rounded-pill @panel-sm:w-auto! @panel-sm:gap-1 @panel-sm:px-1.5"
+  "relative shrink-0 rounded-pill @panel-sm:w-auto! @panel-sm:gap-1 @panel-sm:px-1"
 
 /**
  * The trigger geometry for a reading whose words are never dropped.
@@ -139,7 +139,7 @@ export const READING_TRIGGER =
  * contents; the height stays the row's 24px, so the cluster is still one row.
  * `max-w` is the caller's, since only it knows how long its own value may run.
  */
-export const READING_TRIGGER_ALWAYS = "w-auto! max-w-40 min-w-0 px-1.5"
+export const READING_TRIGGER_ALWAYS = "w-auto! max-w-40 min-w-0 px-1"
 
 /**
  * The count that rides the mark on a narrow panel — the badge's other dress.
@@ -224,7 +224,7 @@ export function ReadingBadge({
            `max-w-full` so the pill can never be wider than the button it is in
            — the words ellipsis instead, which is what the truncating span below
            is for. */
-        "inline-flex h-5 max-w-full min-w-0 items-center gap-1 px-0.5 text-xs leading-none font-medium whitespace-nowrap",
+        "inline-flex h-5 max-w-full min-w-0 items-center gap-1 text-xs leading-none font-medium whitespace-nowrap",
         !always && "hidden @panel-sm:inline-flex",
         className
       )}

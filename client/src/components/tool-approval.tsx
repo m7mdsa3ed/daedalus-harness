@@ -22,7 +22,7 @@ import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import {
   CheckIcon,
-  ChevronDownIcon,
+  ChevronRightIcon,
   ClipboardListIcon,
   WrenchIcon,
   XIcon,
@@ -42,7 +42,7 @@ import {
   AgentRequestHeader,
   AgentRequestWell,
 } from "./agent-request"
-import { FileBadge, JSON_INPUT_PREVIEW, JsonView, PlanFullscreen, Prose } from "./tool-parts"
+import { CHIP, DISCLOSURE, FileBadge, JSON_INPUT_PREVIEW, JsonView, LABEL, PlanFullscreen, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "@/components/tool-parts"
 import type { PendingPermission, ToolItem } from "@/lib/store"
 import { isTypingTarget } from "@/lib/shortcuts"
@@ -86,16 +86,6 @@ function CodeBlock({ value }: { value: string }) {
     <pre className="max-h-56 overflow-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">
       {value}
     </pre>
-  )
-}
-
-/** The caption-tier heading the tool-call details already use, so a section
-    means the same thing wherever it appears. */
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="text-xs font-medium text-muted-foreground">
-      {children}
-    </h3>
   )
 }
 
@@ -200,7 +190,7 @@ function PermissionOptions({
                 to hint at. */}
             {(index < 9 || primary) && (
               <Shortcut
-                className="ms-0.5 hidden sm:inline-flex"
+                className="hidden sm:inline-flex"
                 keys={[...(index < 9 ? [String(index + 1)] : []), ...(primary ? ["↵"] : [])]}
                 keyClassName="bg-transparent"
               />
@@ -232,18 +222,18 @@ function EvidenceFold({
         render={
           <button
             type="button"
-            className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className={DISCLOSURE}
           />
         }
       >
-        <ChevronDownIcon
+        <ChevronRightIcon
           aria-hidden
-          className={cn("size-3 transition-transform duration-200", open && "rotate-180")}
+          className={cn("size-3 shrink-0 transition-transform duration-200", open && "rotate-90")}
         />
         {label}
       </CollapsibleTrigger>
       <CollapsibleContent className="harness-collapse">
-        <div className="mt-2 space-y-2.5">{children}</div>
+        <div className="mt-2 space-y-3">{children}</div>
       </CollapsibleContent>
     </Collapsible>
   )
@@ -300,7 +290,7 @@ function PlanApproval({
       <AgentRequestBody>
         <Collapsible open={open} onOpenChange={setOpen}>
           <CollapsibleContent className="harness-collapse">
-            <AgentRequestWell className="max-h-[calc(var(--panel-h,100svh)*0.5)] overflow-auto overscroll-contain px-3 py-3">
+            <AgentRequestWell className="max-h-[calc(var(--panel-h,100svh)*0.5)] overflow-auto overscroll-contain">
               <Prose text={plan} />
             </AgentRequestWell>
           </CollapsibleContent>
@@ -309,18 +299,18 @@ function PlanApproval({
               Beside it, the way *in* to a longer one — the band above stops at
               half the panel, and a plan can be longer than that is worth
               scrolling through in a column. */}
-          <div className="mt-2 flex flex-wrap items-center gap-3">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <CollapsibleTrigger
               render={
                 <button
                   type="button"
-                  className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  className={DISCLOSURE}
                 />
               }
             >
-              <ChevronDownIcon
+              <ChevronRightIcon
                 aria-hidden
-                className={cn("size-3 transition-transform duration-200", open && "rotate-180")}
+                className={cn("size-3 shrink-0 transition-transform duration-200", open && "rotate-90")}
               />
               {open ? "Hide the plan" : "Show the plan"}
             </CollapsibleTrigger>
@@ -445,7 +435,7 @@ export function InlineApproval({
           )
         }
       >
-        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="min-w-0 break-words">{heading}</span>
           {h.file && <FileBadge file={h.file} filePath={h.filePath} />}
         </span>
@@ -456,7 +446,7 @@ export function InlineApproval({
             card, so unlike the fold below it is not behind anything; the band
             scrolls past half the panel so a long diff cannot carry the answers
             off the bottom of the screen. */}
-        <div className="max-h-[calc(var(--panel-h,100svh)*0.5)] space-y-2.5 overflow-auto overscroll-contain">
+        <div className="max-h-[calc(var(--panel-h,100svh)*0.5)] space-y-3 overflow-auto overscroll-contain">
           {content.length > 0 ? (
             <ToolCallContent content={content} />
           ) : (
@@ -479,7 +469,7 @@ export function InlineApproval({
                 <li
                   key={`${location.path}-${index}`}
                   title={location.path}
-                  className="max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
+                  className={cn(CHIP, "block max-w-full truncate text-muted-foreground")}
                 >
                   {location.path}
                   {location.line != null && (
@@ -492,7 +482,7 @@ export function InlineApproval({
         </div>
 
         <EvidenceFold open={open} onOpenChange={setOpen} label="Details">
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
             {call.title && <MetaRow label="Title" value={call.title} mono={false} />}
             {description && <MetaRow label="Description" value={description} mono={false} />}
             <MetaRow label="Session" value={request.sessionId} />
@@ -502,7 +492,7 @@ export function InlineApproval({
           </dl>
           {output && (
             <section className="space-y-1">
-              <Label>Raw output</Label>
+              <h3 className={LABEL}>Raw output</h3>
               <AgentRequestWell>
                 <CodeBlock value={output} />
               </AgentRequestWell>
@@ -510,7 +500,7 @@ export function InlineApproval({
           )}
           {content.length > 0 && input && (
             <section className="space-y-1">
-              <Label>Raw input</Label>
+              <h3 className={LABEL}>Raw input</h3>
               <AgentRequestWell>
                 <CodeBlock value={input} />
               </AgentRequestWell>

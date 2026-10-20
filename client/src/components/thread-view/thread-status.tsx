@@ -170,7 +170,7 @@ export function ThreadStatus({
   const last = React.useRef<React.ReactNode>(null)
   if (hasBody) {
     last.current = (
-      <div className="min-w-0 space-y-1 pl-6 pt-1 text-sm">
+      <div className="min-w-0 space-y-1 pl-7 pt-1 text-sm">
           {retry && (
             <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
               {retry.of && (
@@ -195,7 +195,7 @@ export function ThreadStatus({
             </div>
           )}
           {bar && (
-            <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2 pt-0.5">
+            <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2">
               <Progress value={bar.done} max={bar.total} className="flex-1 [&_[data-slot=progress-track]]:h-1" />
               <span className="text-muted-foreground tabular-nums">
                 {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
@@ -213,7 +213,7 @@ export function ThreadStatus({
             </div>
           )}
           {status.install && (
-            <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs break-all text-foreground select-text">
+            <code className="harness-part-in [--part-i:2] block w-fit max-w-full rounded-md bg-muted px-2 py-1 font-mono text-xs break-all text-foreground select-text">
               {status.install}
             </code>
           )}
@@ -223,12 +223,12 @@ export function ThreadStatus({
             </Disclosure>
           )}
           {open && status.more && (
-            <pre className="max-h-56 overflow-auto rounded-lg bg-muted p-2 font-mono text-xs whitespace-pre-wrap text-foreground">
+            <pre className="max-h-56 overflow-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap text-foreground">
               {status.more}
             </pre>
           )}
           {(visible.length > 0 || showCopy) && (
-            <div className="harness-part-in [--part-i:3] flex flex-wrap items-center gap-1.5 pt-0.5">
+            <div className="harness-part-in [--part-i:3] flex flex-wrap items-center gap-2 pt-1">
               {visible.map((a) => (
                 <ActionPill
                   key={a.kind}
@@ -237,12 +237,12 @@ export function ThreadStatus({
                   disabled={busy && (a.kind === "revive" || a.kind === "reconnect" || a.kind === "restore")}
                   onClick={() => run(a.kind)}
                 >
-                  {a.kind === "continue" && <PlayIcon className="size-3" />}
-                  {a.kind === "retry" && <RotateCwIcon className="size-3" />}
-                  {a.kind === "retryAsPaths" && <PaperclipIcon className="size-3" />}
-                  {a.kind === "settings" && <SettingsIcon className="size-3" />}
+                  {a.kind === "continue" && <PlayIcon />}
+                  {a.kind === "retry" && <RotateCwIcon />}
+                  {a.kind === "retryAsPaths" && <PaperclipIcon />}
+                  {a.kind === "settings" && <SettingsIcon />}
                   {(a.kind === "revive" || a.kind === "reconnect" || a.kind === "restore") && (
-                    <RotateCwIcon className={cn("size-3", busy && "animate-spin")} />
+                    <RotateCwIcon className={busy ? "animate-spin" : undefined} />
                   )}
                   {busy && a.busyLabel ? a.busyLabel : a.label}
                 </ActionPill>
@@ -260,7 +260,7 @@ export function ThreadStatus({
           {/* The way out of a wait that has stopped looking like one. Cancel
               gives up the wait, never the words: the message goes back in the box. */}
           {cancellable && waited >= CLOCK_MS && (
-            <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-0.5 text-muted-foreground">
+            <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-1 text-muted-foreground">
               <span className="tabular-nums">Waiting {formatElapsed(waited)}</span>
               <Button variant="outline" size="xs" onClick={() => run("cancel")}>
                 Cancel
@@ -272,7 +272,9 @@ export function ThreadStatus({
   }
 
   return (
-    <div className="harness-status py-1" data-tone={status.tone}>
+    /* No padding of its own: the foot gives every item one `py-1` wrapper
+       (thread-view), this one included. */
+    <div className="harness-status" data-tone={status.tone}>
       <button
         type="button"
         className="block w-full text-left"
@@ -288,7 +290,7 @@ export function ThreadStatus({
         />
       </button>
       {showLog && (
-        <ul className="max-h-48 space-y-0.5 overflow-auto pl-6 pt-1 text-sm text-muted-foreground">
+        <ul className="max-h-48 space-y-1 overflow-auto pl-7 pt-1 text-sm text-muted-foreground">
           {[...log].reverse().map((e, i) => (
             <li key={i} className="flex gap-2">
               <time className="shrink-0 tabular-nums">{clock(e.at)}</time>

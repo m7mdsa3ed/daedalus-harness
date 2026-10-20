@@ -31,7 +31,6 @@ export function FooterMenuButton({
       <DropdownMenuContent
         align="start"
         side={isMobile ? "bottom" : "top"}
-        sideOffset={8}
         className={cn(contentClassName)}
       >
         {children({ isMobile, setOpenMobile })}

@@ -146,15 +146,17 @@ export function Row({ item }: { item: PaletteItem }) {
         /* The menu's own row is one fixed-height line (`sizeClasses.control`).
            These are two — a title and a subtitle — so the height is given back
            to the content and only the floor is kept, which is what lines a
-           one-line row up with a two-line one on the same page. */
-        "group/row h-auto min-h-9 items-center gap-3 py-1.5",
+           one-line row up with a two-line one on the same page. The inset is
+           equal all round (6px) so the tile's rounded-md (8) sits concentric
+           in the row's rounded-xl (14). */
+        "group/row h-auto min-h-10 items-center gap-3 p-1.5",
         item.muted && "opacity-60 aria-selected:opacity-100"
       )}
     >
       <Tile>{item.icon}</Tile>
 
       <span className="flex min-w-0 flex-1 flex-col justify-center gap-px">
-        <span className="flex min-w-0 items-center gap-1.5">
+        <span className="flex min-w-0 items-center gap-2">
           {item.fresh && (
             <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="New" />
           )}
@@ -201,7 +203,9 @@ function Note({ item }: { item: PaletteItem }) {
     <CommandMenuItem
       value={item.id}
       className={cn(
-        "h-auto min-h-0 cursor-default gap-2 py-2.5 text-sm",
+        // With a mark: the row's own inset and a bare tile-sized slot, so the
+        // words start on the titles' column. Without one: a menu note's px-3 py-2.
+        item.icon ? "h-auto min-h-0 cursor-default gap-3 p-1.5 text-sm" : "h-auto min-h-0 cursor-default px-3 py-2 text-sm",
         item.noteTone === "warn" ? "text-warning" : "text-muted-foreground",
         // `disabled` fades a row that could have been picked; a note was never
         // going to be, so the fade is only noise over text meant to be read.
@@ -209,7 +213,7 @@ function Note({ item }: { item: PaletteItem }) {
       )}
     >
       {item.icon && (
-        <span className="flex shrink-0 items-center [&_svg:not([class*='size-'])]:size-3.5">
+        <span className="flex size-7 shrink-0 items-center justify-center [&_svg:not([class*='size-'])]:size-4">
           {item.icon}
         </span>
       )}
@@ -225,7 +229,7 @@ function Tile({ children }: { children: React.ReactNode }) {
     <span
       aria-hidden="true"
       className={cn(
-        "flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground",
+        "flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
         "transition-colors group-aria-selected/row:bg-background group-aria-selected/row:text-foreground",
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "[&_img]:size-5"
@@ -249,7 +253,7 @@ function Badge({ badge }: { badge: PaletteBadge }) {
     it — the part that is short and always wanted — stays. */
 function Meta({ parts }: { parts: PaletteMeta[] }) {
   return (
-    <span className="flex max-w-[45%] min-w-0 shrink items-center gap-1.5 text-xs text-muted-foreground">
+    <span className="flex max-w-[45%] min-w-0 shrink items-center gap-1 text-xs text-muted-foreground">
       {parts.map((part, index) => (
         <React.Fragment key={index}>
           {index > 0 && <span className="shrink-0 opacity-50">·</span>}

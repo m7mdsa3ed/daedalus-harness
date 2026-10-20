@@ -52,7 +52,6 @@ import {
   READING_TRIGGER_ALWAYS,
   ReadingFace,
 } from "@/components/composer/indicator";
-import { SHELF_PAD } from "@/components/composer-strip";
 import { useIsMobile } from "@/hooks/use-device";
 import { useMenuShortcut } from "@/hooks/use-hotkey";
 import type { ShortcutId } from "@/lib/shortcuts";
@@ -194,21 +193,20 @@ export function DraftScopeRow({
   );
   const newProject = useNewProject();
   return (
-    /* py-1, not the shelf's py-1.5: every control in here is already h-6, so
-       the padding is the only slack there is, and this row is under the pile on
-       every thread — four pixels here is four pixels off the transcript for the
-       whole life of the app. Half a step rather than none, because the row now
-       carries four readings at its end and h-6 controls edge to edge read as a
-       band rather than as a floor. */
+    /* px-2 py-1, not the shelf's px-3: every control in here is an h-6
+       trigger with its own px-1, so 8px + 4px puts each mark on the 12px
+       column `SHELF_PAD` sets for the pile above. py-1 because the padding is
+       the only slack a row of h-6 controls has, and this row is under the pile
+       on every thread. */
     /* Two halves, two grammars. The start is a *path* — project, then its
        checkout, then what rides along — read left to right like a location,
        chevrons between and no frame, because it names a place and not a state.
        The end is a bare cluster of readings: no box around them, each
        trigger's own hover ground is the only frame it wears. */
-    <div className={cn(SHELF_PAD, "flex min-w-0 items-center gap-3 py-1")}>
+    <div className="flex min-w-0 items-center gap-3 px-2 py-1">
       <nav
         aria-label="Thread scope"
-        className="flex min-w-0 flex-1 items-center gap-0.5"
+        className="flex min-w-0 flex-1 items-center gap-1"
       >
         {editable ? (
           <PickerMenu
@@ -255,7 +253,7 @@ export function DraftScopeRow({
           <McpPicker meta={meta} actions={actions} remember={remember} keys={keys} />
         )}
       </nav>
-      {trailing && <span className="flex shrink-0 items-center gap-0.5">{trailing}</span>}
+      {trailing && <span className="flex shrink-0 items-center gap-1">{trailing}</span>}
     </div>
   );
 }

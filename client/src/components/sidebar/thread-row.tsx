@@ -124,7 +124,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   const age = shortAge(activityAt(session))
   const row = (
     <span className="flex min-w-0 flex-1 items-center gap-2" title={detail}>
-      {agentIcon && <AgentIcon agentId={session.agentId} className="size-3.5 shrink-0" />}
+      {agentIcon && <AgentIcon agentId={session.agentId} className="size-4 shrink-0" />}
       <span
         className={cn(
           "min-w-0 flex-1 truncate",
@@ -210,7 +210,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           showOnHover
           title={`Close ${session.title}`}
           aria-label={`Close ${session.title}`}
-          className={cn(FLOAT_ACTION, fold ? "right-13" : "right-8")}
+          className={cn(FLOAT_ACTION, fold ? "right-13" : "right-7")}
           onClick={(event) => {
             event.stopPropagation()
             onClose(session)
@@ -235,7 +235,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           sideOffset={isMobile ? 8 : 4}
           className="w-72 max-w-[calc(var(--float-w)-1rem)]"
         >
-          <div className="px-2 pt-1.5 pb-1">{card}</div>
+          <div className="px-3 py-2">{card}</div>
           <DropdownMenuSeparator />
           {renderMenuItems(items, { Item: DropdownMenuItem, Separator: DropdownMenuSeparator })}
         </DropdownMenuContent>

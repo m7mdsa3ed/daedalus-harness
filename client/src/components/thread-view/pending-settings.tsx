@@ -80,8 +80,8 @@ export function PendingSettings({
   const description = [describeConfig(patch, profiles, thread), tools].filter(Boolean).join(" · ")
 
   return (
-    <section aria-label="Pending settings change" className="mt-2">
-      <header className="mb-1.5 flex items-center gap-1.5 px-1">
+    <section aria-label="Pending settings change">
+      <header className="mb-2 flex items-center gap-2 px-3">
         {applying ? (
           <Spinner className="size-3 text-muted-foreground" />
         ) : (
@@ -101,7 +101,7 @@ export function PendingSettings({
             : `Picks are held until a turn starts — or a spawn, for what only a restart can place. Nothing is applied before you ask. ${action} takes what the running agent can take as it is${thread.turnActive ? ", and the rest waits for the next turn" : ""}.`}
         </p>
         {!applying && (
-          <div className="mt-2 flex gap-1.5">
+          <div className="mt-2 flex gap-2">
             <Button
               size="xs"
               className="flex-1"

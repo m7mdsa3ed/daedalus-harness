@@ -103,11 +103,11 @@ export function ChangesIndicator({
           What the last turn that wrote anything did to the worktree — git's count, not the
           transcript's, so a shell command that edited a file is in it.
         </p>
-        <ul className={cn("-mx-1 space-y-0.5 px-1", READING_LIST)}>
+        <ul className={cn("-mx-1 space-y-1 px-1", READING_LIST)}>
           {changes.files.map((file) => (
-            <li key={file.path} className="flex items-baseline gap-2 text-sm">
+            <li key={file.path} className="flex items-center gap-2 text-sm">
               <span
-                className={cn("w-3 shrink-0 text-center font-mono font-semibold", FILE_STATUS[file.status].tone)}
+                className={cn("grid size-5 shrink-0 place-items-center font-mono font-semibold", FILE_STATUS[file.status].tone)}
                 title={file.status}
               >
                 {FILE_STATUS[file.status].letter}

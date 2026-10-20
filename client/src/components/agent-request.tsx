@@ -25,9 +25,9 @@ export function AgentRequestCard({ className, ...props }: React.ComponentProps<"
       role="group"
       data-slot="agent-request"
       className={cn(
-        // px-4/py-3.5 is the card's whole gutter — bands inside it add no
+        // p-4 is the card's whole gutter — bands inside it add no
         // horizontal padding of their own, so every edge lines up.
-        "my-3 gap-0 px-4 py-3.5",
+        "my-2 gap-0 p-4",
         "animate-in duration-200 fade-in slide-in-from-bottom-1",
         className
       )}
@@ -56,10 +56,10 @@ export function AgentRequestHeader({
   children?: React.ReactNode
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       <div className="flex items-center gap-2">
-        <Icon aria-hidden className="size-3.5 shrink-0 text-primary" />
-        <p className="harness-shimmer min-w-0 flex-1 truncate text-xs font-medium text-primary">
+        <Icon aria-hidden className="size-3 shrink-0 text-primary" />
+        <p className="harness-shimmer min-w-0 flex-1 truncate text-xs leading-5 font-medium text-primary">
           {label}
         </p>
         {aside}
@@ -73,7 +73,7 @@ export function AgentRequestHeader({
 
 /** The middle band: the evidence, the choices, the details disclosure. */
 export function AgentRequestBody({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("mt-3 space-y-2.5", className)} {...props} />
+  return <div className={cn("mt-3 space-y-3", className)} {...props} />
 }
 
 /**
@@ -84,7 +84,7 @@ export function AgentRequestBody({ className, ...props }: React.ComponentProps<"
 export function AgentRequestWell({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("overflow-hidden rounded-lg bg-muted p-2.5", className)}
+      className={cn("overflow-hidden rounded-lg bg-muted p-3", className)}
       {...props}
     />
   )
@@ -106,7 +106,7 @@ export function AgentRequestActions({ className, ...props }: React.ComponentProp
   return (
     <div
       className={cn(
-        "-mx-4 mt-3.5 flex flex-wrap items-center gap-2 border-t px-4 pt-3",
+        "-mx-4 mt-4 flex flex-wrap items-center gap-2 border-t px-4 pt-4",
         className
       )}
       {...props}

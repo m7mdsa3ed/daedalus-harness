@@ -110,7 +110,7 @@ function ElicitationStep({
       name={field.key}
       required={field.required}
       multiple={field.kind === "multiselect"}
-      className="gap-3.5"
+      className="gap-3"
     >
       <div className="flex items-start justify-between gap-3">
         {/* mb-0! because the wrapper's own margin is set by a `:has(~ …)`
@@ -134,7 +134,7 @@ function ElicitationStep({
       {choices && (
         <QuestionnaireChoices>
           {field.options.map((option) => (
-            <QuestionnaireChoice key={option.value} value={option.value}>
+            <QuestionnaireChoice key={option.value} value={option.value} className="rounded-2xl p-3">
               <ProsePreview text={option.label} className="font-medium" />
               {option.description && (
                 <QuestionnaireChoiceDescription className="text-sm">
@@ -150,7 +150,7 @@ function ElicitationStep({
                    `bg-background` would make it invisible against its own
                    parent. Prose marks up a markdown preview; a code preview
                    still finds its fenced blocks styled by the same renderer. */
-                <div className="mt-1.5 overflow-x-auto rounded-lg bg-muted px-2.5 py-2 text-xs leading-relaxed text-foreground">
+                <div className="mt-2 overflow-x-auto rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed text-foreground">
                   {/* A mockup's whitespace is its layout, so it is drawn verbatim
                       in mono; only a preview that fences its own code is markdown. */}
                   {option.preview.includes("```") ? (
@@ -361,7 +361,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
           {/* Grouped rather than pushed apart button by button: Previous and
               Skip hide themselves (first step, required question), and an auto
               margin on a hidden button stops pushing. */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <QuestionnairePrevious
               size="sm"
               variant="ghost"
@@ -380,10 +380,10 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
               {single ? "Don't answer" : "Dismiss"}
               {/* Escape does this from anywhere in the thread — including from
                   the composer, where the cursor usually is. */}
-              <Shortcut chord="esc" className="ms-1 hidden sm:inline-flex" keyClassName="bg-transparent" />
+              <Shortcut chord="esc" className="hidden sm:inline-flex" keyClassName="bg-transparent" />
             </Button>
           </div>
-          <div className="ms-auto flex items-center gap-1.5">
+          <div className="ms-auto flex items-center gap-2">
             {/* Hidden, not disabled, on a required question: the primitive
                 refuses to skip one anyway, so a disabled button would only
                 advertise a dead key. A required question's way out is the

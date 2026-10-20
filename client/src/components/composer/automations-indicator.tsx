@@ -73,14 +73,14 @@ export function AutomationsIndicator({ sessionId }: { sessionId: string }) {
           </div>
         }
       >
-        <ul className={cn("-mx-1 space-y-0.5 px-1", READING_LIST)}>
+        <ul className={cn("-mx-2 space-y-1", READING_LIST)}>
           {mine.map((a) => {
             const next = a.enabled ? nextFireOf(triggers[a.id]) : null
             return (
               <li key={a.id}>
                 <button
                   type="button"
-                  className="block w-full rounded-lg px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="block w-full rounded-lg p-2 text-left text-sm outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset"
                   onClick={() => go(automationPath(a.id))}
                 >
                   <span className={cn("block truncate text-foreground", !a.enabled && "text-muted-foreground")}>{a.name}</span>

@@ -45,6 +45,7 @@ import { useIsMobile } from "@/hooks/use-device"
 import { HEADER_CHIP } from "@/lib/header-chrome"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { PANEL_ICONS, PanelIcon } from "@/components/workspace/panel-kinds"
+import { AgentIcon } from "@/components/entity-icon"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import type { PresetId } from "@/components/workspace/dock-context"
 import { LAYOUT_PRESETS, WorkspacePanelItems } from "@/components/workspace/panel-items"
@@ -126,7 +127,7 @@ function TabGrid({
         )}
       </Button>
       <ResponsiveDialog open={open} onOpenChange={setOpen}>
-        <ResponsiveDialogContent bodyClassName="gap-0.5 px-2 py-2" className="sm:max-w-md">
+        <ResponsiveDialogContent bodyClassName="gap-1 p-2" className="sm:max-w-md">
           <ResponsiveDialogHeader className="flex-row items-center gap-2">
             <ResponsiveDialogTitle>Tabs</ResponsiveDialogTitle>
             <Count>{panels.length}</Count>
@@ -151,8 +152,8 @@ function TabGrid({
           ))}
           {recent.length > 0 && (
             <>
-              <div className="mt-3 flex h-8 items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
-                <HistoryIcon className="size-3.5" />
+              <div className="mt-3 flex h-8 items-center gap-2.5 px-3 text-xs font-medium text-muted-foreground">
+                <HistoryIcon className="size-4" />
                 Recent
               </div>
               {recent.map((s) => (
@@ -163,8 +164,12 @@ function TabGrid({
                     setOpen(false)
                     onOpenThread(s.id)
                   }}
-                  className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left hover:bg-muted"
+                  className="flex min-h-12 items-center gap-2.5 rounded-3xl px-3 text-left hover:bg-muted"
                 >
+                  {/* The tab rows' leading column: the thread's own mark. */}
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    <AgentIcon agentId={s.agentId} className="size-4" />
+                  </span>
                   <span className="min-w-0 flex-1 truncate text-sm">{s.title || "Untitled thread"}</span>
                   <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                     {relativeAge(activityAt(s))}
@@ -210,7 +215,8 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
   return (
     <div
       className={cn(
-        "flex min-h-12 items-center rounded-xl transition-colors",
+        // 48px row, 36px trailing control at 6px all round: 18 + 6 ≈ rounded-3xl.
+        "flex min-h-12 items-center rounded-3xl transition-colors",
         active ? "bg-muted" : "hover:bg-muted"
       )}
     >
@@ -235,13 +241,17 @@ function TabCard({ panel, onPick, onClose }: { panel: IDockviewPanel; onPick: ()
           makes too. The ✕ stands *beside* the switch button rather than inside
           it, so closing a tab never switches to it on the way out. */}
       {pinned ? (
-        <PinIcon aria-label="Pinned" className="mr-3 size-3.5 shrink-0 text-muted-foreground" />
+        <span className="mr-1.5 flex size-9 shrink-0 items-center justify-center">
+          <PinIcon aria-label="Pinned" className="size-3.5 text-muted-foreground" />
+        </span>
       ) : (
         <Button
           variant="ghost"
           size="icon"
           aria-label={`Close ${title}`}
           onClick={onClose}
+          /* 36px, not 32: this list is a drawer on a phone, and the ✕ is a
+             touch target. `mr-1.5` is the row's 6px vertical inset. */
           className="mr-1.5 shrink-0 text-muted-foreground"
         >
           <XIcon />

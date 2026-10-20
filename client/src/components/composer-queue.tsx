@@ -94,8 +94,8 @@ export function ComposerQueue({
       .finally(() => setBusy(false))
   }
   return (
-    <section aria-label="Pending updates" className="mt-2">
-      <header className="mb-1.5 flex items-center justify-between px-1">
+    <section aria-label="Pending updates">
+      <header className="mb-2 flex items-center justify-between px-3">
         <h3 className="text-xs font-medium text-muted-foreground">
           Up next
         </h3>
@@ -206,18 +206,18 @@ function QueuedMessageRow({
         /* Every row is waiting on the agent — a steer for the step boundary, a
            queued one for the turn's end — so it wears the busy ring a loading
            Button does (push/pull). */
-        "group/queued harness-busy-ring relative flex min-w-0 flex-col gap-1 rounded-xl border border-dashed bg-muted/50 px-3 py-2",
+        "group/queued harness-busy-ring relative flex min-w-0 flex-col gap-1 rounded-2xl border border-dashed bg-muted/50 p-2",
         "transition-colors hover:bg-muted",
         busy && "opacity-50",
         isDragging && "z-10 bg-muted"
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <div className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-2 px-1">
           {sortable && (
             <button
               type="button"
-              className="-ms-1 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+              className="shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
               title="Drag to reorder"
               {...attributes}
               {...listeners}
@@ -246,7 +246,7 @@ function QueuedMessageRow({
           <Timestamp at={item.createdAt} className="shrink-0 text-xs text-muted-foreground" />
         </div>
         {!item.steer && (
-          <div className="ms-auto flex flex-wrap items-center justify-end gap-0.5">
+          <div className="ms-auto flex flex-wrap items-center justify-end gap-1">
             {running && (
               <Button
                 variant="ghost"
@@ -300,7 +300,7 @@ function QueuedMessageRow({
           </div>
         )}
       </div>
-      <div dir="auto" className="min-w-0 break-words text-sm text-muted-foreground">
+      <div dir="auto" className="min-w-0 break-words px-1 text-sm text-muted-foreground">
         {item.attachments && item.attachments.length > 0 && (
           <QueuedAttachments
             attachments={item.attachments}
@@ -335,7 +335,7 @@ function QueuedAttachments({
   onRemove: (id: string) => void
 }) {
   return (
-    <ul className="mb-1.5 flex flex-wrap gap-1">
+    <ul className="mb-2 flex flex-wrap gap-1">
       {attachments.map((ref) => (
         <Badge key={ref.id} variant="secondary" render={<li />}>
           <PaperclipIcon />

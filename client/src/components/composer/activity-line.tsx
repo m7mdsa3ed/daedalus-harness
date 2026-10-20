@@ -174,8 +174,11 @@ export function PhaseLine({
       )}
       role="status"
     >
-      {/* size-4 sits on the step row's 1.5rem line box. */}
-      <Logo working={!still && tone === "normal"} className="size-4 shrink-0" />
+      {/* The step row's mark slot (20 wide, one 24px line box), so the Logo
+          stands in the column every step's mark does. */}
+      <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+        <Logo working={!still && tone === "normal"} className="size-4" />
+      </span>
       {/* The wave animates each letter, never this span, so the swap below keeps
           this span's transition to itself (`harness-phase-swap` in index.css — written
           when the sweep owned `animation` here and a nested span went blank).

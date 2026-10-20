@@ -18,6 +18,7 @@
  * on a timer: nothing here is worth a poll, and the half that does move
  * (threads, running turns) is the half that already moves on its own.
  */
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import {
   ActivityIcon,
@@ -346,7 +347,7 @@ function HelpersMenu({
           </Button>
         }
       />
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className={MENU_WIDTH}>
         {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: it reads its group
             from context and throws outside one, so the label and its items are
             wrapped together rather than sitting loose in the content. */}

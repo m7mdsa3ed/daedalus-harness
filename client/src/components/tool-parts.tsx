@@ -182,7 +182,12 @@ export const PANE = "overflow-hidden rounded-lg bg-muted"
 
 /** The same box with its own padding, for a pane holding one thing rather than
     a list of rows (a brief, a plan, tool prose, a code block). */
-export const PANE_PAD = "rounded-lg bg-muted px-2.5 py-2"
+export const PANE_PAD = "rounded-lg bg-muted px-3 py-2"
+
+/** A row inside a `PANE`: a text row with no leading mark, so it may run wider
+    than it is tall. A dense mono list (grep hits, a read, a run's footer) is
+    `px-3 py-1`; a row that holds more than one line adds `space-y-1`. */
+export const PANE_ROW = "px-3 py-2"
 
 /** A recessed block inside a pane — a heredoc body, an unfolded stack trace. */
 export const INSET = "rounded-md bg-background"
@@ -190,7 +195,12 @@ export const INSET = "rounded-md bg-background"
 /** A notice that is its own object in the flow rather than a step: an error, a
     task reporting back, an agent's demarcated block, a pasted blob. The tone
     (border and wash) is the caller's; the geometry is not. */
-export const CARD = "my-2 rounded-xl border px-3 py-2.5"
+export const CARD = "my-2 rounded-xl border p-3"
+
+/** A chip inside a step's title line — a file, a path. 20px tall, so it sits in
+    the 24px title line box with 2px either side. */
+export const CHIP =
+  "inline-flex items-center gap-1 rounded-md bg-muted px-1 py-0.5 font-mono text-xs leading-4"
 
 /** The caption over a section of a step's detail, and over anything else that
     is a group of rows with a name. */
@@ -200,6 +210,11 @@ export const LABEL =
 /** The "Show details" / "Hide result" line every card folds its payload behind.
     One component rather than three copies of the same flex row, so the chevron
     turns the same way and sits at the same size wherever it is drawn. */
+/** The disclosure line's own class, for a trigger that cannot be `Disclosure`
+    itself (a dialog trigger, a `<summary>`). */
+export const DISCLOSURE =
+  "flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+
 export function Disclosure({
   open,
   onToggle,
@@ -215,10 +230,7 @@ export function Disclosure({
     <button
       type="button"
       onClick={onToggle}
-      className={cn(
-        "flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",
-        className
-      )}
+      className={cn(DISCLOSURE, className)}
     >
       <ChevronRightIcon
         aria-hidden
@@ -313,7 +325,7 @@ const MarkdownPre = ({
         title={copied ? "Copied" : "Copy"}
         onClick={() => void copy()}
         className={cn(
-          "absolute top-1.5 right-1.5 bg-popover",
+          "absolute top-1 right-1 bg-popover",
           coarse ? "opacity-100" : "opacity-0 group-hover/code:opacity-100 focus-visible:opacity-100",
         )}
       >
@@ -476,10 +488,7 @@ export function PlanFullscreen({
         render={
           <button
             type="button"
-            className={cn(
-              "flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",
-              className
-            )}
+            className={cn(DISCLOSURE, className)}
           />
         }
       >
@@ -569,7 +578,7 @@ export function ToolInput({ item }: { item: ToolItem }) {
       /* Body tier, not caption tier: these are the tool's actual arguments —
          the thing you read — so they match message prose. `text-xs` is for
          labels and counters. */
-      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-sm">
+      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 font-mono text-sm">
         {entries.map(([key, value]) => (
           <React.Fragment key={key}>
             <dt className="text-muted-foreground">{key}</dt>
@@ -595,7 +604,7 @@ export function ToolInput({ item }: { item: ToolItem }) {
  */
 export function ToolLocations({ item }: { item: ToolItem }) {
   return (
-    <ul className="space-y-0.5 font-mono text-xs text-muted-foreground">
+    <ul className="space-y-1 font-mono text-xs text-muted-foreground">
       {item.locations.map((location, index) => {
         const range = fileRangeOf(item, location)
         const label = `${location.path}${range ? `:${formatRange(range)}` : ""}`
@@ -795,7 +804,7 @@ export function ShellScript({ command, className }: { command: string; className
           <Highlighted key={index} code={segment.text} language="bash" />
         ) : (
           <div key={index} className={cn(INSET, "overflow-hidden")}>
-            <div className="flex items-center gap-1.5 border-b px-2 py-0.5 font-mono text-xs text-muted-foreground">
+            <div className="flex items-center gap-1 border-b px-2 py-1 font-mono text-xs text-muted-foreground">
               <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
               <span>{segment.label}</span>
               {segment.language && <span className="opacity-70">· {segment.language}</span>}
@@ -828,7 +837,7 @@ export function CodeBlock({
           ? /* `pr-9` reserves the corner the copy below floats in, so a long
                single-line stack trace is not read with its tail under a
                button. */
-            "rounded-lg bg-destructive/10 py-2 pl-2.5 pr-9 text-destructive"
+            "rounded-lg bg-destructive/10 py-2 pl-3 pr-9 text-destructive"
           : PANE_PAD
       )}
     >
@@ -1150,7 +1159,7 @@ export function JsonView({
   const coarse = useCoarsePointer()
   return (
     <div className={cn("group/json relative", className)}>
-      <div className={cn(PANE, PANE_MAX_H, "overflow-auto px-2 py-1.5")}>
+      <div className={cn(PANE, PANE_MAX_H, "overflow-auto", PANE_ROW)}>
         <JsonNode name={null} index={null} value={value} depth={0} preview={preview} last />
       </div>
       {/* The copy rides the tree the way it rides a fenced block — hover on a
@@ -1189,6 +1198,15 @@ function parseJsonDocument(text: string): { value: unknown } | null {
  * (`thread-cards.tsx`, `ShellStep`) both draw through it, so the two read as the
  * same act rather than as two things that happen to print text.
  */
+/** ShellPane's rows, shared with the terminal-channel run (`TerminalDetail`)
+    so the two panes are one geometry. */
+export const SHELL_COMMAND = "flex items-start gap-2 px-3 py-2 font-mono text-xs leading-relaxed"
+export const SHELL_OUTPUT =
+  "overflow-auto border-t border-inherit px-3 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap"
+export const SHELL_SKELETON = "border-t border-inherit px-3 py-2"
+/** A pane's footer row — a failed run's exit line. */
+export const SHELL_FOOTER = "flex items-center gap-2 border-t border-inherit px-3 py-1 font-mono text-xs"
+
 export function ShellPane({
   command,
   output,
@@ -1207,7 +1225,7 @@ export function ShellPane({
   const [out, over, showAll] = useShowAll(output, 200_000)
   return (
     <div className={cn(PANE, failed && "bg-destructive/10")}>
-      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-xs leading-relaxed">
+      <div className={SHELL_COMMAND}>
         <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground">
           $
         </span>
@@ -1217,7 +1235,7 @@ export function ShellPane({
         <pre
           className={cn(
             PANE_MAX_H,
-            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap",
+            SHELL_OUTPUT,
             failed ? "text-destructive" : "text-muted-foreground"
           )}
         >
@@ -1225,9 +1243,9 @@ export function ShellPane({
         </pre>
       )}
       {/* Running with nothing printed yet: breathing lines, not an empty pane. */}
-      {!out.trim() && running && <ToolCallSkeleton className="border-t border-inherit p-2.5" />}
+      {!out.trim() && running && <ToolCallSkeleton className={SHELL_SKELETON} />}
       {!out.trim() && !running && emptyNote && (
-        <p className="border-t border-inherit px-2.5 py-1.5 font-mono text-xs text-muted-foreground">
+        <p className="border-t border-inherit px-3 py-2 font-mono text-xs text-muted-foreground">
           {emptyNote}
         </p>
       )}
@@ -1281,7 +1299,7 @@ export function FileBadge({
      lands with the title it belongs to — it inherits that part's `--part-i`,
      so it is the same 45ms, not a slot of its own. */
   const cls =
-    "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-px font-mono text-xs leading-4 text-muted-foreground"
+    cn(CHIP, "harness-part-in max-w-[45%] shrink-0 text-muted-foreground")
   if (!ctx || !target) return <span className={cls} title={filePath ?? file}>{inner}</span>
   return (
     <span

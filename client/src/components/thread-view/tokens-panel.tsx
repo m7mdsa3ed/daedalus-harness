@@ -17,6 +17,7 @@
    Nothing else in the app prints an estimate: the composer's popovers and the
    transcript's footers show only what was reported. */
 import * as React from "react"
+import { ChevronRightIcon } from "lucide-react"
 
 import { Empty } from "@/components/empty"
 import { Badge } from "@/components/ui/badge"
@@ -48,6 +49,10 @@ const sum = (parts: PromptParts) => Object.values(parts).reduce((n, v) => n + v,
 /** The columns the request chart draws, newest last — more would be slivers. */
 const CHART_MAX = 48
 
+/** A figure tile inside an `InspectorCard` body: its corner is the card's
+    less the body's padding (`frame-2xl` / `frame-p-3` → `rounded-inner`). */
+export const INSPECTOR_TILE = "rounded-inner bg-muted px-3 py-2"
+
 /** One card of an inspector reading (Details, Tokens): a caption strip — its
     mark, its title and a hint at the end — over the card's body. The one
     shape, so every reading's cards are the same card. */
@@ -63,15 +68,15 @@ export function InspectorCard({
   children: React.ReactNode
 }) {
   return (
-    <Card size="sm" className="gap-0 py-0">
+    <Card size="sm" className="frame-2xl gap-0 py-0">
       <div className="flex min-w-0 items-center gap-2 border-b px-3 py-2">
-        <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium text-muted-foreground [&_svg:not([class*='size-'])]:size-3.5">
+        <h2 className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-muted-foreground [&_svg:not([class*='size-'])]:size-3">
           {icon}
           {title}
         </h2>
         {hint && <span className="shrink-0 truncate text-xs text-muted-foreground">{hint}</span>}
       </div>
-      <div className="p-3">{children}</div>
+      <div className="frame-p-3">{children}</div>
     </Card>
   )
 }
@@ -123,12 +128,12 @@ interface Row {
     percentage. A row with nothing in it is not drawn. */
 function Rows({ rows, total }: { rows: Row[]; total: number }) {
   return (
-    <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-start gap-x-2.5 gap-y-2 text-xs tabular-nums">
+    <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-start gap-x-2 gap-y-2 text-xs tabular-nums">
       {rows
         .filter((row) => row.value > 0)
         .map((row) => (
           <React.Fragment key={row.label}>
-            <span className={cn("mt-[3px] size-2 rounded-sm", row.swatch)} />
+            <span className={cn("mt-1 size-2 rounded-sm", row.swatch)} />
             <span className="min-w-0">
               <span className="block truncate">
                 {row.label}
@@ -156,11 +161,11 @@ const TONE_FILL: Record<Tone, string> = { ok: "bg-success", warn: "bg-warning", 
 /** One headline figure: label, value, and a line of what it is made of. */
 function Tile({ label, value, hint, tone, fill }: { label: string; value: string; hint?: string; tone?: Tone; fill?: number }) {
   return (
-    <div className="min-w-0 rounded-xl bg-muted px-2.5 py-2">
+    <div className={cn("min-w-0", INSPECTOR_TILE)}>
       <p className="truncate text-xs text-muted-foreground">{label}</p>
-      <p className={cn("mt-0.5 text-base font-medium leading-none tabular-nums", tone && TONE_TEXT[tone])}>{value}</p>
+      <p className={cn("mt-1 text-base font-medium leading-none tabular-nums", tone && TONE_TEXT[tone])}>{value}</p>
       {fill !== undefined && (
-        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-background" aria-hidden>
+        <span className="mt-2 block h-1 overflow-hidden rounded-full bg-background" aria-hidden>
           <span className={cn("block h-full rounded-full", TONE_FILL[tone ?? "ok"])} style={{ width: `${Math.min(100, fill)}%` }} />
         </span>
       )}
@@ -177,7 +182,7 @@ function ItemList({ items, part }: { items: { name: string; tokens: number }[]; 
   const [all, setAll] = React.useState(false)
   const shown = all ? items : items.slice(0, LIST_MAX)
   return (
-    <ul className="space-y-0.5">
+    <ul className="space-y-1">
       {shown.map((item, i) => (
         <li key={i} className="grid grid-cols-[1fr_auto_2rem] items-baseline gap-x-2 tabular-nums">
           <span className="min-w-0 truncate" title={item.name}>{item.name}</span>
@@ -199,19 +204,21 @@ function ItemList({ items, part }: { items: { name: string; tokens: number }[]; 
 /** One part's contents: its items, a group opening onto its children. */
 function PartItems({ items, part }: { items: DetailItem[]; part: number }) {
   return (
-    <div className="space-y-0.5 py-1 pl-4 text-xs">
+    <div className="space-y-1 py-1 pl-4 text-xs">
       {items.map((item, i) =>
         item.children ? (
           <details key={i} className="group/item">
             <summary className="grid cursor-pointer list-none grid-cols-[1fr_auto_2rem] items-baseline gap-x-2 tabular-nums">
-              <span className="min-w-0 truncate font-medium" title={item.name}>
-                <span className="mr-1 inline-block text-muted-foreground transition-transform group-open/item:rotate-90">›</span>
-                {item.name} <span className="font-normal text-muted-foreground">({item.children.length})</span>
+              <span className="flex min-w-0 items-center gap-1 font-medium" title={item.name}>
+                <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground transition-transform group-open/item:rotate-90" />
+                <span className="min-w-0 truncate">
+                  {item.name} <span className="font-normal text-muted-foreground">({item.children.length})</span>
+                </span>
               </span>
               <span className="text-right">{about(item.tokens)}</span>
               <span className="text-right text-muted-foreground">{pct(item.tokens, part)}</span>
             </summary>
-            <div className="mt-0.5 border-l pl-2.5 text-muted-foreground">
+            <div className="mt-1 border-l pl-3 text-muted-foreground">
               <ItemList items={item.children} part={part} />
             </div>
           </details>
@@ -237,9 +244,9 @@ function PromptRows({
   all: PromptParts
   details: Partial<Record<PromptKey, DetailItem[]>>
 }) {
-  const cols = "grid grid-cols-[0.75rem_auto_1fr_auto_auto] items-start gap-x-2.5"
+  const cols = "grid grid-cols-[0.75rem_auto_1fr_auto_auto] items-start gap-x-2"
   return (
-    <div className="mt-3 space-y-1.5 text-xs tabular-nums">
+    <div className="mt-3 space-y-1 text-xs tabular-nums">
       <div className={cn(cols, "text-xs text-muted-foreground")}>
         <span />
         <span />
@@ -251,8 +258,12 @@ function PromptRows({
         const items = details[part.key] ?? []
         const row = (
           <>
-            <span className="text-xs text-muted-foreground transition-transform group-open/part:rotate-90">{items.length ? "›" : ""}</span>
-            <span className={cn("mt-[3px] size-2 rounded-sm", part.swatch)} />
+            <span className="flex h-4 items-center text-muted-foreground">
+              {items.length > 0 && (
+                <ChevronRightIcon aria-hidden className="size-3 transition-transform group-open/part:rotate-90" />
+              )}
+            </span>
+            <span className={cn("mt-1 size-2 rounded-sm", part.swatch)} />
             <span className="min-w-0">
               <span className="block truncate">{part.label}</span>
               <ShareBar swatch={part.swatch} value={parts[part.key]} total={totals[0]} />
@@ -265,7 +276,7 @@ function PromptRows({
         )
         return items.length ? (
           <details key={part.key} className="group/part">
-            <summary className={cn(cols, "cursor-pointer list-none rounded-md hover:bg-muted")}>{row}</summary>
+            <summary className={cn(cols, "-mx-1 cursor-pointer list-none rounded-md px-1 py-0.5 hover:bg-muted")}>{row}</summary>
             <PartItems items={items} part={parts[part.key]} />
           </details>
         ) : (
@@ -309,7 +320,7 @@ function RequestChart({
   const max = Math.max(1, ...shown.map((r) => r.step.update.used))
   return (
     <div className="relative pt-3">
-      <span className="absolute inset-x-0 top-0 flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground" aria-hidden>
+      <span className="absolute inset-x-0 top-0 flex items-center gap-2 text-xs tabular-nums text-muted-foreground" aria-hidden>
         <span>{formatTokens(max)}</span>
         <span className="flex-1 border-t border-dashed border-border" />
       </span>
@@ -367,7 +378,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
 
   if (turns.length === 0) {
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <Empty>No token usage has been recorded for this thread.</Empty>
       </div>
     )
@@ -394,7 +405,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
   const peak = steps.reduce((best, step, i) => (step.update.used > best.used ? { used: step.update.used, number: i + 1 } : best), { used: 0, number: 0 })
 
   return (
-    <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-2.5">
+    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
       {billed && billedRows && (
         <InspectorCard title="Billed" hint={`${steps.length} steps · ${billedTurns} turns`}>
           <p className="text-2xl font-medium leading-none tabular-nums">{formatTokens(billed.totalTokens)}</p>
@@ -452,7 +463,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
               <span className="tabular-nums text-muted-foreground">
                 {formatTokens(selected.step.update.used)} in the prompt
                 {delta !== null && delta !== 0 && (
-                  <span className={cn("ml-1.5", delta > 0 ? TONE_TEXT.warn : TONE_TEXT.ok)}>
+                  <span className={cn("ml-1", delta > 0 ? TONE_TEXT.warn : TONE_TEXT.ok)}>
                     {delta > 0 ? "+" : "−"}
                     {formatTokens(Math.abs(delta))}
                   </span>
@@ -460,8 +471,8 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
               </span>
             </div>
             {largest && selectedTotal > 0 && (
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className={cn("size-1.5 rounded-full", largest.swatch)} />
+              <p className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className={cn("size-1.5 shrink-0 rounded-full", largest.swatch)} />
                 {largest.label} lead at {pct(selected.parts[largest.key], selectedTotal)}
                 {selected.step.update.size > 0 && !windowEstimated(selected.step.update) && ` · ${pct(selected.step.update.used, selected.step.update.size)} of the window`}
               </p>
@@ -480,8 +491,9 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
               details={details}
             />
             <details className="group/notes mt-3 text-xs text-muted-foreground">
-              <summary className="cursor-pointer list-none hover:text-foreground">
-                <span className="mr-1 inline-block transition-transform group-open/notes:rotate-90">›</span>How these are measured
+              <summary className="flex cursor-pointer list-none items-center gap-1 hover:text-foreground">
+                <ChevronRightIcon aria-hidden className="size-3 shrink-0 transition-transform group-open/notes:rotate-90" />
+                How these are measured
               </summary>
               <div className="mt-1 space-y-1">
                 {all.inferred < all.requests && (
@@ -619,7 +631,8 @@ function StepRow({
         aria-pressed={picked}
         onClick={() => onPick(number)}
         className={cn(
-          "block w-full rounded-lg px-2.5 py-2 text-start text-xs transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          INSPECTOR_TILE,
+          "block w-full text-start text-xs transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
           picked ? "bg-muted ring-1 ring-foreground/10" : "bg-muted/50"
         )}
       >
@@ -628,7 +641,7 @@ function StepRow({
           <span className="min-w-0 flex-1 truncate" title={step.label}>{step.label}</span>
           <span className="shrink-0 font-medium tabular-nums">{formatTokens(used)}</span>
         </span>
-        <span className="mt-1.5 block" style={{ width: `${Math.max(4, (used / max) * 100)}%` }}>
+        <span className="mt-2 block" style={{ width: `${Math.max(4, (used / max) * 100)}%` }}>
           <StackBar
             className="h-1.5"
             label={`Step ${number} prompt by part`}
@@ -638,7 +651,7 @@ function StepRow({
             }
           />
         </span>
-        <span className="mt-1 flex flex-wrap gap-x-2.5 text-xs tabular-nums text-muted-foreground">
+        <span className="mt-1 flex flex-wrap gap-x-2 text-xs tabular-nums text-muted-foreground">
           <span>turn {step.turn}</span>
           {step.durationMs !== undefined && (
             <span title="Time since the step before it, tool calls included">{formatDuration(step.durationMs)}</span>

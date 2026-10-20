@@ -76,7 +76,7 @@ import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
 import { usePlacePhoto, type PlacePhoto } from "@/lib/openui/place-photo"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
-import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT } from "@/lib/openui/kit"
+import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT, WELL_PAD } from "@/lib/openui/kit"
 import { UI_GROUPS } from "@/lib/openui/groups"
 import { FileTree } from "@/lib/openui/components/FileTree"
 import { Button, Checkbox, Form, FormControl, Input, Select, SelectItem, Slider, Textarea } from "@/lib/openui/components/interactive"
@@ -129,7 +129,7 @@ const Card = defineComponent({
   component: ({ props, renderNode }) => (
     <Box>
       <BoxHeader title={props.title} meta={props.subtitle} />
-      <div className={cn(FLOW, PAD)}>{renderNode(props.children)}</div>
+      <div className={cn(FLOW, WELL_PAD)}>{renderNode(props.children)}</div>
     </Box>
   ),
 })
@@ -184,7 +184,7 @@ const Details = defineComponent({
           <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open/details:rotate-90" />
           <span className="min-w-0 break-words">{props.summary}</span>
         </summary>
-        <div className={cn(FLOW, "border-t", PAD)}>{renderNode(props.children)}</div>
+        <div className={cn(FLOW, "border-t", WELL_PAD)}>{renderNode(props.children)}</div>
       </details>
     </Box>
   ),
@@ -905,8 +905,8 @@ function CardGridView({ items, origin, carousel }: { items: GridItem[]; origin?:
       {pick && (
         <div ref={panel} className="scroll-mb-4">
           <Box>
-            <div className={cn("flex items-center gap-3 border-b", PAD)}>
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+            <div className={cn("flex items-center gap-3 border-b", WELL_PAD)}>
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-inner bg-muted text-foreground">
                 <MapPin aria-hidden className="size-4" />
               </span>
               <span className="min-w-0 flex-1">

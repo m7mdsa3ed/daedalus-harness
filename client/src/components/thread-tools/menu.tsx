@@ -16,7 +16,6 @@
  *
  * The project contributes nothing: it is the directory, not the toolset.
  */
-import { BlocksIcon, SlashSquareIcon } from "lucide-react"
 
 import { useDispatch } from "@/lib/store"
 import {
@@ -114,7 +113,6 @@ export function ThreadToolsSections({
      (`useThreadToolLinks.toggle`). This menu is where tools are chosen; the
      strip only reads them. */
   const canEdit = editable || !meta.draft
-  const iconClass = "size-4 text-muted-foreground"
   const common = { editable: canEdit, needsAuth, agentName: agent?.name }
   return (
     <>
@@ -126,7 +124,6 @@ export function ThreadToolsSections({
       <ToolSection
         {...common}
         title="Skills"
-        icon={<BlocksIcon className={iconClass} />}
         items={skills}
         hint={(s) => s.path}
         inherited={inherited.skillIds}
@@ -137,7 +134,6 @@ export function ThreadToolsSections({
       <ToolSection
         {...common}
         title="Slash commands"
-        icon={<SlashSquareIcon className={iconClass} />}
         items={commands}
         hint={(c) => `/${c.name}`}
         inherited={inherited.commandIds}

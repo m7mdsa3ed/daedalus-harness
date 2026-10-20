@@ -1,3 +1,4 @@
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import type { LucideIcon } from "lucide-react"
 import { toast } from "@/lib/toast"
@@ -242,7 +243,7 @@ export function NotificationsPage() {
                 </Button>
               }
             />
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className={MENU_WIDTH}>
               {THREAD_EVENT_ROWS.map(({ key, title }) => (
                 <DropdownMenuItem key={key} onClick={() => testThreadNotification(key)}>
                   {title}

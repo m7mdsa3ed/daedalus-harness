@@ -42,13 +42,13 @@ export function FetchDetail({ item }: { item: ToolItem }) {
   const { text } = toolOutputText(item, 20_000)
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       {url && (
         <a
           href={/^https?:\/\//.test(url) ? url : undefined}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-1.5 font-mono text-xs text-primary hover:underline"
+          className="flex items-center gap-1 font-mono text-xs leading-5 text-primary hover:underline"
         >
           <GlobeIcon className="size-3 shrink-0" />
           <span className="truncate">{url}</span>
@@ -85,9 +85,9 @@ export function WebSearchDetail({ item, active }: { item: ToolItem; active: bool
   const failed = item.status === "failed" || call.error !== undefined
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
-        <GlobeIcon className="size-3 shrink-0 self-center text-muted-foreground" />
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-5">
+        <GlobeIcon className="size-3.5 shrink-0 text-muted-foreground" />
         {call.query && <span className="text-foreground">“{call.query}”</span>}
         {call.pattern && <code className="font-mono text-foreground">{call.pattern}</code>}
         {call.url && (
@@ -255,9 +255,9 @@ function WebResultRow({ hit }: { hit: WebResult }) {
   const openSource = useSourceOpener()
   const host = hostOf(hit.url)
   return (
-    <li className="px-2.5 py-2">
-      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <Favicon url={hit.url} className="size-3.5" />
+    <li className="space-y-1 px-3 py-2">
+      <div className="flex min-w-0 items-center gap-1 text-xs leading-5 text-muted-foreground">
+        <Favicon url={hit.url} className="size-3" />
         <span className="truncate">{host || hit.url}</span>
       </div>
       <a
@@ -266,7 +266,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
         rel="noreferrer noopener"
         onClick={(event) => openSource(event, hit.url)}
         title={hit.url}
-        className="mt-0.5 block truncate text-sm font-medium text-foreground hover:underline"
+        className="block truncate text-sm font-medium text-foreground hover:underline"
       >
         {hit.title}
       </a>
@@ -278,7 +278,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
           type="button"
           onClick={() => setOpen((value) => !value)}
           className={cn(
-            "mt-0.5 block w-full text-left text-xs text-muted-foreground",
+            "block w-full text-left text-xs text-muted-foreground",
             !open && "line-clamp-3"
           )}
           style={open ? undefined : { WebkitLineClamp: SNIPPET_LINES }}
@@ -305,8 +305,8 @@ export function WebFetchDetail({ item, active }: { item: ToolItem; active: boole
   if (!call) return null
   const failed = item.status === "failed" || /^error:/i.test(call.text.trim())
   return (
-    <div className="space-y-1.5">
-      <div className="flex min-w-0 items-center gap-1.5 text-sm">
+    <div className="space-y-2">
+      <div className="flex min-w-0 items-center gap-2 text-sm leading-5">
         <Favicon url={call.url} />
         <span className="shrink-0 text-muted-foreground">{hostOf(call.url)}</span>
         <a

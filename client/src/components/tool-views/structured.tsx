@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { TodoChecklist } from "@/components/todo-checklist"
 import {
+  INSET,
   LABEL,
   PANE,
   PANE_MAX_H,
@@ -87,9 +88,13 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
         )
         const spelled = question.options.length === 0 ? answer : custom
         return (
-          <div key={index} className="space-y-1.5">
-            <div className="flex items-start gap-1.5 text-sm">
-              <MessageCircleQuestionIcon className="mt-1 size-3 shrink-0 text-muted-foreground" />
+          <div key={index} className="space-y-1">
+            {/* A 16px mark cell and gap-1: the question text starts 20px in,
+                which is the `ms-5` the options and the answer hang from. */}
+            <div className="flex items-start gap-1 text-sm leading-5">
+              <span className="flex h-5 w-4 shrink-0 items-center">
+                <MessageCircleQuestionIcon className="size-3 text-muted-foreground" />
+              </span>
               <span className="min-w-0 flex-1 text-foreground">
                 <ProsePreview text={question.question} />
               </span>
@@ -105,18 +110,17 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
                     <li
                       key={optionIndex}
                       className={cn(
-                        "flex items-start gap-2 rounded-lg px-2 py-1 text-sm",
+                        "flex items-start gap-2 rounded-lg p-2 text-sm leading-5",
                         chosen ? "bg-primary/10" : "bg-muted"
                       )}
                     >
-                      {chosen ? (
-                        <CheckIcon className="mt-[0.15em] size-3 shrink-0 text-primary" />
-                      ) : (
-                        <span
-                          aria-hidden
-                          className="mt-[0.4em] size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-                        />
-                      )}
+                      <span aria-hidden className="grid h-5 w-3 shrink-0 place-items-center">
+                        {chosen ? (
+                          <CheckIcon className="size-3 text-primary" />
+                        ) : (
+                          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
+                        )}
+                      </span>
                       <span className="min-w-0">
                         <ProsePreview
                           text={option.label}
@@ -138,10 +142,12 @@ export function QuestionsDetail({ item }: { item: ToolItem }) {
                 options at all (a free-text question) the mark has nothing to sit
                 on, and a long list makes the one tinted row easy to miss. */}
             {(spelled.length > 0 || question.notes) && (
-              <div className="ms-5 space-y-0.5 text-sm">
+              <div className="ms-5 space-y-1 text-sm leading-5">
                 {spelled.map((picked, pickedIndex) => (
-                  <p key={pickedIndex} className="flex items-start gap-1.5">
-                    <CheckIcon className="mt-[0.15em] size-3 shrink-0 text-primary" />
+                  <p key={pickedIndex} className="flex items-start gap-2">
+                    <span aria-hidden className="grid h-5 w-3 shrink-0 place-items-center">
+                      <CheckIcon className="size-3 text-primary" />
+                    </span>
                     <span className="min-w-0 text-foreground">
                       <ProsePreview text={picked} />
                     </span>
@@ -187,19 +193,22 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
       {answered.map((question, index) => (
         <div
           key={index}
-          className={cn(PANE_PAD, "min-w-0 space-y-1.5")}
+          className={cn(PANE_PAD, "min-w-0 space-y-1")}
         >
-          <div className="flex min-w-0 items-start gap-1.5">
-            <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 text-primary" />
+          {/* Mark cell w-4 + gap-1 = the `ps-5`/`ms-5` the picks hang from. */}
+          <div className="flex min-w-0 items-start gap-1">
+            <span className="flex h-5 w-4 shrink-0 items-center">
+              <MessageCircleQuestionIcon className="size-3.5 text-primary" />
+            </span>
             <div className="min-w-0 flex-1">
-              {question.header && <div className={cn(LABEL, "mb-0.5")}>{question.header}</div>}
-              <div className="text-sm text-foreground">
+              {question.header && <div className={cn(LABEL, "leading-5")}>{question.header}</div>}
+              <div className="text-sm leading-5 text-foreground">
                 <ProsePreview text={question.question} />
               </div>
             </div>
           </div>
           {(question.answer?.length ?? 0) > 0 && (
-            <div className="flex min-w-0 flex-wrap gap-1.5 ps-5">
+            <div className="flex min-w-0 flex-wrap gap-1 ps-5">
               {(question.answer ?? []).map((picked, pickedIndex) => (
                 <Badge key={pickedIndex} title={picked} variant="secondary" className="max-w-full">
                   <CheckIcon />
@@ -211,7 +220,8 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
           {question.notes && (
             <div
               className={cn(
-                "rounded-md bg-background px-2 py-1.5 text-xs text-muted-foreground",
+                INSET,
+                "px-2 py-1 text-xs text-muted-foreground",
                 (question.answer?.length ?? 0) > 0 && "ms-5"
               )}
             >
@@ -240,8 +250,8 @@ export function FindingsDetail({ item }: { item: ToolItem }) {
       {findings.map((finding, index) => {
         const where = `${shortPath(finding.file, 48)}${finding.line != null ? `:${finding.line}` : ""}`
         return (
-          <li key={index} className="space-y-0.5 px-2.5 py-1.5 text-sm">
-            <div className="flex items-center gap-1.5">
+          <li key={index} className="space-y-1 px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
               <FileWarningIcon className="size-3 shrink-0 text-muted-foreground" />
               <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
                 {where}
@@ -305,7 +315,7 @@ export function SkillDetail({ item, active }: { item: ToolItem; active: boolean 
   return (
     <div
       className={cn(
-        "relative isolate overflow-hidden rounded-xl border border-purple-500/20 bg-purple-500/[0.035] p-3",
+        "relative isolate overflow-hidden rounded-xl border border-purple-500/20 bg-purple-500/[0.035] p-3 frame-xl frame-p-3",
         active && "border-dashed border-purple-500/35 bg-purple-500/[0.06]"
       )}
     >
@@ -317,8 +327,8 @@ export function SkillDetail({ item, active }: { item: ToolItem; active: boolean 
           <span className="skill-load-rail absolute inset-x-0 top-0 h-1/2 rounded-full bg-purple-500/70" />
         </div>
       )}
-      <div className="flex items-start gap-2.5">
-        <span className="relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+      <div className="flex items-start gap-3">
+        <span className="relative grid size-7 shrink-0 place-items-center rounded-inner bg-purple-500/10 text-purple-600 dark:text-purple-400">
           {active ? (
             <Spinner aria-hidden className="size-3.5" />
           ) : (
@@ -378,9 +388,9 @@ function LoadedToolList({ tools }: { tools: LoadedTool[] }) {
       {tools.map((tool) => {
         const mcp = parseMcpToolName(tool.name)
         return (
-          <li key={tool.name} className="space-y-0.5 px-2.5 py-1.5 text-sm">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <PlugZapIcon className="size-3 shrink-0 text-muted-foreground" />
+          <li key={tool.name} className="space-y-1 px-3 py-2 text-sm">
+            <div className="flex min-w-0 items-center gap-2">
+              <PlugZapIcon className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0 truncate font-mono text-foreground" title={tool.name}>
                 {mcp?.tool ? formatMcpName(mcp.tool) : tool.name}
               </span>

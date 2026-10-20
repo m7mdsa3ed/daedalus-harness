@@ -67,12 +67,11 @@
      like the capsule, so they are circles where the theme is round and
      small squares where it is not. */
   --radius-composer: min(calc(var(--radius) * var(--app-composer-mult, 1.8)), var(--app-composer-cap, 1.5rem));
-  /* The box's padding follows its corner: 0.4 x the radius, never under the
-     0.5rem the controls were laid out on. At the 1.5rem cap that is 0.6rem, and
-     the corner-most control (a 28px round key) is then concentric with the
-     curve — 1.5rem less 0.6rem is its own 0.9rem. Below the cap it is the 0.5rem
-     it always was, so only the roundest presets change. */
-  --spacing-composer-pad: max(0.5rem, calc(var(--radius-composer) * 0.4));
+  /* The box's padding follows its corner: the composer's radius less the
+     corner-most key's (a 24px key, whose radius is the 4xl step capped at its
+     own half-height, 12px), so the key's curve shares the box's centre. Never
+     under 6px, which is where the Square and Sharp presets land. */
+  --spacing-composer-pad: max(0.375rem, calc(var(--radius-composer) - min(var(--radius-4xl), 0.75rem)));
   --radius-key: var(--app-radius-pill);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -802,7 +801,8 @@
    own `h-6`/`size-*` utilities. */
 @media (pointer: coarse) {
   /* Not the round icon buttons: they are sized square by `iconFit`, and a
-     forced height made them ovals. */
+     forced height made them ovals. (Not `[class*='size-']`: every Button's base
+     class carries `[&_svg:not([class*='size-'])]`, so that excluded them all.) */
   [data-slot="composer-toolbar"] [data-slot="button"]:not(.rounded-full, .rounded-key) {
     height: 2rem;
   }

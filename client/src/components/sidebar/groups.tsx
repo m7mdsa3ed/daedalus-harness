@@ -121,7 +121,7 @@ export function ProjectFolder({
           {!open && running > 0 && (
             <span
               title={`${running} running`}
-              className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-muted-foreground tabular-nums"
+              className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground tabular-nums"
             >
               <Loader2 aria-hidden className="size-3! animate-spin" />
               {running}
@@ -141,7 +141,7 @@ export function ProjectFolder({
             showOnHover
             title={`Open ${name}`}
             onClick={onOpenProject}
-            className="right-8"
+            className="right-7"
           >
             <PanelsTopLeft />
             <span className="sr-only">Open {name}</span>
@@ -224,7 +224,7 @@ export function FoldableGroup({
         <div className="relative">
           <CollapsibleTrigger
             render={
-              <SidebarGroupLabel className="gap-1.5 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
+              <SidebarGroupLabel className="gap-2 rounded-lg hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
             }
           >
             {icon}

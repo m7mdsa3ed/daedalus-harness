@@ -100,7 +100,7 @@ export function ToolDetail({ item, active }: { item: ToolItem; active: boolean }
   const { showRawToolData } = useLayoutOptionsContext()
   if (!showRawToolData) return <Detail item={item} active={active} />
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {toolHasDetail(item) && <Detail item={item} active={active} />}
       <RawToolData item={item} />
     </div>

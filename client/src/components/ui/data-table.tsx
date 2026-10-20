@@ -61,6 +61,7 @@ import type { SwipeNeighborMotion } from "@/components/motion/swipeable-list";
 import { useMotionValue } from "motion/react";
 import { HeaderActionOverflow } from "@/components/ui/action-overflow";
 import { useIsNarrow } from "@/hooks/use-device";
+import { MENU_WIDTH } from "@/components/menu-row";
 import { KEYBOARD_RISE } from "@/lib/keyboard-inset";
 import {
   FiltersBar,
@@ -404,7 +405,7 @@ const HEAD_BG =
   "bg-card shadow-[inset_0_-1px_0_var(--border)]";
 /** Mark slot at the start of a title cell / list row. */
 const MARK_BOX =
-  "flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-4";
+  "flex shrink-0 items-center justify-center overflow-hidden bg-muted text-muted-foreground [&_svg:not([class*='size-'])]:size-4";
 
 /** Title + optional muted second line, the shape a title cell wants. A column
  *  may render this, or anything else — it is a convenience, not a contract. */
@@ -459,7 +460,7 @@ function ActionMenuItems<TData>({
         a.onClick(row);
       }}
       className={cn(
-        "gap-2 pointer-coarse:min-h-11",
+        "pointer-coarse:min-h-11",
         a.tone && a.tone !== "danger" && a.tone !== "neutral" && ACTION_TONE_TEXT[a.tone],
       )}
     >
@@ -504,7 +505,7 @@ function ActionMenu<TData>({
       >
         {icon ?? <MoreHorizontal className="size-4" />}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
+      <DropdownMenuContent align="end" className={MENU_WIDTH}>
         <ActionMenuItems actions={actions} row={row} />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -629,7 +630,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
                 >
                   {isTitle && mark ? (
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className={cn(MARK_BOX, "size-9")}>{mark(row.original)}</div>
+                      <div className={cn(MARK_BOX, "size-9 rounded-lg")}>{mark(row.original)}</div>
                       <div className="min-w-0 flex-1">{content}</div>
                     </div>
                   ) : (
@@ -881,7 +882,7 @@ const MobileCard = React.memo(function MobileCard<TData extends RowData>({
                     sel && "bg-primary/5 before:opacity-100",
                   )
                 : (wrapperClassName ??
-                    "flex items-center gap-3 rounded-2xl bg-card px-4 py-3.5 ring-1 ring-foreground/10"),
+                    "flex items-center gap-3 bg-card p-3 frame-2xl frame-p-3 ring-1 ring-foreground/10"),
               tappable && "cursor-pointer active:bg-muted transition-colors",
               !flat && sel && "ring-2 ring-primary ring-inset rounded-2xl",
               rowClassName?.(row.original, rowIndex),
@@ -1308,7 +1309,7 @@ export function DataTable<TData extends RowData, TValue>({
       if (!rowActions.length) return null;
       const { inline, overflow } = splitActions(rowActions);
       return (
-        <div className="flex items-center justify-end gap-0.5">
+        <div className="flex items-center justify-end gap-1">
           {inline.map((a) => (
             <Button
               key={a.id}
@@ -1372,7 +1373,9 @@ export function DataTable<TData extends RowData, TValue>({
       return (
         <div className="flex min-w-0 items-center gap-3">
           {mark && (
-            <div className={cn(MARK_BOX, "size-10")}>{mark(original)}</div>
+            // A card (`listClassName`) is a frame, so its tile is concentric
+            // with the card's corner; a flat row has no frame to read.
+            <div className={cn(MARK_BOX, "size-9", mobileListClassName ? "rounded-inner" : "rounded-lg")}>{mark(original)}</div>
           )}
           <div className="min-w-0 flex-1">
             {titleCell && (
@@ -1393,7 +1396,7 @@ export function DataTable<TData extends RowData, TValue>({
         </div>
       );
     },
-    [mark, onRowClick],
+    [mark, onRowClick, mobileListClassName],
   );
   const mobileRowRenderer = renderMobileRow ?? renderDefaultMobileRow;
   // `listClassName` hands the rows' chrome to the caller; otherwise they are
@@ -1579,7 +1582,7 @@ export function DataTable<TData extends RowData, TValue>({
                   // Remembered for the bulk bar, which takes this row's height.
                   if (node) toolbarHeight.current = node.offsetHeight;
                 }}
-                className={cn("border-b", isNarrow ? "p-2.5" : "p-3")}
+                className={cn("border-b", isNarrow ? "p-3" : "px-4 py-3")}
               >
                 {filtersNode}
               </div>
@@ -1600,7 +1603,7 @@ export function DataTable<TData extends RowData, TValue>({
           return (
             <>
               <div
-                className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-primary/5 px-3 py-2"
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-primary/5 px-4 py-2"
                 style={{ minHeight: toolbarHeight.current || undefined }}
               >
                 <span className="flex size-4 items-center justify-center pointer-coarse:size-11">
@@ -1717,7 +1720,7 @@ export function DataTable<TData extends RowData, TValue>({
   const footerNode = !showFooter ? null : isNarrow ? (
     // A thumb-sized "Load more" for a client-paged list (the rows stay one
     // continuous list); prev/next when the server owns the pages.
-    <div className="flex flex-col items-stretch gap-2 border-t bg-muted/50 px-3 py-3">
+    <div className="flex flex-col items-stretch gap-2 border-t bg-muted/50 p-3">
       <span className="text-center text-xs tabular-nums text-muted-foreground">
         {pagination
           ? rangeLabel
@@ -2149,7 +2152,7 @@ export function DataTable<TData extends RowData, TValue>({
           if (header) {
             return (
               <div key={`group-${gk}`}>
-                <div className="border-b bg-muted/50 px-4 py-2.5">
+                <div className="border-b bg-muted/50 px-4 py-3">
                   {header}
                 </div>
                 <div className="divide-y">
@@ -2259,7 +2262,7 @@ export function MobileRowSkeleton({
       )}
     >
       {withSelect && <Skeleton className="size-4 shrink-0 rounded" />}
-      {withMark && <Skeleton className="size-10 shrink-0 rounded-lg" />}
+      {withMark && <Skeleton className="size-9 shrink-0 rounded-lg" />}
       <div className="min-w-0 flex-1 space-y-2">
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-3 w-1/3" />
@@ -2335,7 +2338,7 @@ export function RowsPerPageSelect({
           <ChevronDown className="size-3.5 opacity-60" />
         
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={align} className="w-32">
+      <DropdownMenuContent align={align} className={MENU_WIDTH}>
         {PAGE_SIZE_OPTIONS.map((size) => (
           <DropdownMenuItem
             key={size}

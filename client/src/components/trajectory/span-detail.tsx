@@ -83,7 +83,9 @@ export function SpanDetail({
         >
           <ArrowLeftIcon />
         </Button>
-        <Icon className={cn("mt-0.5 size-4 shrink-0", spanText(span))} />
+        <span className="flex h-5 shrink-0 items-center">
+          <Icon className={cn("size-4", spanText(span))} />
+        </span>
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium [overflow-wrap:anywhere]">{span.name}</h3>
           <p className="text-muted-foreground">
@@ -183,15 +185,15 @@ export function SpanDetail({
 
       {span.events.length > 0 && (
         <Section title="Events" copy={JSON.stringify(span.events, null, 2)}>
-          <ol className="space-y-1.5">
+          <ol className="space-y-1">
             {span.events.map((event, i) => (
-              <li key={i} className="rounded-md bg-muted px-2 py-1.5">
+              <li key={i} className="rounded-lg bg-muted px-3 py-2">
                 <div className="flex items-baseline gap-2">
                   <span className="font-medium">{event.name}</span>
                   <span className="text-muted-foreground tabular-nums">+{fmtMs(event.at - span.start)}</span>
                 </div>
                 {event.attributes && Object.keys(event.attributes).length > 0 && (
-                  <p className="mt-0.5 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  <p className="mt-1 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
                     {Object.entries(event.attributes)
                       .map(([k, v]) => `${k}=${text(v)}`)
                       .join("  ")}
@@ -210,7 +212,7 @@ const text = (value: TraceAttributeValue) => (Array.isArray(value) ? value.join(
 
 function Section({ title, copy, children }: { title: string; copy?: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-1.5">
+    <section className="space-y-1">
       <div className="flex items-center gap-1">
         <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
         {copy !== undefined && <CopyButton size="icon-xs" className="ml-auto" text={copy} />}
@@ -222,9 +224,9 @@ function Section({ title, copy, children }: { title: string; copy?: string; chil
 
 function Facts({ title, rows }: { title?: string; rows: [string, string][] }) {
   const body = (
-    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border @panel-sm:grid-cols-3">
+    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border @panel-sm:grid-cols-3">
       {rows.map(([k, v]) => (
-        <div key={k} className="bg-card px-2 py-1.5">
+        <div key={k} className="bg-card px-3 py-2">
           <dt className="text-xs text-muted-foreground">{k}</dt>
           <dd className="font-medium tabular-nums">{v}</dd>
         </div>
@@ -243,9 +245,9 @@ function Payload({ label, value }: { label: string; value: TraceAttributeValue }
   return (
     <Section title={label} copy={raw}>
       {messages ? (
-        <ol className="space-y-1.5">
+        <ol className="space-y-1">
           {(parsed as Message[]).map((message, i) => (
-            <li key={i} className="rounded-md bg-muted px-2 py-1.5">
+            <li key={i} className="rounded-lg bg-muted px-3 py-2">
               <div className="mb-1 text-xs font-medium text-muted-foreground">{message.role}</div>
               <MessageBody message={message} />
             </li>
@@ -285,7 +287,7 @@ function MessageBody({ message }: { message: Message }) {
 
 function Pre({ children }: { children: string }) {
   return (
-    <pre className="max-h-80 overflow-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+    <pre className="max-h-80 overflow-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
       {children}
     </pre>
   )
@@ -319,7 +321,7 @@ function PromptChange({
   const prevReady = !listedPrev?.elided?.length || detail.data !== undefined
 
   const picker = (
-    <div className="ml-auto flex rounded-md bg-muted p-0.5">
+    <div className="ml-auto flex rounded-lg bg-muted p-0.5">
       {(["turn", "call"] as const).map((value) => (
         <button
           key={value}
@@ -327,7 +329,7 @@ function PromptChange({
           aria-pressed={scope === value}
           onClick={() => setScope(value)}
           className={cn(
-            "rounded-md px-1.5 py-0.5 text-xs",
+            "rounded-md px-2 py-0.5 text-xs",
             scope === value ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -367,7 +369,7 @@ function PromptChange({
   }
 
   return (
-    <section className="space-y-1.5">
+    <section className="space-y-1">
       <div className="flex items-center gap-1">
         <h3 className="text-xs font-medium text-muted-foreground">Prompt change</h3>
         {picker}
@@ -401,7 +403,7 @@ function PromptPart({
   if (name === "gen_ai.input.messages" && Array.isArray(a) && Array.isArray(b)) {
     const diff = diffMessages(a as Message[], b as Message[])
     return (
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <PartHeading label={label}>
           {diff.kept} kept · <span className="text-success">+{diff.added.length}</span>
           {diff.removed.length > 0 && <span className="text-destructive"> −{diff.removed.length}</span>}
@@ -412,7 +414,7 @@ function PromptPart({
             {diff.removed.length === 1 ? "message is" : "messages are"} no longer sent (a compaction or a rewind).
           </Notice>
         )}
-        <ol className="space-y-1.5">
+        <ol className="space-y-1">
           {diff.removed.map((message, i) => (
             <MessageChange key={`d${i}`} message={message} op="del" />
           ))}
@@ -428,7 +430,7 @@ function PromptPart({
   const lines = diffLines(pretty(a), pretty(b))
   const changed = lines === null || lines.some((line) => line.op !== "same")
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <PartHeading label={label}>
         {!changed ? (
           "unchanged"
@@ -459,7 +461,7 @@ function MessageChange({ message, op }: { message: Message; op: "add" | "del" })
   return (
     <li
       className={cn(
-        "rounded-md border-l-2 px-2 py-1.5",
+        "rounded-lg border-l-2 px-3 py-2",
         op === "add" ? "border-success bg-success/10" : "border-destructive bg-destructive/10 opacity-80"
       )}
     >
@@ -487,7 +489,7 @@ function LineDiff({ lines }: { lines: LineOp[] }) {
       if (run > lead + trail + 1) {
         for (let k = i; k < i + lead; k++) rows.push(<DiffRow key={k} line={lines[k]} />)
         rows.push(
-          <div key={`fold${i}`} className="px-2 text-muted-foreground italic">
+          <div key={`fold${i}`} className="px-3 text-muted-foreground italic">
             … {run - lead - trail} unchanged lines
           </div>
         )
@@ -500,7 +502,7 @@ function LineDiff({ lines }: { lines: LineOp[] }) {
     }
   }
   return (
-    <div className="max-h-80 overflow-auto rounded-md bg-muted py-1 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+    <div className="max-h-80 overflow-auto rounded-lg bg-muted py-2 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
       {rows}
     </div>
   )
@@ -510,7 +512,7 @@ function DiffRow({ line }: { line: LineOp }) {
   return (
     <div
       className={cn(
-        "px-2",
+        "px-3",
         line.op === "add" && "bg-success/10 text-success",
         line.op === "del" && "bg-destructive/10 text-destructive"
       )}

@@ -20,9 +20,9 @@ export function TodoChecklist({ items, className }: { items: ChecklistItem[]; cl
           render={<li />}
           variant={item.status === "in_progress" ? "muted" : "outline"}
           size="xs"
-          className="min-w-0 flex-nowrap items-start gap-2 py-1.5 text-start"
+          className="min-w-0 flex-nowrap items-start gap-2 rounded-xl p-2 text-start"
         >
-          <span aria-hidden className="grid h-5 w-4 shrink-0 place-items-center">
+          <span aria-hidden className="grid size-5 shrink-0 place-items-center">
             {item.status === "completed" ? (
               <CheckIcon className="size-3.5 text-primary" />
             ) : item.status === "in_progress" ? (

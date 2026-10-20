@@ -3,7 +3,7 @@
    recessed well of its own, so it can be selected whole; nothing here runs it. */
 import { z } from "zod/v4"
 import { defineComponent } from "@openuidev/react-lang"
-import { BODY, Box, BoxHeader, PAD } from "@/lib/openui/kit"
+import { BODY, Box, BoxHeader, WELL_PAD } from "@/lib/openui/kit"
 import { cn } from "@/lib/utils"
 
 export const Steps = defineComponent({
@@ -27,9 +27,9 @@ export const Steps = defineComponent({
       <Box>
         <BoxHeader title={props.title} />
         {steps.length > 0 && (
-          <ol role="list" className={cn(PAD, "w-full min-w-0")}>
+          <ol role="list" className={cn(WELL_PAD, "w-full min-w-0")}>
             {steps.map((step, index) => (
-              <li key={index} className="relative flex min-w-0 gap-2.5 pb-4 last:pb-0 @panel-sm:gap-3">
+              <li key={index} className="relative flex min-w-0 gap-2 pb-4 last:pb-0 @panel-sm:gap-3">
                 {index < steps.length - 1 && (
                   <span aria-hidden className="absolute top-6 bottom-1 left-2.5 w-px -translate-x-1/2 bg-border" />
                 )}
@@ -39,7 +39,7 @@ export const Steps = defineComponent({
                 >
                   {index + 1}
                 </span>
-                <div className="min-w-0 flex-1 space-y-1.5 pt-px">
+                <div className="min-w-0 flex-1 space-y-2 pt-px">
                   <div className="text-sm leading-snug font-medium break-words text-foreground">{step.title}</div>
                   {step.text && <p className={cn(BODY, "text-pretty")}>{step.text}</p>}
                   {step.code && (

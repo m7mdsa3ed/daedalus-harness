@@ -5,7 +5,7 @@
    option (`lib/layout-options`: `sidebarSort`, `sidebarFilter`,
    `sidebarWithin`), so Settings › Appearance › Sidebar edits the same ones;
    this is the quick menu on the Threads label. */
-import { ListFilter, SlidersHorizontal } from "lucide-react"
+import { ListFilter } from "lucide-react"
 import { useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,6 +26,7 @@ import {
 } from "@/lib/layout-options"
 import { settingsPath } from "@/lib/router"
 import { cn } from "@/lib/utils"
+import { MENU_WIDTH } from "@/components/menu-row"
 
 export const SORT_LABELS: Record<SidebarSort, string> = {
   recent: "Recent activity",
@@ -76,7 +77,7 @@ export function ViewMenu({
         <ListFilter />
         <span className="sr-only">Sort and filter threads</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="right" align="start" className="w-48">
+      <DropdownMenuContent side="right" align="start" className={MENU_WIDTH}>
         {/* The label is Base UI's Menu.GroupLabel: it reads its group from
             context and throws outside one, so it sits inside the radio group
             it names rather than loose in the content. */}
@@ -108,7 +109,7 @@ export function ViewMenu({
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void navigate(`${settingsPath("appearance")}#interface`)}>
-          <SlidersHorizontal />
+          {/* No glyph: every other row here is words alone, and one text column. */}
           Sidebar settings…
         </DropdownMenuItem>
       </DropdownMenuContent>

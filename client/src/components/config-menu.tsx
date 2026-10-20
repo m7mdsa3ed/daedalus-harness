@@ -6,7 +6,7 @@
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@daedalus/acp"
 import * as React from "react"
-import { CheckIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react"
+import { CheckIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
 import {
   DropdownMenuCheckboxItem,
   DropdownMenuItem,
@@ -129,7 +129,7 @@ export function MenuSearchInput({
       }}
       placeholder={`Search ${label.toLowerCase()}…`}
       aria-label={`Search ${label.toLowerCase()}`}
-      className="mb-1 w-full rounded-lg bg-muted/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
+      className="mb-1 w-full rounded-xl bg-muted/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
     />
   )
 }
@@ -281,7 +281,6 @@ export function SessionSettingsSub({
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
-        <SlidersHorizontalIcon className="size-4 text-muted-foreground" />
         <span className="flex-1">Session settings</span>
         <span className="text-xs tabular-nums text-muted-foreground">{on} of 2</span>
       </DropdownMenuSubTrigger>
@@ -539,7 +538,7 @@ export const selectChoices = (option: acp.SessionConfigOption): Choice[] => {
 
 /** The composer's thread-settings chip. */
 export const PILL =
-  "h-6 gap-1 border-0 bg-transparent px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted data-popup-open:bg-muted pointer-coarse:h-8 pointer-coarse:px-2.5 [&_[data-slot=avatar]]:size-3.5"
+  "h-6 gap-1 border-0 bg-transparent ps-1 pe-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted data-popup-open:bg-muted pointer-coarse:h-8 pointer-coarse:ps-2 pointer-coarse:pe-3"
 
 /**
  * The words on the settings chip, shared by the draft's trigger and the started
@@ -567,7 +566,7 @@ export function PillLabel({
   modeId?: string
 }) {
   return (
-    <span className="flex min-w-0 max-w-52 items-center gap-1.5 @panel-sm:max-w-80">
+    <span className="flex min-w-0 max-w-52 items-center gap-1 @panel-sm:max-w-80">
       <span className="flex min-w-0 items-baseline gap-1">
         <span className="min-w-0 truncate font-medium text-foreground">{model}</span>
       </span>

@@ -336,7 +336,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   return (
     <SidebarEnvContext.Provider value={env}>
       <SidebarGroup>
-        <SidebarGroupLabel className="gap-1.5 pr-0">
+        <SidebarGroupLabel className="gap-2 pr-0">
           <span className="truncate">Sessions</span>
           {counts.needsYou > 0 && (
             <Badge

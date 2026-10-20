@@ -246,7 +246,7 @@ const GROUND = "bg-shelf"
 
 /* The narrow layout's horizontal selector rail and the gap before its panel. */
 const RAIL_HEIGHT = 32
-const RAIL_GAP = 6
+const RAIL_GAP = 8
 
 /* The shelf's own bottom edge, hidden behind the composer. Must stay in step
    with the `pb-4` it is spelled on: the box has to reserve it, and the pile's
@@ -444,7 +444,7 @@ export function ComposerStrip({
         data-front={front ? "" : undefined}
         hidden={!front}
         className={cn(
-          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-composer ring-1 ring-edge-extra",
+          "harness-strip-card absolute inset-x-0 overflow-hidden rounded-t-composer",
           front && cn("backdrop-blur-[var(--app-blur)]", ground)
         )}
         style={{ top: railHeight, bottom: footerHeight + tuck }}
@@ -475,7 +475,8 @@ export function ComposerStrip({
           // The selector rail and selected panel share one measured height
           // transition, so changing rows does not jump the composer or transcript.
           "harness-strip-panel relative",
-          many && wideLayout && "pl-36",
+          /* The rail's w-32 plus `RAIL_GAP`. */
+          many && wideLayout && "pl-34",
           // isolate: the composer is `relative z-10` beside this box. Without a
           // stacking context, the shelf could paint over the thing it attaches to.
           "isolate",
@@ -514,7 +515,7 @@ export function ComposerStrip({
             className={cn(
               "absolute z-20 flex min-w-0 gap-1",
               wideLayout
-                ? "inset-y-0 left-0 w-32 flex-col items-stretch overflow-y-auto rounded-tl-composer px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                ? "inset-y-0 left-0 w-32 flex-col items-stretch overflow-y-auto rounded-tl-composer p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 : "inset-x-0 top-0 h-8 flex-row items-center overflow-x-auto rounded-t-composer px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             )}
           >
@@ -532,7 +533,7 @@ export function ComposerStrip({
                   tabIndex={selected ? 0 : -1}
                   onClick={() => setPicked(entry.id)}
                   className={cn(
-                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 text-left text-xs font-medium transition-colors",
+                    "inline-flex h-8 min-w-0 shrink-0 items-center gap-2 rounded-full px-2 text-left text-xs font-medium transition-colors",
                     wideLayout && "w-full justify-start",
                     selected
                       ? "bg-composer text-foreground ring-1 ring-foreground/10"
@@ -540,7 +541,7 @@ export function ComposerStrip({
                     "outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   )}
                 >
-                  {Icon && <Icon className="size-3.5 shrink-0" />}
+                  {Icon && <Icon className="size-4 shrink-0" />}
                   <span className="max-w-36 truncate">{entry.label}</span>
                   {entry.badge != null && entry.badge > 0 && (
                     <ChipBadge>{formatCount(entry.badge, 99)}</ChipBadge>
@@ -573,7 +574,7 @@ export function ComposerStrip({
                  the box on the way down — one colour for the whole shelf,
                  because nothing on it is ever wrong (see `GROUND`). */
               ground,
-              entries.length === 0 && "rounded-t-composer ring-1 ring-edge-extra"
+              entries.length === 0 && "rounded-t-composer"
             )}
           >
             {footer}

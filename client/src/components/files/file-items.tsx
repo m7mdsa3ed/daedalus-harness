@@ -159,7 +159,7 @@ export function GridView({
   const roomy = size >= 104
   return (
     <div
-      className="grid grid-cols-[repeat(auto-fill,minmax(min(var(--tile),100%),1fr))] gap-1.5 p-2"
+      className="grid grid-cols-[repeat(auto-fill,minmax(min(var(--tile),100%),1fr))] gap-2 p-2"
       style={{ "--tile": `${size}px` } as React.CSSProperties}
       data-grid
     >
@@ -169,7 +169,7 @@ export function GridView({
           <div
             key={item.id}
             {...attrs}
-            className={cn(attrs.className, "flex min-w-0 flex-col items-center gap-1.5", roomy ? "p-2" : "p-1")}
+            className={cn(attrs.className, "flex min-w-0 flex-col items-center gap-2", roomy ? "p-2 rounded-2xl" : "p-1 rounded-xl")}
             title={item.name}
           >
             <Thumb item={item} crop={crop} className="aspect-square w-full rounded-lg bg-muted" />
@@ -296,7 +296,8 @@ export function ListView({
   return (
     <div ref={ref} className="flex flex-col">
       <div
-        className="sticky top-0 z-10 grid gap-3 border-b bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground"
+        // px-3.5: the rows' columns start at the pane's p-1.5 + the row's px-2.
+        className="sticky top-0 z-10 grid gap-3 border-b bg-background px-3.5 py-2 text-xs font-medium text-muted-foreground"
         style={{ gridTemplateColumns: template }}
       >
         <SortHead id="name" label="Name" sort={sort} desc={desc} onSort={onSort} />
@@ -323,7 +324,7 @@ export function ListView({
           </div>
         ))}
       </div>
-      <div className="flex flex-col gap-px p-1">
+      <div className="flex flex-col gap-px p-1.5">
         {items.map((item) => {
           const attrs = itemAttrs(item, h)
           const Icon = mimeIcon(item.mimeType)
@@ -331,18 +332,22 @@ export function ListView({
             <div
               key={item.id}
               {...attrs}
-              className={cn(attrs.className, "grid h-8 items-center gap-3 px-2 text-sm pointer-coarse:h-11")}
+              className={cn(attrs.className, "grid h-8 items-center gap-3 rounded-lg px-2 text-sm pointer-coarse:h-11")}
               style={{ gridTemplateColumns: template }}
             >
               <span className="flex min-w-0 items-center gap-2">
                 {thumbs && item.kind === "file" ? (
-                  <Thumb item={item} className="size-6 shrink-0 rounded-md bg-muted" />
+                  <Thumb item={item} className="size-6 shrink-0 rounded-sm bg-muted" />
                 ) : (
-                  <Icon
-                    className={cn("size-4 shrink-0", item.kind === "folder" ? "text-primary" : "text-muted-foreground")}
-                    fill={item.kind === "folder" ? "currentColor" : "none"}
-                    fillOpacity={0.15}
-                  />
+                  /* With thumbs on, a folder takes the thumb's 24px slot so
+                     every name starts on one column. */
+                  <span className={cn("flex shrink-0 items-center justify-center", thumbs && "size-6")}>
+                    <Icon
+                      className={cn("size-4 shrink-0", item.kind === "folder" ? "text-primary" : "text-muted-foreground")}
+                      fill={item.kind === "folder" ? "currentColor" : "none"}
+                      fillOpacity={0.15}
+                    />
+                  </span>
                 )}
                 {h.renamingId === item.id ? (
                   <RenameInput item={item} onRename={h.onRename} className="flex-1" />

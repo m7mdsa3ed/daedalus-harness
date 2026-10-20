@@ -672,7 +672,7 @@ export function FileExplorer({
 
   /* The verbs for what is selected, under the details or the preview. */
   const selectionActions = selectedItems.length > 0 && (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {onPick && chosen.length > 0 ? (
         <Button type="button" size="sm" onClick={() => onPick(chosen)}>
           {chooseText}
@@ -729,7 +729,7 @@ export function FileExplorer({
   return (
     <div ref={root} className={cn("@container flex min-h-0 flex-col overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10", className)}>
       {/* ── Toolbar ── */}
-      <div className="flex flex-wrap items-center gap-1 border-b px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-1 border-b p-1">
         <Button type="button" variant="ghost" size="icon-sm" title="Back (Alt+←)" disabled={!nav.back.length} onClick={back}>
           <ArrowLeftIcon />
         </Button>
@@ -807,7 +807,7 @@ export function FileExplorer({
           ))}
         </ToggleGroup>
         {prefs.view === "grid" && (
-          <div className="hidden items-center gap-1.5 px-1 @min-[40rem]:flex" title={`Tile size (${MOD}+scroll, ${MOD}= / ${MOD}−)`}>
+          <div className="hidden items-center gap-1 px-1 @min-[40rem]:flex" title={`Tile size (${MOD}+scroll, ${MOD}= / ${MOD}−)`}>
             <Button type="button" variant="ghost" size="icon-xs" tabIndex={-1} aria-label="Smaller tiles" onClick={() => zoomGrid(-GRID_SIZES.step * 2)}>
               <ZoomOutIcon />
             </Button>
@@ -927,9 +927,9 @@ export function FileExplorer({
       </div>
 
       {/* ── Address bar ── */}
-      <nav aria-label="Folder path" className="flex min-w-0 items-center gap-0.5 border-b bg-muted/50 px-2 py-1 text-sm">
+      <nav aria-label="Folder path" className="flex min-w-0 items-center gap-1 border-b bg-muted/50 px-2 py-1 text-sm">
         {searching ? (
-          <span className="truncate px-1.5 text-muted-foreground">
+          <span className="truncate px-1 text-muted-foreground">
             Search results for “{debounced.trim()}” across the library
           </span>
         ) : (
@@ -941,7 +941,7 @@ export function FileExplorer({
                 {...dropFor(step.id, `@crumb:${step.id ?? "root"}`)}
                 onClick={() => go(step.id)}
                 className={cn(
-                  "flex min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-muted data-drop:bg-primary/10",
+                  "flex min-w-0 shrink items-center gap-1 rounded-md px-1 py-0.5 hover:bg-muted data-drop:bg-primary/10",
                   i === all.length - 1 ? "font-medium text-foreground" : "text-muted-foreground"
                 )}
               >
@@ -1027,7 +1027,7 @@ export function FileExplorer({
                 className="m-3"
               />
             ) : pending ? (
-              <div className="flex flex-col gap-1 p-2">
+              <div className="flex flex-col gap-1 p-1.5">
                 {[0, 1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-7" />
                 ))}
@@ -1097,14 +1097,14 @@ export function FileExplorer({
       )}
 
       {/* ── Status bar / pick footer ── */}
-      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-t bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-t bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
         <span className="tabular-nums">
           {items.length} {items.length === 1 ? "item" : "items"}
           {selectedItems.length > 0 &&
             ` · ${selectedItems.length} selected${totalSize ? ` (${formatBytes(totalSize)})` : ""}`}
         </span>
         {uploading && (
-          <span className="flex items-center gap-1.5 text-foreground tabular-nums">
+          <span className="flex items-center gap-1 text-foreground tabular-nums">
             <Spinner className="size-3" /> Uploading {Math.min(uploading.done + 1, uploading.total)} of {uploading.total}…
           </span>
         )}

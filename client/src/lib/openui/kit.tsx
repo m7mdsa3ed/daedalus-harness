@@ -14,11 +14,15 @@ export const META = "break-words text-xs leading-snug text-muted-foreground"
 export const LABEL = "break-words text-xs leading-tight font-medium text-muted-foreground"
 export const PAD = "p-3 @panel-sm:p-4"
 export const PAD_ROW = "px-3 py-2 @panel-sm:px-4 @panel-sm:py-2.5"
+/** `PAD` for a body that holds wells or a corner tile: the same inset, stated
+    as the frame's (`frame-p-*`), so what is inside derives a concentric corner
+    (`rounded-inner`) from the card's. */
+export const WELL_PAD = "frame-p-3 @panel-sm:frame-p-4"
 /** Between siblings, everywhere: a stack, a card's body, a tab's panel. */
 export const FLOW = "flex w-full min-w-0 flex-col gap-3 @panel-sm:gap-4"
 
 /** The well a frame inside a frame becomes — the settings kit's `INSET`. */
-export const INSET = "rounded-xl border bg-muted/50"
+export const INSET = "rounded-inner border bg-muted/50"
 
 export type Surface = "page" | "frame" | "cell"
 export const SurfaceContext = createContext<Surface>("page")
@@ -34,7 +38,9 @@ export function Box({ className, children, style }: { className?: string; childr
   return (
     <SurfaceContext.Provider value="frame">
       {surface === "page" ? (
-        <Card className={cn("block gap-0 py-0", box)} style={style}>
+        // The card is the frame (`frame-2xl`); its own padding is 0 until a
+        // body states one with `WELL_PAD`, so an outer frame's never leaks in.
+        <Card className={cn("block gap-0 py-0 frame-2xl [--frame-p:0px]", box)} style={style}>
           {children}
         </Card>
       ) : (
@@ -49,7 +55,7 @@ export function Box({ className, children, style }: { className?: string; childr
 /** A frame's top band: a name and what qualifies it, over a hairline. */
 export function BoxHeader({ title, meta }: { title: ReactNode; meta?: ReactNode }) {
   return (
-    <header className="min-w-0 space-y-0.5 border-b px-3 py-3 @panel-sm:px-4">
+    <header className={cn("min-w-0 space-y-1 border-b", PAD)}>
       <div className={TITLE}>{title}</div>
       {meta && <div className={cn(META, "text-pretty")}>{meta}</div>}
     </header>

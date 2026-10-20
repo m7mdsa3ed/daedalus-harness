@@ -143,7 +143,7 @@ export function NotificationRow({
   return (
     <article
       className={cn(
-        "group/notice relative flex min-h-12 w-full items-start gap-3 px-3 py-3 transition-colors hover:bg-muted/50 has-[[data-open]:focus-visible]:bg-muted/50 @panel-sm:px-4",
+        "group/notice relative flex min-h-12 w-full items-start gap-3 p-3 transition-colors hover:bg-muted/50 has-[[data-open]:focus-visible]:bg-muted/50 @panel-sm:p-4",
         /* Unread is the selected-row look every list uses: a tint and a bar
            at the start edge. */
         "before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
@@ -153,7 +153,7 @@ export function NotificationRow({
       <KindGlyph
         kind={n.kind}
         read={n.read}
-        className={cn(detailed ? "mt-0.5 size-8" : "size-7")}
+        className="mt-0.5 size-8"
       />
 
       <button
@@ -165,7 +165,7 @@ export function NotificationRow({
         <span className="flex items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
           <span
-            className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-muted-foreground"
+            className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground"
             title={exactStamp(n.createdAt)}
           >
             {shortAge(n.createdAt)}
@@ -175,7 +175,7 @@ export function NotificationRow({
         {body && (
           <span
             className={cn(
-              "mt-0.5 block text-xs text-muted-foreground",
+              "mt-1 block text-xs text-muted-foreground",
               detailed ? "line-clamp-3 text-pretty" : "truncate"
             )}
           >
@@ -183,7 +183,7 @@ export function NotificationRow({
           </span>
         )}
         {detailed && n.threadTitle && (
-          <span className="mt-1.5 flex">
+          <span className="mt-2 flex">
             <StatusBadge tone={n.read ? "neutral" : meta.tone}>{meta.label}</StatusBadge>
           </span>
         )}

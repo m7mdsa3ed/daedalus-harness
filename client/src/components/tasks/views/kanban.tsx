@@ -1,3 +1,4 @@
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import { createPortal } from "react-dom"
 import {
@@ -166,7 +167,7 @@ function Column({
                 </Button>
               }
             />
-            <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuContent align="end" className={MENU_WIDTH}>
               <DropdownMenuItem onClick={() => ops.onEdit(status)}>
                 <Pencil className="size-4" /> Edit column…
               </DropdownMenuItem>

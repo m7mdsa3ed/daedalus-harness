@@ -1,3 +1,4 @@
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router"
 import {
@@ -648,7 +649,7 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
                   </Button>
                 }
               />
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent align="end" className={MENU_WIDTH}>
                 <DropdownMenuItem onClick={() => setBoardDialog({ open: true, board: null })}>
                   <Plus className="size-4" /> New board…
                 </DropdownMenuItem>

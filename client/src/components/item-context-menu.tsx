@@ -82,7 +82,7 @@ export function renderMenuItems(items: MenuItemSpec[], parts: MenuParts) {
     item.type === "separator" ? (
       <Separator key={index} />
     ) : item.type === "icons" ? (
-      <div key={index} className="flex items-center gap-0.5 px-1 py-0.5">
+      <div key={index} className="flex items-center gap-1 p-1">
         {item.items.map((entry) => (
           <Item
             key={entry.label}

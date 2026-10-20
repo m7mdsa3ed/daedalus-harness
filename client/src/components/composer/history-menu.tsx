@@ -58,7 +58,7 @@ export function ComposerHistorySubmenu({
 
   return (
     <DropdownMenuSub open={open} onOpenChange={setOpen}>
-      <DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger className="gap-2.5">
         <History />
         Earlier prompt
         {shortcut && <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>}
@@ -70,11 +70,11 @@ export function ComposerHistorySubmenu({
             <DropdownMenuItem
               key={entry.id}
               onClick={() => onPick(entry.text)}
-              className="flex-col items-start gap-0.5"
+              className="flex-col items-start gap-1"
             >
               {/* Two lines at most — the search tells two long ones apart. */}
               <span className="line-clamp-2 w-full whitespace-pre-wrap text-sm">{entry.text}</span>
-              <span className="flex w-full min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="flex w-full min-w-0 items-center gap-1 text-xs text-muted-foreground">
                 <span className="shrink-0">{shortAge(entry.createdAt)}</span>
                 {entry.threadTitle && (
                   <>
@@ -92,7 +92,7 @@ export function ComposerHistorySubmenu({
             </DropdownMenuItem>
           )}
           {matches.length > shown.length && (
-            <p className="px-2 py-1 text-center text-xs text-muted-foreground">
+            <p className="px-3 py-2 text-center text-xs text-muted-foreground">
               Showing {shown.length} of {matches.length} — search to narrow it.
             </p>
           )}

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ChevronRightIcon, PauseIcon, PlayIcon, SlidersHorizontalIcon, SquareIcon } from "lucide-react"
+import { PauseIcon, PlayIcon, SlidersHorizontalIcon, SquareIcon } from "lucide-react"
 
 import {
   AgentRequestActions,
@@ -15,7 +15,7 @@ import type { Actions } from "@/lib/actions"
 import { describeError, reportError } from "@/lib/errors"
 import type { ThreadState } from "@/lib/store"
 import { holdOf } from "@/lib/thread/hold"
-import { cn } from "@/lib/utils"
+import { Disclosure } from "@/components/tool-parts"
 
 /**
  * The transcript's **held turn** card: a turn that failed and did not end.
@@ -78,16 +78,11 @@ export function InlineHeldTurn({
             provider's sentence in the header is often the whole of what a rate
             limit or a bad-key failure said, and it is the part someone pastes
             into a support thread. */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           {info?.detail && (
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
+            <Disclosure open={open} onToggle={() => setOpen((v) => !v)}>
               {open ? "Hide details" : "Show details"}
-            </button>
+            </Disclosure>
           )}
           <CopyButton
             text={[reason, info?.detail].filter(Boolean).join("\n\n")}

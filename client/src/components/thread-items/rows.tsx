@@ -256,16 +256,18 @@ export const ToolRun = React.memo(function ToolRun({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="group/fold -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-xl px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className="group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
-        <ChevronRightIcon
-          aria-hidden
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground transition-transform duration-200",
-            dir === "rtl" && "-scale-x-100",
-            open && (dir === "rtl" ? "-rotate-90" : "rotate-90")
-          )}
-        />
+        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 text-muted-foreground transition-transform duration-200",
+              dir === "rtl" && "-scale-x-100",
+              open && (dir === "rtl" ? "-rotate-90" : "rotate-90")
+            )}
+          />
+        </span>
         <RunAvatarStack items={items} />
         {/* English UI words, isolated: in an RTL run "2 files" would otherwise
             reorder into "files 2". */}
@@ -301,14 +303,14 @@ export const ToolRun = React.memo(function ToolRun({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
             }}
-            /* `-mx-1.5 px-1.5`: a nested row's hover ground bleeds 6px past its
+            /* `-mx-1 px-1`: a nested row's hover ground bleeds 4px past its
                box on both sides, and this clip stays `hidden` whenever the
                opening animation did not run (a run already open on mount) —
                so the clip carries the bleed's room itself. */
-            className="-mx-1.5 overflow-hidden px-1.5"
+            className="-mx-1 overflow-hidden px-1"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
-            <div className={branch ? "ms-[calc(0.75rem-1px)] space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
+            <div className={branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
             {hidden > 0 && (
               <div className={branch ? undefined : RAIL_THROUGH} style={branch ? { paddingInlineStart: gutter } : undefined}>
                 <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
@@ -476,15 +478,14 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="group/fold -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-xl px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className="group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
-        <ChevronRightIcon
-          aria-hidden
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground transition-transform duration-200",
-            open && "rotate-90"
-          )}
-        />
+        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-90")}
+          />
+        </span>
         <RunAvatarStack items={tools} />
         {/* English UI words, isolated: in an RTL fold "2 files" would otherwise
             reorder into "files 2". */}
@@ -520,11 +521,11 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             onAnimationComplete={(definition) => {
               if (finishedOpening(definition) && railRef.current) railRef.current.style.overflow = "visible"
             }}
-            /* `-mx-1.5 px-1.5`: a nested row's hover ground bleeds 6px past its
+            /* `-mx-1 px-1`: a nested row's hover ground bleeds 4px past its
                box on both sides, and this clip stays `hidden` whenever the
                opening animation did not run (a run already open on mount) —
                so the clip carries the bleed's room itself. */
-            className="-mx-1.5 overflow-hidden px-1.5"
+            className="-mx-1 overflow-hidden px-1"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={RUN_RAIL_CLASS}>
@@ -759,7 +760,7 @@ function SubagentBody({
           to={threadPath(stepThread)}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
-          Open thread <ArrowUpRightIcon className="size-3" />
+          Open thread <ArrowUpRightIcon className="size-3.5" />
         </Link>
       )}
       {/* The rail is drawn while the subagent is live even with nothing on it
@@ -925,9 +926,12 @@ function SubagentTranscript({
       {active && (
         <div
           aria-label="Subagent working"
-          className="flex items-center gap-2 px-1.5 py-0.5 text-xs leading-6 text-primary"
+          className="flex items-center gap-2 py-0.5 text-sm leading-6 text-primary"
         >
-          <Logo working className="size-3.5 shrink-0" />
+          {/* The steps' mark slot, so the Logo stands in their mark column. */}
+          <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+            <Logo working className="size-4" />
+          </span>
           <ShimmerWave text={rows.length === 0 ? "Starting…" : "Working…"} />
         </div>
       )}
@@ -1029,7 +1033,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               loudest thing the theme has and made every prompt shout over the
               answer under it. The bubble hugs the right edge and may grow to
               the full width; its shape is the stock bubble's. */}
-          <Message align="end" className="flex-col items-end gap-0.5 py-2 data-[align=end]:flex-col">
+          <Message align="end" className="flex-col items-end gap-1 py-2 data-[align=end]:flex-col">
             <MessageContent>
               <Bubble variant="tinted" align="end" className="max-w-full">
                 <BubbleContent
@@ -1059,7 +1063,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
         >
           {/* The transcript is ONE column: prose, steps and notices all start on
               the same left edge, with nothing inset for a gutter. */}
-          <Message className="flex-col items-start gap-0.5 py-2">
+          <Message className="flex-col items-start gap-1 py-2">
             <MessageContent>
               <Bubble variant="ghost" className={hasOpenui ? "w-full max-w-full" : undefined}>
                 <BubbleContent
@@ -1089,7 +1093,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       // the resume button right there in the rule — picking the turn back up
       // is the only thing anyone wants after stopping it.
       return (
-        <div className="flex items-center gap-2.5 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
           <span aria-hidden className="h-px flex-1 bg-border" />
           <span className="shrink-0">{item.text}</span>
           {showTimestamps && <Timestamp at={item.at} />}
@@ -1101,7 +1105,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               onClick={onContinue}
               title="Ask the agent to pick up where it stopped"
             >
-              <PlayIcon className="size-3" />
+              <PlayIcon />
               Continue
             </Button>
           )}

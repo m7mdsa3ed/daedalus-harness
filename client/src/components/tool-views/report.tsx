@@ -21,7 +21,7 @@ const TONE: Record<ReportTone, string> = {
 
 /* A nested object or a list entry: an outlined box, so one inside another
    still reads as nested on the pane's muted ground. */
-const BOX = "rounded-lg border px-2.5 py-2"
+const BOX = "rounded-lg border px-3 py-2"
 
 /**
  * A subagent's report. JSON is drawn by role (`lib/tools/report`) with the
@@ -64,10 +64,12 @@ function ReportList({ items, depth }: { items: unknown[]; depth: number }) {
   if (items.length === 0) return <p className="text-xs text-muted-foreground">None</p>
   if (items.every((item) => item === null || typeof item !== "object")) {
     return (
-      <ul className="space-y-0.5">
+      <ul className="space-y-1">
         {items.map((item, index) => (
-          <li key={index} className="flex items-start gap-2 text-sm leading-relaxed">
-            <span aria-hidden className="mt-1.5 size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+          <li key={index} className="flex items-start gap-2 text-sm leading-5">
+            <span aria-hidden className="grid h-5 w-3 shrink-0 place-items-center">
+              <span className="size-1.5 rounded-full bg-muted-foreground/50" />
+            </span>
             <span className="min-w-0 break-words">{String(item)}</span>
           </li>
         ))}
@@ -77,8 +79,8 @@ function ReportList({ items, depth }: { items: unknown[]; depth: number }) {
   if (isTable(items)) return <ReportTable rows={items} />
   const shown = all ? items : items.slice(0, LIST_LIMIT)
   return (
-    <div className="space-y-1.5">
-      <ol className="space-y-1.5">
+    <div className="space-y-2">
+      <ol className="space-y-2">
         {shown.map((item, index) => (
           <li key={index} className={BOX}>
             {item && typeof item === "object" && !Array.isArray(item) ? (
@@ -122,7 +124,7 @@ function ReportObject({ value, depth, item = false }: { value: Record<string, un
       )}
       {shape.location && <p className="break-all font-mono text-xs text-muted-foreground">{shape.location}</p>}
       {shape.facts.length > 0 && (
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
           {shape.facts.map((fact) => (
             <React.Fragment key={fact.key}>
               <dt className="text-muted-foreground">{fact.label}</dt>
@@ -132,7 +134,7 @@ function ReportObject({ value, depth, item = false }: { value: Record<string, un
         </dl>
       )}
       {shape.texts.map((field) => (
-        <section key={field.key} className="min-w-0 space-y-0.5">
+        <section key={field.key} className="min-w-0 space-y-1">
           <h5 className={LABEL}>{field.label}</h5>
           <div className="min-w-0">
             <Prose text={field.value as string} />

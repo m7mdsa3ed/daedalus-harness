@@ -80,7 +80,6 @@ const RUN_AVATARS = 6
 /** One circular tool mark per call, in arrival order, like the web source
     stack. Remaining calls collapse into a `+N` avatar. */
 export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> }) {
-  const tools = items.filter((item): item is ToolItem => item.kind === "tool")
   const marks = items.flatMap((item) => {
     if (item.kind === "tool") {
       const kind = toolKindOf(item)
@@ -94,7 +93,9 @@ export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> })
   const hidden = marks.length - shown.length
   if (shown.length === 0) return null
   return (
-    <div aria-hidden className="flex min-w-0 items-center gap-2">
+    /* No "N tools" beside it: the summary the header draws next already
+       counts the run, kind by kind. */
+    <div aria-hidden className="flex min-w-0 items-center">
       <AvatarGroup className="-space-x-1.5">
         {shown.map((item, index) => {
           const Icon = KIND_ICONS[item.kind] ?? WrenchIcon
@@ -125,9 +126,6 @@ export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> })
           </span>
         )}
       </AvatarGroup>
-      <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
-        {tools.length} {tools.length === 1 ? "tool" : "tools"}
-      </span>
     </div>
   )
 }

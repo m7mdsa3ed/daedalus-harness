@@ -19,6 +19,7 @@
    components, unchanged: this dock hands them a `DockContext` of its own, so a
    terminal's restart, its close guard and a preview's helper run all land in
    here instead of the outer dock. */
+import { MENU_WIDTH } from "@/components/menu-row"
 import { watchSashReset } from "@/components/workspace/dock-sizes"
 import * as React from "react"
 import {
@@ -615,7 +616,7 @@ function ThreadPanelsMenu() {
             </Button>
           }
         />
-        <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuContent align="end" className={MENU_WIDTH}>
           {SECTIONS.map((kind) => row(kind))}
           <DropdownMenuSeparator />
           {row("terminal", "New terminal")}

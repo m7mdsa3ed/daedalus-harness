@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ComposerHistorySubmenu } from "@/components/composer/history-menu"
+import { READING_MARK } from "@/components/composer/indicator"
+import { MENU_WIDTH } from "@/components/menu-row"
 import { useChords } from "@/lib/keybindings"
 import { cn } from "@/lib/utils"
 import { formatChord } from "@/lib/shortcuts"
@@ -91,9 +93,9 @@ export function ComposerAddMenu({
             />
           }
         >
-          <Plus />
+          <Plus className={READING_MARK} />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" sideOffset={8} className="min-w-52">
+        <DropdownMenuContent align="start" side="top" className={MENU_WIDTH}>
           <DropdownMenuItem onClick={() => filePicker.current?.click()}>
             <Paperclip />
             Attach files

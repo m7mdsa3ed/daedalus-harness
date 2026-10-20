@@ -9,6 +9,7 @@
    It is the thread dock's recipe one level in: the same `.dock-nested` surface,
    its own closed world (nothing crosses into or out of it), and on a phone-wide
    panel every pane is a tab in one group, since a split has no room there. */
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import {
   DockviewReact,
@@ -222,7 +223,7 @@ export function ScmDock({ panes }: { panes: Record<ScmPaneId, React.ReactNode> }
                 </Button>
               }
             />
-            <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuContent align="end" className={MENU_WIDTH}>
               {SCM_PANES.map((pane) => (
                 <DropdownMenuCheckboxItem
                   key={pane.id}

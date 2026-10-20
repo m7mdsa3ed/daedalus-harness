@@ -83,6 +83,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { McpPicker } from "@/components/composer/mcp-picker"
+import { READING_MARK } from "@/components/composer/indicator"
 import { optionKey, useAgentCommands } from "@/lib/agent-options"
 import {
   AgentsIndicator,
@@ -1065,7 +1066,7 @@ export function Composer({
             of controls about sending. It rewrites the draft through the AI SDK
             against the profile picked in Settings › General — a device habit,
             not a property of the thread. */}
-        <div className="absolute top-composer-pad right-composer-pad z-10">
+        <div className={cn("absolute right-composer-pad z-10", coarse ? "top-[calc(var(--spacing-composer-pad)+0.125rem)]" : "top-[calc(var(--spacing-composer-pad)+0.375rem)]")}>
           <EnhanceButton
             sessionId={sessionId}
             meta={meta}
@@ -1119,7 +1120,7 @@ export function Composer({
                what is being answered. */
             "w-full text-sm md:text-sm",
             /* Clear of the enhance button in the corner. */
-            "pr-7",
+            coarse ? "pr-8" : "pr-6",
             /* Keep the compact default, with more room available on demand. */
             expanded ? "max-h-[min(50vh,32rem)]" : "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons
@@ -1132,7 +1133,7 @@ export function Composer({
             `destructive` — so the row is stock variants only. */}
         <div
           data-slot="composer-toolbar"
-          className={cn("flex items-center gap-1 pt-1", coarse && "gap-1.5 pt-1.5")}
+          className={cn("flex items-center gap-1 pt-1", coarse && "gap-2 pt-2")}
         >
           <ComposerAddMenu
             disabled={disabled || gated}
@@ -1217,7 +1218,7 @@ export function Composer({
               aria-label={expanded ? "Collapse composer" : "Expand composer"}
               aria-pressed={expanded}
             >
-              {expanded ? <Minimize2 /> : <Maximize2 />}
+              {expanded ? <Minimize2 className={READING_MARK} /> : <Maximize2 className={READING_MARK} />}
             </Button>
           )}
           {voice.supported && (voice.listening || (!hasContent && !gated)) && (
@@ -1235,7 +1236,7 @@ export function Composer({
               title={voice.listening ? "Stop listening" : "Voice input"}
               aria-pressed={voice.listening}
             >
-              <Mic />
+              <Mic className={READING_MARK} />
             </Button>
           )}
           {voiceBackend && voiceCall && (
@@ -1250,7 +1251,7 @@ export function Composer({
               title={voiceChord ? `${inCall ? "End voice call" : "Voice call"} (${voiceChord})` : inCall ? "End voice call" : "Voice call"}
               aria-pressed={inCall}
             >
-              <AudioLines />
+              <AudioLines className={READING_MARK} />
             </Button>
           )}
           {/* Pause is the harness's own agent's, not ACP's: the runtime holds
@@ -1286,7 +1287,7 @@ export function Composer({
                     : "Pause at the next step"
               }
             >
-              {thread.paused ? <Play /> : <Pause />}
+              {thread.paused ? <Play className={READING_MARK} /> : <Pause className={READING_MARK} />}
             </Button>
           )}
           {thread.turnActive && (
@@ -1306,7 +1307,7 @@ export function Composer({
               }
               title="Stop"
             >
-              <Square className="fill-current" />
+              <Square className={cn(READING_MARK, "fill-current")} />
             </Button>
           )}
           {/* Always drawn, even on an empty box: the affordance you aim at
@@ -1322,7 +1323,7 @@ export function Composer({
             title={sendTitle}
             aria-label={sendTitle}
           >
-            {gated ? <Spinner /> : <ArrowUp strokeWidth={2.5} />}
+            {gated ? <Spinner className={READING_MARK} /> : <ArrowUp className={READING_MARK} strokeWidth={2.5} />}
           </Button>
         </div>
       </div>

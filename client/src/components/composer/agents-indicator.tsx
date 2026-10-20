@@ -120,7 +120,7 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
         headingClassName="harness-shimmer text-primary"
         action={<OpenInInspector tab="agents" onOpen={() => setOpen(false)} />}
       >
-        <ul className={cn("-mx-1 space-y-0.5 px-1", READING_LIST)}>
+        <ul className={cn("-mx-1 space-y-1 px-1", READING_LIST)}>
           {agents.map((agent) => (
             <li key={agent.id} className="flex items-start gap-2 text-sm">
               <span className="grid size-5 shrink-0 place-items-center">

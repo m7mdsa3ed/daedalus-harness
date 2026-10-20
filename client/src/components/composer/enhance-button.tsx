@@ -8,6 +8,7 @@ import { Sparkles } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { READING_MARK } from "@/components/composer/indicator"
 import {
   enhanceDraft,
   enhanceThread,
@@ -144,7 +145,7 @@ export function EnhanceButton({
       }
       aria-label="Enhance the prompt"
     >
-      {enhancing ? <Spinner /> : <Sparkles />}
+      {enhancing ? <Spinner className={READING_MARK} /> : <Sparkles className={READING_MARK} />}
     </Button>
   )
 }

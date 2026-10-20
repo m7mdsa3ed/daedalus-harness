@@ -74,7 +74,8 @@ export function FolderTree({
           {...(!off ? dropProps?.(folder.id) : {})}
           onClick={() => !off && onSelect(folder.id)}
           onDoubleClick={() => kids.length > 0 && toggle(folder.id)}
-          style={{ paddingLeft: depth * 14 + 4 }}
+          // One level = the chevron slot (20) + the gap (4), from a 4px inset.
+          style={{ paddingLeft: depth * 24 + 4 }}
           className={cn(
             "group flex h-7 cursor-pointer items-center gap-1 rounded-md pr-2 text-sm pointer-coarse:h-10",
             "hover:bg-muted data-drop:bg-primary/10 data-drop:ring-1 data-drop:ring-primary",
@@ -112,12 +113,15 @@ export function FolderTree({
         aria-expanded
         {...dropProps?.(null)}
         onClick={() => onSelect(null)}
+        style={{ paddingLeft: 4 }}
         className={cn(
-          "flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm pointer-coarse:h-10",
+          "flex h-7 cursor-pointer items-center gap-1 rounded-md pr-2 text-sm pointer-coarse:h-10",
           "hover:bg-muted data-drop:bg-primary/10 data-drop:ring-1 data-drop:ring-primary",
           value === null && "bg-muted font-medium"
         )}
       >
+        {/* The folders' chevron slot, empty, so the root's mark is on their column. */}
+        <span aria-hidden className="invisible size-5 shrink-0" />
         <LibraryIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="flex-1 truncate">Library</span>
       </div>

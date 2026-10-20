@@ -1,3 +1,4 @@
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import {
   ArchiveIcon,
@@ -390,7 +391,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     )
   }
 
-  if (repoError) return <ErrorNote error={repoError} className="m-2" />
+  if (repoError) return <ErrorNote error={repoError} className="m-3" />
   if (!repos) return <PanelRowsSkeleton />
   if (repos.length === 0) return <Empty className="m-3" icon={GitBranchIcon}>No repository found. This project does not contain a Git repository.</Empty>
   if (!repo) return null
@@ -445,7 +446,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
     <>
           <div className="min-h-0 flex-1 overflow-auto">
             {statusQuery.error ? (
-              <ErrorNote error={inlineFromQuery(statusQuery.error, "Status unavailable")} onRetry={() => void statusQuery.refetch()} className="m-2" />
+              <ErrorNote error={inlineFromQuery(statusQuery.error, "Status unavailable")} onRetry={() => void statusQuery.refetch()} className="m-3" />
             ) : statusQuery.isLoading && !status ? (
               <PanelRowsSkeleton />
             ) : groups.length === 0 ? (
@@ -458,16 +459,16 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
                 const tracked = group.files.filter((file) => !file.untracked).map((file) => file.path)
                 return (
                   <section key={group.id}>
-                    <div className={cn("flex items-center gap-1 bg-muted pr-1 text-xs font-medium text-muted-foreground", coarse ? "min-h-11" : "min-h-6")}>
+                    <div className={cn("flex items-center gap-2 border-l-2 border-transparent bg-muted pl-2 pr-1 text-xs font-medium text-muted-foreground", coarse ? "min-h-11" : "min-h-6")}>
                       <Checkbox
                         aria-label={`Select all in ${group.title}`}
-                        className="ml-1.5 size-3.5 rounded-md"
+                        className="size-3.5 rounded-md"
                         checked={group.files.every((file) => picks.has(pickKey(group.id, file.path)))}
                         indeterminate={group.files.some((file) => picks.has(pickKey(group.id, file.path))) && !group.files.every((file) => picks.has(pickKey(group.id, file.path)))}
                         onCheckedChange={(on) => pickGroup(group.id, on)}
                       />
-                      <button type="button" aria-expanded={!shut} onClick={() => setCollapsed((current) => toggled(current, group.id))} className="flex min-w-0 items-center gap-1 py-0.5 text-left">
-                        {shut ? <ChevronRightIcon className="size-3.5 shrink-0" /> : <ChevronDownIcon className="size-3.5 shrink-0" />}
+                      <button type="button" aria-expanded={!shut} onClick={() => setCollapsed((current) => toggled(current, group.id))} className="flex min-w-0 items-center gap-1 self-stretch text-left">
+                        {shut ? <ChevronRightIcon className="size-4 shrink-0" /> : <ChevronDownIcon className="size-4 shrink-0" />}
                         <span className="truncate">{group.title}</span>
                         <span className="font-mono tabular-nums normal-case">({group.files.length})</span>
                         <LineCounts insertions={lines.insertions} deletions={lines.deletions} className="font-normal normal-case" />
@@ -586,7 +587,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
               <SelectContent>
                 {repos.map((item) => (
                   <SelectItem key={item.path || "."} value={item.path}>
-                    <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate">{item.name}</span>
                       {item.worktree && <WorktreeBadge />}
                       {item.branch && <span className="truncate font-mono text-xs font-normal text-muted-foreground">{item.branch}</span>}
@@ -595,14 +596,14 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
                 ))}
               </SelectContent>
             </Select>
-          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-1.5 text-sm font-medium"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
+          ) : <div className="order-1 flex min-w-0 max-w-44 shrink items-center gap-2 text-sm font-medium"><span className="truncate">{repo.name}</span>{repo.worktree && <WorktreeBadge />}</div>}
           <Button variant="ghost" size="icon-xs" title="Refresh repository status" aria-label="Refresh repository status" loading={statusQuery.isFetching} onClick={() => void statusQuery.refetch()} className={cn(iconButton, "order-5")}>
             <RefreshCwIcon className={cn(statusQuery.isFetching && "animate-spin")} />
           </Button>
           {status?.repository && (
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`More for ${repo.name}`} className={cn(iconButton, "order-6")}><MoreHorizontalIcon /></Button>} />
-              <DropdownMenuContent align="end" className="w-auto min-w-52">
+              <DropdownMenuContent align="end" className={MENU_WIDTH}>
                 <DropdownMenuItem disabled={busy} onClick={() => void write({ action: "fetch" })}><CloudDownloadIcon />Fetch all remotes</DropdownMenuItem>
                 <DropdownMenuItem disabled={busy || counts.staged === 0} onClick={() => void write({ action: "unstage", paths: files.filter((file) => file.staged !== "no").map((file) => file.path) })}><MinusIcon />Unstage everything</DropdownMenuItem>
                 <DropdownMenuItem disabled={busy || counts.total === 0} onClick={() => void stash("")}><ArchiveIcon />Stash everything</DropdownMenuItem>
@@ -620,7 +621,7 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
             unborn={status?.unborn ?? false}
             disabled={busy || !status?.repository}
             onPick={(choice) => void write({ action: "checkout", branch: choice.branch, create: choice.create, track: choice.track })}
-            className={cn("order-2 flex min-w-0 max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-0.5 font-mono text-sm", coarse && "min-h-11")}
+            className={cn("order-2 flex min-w-0 max-w-full items-center gap-1 rounded-md border bg-background px-2 py-0.5 font-mono text-sm", coarse && "min-h-11")}
           >
             <GitBranchIcon className="size-3.5 shrink-0" /><span className="truncate">{branch}</span>
           </BranchPicker>
@@ -640,13 +641,13 @@ function GitWorkspace({ projectId, pinnedRepo }: { projectId: string; pinnedRepo
       </PanelToolbar>
       </header>
 
-      <ErrorNote error={error} className="m-2" />
+      <ErrorNote error={error} className="m-3" />
       {notice && (
         <Notice
           tone="info"
           role="status"
           icon={<CheckIcon className="text-success" />}
-          className="m-2"
+          className="m-3"
           action={<Button variant="ghost" size="icon-xs" aria-label="Dismiss message" title="Dismiss message" onClick={() => setNotice(null)}><XIcon /></Button>}
         >
           <p className="truncate" title={notice}>{notice}</p>

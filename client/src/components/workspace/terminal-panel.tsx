@@ -19,6 +19,7 @@
    fresh one in the same project rather than reconnecting to a dead PTY. The
    toolbar holds the two that are pressed mid-task; the rest live behind ⋯,
    because this panel is frequently 300px wide beside a transcript. */
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import type { IDockviewPanelProps } from "dockview-react"
 import { FitAddon } from "@xterm/addon-fit"
@@ -712,7 +713,7 @@ export function TerminalPanel({
               </Button>
             }
           />
-          <DropdownMenuContent align="end" className="w-auto min-w-52">
+          <DropdownMenuContent align="end" className={MENU_WIDTH}>
             <DropdownMenuItem onClick={copySelection}>
               <CopyIcon className="text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">Copy selection</span>

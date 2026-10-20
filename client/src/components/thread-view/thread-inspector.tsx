@@ -53,7 +53,7 @@ import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import type { SessionMeta } from "@/lib/settings"
 import type { ThreadItem, ThreadState } from "@/lib/store"
 import { formatDuration, formatRate, formatTokens, promptTokens, sumUsage } from "@/lib/tokens"
-import { InspectorCard, TokensPanel } from "./tokens-panel"
+import { INSPECTOR_TILE, InspectorCard, TokensPanel } from "./tokens-panel"
 import { Count } from "@/components/settings/primitives"
 import { PanelToolbar } from "@/components/workspace/primitives"
 
@@ -179,7 +179,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
   )
   if (rows.length === 0)
     return (
-      <div className="p-2.5">
+      <div className="p-3">
         <Empty>No subagents in this thread yet.</Empty>
       </div>
     )
@@ -204,7 +204,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
     <LayoutOptionsContext.Provider value={options}>
       <AgentJumpContext.Provider value={onJump}>
         <div className="flex min-h-0 flex-1 flex-col">
-          <PanelToolbar className="flex-col items-stretch gap-1.5">
+          <PanelToolbar className="flex-col items-stretch gap-2">
             <RunViewTabs views={RUN_VIEWS} value={view} onChange={(next) => setInspectorPref("agentsView", next)} label="Agents layout" />
             <div className="flex flex-wrap items-center gap-1 text-xs tabular-nums">
               {(Object.keys(AGENT_FILTERS) as AgentFilter[]).map((key) => {
@@ -228,7 +228,7 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
               {tokens && <span className="ml-auto text-muted-foreground">{formatTokens(tokens.totalTokens)} tokens</span>}
             </div>
           </PanelToolbar>
-          <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {shownEntries.length === 0 ? (
               <Empty>No {filter} agents.</Empty>
             ) : (
@@ -268,7 +268,7 @@ function LoadedToolRows({ tools }: { tools: LoadedTool[] }) {
               </span>
               {mcp && <Badge variant="outline">{formatMcpName(mcp.server)}</Badge>}
             </div>
-            {tool.description && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{tool.description}</p>}
+            {tool.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{tool.description}</p>}
           </li>
         )
       })}
@@ -281,20 +281,20 @@ function WorkflowPreview({ workflows }: { workflows: WorkflowGroup[] }) {
   if (recent.length === 0) return <Empty>No workflow runs yet.</Empty>
 
   return (
-    <ul className="space-y-1.5">
+    <ul className="space-y-2">
       {recent.map((workflow) => {
         const progress = workflowProgress(workflow)
         const status = progress.active ? "Running" : progress.failed ? "Failed" : "Complete"
         const percent = progress.total ? Math.min(100, (progress.completed / progress.total) * 100) : 0
         return (
-          <li key={workflow.id} className="rounded-xl border px-3 py-2">
+          <li key={workflow.id} className="rounded-inner border px-3 py-2">
             <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
               <span className="min-w-0 truncate font-medium">{workflow.name}</span>
               <span className="shrink-0 tabular-nums text-muted-foreground">
                 {progress.completed}/{progress.total}
               </span>
             </div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${workflow.name}: ${status}`} aria-valuenow={progress.completed} aria-valuemin={0} aria-valuemax={progress.total || 1}>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${workflow.name}: ${status}`} aria-valuenow={progress.completed} aria-valuemin={0} aria-valuemax={progress.total || 1}>
               <div
                 className={`h-full rounded-full transition-[width] ${progress.failed ? "bg-destructive" : progress.active ? "bg-primary" : "bg-muted-foreground"}`}
                 style={{ width: `${percent}%` }}
@@ -302,12 +302,12 @@ function WorkflowPreview({ workflows }: { workflows: WorkflowGroup[] }) {
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{status}{progress.failed ? ` · ${progress.failed} failed` : ""}</p>
             {workflow.steps.length > 0 && (
-              <ul className="mt-1.5 space-y-1 border-t pt-1.5">
+              <ul className="mt-2 space-y-1 border-t pt-2">
                 {[...workflow.steps].slice(-3).reverse().map((step) => {
                   const state = stepStateOf(step)
                   const label = state === "completed" ? "Done" : state[0].toUpperCase() + state.slice(1)
                   return (
-                    <li key={step.id} className="flex min-w-0 items-center gap-1.5 text-sm">
+                    <li key={step.id} className="flex min-w-0 items-center gap-2 text-sm">
                       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", SEGMENT[state])} />
                       <span className="min-w-0 flex-1 truncate" title={stepNameOf(step)}>{stepNameOf(step)}</span>
                       <span className="shrink-0 text-muted-foreground">{label}</span>
@@ -366,7 +366,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="border-b px-3 pt-2.5 pb-2">
+      <div className="border-b px-3 py-2">
         <h2 className="truncate font-heading text-base font-medium">{meta.title || "New thread"}</h2>
         <div className="mt-2 flex min-w-0 flex-wrap gap-1">
           <Badge
@@ -380,10 +380,10 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
         </div>
       </div>
 
-      <div className="space-y-2.5 p-2.5">
-        <Card size="sm" className="gap-0 py-0">
-          <div className="flex items-center gap-2 border-b p-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+      <div className="space-y-3 p-3">
+        <Card size="sm" className="frame-2xl gap-0 py-0">
+          <div className="frame-p-3 flex items-center gap-2 border-b">
+            <span className="grid size-7 shrink-0 place-items-center rounded-inner bg-muted text-muted-foreground">
               <BotIcon aria-hidden className="size-4" />
             </span>
             <div className="min-w-0">
@@ -391,20 +391,22 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
               <p className="truncate text-xs text-muted-foreground">{profile?.name ?? meta.profileId}</p>
             </div>
           </div>
-          <dl className="space-y-0 px-3 py-1 text-sm">
-            <div className="flex min-w-0 justify-between gap-3 border-b py-1.5"><dt className="shrink-0 text-muted-foreground">Model</dt><dd className="truncate text-right font-medium" title={meta.model}>{model}</dd></div>
-            {meta.effort && <div className="flex justify-between gap-3 border-b py-1.5 last:border-0"><dt className="text-muted-foreground">Effort</dt><dd className="font-medium capitalize">{meta.effort}</dd></div>}
+          <dl className="px-3 py-2">
+            {/* Not `Metric`: there the value never shrinks, and a model id is the
+                long half of this row, so here the label holds and the id truncates. */}
+            <div className="flex min-w-0 items-baseline justify-between gap-2 border-b py-1 last:border-0"><dt className="shrink-0 text-xs text-muted-foreground">Model</dt><dd className="min-w-0 truncate text-right text-sm font-medium text-foreground" title={meta.model}>{model}</dd></div>
+            {meta.effort && <Metric label="Effort" value={meta.effort[0].toUpperCase() + meta.effort.slice(1)} />}
           </dl>
         </Card>
 
         {project && (
           <InspectorCard title="Workspace" icon={<FolderIcon aria-hidden />}>
             <div className="flex min-w-0 items-start gap-2">
-              <ProjectIcon project={project} className="size-7 rounded-lg" />
-              <div className="min-w-0 pt-0.5">
+              <ProjectIcon project={project} className="size-7 rounded-inner" />
+              <div className="min-w-0 pt-1">
                 <p className="truncate text-sm font-medium">{project.name}</p>
-                {project.cwd && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground" title={project.cwd}>{project.cwd}</p>}
-                {project.description && <p className="mt-1.5 line-clamp-3 text-xs text-muted-foreground">{project.description}</p>}
+                {project.cwd && <p className="mt-1 truncate font-mono text-xs text-muted-foreground" title={project.cwd}>{project.cwd}</p>}
+                {project.description && <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{project.description}</p>}
               </div>
             </div>
           </InspectorCard>
@@ -420,14 +422,14 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
         <InspectorCard title="Usage & performance" icon={<GaugeIcon aria-hidden />}>
           <div className="grid grid-cols-2 gap-2">
             <div className="col-span-2 grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-muted px-2.5 py-2">
+              <div className={INSPECTOR_TILE}>
                 <p className="text-xs text-muted-foreground">Total tokens</p>
-                <p className="mt-0.5 text-base font-medium leading-none tabular-nums">{thread.usage ? formatTokens(thread.usage.totalTokens) : "—"}</p>
+                <p className="mt-1 text-base font-medium leading-none tabular-nums">{thread.usage ? formatTokens(thread.usage.totalTokens) : "—"}</p>
               </div>
-              <div className="rounded-xl bg-muted px-2.5 py-2">
+              <div className={INSPECTOR_TILE}>
                 <p className="text-xs text-muted-foreground">Context window</p>
-                <p className="mt-0.5 text-base font-medium leading-none tabular-nums">{contextPercent === null ? "—" : `${contextPercent}%`}</p>
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">{context ? `${formatTokens(context.used)} / ${contextCapacity}` : "Not reported"}</p>
+                <p className="mt-1 text-base font-medium leading-none tabular-nums">{contextPercent === null ? "—" : `${contextPercent}%`}</p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">{context ? `${formatTokens(context.used)} / ${contextCapacity}` : "Not reported"}</p>
               </div>
             </div>
             {contextPercent !== null && (
@@ -436,7 +438,7 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
               </div>
             )}
           </div>
-          <dl className="mt-1.5 divide-y">
+          <dl className="mt-2 divide-y">
             <Metric label="Turns / requests" value={`${turns} / ${requests}`} />
             <Metric label="Tools done / failed" value={`${completedTools} / ${failedTools}`} />
             <Metric label="Output / cached input" value={thread.usage ? `${formatTokens(thread.usage.outputTokens)} / ${formatTokens(cachedIn)}` : "—"} />
@@ -453,9 +455,9 @@ function DetailsTab({ thread, meta, rows }: { thread: ThreadState; meta: Session
 
         <InspectorCard title="Workflow runs" icon={<WorkflowIcon aria-hidden />}>
           {activeWorkflow && activeWorkflowStep && (
-            <div className="mb-2 rounded-xl bg-muted px-2.5 py-2">
+            <div className={cn("mb-2", INSPECTOR_TILE)}>
               <p className="text-xs font-medium text-primary">Now running</p>
-              <p className="mt-0.5 truncate text-sm font-medium">{activeWorkflow.name} / {stepNameOf(activeWorkflowStep)}</p>
+              <p className="mt-1 truncate text-sm font-medium">{activeWorkflow.name} / {stepNameOf(activeWorkflowStep)}</p>
               <p className="truncate text-xs text-muted-foreground">{recentStepText(activeWorkflowStep)}</p>
             </div>
           )}
@@ -605,7 +607,7 @@ export function ThreadInspector({
         onValueChange={(next) => setInspectorPref("tab", next as InspectorTab)}
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <header className="flex shrink-0 items-center gap-1 border-b pt-[var(--dock-content-overlap,0px)] pr-1.5 pl-1">
+        <header className="flex shrink-0 items-center gap-1 border-b pt-[var(--dock-content-overlap,0px)] px-1">
           <TabsList variant="line" className="my-1 min-w-0 flex-1 justify-start overflow-x-auto">
             <TabsTrigger value="changes" className="text-sm">
               Source Control
@@ -676,7 +678,7 @@ export function ThreadSection({
 
   if (section === "changes")
     return !meta.projectId ? (
-      <div className="p-2.5">
+      <div className="p-3">
         <Empty>This thread has no project, so there is no worktree to measure.</Empty>
       </div>
     ) : (
@@ -689,7 +691,7 @@ export function ThreadSection({
     )
   if (section === "plan")
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {todos ? <TodoChecklist items={todos} /> : <Empty>The agent has not written a plan in this thread.</Empty>}
       </div>
     )

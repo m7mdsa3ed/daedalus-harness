@@ -252,7 +252,15 @@ function QuickActions({
       {chip(go("/notifications"), <BellIcon data-icon="inline-start" />, "Inbox")}
       {chip(go(settingsRootPath()), <SettingsIcon data-icon="inline-start" />, "Settings")}
       {projects.slice(0, 4).map((project) =>
-        chip(go(projectPath(project.id)), <ProjectIcon project={project} className="size-4" />, project.name, project.id)
+        chip(
+          go(projectPath(project.id)),
+          // ProjectIcon does not forward props, so the slot the button spaces by is a wrapper.
+          <span data-icon="inline-start" className="flex size-4 shrink-0 items-center justify-center">
+            <ProjectIcon project={project} className="size-4" />
+          </span>,
+          project.name,
+          project.id
+        )
       )}
     </div>
   )

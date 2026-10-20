@@ -83,7 +83,7 @@ function PendingCard({ item }: { item: PendingItem }) {
     answer.mutate({ sessionId: item.sessionId, requestId: item.requestId, optionId })
 
   return (
-    <article className="flex min-h-12 items-start gap-3 px-3 py-3 @panel-sm:px-4">
+    <article className="flex min-h-12 items-start gap-3 p-3 @panel-sm:p-4">
       <KindGlyph
         kind={item.kind === "permission" ? "permission" : "question"}
         read={false}
@@ -98,11 +98,11 @@ function PendingCard({ item }: { item: PendingItem }) {
             {shortAge(item.askedAt)}
           </span>
         </div>
-        <p className="mt-0.5 line-clamp-3 text-xs text-pretty break-words text-muted-foreground">
+        <p className="mt-1 line-clamp-3 text-xs text-pretty break-words text-muted-foreground">
           {summary(item)}
         </p>
         {project && <p className="mt-1 truncate text-xs text-muted-foreground">{project}</p>}
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 [&_[data-slot=button]]:pointer-coarse:h-11">
+        <div className="mt-3 flex flex-wrap items-center gap-2 [&_[data-slot=button]]:pointer-coarse:h-11">
           {allow && (
             <Button size="sm" disabled={answer.isPending} onClick={() => send(allow.optionId)}>
               {allow.kind === "allow_always" ? "Always allow" : "Allow"}

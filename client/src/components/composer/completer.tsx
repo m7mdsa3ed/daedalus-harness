@@ -92,7 +92,7 @@ export function CompleterRow({
       }}
       onMouseMove={onHover}
       className={cn(
-        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-2 py-2 text-left text-sm sm:py-1.5",
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-xl p-2 text-left text-sm",
         selected && "bg-muted text-foreground"
       )}
     >
@@ -125,7 +125,7 @@ export function CompleterRow({
       {(aside || badge || trailing) && (
         <span
           className={cn(
-            "col-start-3 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+            "col-start-3 flex shrink-0 items-center gap-2 text-xs text-muted-foreground"
           )}
         >
           {aside && <span className="font-mono tabular-nums">{aside}</span>}
@@ -182,7 +182,7 @@ export function CompleterList({
       <div ref={listRef} className="max-h-52 overflow-y-auto p-1 overscroll-contain">
         {children}
       </div>
-      {/* `SHELF_PAD` here and the rows' own `p-1` + `px-2` land at the same
+      {/* `SHELF_PAD` here and the list's `p-1` + the rows' `p-2` land at the same
           12px, so the hint and the keys that drive the list line up with the
           rows above them rather than sitting 2px inboard. */}
       {(hint || !coarse) && (
@@ -214,8 +214,8 @@ export function CompleterList({
 /** The one-line "nothing yet" / hint row the menus draw instead of a list. */
 export function CompleterNote({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
   return (
-    <ComposerStripItem className={cn(SHELF_PAD, "flex items-center gap-2 py-1.5 text-xs text-muted-foreground")}>
-      <Icon className="size-3.5 shrink-0" />
+    <ComposerStripItem className={cn(SHELF_PAD, "flex items-center gap-2 py-2 text-xs text-muted-foreground")}>
+      <Icon className="size-4 shrink-0" />
       <span className="min-w-0 truncate">{children}</span>
     </ComposerStripItem>
   )

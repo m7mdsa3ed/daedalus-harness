@@ -145,10 +145,10 @@ export function ComposerAttachments({
         label,
         badge: attachments.length,
       }}
-      className={cn(SHELF_PAD, "py-1.5")}
+      className={cn(SHELF_PAD, "py-3")}
     >
       {attachments.length > 1 && (
-        <div className="mb-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <div className="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span className="tabular-nums">
             {label} · {formatBytes(total)}
           </span>
@@ -321,7 +321,7 @@ function ImageTile({
       data-slot="attachment"
       title={title}
       className={cn(
-        "group/tile relative size-14 shrink-0 overflow-hidden rounded-lg border bg-muted",
+        "group/tile relative size-14 shrink-0 overflow-hidden rounded-2xl border bg-muted",
         failed && "border-destructive/40 bg-destructive/10 text-destructive"
       )}
     >
@@ -343,15 +343,15 @@ function ImageTile({
         </button>
       )}
       {outcome && outcome.delivery === "link" && (
-        <span className="absolute bottom-1 left-1 flex size-4 items-center justify-center rounded-full bg-background/90 text-muted-foreground">
-          <LinkIcon className="size-2.5" />
+        <span className="absolute bottom-2 left-2 flex size-5 items-center justify-center rounded-full bg-background/90 text-muted-foreground">
+          <LinkIcon className="size-3" />
         </span>
       )}
       <button
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${attachment.name}`}
-        className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 transition-opacity group-hover/tile:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+        className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground opacity-0 transition-opacity group-hover/tile:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
       >
         <XIcon className="size-3" />
       </button>

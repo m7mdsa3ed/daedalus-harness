@@ -118,9 +118,9 @@ export function DiffView({
   const removed = rows.filter((row) => row.type === "del").length
 
   return (
-    <div className={cn("overflow-hidden rounded-md border", className)}>
+    <div className={cn("overflow-hidden rounded-lg border", className)}>
       {(path || added || removed) && (
-        <div className="flex items-center gap-2 border-b bg-muted/50 px-2 py-1 font-mono text-xs">
+        <div className="flex items-center gap-2 border-b bg-muted/50 px-3 py-1 font-mono text-xs">
           {path && <span className="min-w-0 flex-1 truncate text-muted-foreground">{path}</span>}
           <span className="ml-auto shrink-0 tabular-nums text-success">
             +{added}
@@ -138,7 +138,7 @@ export function DiffView({
               row.type === "skip" ? (
                 <div
                   key={index}
-                  className="col-span-2 my-0.5 border-y bg-muted/50 px-2.5 py-0.5 text-xs text-muted-foreground select-none"
+                  className="col-span-2 my-1 border-y bg-muted/50 px-3 py-0.5 text-xs text-muted-foreground select-none"
                 >
                   ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
                 </div>
@@ -155,7 +155,7 @@ export function DiffView({
               row.type === "skip" ? (
                 <div
                   key={index}
-                  className="my-0.5 border-y bg-muted/50 px-2.5 py-0.5 text-xs text-muted-foreground select-none"
+                  className="my-1 border-y bg-muted/50 px-3 py-0.5 text-xs text-muted-foreground select-none"
                 >
                   ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
                 </div>
@@ -200,7 +200,7 @@ function DiffSplitRow({ row }: { row: Row }) {
     <>
       <div
         className={cn(
-          "whitespace-pre pe-3",
+          "whitespace-pre px-3",
           left?.type === "del" && "bg-red-500/10 text-red-700 dark:text-red-300",
           left?.type === "eq" && "text-muted-foreground"
         )}
@@ -209,7 +209,7 @@ function DiffSplitRow({ row }: { row: Row }) {
       </div>
       <div
         className={cn(
-          "whitespace-pre ps-3",
+          "whitespace-pre px-3",
           right?.type === "add" && "bg-success/10 text-success",
           right?.type === "eq" && "text-muted-foreground"
         )}

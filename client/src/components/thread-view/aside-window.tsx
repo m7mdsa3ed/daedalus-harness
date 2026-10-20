@@ -118,7 +118,7 @@ export function AsideWindow({
       style={{ ...box, "--dock-content-overlap": "0px" } as React.CSSProperties}
     >
       <div
-        className="flex min-h-8 shrink-0 cursor-grab touch-none items-center gap-1.5 border-b px-2 text-sm select-none active:cursor-grabbing"
+        className="flex min-h-8 shrink-0 cursor-grab touch-none items-center gap-2 border-b px-2 text-sm select-none active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

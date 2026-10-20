@@ -13,6 +13,10 @@ import {
   LABEL,
   PANE,
   PANE_MAX_H,
+  SHELL_COMMAND,
+  SHELL_FOOTER,
+  SHELL_OUTPUT,
+  SHELL_SKELETON,
   ShellPane,
   ShellScript,
   ShowAll,
@@ -81,12 +85,12 @@ export function ReadDetail({ item }: { item: ToolItem }) {
         {!preNumbered && (
           <pre
             aria-hidden
-            className="shrink-0 py-1 pe-3 ps-2 text-end font-mono text-xs leading-5 tabular-nums whitespace-pre text-muted-foreground select-none"
+            className="shrink-0 py-2 pe-3 ps-3 text-end font-mono text-xs leading-5 tabular-nums whitespace-pre text-muted-foreground select-none"
           >
             {lines.map((_, index) => first + index).join("\n")}
           </pre>
         )}
-        <div className="min-w-max flex-1 py-1 pe-3">
+        <div className="min-w-max flex-1 py-2 pe-3">
           <Highlighted
             code={body}
             language={language}
@@ -151,8 +155,8 @@ export function SearchDetail({ item }: { item: ToolItem }) {
   const flags = searchFlags(item)
 
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         {pattern && <code className="font-mono text-foreground">{pattern}</code>}
         {scope && (
           <span className="font-mono text-muted-foreground">in {shortPath(scope, 44)}</span>
@@ -172,7 +176,7 @@ export function SearchDetail({ item }: { item: ToolItem }) {
             {shown.map((line, index) => {
               const match = /^(.*?):(\d+):(.*)$/.exec(line)
               return (
-                <li key={index} className="flex gap-2 px-2.5 py-1">
+                <li key={index} className="flex gap-2 px-3 py-1">
                   {match ? (
                     <>
                       <span className="shrink-0 text-muted-foreground">
@@ -191,7 +195,7 @@ export function SearchDetail({ item }: { item: ToolItem }) {
             })}
           </ul>
           {lines.length > shown.length && (
-            <div className="px-2.5 py-1 text-xs text-muted-foreground">
+            <div className="px-3 py-1 text-xs text-muted-foreground">
               …and {lines.length - shown.length} more
             </div>
           )}
@@ -235,7 +239,7 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
 
   return (
     <div className={cn(PANE, failed && "bg-destructive/10")}>
-      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-xs leading-relaxed">
+      <div className={SHELL_COMMAND}>
         <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground">
           $
         </span>
@@ -245,21 +249,21 @@ export function TerminalDetail({ item, active }: { item: ToolItem; active: boole
         <pre
           className={cn(
             PANE_MAX_H,
-            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap",
+            SHELL_OUTPUT,
             failed ? "text-destructive" : "text-muted-foreground"
           )}
         >
           {out}
         </pre>
       )}
-      {!out.trim() && active && <ToolCallSkeleton className="border-t border-inherit p-2.5" />}
+      {!out.trim() && active && <ToolCallSkeleton className={SHELL_SKELETON} />}
       {over && <ShowAll onClick={showAll} />}
       {/* A footer only a failure earns. "exited 0" is what every command that
           worked would say, which is nothing worth the row — but a run that
           died is a row worth having, because it is what carries the copy of
           the command and its output out of here. */}
       {failed && (
-        <div className="flex items-center gap-2 border-t border-inherit px-2.5 py-1 font-mono text-xs text-destructive">
+        <div className={cn(SHELL_FOOTER, "text-destructive")}>
           <span className="min-w-0 flex-1 truncate">{exited ?? "failed"}</span>
           <CopyButton
             text={transcript}
@@ -301,7 +305,7 @@ export function EditDetail({ item, active }: { item: ToolItem; active: boolean }
   const seen = new Map<string | undefined, number>()
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       {others.length > 0 && <ToolContentBlocks item={{ ...item, content: others }} />}
       {edits.map((edit, index) => {
         const total = perPath.get(edit.path) ?? 1

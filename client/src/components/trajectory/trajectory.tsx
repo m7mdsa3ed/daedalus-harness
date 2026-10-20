@@ -27,6 +27,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toggle } from "@/components/ui/toggle"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { inlineFromQuery, reportError } from "@/lib/errors"
 import { useFetchWholeSpans, useThreadSpans } from "@/lib/queries/trace"
 import { useStoreSelect } from "@/lib/store"
@@ -113,9 +114,9 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
       )}
     >
       {/* Toolbar: search, turn jump, follow, refresh, export. */}
-      <div className="flex min-h-8 flex-wrap items-center gap-1 border-b px-2 py-1">
+      <PanelToolbar className="flex-wrap">
         {variant === "page" && (
-          <h1 className="mr-2 flex items-center gap-1.5 text-sm font-medium">
+          <h1 className="mr-2 flex items-center gap-2 text-sm font-medium">
             <RouteIcon className="size-4 text-muted-foreground" />
             Trajectory
           </h1>
@@ -177,7 +178,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
         >
           <DownloadIcon />
         </Button>
-      </div>
+      </PanelToolbar>
 
       {failure && (
         <div className="p-3">
@@ -207,7 +208,7 @@ export function Trajectory({ sessionId, variant }: { sessionId: string; variant:
             <Kpis totals={totals} />
             <Overview roots={roots} now={now} selectedId={selectedId} onPick={reveal} />
             {kinds.length > 1 && (
-              <div className="flex flex-wrap gap-1 border-b px-3 py-1.5">
+              <div className="flex flex-wrap gap-1 border-b px-3 py-2">
                 {kinds.map((kind) => {
                   const off = hidden.has(kind)
                   const Icon = KIND[kind].icon
@@ -329,7 +330,7 @@ function Kpis({ totals: t }: { totals: ReturnType<typeof sumTotals> }) {
   return (
     <dl className="grid grid-cols-4 gap-px border-b bg-border @panel-sm:grid-cols-6 @panel-lg:grid-cols-11">
       {cells.map(([label, value, bad]) => (
-        <div key={label} className="bg-background px-2.5 py-1.5">
+        <div key={label} className="bg-background px-3 py-2">
           <dt className="truncate text-xs text-muted-foreground">{label}</dt>
           <dd className={cn("text-sm font-medium tabular-nums", bad && "text-destructive")}>{value}</dd>
         </div>
@@ -441,7 +442,7 @@ function Row({
         selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
         isRoot && "mt-1 border-t font-medium first:mt-0 first:border-t-0"
       )}
-      style={{ paddingLeft: 8 + depth * 12 }}
+      style={{ paddingLeft: 12 + depth * 20 }}
     >
       <span className="flex min-w-0 items-center gap-1">
         {node.children.length ? (

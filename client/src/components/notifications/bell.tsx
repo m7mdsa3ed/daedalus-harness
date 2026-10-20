@@ -87,7 +87,6 @@ export function NotificationIconButton() {
       <PopoverContent
         align="start"
         side={isMobile ? "bottom" : "top"}
-        sideOffset={8}
         className="w-[min(24rem,calc(var(--float-w)-1rem))] gap-0 p-0"
       >
         {/* `overflow-hidden` is not decoration: the popup is `rounded-2xl` and

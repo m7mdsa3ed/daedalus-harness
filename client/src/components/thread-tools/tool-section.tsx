@@ -43,7 +43,7 @@ export function ToolSection<T extends { id: string; name: string }>({
   onToggle,
 }: {
   title: string
-  icon: React.ReactNode
+  icon?: React.ReactNode
   items: T[]
   itemIcon?: (item: T) => React.ReactNode
   hint: (item: T) => string
@@ -92,7 +92,7 @@ export function ToolSection<T extends { id: string; name: string }>({
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-64">
         {unreadable && (
-          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+          <div className="px-3 py-2 text-xs text-muted-foreground">
             {agentName} does not read {unreadable} from the project — these are linked, but it
             will not see them.
           </div>

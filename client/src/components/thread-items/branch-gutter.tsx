@@ -12,7 +12,9 @@ import type { BranchRow } from "@/lib/tool-graph"
 import { fillOf, strokeOf } from "@/components/workspace/scm/commit-graph"
 
 const LANE_W = 10
-const PAD = 7
+/** Lane 0's centre: x=10, the middle of the run header's 20px mark slot, so
+    the trunk hangs straight under the chevron it opened from. */
+const PAD = 10
 /** The dot's centre, in the SVG's own coordinates (the row's 14px + the 2px overhang). */
 const DOT_Y = 16
 

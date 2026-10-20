@@ -13,7 +13,7 @@
 export const FOOTER_ICON = "text-muted-foreground"
 export const FLOAT_ROW = "pr-3!"
 export const FLOAT_ACTION = "bg-sidebar-accent hover:bg-sidebar-border"
-export const NEST = "mx-3.5 border-l border-sidebar-border px-2.5 py-0.5"
+export const NEST = "ml-5 border-l border-sidebar-border pl-1 py-1"
 
 /** Rows a long-tail list (a project folder, Trash) shows before "Show more". */
 export const PROJECT_PAGE_SIZE = 6

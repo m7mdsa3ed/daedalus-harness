@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Notice } from "@/components/notice"
 import { CopyButton } from "@/components/ui/copy-button"
+import { RUN_RAIL_CLASS } from "@/components/thread-items/rail"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import {
   CARD,
@@ -117,7 +118,7 @@ function AgentBlock({
         accent ? "border-s-2 border-s-primary" : "bg-muted"
       )}
     >
-      <p className={cn(LABEL, "mb-1.5", accent && "text-primary")}>
+      <p className={cn(LABEL, "mb-1", accent && "text-primary")}>
         <span aria-hidden>{mark}</span> {label}
       </p>
       <ProseWithOpenui text={body} stream={stream} streaming={streaming} />
@@ -284,8 +285,9 @@ const compactTokens = (n: number): string =>
    four rather than one — the difference is what the reader has to do about it:
 
    — `AlertCard` (here): something the app reports, read and moved past. An
-     error, or a task reporting back. The transcript's `CARD` geometry, a tone,
-     a leading glyph and a stack of lines; `ErrorRow` and `TaskNotificationCard`
+     error, or a task reporting back. The stock `Notice` in the told card's
+     geometry (`my-2 rounded-xl p-3`, `CARD`'s), a tone, a leading glyph and a
+     stack of lines; `ErrorRow` and `TaskNotificationCard`
      are the two members, and the shell is what stops them drifting apart.
    — `AgentRequestCard` (`agent-request.tsx`): something *waiting on the
      reader* — an approval, a question, a held turn. A roomy, borderless tinted
@@ -313,7 +315,7 @@ const AlertCard = React.memo(function AlertCard({
     /* The stock alert (`Notice`), with no live-region role: a replayed
        transcript mounts every one of these at once, and they are history, not
        news. */
-    <Notice tone={tone} icon={icon} size="md" role={undefined} className="my-2">
+    <Notice tone={tone} icon={icon} size="md" role={undefined} className="my-2 rounded-xl p-3">
       {children}
     </Notice>
   )
@@ -378,7 +380,7 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
         <p className="text-xs tabular-nums text-muted-foreground">{stats.join(" · ")}</p>
       )}
       {grouped.map(({ message, labels }, index) => (
-        <div key={index} className="space-y-0.5">
+        <div key={index} className="space-y-1">
           <p className="flex flex-wrap gap-1">
             {labels.map((label) => (
               <Badge key={label} variant="destructive" className="font-mono">
@@ -472,8 +474,10 @@ export const ErrorRow = React.memo(function ErrorRow({
   ]
   if (compact)
     return (
-      <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground select-text">
-        <TriangleAlertIcon className="size-3.5 shrink-0" />
+      <div className="flex min-w-0 items-start gap-2 text-sm leading-6 text-muted-foreground select-text">
+        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+          <TriangleAlertIcon className="size-3" />
+        </span>
         <span className="min-w-0 truncate">{item.title}</span>
         <CopyButton text={full} size="icon-xs" className="text-muted-foreground hover:text-foreground" />
       </div>
@@ -512,7 +516,7 @@ export const ErrorRow = React.memo(function ErrorRow({
         </p>
         {item.reason && <p className="text-muted-foreground">{item.reason}</p>}
         {missing?.install && (
-          <code className="block w-fit max-w-full rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs break-all text-foreground select-text">
+          <code className="block w-fit max-w-full rounded-md bg-muted px-2 py-1 font-mono text-xs break-all text-foreground select-text">
             {missing.install}
           </code>
         )}
@@ -522,16 +526,16 @@ export const ErrorRow = React.memo(function ErrorRow({
           </Disclosure>
         )}
         {open && item.detail && (
-          <pre className="max-h-56 overflow-auto rounded-lg bg-muted p-2 font-mono text-xs whitespace-pre-wrap text-foreground">
+          <pre className="max-h-56 overflow-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap text-foreground">
             {item.detail}
           </pre>
         )}
-        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           {missing && (
             <ActionPill
               onClick={() => void navigate("/settings/agents")}
             >
-              <SettingsIcon className="size-3" />
+              <SettingsIcon />
               Open Agents settings
             </ActionPill>
           )}
@@ -540,7 +544,7 @@ export const ErrorRow = React.memo(function ErrorRow({
               onClick={onContinue}
               title="Start the agent again and ask it to pick up where it stopped"
             >
-              <PlayIcon className="size-3" />
+              <PlayIcon />
               Continue
             </ActionPill>
           )}
@@ -553,7 +557,7 @@ export const ErrorRow = React.memo(function ErrorRow({
                   : "Send that message again"
               }
             >
-              <RotateCwIcon className="size-3" />
+              <RotateCwIcon />
               {retryLabel}
             </ActionPill>
           )}
@@ -562,7 +566,7 @@ export const ErrorRow = React.memo(function ErrorRow({
               onClick={onRetryAsPaths}
               title="Send it again with the files written into the workspace and named by path, rather than inlined"
             >
-              <PaperclipIcon className="size-3" />
+              <PaperclipIcon />
               Retry as file paths
             </ActionPill>
           )}
@@ -610,7 +614,7 @@ export const CompactionStep = React.memo(function CompactionStep({
     item.summary.length > 0 || item.error ? (
       <div className="min-w-0 space-y-2">
         {item.error && (
-          <div className="flex items-start gap-1">
+          <div className="flex items-start gap-2">
             <p className="min-w-0 flex-1 text-sm text-destructive">{item.error}</p>
             <CopyButton text={item.error} size="icon-xs" className="shrink-0 text-destructive" />
           </div>
@@ -688,7 +692,7 @@ export const VoiceStep = React.memo(function VoiceStep({
 }) {
   const user = item.role === "user"
   return (
-    <Message align={user ? "end" : undefined} className={cn("flex-col gap-0.5 py-2", user ? "items-end" : "items-start")}>
+    <Message align={user ? "end" : undefined} className={cn("flex-col gap-1 py-2", user ? "items-end" : "items-start")}>
       <MessageContent>
         <Bubble variant={user ? "tinted" : "muted"} align={user ? "end" : undefined}>
           <BubbleContent
@@ -764,7 +768,7 @@ export const ShellStep = React.memo(function ShellStep({
             emptyNote={running ? undefined : "No output."}
           />
           {item.timedOut && (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Stopped at the timeout — this is what it printed first.
             </p>
           )}
@@ -804,16 +808,26 @@ export const ShellRun = React.memo(function ShellRun({
       <button
         type="button"
         onClick={() => setChoice(!open)}
-        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className="-mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
-        <ChevronRightIcon
+        {/* The folded run's own header: the fold ground, the chevron in the
+            mark slot, then the kind's disc where a run draws its avatars. */}
+        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-90")}
+          />
+        </span>
+        <span
           aria-hidden
           className={cn(
-            "size-3 shrink-0 text-muted-foreground transition-transform duration-200",
-            open && "rotate-90"
+            "grid size-5 shrink-0 place-items-center rounded-full",
+            KIND_CHIPS.execute,
+            KIND_COLORS.execute
           )}
-        />
-        <SquareTerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        >
+          <SquareTerminalIcon className="size-3" />
+        </span>
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-sm leading-6 text-muted-foreground",
@@ -827,12 +841,15 @@ export const ShellRun = React.memo(function ShellRun({
         />
       </button>
       {open && (
-        /* One rail for the blocks, the way a folded tool run draws one: the
-           commands are a group, and the line down their left says so. */
-        <div className="ms-1.5 border-s ps-1">
-          {items.map((item) => (
-            <ShellStep key={item.id} item={item} showTimestamp={showTimestamps} />
-          ))}
+        /* The folded tool run's indent and clip: the commands are a group,
+           nested one step under the header. `-mx-1 px-1` is the room the
+           steps' 4px hover bleed needs inside the clip. */
+        <div className="-mx-1 overflow-hidden px-1">
+          <div className={RUN_RAIL_CLASS}>
+            {items.map((item) => (
+              <ShellStep key={item.id} item={item} showTimestamp={showTimestamps} />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -854,8 +871,8 @@ export const SourcesStrip = React.memo(function SourcesStrip({ turn }: { turn: T
     turn.fetches > 0 && `${turn.fetches} ${turn.fetches === 1 ? "page read" : "pages read"}`,
   ].filter(Boolean)
   return (
-    <div className="mt-1 mb-2 flex min-w-0 flex-wrap items-center gap-1.5 pl-1">
-      <span className={cn(LABEL, "mr-0.5")}>Sources</span>
+    <div className="mt-1 mb-2 flex min-w-0 flex-wrap items-center gap-2">
+      <span className={LABEL}>Sources</span>
       {turn.sources.map((source) => (
         <SourceChip key={source.url} url={source.url} title={source.title} />
       ))}

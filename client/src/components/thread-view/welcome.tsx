@@ -9,7 +9,7 @@
     that does not exist yet — and two copies of these two sentences would drift. */
 export function ThreadWelcome({ draft }: { draft?: boolean }) {
   return (
-    <div className="mx-auto flex w-full max-w-[var(--harness-composer-width)] flex-col items-center gap-1.5 px-4 pb-5 text-center">
+    <div className="mx-auto flex w-full max-w-[var(--harness-composer-width)] flex-col items-center gap-2 px-4 pb-6 text-center">
       <p className="text-base font-medium">
         {draft ? "What are we working on?" : "Thread ready"}
       </p>

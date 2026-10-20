@@ -17,7 +17,7 @@ import {
   Trash2Icon,
 } from "lucide-react"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
-import { DetailSection, JsonView, PANE, PANE_PAD, SmartBlock } from "@/components/tool-parts"
+import { DISCLOSURE, DetailSection, JsonView, PANE, PANE_PAD, SmartBlock } from "@/components/tool-parts"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
@@ -103,10 +103,10 @@ export function HarnessDetail({ item, active }: { item: ToolItem; active: boolea
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1.5 text-sm">
-        <BoxesIcon className="size-3 shrink-0 text-muted-foreground" />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-5">
+        <BoxesIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="font-mono text-foreground">Harness</span>
-        <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
+        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="text-muted-foreground">{subject}</span>
         {effect && (
           <Badge variant={EFFECT_VARIANT[effect]}>{effect}</Badge>
@@ -158,7 +158,7 @@ function HarnessResult({ value, text }: { value: unknown; text: string }) {
     const fields = harnessFields(record)
     if (fields.length > 0) {
       return (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <FieldList fields={fields} />
           <RawJson value={value} />
         </div>
@@ -178,7 +178,7 @@ const EFFECT_VARIANT: Record<HarnessEffect, "secondary" | "default" | "destructi
     down the values, the way the table reads down a column. */
 function FieldList({ fields }: { fields: { key: string; value: string }[] }) {
   return (
-    <dl className={cn(PANE_PAD, "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm")}>
+    <dl className={cn(PANE_PAD, "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm")}>
       {fields.map((field) => (
         <React.Fragment key={field.key}>
           <dt className="font-mono text-muted-foreground">{field.key}</dt>
@@ -194,7 +194,7 @@ function FieldList({ fields }: { fields: { key: string; value: string }[] }) {
 function ResultTable({ table, value }: { table: HarnessTable; value: unknown }) {
   const hidden = table.total - table.rows.length
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className={PANE}>
         <Table>
           <TableHeader>
@@ -236,7 +236,8 @@ function ResultTable({ table, value }: { table: HarnessTable; value: unknown }) 
 function RawJson({ value }: { value: unknown }) {
   return (
     <details className="group text-xs">
-      <summary className="w-fit cursor-pointer text-muted-foreground select-none hover:text-foreground">
+      <summary className={cn(DISCLOSURE, "cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden")}>
+        <ChevronRightIcon aria-hidden className="size-3 shrink-0 transition-transform duration-200 group-open:rotate-90" />
         Raw JSON
       </summary>
       <JsonView value={value} text={safeStringify(value)} preview={2} className="mt-1" />
@@ -255,7 +256,7 @@ function OperationList({ operations }: { operations: unknown[] }) {
         const description = typeof op.description === "string" ? op.description : ""
         const args = Array.isArray(op.args) ? op.args.filter((a): a is string => typeof a === "string") : []
         return (
-          <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <li key={index} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="font-mono text-xs text-foreground">{name}</span>
             {method && (
               <Badge variant="secondary" className="font-mono">{method}</Badge>

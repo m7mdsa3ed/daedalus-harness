@@ -38,13 +38,6 @@ export function copyText(text: string) {
    already said. Only a failure claims that column now. Everything a step
    produced is collapsed behind the row until clicked. */
 
-/** The nested-transcript rail: a hairline down the gutter with the child rows
-    indented off it. Here rather than in thread-items because both the rows
-    inside a subagent (`SubagentTranscript`) and the steps inside a run
-    (`workflow-run`) hang off it, and those two files may not import each other
-    (see the header comment on workflow-run). */
-export const RAIL_CLASS = "mt-0.5 ms-[calc(0.75rem-1px)] space-y-0.5 ps-2.5"
-
 /* ── Direction ── a step reads in the direction of its own text: an Arabic
    title puts the mark on the right and the title flush beside it, as one unit,
    instead of a right-aligned title drifting away from a left-hand mark. A run
@@ -348,11 +341,13 @@ export const StepRow = React.memo(function StepRow({
           // so starting them lines them up exactly — and a row that grew a
           // caption keeps its label and metric pinned to the first line rather
           // than drifting to the middle of two, which `items-center` did.
-          // The width is calc(100% + 12px) so the -mx-1.5/px-1.5 hover bleed
-          // cancels on BOTH sides: a `w-full` box only shifts left under a
-          // negative start margin, which left the row's content edge 12px shy
-          // of the right edge that messages run to.
-          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-xl px-1.5 py-0.5 transition-colors duration-150",
+          // The hover ground is 4px round the 24px line box's 20px disc — the
+          // -mx-1/px-1 bleed and py-0.5 put the disc 4px from every edge, so
+          // the corner is the disc's 10px + 4px = rounded-xl. The width is
+          // calc(100% + 8px) so the bleed cancels on BOTH sides: a `w-full`
+          // box only shifts left under a negative start margin, which left the
+          // row's content edge 8px shy of the right edge messages run to.
+          "group/step -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-start gap-2 rounded-xl px-1 py-0.5 transition-colors duration-150",
           plain && "mx-0 w-full px-0 py-0 hover:bg-transparent",
           expandable && !plain && "hover:bg-muted",
           compact && "py-0",
@@ -421,7 +416,7 @@ export const StepRow = React.memo(function StepRow({
             </div>
           ) : (
             <span className="flex min-w-0 flex-1 flex-col">
-              <div className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-1.5">
+              <div className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-2">
                 <span
                   className={cn(
                     "min-w-0 truncate text-sm leading-6",
@@ -490,16 +485,19 @@ export const StepRow = React.memo(function StepRow({
             className="overflow-hidden"
           >
             {/* Spacing lives inside the clip: a margin on the animated box is
-                outside its height and snapped away after every collapse (14px). */}
+                outside its height and snapped away after every collapse.
+                Full width, not under the title column like `below`: a
+                payload (a diff, a command's output, a JSON well) needs the
+                column the mark would otherwise cost it. */}
             <div
-            className={cn(
-            plain ? "mt-0 mb-2.5 min-w-0 space-y-2" : "mt-1 mb-2.5 min-w-0 space-y-2",
-            compact && "mt-0.5 mb-1 space-y-1",
-            minimal && "mt-0 mb-1 space-y-1",
-            toolLayout === "rail" && "mt-1 ps-3"
-          )}
+              className={cn(
+                "mt-1 mb-2 min-w-0 space-y-2",
+                compact && "mt-1 mb-1 space-y-1",
+                minimal && "mt-0 mb-1 space-y-1",
+                toolLayout === "rail" && "mt-1 ps-3"
+              )}
             >
-          {detail}
+              {detail}
             </div>
           </m.div>
         )}

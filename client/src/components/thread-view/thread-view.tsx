@@ -139,15 +139,15 @@ function Entrance({ animate, children }: { animate: boolean; children: React.Rea
     child — the server routes it by the request's id. */
 function AskedBy({ from }: { from: RequestFrom }) {
   return (
-    <p className="mb-1.5 flex min-w-0 items-center gap-1.5 px-1 text-sm text-muted-foreground">
+    <p className="mb-1 flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
       <span className="truncate">
         Asked by <span className="font-medium text-foreground">{from.title}</span>
       </span>
       <Link
         to={threadPath(from.sessionId)}
-        className="inline-flex shrink-0 items-center gap-0.5 hover:text-foreground"
+        className="inline-flex shrink-0 items-center gap-1 hover:text-foreground"
       >
-        Open thread <ArrowUpRightIcon className="size-3" />
+        Open thread <ArrowUpRightIcon className="size-3.5" />
       </Link>
     </p>
   )
@@ -864,14 +864,14 @@ export function ThreadView({
                     `contain-intrinsic-size: auto` remembers each row's last
                     real height, and only the on-screen tail grows, so the
                     autoscroll target does not drift. */
-                /* `-mx-1.5 px-1.5`: `content-visibility: auto` is paint
+                /* `-mx-1 px-1`: `content-visibility: auto` is paint
                     containment, which clips to the item's box — and step rows
-                    hang their hover ground 6px past it on both sides. */
-                <MessageScrollerItem key={row.id} messageId={row.id} className="-mx-1.5 px-1.5">
+                    hang their hover ground 4px past it on both sides. */
+                <MessageScrollerItem key={row.id} messageId={row.id} className="-mx-1 px-1">
                   {/* No `first:hidden`: the divider is always its item's first
                       child, so that hid every one. `firstUserIndex` already
                       skips the first turn. */}
-                  {divider && <div aria-hidden className="my-1.5 h-px bg-border" />}
+                  {divider && <div aria-hidden className="my-2 h-px bg-border" />}
                   {/* The entrance wrapper (index.css): one per row, so the
                       divider and the Sources strip sit beside it — each mounts
                       at its own moment and rises in on its own.
@@ -933,19 +933,24 @@ export function ThreadView({
                   next thing happens: a replay arrives oldest-first and the
                   scroller is pinned to the bottom. The failure-held card, the
                   approvals and the queue below keep their own rows. */}
+              {/* `-ms-3 ps-3` on the status item: `.harness-status` hangs its
+                  tone rule 10px left of its box, and the item's paint
+                  containment would clip it. */}
               {status && (
-                <MessageScrollerItem messageId="status">
+                <MessageScrollerItem messageId="status" className="-ms-3 ps-3">
                   <div
                     className={status.tone === "progress" && status.opening ? undefined : "harness-item-in"}
                     style={stagger(0)}
                   >
-                    <ThreadStatus
-                      status={status}
-                      sessionId={sessionId}
-                      actions={actions}
-                      onAction={onStatusAction}
-                      canRetryAsPaths={failedRow ? wentInline(failedRow, delivery) : false}
-                    />
+                    <div className="py-1">
+                      <ThreadStatus
+                        status={status}
+                        sessionId={sessionId}
+                        actions={actions}
+                        onAction={onStatusAction}
+                        canRetryAsPaths={failedRow ? wentInline(failedRow, delivery) : false}
+                      />
+                    </div>
                   </div>
                 </MessageScrollerItem>
               )}
@@ -1030,17 +1035,21 @@ export function ThreadView({
                   nothing yet still reserves `contain-intrinsic-size`. */}
               {(thread.pendingConfig || thread.stagedConfig) && (
                 <MessageScrollerItem messageId="pending-settings">
-                  <PendingSettings thread={thread} sessionId={sessionId} actions={actions} />
+                  <div className="py-1">
+                    <PendingSettings thread={thread} sessionId={sessionId} actions={actions} />
+                  </div>
                 </MessageScrollerItem>
               )}
               {thread.queue.length > 0 && (
-                <MessageScrollerItem messageId="queue" className="-mx-1.5 px-1.5">
-                  <ComposerQueue
-                    sessionId={sessionId}
-                    thread={thread}
-                    actions={actions}
-                    onEdit={(text) => composerApiRef.current?.fill(text)}
-                  />
+                <MessageScrollerItem messageId="queue" className="-mx-1 px-1">
+                  <div className="py-1">
+                    <ComposerQueue
+                      sessionId={sessionId}
+                      thread={thread}
+                      actions={actions}
+                      onEdit={(text) => composerApiRef.current?.fill(text)}
+                    />
+                  </div>
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>

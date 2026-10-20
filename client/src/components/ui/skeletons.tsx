@@ -36,9 +36,10 @@ const SHIMMER = "animate-none skeleton-shimmer"
 
 function SidebarRows({ rows }: { rows: number }) {
   return (
-    <div className="space-y-1 px-2">
+    <div className="space-y-1">
       {[...Array(rows).keys()].map((index) => (
-        <div key={index} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+        // The stock row: h-9 px-3 gap-2, a size-4 mark.
+        <div key={index} className="flex h-9 items-center gap-2 px-3">
           <Skeleton className={cn("size-4 shrink-0 rounded-sm", SHIMMER)} style={{ animationDelay: `${index * 120}ms` }} />
           <Skeleton className={cn("h-3 flex-1", SHIMMER)} style={{ animationDelay: `${index * 120}ms` }} />
         </div>
@@ -52,14 +53,19 @@ export function SidebarGroupsSkeleton() {
     // Hidden in the icon rail for the same reason the list itself is: a rail
     // of blank placeholder rows says nothing 3rem wide.
     <div aria-busy="true" className="group-data-[collapsible=icon]:hidden">
-      <div className="px-2 pb-1 pt-4">
-        <Skeleton className={cn("ml-2 h-3 w-16", SHIMMER)} />
+      {/* The stock group: p-2, an h-8 px-3 label over the rows. */}
+      <div className="p-2">
+        <div className="flex h-8 items-center px-3">
+          <Skeleton className={cn("h-3 w-16", SHIMMER)} />
+        </div>
+        <SidebarRows rows={4} />
       </div>
-      <SidebarRows rows={4} />
-      <div className="px-2 pb-1 pt-4">
-        <Skeleton className={cn("ml-2 h-3 w-20", SHIMMER)} />
+      <div className="p-2">
+        <div className="flex h-8 items-center px-3">
+          <Skeleton className={cn("h-3 w-20", SHIMMER)} />
+        </div>
+        <SidebarRows rows={3} />
       </div>
-      <SidebarRows rows={3} />
     </div>
   )
 }
@@ -148,16 +154,16 @@ export function NotificationRowsSkeleton({
       {[...Array(rows).keys()].map((index) => (
         <li
           key={index}
-          className={cn("flex items-start gap-3", detailed ? "min-h-12 px-3 py-3 @panel-sm:px-4" : "px-3 py-2.5")}
+          className="flex min-h-12 items-start gap-3 p-3 @panel-sm:p-4"
         >
-          <Skeleton className={cn("shrink-0 rounded-full", detailed ? "mt-0.5 size-8" : "size-7")} />
+          <Skeleton className="mt-0.5 size-8 shrink-0 rounded-full" />
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">
               <Skeleton className="h-3.5 flex-1" />
               <Skeleton className="h-3 w-8 shrink-0" />
             </div>
-            <Skeleton className="mt-1.5 h-3 w-3/4" />
-            {detailed && <Skeleton className="mt-2.5 h-3 w-24" />}
+            <Skeleton className="mt-1 h-3 w-3/4" />
+            {detailed && <Skeleton className="mt-2 h-3 w-24" />}
           </div>
         </li>
       ))}

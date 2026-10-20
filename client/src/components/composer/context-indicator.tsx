@@ -78,7 +78,7 @@ const SUBAGENT_ROWS = 4
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="border-t pt-2">
-      <p className="mb-1.5 text-xs font-medium text-muted-foreground">{title}</p>
+      <p className="mb-1 text-xs font-medium text-muted-foreground">{title}</p>
       <dl className="space-y-1">{children}</dl>
     </section>
   )
@@ -99,7 +99,7 @@ function WindowBar({ window, label }: { window: QuotaWindow; label: string }) {
     <div>
       <div className="flex items-baseline justify-between gap-2 text-sm">
         <span className="truncate text-muted-foreground">{label}</span>
-        <span className="flex shrink-0 items-baseline gap-1.5">
+        <span className="flex shrink-0 items-baseline gap-1">
           {amount && <span className="text-muted-foreground tabular-nums">{amount}</span>}
           {metered ? (
             <span className="font-medium text-muted-foreground">Unlimited</span>
@@ -120,7 +120,7 @@ function WindowBar({ window, label }: { window: QuotaWindow; label: string }) {
           <div className={cn("h-full rounded-pill transition-all", tone.bar)} style={{ width: `${percent}%` }} />
         </div>
       )}
-      {reset && <p className="mt-0.5 text-xs text-muted-foreground">Resets {reset}</p>}
+      {reset && <p className="mt-1 text-xs text-muted-foreground">Resets {reset}</p>}
     </div>
   )
 }
@@ -174,7 +174,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
     return (
       <div className="border-t pt-2">
         <p className="text-xs font-medium text-muted-foreground">Plan</p>
-        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground" aria-live="polite">
           <Spinner aria-hidden className="size-3" />
           Reading plan usage…
         </p>
@@ -196,12 +196,12 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
     <div className="border-t pt-2">
       <p className="text-xs font-medium text-muted-foreground">Plan</p>
       {quota.windows.length === 0 && accounts.length === 0 ? (
-        <p className="mt-0.5 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
       ) : accounts.length > 0 ? (
         /* A gateway's reading, at a glance's measure: the account is the
            heading — a thread that spends one of four accounts has to be told
            which — and its own bars sit under it. */
-        <div className="mt-1.5 max-h-48 space-y-1 overflow-y-auto overscroll-contain pr-1">
+        <div className="mt-1 max-h-48 space-y-1 overflow-y-auto overscroll-contain pr-1">
           {accounts.map((account, index) => {
             const windows = windowsByGroup.get(account.group) ?? []
             const accountPeak = windows.reduce<QuotaWindow | null>(
@@ -212,7 +212,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
             const tone = percent === null ? null : quotaTone(percent)
             return (
               <Collapsible key={account.id} defaultOpen={index === 0} className="border-b last:border-0">
-                <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 py-1.5 text-left">
+                <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 py-2 text-left">
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">{accountTitle(account)}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {windows.length} {windows.length === 1 ? "window" : "windows"}
@@ -223,7 +223,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
                   <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="space-y-1.5 pb-2 pl-2">
+                  <div className="space-y-2 pb-2 pl-2">
                     {windows.length === 0 ? (
                       <p className="text-xs text-muted-foreground">
                         {account.disabled ? "Turned off in the gateway" : (account.state ?? "No quota reported")}
@@ -240,7 +240,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
           })}
         </div>
       ) : (
-        <div className="mt-1.5 space-y-2">
+        <div className="mt-1 space-y-2">
           {quota.windows.map((window) => (
             <WindowBar key={window.id} window={window} label={windowTitle(window)} />
           ))}
@@ -377,7 +377,7 @@ export function ContextIndicator({
       >
         {/* The window: one figure in the heading and a plain fill. What the prompt is
             made of is the inspector's Tokens panel's to say, estimates included. */}
-        <p className="-mt-1.5 text-xs text-muted-foreground tabular-nums">
+        <p className="-mt-1 text-xs text-muted-foreground tabular-nums">
           {context
             ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
             : "Not reported by this agent"}

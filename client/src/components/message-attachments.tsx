@@ -260,7 +260,7 @@ function LightboxImage({ image, known }: { image: Ref; known?: string }) {
   const src = image.inlineData ?? known ?? fetched.url
   if (!src) {
     return (
-      <div className="flex size-64 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+      <div className="flex size-64 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
         {fetched.failed ? <ImageOffIcon className="size-6" /> : null}
       </div>
     )
@@ -269,7 +269,7 @@ function LightboxImage({ image, known }: { image: Ref; known?: string }) {
     <img
       src={src}
       alt={image.name}
-      className="max-h-[calc(var(--float-h)-5rem)] w-auto rounded-lg object-contain"
+      className="max-h-[calc(var(--float-h)-5rem)] w-auto rounded-2xl object-contain"
     />
   )
 }
@@ -281,7 +281,7 @@ function FileList({ files }: { files: Ref[] }) {
   const folded = !expanded && files.length > MAX_FILES
   const shown = folded ? files.slice(0, MAX_FILES - 1) : files
   return (
-    <div className="flex w-72 max-w-full flex-col gap-1.5">
+    <div className="flex w-72 max-w-full flex-col gap-2">
       {shown.map((file) => (
         <FileRow key={file.id} file={file} />
       ))}

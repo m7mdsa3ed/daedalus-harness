@@ -387,7 +387,7 @@ function StepCard({
   const [Icon, tone] = STATE_ICON[state]
   const body = (
     <>
-      <span className="flex min-w-0 items-center gap-1.5">
+      <span className="flex min-w-0 items-center gap-2">
         <Icon aria-hidden className={cn("size-3 shrink-0", tone)} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
         {meta && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{meta}</span>}
@@ -395,7 +395,7 @@ function StepCard({
       {detail && (
         <span
           className={cn(
-            "block truncate ps-[18px] text-xs text-muted-foreground",
+            "block truncate ps-5 text-xs text-muted-foreground",
             state === "running" && "harness-shimmer"
           )}
         >
@@ -406,7 +406,7 @@ function StepCard({
   )
   if (!group)
     return (
-      <div className="rounded-xl border border-dashed px-2.5 py-2 text-muted-foreground">
+      <div className="rounded-xl border border-dashed p-2 text-muted-foreground">
         <span className="sr-only">pending: </span>
         {body}
       </div>
@@ -417,7 +417,7 @@ function StepCard({
       aria-pressed={selected}
       onClick={() => onPick(group.id)}
       className={cn(
-        "block w-full min-w-0 rounded-xl border bg-card px-2.5 py-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "block w-full min-w-0 rounded-xl border bg-card p-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
         selected ? "border-primary" : "",
         state === "failed" && !selected && "border-destructive/30 bg-destructive/10",
         state === "running" && !selected && "border-primary/30"
@@ -511,22 +511,22 @@ function BoardView({ phases, staged, picked, pick }: ViewProps) {
   )
   if (!staged)
     return (
-      <div className="grid grid-cols-1 gap-1.5 @panel-sm:grid-cols-2 @panel-md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 @panel-sm:grid-cols-2 @panel-md:grid-cols-3">
         {phases[0].steps.map((step, i) => card(step, step.group?.id ?? i))}
       </div>
     )
   /* A wide definition scrolls sideways rather than squeezing every column to a word. */
   return (
-    <div className="-mx-2.5 flex snap-x gap-2 overflow-x-auto px-2.5 pb-1">
+    <div className="-mx-2 flex snap-x gap-2 overflow-x-auto px-2 pb-1">
       {phases.map((phase, p) => {
         const own = phase.steps.map(stateOfStep)
         return (
           <section
             key={phase.name ?? p}
             aria-label={phaseLabel(phase, p)}
-            className="flex w-44 min-w-44 flex-1 shrink-0 snap-start flex-col gap-1 rounded-xl bg-muted p-1.5"
+            className="flex w-44 min-w-44 flex-1 shrink-0 snap-start flex-col gap-1 rounded-2xl bg-muted p-1"
           >
-            <header className="flex h-5 items-center gap-1.5 px-0.5">
+            <header className="flex h-5 items-center gap-2 px-1">
               <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", SEGMENT[phaseState(own)])} />
               <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
                 {phaseLabel(phase, p)}
@@ -552,7 +552,9 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
         <StepView key={step.group.id} group={step.group} showTimestamps={showTimestamps} />
       ) : (
         <div key={`${p}:${i}`} className="flex h-6 items-center gap-2 text-sm text-muted-foreground">
-          <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
+          <span className="flex h-6 w-5 shrink-0 items-center justify-center">
+            <CircleDashedIcon aria-hidden className="size-3" />
+          </span>
           <span className="sr-only">pending: </span>
           <span className="min-w-0 flex-1 truncate">{step.name}</span>
           <span className="shrink-0 text-xs text-muted-foreground">waiting</span>
@@ -567,7 +569,7 @@ function ListView({ phases, staged, stepRow: StepView, showTimestamps }: ViewPro
         const state = phaseState(own)
         const last = p === phases.length - 1
         return (
-          <li key={phase.name ?? p} className="flex min-w-0 gap-2.5">
+          <li key={phase.name ?? p} className="flex min-w-0 gap-2">
             <span aria-hidden className="flex w-5 shrink-0 flex-col items-center">
               <span
                 className={cn(
@@ -619,7 +621,7 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
       {phases.map((phase, p) => (
         <React.Fragment key={phase.name ?? p}>
           {staged && (
-            <div className="flex items-center gap-1 pt-1.5 pb-0.5 text-xs font-medium text-muted-foreground first:pt-0">
+            <div className="flex items-center gap-1 pt-2 pb-1 text-xs font-medium text-muted-foreground first:pt-0">
               <span className="min-w-0 flex-1 truncate">{phaseLabel(phase, p)}</span>
               <PhaseHold phase={phase} />
             </div>
@@ -651,7 +653,7 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
                       )}
                     />
                   ) : (
-                    <span className="absolute inset-y-0 start-1.5 flex items-center text-xs text-muted-foreground">
+                    <span className="absolute inset-y-0 start-2 flex items-center text-xs text-muted-foreground">
                       waiting
                     </span>
                   )}
@@ -662,7 +664,7 @@ function TimelineView({ phases, staged, picked, pick, active }: ViewProps) {
         </React.Fragment>
       ))}
       {known.length > 0 && (
-        <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-2 pt-0.5 text-xs tabular-nums text-muted-foreground">
+        <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-2 pt-1 text-xs tabular-nums text-muted-foreground">
           <span />
           <span className="flex justify-between">
             <span>0s</span>
@@ -705,7 +707,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
 
   return (
     <div className="min-w-0">
-      <nav aria-label="Run" className="mb-1.5 flex h-6 min-w-0 items-center gap-1 text-sm">
+      <nav aria-label="Run" className="mb-2 flex h-6 min-w-0 items-center gap-1 text-sm">
         {(level === 2 || (level === 1 && staged)) && (
           <Button
             type="button"
@@ -738,14 +740,14 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                   type="button"
                   onClick={() => setPhaseAt(i)}
                   className={cn(
-                    "group/phase flex w-full min-w-0 flex-1 items-center gap-2.5 rounded-xl border bg-card px-2.5 py-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                    "group/phase flex w-full min-w-0 flex-1 items-center gap-2 rounded-2xl border bg-card p-2 text-start transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
                     state === "running" ? "border-primary/30" : state === "failed" ? "border-destructive/30" : ""
                   )}
                 >
                   <span
                     aria-hidden
                     className={cn(
-                      "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium tabular-nums",
+                      "flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-medium tabular-nums",
                       state === "completed" && "bg-success/10 text-success",
                       state === "running" && "bg-primary/15 text-primary",
                       state === "failed" && "bg-destructive/10 text-destructive",
@@ -753,7 +755,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
                         "bg-muted text-muted-foreground"
                     )}
                   >
-                    {state === "completed" ? <CheckIcon className="size-3.5" /> : i + 1}
+                    {state === "completed" ? <CheckIcon className="size-3" /> : i + 1}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{phaseLabel(ph, i)}</span>
@@ -790,7 +792,7 @@ function BrowseView({ phases, staged, stepRow: StepView, showTimestamps }: ViewP
       )}
 
       {level === 1 && phase && (
-        <div className="grid min-w-0 grid-cols-1 gap-1.5 @panel-sm:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-1 gap-2 @panel-sm:grid-cols-2">
           {phase.steps.map((st, i) => (
             <StepCard
               key={st.group?.id ?? i}
@@ -872,7 +874,7 @@ function RunHead({
       type="button"
       aria-expanded={open}
       onClick={onToggle}
-      className="group/run flex min-w-0 flex-1 items-start gap-2.5 text-start"
+      className="group/run flex min-w-0 flex-1 items-start gap-2 text-start"
     >
       {inner}
     </button>
@@ -951,7 +953,7 @@ export function RunLayout({
     <>
       {/* The flowchart has no headings, so its runs' toggles stand above it. */}
       {view === "flowchart" && holds.length > 0 && (
-        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground", fill ? "px-2.5 py-1" : "pb-1.5")}>
+        <div className={cn("flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground", fill ? "px-3 py-1" : "pb-2")}>
           {holds.map((phase, i) => (
             <span key={i} className="inline-flex min-w-0 items-center gap-0.5">
               <span className="truncate">{phase.name}</span>
@@ -964,7 +966,7 @@ export function RunLayout({
         <div
           className={cn(
             "flex flex-col",
-            fill ? "min-h-0 flex-1" : "-mx-2.5 h-[min(70vh,600px)] min-h-64 border-y "
+            fill ? "min-h-0 flex-1" : "-mx-2 h-[min(70vh,600px)] min-h-64 border-y"
           )}
         >
           <React.Suspense fallback={<div className="flex-1" />}>
@@ -997,8 +999,8 @@ export function RunLayout({
       {pickedStep && view !== "list" && view !== "browse" && (
         <div
           className={cn(
-            "mt-2 min-w-0 border-t pt-1.5",
-            fill && view === "flowchart" && "mt-0 max-h-[45%] shrink-0 overflow-y-auto px-2.5 pb-2"
+            "mt-2 min-w-0 border-t pt-2",
+            fill && view === "flowchart" && "mt-0 max-h-[45%] shrink-0 overflow-y-auto px-3 pb-3"
           )}
         >
           <StepView group={pickedStep} showTimestamps={showTimestamps} />
@@ -1013,7 +1015,7 @@ export function RunLayout({
 export function RunStrip({ phases, className }: { phases: PhaseView[]; className?: string }) {
   if (!phases.some((phase) => phase.steps.length > 0)) return null
   return (
-    <div className={cn("flex gap-1.5", className)} aria-hidden>
+    <div className={cn("flex gap-1", className)} aria-hidden>
       {phases.map((phase, p) => (
         <div key={phase.name ?? p} className="flex flex-1 gap-0.5" style={{ flexGrow: phase.steps.length }}>
           {phase.steps.map((step, i) => (
@@ -1172,7 +1174,7 @@ function RunRow({
         value={runView}
         onChange={setRunView}
         label="Run view"
-        className="pb-1.5"
+        className="pb-2"
       />
       <RunLayout phases={phases} view={runView} active={active} stepRow={StepView} showTimestamps={showTimestamps} />
     </>
@@ -1188,8 +1190,8 @@ function RunRow({
     )
 
   return (
-    <Card size="sm" className="my-1.5 gap-0 py-0">
-      <div className="flex min-w-0 items-start gap-2.5 px-2.5 pt-2">
+    <Card size="sm" className="my-2 gap-0 py-0">
+      <div className="flex min-w-0 items-start gap-2 p-2 pb-0">
         <RunHead
           open={open}
           onToggle={() => setOpen((v) => !v)}
@@ -1200,15 +1202,15 @@ function RunRow({
           active={active}
           paused={paused}
         />
-        <span className="flex h-7 shrink-0 items-center gap-1.5">
+        <span className="flex h-7 shrink-0 items-center gap-2">
           {meta}
           {control}
         </span>
       </div>
 
-      <RunStrip phases={phases} className="px-2.5 pt-2 pb-2.5" />
+      <RunStrip phases={phases} className="px-2 pt-2 pb-2" />
 
-      {open && <div className="min-w-0 border-t px-2.5 py-2">{steps}</div>}
+      {open && <div className="min-w-0 border-t p-2">{steps}</div>}
     </Card>
   )
 }

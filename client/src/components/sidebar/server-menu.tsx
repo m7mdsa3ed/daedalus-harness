@@ -26,6 +26,8 @@ import { compatOf } from "@/lib/compat"
 import { healthQuery } from "@/lib/queries"
 import { settingsPath } from "@/lib/router"
 import { loadServers, setActiveServer, type ServerSettings } from "@/lib/settings"
+import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
+import { cn } from "@/lib/utils"
 import { FooterMenuButton } from "./footer-menu"
 
 /** The address without its scheme — what identifies a server in a tooltip or a
@@ -53,15 +55,15 @@ function ServerRows({ servers }: { servers: ServerSettings[] }) {
     const data = health[i]?.data
     const compat = data ? compatOf(data) : "ok"
     return (
-      <DropdownMenuRadioItem key={server.id} value={server.id}>
-        <ServerIcon />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate">{server.name}</span>
-          <span className="truncate font-mono text-xs text-muted-foreground">
-            {serverHost(server.url)}
-          </span>
-        </span>
-        {compat !== "ok" && <StatusBadge tone="warn">{COMPAT_LABEL[compat]}</StatusBadge>}
+      // The address is the hint line, kept monospaced (MenuRow's hint is its
+      // one `leading-4` span).
+      <DropdownMenuRadioItem key={server.id} value={server.id} className={cn(MENU_ROW, "[&_span.leading-4]:font-mono")}>
+        <MenuRow
+          icon={<ServerIcon />}
+          label={server.name}
+          hint={serverHost(server.url)}
+          trailing={compat !== "ok" ? <StatusBadge tone="warn">{COMPAT_LABEL[compat]}</StatusBadge> : undefined}
+        />
       </DropdownMenuRadioItem>
     )
   })
@@ -90,7 +92,7 @@ export function ServerIconButton({
     <FooterMenuButton
       title={`${settings.name} · ${serverHost(settings.url)}`}
       icon={<ServerIcon />}
-      contentClassName="w-64"
+      contentClassName={MENU_WIDTH}
     >
       {() => (
         <>
@@ -105,13 +107,11 @@ export function ServerIconButton({
         </DropdownMenuRadioGroup>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
-      <DropdownMenuItem onClick={onAddServer}>
-        <Plus />
-        Add server…
+      <DropdownMenuItem onClick={onAddServer} className={MENU_ROW}>
+        <MenuRow icon={<Plus />} label="Add server…" />
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={handleManage}>
-        <ChevronRightIcon />
-        Manage servers
+      <DropdownMenuItem onClick={handleManage} className={MENU_ROW}>
+        <MenuRow icon={<ChevronRightIcon />} label="Manage servers" />
       </DropdownMenuItem>
         </>
       )}

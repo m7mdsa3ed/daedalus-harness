@@ -50,7 +50,8 @@ export function LandingSetup({
             <li key={step.id}>
               <Item
                 variant="outline"
-                className={cn("h-full items-start text-left hover:bg-muted", step.done && "opacity-80")}
+                // A frame: the tile sits in the card's 12px corner, concentric with it.
+                className={cn("h-full items-start gap-3 p-3 text-left frame-2xl frame-p-3 hover:bg-muted", step.done && "opacity-80")}
                 render={
                   <button
                     type="button"
@@ -59,7 +60,7 @@ export function LandingSetup({
                   />
                 }
               >
-                <ItemMedia variant="icon" className={cn("size-9 rounded-lg bg-muted", step.done && "bg-primary/10 text-primary")}>
+                <ItemMedia variant="icon" className={cn("size-9 rounded-inner bg-muted group-has-data-[slot=item-description]/item:translate-y-0", step.done && "bg-primary/10 text-primary")}>
                   {step.done ? <Check /> : <Icon />}
                 </ItemMedia>
                 <ItemContent>

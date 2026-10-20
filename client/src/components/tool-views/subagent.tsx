@@ -78,8 +78,8 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
     )
   }
   return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         {task.summary && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{task.summary}</span>
         )}
@@ -87,19 +87,21 @@ export function TaskProgress({ task }: { task: BackgroundTask }) {
           {finished}/{rows.length} agents finished
         </span>
       </div>
-      <ul className="space-y-0.5">
+      <ul className="space-y-1">
         {rows.map((row, index) => (
-          <li key={row.agentId} className="flex items-center gap-2 text-xs">
-            <span
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                row.failed
-                  ? "bg-destructive"
-                  : row.done
-                    ? "bg-primary"
-                    : "harness-node-active bg-primary"
-              )}
-            />
+          <li key={row.agentId} className="flex items-center gap-2 text-xs leading-5">
+            <span aria-hidden className="grid h-5 w-3 shrink-0 place-items-center">
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  row.failed
+                    ? "bg-destructive"
+                    : row.done
+                      ? "bg-primary"
+                      : "harness-node-active bg-primary"
+                )}
+              />
+            </span>
             {/* The journal's agent ids are hashes; their order is the readable
                 identity. The real id stays on the tooltip for cross-reference
                 with the transcript dir. */}
@@ -209,7 +211,7 @@ export function SubagentBrief({ item }: { item: ToolItem }) {
         </DetailSection>
       )}
       {(facts.length > 0 || call.sessionId) && (
-        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1 text-xs leading-5 text-muted-foreground">
           <BotIcon className="size-3 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate">{facts.join(" · ")}</span>
           {call.sessionId && (

@@ -1,3 +1,4 @@
+import { MENU_WIDTH } from "@/components/menu-row"
 import * as React from "react"
 import { CircleCheck, MoreHorizontal, Pencil, Play, Plus, Rocket, Trash2 } from "lucide-react"
 
@@ -73,7 +74,7 @@ function SprintHeader({ sprint, tasks, statuses, ops }: { sprint: Sprint; tasks:
             </Button>
           }
         />
-        <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuContent align="end" className={MENU_WIDTH}>
           <DropdownMenuItem onClick={() => ops.onEdit(sprint)}>
             <Pencil className="size-4" /> Edit sprint…
           </DropdownMenuItem>

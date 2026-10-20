@@ -104,8 +104,9 @@ interface CommandMenuSection {
 // The list keeps the smaller "rounded" radii whatever the rest of the UI is
 // shaped, like every popup list: pill rows inside a square panel distort the
 // concentric fit of the hover fill. The dialog shell follows the global
-// shape through DialogContent.
-const listShape = shapeMap.rounded;
+// shape through DialogContent. Rows and fill wear a menu row's corner,
+// rounded-xl, the same as every non-registry row in a p-1 frame.
+const listShape = { ...shapeMap.rounded, item: "rounded-xl", bg: "rounded-xl" };
 
 // ---------------------------------------------------------------------------
 // Shortcuts — one string syntax for both the trigger combo and the caps a row
@@ -825,7 +826,7 @@ const CommandMenuInput = forwardRef<HTMLInputElement, CommandMenuInputProps>(
         data-slot="command-menu-input"
         className={cn(
           "group/command-input flex shrink-0 items-center",
-          compact ? "h-10 gap-2 px-3" : "h-12 gap-2.5 px-4"
+          compact ? "h-10 gap-2 px-3" : "h-12 gap-2.5 px-3"
         )}
       >
         {Icon && (
@@ -928,7 +929,7 @@ const CommandMenuTabs = forwardRef<HTMLDivElement, CommandMenuTabsProps>(
         data-slot="command-menu-tabs"
         className={cn(
           "flex shrink-0 items-center",
-          compact ? "gap-1 px-2 pb-1.5" : "gap-2 px-2.5 pb-2",
+          compact ? "gap-1 px-3 pb-2" : "gap-2 px-3 pb-2",
           className
         )}
         {...props}
@@ -993,7 +994,7 @@ const CommandMenuFilters = forwardRef<HTMLDivElement, CommandMenuFiltersProps>(
           // width it keeps in forms.
           "[&_[role=combobox]]:w-auto [&_[role=combobox]]:min-w-0",
           !inTabsRow && "flex-wrap",
-          !inTabsRow && (compact ? "px-2 pb-1.5" : "px-2.5 pb-2"),
+          !inTabsRow && "px-3 pb-2",
           className
         )}
         {...props}
@@ -1359,7 +1360,7 @@ const CommandMenuFooter = forwardRef<HTMLDivElement, CommandMenuFooterProps>(
         data-slot="command-menu-footer"
         className={cn(
           "flex shrink-0 items-center overflow-hidden text-muted-foreground",
-          compact ? "h-8 gap-3 px-3 text-xs" : "h-10 gap-4 px-4 text-xs",
+          compact ? "h-8 gap-3 px-3 text-xs" : "h-10 gap-4 px-3 text-xs",
           className
         )}
         {...props}
@@ -1367,7 +1368,7 @@ const CommandMenuFooter = forwardRef<HTMLDivElement, CommandMenuFooterProps>(
         {children ?? (
           <>
             {resolved.map((hint) => (
-              <span key={hint.label} className="flex shrink-0 items-center gap-1.5">
+              <span key={hint.label} className="flex shrink-0 items-center gap-1">
                 <span>{hint.label}</span>
                 <CommandMenuShortcut keys={hint.keys} className="ml-0" />
               </span>
@@ -1375,7 +1376,7 @@ const CommandMenuFooter = forwardRef<HTMLDivElement, CommandMenuFooterProps>(
             {action !== null && (
               <span
                 data-slot="command-menu-footer-action"
-                className="ml-auto flex min-w-0 items-center gap-1.5 text-foreground"
+                className="ml-auto flex min-w-0 items-center gap-1 text-foreground"
               >
                 <span className="truncate">{action}</span>
                 <CommandMenuShortcut keys="enter" className="ml-0" />

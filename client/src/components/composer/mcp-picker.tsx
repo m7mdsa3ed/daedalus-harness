@@ -10,6 +10,7 @@ import { ChipBadge, formatCount } from "@/components/composer-strip"
 import { Badge } from "@/components/ui/badge"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { PILL, menuFilter } from "@/components/config-menu"
+import { READING_MARK } from "@/components/composer/indicator"
 import { useThreadToolLinks } from "@/components/thread-tools/menu"
 import { useMenuShortcut } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
@@ -71,7 +72,7 @@ function McpRow({
   return (
     <label
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors has-[:focus-visible]:bg-muted",
+        "flex items-center gap-2.5 rounded-xl p-1 transition-colors has-[:focus-visible]:bg-muted",
         locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted",
       )}
     >
@@ -79,7 +80,7 @@ function McpRow({
         <McpIcon server={server} className="size-4" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+        <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
           <span className="truncate">{server.name}</span>
           {/* An OAuth server nobody has connected is not advertised at spawn, so
               it is marked here rather than listed as though the thread had it. */}
@@ -178,7 +179,7 @@ export function McpPicker({
               .filter(Boolean)
               .join(" — ")}
           >
-            <ServerIcon className="size-3.5" />
+            <ServerIcon className={READING_MARK} />
             {/* The count is the whole reading: a badge, no frame around the chip. */}
             {selected.length > 0 && (
               <ChipBadge>{formatCount(selected.length)}</ChipBadge>
@@ -188,7 +189,7 @@ export function McpPicker({
         }
       />
       <PopoverContent align="start" className="w-80 gap-0 p-0" finalFocus={finalFocus}>
-        <div className="flex items-center gap-2 border-b px-3 py-2.5">
+        <div className="flex items-center gap-2 border-b px-2 py-2">
           <span className="text-sm font-medium">MCP servers</span>
           <Badge variant="secondary" className="tabular-nums">
             {selected.length} of {mcpServers.length}
@@ -211,17 +212,18 @@ export function McpPicker({
             </InputGroup>
           </div>
         )}
-        <div className="max-h-[min(20rem,var(--available-height,20rem))] overflow-y-auto px-1.5 py-1.5">
+        <div className="max-h-[min(20rem,var(--available-height,20rem))] overflow-y-auto p-1">
           {mcpServers.length === 0 ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">
+            <p className="px-1 py-2 text-xs text-muted-foreground">
               No MCP servers in the library yet. Add one in Settings › MCP servers.
             </p>
           ) : groups.length === 0 ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">No server matches “{query.trim()}”.</p>
+            <p className="px-1 py-2 text-xs text-muted-foreground">No server matches “{query.trim()}”.</p>
           ) : (
-            groups.map((group) => (
-              <div key={group.label} className="mb-1 last:mb-0">
-                <div className="px-2 pt-1 pb-0.5 text-xs font-medium text-muted-foreground">
+            groups.map((group, index) => (
+              <div key={group.label}>
+                {/* `index`, not `first:`: every label is its own group's first child. */}
+                <div className={cn("px-1 pb-1 text-xs font-medium text-muted-foreground", index === 0 ? "pt-1" : "pt-2")}>
                   {group.label}
                 </div>
                 {group.items.map((server) => {
@@ -241,7 +243,7 @@ export function McpPicker({
             ))
           )}
         </div>
-        <div className="flex items-center justify-between gap-2 border-t px-2 py-1.5">
+        <div className="flex items-center justify-between gap-2 border-t p-1">
           <Button
             variant="ghost"
             size="xs"

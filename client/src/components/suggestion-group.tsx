@@ -45,7 +45,7 @@ export function SuggestionGroup({
         className
       )}
     >
-      <span className={cn(LABEL, "mb-0.5")}>{kind.caption}</span>
+      <span className={LABEL}>{kind.caption}</span>
       {lines.map((line) => {
         const text = kind.show ? kind.show(line) : line
         return (
@@ -55,13 +55,13 @@ export function SuggestionGroup({
             size="xs"
             render={<button type="button" onClick={() => onPick(kind.fill(line))} title={kind.fill(line)} />}
             className={cn(
-              "group/suggestion min-w-0 flex-nowrap gap-2 py-1.5 text-start hover:bg-muted",
+              "group/suggestion min-w-0 flex-nowrap gap-2 rounded-xl p-2 text-start hover:bg-muted",
               kind.mono ? "items-center" : "items-start"
             )}
           >
             {/* h-5 grid, not a bare icon: it pins the mark to the first line
                 box, so a two-line row keeps its mark beside the first line. */}
-            <span aria-hidden className="grid h-5 shrink-0 place-items-center">
+            <span aria-hidden className="grid size-5 shrink-0 place-items-center">
               <Icon className="size-3.5 text-muted-foreground transition-colors group-hover/suggestion:text-foreground" />
             </span>
             <span
