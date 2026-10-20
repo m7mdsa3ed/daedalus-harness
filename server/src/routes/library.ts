@@ -30,7 +30,7 @@ import {
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
 import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
-import { searchRegistry } from "../mcp-registry.js";
+import { registryDetail, searchRegistry } from "../mcp-registry.js";
 import { mcpServersFor, threadCwd, type SessionManager } from "../sessions.js";
 import { getProject, listProjects, type Project } from "../projects.js";
 
@@ -233,8 +233,11 @@ export function libraryRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      the ordinary `POST /api/mcp-servers` every other door uses. Uncached: a
      search is a keystroke's answer, and the registry is the thing that knows
      what it holds. */
+  app.get("/api/mcp-registry/detail", async (c) =>
+    c.json(await registryDetail(c.req.query("source") ?? "", c.req.query("name") ?? "", c.req.query("repo") || null)),
+  );
   app.get("/api/mcp-registry", async (c) =>
-    c.json(await searchRegistry(c.req.query("q") ?? "", c.req.query("cursor") || undefined)),
+    c.json(await searchRegistry(c.req.query("q") ?? "", c.req.query("cursor") || undefined, c.req.query("source") || undefined)),
   );
 
   // Importable entries from the agents' own configs, minus what the library already has.
@@ -265,9 +268,11 @@ function mcpOauthRoutes(app: Hono): void {
       can offer Connect right there. A network call behind a button somebody
       is watching — never on the spawn path. */
   app.post("/api/mcp-servers/probe", async (c) => {
-    const parsed = z.object({ url: z.string().url() }).safeParse(await c.req.json());
+    const parsed = z
+      .object({ url: z.string().url(), headers: z.array(z.object({ name: z.string(), value: z.string() })).optional() })
+      .safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return c.json(await probeMcpAuth(parsed.data.url));
+    return c.json(await probeMcpAuth(parsed.data.url, Object.fromEntries((parsed.data.headers ?? []).map((h) => [h.name, h.value]))));
   });
 
   /**
@@ -292,7 +297,7 @@ function mcpOauthRoutes(app: Hono): void {
        connected against a different authorization server, which is what a
        changed URL means. */
     if (!row) {
-      const probe = await probeMcpAuth(server.url);
+      const probe = await probeMcpAuth(server.url, Object.fromEntries(server.headers.map((h) => [h.name, h.value])));
       if (probe.kind === "none") {
         /* It answers unauthenticated after all: record that rather than
            starting a flow nothing is waiting for. */

@@ -12,8 +12,7 @@ export interface DataTableColumnMeta {
    *  responsive hide for a column not worth a horizontal scroll. */
   className?: string;
   /** Marks the title column: the one a row is *called*. It gets the title
-   *  type, the leading `mark`, and is pinned while the table scrolls sideways;
-   *  on the narrow list it is the row's heading. Defaults to the first column. */
+   *  type, the leading `mark`; on the narrow list it is the row's heading. Defaults to the first column. */
   title?: boolean;
 }
 
@@ -71,8 +70,12 @@ import {
 
 export interface TableAction<TData> {
   id: string;
-  label: string;
-  icon: ReactNode;
+  /** The words, or a function of the row when they depend on it — "Show" on a
+      hidden profile, "Hide" otherwise. Never a state name: it reads as the
+      action it performs. */
+  label: string | ((row: TData) => string);
+  /** The mark, resolved the same way and for the same reason. */
+  icon: ReactNode | ((row: TData) => ReactNode);
   tone?: "neutral" | "primary" | "success" | "warning" | "danger";
   onClick: (row: TData) => void;
   showOn?: "desktop" | "mobile" | "both";
@@ -83,6 +86,15 @@ export interface TableAction<TData> {
   hidden?: (row: TData) => boolean;
   /** Render the action but disabled for rows where it isn't currently actionable. */
   disabled?: (row: TData) => boolean;
+}
+
+/** A table action's words and mark, which may be per row (Show/Hide). */
+function actionLabel<TData>(action: TableAction<TData>, row: TData): string {
+  return typeof action.label === "function" ? action.label(row) : action.label;
+}
+
+function actionIcon<TData>(action: TableAction<TData>, row: TData): ReactNode {
+  return typeof action.icon === "function" ? action.icon(row) : action.icon;
 }
 
 const ACTION_TONE_TEXT: Record<
@@ -375,28 +387,18 @@ const rowFlagsSelector = (rowId: string) => (s: any): RowFlags => ({
 });
 
 /* ── Shared look ──
-   Named once so the header, the body and the pinned column agree. */
+   Named once so the header and the body agree. */
 
-/** A sticky cell must be opaque or the columns scrolling under it show through,
- *  which also hides the row's hover/selected wash — so the wash is mixed into
- *  the ground here, keyed on the row's group. */
-const PIN_BG =
-  "bg-card group-hover/row:bg-[color-mix(in_oklab,var(--card),var(--muted)_40%)] group-data-[state=selected]/row:bg-[color-mix(in_oklab,var(--card),var(--primary)_5%)] group-data-[state=selected]/row:group-hover/row:bg-[color-mix(in_oklab,var(--card),var(--primary)_7%)]";
-/** The pinned column's trailing edge fades in once the table has scrolled. */
-const PIN_EDGE =
-  "after:pointer-events-none after:absolute after:inset-y-0 after:-end-2 after:w-2 after:bg-linear-to-r rtl:after:bg-linear-to-l after:from-black/[0.07] after:to-transparent after:opacity-0 after:transition-opacity group-data-[scrolled=true]/scroll:after:opacity-100";
 /** 2px primary bar on a selected row's start edge — drawn by the row's first
- *  cell so it follows the row in both directions and shifts nothing. Only ever
- *  worn by a sticky cell, which is the positioned box `before:` needs: a
- *  `relative` here would win the merge against `sticky` and unpin the column. */
+ *  cell so it follows the row in both directions and shifts nothing. */
 const SELECT_BAR =
-  "before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0 group-data-[state=selected]/row:before:opacity-100";
+  "relative before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0 group-data-[state=selected]/row:before:opacity-100";
 /** Row actions are present on hover/focus/selection and on touch, never by
  *  moving layout: only opacity changes. */
 const REVEAL =
   "opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 group-data-[state=selected]/row:opacity-100 group-aria-expanded/row:opacity-100 data-popup-open:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100";
-/** A collapsed border does not travel with a sticky cell, so the header's
- *  hairline is an inset shadow that does. */
+/** The sticky header's hairline is an inset shadow: a collapsed border does not
+ *  travel with a sticky cell. */
 const HEAD_BG =
   "bg-[color-mix(in_oklab,var(--card),var(--muted)_40%)] shadow-[inset_0_-1px_0_color-mix(in_oklab,var(--border)_60%,transparent)]";
 /** Mark slot at the start of a title cell / list row. */
@@ -460,8 +462,8 @@ function ActionMenuItems<TData>({
         a.tone && a.tone !== "danger" && a.tone !== "neutral" && ACTION_TONE_TEXT[a.tone],
       )}
     >
-      {a.icon}
-      {a.label}
+      {actionIcon(a, row)}
+      {actionLabel(a, row)}
     </DropdownMenuItem>
   );
   return (
@@ -592,8 +594,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
             {hasSelection && (
               <TableCell
                 className={cn(
-                  "sticky start-0 z-[1] w-12 py-3 ps-4 pe-0",
-                  PIN_BG,
+                  "w-12 py-3 ps-4 pe-0",
                   SELECT_BAR,
                 )}
                 onClick={(e) => e.stopPropagation()}
@@ -609,9 +610,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
             {row.getVisibleCells().map((cell, cellIndex) => {
               const meta = columnMeta(cell.column);
               const isTitle = cell.column.id === titleColumnId;
-              // Only a *leading* title column is pinned — pinning one in the
-              // middle would pull it out of its place in the row.
-              const pinned = isTitle && cellIndex === 0;
+              const first = cellIndex === 0;
               const content = flexRender(
                 cell.column.columnDef.cell,
                 cell.getContext(),
@@ -622,13 +621,7 @@ const DesktopRow = React.memo(function DesktopRow<TData extends RowData>({
                   className={cn(
                     "px-3 py-3",
                     isTitle && "min-w-48 max-w-[28rem] text-sm font-medium",
-                    pinned && [
-                      "sticky z-[1]",
-                      hasSelection ? "start-12" : "start-0 ps-4",
-                      PIN_BG,
-                      PIN_EDGE,
-                      !hasSelection && SELECT_BAR,
-                    ],
+                    first && !hasSelection && ["ps-4", SELECT_BAR],
                     meta.align === "end" && "text-end tabular-nums",
                     meta.className,
                   )}
@@ -1015,17 +1008,16 @@ export function DataTable<TData extends RowData, TValue>({
   const loadStep = pageSize;
   // Measured height of the toolbar row, lent to the bulk bar that replaces it.
   const toolbarHeight = React.useRef(0);
-  // Which edges of the table's scroller have more behind them — drives the end
-  // fade and the pinned column's trailing shadow. A ref callback, because the
+  // Whether the table's scroller has more behind its end — drives the end
+  // fade. A ref callback, because the
   // scroller mounts and unmounts with the view, the loading state and the
   // empty state; React 19 runs the returned cleanup.
-  const [edge, setEdge] = React.useState({ start: false, end: false });
+  const [moreAtEnd, setMoreAtEnd] = React.useState(false);
   const scrollRef = React.useCallback((el: HTMLDivElement | null) => {
     if (!el) return;
     const measure = () => {
       const x = Math.abs(el.scrollLeft); // negative in RTL
-      const next = { start: x > 1, end: x + el.clientWidth < el.scrollWidth - 1 };
-      setEdge((p) => (p.start === next.start && p.end === next.end ? p : next));
+      setMoreAtEnd(x + el.clientWidth < el.scrollWidth - 1);
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -1285,8 +1277,8 @@ export function DataTable<TData extends RowData, TValue>({
   const swipeActionsFor = React.useCallback(
     (row: TData) => {
       const toDef = (a: TableAction<TData>) => ({
-        label: a.label,
-        icon: a.icon,
+        label: actionLabel(a, row),
+        icon: actionIcon(a, row),
         className: ACTION_TONE_SWIPE_BG[a.tone ?? "neutral"],
         onClick: () => a.onClick(row),
       });
@@ -1321,8 +1313,8 @@ export function DataTable<TData extends RowData, TValue>({
               key={a.id}
               variant="ghost"
               size="icon"
-              title={a.label}
-              aria-label={a.label}
+              title={actionLabel(a, row)}
+              aria-label={actionLabel(a, row)}
               disabled={a.disabled?.(row)}
               className={cn(
                 "size-8 rounded-lg pointer-coarse:size-11",
@@ -1336,7 +1328,7 @@ export function DataTable<TData extends RowData, TValue>({
                 a.onClick(row);
               }}
             >
-              {a.icon}
+              {actionIcon(a, row)}
             </Button>
           ))}
           {overflow.length > 0 && (
@@ -1806,14 +1798,13 @@ export function DataTable<TData extends RowData, TValue>({
   ) => {
     const meta = columnMeta(h.column);
     const isTitle = h.column.id === titleColumnId;
-    const pinned = isTitle && index === 0;
+    const leadPad = index === 0 && !hasSelection;
     const canSort = h.column.getCanSort();
     const sorted = h.column.getIsSorted();
     // A plain header on a sortable column becomes the whole cell's button. A
     // function header (`SortableHeader`) already draws its own — left alone.
     const nativeSort =
       canSort && !h.isPlaceholder && typeof h.column.columnDef.header !== "function";
-    const leadPad = pinned && !hasSelection;
     return (
       <TableHead
         key={h.id}
@@ -1829,7 +1820,7 @@ export function DataTable<TData extends RowData, TValue>({
         className={cn(
           "group/head sticky top-0 z-10 h-10 px-3 text-start text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
           HEAD_BG,
-          pinned && ["z-20", hasSelection ? "start-12" : "start-0", leadPad && "ps-4", PIN_EDGE],
+          leadPad && "ps-4",
           nativeSort && "p-0",
           meta.align === "end" && "text-end",
           meta.className,
@@ -1860,10 +1851,9 @@ export function DataTable<TData extends RowData, TValue>({
     <div className="relative">
       {/* This is the surface's one scroller (`maxHeight` gives the sticky
           header something to stick to). Overflow scrolls in here, never the
-          page: the pinned title column and the end fade keep it legible. */}
+          page: the end fade says there is more to the side. */}
       <div
         ref={scrollRef}
-        data-scrolled={edge.start}
         className="group/scroll overflow-auto"
         style={maxHeight !== undefined ? { maxHeight } : undefined}
       >
@@ -1874,7 +1864,7 @@ export function DataTable<TData extends RowData, TValue>({
                 {hasSelection && (
                   <TableHead
                     className={cn(
-                      "sticky start-0 top-0 z-20 h-10 w-12 ps-4 pe-0",
+                      "sticky top-0 z-10 h-10 w-12 ps-4 pe-0",
                       HEAD_BG,
                     )}
                   >
@@ -2051,13 +2041,12 @@ export function DataTable<TData extends RowData, TValue>({
           )}
         </table>
       </div>
-      {/* End-edge fade: more columns off-screen. The start edge is the pinned
-          column's own trailing shadow (PIN_EDGE). */}
+      {/* End-edge fade: more columns off-screen. */}
       <div
         aria-hidden
         className={cn(
           "pointer-events-none absolute inset-y-0 end-0 z-30 w-8 bg-linear-to-l from-card to-transparent transition-opacity rtl:bg-linear-to-r",
-          edge.end ? "opacity-100" : "opacity-0",
+          moreAtEnd ? "opacity-100" : "opacity-0",
         )}
       />
     </div>

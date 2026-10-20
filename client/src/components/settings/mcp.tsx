@@ -1,5 +1,8 @@
 import * as React from "react"
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router"
+import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+import { MARKDOWN_COMPONENTS } from "@/components/tool-parts"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -11,11 +14,17 @@ import {
   type McpCheckResult,
   type McpServerDef,
   type RegistryEntry,
+  type RegistryDetail,
+  type RegistryPage,
+  type RegistrySource,
   type ServerSettings,
 } from "@/lib/settings"
 import { Button } from "@/components/ui/button"
 import {
+  BadgeCheckIcon,
   ChevronDownIcon,
+  ExternalLinkIcon,
+  FlameIcon,
   DownloadIcon,
   GlobeIcon,
   KeyRoundIcon,
@@ -785,24 +794,36 @@ export function McpBrowsePage() {
   const meta = sectionMeta("mcp")
   const mcpServers = useMcpServers()
   const [query, setQuery] = React.useState("")
+  const [source, setSource] = React.useState("official")
+  const [picked, setSort] = React.useState<"match" | "popular" | null>(null)
+  const [sources, setSources] = React.useState<RegistrySource[]>([])
   const [entries, setEntries] = React.useState<RegistryEntry[] | null>(null)
+  const [cursor, setCursor] = React.useState<string | null>(null)
+  const [more, setMore] = React.useState(false)
   const [error, setError] = React.useState<InlineError | null>(null)
-  const registryRows = React.useMemo(() => entries ?? [], [entries])
-  const f = useTableFilter(registryRows, {
-    text: (e) => `${e.qualifiedName} ${e.description}`,
-    placeholder: "Filter these results…",
-    fields: [{ id: "via", label: "Source", of: (e) => e.via, optionLabel: (v) => (v === "remote" ? "Remote" : v) }],
-  })
+
+  const fetchPage = React.useCallback(
+    (cursorArg: string | null, signal: AbortSignal) =>
+      api<RegistryPage>(
+        settings,
+        `/api/mcp-registry?q=${encodeURIComponent(query)}&source=${source}${cursorArg ? `&cursor=${encodeURIComponent(cursorArg)}` : ""}`,
+        { signal }
+      ),
+    [settings, query, source]
+  )
 
   React.useEffect(() => {
     const abort = new AbortController()
     const timer = window.setTimeout(() => {
       setEntries(null)
+      setCursor(null)
       setError(null)
-      api<{ entries: RegistryEntry[] }>(settings, `/api/mcp-registry?q=${encodeURIComponent(query)}`, {
-        signal: abort.signal,
-      })
-        .then((r) => setEntries(r.entries))
+      fetchPage(null, abort.signal)
+        .then((r) => {
+          setEntries(r.entries)
+          setCursor(r.nextCursor)
+          setSources(r.sources ?? [])
+        })
         .catch((err) => {
           if (abort.signal.aborted) return
           setError(captureError(err, "Couldn't search the MCP registry"))
@@ -813,7 +834,39 @@ export function McpBrowsePage() {
       window.clearTimeout(timer)
       abort.abort()
     }
-  }, [settings, query])
+  }, [fetchPage])
+
+  const loadMore = async () => {
+    if (!cursor) return
+    setMore(true)
+    try {
+      const r = await fetchPage(cursor, new AbortController().signal)
+      setEntries((prev) => [...(prev ?? []), ...r.entries])
+      setCursor(r.nextCursor)
+    } catch (err) {
+      setError(captureError(err, "Couldn't load more"))
+    } finally {
+      setMore(false)
+    }
+  }
+
+  /* Trending: with nothing typed, the most-used come first unless the reader
+     chose an order; a typed query is a search, so the source's own ranking. */
+  const sort = picked ?? (query.trim() ? "match" : "popular")
+  const rows = React.useMemo(() => {
+    const all = entries ?? []
+    return sort === "popular" ? [...all].sort((x, y) => (y.popularity ?? -1) - (x.popularity ?? -1)) : all
+  }, [entries, sort])
+  const f = useTableFilter(rows, {
+    text: (e) => `${e.qualifiedName} ${e.description}`,
+    placeholder: "Filter these results…",
+    fields: [
+      { id: "via", label: "Runs as", of: (e) => e.via, optionLabel: (v) => (v === "remote" ? "Remote (HTTP)" : v) },
+      { id: "setup", label: "Setup", of: (e) => (e.needs.length ? "keys" : "ready"), optionLabel: (v) => (v === "keys" ? "Needs keys" : "Ready to run") },
+    ],
+  })
+  const active = sources.find((x) => x.id === source)
+  const hasPopularity = rows.some((e) => e.popularity != null)
 
   /* A name already in the library is the one fact this page knows that the
      registry does not — and installing a second copy under the same name is
@@ -827,6 +880,12 @@ export function McpBrowsePage() {
     []
   )
 
+  const details = React.useCallback(
+    (entry: RegistryEntry) =>
+      void navigateRef.current(settingsFormPath("mcp", "browse/detail").replace("%2F", "/"), { state: { entry } }),
+    []
+  )
+
   const columns = React.useMemo<ColumnDef<RegistryEntry, unknown>[]>(
     () => [
       {
@@ -835,7 +894,12 @@ export function McpBrowsePage() {
         meta: { title: true, className: "min-w-56" },
         cell: ({ row }) => (
           <TitleCell
-            title={row.original.server.name}
+            title={
+              <span className="flex items-center gap-1.5">
+                {row.original.server.name}
+                {row.original.verified && <BadgeCheckIcon className="size-3.5 text-primary" aria-label="Verified" />}
+              </span>
+            }
             subtitle={<span className="font-mono text-[11px]">{row.original.qualifiedName}</span>}
           />
         ),
@@ -852,15 +916,14 @@ export function McpBrowsePage() {
       },
       {
         id: "via",
-        header: "Transport",
-        cell: ({ row }) => (
-          <span className="flex items-center gap-1.5">
-            <Badge variant="outline" className="font-normal">
-              {row.original.via === "remote" ? "HTTP" : row.original.via}
-            </Badge>
-            <span className="text-xs text-muted-foreground">{row.original.version}</span>
-          </span>
-        ),
+        header: "Runs as",
+        cell: ({ row }) => <ViaCell entry={row.original} />,
+      },
+      {
+        id: "popularity",
+        header: "Used",
+        meta: { className: "hidden @panel-lg:table-cell" },
+        cell: ({ row }) => <PopularityCell entry={row.original} />,
       },
       {
         id: "needs",
@@ -881,7 +944,22 @@ export function McpBrowsePage() {
         meta: { align: "end" },
         cell: ({ row }) => (
           <span className="flex items-center justify-end gap-2">
+            {row.original.repositoryUrl && (
+              <a
+                href={row.original.repositoryUrl}
+                target="_blank"
+                rel="noreferrer"
+                title="Open the source"
+                aria-label={`Open ${row.original.server.name} source`}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <ExternalLinkIcon className="size-4" />
+              </a>
+            )}
             {have.has(row.original.server.name) && <Badge variant="secondary">In library</Badge>}
+            <Button type="button" variant="ghost" size="sm" onClick={() => details(row.original)}>
+              Details
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -896,7 +974,7 @@ export function McpBrowsePage() {
         ),
       },
     ],
-    [have, install]
+    [have, install, details]
   )
 
   const renderRow = React.useCallback(
@@ -905,16 +983,17 @@ export function McpBrowsePage() {
         <div className="flex min-w-0 items-center gap-3">
           <RegistryMark entry={entry} className="size-10" />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{entry.server.name}</div>
+            <div className="flex items-center gap-1.5 truncate text-sm font-medium">
+              {entry.server.name}
+              {entry.verified && <BadgeCheckIcon className="size-3.5 shrink-0 text-primary" aria-label="Verified" />}
+            </div>
             <div className="truncate font-mono text-[11px] text-muted-foreground">{entry.qualifiedName}</div>
           </div>
         </div>
         <p className="line-clamp-3 text-xs text-muted-foreground">{entry.description}</p>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" className="font-normal">
-            {entry.via === "remote" ? "HTTP" : entry.via}
-          </Badge>
-          <span className="text-xs text-muted-foreground">{entry.version}</span>
+          <ViaCell entry={entry} />
+          <PopularityCell entry={entry} />
           {have.has(entry.server.name) && <Badge variant="secondary">In library</Badge>}
         </div>
         {entry.needs.length > 0 && (
@@ -922,24 +1001,43 @@ export function McpBrowsePage() {
             Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
           </p>
         )}
-        <Button type="button" variant="outline" className="h-11 w-full" aria-label={`Install ${entry.server.name}`} onClick={() => install(entry)}>
-          <PlusIcon className="size-4" /> Install
-        </Button>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" className="h-11 grow" aria-label={`Install ${entry.server.name}`} onClick={() => install(entry)}>
+            <PlusIcon className="size-4" /> Install
+          </Button>
+          <Button type="button" variant="outline" className="h-11" onClick={() => details(entry)}>
+            Details
+          </Button>
+          {entry.repositoryUrl && (
+            <Button type="button" variant="outline" className="h-11" aria-label="Open the source" render={<a href={entry.repositoryUrl} target="_blank" rel="noreferrer" />}>
+              <ExternalLinkIcon className="size-4" />
+            </Button>
+          )}
+        </div>
       </div>
     ),
-    [have, install]
+    [have, install, details]
   )
 
   return (
     <>
       <FormPageHeader
         title="Browse MCP servers"
-        description="Search a public MCP Registry. Installing opens the form prefilled — API keys and placeholders are yours to fill in."
+        description="Search public MCP sources. Installing opens the form prefilled — API keys and placeholders are yours to fill in."
         onBack={() => void navigate(settingsPath(meta.id))}
       />
       <PageForm onSubmit={(e) => e.preventDefault()}>
         <FormShell sections={[{ id: "search", label: "Search" }]}>
-          <FormSection id="search" label="Search" hint="Leave empty for the most recently published.">
+          <FormSection id="search" label="Search" hint={active?.hint ?? "Leave empty for the newest."}>
+            <Segmented
+              label="Source"
+              value={source}
+              onChange={setSource}
+              options={(sources.length ? sources : [{ id: "official", label: "Official", hint: "" }]).map((x) => ({
+                value: x.id,
+                label: x.label,
+              }))}
+            />
             <div className="relative">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -951,11 +1049,22 @@ export function McpBrowsePage() {
                 autoFocus
               />
             </div>
+            {hasPopularity && (
+              <Segmented
+                label="Order"
+                value={sort}
+                onChange={setSort}
+                options={[
+                  { value: "match", label: "Best match" },
+                  { value: "popular", label: "Most used", icon: FlameIcon },
+                ]}
+              />
+            )}
             <ErrorNote error={error} />
           </FormSection>
           <Section
-            label="Results"
-            hint={entries ? `${entries.length} ${entries.length === 1 ? "result" : "results"}` : undefined}
+            label={query.trim() ? "Results" : active?.id === "official" ? "Newest" : "Trending"}
+            hint={entries ? `${f.rows.length} ${f.rows.length === 1 ? "result" : "results"}${cursor ? " so far" : ""}` : undefined}
           >
             <DataTable
               columns={columns}
@@ -967,13 +1076,151 @@ export function McpBrowsePage() {
               mobile={{ renderRow }}
               pageSize={50}
               emptyIcon={<meta.icon />}
-              emptyMessage={query || f.narrowed ? "Nothing published matches." : "The registry answered with nothing."}
+              emptyMessage={query || f.narrowed ? "Nothing published matches." : "This source answered with nothing."}
               filtering={{ ...f.filtering, search: undefined }}
             />
+            {cursor && (
+              <Button type="button" variant="outline" className="h-11 w-full @panel-sm:h-9" disabled={more} onClick={() => void loadMore()}>
+                {more ? "Loading…" : "Load more"}
+              </Button>
+            )}
           </Section>
         </FormShell>
       </PageForm>
     </>
+  )
+}
+
+/**
+ * One registry result on a page of its own: what it is, how it would run, its
+ * tools where the source publishes them, and its README. The entry travels as
+ * route state (like Browse's prefill), so a reload lands back on Browse.
+ * Tools are only ever *read from the source* — finding them any other way
+ * would mean starting a stranger's server.
+ */
+export function McpRegistryDetailPage() {
+  const { settings } = useSettingsPage()
+  const navigate = useNavigate()
+  const entry = (useLocation().state as { entry?: RegistryEntry } | null)?.entry ?? null
+  const [detail, setDetail] = React.useState<RegistryDetail | null>(null)
+  const [error, setError] = React.useState<InlineError | null>(null)
+  const browse = settingsFormPath("mcp", "browse")
+
+  React.useEffect(() => {
+    if (!entry) return
+    const abort = new AbortController()
+    const q = new URLSearchParams({ source: entry.source, name: entry.qualifiedName, repo: entry.repositoryUrl ?? "" })
+    api<RegistryDetail>(settings, `/api/mcp-registry/detail?${q}`, { signal: abort.signal })
+      .then(setDetail)
+      .catch((err) => {
+        if (!abort.signal.aborted) {
+          setError(captureError(err, "Couldn't load the details"))
+          setDetail({ readme: null, tools: null })
+        }
+      })
+    return () => abort.abort()
+  }, [settings, entry])
+
+  if (!entry) return <Navigate to={browse} replace />
+  const server = entry.server
+  const run = server.type === "http" ? server.url : [server.command, ...server.args].join(" ")
+  return (
+    <>
+      <FormPageHeader
+        title={server.name}
+        description={entry.description}
+        onBack={() => void navigate(browse)}
+      />
+      <PageForm onSubmit={(e) => e.preventDefault()}>
+        <FormShell sections={[{ id: "about", label: "About" }, { id: "tools", label: "Tools" }, { id: "readme", label: "README" }]}>
+          <FormSection id="about" label="About" hint="What installing would add to your library.">
+            <div className="flex flex-wrap items-center gap-2">
+              <RegistryMark entry={entry} className="size-8" />
+              <ViaCell entry={entry} />
+              <PopularityCell entry={entry} />
+              {entry.verified && <Badge variant="secondary"><BadgeCheckIcon className="size-3" /> Verified</Badge>}
+              {entry.repositoryUrl && (
+                <a href={entry.repositoryUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  Source <ExternalLinkIcon className="size-3.5" />
+                </a>
+              )}
+            </div>
+            <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs">{run}</pre>
+            {entry.needs.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Needs: <span className="font-mono">{entry.needs.join(", ")}</span>
+              </p>
+            )}
+            <Button
+              type="button"
+              className="h-11 @panel-sm:h-9 @panel-sm:self-start"
+              onClick={() => void navigate(settingsFormPath("mcp"), { state: { prefill: entry.server } })}
+            >
+              <PlusIcon className="size-4" /> Install
+            </Button>
+            <ErrorNote error={error} />
+          </FormSection>
+          <FormSection id="tools" label="Tools" hint={detail?.tools ? `${detail.tools.length} published` : undefined}>
+            {detail === null ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : detail.tools === null ? (
+              <p className="text-xs text-muted-foreground">
+                {entry.source === "smithery"
+                  ? "Smithery lists no tools for this server."
+                  : "This source does not publish a tool list. Install it, then Check it in the library to see exactly what it offers."}
+              </p>
+            ) : (
+              <ul className="divide-y rounded-md border">
+                {detail.tools.map((t) => (
+                  <li key={t.name} className="px-3 py-2">
+                    <div className="font-mono text-xs font-medium">{t.name}</div>
+                    {t.description && <div className="line-clamp-2 text-xs text-muted-foreground">{t.description}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </FormSection>
+          <FormSection id="readme" label="README">
+            {detail === null ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : detail.readme ? (
+              <div className="prose prose-sm max-w-none">
+                <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                  {detail.readme}
+                </Markdown>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No README could be read from the source.</p>
+            )}
+          </FormSection>
+        </FormShell>
+      </PageForm>
+    </>
+  )
+}
+
+/** Transport badge, with the version where the source publishes one. */
+function ViaCell({ entry }: { entry: RegistryEntry }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <Badge variant="outline" className="font-normal">
+        {entry.via === "remote" ? "HTTP" : entry.via}
+      </Badge>
+      {entry.version && <span className="text-xs text-muted-foreground">{entry.version}</span>}
+    </span>
+  )
+}
+
+/** Uses (Smithery) or weekly downloads (npm), compacted; nothing where the
+    source publishes no figure. */
+function PopularityCell({ entry }: { entry: RegistryEntry }) {
+  if (entry.popularity == null) return <span className="text-xs text-muted-foreground/60">—</span>
+  const unit = entry.source === "npm" ? "/wk" : " uses"
+  return (
+    <span className="text-xs text-muted-foreground">
+      {new Intl.NumberFormat(undefined, { notation: "compact" }).format(entry.popularity)}
+      {unit}
+    </span>
   )
 }
 
@@ -1046,6 +1293,9 @@ function McpForm({
     url: server?.type === "http" ? server.url : "",
     headers: server?.type === "http" ? server.headers.map((h) => `${h.name}: ${h.value}`).join("\n") : "",
     auth: (server?.type === "http" ? server.auth : "none") as "none" | "oauth",
+    /* How the row authenticates: "auto" asks the server on save (probe), the
+       other two are the person's word and the probe never overrides them. */
+    authMode: (server?.type === "http" ? server.auth : "auto") as "auto" | "none" | "oauth",
   }))
   const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
@@ -1061,7 +1311,7 @@ function McpForm({
   const runProbe = async (): Promise<"none" | "oauth"> => {
     const answer = await api<McpAuthProbe>(settings, "/api/mcp-servers/probe", {
       method: "POST",
-      body: JSON.stringify({ url: form.url }),
+      body: JSON.stringify({ url: form.url, headers: pairs(form.headers, ":") }),
     })
     setProbe(answer)
     /* `unknown` deliberately keeps whatever the row already said: a 403 from a
@@ -1081,7 +1331,9 @@ function McpForm({
          Connect waiting on it. Best-effort: a probe that throws must not cost
          somebody the row they just typed. */
       let auth = form.auth
-      if (form.type === "http") {
+      if (form.type === "http" && form.authMode !== "auto") {
+        auth = form.authMode
+      } else if (form.type === "http") {
         try {
           auth = await runProbe()
         } catch {
@@ -1193,6 +1445,18 @@ function McpForm({
             </p>
           )}
           <ErrorNote error={checkError} />
+          <Field label="Authentication" hint="Auto asks the server on save. Pick None for a server that takes a token in a header, OAuth for one you connect from the list.">
+            <Segmented
+              label="Authentication"
+              value={form.authMode}
+              onChange={(authMode) => set({ authMode, ...(authMode !== "auto" && { auth: authMode }) })}
+              options={[
+                { value: "auto", label: "Auto" },
+                { value: "none", label: "None / headers" },
+                { value: "oauth", label: "OAuth" },
+              ]}
+            />
+          </Field>
           <Field label="Headers" hint="One per line: Name: value">
             <Textarea
               value={form.headers}

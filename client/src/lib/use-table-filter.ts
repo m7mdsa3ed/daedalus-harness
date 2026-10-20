@@ -4,10 +4,19 @@ import type { DataTableFiltering } from "@/components/ui/data-table"
 export interface TableFilterField<T> {
   id: string
   label: string
-  /** The value a row has for this field; its distinct values become the options. */
-  of: (row: T) => string | null | undefined
+  /** The value a row has for this field; its distinct values become the options.
+      Several values when a row can hold more than one — a profile with chat and
+      completion models answers both — and a row matches when any of its own is
+      picked. */
+  of: (row: T) => string | string[] | null | undefined
   /** Display text for a value, when the value itself is a code (`"stdio"` → `"Command"`). */
   optionLabel?: (value: string) => string
+}
+
+/** A row's own values for one field, whichever shape the field answers in. */
+function valuesOf<T>(field: TableFilterField<T>, row: T): string[] {
+  const value = field.of(row)
+  return value == null ? [] : Array.isArray(value) ? value : [value]
 }
 
 /* Search + multi-select filters for a DataTable, derived from the rows
@@ -27,7 +36,7 @@ export function useTableFilter<T>(
   const fields = React.useMemo(
     () =>
       (opts.fields ?? []).flatMap((f) => {
-        const distinct = [...new Set(rows.map(f.of).filter((v): v is string => Boolean(v)))].sort()
+        const distinct = [...new Set(rows.flatMap((row) => valuesOf(f, row)).filter(Boolean))].sort()
         return distinct.length < 2
           ? []
           : [{
@@ -46,7 +55,9 @@ export function useTableFilter<T>(
           (!needle || (opts.matches ? opts.matches(row, needle) : (opts.text?.(row) ?? "").toLowerCase().includes(needle))) &&
           (opts.fields ?? []).every((f) => {
             const picked = values[f.id]
-            return !picked?.length || picked.includes(f.of(row) ?? "")
+            if (!picked?.length) return true
+            const own = valuesOf(f, row)
+            return picked.some((value) => own.includes(value))
           }),
       ),
     [rows, needle, values],

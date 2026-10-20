@@ -42,6 +42,13 @@ export interface RegistryEntry {
   logoUrl: string | null;
   /** npm / pypi / oci / remote — what the reader is about to run. */
   via: string;
+  /** Which source listed it (`SOURCES[].id`). */
+  source: SourceId;
+  /** The source's own popularity figure (Smithery uses, npm weekly downloads),
+      for ordering and for the card; null where the source has none. */
+  popularity: number | null;
+  /** The source vouches for the publisher (Smithery's badge). */
+  verified: boolean;
   /** Ready for `POST /api/mcp-servers`, placeholders and all. */
   server: McpServerInput;
   /** `{placeholder}` tokens left in the command, args, headers or env, and the
@@ -50,9 +57,20 @@ export interface RegistryEntry {
   needs: string[];
 }
 
+/** Where the browse page can look. All three answer without a key; a source
+    that needs one (Glama) is not listed rather than listed and broken. */
+export const SOURCES = [
+  { id: "official", label: "Official", hint: "The MCP Registry: servers their publishers registered." },
+  { id: "smithery", label: "Smithery", hint: "Hosted remote servers, ordered by use." },
+  { id: "npm", label: "npm", hint: "Every npm package tagged mcp-server, including unregistered ones." },
+] as const;
+export type SourceId = (typeof SOURCES)[number]["id"];
+
 export interface RegistrySearch {
   entries: RegistryEntry[];
   nextCursor: string | null;
+  source: SourceId;
+  sources: { id: SourceId; label: string; hint: string }[];
 }
 
 /* ── the registry's own shapes, narrowed to what we read ── */
@@ -228,6 +246,9 @@ export function entriesOf(raw: RegistryServer): RegistryEntry[] {
       out.push({
         ...common,
         id: `${qualifiedName}#pkg${i}`,
+        source: "official",
+        popularity: null,
+        verified: false,
         via: pkg.registryType ?? "package",
         server: { ...server, logoUrl: common.logoUrl ?? undefined },
         needs: needsOf(server, pkg.environmentVariables),
@@ -240,6 +261,9 @@ export function entriesOf(raw: RegistryServer): RegistryEntry[] {
       out.push({
         ...common,
         id: `${qualifiedName}#remote${i}`,
+        source: "official",
+        popularity: null,
+        verified: false,
         via: "remote",
         server: { ...server, logoUrl: common.logoUrl ?? undefined },
         needs: needsOf(server, remote.headers),
@@ -249,37 +273,188 @@ export function entriesOf(raw: RegistryServer): RegistryEntry[] {
   return out;
 }
 
-/**
- * One page of the registry.
- *
- * `version=latest` is not optional: without it the registry returns every
- * published version as its own row, and a search for something popular comes
- * back as twenty copies of one server.
- */
-export async function searchRegistry(query: string, cursor?: string): Promise<RegistrySearch> {
+async function getJson<T>(url: URL, what: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+  } catch (err) {
+    throw new HttpError(`Couldn't reach ${what} at ${url.origin}: ${(err as Error).message}`, 502);
+  }
+  if (!res.ok) throw new HttpError(`${what} answered ${res.status} ${res.statusText}`, 502);
+  return (await res.json()) as T;
+}
+
+/** One page of the MCP Registry (or a private one at `config.mcpRegistryUrl`).
+    `version=latest` is not optional: without it the registry returns every
+    published version as its own row, and a search for something popular comes
+    back as twenty copies of one server. */
+async function official(query: string, cursor?: string): Promise<Omit<RegistrySearch, "source" | "sources">> {
   const base = (getConfig().mcpRegistryUrl ?? DEFAULT_REGISTRY).replace(/\/+$/, "");
   const url = new URL(`${base}/v0/servers`);
   url.searchParams.set("version", "latest");
   url.searchParams.set("limit", "30");
   if (query) url.searchParams.set("search", query);
   if (cursor) url.searchParams.set("cursor", cursor);
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch (err) {
-    throw new HttpError(`Couldn't reach the MCP registry at ${base}: ${(err as Error).message}`, 502);
-  }
-  if (!res.ok) throw new HttpError(`The MCP registry answered ${res.status} ${res.statusText}`, 502);
-  const body = (await res.json()) as {
-    servers?: { server?: RegistryServer }[];
-    metadata?: { nextCursor?: string };
-  };
+  const body = await getJson<{ servers?: { server?: RegistryServer }[]; metadata?: { nextCursor?: string } }>(
+    url,
+    "the MCP registry",
+  );
   return {
     entries: (body.servers ?? []).flatMap((row) => entriesOf(row.server ?? {})),
     nextCursor: body.metadata?.nextCursor ?? null,
   };
+}
+
+/** Smithery lists hosted servers. Its `qualifiedName` is also the path of the
+    streamable-http endpoint; whether that endpoint wants OAuth is the save
+    path's probe, as everywhere. */
+async function smithery(query: string, cursor?: string): Promise<Omit<RegistrySearch, "source" | "sources">> {
+  const page = Number(cursor) || 1;
+  const url = new URL("https://registry.smithery.ai/servers");
+  url.searchParams.set("pageSize", "30");
+  url.searchParams.set("page", String(page));
+  if (query) url.searchParams.set("q", query);
+  const body = await getJson<{
+    servers?: {
+      qualifiedName: string;
+      displayName?: string;
+      description?: string;
+      iconUrl?: string;
+      homepage?: string;
+      verified?: boolean;
+      useCount?: number;
+      remote?: boolean;
+    }[];
+    pagination?: { currentPage?: number; totalPages?: number };
+  }>(url, "Smithery");
+  const entries = (body.servers ?? [])
+    .filter((s) => s.remote && s.qualifiedName)
+    .map<RegistryEntry>((s) => ({
+      id: `smithery:${s.qualifiedName}`,
+      qualifiedName: s.qualifiedName,
+      description: s.description ?? "",
+      version: "",
+      repositoryUrl: s.homepage ?? null,
+      logoUrl: s.iconUrl?.startsWith("https://") ? s.iconUrl : null,
+      via: "remote",
+      source: "smithery",
+      popularity: s.useCount ?? null,
+      verified: Boolean(s.verified),
+      server: {
+        type: "http",
+        name: shortName(s.qualifiedName),
+        url: `https://server.smithery.ai/${s.qualifiedName}/mcp`,
+        headers: [],
+        auth: "none",
+        logoUrl: s.iconUrl?.startsWith("https://") ? s.iconUrl : undefined,
+      },
+      needs: [],
+    }));
+  const { currentPage = page, totalPages = page } = body.pagination ?? {};
+  return { entries, nextCursor: currentPage < totalPages ? String(currentPage + 1) : null };
+}
+
+/** npm packages tagged `mcp-server`: the long tail the registry has not seen.
+    Run with `npx`, so the same pinning as a registry package. The cursor is
+    the offset. Nothing declares env vars, so `needs` is empty — the README is
+    the only place those live, and the repository link is the way to it. */
+async function npm(query: string, cursor?: string): Promise<Omit<RegistrySearch, "source" | "sources">> {
+  const from = Number(cursor) || 0;
+  const url = new URL("https://registry.npmjs.org/-/v1/search");
+  url.searchParams.set("text", `keywords:mcp-server ${query}`.trim());
+  url.searchParams.set("size", "30");
+  url.searchParams.set("from", String(from));
+  const body = await getJson<{
+    objects?: {
+      downloads?: { weekly?: number };
+      package: { name: string; version?: string; description?: string; links?: { repository?: string } };
+    }[];
+    total?: number;
+  }>(url, "npm");
+  const objects = body.objects ?? [];
+  const entries = objects.map<RegistryEntry>(({ package: p, downloads }) => ({
+    id: `npm:${p.name}`,
+    qualifiedName: p.name,
+    description: p.description ?? "",
+    version: p.version ?? "",
+    repositoryUrl: p.links?.repository?.replace(/^git\+/, "").replace(/\.git$/, "") ?? null,
+    logoUrl: null,
+    via: "npm",
+    source: "npm",
+    popularity: downloads?.weekly ?? null,
+    verified: false,
+    server: {
+      type: "stdio",
+      name: shortName(p.name),
+      command: "npx",
+      args: ["-y", p.version ? `${p.name}@${p.version}` : p.name],
+      env: [],
+    },
+    needs: [],
+  }));
+  const next = from + objects.length;
+  return { entries, nextCursor: objects.length > 0 && next < (body.total ?? 0) ? String(next) : null };
+}
+
+const SEARCH: Record<SourceId, typeof official> = { official, smithery, npm };
+
+export async function searchRegistry(query: string, cursor?: string, source: string = "official"): Promise<RegistrySearch> {
+  const id = SOURCES.some((s) => s.id === source) ? (source as SourceId) : "official";
+  return { ...(await SEARCH[id](query, cursor)), source: id, sources: [...SOURCES] };
+}
+
+export interface RegistryDetail {
+  /** Markdown, or null when the source has no readable one. */
+  readme: string | null;
+  /** What the server offers, where the source publishes it (Smithery does);
+      null means "not published", never "none". Registry entries say nothing of
+      tools, and finding out would mean running someone else's code. */
+  tools: { name: string; description: string }[] | null;
+}
+
+const text = async (url: string) => {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    return res.ok ? (await res.text()).slice(0, 200_000) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The README and, where published, the tool list for one result. Inputs are
+    only ever interpolated into the three hosts below, and a repository URL is
+    parsed down to `owner/repo` on github.com — nothing here fetches a
+    caller-supplied URL. */
+export async function registryDetail(source: string, name: string, repo: string | null): Promise<RegistryDetail> {
+  let tools: RegistryDetail["tools"] = null;
+  let readme: string | null = null;
+  if (source === "smithery") {
+    try {
+      const res = await fetch(`https://registry.smithery.ai/servers/${name.split("/").map(encodeURIComponent).join("/")}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { tools?: { name: string; description?: string }[] };
+        tools = (body.tools ?? []).map((t) => ({ name: t.name, description: t.description ?? "" }));
+      }
+    } catch {
+      // Detail is a bonus; the page still draws without it.
+    }
+  }
+  const gh = repo?.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/|$)/);
+  if (gh) {
+    for (const file of ["README.md", "readme.md", "Readme.md"]) {
+      readme = await text(`https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/HEAD/${file}`);
+      if (readme) break;
+    }
+  }
+  if (!readme && source === "npm") {
+    try {
+      const res = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/latest`, { signal: AbortSignal.timeout(10_000) });
+      if (res.ok) readme = ((await res.json()) as { readme?: string }).readme ?? null;
+    } catch {
+      // as above
+    }
+  }
+  return { readme, tools };
 }

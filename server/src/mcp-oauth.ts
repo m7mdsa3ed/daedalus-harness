@@ -103,12 +103,15 @@ const withTimeout = (ms = PROBE_TIMEOUT_MS): AbortSignal => AbortSignal.timeout(
  * which is what servers written before RFC 9728 do. Anything else is
  * `unknown`.
  */
-export async function probeMcpAuth(url: string): Promise<McpAuthProbe> {
+export async function probeMcpAuth(url: string, extra: Record<string, string> = {}): Promise<McpAuthProbe> {
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
+      /* The row's own headers travel too: a server that takes a bearer token in
+         a header answers 401 without it, and would be stored as OAuth. */
       headers: {
+        ...extra,
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "mcp-protocol-version": "2025-06-18",

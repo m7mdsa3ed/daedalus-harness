@@ -466,9 +466,33 @@ export interface RegistryEntry {
   repositoryUrl: string | null
   logoUrl: string | null
   via: string
+  /** Which source listed it (`RegistrySource.id`). */
+  source: string
+  /** The source's own popularity figure (uses, weekly downloads); null if none. */
+  popularity: number | null
+  verified: boolean
   server: McpServerStdio | McpServerHttp
   /** Placeholders and required variables the publisher left for the user. */
   needs: string[]
+}
+
+/** A place the marketplace can search, as the server lists them. */
+export interface RegistrySource {
+  id: string
+  label: string
+  hint: string
+}
+
+/** `GET /api/mcp-registry/detail`: `tools` null = the source does not publish them. */
+export interface RegistryDetail {
+  readme: string | null
+  tools: { name: string; description: string }[] | null
+}
+
+export interface RegistryPage {
+  entries: RegistryEntry[]
+  nextCursor: string | null
+  sources: RegistrySource[]
 }
 
 /** One of the harness's own servers, in the library as a row that holds
@@ -719,7 +743,36 @@ export interface ModelOption {
   /** Model-role ids (`ModelRole.id`) this model serves — a subagent spawned on
       a role runs on the first model carrying it. Absent/empty = none. */
   roles?: string[]
+  /** What the model is (docs/plans/model-kinds.md). Absent = chat, and only a
+      chat model can be handed to a thread: the pickers filter on this before
+      they offer anything. */
+  kind?: ModelKind
+  /** How a decision/completion model is called. Absent on a chat model. */
+  wire?: ModelWire
 }
+
+/** The kinds a profile's catalogue can hold — one column, so the wire is not
+    guessed from an id. */
+export type ModelKind = "chat" | "decision" | "completion"
+export type ModelWire = "systemone" | "systemone-gateway" | "openai-completions"
+
+/** The models of the kinds a surface accepts. Absent `kind` is a chat model, so
+    an entry from before kinds existed reads as what it always was. */
+export const modelsOfKind = <T extends { kind?: ModelKind }>(models: T[], kinds: ModelKind[]): T[] =>
+  models.filter((model) => kinds.includes(model.kind ?? "chat"))
+
+/** The models a thread may be started on: chat models only. A decision model
+    answers typed questions and a completion model fills a gap; neither can
+    drive a turn, and offering one is a thread that fails at spawn. */
+export const chatModels = <T extends { kind?: ModelKind }>(models: T[]): T[] => modelsOfKind(models, ["chat"])
+
+/** Whether a profile can spawn a thread's agent at all. A profile with no
+    catalogue defers to whatever the agent advertises, so it qualifies; one
+    whose whole catalogue is decision or completion models does not — its
+    "models" answer questions and fill gaps, and handing one to a turn is a
+    thread that fails at spawn. */
+export const servesChat = (profile: Pick<Profile, "models">): boolean =>
+  profile.models.length === 0 || chatModels(profile.models).length > 0
 
 /** A model-role row (`model_roles`): the free-form, ordered vocabulary a
     profile's models tag themselves with, so a subagent is spawned on a role
@@ -1103,63 +1156,14 @@ export function relativeAge(at: number): string {
   return `${Math.round(m / 1440)}d`
 }
 
-/** A scheduled prompt: the server sends `text` to `sessionId`'s agent at
-    `nextAt`, and again every `everyMs` until cancelled. The server owns
-    delivery — a browser tab closing must not stop a scheduled turn. */
-export interface ScheduledMessage {
-  id: string
-  sessionId: string
-  text: string
-  /** Epoch ms of the next scheduled fire. */
-  nextAt: number
-  /** Recurrence interval in ms; null = one-shot. */
-  everyMs: number | null
-  /** 1 = active; 0 = paused (the sweep never selects it). SQLite boolean. */
-  enabled: number
-  /** Epoch ms of the last sweep that could not deliver, or null. */
-  skippedAt: number | null
-  /** Why the last sweep skipped it (trashed/vanished thread), or null. */
-  lastError: string | null
-  /** Consecutive undeliverable sweeps; past the server's cap (20) the row is
-      parked — still listed, never selected — until a patch resets it. */
-  skipCount: number
-  createdAt: number
-}
-
-/** `PATCH /api/scheduled/:id` body. Any patch — even a bare pause/resume —
-    also resets the row's skip state server-side, so "Resume" on a parked
-    schedule is just `{enabled: true}`. `everyMs: null` clears the recurrence. */
-export interface ScheduledPatch {
-  text?: string
-  nextAt?: number
-  everyMs?: number | null
-  enabled?: boolean
-}
-
-export async function updateScheduled(
-  settings: ServerSettings,
-  id: string,
-  patch: ScheduledPatch
-): Promise<ScheduledMessage> {
-  return api<ScheduledMessage>(settings, `/api/scheduled/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  })
-}
-
-
-/* ── routines ──────────────────────────────────────────────────────────────
-   A routine is a saved thread-start that fires on its own. The interfaces
-   below mirror the server's rows one field per column, the way
-   `ScheduledMessage` mirrors `scheduled_messages` — the server sends the row
-   itself (`RunView` in `server/src/routines.ts` is an alias of the row, and
-   `Routine` is the row plus its links), so anything else here would be a
-   projection nobody made.
-
-   One thing reads differently from `ScheduledMessage` and it is worth naming:
-   these booleans are real booleans, not SQLite's 0/1. The routine columns are
-   declared `mode: "boolean"` where `scheduled_messages.enabled` deliberately
-   is not, so drizzle hands the route a `true` and JSON carries it through. */
+/* ── automations (the server's `routines`) ────────────────────────────────
+   An automation is a prompt that fires on its own, either as a new thread per
+   fire (`runsIn: "thread"`) or as a message delivered into one existing thread
+   (`runsIn: "session"`, which is what a scheduled message used to be). The
+   interfaces below mirror the server's rows one field per column — the server
+   sends the row itself (`Routine` is the row plus its links) — and the UI says
+   "automation" where the API and these types still say "routine".
+   Booleans are real booleans. */
 
 /** What the harness answers with when the agent asks. `"ask"` is the ordinary
     thread's behaviour exactly: park, tell the peers, wait for a human. */
@@ -1236,6 +1240,13 @@ export interface OnFinishRecord {
 /** What a fire does when the routine's previous run is still going. */
 export type RoutineOverlap = "skip" | "queue"
 
+/** `thread` mints a thread per fire; `session` delivers into `sessionId`. */
+export type RoutineRunsIn = "thread" | "session"
+
+/** What a boot or a wake does about slots missed while the server was off:
+    run the newest once (within 7 days), or only record them as skipped. */
+export type RoutineCatchup = "once" | "none"
+
 /**
  * A saved thread-start that fires on its own — everything `POST /api/sessions`
  * carries, because a fire is `create(...)` with these values and then one
@@ -1269,6 +1280,13 @@ export interface Routine {
   output: Record<string, unknown> | null
   onFinish: OnFinishAction[]
   overlap: RoutineOverlap
+  /** Where a fire lands. `session` routines are pinned to `sessionId` and
+      derive project/profile/agent from that thread. */
+  runsIn: RoutineRunsIn
+  sessionId: string | null
+  catchup: RoutineCatchup
+  /** Each run works in its own git worktree (not for `session`). */
+  worktree: boolean
   autonomy: AutonomyPolicy
   /** One run has completed under this routine. The form may not widen
       `autonomy.permissions.default` to `allow` until it has — the difference
@@ -1290,9 +1308,14 @@ export interface RoutineInput {
   name: string
   description?: string | null
   enabled?: boolean
-  projectId: string
-  profileId: string
-  agentId: string
+  runsIn?: RoutineRunsIn
+  sessionId?: string | null
+  catchup?: RoutineCatchup
+  worktree?: boolean
+  /** Required for `thread`; derived server-side from the thread for `session`. */
+  projectId?: string
+  profileId?: string
+  agentId?: string
   model?: string
   effort?: string
   configChoices?: Record<string, string | boolean>
@@ -1301,7 +1324,7 @@ export interface RoutineInput {
   output?: Record<string, unknown> | null
   onFinish?: OnFinishAction[]
   overlap?: RoutineOverlap
-  autonomy: AutonomyPolicy
+  autonomy?: AutonomyPolicy
   mcpServerIds?: string[]
   skillIds?: string[]
   commandIds?: string[]
@@ -1313,7 +1336,7 @@ export interface RoutineInput {
     it guards decorative. */
 export type RoutinePatch = Partial<RoutineInput>
 
-export type RoutineTriggerKind = "schedule" | "api" | "git"
+export type RoutineTriggerKind = "schedule" | "api" | "git" | "manual"
 
 /**
  * One way a routine fires. Several per routine, combinable, each enabled on its
@@ -1336,6 +1359,8 @@ export interface RoutineTrigger {
   tz: string | null
   /** Epoch ms of a single fire; null for a recurring one. */
   atMs: number | null
+  /** Fixed recurrence in ms (one minute at the least); null for cron/one-off. */
+  intervalMs: number | null
   /** Checked at fire time, never at edit time. A refused fire writes a
       `skipped` run saying why and does not disturb `nextFireAt`. */
   condition: { gitChangedSince?: "lastRun" } | null
@@ -1374,6 +1399,7 @@ export interface RoutineTriggerInput {
   cron?: string | null
   tz?: string | null
   atMs?: number | null
+  intervalMs?: number | null
   condition?: { gitChangedSince?: "lastRun" } | null
   branch?: string | null
   paths?: string[]
@@ -1412,6 +1438,11 @@ export interface RoutineRun {
   /** A "Run now, forced to ask" — the run that clears `dryRunCompleted`. */
   dryRun: boolean
   status: RoutineRunStatus
+  /** Machine reason on a `skipped` run (`missed`, `disabled`, `quota`,
+      `rate-limit`, `thread-trashed`, …); `error` carries the sentence. */
+  skipReason: string | null
+  /** The inbox's read state; null on a run that never reached it. */
+  inboxState: "unread" | "read" | "archived" | null
   /** Why a `skipped` run was skipped, why a `blocked` one is blocked, or why a
       `failed` one failed. One column because it is one sentence to one reader. */
   error: string | null
