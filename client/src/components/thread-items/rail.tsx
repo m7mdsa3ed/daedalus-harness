@@ -67,6 +67,22 @@ export function useRailSlots(ids: string[], mounted: boolean, leading = false) {
   }
 }
 
+/** True inside a rail. A step at the transcript's top level stands in the
+    same column a rail's steps do — one `ps-7` in, past the gutter a group
+    header's chevron hangs in — so every step's mark in the transcript, alone
+    or grouped, is one column, and every chevron is the column before it. */
+export const InRail = React.createContext(false)
+
+/** The top-level step's indent: the rail's own (`ps-7`). */
+export const STEP_GUTTER = "ps-7"
+
+/** Rows that are a step — a mark and a title — rather than a group header
+    (whose chevron owns the gutter) or the conversation (messages, notices). */
+const STEP_KINDS = new Set(["tool", "plan", "compaction", "autonomy", "shell", "voice", "thought", "subagent", "subagent-group"])
+export function isStepRow(kind: string): boolean {
+  return STEP_KINDS.has(kind)
+}
+
 /** "N earlier steps" — the top of a peeking rail. The steps' own ground
     (`-mx-1 px-1 py-0.5`, rounded-xl), its text starting at the title column
     (`ps-8` = the 4px bleed + the 28px mark slot and gap). */
