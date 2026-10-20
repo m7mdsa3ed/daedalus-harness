@@ -155,6 +155,12 @@
      queries written against those numbers. */
   --container-panel-lg: 64rem;
   --container-panel-xl: 80rem;
+  /* Every `transition*` and `ease-*` utility wears IPTV's motion tokens
+     (:root, by the streaming reveal), resolved at paint like the colours. */
+  --default-transition-duration: var(--dur-fast);
+  --default-transition-timing-function: var(--ease);
+  --ease-out: var(--ease);
+  --ease-in-out: var(--ease);
   --color-hover: var(--hover);
   --color-active: var(--active);
   --color-focus-ring: var(--focus-ring);
@@ -833,7 +839,15 @@
    blur here is deliberately around a pixel: it has to be felt as softness at the
    moment of arrival, not read as the text being out of focus. */
 :root {
-  --stream-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* IPTV's motion tokens (its index.css "MOTION" block), the app's one set:
+     feedback at --dur-fast, state changes at --dur, entrances and size at
+     --dur-slow, all on the one --ease. Tailwind's `transition`/`ease-*`
+     utilities route through them too (@theme below). */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --stream-ease: var(--ease);
   /* Sweep. The ramp is the CSS half of `TAIL_WORDS` — the pass stamps `--tail`
      in words, this is what divides it back into a 0…1 position — so the two
      have to move together. The fade is short because it runs on every word
@@ -1060,7 +1074,7 @@
 .harness-collapse {
   height: var(--collapsible-panel-height);
   overflow: hidden;
-  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: height var(--dur) var(--ease);
 }
 .harness-collapse[data-starting-style],
 .harness-collapse[data-ending-style] {
@@ -1087,13 +1101,13 @@
      *shorthand*, which resets `transition-property` outright. Anything this
      element is to transition has to be in this list; a `transition-*` utility
      on the element itself will not run. */
-  transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: height var(--dur-slow) var(--ease);
 }
 
 /* The active panel changes without moving the selector rail. The shelf itself
    animates its measured height; panel opacity signals the selected content. */
 .harness-strip-card {
-  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: background-color var(--dur) var(--ease);
 }
 
 /* The row arriving in front. Attribute-driven, not mount-driven: the bodies
@@ -1107,7 +1121,7 @@
   to { opacity: 1; }
 }
 [data-strip-body][data-front] {
-  animation: harness-strip-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: harness-strip-in var(--dur) var(--ease);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1611,7 +1625,7 @@ html[data-window-controls-overlay="true"] {
   to { opacity: 1; transform: translateY(0); }
 }
 .harness-item-in {
-  animation: harness-item-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: harness-item-in var(--dur-slow) var(--ease) backwards;
   /* The stagger counts the *batch that mounted*, never the row's place in the
      list — `--item-i` is what the call site counted as new this render, so a
      step arriving on its own carries 0 and rises the moment it lands. Index
@@ -1641,7 +1655,7 @@ html[data-window-controls-overlay="true"] {
   to { opacity: 1; }
 }
 .harness-fade-in {
-  animation: harness-fade-in 360ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: harness-fade-in var(--dur-slow) var(--ease) backwards;
 }
 
 /* ── A run's rail drawing itself ──
@@ -1677,7 +1691,7 @@ html[data-window-controls-overlay="true"] {
 }
 .harness-rail-draw::before,
 .harness-rail-draw::after {
-  animation: harness-rail-draw 320ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: harness-rail-draw var(--dur-slow) var(--ease) backwards;
   animation-delay: calc(min(var(--item-i, 0), 6) * 60ms);
 }
 
@@ -1714,7 +1728,7 @@ html[data-window-controls-overlay="true"] {
   to { opacity: 1; transform: none; }
 }
 .harness-part-in {
-  animation: harness-part-in 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: harness-part-in var(--dur-slow) var(--ease) backwards;
   animation-delay: calc(min(var(--item-i, 0), 6) * 60ms + var(--part-i, 0) * 45ms);
 }
 
@@ -1739,8 +1753,8 @@ html[data-window-controls-overlay="true"] {
    compositor properties already read as the line settling in. */
 .harness-phase-swap {
   transition:
-    opacity 260ms var(--stream-ease),
-    translate 260ms var(--stream-ease);
+    opacity var(--dur-slow) var(--stream-ease),
+    translate var(--dur-slow) var(--stream-ease);
 }
 @starting-style {
   .harness-phase-swap {
@@ -1757,7 +1771,7 @@ html[data-window-controls-overlay="true"] {
   margin-left: -0.625rem;
   padding-left: 0.5rem;
   border-left: 2px solid transparent;
-  transition: border-color 260ms var(--stream-ease);
+  transition: border-color var(--dur-slow) var(--stream-ease);
 }
 .harness-status[data-tone="error"] {
   border-left-color: color-mix(in oklab, var(--destructive) 55%, transparent);
@@ -1769,8 +1783,8 @@ html[data-window-controls-overlay="true"] {
   display: grid;
   grid-template-rows: 1fr;
   transition:
-    grid-template-rows 260ms var(--stream-ease),
-    opacity 260ms var(--stream-ease);
+    grid-template-rows var(--dur-slow) var(--stream-ease),
+    opacity var(--dur-slow) var(--stream-ease);
 }
 .harness-status-body[data-open="false"] {
   grid-template-rows: 0fr;
@@ -2515,7 +2529,7 @@ html .dv-tab.dv-tab--dragging {
    specificity the later rule wins, and a definition placed after it would
    quietly undo it. */
 html {
-  --dock-tab-duration: 240ms;
+  --dock-tab-duration: var(--dur);
 }
 
 /* ── Narrow: the strip is one tab, the rest are in the list ──

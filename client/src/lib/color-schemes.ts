@@ -35,8 +35,12 @@ export interface SchemeAnchors {
   muted: string
   /** --accent: one step further from the background than muted. */
   accent: string
-  /** --border / --input */
+  /** --border, and --input unless `input` says otherwise. */
   border: string
+  /** --input. Defaults to `border`. */
+  input?: string
+  /** --popover. Defaults to `card`. */
+  popover?: string
   /** --foreground */
   fg: string
   /** --muted-foreground: secondary text, which must clear AA on `muted`. */
@@ -63,7 +67,71 @@ export interface ColorScheme {
   design: BaseTokens
 }
 
+/* ── IPTV ──
+   Its colour themes, tuples copied verbatim from IPTV's src/lib/themes.ts:
+   background, surface, surface-2, surface-3, accent, accent container, text on
+   accent. Everything else is its `css()` generator's: the ink is translucent
+   white or black (never a hue), popovers sit on surface-2, and the charts and
+   destructive reds are its index.css :root / .dark. Amoled ships dark only, so
+   its light half is Default's, as it is there. */
+type TvPalette = readonly [string, string, string, string, string, string, string]
+
+const TV_LIGHT: TvPalette = ["#f4f5f7", "#ffffff", "#eceef2", "#e1e4ea", "#1a73e8", "#d3e3fd", "#ffffff"]
+
+function tvAnchors(p: TvPalette, dark: boolean): SchemeAnchors {
+  const ink = dark ? "255, 255, 255" : "0, 0, 0"
+  return {
+    bg: p[0],
+    card: p[1],
+    popover: p[2],
+    muted: p[2],
+    accent: p[3],
+    border: `rgba(${ink}, 0.12)`,
+    input: `rgba(${ink}, 0.18)`,
+    fg: dark ? "rgba(255, 255, 255, 0.87)" : "#1f1f1f",
+    fgMuted: `rgba(${ink}, 0.6)`,
+    primary: p[4],
+    primaryFg: p[6],
+    destructive: dark ? "#f28b82" : "#d93025",
+    charts: dark
+      ? ["#8ab4f8", "#81c995", "#fdd663", "#f28b82", "#c58af9"]
+      : ["oklch(0.809 0.105 251.813)", "oklch(0.623 0.214 259.815)", "oklch(0.546 0.245 262.881)", "oklch(0.488 0.243 264.376)", "oklch(0.424 0.199 265.638)"],
+  }
+}
+
+const tv = (id: string, label: string, note: string, dark: TvPalette, light = TV_LIGHT): ColorScheme => ({
+  id: id === "default" ? "google-tv" : id,
+  label: id === "default" ? "Google TV" : label,
+  note,
+  source: `IPTV colour theme "${id}", src/lib/themes.ts`,
+  light: tvAnchors(light, false),
+  dark: tvAnchors(dark, true),
+  // Google Sans is not bundleable; Roboto is the next face in IPTV's stack.
+  design: {
+    "font-sans": "roboto",
+    "font-heading": "roboto",
+    "font-mono": "jetbrains-mono",
+    radius: "round",
+    depth: "subtle",
+    tracking: "normal",
+    blur: "medium",
+    width: "default",
+  },
+})
+
+const TV_SCHEMES: readonly ColorScheme[] = [
+  tv("default", "Default", "Google TV greys with a Material blue accent.", ["#0e0f11", "#1b1c1f", "#25262a", "#2f3135", "#8ab4f8", "#2b4a76", "#062e6f"]),
+  tv("midnight", "Midnight", "Navy surfaces, a periwinkle accent.", ["#0b1020", "#131a2e", "#1b2440", "#26315a", "#7aa2ff", "#24407e", "#0a1633"], ["#eef2fb", "#ffffff", "#e1e8f7", "#d2dbf0", "#2f55d4", "#d6e0fb", "#ffffff"]),
+  tv("amoled", "Amoled", "True black for OLED panels.", ["#000000", "#0d0d0d", "#161616", "#222222", "#8ab4f8", "#1f3a64", "#062e6f"]),
+  tv("forest", "Forest", "Deep greens, a mint accent.", ["#0c130f", "#141f18", "#1d2b22", "#283a2e", "#6fcf97", "#1f4a33", "#05260f"], ["#eef4ef", "#ffffff", "#e0ebe3", "#d0dfd4", "#1e7a45", "#cdeedb", "#ffffff"]),
+  tv("sunset", "Sunset", "Warm browns, an orange accent.", ["#150f0c", "#211814", "#2e211b", "#3d2d25", "#ff9a62", "#6a3418", "#3a1500"], ["#fbf3ee", "#ffffff", "#f5e5dc", "#ecd5c8", "#c8501a", "#fcd9c5", "#ffffff"]),
+  tv("rose", "Rose", "Plum surfaces, a pink accent.", ["#160e12", "#22151b", "#2f1d26", "#3e2733", "#ff8fb1", "#6b2342", "#3d0720"], ["#fcf1f4", "#ffffff", "#f6e1e8", "#eecfda", "#c2185b", "#fbd0df", "#ffffff"]),
+  tv("violet", "Violet", "Indigo surfaces, a lavender accent.", ["#110d1a", "#1a1427", "#251c38", "#322750", "#b69cff", "#46308a", "#1c0b52"], ["#f5f1fc", "#ffffff", "#e9e1f8", "#dbd0f1", "#6d3fd1", "#e0d4fb", "#ffffff"]),
+  tv("mocha", "Mocha", "Coffee browns, a caramel accent.", ["#14100d", "#1e1814", "#2a221c", "#382e26", "#d9a877", "#5a3f22", "#2e1a05"], ["#f6f0ea", "#ffffff", "#ebe0d5", "#dfd0c1", "#8a5a2b", "#f0dcc4", "#ffffff"]),
+]
+
 export const COLOR_SCHEMES: readonly ColorScheme[] = [
+  ...TV_SCHEMES,
   {
     id: "opencode",
     label: "OpenCode",
@@ -430,7 +498,7 @@ export function schemePalette(anchors: SchemeAnchors): ThemeTokens {
     foreground: anchors.fg,
     card: anchors.card,
     "card-foreground": anchors.fg,
-    popover: anchors.card,
+    popover: anchors.popover ?? anchors.card,
     "popover-foreground": anchors.fg,
     primary: anchors.primary,
     "primary-foreground": anchors.primaryFg,
@@ -442,7 +510,7 @@ export function schemePalette(anchors: SchemeAnchors): ThemeTokens {
     "accent-foreground": anchors.fg,
     destructive: anchors.destructive,
     border: anchors.border,
-    input: anchors.border,
+    input: anchors.input ?? anchors.border,
     ring: anchors.primary,
     sidebar,
     "sidebar-foreground": anchors.fg,
