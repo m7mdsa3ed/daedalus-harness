@@ -352,10 +352,11 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           2px inset, which is what `py-0.5` here and `h-full` + `m-0.5` below
           add up to.
 
-          `pl-2.5`: the leading side is paid for the active tab's 2px rail
-          (`index.css`), which sits at the slab's left edge — at `pl-2` the mark
-          would start *on* the rail. The padding is unconditional so the mark
-          does not jump 2px when a tab becomes active. */}
+          `px-(--frame-p)`: one inset on both sides, and the one the floating ⋮
+          and ✕ already sit at (half of the slab's height less a control's,
+          `index.css`) — so the mark, the title's end, the age and the controls
+          all stand the same distance in from the slab's edge on every strip.
+          It was `pl-2.5 pr-1.5`, paid for an active-tab rail that is gone. */}
       <div className="flex h-full min-w-0 flex-1 items-center py-0.5">
         <div
           /* The ref lives here and not on the box above, which is the one
@@ -374,7 +375,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
             /* Fully round (`--dock-corner` is the pill, `index.css`), the same
                shape as the sidebar toggle and the strip's own buttons — a
                control on the strip's line, not a miniature card. */
-            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-1.5 pl-2.5 text-sm leading-4",
+            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 px-(--frame-p) py-0 text-sm leading-4",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
