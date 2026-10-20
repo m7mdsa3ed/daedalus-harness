@@ -108,7 +108,15 @@ function partitionChildren(children: React.ReactNode) {
   return { header, body, footer }
 }
 
-function CloseButton({ Close }: { Close: typeof DialogPrimitive.Close | typeof DrawerPrimitive.Close }) {
+function CloseButton({
+  Close,
+  inHeader = false,
+}: {
+  Close: typeof DialogPrimitive.Close | typeof DrawerPrimitive.Close
+  /** Drawn inside the header, on its title line, rather than in the popup's
+      corner — see `withClose`. */
+  inHeader?: boolean
+}) {
   return (
     <Close
       data-slot="dialog-close"
@@ -117,7 +125,10 @@ function CloseButton({ Close }: { Close: typeof DialogPrimitive.Close | typeof D
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
+          className={cn(
+            "absolute text-muted-foreground hover:text-foreground",
+            inHeader ? "end-3 top-[calc(var(--dialog-header-pt)-0.25rem)]" : "top-4 right-4"
+          )}
         />
       }
     >
@@ -125,6 +136,17 @@ function CloseButton({ Close }: { Close: typeof DialogPrimitive.Close | typeof D
       <span className="sr-only">Close</span>
     </Close>
   )
+}
+
+/* The X belongs to the header's title line, not to the popup's corner: a
+   fixed `top-4` only lined up by accident, and on a phone the grab handle
+   pushes the header down so the X floated above "Tabs" and its Close all.
+   Centred on the 24px title line — the header's top padding
+   (`--dialog-header-pt`) + 12px, less half the 32px button — and, for a header
+   laid out as one row (`flex-row`), on the row (index.css). */
+function withClose(header: React.ReactNode, Close: typeof DialogPrimitive.Close | typeof DrawerPrimitive.Close) {
+  if (!React.isValidElement<{ children?: React.ReactNode }>(header)) return header
+  return React.cloneElement(header, undefined, header.props.children, <CloseButton key="close" Close={Close} inHeader />)
 }
 
 /* Plain div props: the two popups' `render`/`className` state types differ, and
@@ -204,7 +226,7 @@ function ResponsiveDialogContent({
               className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-muted-foreground/30"
             />
             <DrawerPrimitive.Content className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-contain rounded-[inherit] select-text">
-              {header}
+              {showCloseButton ? withClose(header, DrawerPrimitive.Close) : header}
               <div
                 className={cn(
                   "@container/panel flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4",
@@ -216,7 +238,7 @@ function ResponsiveDialogContent({
               </div>
               {footer}
             </DrawerPrimitive.Content>
-            {showCloseButton && <CloseButton Close={DrawerPrimitive.Close} />}
+            {showCloseButton && !header && <CloseButton Close={DrawerPrimitive.Close} />}
           </DrawerPrimitive.Popup>
         </DrawerPrimitive.Viewport>
       </DrawerPrimitive.Portal>
@@ -248,12 +270,12 @@ function ResponsiveDialogContent({
         )}
         {...props}
       >
-        {header}
+        {showCloseButton ? withClose(header, DialogPrimitive.Close) : header}
         <div className={cn("@container/panel flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5", bodyClassName)}>
           {body}
         </div>
         {footer}
-        {showCloseButton && <CloseButton Close={DialogPrimitive.Close} />}
+        {showCloseButton && !header && <CloseButton Close={DialogPrimitive.Close} />}
       </DialogPrimitive.Popup>
     </DialogPrimitive.Portal>
   )
@@ -267,8 +289,8 @@ function ResponsiveDialogHeader({ className, ...props }: React.ComponentProps<"h
       className={cn(
         /* Clearing the corner X is index.css's (`--dialog-x-room`), not a
            `pr-*` here: `cn` let the `px-*` below — and any caller's — erase it. */
-        "flex shrink-0 flex-col gap-1.5 border-b text-left [--dialog-x-room:3.5rem]",
-        isMobile ? "px-4 py-4" : "px-6 py-5",
+        "relative flex shrink-0 flex-col gap-1.5 border-b text-left [--dialog-x-room:3.5rem]",
+        isMobile ? "px-4 py-4 [--dialog-header-pt:1rem]" : "px-6 py-5 [--dialog-header-pt:1.25rem]",
         className
       )}
       {...props}
@@ -344,6 +366,7 @@ function ViewerHeader({
   return (
     <div
       data-slot="dialog-header"
+      data-viewer-bar=""
       className={cn("flex h-12 shrink-0 items-center gap-2.5 border-b px-4 [--dialog-x-room:3.5rem]", className)}
     >
       {icon && (

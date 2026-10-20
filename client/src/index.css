@@ -3599,8 +3599,20 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
    SheetHeader) states `--dialog-x-room: 3.5rem`; a stock DialogHeader sits
    inside the popup's `p-6` and needs only the 2rem past it. */
 :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]):has(> [data-slot="dialog-close"])
-  [data-slot="dialog-header"] {
+  [data-slot="dialog-header"],
+[data-slot="dialog-header"]:has(> [data-slot="dialog-close"]) {
   padding-inline-end: var(--dialog-x-room, 2rem);
+}
+/* A header laid out as one row (a title with a count and a Close all, a task's
+   chips) centres its X on that row rather than on the title line. */
+[data-slot="dialog-header"].flex-row > [data-slot="dialog-close"] {
+  top: 50%;
+  translate: 0 -50%;
+}
+/* The stock dialog's own corner X, over a viewer's 48px title bar: centred in
+   the bar ((48 − 32) / 2) instead of 16px down. */
+[data-slot="dialog-content"]:has(> [data-viewer-bar]) > [data-slot="dialog-close"] {
+  top: 0.5rem;
 }
 [data-slot="sheet-content"]:has(> [data-slot="sheet-close"]) [data-slot="sheet-header"] {
   padding-inline-end: 3.5rem;
