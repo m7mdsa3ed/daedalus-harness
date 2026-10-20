@@ -25,7 +25,6 @@ import { PencilEdit02Icon, SparklesIcon, Tick02Icon } from "@hugeicons/core-free
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
 import { ActionIcon, actionClass, type ActionPhase } from "@/components/ui/action-state"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -227,26 +226,23 @@ export function CommitBox({
             wand nobody can enable is worse than no wand. The label is the only
             thing that changes between the two questions - one control, because
             to the reader it is one gesture applied to whatever is in the box. */}
-        {draftProfile &&
-          (drafting ? (
-            <span className="flex size-6 shrink-0 items-center justify-center" aria-live="polite">
-              <Spinner className="size-3.5" />
-              <span className="sr-only">
-                {typed ? "Rewriting the message…" : "Drafting the message…"}
-              </span>
-            </span>
-          ) : (
-            <IconAction
-              label={
-                typed
+        {draftProfile && (
+          <IconAction
+            label={
+              drafting
+                ? typed
+                  ? "Rewriting the message…"
+                  : "Drafting the message…"
+                : typed
                   ? `Rewrite this message with ${draftProfile.name}`
                   : `Draft the message with ${draftProfile.name}`
-              }
-              icon={SparklesIcon}
-              disabled={busy || changeCount === 0}
-              onClick={() => void ask()}
-            />
-          ))}
+            }
+            icon={SparklesIcon}
+            loading={drafting}
+            disabled={busy || changeCount === 0}
+            onClick={() => void ask()}
+          />
+        )}
       </div>
       <Textarea
         ref={descriptionRef}

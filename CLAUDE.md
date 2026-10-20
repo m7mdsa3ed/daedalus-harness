@@ -498,7 +498,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   focused tab's path to the URL and the URL writes it back); a pinned tab, or none, gets a new tab
   instead. **`openTab(path)`** is a new tab, always — ⌘N, the sidebar's "New tab" row, the strip's +,
   the palette — and opens on the **New tab page** (`/`, `landing/landing-page.tsx`): the composer to
-  start a thread in that tab, and quick actions (New thread, Tasks, Routines, Scheduled, Inbox,
+  start a thread in that tab, and quick actions (New thread, Tasks, Automations, Inbox,
   Settings, the first projects) that each navigate *that* tab. A thread started from a project's +
   or ⌘K's ask row mints a draft and opens it in a tab of its own (`startThread`, `openInNewTab`).
   Several mounted views of one thread share its connection: exactly one holder opens it

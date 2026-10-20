@@ -336,17 +336,25 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `kind` decides the layout family only; web views match the tool's **leaf** name. A vendor's
   `_meta` namespace is named once, in `lib/tools/helpers.ts` (`vendorMeta`); the readers know
   the shape, never the key.
-- **A fenced `openui-lang` block is a generated view, and it is inert.** The model writes a program
+- **A fenced `openui-lang` block is a generated view, and it reaches only as far as the reader.** The model writes a program
   in `openui-lang` (`@openuidev/react-lang`) and the client draws the UI it describes —
   splitting the message and handing each prose run to `Prose` is what turns the fence
   (`ProseWithOpenui` in `tool-parts.tsx`; **every** run of agent prose goes through it, not
   just the tail of one that also carries an insight or plan block), and the
   parser, the library and recharts ride the lazy `components/openui-view.tsx` chunk, so a
-  transcript that never holds a fence never pays for any of it. **Nothing it writes can act**:
-  no `toolProvider` is passed, so a `Query()`/`Mutation()` is dropped rather than run, and the
-  prompt carries `bindings:false`/`toolCalls:false` so a form is never offered — a generated
-  view composes what the model already knows, and every tool call stays an ACP one with a
-  permission in front of it. **An unclosed fence draws too, from the moment it opens** — the
+  transcript that never holds a fence never pays for any of it. **What it may not do is reach
+  the server**: no `toolProvider` is passed, so a `Query()`/`Mutation()` is dropped rather than
+  run, and the prompt carries `toolCalls:false` so neither is offered — a generated view
+  composes what the model already knows, and every tool call stays an ACP one with a
+  permission in front of it. **The one thing it may do is ask, on the reader's behalf, for
+  words** (`interactive` group, `lib/openui/components/interactive.tsx`): a `Button`'s `Action` reaches
+  the client as an `ActionEvent`, and `continue_conversation` is filled into the composer
+  **unsent** through `lib/openui/actions.tsx` — the same bargain a suggestion pick makes, so
+  the reader still presses send; `open_url` opens a real tab for an http(s) URL and nothing
+  else. A field's value is the view's own state (`$variables`, `bindings:true` in the
+  generator), never a stored row, so it is gone on reload — and `bindings` is the library's
+  flag, not a group's, so it costs the Built-in Functions section on every thread the lane is
+  on. **An unclosed fence draws too, from the moment it opens** — the
   language puts `root` first and resolves forward references as their statements arrive, so a
   program fills in over the answer rather than appearing at the end; what that demands is that
   the drawing be forgiving, so the "came out empty" fallback is suspended while the row is
@@ -430,7 +438,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   focused tab's path to the URL and the URL writes it back); a pinned tab, or none, gets a new tab
   instead. **`openTab(path)`** is a new tab, always — ⌘N, the sidebar's "New tab" row, the strip's +,
   the palette — and opens on the **New tab page** (`/`, `landing/landing-page.tsx`): the composer to
-  start a thread in that tab, and quick actions (New thread, Tasks, Routines, Scheduled, Inbox,
+  start a thread in that tab, and quick actions (New thread, Tasks, Automations, Inbox,
   Settings, the first projects) that each navigate *that* tab. A thread started from a project's +
   or ⌘K's ask row mints a draft and opens it in a tab of its own (`startThread`, `openInNewTab`).
   Several mounted views of one thread share its connection: exactly one holder opens it
@@ -511,7 +519,21 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   one inline chip (no card, no border) and serialise back to the same characters. The ref is a `TextSurface` (a textarea's
   `value`/`selectionStart`/`setSelectionRange`/`focus`), so the completers and the history walk
   never learn the editor exists. Markdown WYSIWYG escapes what was typed (`snake\_case`), which
-  breaks `/`, `!`, `@` and history recall. Keys are taken in the capture phase and ProseMirror
+  breaks `/`, `!`, `@` and history recall. **A completion model may draw ghost text at the caret and
+  it is never part of `text`**: `composer/fim-completion.ts` asks the install's completion lane after
+  a pause, the editor draws the gap as a widget decoration (`ComposerGhost`), **Tab inserts it as an
+  ordinary edit through `setText` + `requestCaret`**, Escape drops it, and any keystroke retires it
+  because it was drawn for other text. A `!` line is prefix-only and single-line and belongs to the
+  ghost only once the command name is finished (a lone `!token` is the project menu's); prose is
+  whatever sits either side of the caret. It is ambient, so a failure is **one quiet line beside Send**
+  (`status`: asking → a spinner, failed → the message in its title), never a toast per pause, and
+  the settings row is where a broken lane is proved. **The redraw must never move the reader's
+  caret**: it dispatches only when the ghost actually changed, and restates the offset it held on
+  the next frame (guarded by comparing offsets, so a keystroke in between wins) — a widget landing
+  *at* the caret is exactly where Chrome re-guesses a contenteditable selection around a
+  non-editable node, and a drifting caret makes the box feel like it is fighting the reader. The
+  ghost is also clamped (`PROSE_MAX_LINES`/`CHAR`) because a suggestion that grows the box reflows
+  the page under a thumb. Keys are taken in the capture phase and ProseMirror
   honours their `preventDefault`. "Ask about this" on a transcript selection is `ComposerHandle.quote`.
 - **A reading of the thread is a 24px trigger over a popover, in the footer's end cluster** —
   the checklist's progress, the running-subagent count, what the last turn wrote, the context

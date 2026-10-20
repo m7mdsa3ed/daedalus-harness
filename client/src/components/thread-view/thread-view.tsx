@@ -41,6 +41,7 @@ import { useLayoutOptions, LayoutOptionsContext } from "@/lib/layout-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn, stagger } from "@/lib/utils"
 import { ThreadIdContext } from "@/lib/thread-id-context"
+import { OpenuiActionsContext } from "@/lib/openui/actions"
 import { StepTokensProvider } from "@/components/token-usage"
 import { TurnFooter } from "@/components/thread-view/turn-footer"
 import { InlineElicitation } from "@/components/elicitation-form"
@@ -544,6 +545,11 @@ export function ThreadView({
      the line is read and edited before it goes anywhere, so nothing happens on
      the click. */
   const pickSuggestion = React.useCallback((text: string) => composerApiRef.current?.fill(text), [])
+  /* The same door for a drawn answer: a generated view's button asks for words
+     and they land in the box unsent, so it is the suggestion pick's contract
+     rather than a second one. Memoised because the transcript re-renders per
+     streamed token and a view should not be handed a new object each time. */
+  const openuiActions = React.useMemo(() => ({ fill: pickSuggestion }), [pickSuggestion])
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
@@ -708,6 +714,7 @@ export function ThreadView({
        minmax(0,…) on both flexible tracks, never a bare `1fr`: that is shorthand
        for minmax(auto,1fr), whose auto minimum lets a long transcript push the
        row taller than the thread and scroll the whole pane. */
+    <OpenuiActionsContext.Provider value={openuiActions}>
     <MessageScrollerProvider autoScroll={options.autoScroll}>
     {/* The Provider sits at the grid root rather than around the transcript:
         the turn rail needs the scroller's `scrollToMessage`/`currentAnchorId`
@@ -926,7 +933,7 @@ export function ThreadView({
               {status && (
                 <MessageScrollerItem messageId="status">
                   <div
-                    className={status.tone === "progress" && status.step ? undefined : "harness-item-in"}
+                    className={status.tone === "progress" && status.opening ? undefined : "harness-item-in"}
                     style={stagger(0)}
                   >
                     <ThreadStatus
@@ -1190,6 +1197,7 @@ export function ThreadView({
       />
     )}
     </MessageScrollerProvider>
+    </OpenuiActionsContext.Provider>
   )
 }
 

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Progress } from "@/components/ui/progress"
 import type { Actions } from "@/lib/actions"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 import type { StatusActionKind, ThreadStatus as Status } from "@/lib/thread/status"
 import { cn } from "@/lib/utils"
 
@@ -97,7 +98,10 @@ export function ThreadStatus({
   const [open, setOpen] = React.useState(false)
   const [showLog, setShowLog] = React.useState(false)
   const [, bump] = React.useReducer((n: number) => n + 1, 0)
-  const opening = !!status.step
+  // Read at render, never seeded into state: the switch has to land on a status
+  // line that is already on screen.
+  const { showStatusDetail } = useLayoutOptionsContext()
+  const opening = !!status.opening
   const cancellable = !!status.actions?.some((a) => a.kind === "cancel")
   const { slow, waited } = useWaitClock(opening, cancellable)
   const seconds = useSecondsUntil(status.kind === "reconnecting" ? (status.nextAt ?? null) : null)
@@ -155,7 +159,9 @@ export function ThreadStatus({
   const live = status.tone === "progress" || status.kind === "retrying"
   const text = status.kind === "working" || status.kind === "waiting" ? `${status.headline.replace(/[.…]+$/, "")}…` : status.headline
   const hasBody =
-    opening || !!retry || !!(detail || status.more || status.install || bar || visible.length || showCopy)
+    opening ||
+    !!retry ||
+    !!((showStatusDetail && (detail || status.slow)) || status.more || status.install || bar || visible.length || showCopy)
 
   /* One body for the life of the line, never remounted: a change of kind used to
      cut the old body away and re-open a new one from nothing. It stays, its
@@ -165,11 +171,6 @@ export function ThreadStatus({
   if (hasBody) {
     last.current = (
       <div className="min-w-0 space-y-1 pl-6 pt-1 text-xs">
-          {status.step && (
-            <span className="harness-part-in inline-block rounded-pill bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
-              Step {status.step.n} of {status.step.of}
-            </span>
-          )}
           {retry && (
             <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
               {retry.of && (
@@ -202,8 +203,10 @@ export function ThreadStatus({
             </div>
           )}
           {/* Always said, never taken over by the slow line: the detail is the
-              only thing that says nothing was lost. */}
-          {(detail || (opening && slow && status.slow)) && (
+              only thing that says nothing was lost. A description, so the one
+              switch takes it — what a status *offers* (Retry, Copy, the JSON
+              under Show details) is not a description and stays. */}
+          {showStatusDetail && (detail || (opening && slow && status.slow)) && (
             <div key={detail} className="harness-part-in [--part-i:1] max-w-prose leading-relaxed whitespace-pre-line text-muted-foreground">
               {detail}
               {opening && slow && status.slow && <span className="mt-1 block">{status.slow}</span>}

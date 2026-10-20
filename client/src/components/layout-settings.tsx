@@ -33,6 +33,7 @@
    above counts all of them and is the one way back. */
 import * as React from "react"
 import {
+  AlignLeft,
   AlignJustify,
   ArrowDownToLine,
   Bot,
@@ -161,6 +162,13 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         description: "The line under every tab's title: a thread's project and model, a page's section, a shell's directory. Off, tabs are a single, shorter line.",
       },
       {
+        key: "tabAgentIcon",
+        icon: Bot,
+        title: "Agent mark on tabs",
+        description:
+          "The agent's own mark at the start of a thread's tab, the same one its sidebar row wears, so the strip says which runtime each thread runs on. Off, a tab starts at its title.",
+      },
+      {
         key: "turnRail",
         icon: Rows3,
         title: "Turn rail",
@@ -202,6 +210,13 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         description:
           "The rows marking a mode, model, effort, profile or agent change, wherever in the thread it happened. Off, the change still takes effect — only the row is silent.",
       },
+      {
+        key: "showStatusDetail",
+        icon: AlignLeft,
+        title: "Status detail",
+        description:
+          "The sentence under the thread's status line — what a wait, a stop or a failure means. Off, a status is its title alone: its buttons stay, and Copy still takes the whole report.",
+      },
     ],
   },
   {
@@ -216,6 +231,13 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         title: "Show thinking",
         description:
           "Open the agent's reasoning while it streams. It folds away the moment the step finishes — click a row to read a settled one.",
+      },
+      {
+        key: "thoughtOneLine",
+        icon: AlignLeft,
+        title: "Thinking as one line",
+        description:
+          "Show a thought as just \"Thinking 12s\" while it streams and \"Thought for 12s\" after, with no excerpt of the reasoning. Click the line to read it.",
       },
       {
         key: "showToolDetails",
@@ -453,8 +475,8 @@ const SIDEBAR_GROUPS: Category[] = [
       {
         key: "sidebarShowPlaces",
         icon: Compass,
-        title: "Tasks, Routines, Scheduled",
-        description: "The three page rows under New tab. They stay one search away in the command palette.",
+        title: "Tasks and Automations",
+        description: "The page rows under New tab. They stay one search away in the command palette.",
       },
     ],
   },

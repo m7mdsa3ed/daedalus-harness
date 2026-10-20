@@ -126,6 +126,10 @@ export interface LayoutOptions {
   /** Open a reasoning row while it streams. It folds once the step finishes;
    *  off, only its one-line ticker shows. */
   showThinking: boolean
+  /** A thought is one line — "Thinking 12s" / "Thought for 12s" — with no
+   *  excerpt under it and no live view while it streams. Click still opens
+   *  the full text. */
+  thoughtOneLine: boolean
   /** Soft-wrap long code and diff lines instead of scrolling. */
   codeWrap: boolean
   /** Wider transcript column. */
@@ -152,6 +156,10 @@ export interface LayoutOptions {
   /** The second row of every dock tab (project and model, a page's section,
       a shell's directory). Off, the tab is one line and shorter. */
   showTabDetails: boolean
+  /** The agent's own mark at the leading edge of a thread's tab — the same mark
+   *  its sidebar row wears, so the tab says which runtime the thread runs on
+   *  before its title is read. Off, a tab starts at its title. */
+  tabAgentIcon: boolean
   /** Hairline rule above each user turn. */
   stepDividers: boolean
   /** Tick marks across the top of the composer, one per user turn, to jump between them. */
@@ -166,6 +174,12 @@ export interface LayoutOptions {
       switch. This switch is what makes reporting *every* change safe, and it
       is why the server no longer picks which ones are worth mentioning. */
   showConfigNotices: boolean
+  /** The sentence under the thread's status line — what a wait, a stop or a
+   *  failure means, and the line a long wait adds. Off, a status is its title
+   *  alone: the buttons stay (a Retry is a door, not a description), and Copy
+   *  still takes the whole report, which is why this can be off by default
+   *  without losing the words. */
+  showStatusDetail: boolean
   /** What each turn, workflow step and subagent spent, in tokens. */
   showTokens: boolean
   /** Drop the row entrance animation and the running-turn shimmer. */
@@ -209,7 +223,7 @@ export interface LayoutOptions {
   sidebarPeriodHeadings: boolean
   /** The Pinned group above the list. Off, a pinned thread is just a thread. */
   sidebarShowPinned: boolean
-  /** The Tasks / Routines / Scheduled rows under New tab. */
+  /** The Tasks / Automations rows under New tab. */
   sidebarShowPlaces: boolean
   /** In the by-project view, folders with no thread in them. */
   sidebarEmptyProjects: boolean
@@ -224,6 +238,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   compactDensity: false,
   autoScroll: true,
   showThinking: true,
+  thoughtOneLine: false,
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
@@ -236,10 +251,12 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   splitDiffs: false,
   stepDividers: false,
   showTabDetails: true,
+  tabAgentIcon: true,
   turnRail: true,
   showSources: true,
   showToolSourcesOnFirstRow: false,
   showConfigNotices: true,
+  showStatusDetail: false,
   showTokens: false,
   calmMotion: false,
   answersOnly: false,

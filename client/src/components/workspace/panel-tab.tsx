@@ -29,8 +29,9 @@
 
    ── What the face draws ──
    The mark, the title, the reading, and two controls that appear when pointed
-   at. A chat's mark pairs its agent and project so both the runtime and workspace
-   are recognizable. Nor is the thread's context
+   at. A chat's mark is its thread's agent — the one its sidebar row wears, so the
+   strip says which runtime a tab is — and its project rides the second row
+   beside the model. Nor is the thread's context
    reading: a tab subscribed to a value written on every streamed token is a
    strip that re-renders per token.
 
@@ -68,6 +69,7 @@ import {
   renderMenuItems,
   type MenuItemSpec,
 } from "@/components/item-context-menu"
+import { AgentIcon } from "@/components/entity-icon"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspace/dock-context"
 import { useIsMobile } from "@/hooks/use-device"
@@ -376,9 +378,9 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
-          {/* The title is the whole of what the tab lays out — the two controls
-              are floating (`index.css`), so nothing reserves a gutter for a pair
-              of things that only exist while you point at one tab. The title and
+          {/* The title takes the rest of the tab's width — the two controls are
+              floating (`index.css`), so nothing reserves a gutter for a pair of
+              things that only exist while you point at one tab. The title and
               its reading are **one box**: the mask below fades this box's right
               end, so what the controls cover when they arrive is this box, and
               the reading is what they replace there. Leaving the dot outside it
@@ -387,6 +389,19 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               `flex-1 min-w-0` on both this box and the text gives the text a
               real column to truncate in — the grid-of-one this used to be was
               the same idea spelled with `grid-template-columns`. */}
+          {/* The mark, at the leading edge and outside the title's box: it is the
+              one thing in the chip that never truncates, and the strip's CSS
+              colours it (`[data-tab-mark]`, index.css — muted at rest, the
+              foreground on the tab you are on). A thread's is its agent's, the
+              same mark its sidebar row wears; the hover card names the project
+              and the section a page tab belongs to. The reader can turn it off
+              (`tabAgentIcon`), because a strip of marks beside a strip of titles
+              is a taste and not a fact about the thread. */}
+          {options.tabAgentIcon && descriptor?.kind === "chat" && (
+            <span data-tab-mark aria-hidden className="flex shrink-0 items-center">
+              <AgentIcon agentId={meta?.agentId} className="size-3.5" />
+            </span>
+          )}
           <span data-tab-title className="flex min-w-0 flex-1 flex-col justify-center">
             <span className="flex min-w-0 items-center gap-1.5">
               <span className={cn("min-w-0 flex-1 truncate", status?.tone === "running" && "harness-shimmer")}>

@@ -11,6 +11,7 @@ import { PlusSignIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
@@ -33,6 +34,7 @@ export function IconAction({
   disabled,
   className,
   variant = "ghost",
+  loading,
 }: {
   label: string
   icon: typeof PlusSignIcon
@@ -40,6 +42,7 @@ export function IconAction({
   disabled?: boolean
   className?: string
   variant?: React.ComponentProps<typeof Button>["variant"]
+  loading?: boolean
 }) {
   const coarse = useCoarsePointer()
   return (
@@ -50,11 +53,12 @@ export function IconAction({
             variant={variant}
             size="icon-xs"
             disabled={disabled}
+            loading={loading}
             onClick={onClick}
             aria-label={label}
             className={cn(coarse ? "size-11" : "size-6", className)}
           >
-            <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />
+            {loading ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />}
           </Button>
         }
       />

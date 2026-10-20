@@ -169,6 +169,7 @@ beside Import in Settings › MCP.
   container's env has to cross the boundary as `-e NAME` flags, with the values still
   travelling as env so a secret stays out of the argv a `ps` would show.
 - Pure mapping, so it has a self-check off real captures: `pnpm test:mcp-registry`.
+- **Sources** (`SOURCES` in `mcp-registry.ts`, `&source=`): `official` (the MCP Registry, or `mcpRegistryUrl`), `smithery` (hosted remotes, `useCount` as popularity) and `npm` (`keywords:mcp-server`, weekly downloads). Each has its own cursor (token, page, offset); all are keyless. Glama needs a key and is not listed. Adding a source is one function plus a `SOURCES` row; the page reads the list from the response.
 
 ## Workflows
 

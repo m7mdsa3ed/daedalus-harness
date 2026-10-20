@@ -22,8 +22,13 @@ export interface ThreadStatus {
     | "archived" | "trashed" | "turn-failed"
   tone: "progress" | "info" | "warn" | "error"
   headline: string
-  /** Position in the startup sequence; only the opening phases have one. */
-  step?: { n: number; of: number }
+  /** The transcript is opening — a wait, never a position in a sequence. This
+      used to carry `{n, of}` and draw "Step 1 of 4", which was a lie twice
+      over: an open is not a fixed four steps (a new thread never leaves the
+      spawn, and a revive is one wait, not a rung) and the phases that would
+      advance it are deliberately held while a create is in flight. So it is a
+      flag; the only progress with a number behind it is the replay `bar`. */
+  opening?: true
   detail?: string
   /** The backoff in progress (`retrying`): which retry of how many, and its wait. */
   retry?: { attempt: number; of?: number; delayMs?: number }
@@ -44,8 +49,6 @@ export interface ThreadStatus {
   /** When the state began, where state already holds it (`parked`). */
   since?: number
 }
-
-const STEPS = { starting: 1, reviving: 1, loading: 2, replaying: 3, attaching: 4 } as const
 
 /**
  * `waitShown` is `useWaitShown(phase)`: the one time-dependent input (a config
@@ -83,7 +86,7 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
       kind,
       tone: "progress",
       headline: sending ? `Sending your message — ${line.text}` : line.text,
-      step: { n: STEPS[kind], of: 4 },
+      opening: true,
       detail: sending
         ? `Your message is safe and will be delivered as soon as the agent is ready. ${line.detail}`
         : line.detail,

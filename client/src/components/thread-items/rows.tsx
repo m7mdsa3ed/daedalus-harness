@@ -1128,10 +1128,16 @@ export const ThreadItemView = React.memo(function ThreadItemView({
              folded, it shows three lines of muted reasoning like assistant
              prose; clicking opens the full text. "Show thinking" arms the live
              view: off, the excerpt stays folded while the thought streams. */
-          autoOpen={view.showThinking && streaming}
+          autoOpen={view.showThinking && !view.thoughtOneLine && streaming}
           openSetting={view.showThinking}
           target=""
-          foldedTarget={<ThoughtPreview text={reasoning} label={durationLabel} />}
+          foldedTarget={
+            view.thoughtOneLine ? (
+              <ThoughtLabel label={durationLabel} />
+            ) : (
+              <ThoughtPreview text={reasoning} label={durationLabel} />
+            )
+          }
           detail={<ThoughtDetail text={reasoning} streaming={streaming} label={durationLabel} />}
         />
       )

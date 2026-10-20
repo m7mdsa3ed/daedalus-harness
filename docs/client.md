@@ -918,6 +918,23 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   asking: the renderer reads no set, so a fence from a group the thread was not taught still draws.
   `library.tsx` builds its `componentGroups` from `groups.ts` (names and membership are one
   place), keeping each group's notes beside the components.
+- **A drawn answer may hold a choice and ask for words, and neither is a way out of the
+  transcript** (`interactive` group, `lib/openui/components/interactive.tsx`). A field's value
+  is the renderer's own store — a `$variable` when the program bound one (`reactive()` on the
+  prop schema, `useStateField` in the component), form state scoped by the `Form`'s name
+  otherwise — so nothing is stored and nothing survives a reload; `bindings:true` in
+  `gen-openui.mjs` is what lets the model write one, and it is the library's flag rather than
+  a group's, so it also brings the Built-in Functions section to every thread the lane is on
+  (`toolCalls` stays false, and with it the Query/Mutation sections; the generator's only
+  Forms documentation is gated on both, which is why the form paragraph is ours in
+  `additionalRules`). A `Button`'s action arrives as an `ActionEvent` and the two kinds it
+  dispatches are both the reader's: `continue_conversation` goes through
+  `lib/openui/actions.tsx` into the composer **unsent** — the suggestion pick's bargain, from
+  a context `ThreadView` provides because only it owns a composer, and a view drawn where
+  there is none says so on the console instead of silently doing nothing — and `open_url`
+  opens a real tab, `http(s)` only. `@Set`/`@Reset` never leave the renderer, which is why a
+  filter costs no round trip, and no `toolProvider` is passed, which is why a `Query` cannot
+  run.
 - **Three view options govern the rows** (`lib/layout-options.ts`). **Show `!` commands** hides them
   outright — the command still ran and the journal still holds it, only the row is silent — and
   **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,
@@ -1841,58 +1858,57 @@ double-click on a divider evens out the views it separates — in the main dock 
   thread's header, the palette's Projects group and the settings row — settings keeps the
   *form*, this is the workspace as a thing with a history.
 
-## Routines and schedules pages
+## Automations pages
 
-`/routines` and `/schedules` are places, not settings sections, and both are drawn
-the way the project page is: a `SurfaceHeader`, a row of `StatTile`s, then the list
-(`components/page-primitives.tsx` holds those pieces; nothing in it knows which
-surface it is on). **Every scrolling page route sits in its `PageFrame`** — the scroller
-that pads for `--app-header-h` and the centred column, with a `width` (`form`,
-`settings`, `wide`, `full`) — the schedules, routines, inbox, project, trace and settings
-pages alike; only the board (whose views own their scrollers) and the landing console
-(a centred composer, not a column) build their own. **The sidebar reaches each through one fixed nav row** (Routines,
-Scheduled — beside Tasks and Notifications, carrying the armed count) and lists
-neither. They used to be two fold groups under an "Automations" tier, each a smaller
-copy of its page's list with fewer controls: the page had to exist anyway for the
-detail views, so the sidebar copy was a second surface to keep consistent, a second
-place a row's menu had to be maintained, and the way *to* the page was a pencil that
-only appeared on hover once something existed. A page that is a URL gets a row that
-goes to it.
+`/automations` is one place for what used to be two (routines, which start a thread per
+fire, and scheduled messages, which speak into a thread that exists). The server's model is
+the routine row with `runsIn: "thread" | "session"`; the UI says **automation** everywhere
+and the types in `lib/settings.ts` keep the server's `Routine*` names. `/routines*` and
+`/schedules*` are redirects (`LegacyRedirect` in `routes.tsx`; `/schedules/new?session=ID`
+lands on `/automations/new?session=ID`). The page is drawn the way the project page is: a
+`SurfaceHeader`, `StatStrip`, then the list; **every scrolling page route sits in its
+`PageFrame`**. The sidebar has **one fixed row** (Automations, carrying the count of
+enabled ones), the landing chips and the palette name the same noun. Code is
+`components/automations/` (`page.tsx` reads the path and picks a face), one query file
+(`lib/queries/automations.ts`, keys `automationsKey` / `automationRunsKey` /
+`automationTriggersKey`), and the schedule model in `lib/automation-schedule.ts`.
 
-- **The routines list reads one extra thing: the newest run of every routine**, one
-  `limit=1` request each through `useQueries`, on the visit and never on a timer, so a
-  row can say what happened last and the tiles can count running and blocked runs across
-  every routine. Mutations invalidate `routineRunsFamilyKey` — the prefix under every
-  limit — never one limit's key, or the list and the detail page would disagree after a
-  fire. Rows are filed under their project; a routine whose project is gone is listed,
-  not hidden.
-- **A routine's page is one URL with four tabs** (`?tab=overview|runs|triggers|settings`,
-  the overview carrying no param). The overview shows a little of each — the newest five
-  runs, the triggers with their next fire, the policy as facts — and the tiles say last
-  run, next fire, run outcomes and tokens. The counts are over what the page has read
-  (the server's newest 50), and say "50+" rather than a total they do not know.
-  Triggers and runs are read on this page and nowhere else; `trigger-summary.ts` is how a
-  trigger is said in one line.
-- **The routine form is a rail of six sections, one in front at a time** — basics, how it
-  starts, what it runs, autonomy, limits and overlap, when it finishes — and the same
-  component draws the create page and the detail page's Settings tab. Stacked, it was the
-  widest thing in the harness configured in one sitting and the section that can hand an
-  agent a standing grant sat 400px below the fold. **Each rail row says what its section
-  currently holds**, read off the draft, so the whole routine is legible without opening
-  anything; **`problemOf` is the one validator and it names a section**, so the rail marks
-  what is not ready and submitting from anywhere jumps to it (`toInput` calls it — there is
-  no second copy). **Sections are hidden, never unmounted**: `DraftScopeRow` probes the
-  agent's option set on mount, and remounting it to look at the prompt would re-probe for
-  nothing. The action bar is sticky and carries the autonomy reading, so the distance from
-  changing a permission to committing it is zero from every section. `autonomy-control.tsx`
-  exports the policy in its two halves — `AutonomyPermissions` (the grant) and
-  `AutonomyLimits` (the guard rails) — in one file, because the object they write has one
-  owner.
-- **A schedule has a page too** (`/schedules/<id>`), and it has no history section on
-  purpose: a delivered message is a turn in the thread it was sent to, and that
-  transcript is the record. The page names the thread, says when it fires next and how
-  often, shows the skip state, and holds the editor. The list files schedules under the
-  thread they land in.
+- **The list reads two extra things per automation** — the newest run and the triggers —
+  through `useAutomationReads` (`useQueries`, on the visit, never on a timer), so a row can
+  say how it fires, when it fires next and what happened last, and the tiles can count
+  across all of them. Mutations invalidate `automationRunsFamilyKey`/`automationTriggersKey`,
+  never one limit's key. Filters are the `DataTable`'s: State (Active / Paused / Needs you —
+  last run blocked or failed) and Project. A row's switch pauses; a row action is Run now.
+- **Runs in is the first decision.** `New thread` mints a thread per fire; `This thread`
+  delivers into `sessionId` and derives project, agent and permissions from it — so for
+  `This thread` the Where, Agent and Access sections are not drawn at all, rather than drawn
+  and ignored. It cannot be switched on an existing automation.
+- **New is a template gallery first** (`ChoiceTiles`, `templates.ts` — plain data), then the
+  form prefilled; Blank is one tile. A template never saves anything. The gallery is
+  skipped when the caller already knows: a `?session=` (the composer's `/automate`, the
+  thread footer) opens the form pinned to that thread, and the text typed into the composer
+  rides in the route state. `/automate` replaces `/schedule`; `actions.createSchedule` now
+  creates a session-mode routine (materialising a draft thread first) and the caller writes
+  its triggers.
+- **When is a preset, never a second representation.** `lib/automation-schedule.ts` compiles
+  Manual / Every N min-hours / Hourly / Daily / Weekdays / Weekly / Monthly / Once / Custom
+  into a cron (+ tz), `intervalMs` or `atMs`, and `readPlan` reads a stored trigger back
+  (anything matching no preset reads as Custom). `SchedulePicker` prints the sentence
+  ("Weekdays at 09:07 Cairo time") and the next three fire times (`croner`, the server's
+  own library, minus the stagger) and nudges an on-the-hour time to :07 with a button.
+  On create the plan becomes trigger rows right after the automation; on an existing one
+  the Triggers tab edits them, and the form says so.
+- **The detail page is one URL with five tabs** (`?tab=overview|runs|triggers|access|settings`).
+  Runs include the skipped ones with `skipReason` in words (`status.ts` `SKIP_REASON`).
+  Access lists what is *always allowed*, revocable per row, and warns on a blanket allow;
+  the full per-kind editor is Settings' Access section. `problemOf` is the one validator and
+  names a section; the Settings tab and the create page are the same `AutomationForm`.
+- **The thread footer reads its automations** (`composer/automations-indicator.tsx`, a
+  24px trigger over a popover in the end cluster, draws nothing at zero) — those with
+  `runsIn: "session"` and this `sessionId`, each linking to its page, plus Add and Manage.
+- **Deferred:** the "also archive its threads?" question on delete (the DELETE route takes
+  no such option yet), the inbox's `run` rows and unread badge (phase 4), and a `needs-you`
+  run status (the server's statuses are still five).
 
 ## The thread inspector and the agents dashboard
 
