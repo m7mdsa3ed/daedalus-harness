@@ -27,6 +27,20 @@ export const RAIL_ELBOW = "run-rail-step harness-rail-draw"
     last, so the line stops on the last mark. */
 export const RAIL_TAIL = "run-rail-tail"
 
+/** Rows that draw a mark in the rail's column — a step's icon, a group's
+    chevron. Anything else (a thought's card, prose, a message, a notice) is
+    `RAIL_PLAIN`: the line stops at its top edge and starts again at its bottom
+    edge, rather than aiming at a mark that is not there and running on behind
+    the block — through a see-through card, or the text itself. */
+const MARKED = new Set([
+  "tool", "plan", "compaction", "autonomy", "shell", "voice", "subagent",
+  "run", "tool-group", "shell-run", "work-fold", "subagent-group", "workflow-group", "subagent-batch",
+])
+export const RAIL_PLAIN = "run-rail-plain"
+export function railPlain(kind: string): string | false {
+  return !MARKED.has(kind) && RAIL_PLAIN
+}
+
 /** A straight length of the trunk, for a row on the rail that is not a step
     (the "N earlier steps" line). */
 export const RAIL_THROUGH = "run-rail-through harness-rail-draw"

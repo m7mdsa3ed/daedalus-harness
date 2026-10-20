@@ -1725,6 +1725,12 @@ html[data-window-controls-overlay="true"] {
 .run-rail > * {
   --rail-up: var(--rail-gap);
 }
+/* A row with no mark in the column (a thought's card, prose): the row itself
+   is the stop — the line ends on its top edge and resumes from its bottom. */
+.run-rail-plain {
+  --rail-mark-top: 0px;
+  --rail-mark-bottom: 100%;
+}
 .run-rail-step,
 .run-rail-through,
 .run-rail-head {

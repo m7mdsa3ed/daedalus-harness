@@ -103,6 +103,7 @@ import {
   RAIL_TAIL,
   RAIL_THROUGH,
   RUN_RAIL_CLASS,
+  railPlain,
   useRailSlots,
 } from "@/components/thread-items/rail"
 import { UserMessageText } from "@/components/thread-items/user-message"
@@ -340,6 +341,7 @@ export const ToolRun = React.memo(function ToolRun({
                 className={cn(
                   branch && !already.has(item.id) && "harness-item-in",
                   branch ? "relative flow-root" : RAIL_ELBOW,
+                  !branch && railPlain(item.kind),
                   !branch && index < showing.length - 1 && RAIL_TAIL
                 )}
               >
@@ -553,7 +555,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={RUN_RAIL_CLASS}>
               {rows.map((inner, index) => (
-                <div key={inner.id} style={railSlot(inner.id)} className={cn(RAIL_ELBOW, index < rows.length - 1 && RAIL_TAIL)}>
+                <div key={inner.id} style={railSlot(inner.id)} className={cn(RAIL_ELBOW, railPlain(inner.kind), index < rows.length - 1 && RAIL_TAIL)}>
                   <RowView
                     row={inner}
                     showTimestamps={showTimestamps}
@@ -928,7 +930,7 @@ function SubagentTranscript({
         </div>
       )}
       {rows.map((row, i) => (
-        <div key={row.id} style={railSlot(row.id)} className={cn(RAIL_ELBOW, (i < rows.length - 1 || active) && RAIL_TAIL)}>
+        <div key={row.id} style={railSlot(row.id)} className={cn(RAIL_ELBOW, railPlain(row.kind), (i < rows.length - 1 || active) && RAIL_TAIL)}>
           {/* The entrance on an inner box, so the rail does not slide with it. */}
           <div className="harness-item-in">
             <RowView
