@@ -69,7 +69,7 @@ import {
   renderMenuItems,
   type MenuItemSpec,
 } from "@/components/item-context-menu"
-import { AgentIcon } from "@/components/entity-icon"
+import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock, useDockOpeners, type TabGroupRow } from "@/components/workspace/dock-context"
 import { useIsMobile } from "@/hooks/use-device"
@@ -352,11 +352,12 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           2px inset, which is what `py-0.5` here and `h-full` + `m-0.5` below
           add up to.
 
-          `px-(--frame-p)`: one inset on both sides, and the one the floating ⋮
-          and ✕ already sit at (half of the slab's height less a control's,
-          `index.css`) — so the mark, the title's end, the age and the controls
-          all stand the same distance in from the slab's edge on every strip.
-          It was `pl-2.5 pr-1.5`, paid for an active-tab rail that is gone. */}
+          Concentric with the pill (`--frame-r`, half the slab): the leading
+          side is the corner less half the 14px mark, so the mark sits in the
+          round end rather than against it; the trailing side is the inset the
+          floating ⋮ and ✕ sit at (`--frame-p`, index.css), so the age ends
+          where they begin. Both are read off the slab's height, so a taller
+          strip (the phone's) keeps them. */}
       <div className="flex h-full min-w-0 flex-1 items-center py-0.5">
         <div
           /* The ref lives here and not on the box above, which is the one
@@ -375,7 +376,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
             /* Fully round (`--dock-corner` is the pill, `index.css`), the same
                shape as the sidebar toggle and the strip's own buttons — a
                control on the strip's line, not a miniature card. */
-            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 px-(--frame-p) py-0 text-sm leading-4",
+            "dock-tab relative mx-0.5 flex h-[var(--dock-tab-h)] min-w-0 flex-1 items-center gap-1.5 ps-[calc(var(--frame-r)-7px)] pe-(--frame-p) py-0 text-sm leading-4",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -398,9 +399,12 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               and the section a page tab belongs to. The reader can turn it off
               (`tabAgentIcon`), because a strip of marks beside a strip of titles
               is a taste and not a fact about the thread. */}
-          {options.tabAgentIcon && descriptor?.kind === "chat" && (
+          {/* Every panel's own mark (`PanelIcon`): a thread's agent, a page's
+              section, a terminal's kind — so a page tab is not the one bare
+              title in a strip of marked ones. */}
+          {options.tabAgentIcon && descriptor && (
             <span data-tab-mark aria-hidden className="flex shrink-0 items-center">
-              <AgentIcon agentId={meta?.agentId} className="size-3.5" />
+              <PanelIcon panel={descriptor} className="size-3.5" />
             </span>
           )}
           <span data-tab-title className="flex min-w-0 flex-1 flex-col justify-center">

@@ -165,9 +165,9 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
       {
         key: "tabAgentIcon",
         icon: Bot,
-        title: "Agent mark on tabs",
+        title: "Marks on tabs",
         description:
-          "The agent's own mark at the start of a thread's tab, the same one its sidebar row wears, so the strip says which runtime each thread runs on. Off, a tab starts at its title.",
+          "Each tab's own mark at its start: a thread's agent (the same one its sidebar row wears), a page's section, a terminal's kind. Off, a tab starts at its title.",
       },
       {
         key: "turnRail",

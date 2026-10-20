@@ -2887,7 +2887,10 @@ html {
    stated value can be infinity — and the inset its round controls sit at, the
    same on every side or they are not concentric with it. The ✕ and ⋮ read both. */
 html .dock-tab {
-  --frame-r: min(var(--radius), calc(var(--dock-tab-h) / 2));
+  /* The pill, at the slab's own height: the round the sidebar toggle, the +
+     and the tab count beside it wear — a 10px corner (`--radius`) between
+     three circles read as a different kind of control. */
+  --frame-r: calc(var(--dock-tab-h) / 2);
   --frame-p: calc((var(--dock-tab-h) - var(--dock-control-h)) / 2);
   border-radius: var(--frame-r);
   background-color: transparent;

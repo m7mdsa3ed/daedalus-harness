@@ -156,9 +156,10 @@ export interface LayoutOptions {
   /** The second row of every dock tab (project and model, a page's section,
       a shell's directory). Off, the tab is one line and shorter. */
   showTabDetails: boolean
-  /** The agent's own mark at the leading edge of a thread's tab — the same mark
-   *  its sidebar row wears, so the tab says which runtime the thread runs on
-   *  before its title is read. Off, a tab starts at its title. */
+  /** Each tab's own mark at its leading edge (`PanelIcon`): a thread's agent —
+   *  the same mark its sidebar row wears — a page's section, a terminal's kind.
+   *  Off, a tab starts at its title. The key keeps its old name so a stored
+   *  choice survives. */
   tabAgentIcon: boolean
   /** Hairline rule above each user turn. */
   stepDividers: boolean
