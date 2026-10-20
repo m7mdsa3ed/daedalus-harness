@@ -111,6 +111,9 @@ export function useElapsed(startedAt: number, active: boolean): number | null {
 }
 
 export function formatElapsed(ms: number): string {
+  /* A step that took no measurable time still took some; "0s" read as no
+     reading at all. */
+  if (ms < 1000) return "<1s"
   return ms < 60_000
     ? `${Math.round(ms / 1000)}s`
     : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
@@ -299,7 +302,6 @@ export const StepRow = React.memo(function StepRow({
     !active && startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
       ? endedAt - startedAt
       : null
-  const clockMs = elapsedMs ?? settledMs
   const runDir = React.useContext(StepDirContext)
   const d = runDir ?? dir ?? textDir(typeof target === "string" ? target : caption)
   const variant = toolLayout && toolVariant ? toolVariantOf(toolLayout, toolVariant) : undefined
@@ -462,7 +464,10 @@ export const StepRow = React.memo(function StepRow({
             its own colour, but at the group's size and not its own. */}
         <StepMeta
           parts={[
-            clockMs !== null && clockMs >= 2000 ? formatElapsed(clockMs) : null,
+            /* A live clock waits two seconds before it ticks (a quick call
+               should not flash a counter); a settled step always says how
+               long it took, the quick ones included. */
+            elapsedMs !== null ? (elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null) : settledMs !== null ? formatElapsed(settledMs) : null,
             ...(metric ?? []),
             failed ? <span className="text-destructive">failed</span> : label,
           ]}

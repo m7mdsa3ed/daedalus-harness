@@ -19,6 +19,12 @@ export interface TextItem {
   text: string
   /** Set on `notice` rows that announce a setting change. */
   config?: boolean
+  /** A thought's: when the model began thinking — the end of the step before
+      it on the same owner (or the message that asked), not its first chunk.
+      An agent that sends a thinking block whole, once it is done, puts its
+      first and last chunk on the same instant, and timing from there said
+      "Thought for 0s" about every one of them (`stepFloor`, session-update). */
+  startedAt?: number
   /** What this message carried, on a user bubble. References, never bytes —
       the chip fetches `/api/attachments/:id` (see `AttachmentRef`). Journaled
       on `turn_started`, so a replayed bubble draws the same chips a live one

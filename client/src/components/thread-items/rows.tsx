@@ -1006,9 +1006,12 @@ export const ThreadItemView = React.memo(function ThreadItemView({
      place a hook can live. Only a thought uses it — a tool row draws its own
      inside ToolStep, and the other kinds are not steps. */
   const stepTokens = useStepTokens(item.id)
+  /* From when thinking began (`startedAt`, the step before it) to its last
+     chunk — or to its only one: a thought sent whole has no `endedAt`, and its
+     arrival is where it ended. */
   const thoughtElapsed = useThoughtElapsed(
-    item.kind === "thought" ? item.at : undefined,
-    item.kind === "thought" ? item.endedAt : undefined,
+    item.kind === "thought" ? (item.startedAt ?? item.at) : undefined,
+    item.kind === "thought" ? (item.endedAt ?? item.at) : undefined,
     item.kind === "thought" && streaming
   )
   switch (item.kind) {

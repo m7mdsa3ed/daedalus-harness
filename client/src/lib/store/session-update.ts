@@ -31,6 +31,23 @@ import { addUsage } from "./messages"
 
 // ---- update application (shared by live updates and journal rebuild) ----
 
+/** When the step about to be added really began: the end of the last step on
+    the same owner (a subagent's for its own, the thread's for the thread's) —
+    or, for the first, the message that set the turn going. The agent was at
+    work from then, whatever instant its first chunk or its tool call landed.
+    Undefined where no earlier step has a stamp (a `session/load` narration). */
+function stepFloor(items: ThreadItem[], owner: string | undefined): number | undefined {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.parentId !== owner) continue
+    const end = "endedAt" in item ? item.endedAt : undefined
+    const at = "at" in item ? item.at : undefined
+    const start = "startedAt" in item ? item.startedAt : undefined
+    return end ?? at ?? start
+  }
+  return undefined
+}
+
 function appendText(
   items: ThreadItem[],
   kind: TextItem["kind"],
@@ -49,7 +66,11 @@ function appendText(
        two merged events, and the second's end is the run's own. */
     return [...items.slice(0, -1), { ...last, text: last.text + text, endedAt: endedAt ?? last.endedAt }]
   }
-  return [...items, { kind, id: mintItemId(kind), text, at, endedAt, parentId }]
+  /* A thought's clock starts where the step before it ended, never later than
+     its own first chunk (`TextItem.startedAt`). */
+  const floor = kind === "thought" && at !== undefined ? stepFloor(items, parentId) : undefined
+  const startedAt = floor !== undefined && floor <= at! ? floor : undefined
+  return [...items, { kind, id: mintItemId(kind), text, at, endedAt, parentId, ...(startedAt !== undefined ? { startedAt } : {}) }]
 }
 
 /* Agents write a synthetic user turn when a prompt is cancelled, so the model
@@ -309,6 +330,16 @@ export function applySessionUpdate(
          owner once learned is never forgotten. */
       item.parentId = owner ?? existing?.parentId
       item.name = item.name ?? existing?.name
+      /* A re-announced call started when it was first announced — a
+         restatement is later only because it was sent later. A call announced
+         already finished (its one and only update) started where the step
+         before it ended: stamping it at its arrival made its start its end,
+         and the row had no length to say. */
+      if (existing) item.startedAt = existing.startedAt
+      else if (item.endedAt !== undefined) {
+        const floor = stepFloor(items, item.parentId)
+        if (floor !== undefined && floor <= item.endedAt) item.startedAt = floor
+      }
       /* The FIRST ending, not the latest: a restatement arrives later simply
          because it was sent later, and the call did not end twice. */
       item.endedAt = existing?.endedAt ?? item.endedAt
