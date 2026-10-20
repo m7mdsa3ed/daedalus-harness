@@ -12,7 +12,8 @@
    one app disagreeing about what "failed" looks like is the bug that table
    exists to prevent. */
 import type { StatusTone as BadgeTone } from "@/components/settings/primitives"
-import type { RoutineRunStatus } from "@/lib/settings"
+import type { RoutineRun, RoutineRunStatus } from "@/lib/settings"
+import { shortAge } from "@/lib/time"
 
 export interface StatusTone {
   label: string
@@ -110,3 +111,61 @@ export const SKIP_REASON: Record<string, string> = {
 
 export const skipLabel = (reason: string | null | undefined): string | null =>
   reason ? (SKIP_REASON[reason] ?? reason) : null
+
+/** How long a run took, or null while it has no end (still running, or a skip
+    that never started). */
+export function durationOf(run: RoutineRun): number | null {
+  return run.endedAt === null ? null : Math.max(0, run.endedAt - run.startedAt)
+}
+
+/** "42s", "3m 12s", "1h 4m"; null is "—". */
+export function durationLabel(ms: number | null): string {
+  if (ms === null) return "—"
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${s % 60}s`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+/** A setting held in seconds, in words: "45s" under a minute, else "N min". */
+export const secondsLabel = (s: number): string => (s < 60 ? `${s}s` : `${Math.round(s / 60)} min`)
+
+/** The health of a window of runs. `finished` is everything that is neither
+    running nor skipped; `failed` counts blocked with failed (both need a
+    person); `rate` is completed / finished, null when nothing has finished. */
+export function healthOf(runs: RoutineRun[]) {
+  let finished = 0, completed = 0, failed = 0, skipped = 0, running = 0, tokens = 0, total = 0, timed = 0
+  for (const run of runs) {
+    tokens += run.tokens ?? 0
+    if (run.status === "running") running++
+    else if (run.status === "skipped") skipped++
+    else {
+      finished++
+      if (run.status === "completed") completed++
+      else if (run.status === "failed" || run.status === "blocked") failed++
+      const d = durationOf(run)
+      if (d !== null) {
+        total += d
+        timed++
+      }
+    }
+  }
+  return {
+    finished,
+    completed,
+    failed,
+    skipped,
+    running,
+    rate: finished ? completed / finished : null,
+    avgMs: timed ? total / timed : null,
+    tokens,
+  }
+}
+
+/** `shortAge` as a phrase: "just now", "3h ago", "on Oct 3". */
+export function agoLabel(at: number, now = Date.now()): string {
+  const age = shortAge(at, now)
+  if (age === "now") return "just now"
+  return /^\d+[mhd]$/.test(age) ? `${age} ago` : `on ${age}`
+}

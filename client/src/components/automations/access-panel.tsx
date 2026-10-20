@@ -16,19 +16,23 @@ import { useUpdateAutomation } from "@/lib/queries/automations"
 import type { Routine } from "@/lib/settings"
 import { toast } from "@/lib/toast"
 import { KINDS } from "./autonomy-control"
+import { secondsLabel } from "./status"
 
 export function AccessPanel({ routine, onEdit }: { routine: Routine; onEdit: () => void }) {
   const update = useUpdateAutomation()
 
   if (routine.runsIn === "session")
     return (
-      <Notice tone="info">
-        This automation delivers its prompt into a thread, so that thread&rsquo;s own permissions apply. Change them
-        from the thread; there is nothing to grant here.
-      </Notice>
+      <Section>
+        <Notice tone="info">
+          This automation delivers its prompt into a thread, so that thread&rsquo;s own permissions apply. Change them
+          from the thread; there is nothing to grant here.
+        </Notice>
+      </Section>
     )
 
-  const { permissions } = routine.autonomy
+  const { autonomy } = routine
+  const { permissions } = autonomy
   const allowed = KINDS.filter((k) => permissions[k.kind] === "allow")
   const denied = KINDS.filter((k) => permissions[k.kind] === "deny")
   const blanket = permissions.default === "allow"
@@ -92,19 +96,27 @@ export function AccessPanel({ routine, onEdit }: { routine: Routine; onEdit: () 
         </Group>
       )}
       <Group label="Limits">
+        <Row title="Questions">
+          <span className="text-sm">{autonomy.elicitations === "decline" ? "Declined" : "Wait for a person"}</span>
+        </Row>
         <Row title="Unanswered questions">
           <span className="text-sm">
-            {routine.autonomy.askTimeoutSeconds > 0
-              ? `${routine.autonomy.askFallback === "deny" ? "Denied" : "Cancelled"} after ${Math.round(routine.autonomy.askTimeoutSeconds / 60)} min`
+            {autonomy.askTimeoutSeconds > 0
+              ? `${autonomy.askFallback === "deny" ? "Denied" : "Cancelled"} after ${secondsLabel(autonomy.askTimeoutSeconds)}`
               : "Wait forever"}
           </span>
         </Row>
-        <Row title="Ceiling">
-          <span className="text-sm">
-            {routine.autonomy.maxRunSeconds > 0 ? `${Math.round(routine.autonomy.maxRunSeconds / 60)} min` : "none"}
-            {routine.autonomy.maxRunTokens ? ` · ${routine.autonomy.maxRunTokens.toLocaleString()} tokens` : ""}
-          </span>
+        <Row title="Run time limit">
+          <span className="text-sm">{autonomy.maxRunSeconds > 0 ? secondsLabel(autonomy.maxRunSeconds) : "None"}</span>
         </Row>
+        <Row title="Token ceiling">
+          <span className="text-sm">{autonomy.maxRunTokens ? autonomy.maxRunTokens.toLocaleString() : "None"}</span>
+        </Row>
+        {autonomy.minQuotaPercent != null && (
+          <Row title="Minimum quota">
+            <span className="text-sm">Skips below {autonomy.minQuotaPercent}% of the plan</span>
+          </Row>
+        )}
       </Group>
     </>
   )

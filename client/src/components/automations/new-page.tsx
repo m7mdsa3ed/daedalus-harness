@@ -4,7 +4,10 @@
    `?session=` (the composer's `/automate`, the thread footer) opens the form
    with Runs in = This thread pinned to that thread, and any text typed into
    the composer rides along in the route state. A template never saves
-   anything — the form opens on it and a person reviews it. */
+   anything — the form opens on it and a person reviews it. A `duplicateOf`
+   in the route state (Duplicate, on the list and the detail page) skips the
+   gallery too and opens the form on a paused copy of that automation and its
+   triggers — never its webhook token, which is minted fresh or not at all. */
 import * as React from "react"
 import { BotIcon } from "lucide-react"
 import { useLocation, useNavigate, useSearchParams } from "react-router"
@@ -14,17 +17,21 @@ import { FormPageHeader, Group, ChoiceTiles } from "@/components/settings/primit
 import type { Actions } from "@/lib/actions"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
-import { useCreateAutomation, useCreateAutomationTriggers } from "@/lib/queries/automations"
+import { useAutomationTriggers, useAutomations, useCreateAutomation, useCreateAutomationTriggers } from "@/lib/queries/automations"
+import { defaultPlan, readPlan } from "@/lib/automation-schedule"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { automationPath, automationsPath } from "@/lib/router"
 import { profileSupports, type Routine } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
-import { AutomationForm, applyTemplate, blankDraft, problemNote, toInput, triggersOf, type AutomationDraft } from "./automation-form"
+import { AutomationForm, applyTemplate, blankDraft, draftOf, problemNote, toInput, triggersOf, type AutomationDraft } from "./automation-form"
 import { BLANK_TEMPLATE, TEMPLATES, TEMPLATE_GROUPS } from "./templates"
 
-interface NewAutomationState {
+export interface NewAutomationState {
   defaultText?: string
   returnTo?: string
+  /** An automation to copy. */
+  duplicateOf?: string
 }
 
 export function NewAutomationPage({ actions }: { actions: Actions }) {
@@ -40,12 +47,22 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
   const routeState = (location.state ?? {}) as NewAutomationState
   const pinned = params.get("session")
   const pinnedSession = pinned ? sessions.find((s) => s.id === pinned) : undefined
+  const automations = useAutomations()
+  const duplicateOf = routeState.duplicateOf
+  const source = duplicateOf ? automations.data?.find((r) => r.id === duplicateOf) : undefined
+  /* A copy waits for its source's triggers before the form opens; a source
+     that is gone (or a list that will not read) falls back to a blank form. */
+  const [seeded, setSeeded] = React.useState(!duplicateOf)
+  const sourceGone = Boolean(duplicateOf) && !source && (automations.isError || automations.data !== undefined)
+  React.useEffect(() => {
+    if (sourceGone) setSeeded(true)
+  }, [sourceGone])
 
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<InlineError | null>(null)
   /* The gallery is a step, not a route: it is skipped when the caller already
      knows what it wants (a pinned thread, or words typed into the composer). */
-  const [step, setStep] = React.useState<"gallery" | "form">(pinnedSession || routeState.defaultText ? "form" : "gallery")
+  const [step, setStep] = React.useState<"gallery" | "form">(pinnedSession || routeState.defaultText || duplicateOf ? "form" : "gallery")
 
   /* Seeded from whatever is first and coherent, never from the remembered
      thread defaults: an automation is set up deliberately and the pickers are
@@ -119,6 +136,24 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
     )
   }
 
+  if (!seeded) {
+    return (
+      <>
+        <FormPageHeader title="Duplicate automation" onBack={back} />
+        {source && (
+          <DuplicateSeed
+            source={source}
+            onSeed={(seed) => {
+              setDraft(seed)
+              setSeeded(true)
+            }}
+          />
+        )}
+        <GroupRowsSkeleton label />
+      </>
+    )
+  }
+
   if (step === "gallery") {
     return (
       <>
@@ -157,8 +192,12 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
   return (
     <>
       <FormPageHeader
-        title="New automation"
-        description="A prompt that runs on its own. Review each section, then create it — a fresh automation is worth running once by hand first."
+        title={source ? "Duplicate automation" : "New automation"}
+        description={
+          source
+            ? `A copy of “${source.name}”, paused until you turn it on. Review each section, then create it.`
+            : "A prompt that runs on its own. Review each section, then create it — a fresh automation is worth running once by hand first."
+        }
         onBack={back}
       />
       <AutomationForm
@@ -171,8 +210,36 @@ export function NewAutomationPage({ actions }: { actions: Actions }) {
         busy={busy}
         error={error}
         submitLabel="Create automation"
-        onBrowseTemplates={pinnedSession ? undefined : () => setStep("gallery")}
+        onBrowseTemplates={pinnedSession || source ? undefined : () => setStep("gallery")}
       />
     </>
   )
+}
+
+/** Reads the source's triggers and hands the copy's draft up once, when they
+    have loaded — or on a failed read, with the form's own defaults. A
+    component rather than a hook in the page so the read only exists when
+    there is a source to read. */
+function DuplicateSeed({ source, onSeed }: { source: Routine; onSeed: (draft: AutomationDraft) => void }) {
+  const triggers = useAutomationTriggers(source.id)
+  const done = triggers.data !== undefined || triggers.isError
+  React.useEffect(() => {
+    if (!done) return
+    const base: AutomationDraft = { ...draftOf(source), name: `${source.name} (copy)`, enabled: false }
+    const all = triggers.data
+    if (!all) return onSeed(base)
+    const schedule = all.find((t) => t.kind === "schedule")
+    const git = all.find((t) => t.kind === "git")
+    onSeed({
+      ...base,
+      // No clock on the source is no clock on the copy.
+      plan: schedule ? readPlan(schedule) : defaultPlan({ preset: "manual" }),
+      apiTrigger: all.some((t) => t.kind === "api"),
+      // Newline-separated: `triggersOf` reads the draft's paths as lines.
+      git: git ? { on: true, branch: git.branch ?? "", paths: git.paths.join("\n") } : base.git,
+    })
+    // Seed once; `onSeed` unmounts this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done])
+  return null
 }

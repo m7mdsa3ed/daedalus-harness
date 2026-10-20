@@ -82,7 +82,7 @@ const GRAVE_GRANT = new Set<string>(["default", "execute", "delete"])
 /** The policy as one sentence, live under the rows. This is what the per-kind
     design buys and it is worth spending a line to actually print: a table of
     ten selects is something you audit, a sentence is something you read. */
-function policySentence(policy: AutonomyPolicy): string {
+export function policySentence(policy: AutonomyPolicy): string {
   const allowed = KINDS.filter((k) => policy.permissions[k.kind] === "allow")
   const denied = KINDS.filter((k) => policy.permissions[k.kind] === "deny")
   const rest =

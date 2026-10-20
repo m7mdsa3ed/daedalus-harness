@@ -338,6 +338,8 @@ export function AutomationForm({
   submitLabel,
   sectionBar = true,
   onBrowseTemplates,
+  dirty = false,
+  onOpenTriggers,
 }: {
   draft: AutomationDraft
   onChange: (next: AutomationDraft) => void
@@ -353,6 +355,10 @@ export function AutomationForm({
   sectionBar?: boolean
   /** Create only: back to the gallery. */
   onBrowseTemplates?: () => void
+  /** Edit only: the draft differs from what was loaded — said in the action bar. */
+  dirty?: boolean
+  /** Edit only: the "When" note's way to the Triggers tab. */
+  onOpenTriggers?: () => void
 }) {
   const projects = useProjects()
   const automations = useAutomations().data ?? []
@@ -552,7 +558,18 @@ export function AutomationForm({
       )}
       {mode === "edit" && (
         <Section>
-          <Notice tone="info">When it fires — the schedule, a webhook, a commit — is edited in the Triggers tab.</Notice>
+          <Notice
+            tone="info"
+            action={
+              onOpenTriggers && (
+                <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-11" onClick={onOpenTriggers}>
+                  Open triggers
+                </Button>
+              )
+            }
+          >
+            When it fires — the schedule, a webhook, a commit — is edited in the Triggers tab.
+          </Notice>
         </Section>
       )}
 
@@ -622,15 +639,19 @@ export function AutomationForm({
             {advancedOpen ? "Hide" : "Show"} overlap, catch-up, webhook and commit triggers
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-4 pt-4">
-            <label className="flex items-center gap-2.5">
-              <Switch checked={draft.enabled} onCheckedChange={(on) => patch({ enabled: on })} />
-              <span className="text-sm">
-                Enabled
-                <span className="ml-1.5 text-xs text-muted-foreground">
-                  — off keeps the automation and its history, and makes every trigger inert.
+            {/* Edit mode pauses from the page header; a second switch here would
+                be a save-time pause that races the live one. */}
+            {mode === "create" && (
+              <label className="flex items-center gap-2.5">
+                <Switch checked={draft.enabled} onCheckedChange={(on) => patch({ enabled: on })} />
+                <span className="text-sm">
+                  Enabled
+                  <span className="ml-1.5 text-xs text-muted-foreground">
+                    — off keeps the automation and its history, and makes every trigger inert.
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            )}
             {!session && (
               <Field
                 label="If the previous run is still going"
@@ -742,10 +763,15 @@ export function AutomationForm({
         error={error}
         submitLabel={submitLabel}
         leading={
-          !session && (
-            <StatusBadge tone={grants > 0 ? "warn" : "neutral"}>
-              {grants === 0 ? "Asks a person for everything" : `Acts without asking for ${grants} kind${grants === 1 ? "" : "s"}`}
-            </StatusBadge>
+          (dirty || !session) && (
+            <>
+              {dirty && <StatusBadge tone="info">Unsaved changes</StatusBadge>}
+              {!session && (
+                <StatusBadge tone={grants > 0 ? "warn" : "neutral"}>
+                  {grants === 0 ? "Asks a person for everything" : `Acts without asking for ${grants} kind${grants === 1 ? "" : "s"}`}
+                </StatusBadge>
+              )}
+            </>
           )
         }
       />

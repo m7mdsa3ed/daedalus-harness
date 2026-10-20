@@ -14,17 +14,21 @@
    link is conditional rather than always drawn and sometimes broken. */
 import * as React from "react"
 import { ExternalLinkIcon, HistoryIcon, SquareIcon } from "lucide-react"
-import { useNavigate } from "react-router"
+import { Link, useNavigate } from "react-router"
 
 import { Empty } from "@/components/empty"
-import { StatusBadge } from "@/components/settings/primitives"
+import { Notice } from "@/components/notice"
+import { Group, Row, Section, StatusBadge } from "@/components/settings/primitives"
 import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { reportError } from "@/lib/errors"
-import { automationRunPath, threadPath } from "@/lib/router"
-import type { RoutineRun } from "@/lib/settings"
+import { automationPath, automationRunPath, threadPath } from "@/lib/router"
+import type { OnFinishAction, RoutineRun } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
-import { SOURCE_LABEL, runStatus, skipLabel } from "./status"
+import { cn } from "@/lib/utils"
+import { KIND_META, onFinishLabel } from "./on-finish"
+import { SOURCE_LABEL, agoLabel, durationLabel, durationOf, runStatus, skipLabel } from "./status"
 
 export function RunList({
   routineId,
@@ -34,12 +38,15 @@ export function RunList({
   runs,
   hasOutputSchema,
   onCancel,
+  compact = false,
 }: {
   routineId: string
   runs: RoutineRun[] | undefined
   hasOutputSchema: boolean
   /** Stop a run that is still going. Omitted where there is nothing to act on. */
-  onCancel?: (runId: string) => Promise<void>
+  onCancel?: (runId: string) => Promise<unknown> | void
+  /** A few rows on an overview: no search, no filters, no view toggle. */
+  compact?: boolean
 }) {
   const navigate = useNavigate()
   const [stopping, setStopping] = React.useState<ReadonlySet<string>>(new Set())
@@ -48,7 +55,7 @@ export function RunList({
   const stop = (run: RoutineRun) => {
     if (!onCancel) return
     setStopping((prev) => new Set(prev).add(run.id))
-    void onCancel(run.id)
+    void Promise.resolve(onCancel(run.id))
       .catch((err) => reportError(err, "Couldn't stop the run"))
       .finally(() =>
         setStopping((prev) => {
@@ -76,14 +83,36 @@ export function RunList({
         cell: (run) => <RunResult run={run} hasOutputSchema={hasOutputSchema} />,
       },
       {
+        id: "duration",
+        header: "Duration",
+        secondary: true,
+        width: "w-24 whitespace-nowrap",
+        cell: (run) => (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {run.status === "running" ? "running" : durationLabel(durationOf(run))}
+          </span>
+        ),
+      },
+      {
         id: "when",
         header: "Started",
         align: "end",
-        width: "w-32 whitespace-nowrap",
+        width: "w-28 whitespace-nowrap",
         cell: (run) => (
           <span className="text-xs text-muted-foreground" title={new Date(run.startedAt).toLocaleString()}>
             {shortAge(run.startedAt)}
-            {run.tokens !== null && ` · ${run.tokens.toLocaleString()} tokens`}
+          </span>
+        ),
+      },
+      {
+        id: "tokens",
+        header: "Tokens",
+        secondary: true,
+        align: "end",
+        width: "w-24 whitespace-nowrap",
+        cell: (run) => (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {run.tokens === null ? "—" : run.tokens.toLocaleString()}
           </span>
         ),
       },
@@ -104,7 +133,7 @@ export function RunList({
       },
       {
         id: "thread",
-        label: "Open this run\u2019s thread",
+        label: "Open this run’s thread",
         icon: <ExternalLinkIcon />,
         position: "left",
         hidden: (run) => !run.sessionId,
@@ -118,76 +147,210 @@ export function RunList({
 
   return (
     <SettingsList
-        columns={columns}
-        rows={runs ?? []}
-        rowId={(run) => run.id}
-        loading={runs === undefined}
-        skeletonRows={3}
-        actions={actions}
-        mark={() => <HistoryIcon className="size-4 text-muted-foreground" />}
-        search={{
-          placeholder: "Search runs…",
-          matches: (run, n) =>
-            `${runStatus(run.status).label} ${SOURCE_LABEL[run.source] ?? run.source} ${skipLabel(run.skipReason) ?? ""} ${run.error ?? ""} ${run.output ?? ""}`.toLowerCase().includes(n),
-        }}
-        fields={[
-          { id: "status", label: "Status", of: (run) => run.status, optionLabel: (v) => runStatus(v as RoutineRun["status"]).label },
-          { id: "source", label: "Source", of: (run) => run.source, optionLabel: (v) => SOURCE_LABEL[v as RoutineRun["source"]] ?? v },
-        ]}
-        onRowClick={(run) => void navigate(automationRunPath(routineId, run.id))}
-        empty={
-          <Empty size="lg" icon={HistoryIcon}>
-            This automation has not run yet.
-          </Empty>
-        }
-      />
+      columns={columns}
+      rows={runs ?? []}
+      rowId={(run) => run.id}
+      loading={runs === undefined}
+      skeletonRows={3}
+      actions={actions}
+      mark={(run) => <span className={cn("size-2 shrink-0 rounded-full", runStatus(run.status).dot)} />}
+      viewToggle={compact ? false : undefined}
+      search={
+        compact
+          ? undefined
+          : {
+              placeholder: "Search runs…",
+              matches: (run, n) =>
+                `${runStatus(run.status).label} ${SOURCE_LABEL[run.source] ?? run.source} ${skipLabel(run.skipReason) ?? ""} ${run.error ?? ""} ${run.output ?? ""}`
+                  .toLowerCase()
+                  .includes(n),
+            }
+      }
+      fields={
+        compact
+          ? undefined
+          : [
+              { id: "status", label: "Status", of: (run) => run.status, optionLabel: (v) => runStatus(v).label },
+              { id: "source", label: "Source", of: (run) => run.source, optionLabel: (v) => SOURCE_LABEL[v] ?? v },
+            ]
+      }
+      onRowClick={(run) => void navigate(automationRunPath(routineId, run.id))}
+      empty={
+        <Empty size="lg" icon={HistoryIcon}>
+          This automation has not run yet.
+        </Empty>
+      }
+    />
   )
 }
 
-/** One run on a page of its own: the head, the whole of what it produced, and
-    the actions the row carries. */
-export function RunPage({
-  run,
-  hasOutputSchema,
-  onCancel,
-}: {
-  run: RoutineRun
-  hasOutputSchema: boolean
-  onCancel?: (runId: string) => Promise<void>
-}) {
-  const navigate = useNavigate()
-  const [stopping, setStopping] = React.useState(false)
-  const stop = () => {
-    if (!onCancel) return
-    setStopping(true)
-    void onCancel(run.id)
-      .catch((err) => reportError(err, "Couldn't stop the run"))
-      .finally(() => setStopping(false))
-  }
+/** The newest runs as a row of bars, oldest on the left: a health reading at a
+    glance, each bar its run's page. 20 on a narrow panel, 50 from `@panel-sm`. */
+export function RunStrip({ routineId, runs }: { routineId: string; runs: RoutineRun[] }) {
+  const shown = runs.slice(0, 50)
   return (
-    <div className="space-y-4">
-      <RunHead run={run} />
-      <RunDetail run={run} hasOutputSchema={hasOutputSchema} />
-      <div className="flex flex-wrap gap-2">
-        {run.status === "running" && onCancel && (
-          <Button variant="outline" disabled={stopping} onClick={stop}>
-            <SquareIcon data-icon="inline-start" />
-            {stopping ? "Stopping\u2026" : "Stop"}
-          </Button>
+    <ol className="flex h-10 items-end gap-0.5">
+      {shown
+        .map((r, i) => {
+          const tone = runStatus(r.status)
+          const when = new Date(r.startedAt).toLocaleString()
+          return (
+            <li key={r.id} className={cn("flex h-full max-w-3 flex-1 items-end", i >= 20 && "hidden @panel-sm:flex")}>
+              <Link
+                to={automationRunPath(routineId, r.id)}
+                aria-label={`${tone.label}, started ${agoLabel(r.startedAt)}`}
+                title={`${tone.label} · ${when}`}
+                className={cn(
+                  "block w-full rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  tone.dot,
+                  r.status === "skipped" ? "h-1/2 opacity-60" : "h-full"
+                )}
+              />
+            </li>
+          )
+        })
+        .reverse()}
+    </ol>
+  )
+}
+
+/** One run on a page of its own: what it produced and what happened after.
+    The head, Stop and Open thread are the page header's (run-page.tsx). */
+export function RunPage({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema: boolean }) {
+  const navigate = useNavigate()
+  const outcome = outcomeOf(run)
+  const ended = run.endedAt === null ? null : new Date(run.endedAt).toLocaleString()
+  return (
+    <>
+      {outcome && (
+        <Section>
+          <Notice tone={outcome.tone} title={outcome.title}>
+            {outcome.body}
+          </Notice>
+        </Section>
+      )}
+
+      {hasOutputSchema && run.verdict != null && (
+        <Group label="Verdict">
+          <Row title={<span className="font-mono text-xs">{compact(run.verdict)}</span>} />
+          <pre className="overflow-x-auto py-3 font-mono text-xs whitespace-pre-wrap break-words">
+            {JSON.stringify(run.verdict, null, 2)}
+          </pre>
+        </Group>
+      )}
+
+      {run.output && (
+        <Group label="Answer">
+          <div className="py-3 text-sm/relaxed whitespace-pre-wrap break-words">{run.output}</div>
+        </Group>
+      )}
+
+      {run.actions.length > 0 && (
+        <Group
+          label="Follow-up actions"
+          count={run.actions.length}
+          hint="They ran after the run; a failure here does not change the run's own result."
+        >
+          {run.actions.map((action, i) => {
+            const known = action.kind in KIND_META
+            return (
+              <Row
+                key={i}
+                icon={known ? KIND_META[action.kind as OnFinishAction["kind"]].icon : undefined}
+                title={known ? onFinishLabel(action as unknown as OnFinishAction) : action.kind}
+                subtitle={action.ok ? action.ref : (action.error ?? undefined)}
+              >
+                <StatusBadge tone={action.ok ? "ok" : "bad"}>{action.ok ? "Done" : "Failed"}</StatusBadge>
+              </Row>
+            )
+          })}
+        </Group>
+      )}
+
+      {run.payload != null && (
+        <Group label="Payload" hint="The caller's own words. The agent read them as untrusted input.">
+          <Clamped text={prettyPayload(run.payload)} />
+        </Group>
+      )}
+
+      <Group label="Details">
+        <Row title="Started">{new Date(run.startedAt).toLocaleString()}</Row>
+        <Row title="Ended">{ended ?? (run.status === "running" ? "Still running" : "—")}</Row>
+        <Row title="Forced to ask" subtitle="Every question went to a person for this run.">
+          {run.dryRun ? "Yes" : "No"}
+        </Row>
+        {run.inboxState && <Row title="Inbox">{INBOX_LABEL[run.inboxState]}</Row>}
+        {run.headOid && (
+          <Row title="HEAD" subtitle="The commit this run saw.">
+            <span className="font-mono text-xs">{run.headOid.slice(0, 7)}</span>
+            <CopyButton text={run.headOid} size="icon-xs" label="Copy commit id" />
+          </Row>
         )}
-        {run.sessionId && (
-          <Button variant="outline" onClick={() => void navigate(threadPath(run.sessionId!))}>
-            <ExternalLinkIcon data-icon="inline-start" />
-            Open this run&rsquo;s thread
+        <Row title="Run id">
+          <span className="max-w-48 truncate font-mono text-xs">{run.id}</span>
+          <CopyButton text={run.id} size="icon-xs" label="Copy run id" />
+        </Row>
+        <Row title="Automation settings" subtitle="What this automation runs with now, which may differ from this run.">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="pointer-coarse:h-11"
+            onClick={() => void navigate(`${automationPath(run.routineId)}?tab=settings`)}
+          >
+            Open
           </Button>
-        )}
-      </div>
+        </Row>
+      </Group>
+    </>
+  )
+}
+
+const INBOX_LABEL: Record<NonNullable<RoutineRun["inboxState"]>, string> = {
+  unread: "Unread",
+  read: "Read",
+  archived: "Archived",
+}
+
+/** The one box saying how the run ended, when that is anything but fine. */
+function outcomeOf(run: RoutineRun): { tone: "warn" | "error"; title: string; body: string } | null {
+  const tone = runStatus(run.status)
+  if (run.status === "skipped") {
+    const why = skipLabel(run.skipReason)
+    return { tone: "warn", title: why ?? tone.label, body: run.error && run.error !== why ? run.error : tone.meaning }
+  }
+  if (run.status === "blocked") return { tone: "warn", title: tone.label, body: run.error ?? tone.meaning }
+  if (run.status === "failed") return { tone: "error", title: tone.label, body: run.error ?? tone.meaning }
+  return null
+}
+
+/** A payload is text; when it is JSON it is shown pretty. */
+function prettyPayload(payload: string): string {
+  try {
+    const parsed: unknown = JSON.parse(payload)
+    return typeof parsed === "object" && parsed !== null ? JSON.stringify(parsed, null, 2) : payload
+  } catch {
+    return payload
+  }
+}
+
+/** Long text clamped, with its own way to the rest. No inner scroller. */
+function Clamped({ text }: { text: string }) {
+  const [open, setOpen] = React.useState(false)
+  const long = text.length > 600 || text.split("\n").length > 10
+  return (
+    <div className="py-3">
+      <pre className={cn("font-mono text-xs whitespace-pre-wrap break-words", long && !open && "line-clamp-[10]")}>{text}</pre>
+      {long && (
+        <Button variant="ghost" size="sm" className="mt-2 -ml-2 pointer-coarse:h-11" onClick={() => setOpen((v) => !v)}>
+          {open ? "Show less" : "Show all"}
+        </Button>
+      )}
     </div>
   )
 }
 
 /** The status word, where it came from, and whether it was forced to ask. */
-function RunHead({ run }: { run: RoutineRun }) {
+export function RunHead({ run }: { run: RoutineRun }) {
   const tone = runStatus(run.status)
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -206,7 +369,7 @@ function RunResult({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
       {run.status === "skipped" && (run.skipReason || run.error) ? (
         <p className="text-pretty text-muted-foreground">
           <span className="font-medium text-foreground">{skipLabel(run.skipReason) ?? "Skipped"}</span>
-          {run.error && run.error !== skipLabel(run.skipReason) && ` \u2014 ${run.error}`}
+          {run.error && run.error !== skipLabel(run.skipReason) && ` — ${run.error}`}
         </p>
       ) : run.error ? (
         <p className="text-pretty text-destructive">{run.error}</p>
@@ -219,46 +382,6 @@ function RunResult({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
         <StatusBadge tone="warn" dot={false}>
           {failedActions.length === 1 ? "One follow-up action" : `${failedActions.length} follow-up actions`} failed
         </StatusBadge>
-      )}
-    </div>
-  )
-}
-
-function RunDetail({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema: boolean }) {
-  const failedActions = run.actions.filter((a) => !a.ok)
-  return (
-    <div className="space-y-4">
-      <RunResult run={run} hasOutputSchema={hasOutputSchema} />
-      {failedActions.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          Follow-up actions ran after the run - the run itself is unaffected.
-        </p>
-      )}
-      {run.verdict != null && (
-        <div>
-          <h3 className="text-xs font-medium text-muted-foreground">Verdict</h3>
-          <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap">
-            {JSON.stringify(run.verdict, null, 2)}
-          </pre>
-        </div>
-      )}
-      {run.output && (
-        <div>
-          <h3 className="text-xs font-medium text-muted-foreground">Answer</h3>
-          <p className="mt-1 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">{run.output}</p>
-        </div>
-      )}
-      {run.actions.length > 0 && (
-        <div>
-          <h3 className="text-xs font-medium text-muted-foreground">Follow-up actions</h3>
-          <ul className="mt-1 space-y-0.5 text-sm">
-            {run.actions.map((action, i) => (
-              <li key={i} className={action.ok ? "text-muted-foreground" : "text-destructive"}>
-                {action.kind} {"\u2014"} {action.ok ? (action.ref ?? "done") : (action.error ?? "failed")}
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
     </div>
   )

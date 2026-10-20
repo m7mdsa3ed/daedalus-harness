@@ -32,7 +32,7 @@ import { statusesOf } from "@/lib/boards"
 import { useBoardsEnabled } from "@/lib/queries/boards"
 import type { OnFinishAction, Routine } from "@/lib/settings"
 
-const KIND_META: Record<OnFinishAction["kind"], { label: string; icon: typeof BellIcon; blurb: string }> = {
+export const KIND_META: Record<OnFinishAction["kind"], { label: string; icon: typeof BellIcon; blurb: string }> = {
   push: {
     label: "Send a notification",
     icon: BellIcon,
@@ -45,6 +45,14 @@ const KIND_META: Record<OnFinishAction["kind"], { label: string; icon: typeof Be
   },
   task: { label: "Create a task card", icon: KanbanIcon, blurb: "A card on a board, with the answer as its note." },
   routine: { label: "Fire another routine", icon: RepeatIcon, blurb: "Chained — the next run's payload is this answer." },
+}
+
+/** One action in words — `Save to the knowledge base "Weekly digest"`. A chained
+    routine is named by the caller if at all: only an id travels on the action. */
+export function onFinishLabel(a: OnFinishAction): string {
+  const label = KIND_META[a.kind]?.label ?? a.kind
+  const title = "title" in a ? a.title : undefined
+  return title ? `${label} "${title}"` : label
 }
 
 /** Sentinel for "let the server choose": the first board and its first column.

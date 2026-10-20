@@ -65,3 +65,12 @@ export function triggersLine(triggers: RoutineTrigger[] | undefined): string {
   if (armed.length === 0) return triggers.length === 0 ? "No trigger" : "All triggers off"
   return armed.map(triggerLine).join(" · ")
 }
+
+/** "Schedule", or "Schedule 2" when the automation has more than one of that
+    kind — numbered by creation, so the name does not move as triggers change. */
+export function triggerTitle(t: RoutineTrigger, all: RoutineTrigger[]): string {
+  const label = TRIGGER_KIND[t.kind].label
+  const same = all.filter((o) => o.kind === t.kind)
+  if (same.length < 2) return label
+  return `${label} ${[...same].sort((a, b) => a.createdAt - b.createdAt).findIndex((o) => o.id === t.id) + 1}`
+}

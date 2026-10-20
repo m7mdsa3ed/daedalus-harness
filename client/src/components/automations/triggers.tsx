@@ -11,23 +11,13 @@
    state is gated on `loaded`: a failed GET must not draw as "no triggers", and
    an error and an emptiness are two different screens. */
 import * as React from "react"
-import {
-  CalendarClockIcon,
-  CheckIcon,
-  CopyIcon,
-  GitBranchIcon,
-  HandIcon,
-  KeyRoundIcon,
-  PlusIcon,
-  Trash2Icon,
-  WebhookIcon,
-} from "lucide-react"
+import { CalendarClockIcon, CheckIcon, CopyIcon, KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { ErrorNote } from "@/components/error-note"
 import { Notice } from "@/components/notice"
 import { Empty } from "@/components/empty"
-import { Field, FormSection, INSET, lines, Toolbar } from "@/components/settings/primitives"
+import { Field, FormSection, INSET, lines, Section } from "@/components/settings/primitives"
 import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { Button } from "@/components/ui/button"
 import {
@@ -39,8 +29,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { captureError, type InlineError } from "@/lib/errors"
-import type { RoutineTrigger, RoutineTriggerKind, RoutineTriggerPatch } from "@/lib/settings"
+import { writeClipboard } from "@/lib/clipboard"
+import { captureError, inlineFromQuery, type InlineError } from "@/lib/errors"
+import type { RoutineRunsIn, RoutineTrigger, RoutineTriggerKind, RoutineTriggerPatch } from "@/lib/settings"
 import {
   useCreateAutomationTrigger,
   useDeleteAutomationTrigger,
@@ -52,21 +43,25 @@ import {
 import { useServer } from "@/lib/server-context"
 import { defaultPlan, planProblem, planToPatch, planToTrigger, readPlan, type SchedulePlan } from "@/lib/automation-schedule"
 import { SchedulePicker } from "./schedule-picker"
+import { agoLabel } from "./status"
+import { TRIGGER_KIND, triggerTerms, triggerTitle, untilLabel } from "./trigger-summary"
 
-const KIND_META: Record<RoutineTriggerKind, { label: string; icon: typeof CalendarClockIcon; blurb: string }> = {
-  manual: { label: "Manual", icon: HandIcon, blurb: "Only when you press Run now." },
-  schedule: { label: "On a schedule", icon: CalendarClockIcon, blurb: "A clock the server keeps, browser or no browser." },
-  api: { label: "On a webhook", icon: WebhookIcon, blurb: "A POST to a URL, with a token only you hold." },
-  git: { label: "On a commit", icon: GitBranchIcon, blurb: "The project's HEAD moving, debounced." },
+/** What each door is, for the add menu. Names and marks are `TRIGGER_KIND`'s. */
+const KIND_BLURB: Record<RoutineTriggerKind, string> = {
+  manual: "Only when you press Run now.",
+  schedule: "A clock the server keeps, browser or no browser.",
+  api: "A POST to a URL, with a token only you hold.",
+  git: "The project's HEAD moving, debounced.",
 }
 
-export function TriggersPanel({ routineId }: { routineId: string }) {
+export function TriggersPanel({ routineId, runsIn }: { routineId: string; runsIn: RoutineRunsIn }) {
   const confirm = useConfirm()
   /* The query cache owns the read; the mutations invalidate it, which is the
      re-read. The optimistic part stays here and stays local: these are
      switches and a cron field being typed into, and a full re-read per
      keystroke would fight the caret. */
-  const { data: cached, refetch } = useAutomationTriggers(routineId)
+  const { data: cached, refetch, error: readFailure } = useAutomationTriggers(routineId)
+  const readError = React.useMemo(() => inlineFromQuery(readFailure, "Couldn't read the triggers"), [readFailure])
   const addTrigger = useCreateAutomationTrigger(routineId)
   const patchTrigger = useUpdateAutomationTrigger(routineId)
   const removeTrigger = useDeleteAutomationTrigger(routineId)
@@ -123,7 +118,7 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
   const remove = async (trigger: RoutineTrigger) => {
     if (
       !(await confirm({
-        title: `Remove this ${KIND_META[trigger.kind].label.toLowerCase()} trigger?`,
+        title: `Remove this ${TRIGGER_KIND[trigger.kind].label.toLowerCase()} trigger?`,
         description:
           trigger.hasToken
             ? "Its token stops working immediately and cannot be recovered. The automation and its run history are untouched."
@@ -187,14 +182,16 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
         }
       />
       <DropdownMenuContent align="start" className="w-64">
-        {(Object.keys(KIND_META) as RoutineTriggerKind[]).map((kind) => {
-          const Icon = KIND_META[kind].icon
+        {/* A commit trigger watches a project's checkout; a thread automation's
+            thread is not one, so the server would refuse it. */}
+        {(Object.keys(KIND_BLURB) as RoutineTriggerKind[]).filter((kind) => !(kind === "git" && runsIn === "session")).map((kind) => {
+          const Icon = TRIGGER_KIND[kind].icon
           return (
             <DropdownMenuItem key={kind} onClick={() => void add(kind)}>
               <Icon className="size-4 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
-                <span className="truncate">{KIND_META[kind].label}</span>
-                <span className="truncate text-xs text-muted-foreground">{KIND_META[kind].blurb}</span>
+                <span className="truncate">{TRIGGER_KIND[kind].label}</span>
+                <span className="truncate text-xs text-muted-foreground">{KIND_BLURB[kind]}</span>
               </span>
             </DropdownMenuItem>
           )
@@ -205,33 +202,42 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
 
   return (
     <div>
-      <ErrorNote error={error} onRetry={() => void refetch()} />
-      {/* Null is "not read yet", which is not the same screen as "none" — see
-          the header comment. A failed read leaves it null and the note above
-          is what the user sees, rather than a confident empty state. */}
+      {error && (
+        <Section>
+          <ErrorNote error={error} onRetry={() => void refetch()} />
+        </Section>
+      )}
+      {/* Undefined is "not read yet", which is not the same screen as "none" —
+          and a failed read is a third one, with its own retry, rather than a
+          skeleton that never resolves. */}
       {triggers === null ? (
-        error ? null : (
-          <GroupRowsSkeleton rows={2} />
+        readError ? (
+          <Section>
+            <ErrorNote error={readError} onRetry={() => void refetch()} />
+          </Section>
+        ) : (
+          <GroupRowsSkeleton rows={2} className="mt-0" />
         )
       ) : triggers.length === 0 ? (
-        <Empty size="lg" icon={CalendarClockIcon} action={addMenu}>
-          No triggers — this automation only fires when you run it by hand.
-        </Empty>
+        <Section action={addMenu}>
+          <Empty size="lg" icon={CalendarClockIcon}>
+            No triggers — this automation only fires when you run it by hand.
+          </Empty>
+        </Section>
       ) : (
-        <>
-          <Toolbar>{addMenu}</Toolbar>
-          {triggers.map((trigger) => (
-            <TriggerCard
-              key={trigger.id}
-              trigger={trigger}
-              token={minted[trigger.id]}
-              onPatch={(next) => void patch(trigger.id, next)}
-              onRemove={() => void remove(trigger)}
-              onMint={() => void mint(trigger)}
-              onRevoke={() => void revoke(trigger)}
-            />
-          ))}
-        </>
+        triggers.map((trigger, i) => (
+          <TriggerCard
+            key={trigger.id}
+            trigger={trigger}
+            label={triggerTitle(trigger, triggers)}
+            extra={i === 0 ? addMenu : undefined}
+            token={minted[trigger.id]}
+            onPatch={(next) => void patch(trigger.id, next)}
+            onRemove={() => void remove(trigger)}
+            onMint={() => void mint(trigger)}
+            onRevoke={() => void revoke(trigger)}
+          />
+        ))
       )}
     </div>
   )
@@ -239,6 +245,8 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
 
 function TriggerCard({
   trigger,
+  label,
+  extra,
   token,
   onPatch,
   onRemove,
@@ -246,26 +254,38 @@ function TriggerCard({
   onRevoke,
 }: {
   trigger: RoutineTrigger
+  label: string
+  /** The panel's add menu, worn by the first card's head. */
+  extra?: React.ReactNode
   token?: string
   onPatch: (next: RoutineTriggerPatch) => void
   onRemove: () => void
   onMint: () => void
   onRevoke: () => void
 }) {
-  const meta = KIND_META[trigger.kind]
   return (
     <FormSection
-      label={meta.label}
+      label={label}
       hint={
         <>
-          {trigger.lastFiredAt
-            ? `Last fired ${new Date(trigger.lastFiredAt).toLocaleString()}`
-            : "Has never fired"}
-          {trigger.nextFireAt && ` · next ${new Date(trigger.nextFireAt).toLocaleString()}`}
+          {triggerTerms(trigger)}
+          {" · "}
+          {trigger.lastFiredAt ? (
+            <span title={new Date(trigger.lastFiredAt).toLocaleString()}>fired {agoLabel(trigger.lastFiredAt)}</span>
+          ) : (
+            "never fired"
+          )}
+          {trigger.enabled && trigger.nextFireAt !== null && (
+            <>
+              {" · "}
+              <span title={new Date(trigger.nextFireAt).toLocaleString()}>next {untilLabel(trigger.nextFireAt)}</span>
+            </>
+          )}
         </>
       }
       action={
         <>
+          {extra}
           <Switch
             checked={trigger.enabled}
             onCheckedChange={(checked) => onPatch({ enabled: checked })}
@@ -295,7 +315,7 @@ function TriggerCard({
         <ApiFields trigger={trigger} token={token} onMint={onMint} onRevoke={onRevoke} />
       )}
       {trigger.kind === "git" && <GitFields trigger={trigger} onPatch={onPatch} />}
-      {trigger.kind === "manual" && <p className="text-xs text-muted-foreground">{KIND_META.manual.blurb}</p>}
+      {trigger.kind === "manual" && <p className="text-xs text-muted-foreground">{KIND_BLURB.manual}</p>}
     </FormSection>
   )
 }
@@ -414,23 +434,36 @@ function GitFields({
   trigger: RoutineTrigger
   onPatch: (next: RoutineTriggerPatch) => void
 }) {
+  /* Local until blur, like the paths: a patch per keystroke re-arms the
+     watcher per keystroke and fights the caret on the server's answer. */
   const [paths, setPaths] = React.useState(trigger.paths.join("\n"))
+  const [branch, setBranch] = React.useState(trigger.branch ?? "")
+  const [debounce, setDebounce] = React.useState(String(trigger.debounceMs))
   return (
     <div className="space-y-3">
       <div className="grid gap-3 @lg:grid-cols-2">
         <Field label="Branch" hint="Blank fires on any branch's HEAD moving.">
           <Input
             placeholder="any branch"
-            value={trigger.branch ?? ""}
-            onChange={(e) => onPatch({ branch: e.target.value || null })}
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            onBlur={() => {
+              const next = branch.trim() || null
+              if (next !== trigger.branch) onPatch({ branch: next })
+            }}
           />
         </Field>
         <Field label="Debounce (ms)" hint="A rebase is hundreds of events and one intent.">
           <Input
             type="number"
             min={0}
-            value={trigger.debounceMs}
-            onChange={(e) => onPatch({ debounceMs: Math.max(0, Number(e.target.value) || 0) })}
+            value={debounce}
+            onChange={(e) => setDebounce(e.target.value)}
+            onBlur={() => {
+              const next = Math.max(0, Number(debounce) || 0)
+              setDebounce(String(next))
+              if (next !== trigger.debounceMs) onPatch({ debounceMs: next })
+            }}
           />
         </Field>
       </div>
@@ -474,4 +507,3 @@ function CopyLine({ value, mono }: { value: string; mono?: boolean }) {
   )
 }
 
-import { writeClipboard } from "@/lib/clipboard"

@@ -2,10 +2,12 @@
    resume, delete — as toast-reporting callbacks. The list rows, the detail
    header and the palette all press the same buttons. */
 import * as React from "react"
+import { useNavigate } from "react-router"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { reportError } from "@/lib/errors"
 import { useDeleteAutomation, useRunAutomation, useUpdateAutomation } from "@/lib/queries/automations"
+import { automationPath, newAutomationPath } from "@/lib/router"
 import type { Routine } from "@/lib/settings"
 import { toast } from "@/lib/toast"
 
@@ -79,3 +81,22 @@ export function useRemove() {
     asks a person for everything. */
 export const grantsOf = (automation: Routine) =>
   Object.values(automation.autonomy.permissions).filter((s) => s === "allow").length
+
+/** Now, refreshed every minute — enough for "in 3h" and "2m" to stay true. */
+export function useMinuteTick(): number {
+  const [now, setNow] = React.useState(Date.now)
+  React.useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+  return now
+}
+
+/** Open the new-automation form seeded from an existing one. */
+export function useDuplicate(): (r: Routine) => void {
+  const navigate = useNavigate()
+  return React.useCallback(
+    (r: Routine) => void navigate(newAutomationPath(), { state: { duplicateOf: r.id, returnTo: automationPath(r.id) } }),
+    [navigate]
+  )
+}
