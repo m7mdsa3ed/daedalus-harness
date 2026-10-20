@@ -1699,39 +1699,31 @@ html[data-window-controls-overlay="true"] {
 }
 
 /* ── A run's rail ──
-   One straight line down the column every step's mark shares, broken only
-   by the marks themselves — so the steps sit *on* the line, from the header
-   to the last one. Measured, not tuned:
-   - a step's mark is the 20px slot at its row's content edge, so in the
-     row's box the line's centre is 10px in (`--rail-x`, the 1px line centred
-     on it); the rail indents its rows `ps-7` (28px), which puts that column
-     exactly under the first disc of the header's stack (the 20px chevron
-     slot + the header's gap-2), so the line comes down out of that disc;
-   - a step's disc is 20px in an `h-6` slot under `py-0.5`: it spans 4px to
-     24px down its row (`--rail-mark-top` / `--rail-mark-bottom`), so the piece
-     above ends on it and the piece below starts under it;
-   - rows sit `space-y-0.5` apart (`--rail-gap`), which the piece above reaches
-     back over — the first row's reaches the top of the run's clip, which is
-     where the header (and its stretch under the chevron) ends.
-   Each piece is its row's own pseudo, so an opened row (a diff, a subagent)
-   stretches the piece under its mark and the run's clip folds the line away
-   with the rows. `z-index: -1`: it paints under the transcript's own content,
-   so an opened row's panes cover it rather than wearing a stripe — the marks
-   (positioned) and the page show it. Logical properties, so RTL mirrors. */
+   One trunk under the header's chevron and a rounded elbow from it into each
+   step's mark — the line leaves the header, branches into every step, and
+   stops on the last. Measured, not tuned:
+   - the header's chevron is the 20px slot at its row's content edge, so its
+     centre is 10px in; the steps are indented `ps-7` (28px), so in a step's
+     box the trunk is at 10 − 28 = −18px (`--rail-x`, the 1px line on it);
+   - a step's mark is the 20px disc in an `h-6` slot under `py-0.5`: centred
+     14px down (`--rail-mark-y`), its start edge at x = 0, where the elbow
+     ends — and the disc is opaque (step-row), so the line meets it rather
+     than showing through it;
+   - rows sit `space-y-0.5` apart (`--rail-gap`), which each piece reaches
+     back over, the first child's to the top of the run's clip — where the
+     header, which draws the stretch under its own chevron, ends.
+   A row with no mark (a thought's card, prose) takes no elbow: the trunk
+   passes beside it (`run-rail-plain`), and ends on its top edge if it is the
+   last. Each piece is its row's own pseudo, so an opened row stretches the
+   trunk with it and the run's clip folds the line away with the rows.
+   Logical properties, so RTL mirrors it. */
 .run-rail {
-  --rail-x: 9.5px;
-  --rail-mark-top: 4px;
-  --rail-mark-bottom: 24px;
+  --rail-x: -18.5px;
+  --rail-mark-y: 14px;
   --rail-gap: 2px;
 }
 .run-rail > * {
   --rail-up: var(--rail-gap);
-}
-/* A row with no mark in the column (a thought's card, prose): the row itself
-   is the stop — the line ends on its top edge and resumes from its bottom. */
-.run-rail-plain {
-  --rail-mark-top: 0px;
-  --rail-mark-bottom: 100%;
 }
 .run-rail-step,
 .run-rail-through,
@@ -1744,48 +1736,70 @@ html[data-window-controls-overlay="true"] {
 .run-rail-head::after {
   content: "";
   position: absolute;
-  z-index: -1;
   pointer-events: none;
-  width: 1px;
-  background: var(--border);
 }
-/* Into the mark: from the gap above down to the disc's top edge. */
+/* The elbow: down the trunk to the mark's centre line, then across into it. */
 .run-rail-step::before {
   inset-inline-start: var(--rail-x);
   top: calc(var(--rail-up) * -1);
-  height: calc(var(--rail-mark-top) + var(--rail-up));
+  width: calc(var(--rail-x) * -1);
+  height: calc(var(--rail-mark-y) + var(--rail-up));
+  border-inline-start: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-end-start-radius: 6px;
 }
-/* Out of the mark, on to the next row — every step but the last. */
+/* The trunk going on to the next row, from above the elbow's curve. */
 .run-rail-tail::after {
   inset-inline-start: var(--rail-x);
-  top: var(--rail-mark-bottom);
+  top: calc(var(--rail-mark-y) - 6px);
+  bottom: calc(var(--rail-gap) * -1);
+  width: 1px;
+  background: var(--border);
+}
+/* A row with no mark: the trunk alone, beside it — on to the next row, or
+   ending on its top edge when it is the last. */
+.run-rail-plain::before {
+  width: 1px;
+  height: var(--rail-up);
+  border: 0;
+  border-radius: 0;
+  background: var(--border);
+}
+.run-rail-plain.run-rail-tail::before {
+  height: auto;
   bottom: calc(var(--rail-gap) * -1);
 }
-/* A row on the rail that is not a step ("N earlier steps"): the line passes. */
+.run-rail-plain.run-rail-tail::after {
+  content: none;
+}
+/* A row on the rail that is not a step ("N earlier steps"): the trunk passes. */
 .run-rail-through::before {
   inset-inline-start: var(--rail-x);
   top: calc(var(--rail-up) * -1);
   bottom: calc(var(--rail-gap) * -1);
+  width: 1px;
+  background: var(--border);
 }
-/* The header's stretch: from the bottom edge of its stack's first disc (the
-   20px disc centred 14px down: 24px) to its own bottom edge. 41.5px = the
-   row's 4px bleed padding + the 20px chevron slot + the gap-2 + the disc's
-   10px centre − half the line — the same column as the indented steps' marks. */
+/* The header's stretch: from just under its chevron (the 14px centre + the
+   size-3.5 glyph's 7px + 1px of air) to its own bottom edge. 13.5px = the
+   row's 4px bleed padding + the slot's 10px centre − half the line. */
 .run-rail-head::after {
-  inset-inline-start: 41.5px;
-  top: 24px;
+  inset-inline-start: 13.5px;
+  top: 22px;
   bottom: 0;
+  width: 1px;
+  background: var(--border);
 }
 
 /* ── Drawing it ──
    One pen, start to end, at one speed: the header's stretch, then each row's
-   piece into its mark and the piece out of it, then the next row. Every
-   piece is `linear` and starts as the one above it finishes (`--rail-i` is
-   the row's slot in that sequence — `useRailSlots`: rows already drawn hold
-   slot 0, rows new in this render follow), so it reads as one line being
-   drawn top to bottom. The rows' entrance (`harness-item-in`) is on an inner
-   box, never on the box these pseudos hang off, so the line does not slide or
-   fade with its row. Each rule is one class (0,1,1) and sits before the
+   elbow — down the trunk, then across into the mark (clip insets, so it is
+   drawn, not faded) — then its tail, then the next row. Every piece is
+   `linear` and starts as the one above it finishes (`--rail-i` is the row's
+   slot — `useRailSlots`: rows already drawn hold slot 0, new rows follow), so
+   it reads as one line drawn top to bottom. The rows' entrance is on an inner
+   box, never on the box these pseudos hang off, so the line does not slide
+   or fade with its row. Each rule is one class (0,1,1) and sits before the
    reduced-motion and calm blocks, whose `.harness-rail-draw` rules therefore
    still switch it off. */
 .run-rail-head::after {
@@ -1793,16 +1807,32 @@ html[data-window-controls-overlay="true"] {
   animation-delay: 0ms;
 }
 .run-rail-through::before {
-  animation: harness-rail-draw 80ms linear backwards;
+  animation: harness-rail-draw 90ms linear backwards;
   animation-delay: 40ms;
 }
 .run-rail-step::before {
-  animation: harness-rail-draw 30ms linear backwards;
-  animation-delay: calc(40ms + min(var(--rail-i, 0), 12) * 90ms);
+  animation: harness-rail-elbow 60ms linear backwards;
+  animation-delay: calc(40ms + min(var(--rail-i, 0), 12) * 100ms);
+}
+.run-rail-plain::before {
+  animation-name: harness-rail-draw;
 }
 .run-rail-tail::after {
-  animation: harness-rail-draw 60ms linear backwards;
-  animation-delay: calc(70ms + min(var(--rail-i, 0), 12) * 90ms);
+  animation: harness-rail-draw 40ms linear backwards;
+  animation-delay: calc(100ms + min(var(--rail-i, 0), 12) * 100ms);
+}
+[dir="rtl"] .run-rail-step:not(.run-rail-plain)::before {
+  animation-name: harness-rail-elbow-rtl;
+}
+@keyframes harness-rail-elbow {
+  0% { clip-path: inset(0 calc(100% - 1px) 100% 0); }
+  45% { clip-path: inset(0 calc(100% - 1px) 0 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+@keyframes harness-rail-elbow-rtl {
+  0% { clip-path: inset(0 0 100% calc(100% - 1px)); }
+  45% { clip-path: inset(0 0 0 calc(100% - 1px)); }
+  100% { clip-path: inset(0 0 0 0); }
 }
 
 /* ── A step assembling itself ──
