@@ -80,9 +80,9 @@ const PRIORITY_ICON: Record<TaskPriority, React.ComponentType<{ className?: stri
 const PRIORITY_COLOR: Record<TaskPriority, string> = {
   urgent: "text-destructive",
   high: "text-warning",
-  medium: "text-muted-foreground",
+  medium: "text-foreground/70",
   low: "text-primary",
-  lowest: "text-muted-foreground",
+  lowest: "text-muted-foreground/60",
 }
 
 export function PriorityIcon({ priority, className }: { priority: TaskPriority; className?: string }) {
@@ -207,7 +207,7 @@ export function EstimateBadge({ estimate }: { estimate: number | null }) {
 
 const MENU = "w-56 gap-0 p-1"
 const ROW =
-  "flex w-full cursor-default items-center gap-2 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
+  "flex w-full cursor-default items-center gap-2 rounded-lg px-3 py-2 pointer-coarse:min-h-11 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
 
 function PickerShell({
   trigger,
@@ -257,7 +257,8 @@ export function StatusPicker({
   onChange,
   trigger,
 }: {
-  value: string
+  /** Undefined = nothing checked (a bulk selection that disagrees). */
+  value: string | undefined
   statuses: BoardStatus[]
   onChange: (statusId: string) => void
   trigger: React.ReactElement
@@ -287,7 +288,7 @@ export function PriorityPicker({
   onChange,
   trigger,
 }: {
-  value: TaskPriority
+  value: TaskPriority | undefined
   onChange: (priority: TaskPriority) => void
   trigger: React.ReactElement
 }) {
@@ -316,7 +317,7 @@ export function TypePicker({
   onChange,
   trigger,
 }: {
-  value: TaskType
+  value: TaskType | undefined
   onChange: (type: TaskType) => void
   trigger: React.ReactElement
 }) {
@@ -348,7 +349,7 @@ export function AssigneePicker({
   onChange,
   trigger,
 }: {
-  value: string | null
+  value: string | null | undefined
   suggestions: string[]
   onChange: (assignee: string | null) => void
   trigger: React.ReactElement
@@ -373,7 +374,7 @@ export function AssigneePicker({
         }}
         className="p-1"
       >
-        <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a name…" className="h-8" />
+        <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a name…" className="h-8 pointer-coarse:h-11" />
       </form>
       <div className="max-h-56 overflow-y-auto">
         {text.trim() && !exact && (
@@ -432,7 +433,7 @@ export function LabelsPicker({
         }}
         className="p-1"
       >
-        <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Find or add a label…" className="h-8" />
+        <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Find or add a label…" className="h-8 pointer-coarse:h-11" />
       </form>
       <div className="max-h-56 overflow-y-auto">
         {canAdd && (
@@ -467,7 +468,7 @@ export function SprintPicker({
   onChange,
   trigger,
 }: {
-  value: string | null
+  value: string | null | undefined
   sprints: Sprint[]
   onChange: (sprintId: string | null) => void
   trigger: React.ReactElement
@@ -529,7 +530,7 @@ export function ParentPicker({
   return (
     <PickerShell trigger={trigger} open={open} onOpenChange={setOpen} className="w-72">
       <div className="p-1">
-        <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Search by key or title…" className="h-8" />
+        <Input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Search by key or title…" className="h-8 pointer-coarse:h-11" />
       </div>
       <div className="max-h-64 overflow-y-auto">
         <OptionRow selected={value === null} onClick={() => pick(null)}>
@@ -634,8 +635,8 @@ export function NumberPicker({
         }}
         className="flex items-center gap-1 p-1"
       >
-        <Input autoFocus inputMode="numeric" value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} className="h-8" />
-        <Button type="submit" variant="ghost" size="icon-sm" aria-label="Set">
+        <Input autoFocus inputMode="numeric" value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} className="h-8 pointer-coarse:h-11" />
+        <Button type="submit" variant="ghost" size="icon-sm" aria-label="Set" className={ICON_BTN}>
           <Check />
         </Button>
       </form>
@@ -644,13 +645,13 @@ export function NumberPicker({
           <Button
             key={n}
             type="button"
-            size="xs"
+            size="sm"
             variant={value === n ? "secondary" : "outline"}
             onClick={() => {
               onChange(n)
               setOpen(false)
             }}
-            className="tabular-nums"
+            className="tabular-nums pointer-coarse:h-11"
           >
             {n}
           </Button>
@@ -663,4 +664,8 @@ export function NumberPicker({
 /** The look of a picker's trigger when it sits in a property list or a table
     cell: a quiet chip that reveals it is editable on hover. */
 export const CHIP =
-  "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-sm text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+  "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-sm text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 pointer-coarse:h-10 pointer-coarse:px-2.5"
+
+/** The coarse-pointer size of an icon button, beside `size="icon-sm"`: one
+    target size for every icon control the feature draws. */
+export const ICON_BTN = "pointer-coarse:size-11"

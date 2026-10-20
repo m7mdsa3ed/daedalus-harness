@@ -1,18 +1,20 @@
 import * as React from "react"
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { ChevronDown, CornerDownRight, ListTree, MessageSquare } from "lucide-react"
+import { ChevronDown, CornerDownRight, ListChecks, ListTree } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Count } from "@/components/settings/primitives"
 import type { BoardStatus } from "@/lib/boards"
-import { PRIORITY_LABEL, type Task, type TaskPriority } from "@/lib/tasks-board"
-import { checklistProgress } from "@/lib/tasks-view"
+import { taskKey, type Task } from "@/lib/tasks-board"
+import { checklistProgress, dueLabel } from "@/lib/tasks-view"
 import {
   AssigneeAvatar,
   DueChip,
   EstimateBadge,
+  ICON_BTN,
   KeyBadge,
   LabelChip,
   PriorityIcon,
@@ -21,15 +23,7 @@ import {
   TypeIcon,
 } from "./fields"
 
-const MAX_LABELS = 3
-
-const PRIORITY_DOT: Record<TaskPriority, string> = {
-  urgent: "bg-destructive",
-  high: "bg-warning",
-  medium: "bg-muted-foreground/40",
-  low: "bg-primary",
-  lowest: "bg-muted-foreground/40",
-}
+const MAX_LABELS = 2
 
 /** Turn a markdown body into a one-line plain-text preview for a clipped card:
     links to their text, emphasis to plain, code fences to nothing. Good enough
@@ -55,8 +49,48 @@ export interface CardContext {
   onToggleSelect?: (id: string, additive: boolean) => void
 }
 
-const CARD =
-  "group w-full cursor-pointer text-left outline-none transition-shadow hover:ring-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+/** Hidden until the card or row is pointed at, held visible while checked or
+    focused, and always there on a touch screen — the checkbox is the touch path
+    to selection, since a phone has no modifier-click. */
+const SELECT_REVEAL =
+  "opacity-0 transition-opacity focus-visible:opacity-100 data-checked:opacity-100 pointer-coarse:opacity-100"
+
+/** Stops the gestures that would start a drag (dnd-kit's mouse and touch
+    sensors listen on the card) or open the task, so a tick only ticks. */
+const swallow = (e: React.SyntheticEvent) => e.stopPropagation()
+
+function SelectBox({
+  task,
+  ctx,
+  reveal,
+}: {
+  task: Task
+  ctx: CardContext
+  /** The hover reveal, spelled against the caller's named group. */
+  reveal: string
+}) {
+  if (!ctx.onToggleSelect) return null
+  return (
+    <span
+      className="grid size-6 shrink-0 place-items-center pointer-coarse:size-8"
+      onPointerDown={swallow}
+      onMouseDown={swallow}
+      onTouchStart={swallow}
+      onClick={swallow}
+      onKeyDown={swallow}
+    >
+      <Checkbox
+        checked={ctx.selected.has(task.id)}
+        // Shift extends a range over the visible order, as a modifier-click does.
+        onCheckedChange={(_, details) =>
+          ctx.onToggleSelect?.(task.id, "shiftKey" in details.event && (details.event as MouseEvent).shiftKey)
+        }
+        aria-label={`Select ${task.title}`}
+        className={cn(SELECT_REVEAL, reveal)}
+      />
+    </span>
+  )
+}
 
 /** The card's face, with no dnd-kit inside: the sortable card and the drag
     overlay both draw it (dnd-kit: overlay children must not be draggables). */
@@ -64,24 +98,34 @@ function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
   const progress = checklistProgress(task)
   const parent = ctx.parentOf(task)
   const children = ctx.childCount(task)
+  const done = task.completedAt != null
+  const hasFooter =
+    task.dueAt != null || progress.total > 0 || children > 0 || task.estimate != null || task.assignee != null
   return (
-    <CardContent className="space-y-2">
+    <>
+      <div className="flex min-w-0 items-center gap-2">
+        <SelectBox task={task} ctx={ctx} reveal="group-hover/card:opacity-100" />
+        <KeyBadge task={task} boardKey={ctx.boardKey} className="truncate" />
+        <TypeIcon type={task.type} />
+        <PriorityIcon priority={task.priority} className="ms-auto" />
+      </div>
       {parent && (
-        <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
+        <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
           <CornerDownRight className="size-3 shrink-0" />
-          <TypeIcon type={parent.type} className="size-3" />
+          <KeyBadge task={parent} boardKey={ctx.boardKey} className="shrink-0" />
           <span className="truncate">{parent.title}</span>
         </p>
       )}
-      <p className={cn("flex items-start gap-2 font-medium leading-snug", task.completedAt != null && "text-muted-foreground line-through decoration-muted-foreground/50")}>
-        <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", PRIORITY_DOT[task.priority])} title={`Priority: ${PRIORITY_LABEL[task.priority]}`} />
-        <span className="line-clamp-3">{task.title}</span>
+      <p
+        className={cn(
+          "line-clamp-3 text-sm font-medium leading-snug",
+          done && "text-muted-foreground line-through decoration-muted-foreground/50",
+        )}
+      >
+        {task.title}
       </p>
-      {task.description && (
-        <p className="line-clamp-2 pl-4 text-xs leading-snug text-muted-foreground">{stripMarkdown(task.description)}</p>
-      )}
       {task.labels.length > 0 && (
-        <div className="flex flex-wrap gap-1 pl-4">
+        <div className="flex flex-wrap items-center gap-1">
           {task.labels.slice(0, MAX_LABELS).map((label) => (
             <LabelChip key={label} label={label} />
           ))}
@@ -90,25 +134,34 @@ function TaskCardBody({ task, ctx }: { task: Task; ctx: CardContext }) {
           )}
         </div>
       )}
-      <div className="flex items-center gap-2 pl-4 text-xs text-muted-foreground">
-        <TypeIcon type={task.type} />
-        <KeyBadge task={task} boardKey={ctx.boardKey} />
-        {children > 0 && (
-          <span className="inline-flex items-center gap-0.5 text-xs" title={`${children} subtasks`}>
-            <ListTree className="size-3" />
-            {children}
-          </span>
-        )}
-        {progress.total > 0 && <ProgressBar done={progress.done} total={progress.total} />}
-        <span className="ml-auto flex items-center gap-1.5">
+      {hasFooter && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <DueChip task={task} />
-          <EstimateBadge estimate={task.estimate} />
-          <AssigneeAvatar name={task.assignee} size="xs" />
-        </span>
-      </div>
-    </CardContent>
+          {progress.total > 0 && (
+            <span className="inline-flex items-center gap-1 tabular-nums" title={`${progress.done}/${progress.total} checklist items done`}>
+              <ListChecks className="size-3" />
+              {progress.done}/{progress.total}
+            </span>
+          )}
+          {children > 0 && (
+            <span className="inline-flex items-center gap-1 tabular-nums" title={`${children} subtasks`}>
+              <ListTree className="size-3" />
+              {children}
+            </span>
+          )}
+          {task.estimate != null && <span className="tabular-nums">{task.estimate} pts</span>}
+          {task.assignee != null && <AssigneeAvatar name={task.assignee} size="sm" className="ms-auto" />}
+        </div>
+      )}
+    </>
   )
 }
+
+const CARD =
+  "group/card grid w-full cursor-pointer gap-2 rounded-lg bg-card p-3 text-left ring-1 ring-foreground/10 outline-none transition-shadow focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
+/** A touch-held card is a drag, never a text selection or the OS's callout. */
+const COARSE = "pointer-coarse:select-none [-webkit-touch-callout:none] touch-manipulation"
 
 /** The kanban card: sortable, and a button that opens the task. While it is
     dragged it stays in its column as a faded placeholder — the card under the
@@ -126,12 +179,12 @@ export function TaskCard({
   const selected = ctx.selected.has(task.id)
 
   return (
-    <Card
-      size="sm"
+    <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       {...attributes}
       {...listeners}
+      data-selected={selected || undefined}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey) {
           ctx.onToggleSelect?.(task.id, true)
@@ -149,97 +202,116 @@ export function TaskCard({
       }}
       className={cn(
         CARD,
-        isDragging && "opacity-40",
-        selected && "ring-2 ring-primary",
+        COARSE,
+        selected ? "ring-2 ring-primary" : "hover:ring-foreground/20",
+        task.completedAt != null && "opacity-70",
         task.archived && "opacity-60",
+        isDragging && "opacity-40",
       )}
     >
       <TaskCardBody task={task} ctx={ctx} />
-    </Card>
+    </div>
   )
 }
 
 /** What follows the pointer during a drag: the same face, lifted. */
 export function TaskCardOverlay({ task, ctx }: { task: Task; ctx: CardContext }) {
   return (
-    <Card size="sm" className={cn(CARD, "cursor-grabbing ring-2 ring-primary/40")}>
+    <div className={cn(CARD, COARSE, "cursor-grabbing shadow-lg rotate-1", ctx.selected.has(task.id) && "ring-2 ring-primary")}>
       <TaskCardBody task={task} ctx={ctx} />
-    </Card>
+    </div>
   )
 }
 
-/** The list-view row: dense, selectable, one line plus a meta line. */
+/** The list-view row: the whole row opens the task; what it says grows with
+    the panel's width, and a narrow panel reads the essentials on a second line. */
 export function TaskRow({
   task,
   status,
   ctx,
   onClick,
   depth = 0,
-  commentCount,
+  trailing,
 }: {
   task: Task
   status?: BoardStatus | null
   ctx: CardContext
   onClick: () => void
   depth?: number
-  commentCount?: number
+  /** A control at the row's end (a picker); its clicks never open the row. */
+  trailing?: React.ReactNode
 }) {
   const selected = ctx.selected.has(task.id)
   const progress = checklistProgress(task)
+  const done = task.completedAt != null
+  const narrowMeta = [taskKey(task, ctx.boardKey), status?.name, dueLabel(task.dueAt)].filter(Boolean).join(" · ")
   return (
     <div
-      role="row"
+      onClick={onClick}
       className={cn(
-        "group flex min-h-10 w-full items-center gap-2 border-b px-2 text-left text-sm transition-colors hover:bg-muted last:border-b-0",
+        "group/row grid min-h-11 cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-3 text-sm transition-colors hover:bg-muted/50 pointer-coarse:min-h-12",
         selected && "bg-muted",
         task.archived && "opacity-60",
       )}
-      style={{ paddingLeft: `${0.5 + depth * 1.25}rem` }}
+      style={depth > 0 ? { paddingInlineStart: `${0.75 + depth * 1.25}rem` } : undefined}
     >
-      {ctx.onToggleSelect && (
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={(e) => ctx.onToggleSelect?.(task.id, (e.nativeEvent as MouseEvent).shiftKey)}
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`Select ${task.title}`}
-          className={cn("size-3.5 shrink-0 accent-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100", selected && "opacity-100")}
-        />
-      )}
-      <TypeIcon type={task.type} />
-      <KeyBadge task={task} boardKey={ctx.boardKey} className="w-16 shrink-0 truncate" />
-      <button
-        type="button"
-        onClick={onClick}
-        className={cn("min-w-0 flex-1 truncate text-left font-medium hover:underline focus-visible:outline-none focus-visible:underline", task.completedAt != null && "text-muted-foreground line-through")}
-      >
-        {task.title}
-      </button>
-      {task.labels.slice(0, 2).map((label) => (
-        <LabelChip key={label} label={label} />
-      ))}
-      {progress.total > 0 && <ProgressBar done={progress.done} total={progress.total} className="hidden sm:inline-flex" />}
-      {commentCount ? (
-        <span className="hidden items-center gap-0.5 text-xs text-muted-foreground sm:inline-flex">
-          <MessageSquare className="size-3" />
-          {commentCount}
+      <div className="flex items-center gap-2">
+        <SelectBox task={task} ctx={ctx} reveal="group-hover/row:opacity-100" />
+        <TypeIcon type={task.type} />
+        <KeyBadge task={task} boardKey={ctx.boardKey} className="hidden w-16 truncate @panel-sm:block" />
+      </div>
+      <div className="min-w-0 py-1.5">
+        {/* No handler of its own: a keyboard Enter clicks it, and the click
+            bubbles to the row, which is what opens the task. */}
+        <button
+          type="button"
+          className={cn(
+            "block max-w-full truncate text-left font-medium focus-visible:underline focus-visible:outline-none",
+            done && "text-muted-foreground line-through",
+          )}
+        >
+          {task.title}
+        </button>
+        <p className="truncate text-xs text-muted-foreground @panel-sm:hidden">{narrowMeta}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        {task.labels.length > 0 && (
+          <span className="hidden items-center gap-1 @panel-lg:flex">
+            {task.labels.slice(0, MAX_LABELS).map((label) => (
+              <LabelChip key={label} label={label} />
+            ))}
+          </span>
+        )}
+        {progress.total > 0 && <ProgressBar done={progress.done} total={progress.total} className="hidden @panel-md:inline-flex" />}
+        {status !== undefined && <StatusPill status={status ?? undefined} className="hidden @panel-md:inline-flex" />}
+        <PriorityIcon priority={task.priority} />
+        <span className="hidden w-20 justify-end @panel-sm:flex">
+          <DueChip task={task} />
         </span>
-      ) : null}
-      {status !== undefined && <StatusPill status={status ?? undefined} className="hidden sm:inline-flex" />}
-      <PriorityIcon priority={task.priority} />
-      <DueChip task={task} className="hidden w-24 justify-end sm:inline-flex" />
-      <EstimateBadge estimate={task.estimate} />
-      <AssigneeAvatar name={task.assignee} size="xs" />
+        {task.estimate != null && (
+          <span className="hidden @panel-lg:inline-flex">
+            <EstimateBadge estimate={task.estimate} />
+          </span>
+        )}
+        <AssigneeAvatar name={task.assignee} size="sm" />
+        {trailing != null && (
+          <span className="flex items-center" onClick={swallow} onKeyDown={swallow}>
+            {trailing}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
 
-/** Wraps a list of rows so the group heading can be collapsed. */
+/** A heading over one card of rows, collapsible; the heading sticks while its
+    rows scroll under it. */
 export function GroupSection({
   title,
   count,
   color,
   points,
+  meta,
   action,
   children,
   defaultOpen = true,
@@ -248,29 +320,39 @@ export function GroupSection({
   count: number
   color?: string | null
   points?: number
+  /** Drawn after the title: a sprint's dates, a progress line. */
+  meta?: React.ReactNode
   action?: React.ReactNode
   children: React.ReactNode
   defaultOpen?: boolean
 }) {
   const [open, setOpen] = React.useState(defaultOpen)
   return (
-    <Card className="gap-0 py-0">
-      <header className="flex items-center gap-2 border-b bg-muted/50 px-2 py-1.5">
-        <button
+    <section className="grid gap-2">
+      <header className="sticky top-0 z-10 flex min-h-9 flex-wrap items-center gap-2 bg-background/95 px-1 backdrop-blur">
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-muted-foreground"
+          aria-label={open ? "Collapse group" : "Expand group"}
+          className={cn(ICON_BTN, "text-muted-foreground")}
         >
-          <ChevronDown className={cn("size-3.5 shrink-0 transition-transform", !open && "-rotate-90")} />
-          {color && <span className={cn("size-2 shrink-0 rounded-full", color)} />}
-          <span className="truncate">{title}</span>
-          <Badge variant="secondary" className="tabular-nums">{count}</Badge>
-          {points != null && points > 0 && <span className="text-xs tabular-nums">{points} pts</span>}
-        </button>
-        {action}
+          <ChevronDown className={cn("transition-transform", !open && "-rotate-90")} />
+        </Button>
+        {color && <span className={cn("size-2 shrink-0 rounded-full", color)} />}
+        <span className="min-w-0 truncate text-sm font-medium">{title}</span>
+        <Count>{count}</Count>
+        {points != null && points > 0 && (
+          <span className="hidden text-xs tabular-nums text-muted-foreground @panel-sm:inline">{points} pts</span>
+        )}
+        {meta}
+        {action && <span className="ms-auto flex items-center gap-1">{action}</span>}
       </header>
-      {open && <div>{children}</div>}
-    </Card>
+      {open && (
+        <div className="divide-y overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10">{children}</div>
+      )}
+    </section>
   )
 }

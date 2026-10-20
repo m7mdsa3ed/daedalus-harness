@@ -18,15 +18,21 @@ import {
   FileCode,
   Link2,
   Minus,
+  MoreHorizontal,
   Sparkles,
+  Unlink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { enhanceDraft, resolveEnhanceModelId, resolveEnhanceProfile } from "@/lib/enhance"
 import { reportError } from "@/lib/errors"
 import { useProfiles } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
+import { ICON_BTN } from "./fields"
 
 interface TaskEditorProps {
   value: string
@@ -41,13 +47,16 @@ function ToolbarButton({
   active,
   onClick,
   title,
+  className,
   children,
+  ...props
 }: {
   active?: boolean
-  onClick: () => void
+  onClick?: () => void
   title: string
-  children: React.ReactNode
-}) {
+  className?: string
+  children?: React.ReactNode
+} & Omit<React.ComponentProps<typeof Button>, "onClick" | "title" | "children">) {
   return (
     <Button
       type="button"
@@ -57,46 +66,68 @@ function ToolbarButton({
       aria-label={title}
       aria-pressed={active}
       onClick={onClick}
-      className={cn("text-muted-foreground", active && "bg-muted text-foreground")}
+      {...props}
+      className={cn("shrink-0 text-muted-foreground", ICON_BTN, active && "bg-muted text-foreground", className)}
     >
       {children}
     </Button>
   )
 }
 
-const Sep = () => <Separator orientation="vertical" className="mx-1 h-5" />
+const Sep = ({ className }: { className?: string }) => <Separator orientation="vertical" className={cn("mx-1 h-5 shrink-0", className)} />
 
-function HeadingButton({ editor, level }: { editor: Editor; level: 1 | 2 | 3 }) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      title={`Heading ${level}`}
-      aria-label={`Heading ${level}`}
-      aria-pressed={editor.isActive("heading", { level })}
-      onClick={() => editor.chain().focus().toggleHeading({ level }).run()}
-      className={cn("text-xs text-muted-foreground", editor.isActive("heading", { level }) && "bg-muted text-foreground")}
-    >
-      H{level}
-    </Button>
-  )
+/** One toolbar entry. `core` ones stay in the row on a narrow panel; the rest
+    move behind the ⋯ below `@panel-sm`. */
+interface Tool {
+  title: string
+  icon: React.ReactNode
+  core?: boolean
+  active?: boolean
+  run: () => void
 }
 
-function setLink(editor: Editor) {
-  const previous = editor.getAttributes("link").href as string | undefined
-  const url = window.prompt("Link URL", previous ?? "https://")
-  if (url === null) return
-  if (url === "") {
-    editor.chain().focus().extendMarkRange("link").unsetLink().run()
-    return
+/** The link's URL, asked for in place: an empty answer removes the link. */
+function LinkButton({ editor }: { editor: Editor }) {
+  const [open, setOpen] = React.useState(false)
+  const [url, setUrl] = React.useState("")
+  const apply = (href: string) => {
+    const chain = editor.chain().focus().extendMarkRange("link")
+    if (href.trim()) chain.setLink({ href: href.trim() }).run()
+    else chain.unsetLink().run()
+    setOpen(false)
   }
-  editor
-    .chain()
-    .focus()
-    .extendMarkRange("link")
-    .setLink({ href: url })
-    .run()
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setUrl((editor.getAttributes("link").href as string | undefined) ?? "https://")
+        setOpen(next)
+      }}
+    >
+      <PopoverTrigger render={<ToolbarButton title="Link" active={editor.isActive("link")} />}>
+        <Link2 />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 gap-2 p-2">
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            apply(url)
+          }}
+        >
+          <Input autoFocus type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" aria-label="Link URL" className="h-8 pointer-coarse:h-11" />
+          <Button type="submit" size="sm" className="pointer-coarse:h-11">
+            Apply
+          </Button>
+        </form>
+        {editor.isActive("link") && (
+          <Button type="button" variant="ghost" size="sm" className="justify-start text-muted-foreground pointer-coarse:h-11" onClick={() => apply("")}>
+            <Unlink data-icon="inline-start" /> Remove link
+          </Button>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 const getMarkdown = (editor: Editor) =>
@@ -170,8 +201,33 @@ export function TaskEditor({ value, onChange, placeholder, className, title }: T
       setDrafting(false)
     }
   }
-  const run = (fn: () => boolean) => () => void fn()
   const chain = () => editor.chain().focus()
+  const heading = (level: 1 | 2 | 3): Tool => ({
+    title: `Heading ${level}`,
+    icon: <span className="text-xs font-medium">H{level}</span>,
+    active: editor.isActive("heading", { level }),
+    run: () => void chain().toggleHeading({ level }).run(),
+  })
+  const groups: Tool[][] = [
+    [heading(1), heading(2), heading(3)],
+    [
+      { title: "Bold", icon: <Bold />, core: true, active: editor.isActive("bold"), run: () => void chain().toggleBold().run() },
+      { title: "Italic", icon: <Italic />, core: true, active: editor.isActive("italic"), run: () => void chain().toggleItalic().run() },
+      { title: "Strikethrough", icon: <Strikethrough />, active: editor.isActive("strike"), run: () => void chain().toggleStrike().run() },
+      { title: "Inline code", icon: <Code />, core: true, active: editor.isActive("code"), run: () => void chain().toggleCode().run() },
+      { title: "Link", icon: <Link2 />, core: true, run: () => {} },
+    ],
+    [
+      { title: "Bulleted list", icon: <List />, core: true, active: editor.isActive("bulletList"), run: () => void chain().toggleBulletList().run() },
+      { title: "Numbered list", icon: <ListOrdered />, active: editor.isActive("orderedList"), run: () => void chain().toggleOrderedList().run() },
+      { title: "Task list", icon: <ListChecks />, core: true, active: editor.isActive("taskList"), run: () => void chain().toggleTaskList().run() },
+    ],
+    [
+      { title: "Quote", icon: <TextQuote />, active: editor.isActive("blockquote"), run: () => void chain().toggleBlockquote().run() },
+      { title: "Code block", icon: <SquareCode />, active: editor.isActive("codeBlock"), run: () => void chain().toggleCodeBlock().run() },
+      { title: "Divider", icon: <Minus />, run: () => void chain().setHorizontalRule().run() },
+    ],
+  ]
 
   return (
     <div
@@ -180,51 +236,52 @@ export function TaskEditor({ value, onChange, placeholder, className, title }: T
         className,
       )}
     >
-      <div className="flex flex-wrap items-center gap-0.5 border-b bg-muted/50 p-1">
+      {/* One row that never wraps: below @panel-sm the core marks stay and the
+          rest are behind the ⋯, so the box keeps its height on a phone. */}
+      <div className="flex items-center gap-0.5 overflow-x-auto border-b bg-muted/50 p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {!source && (
           <>
-            <HeadingButton editor={editor} level={1} />
-            <HeadingButton editor={editor} level={2} />
-            <HeadingButton editor={editor} level={3} />
-            <Sep />
-            <ToolbarButton title="Bold" active={editor.isActive("bold")} onClick={run(() => chain().toggleBold().run())}>
-              <Bold />
-            </ToolbarButton>
-            <ToolbarButton title="Italic" active={editor.isActive("italic")} onClick={run(() => chain().toggleItalic().run())}>
-              <Italic />
-            </ToolbarButton>
-            <ToolbarButton title="Strikethrough" active={editor.isActive("strike")} onClick={run(() => chain().toggleStrike().run())}>
-              <Strikethrough />
-            </ToolbarButton>
-            <ToolbarButton title="Inline code" active={editor.isActive("code")} onClick={run(() => chain().toggleCode().run())}>
-              <Code />
-            </ToolbarButton>
-            <ToolbarButton title="Link" active={editor.isActive("link")} onClick={() => setLink(editor)}>
-              <Link2 className="size-4" />
-            </ToolbarButton>
-            <Sep />
-            <ToolbarButton title="Bulleted list" active={editor.isActive("bulletList")} onClick={run(() => chain().toggleBulletList().run())}>
-              <List />
-            </ToolbarButton>
-            <ToolbarButton title="Numbered list" active={editor.isActive("orderedList")} onClick={run(() => chain().toggleOrderedList().run())}>
-              <ListOrdered />
-            </ToolbarButton>
-            <ToolbarButton title="Task list" active={editor.isActive("taskList")} onClick={run(() => chain().toggleTaskList().run())}>
-              <ListChecks />
-            </ToolbarButton>
-            <Sep />
-            <ToolbarButton title="Quote" active={editor.isActive("blockquote")} onClick={run(() => chain().toggleBlockquote().run())}>
-              <TextQuote />
-            </ToolbarButton>
-            <ToolbarButton title="Code block" active={editor.isActive("codeBlock")} onClick={run(() => chain().toggleCodeBlock().run())}>
-              <SquareCode />
-            </ToolbarButton>
-            <ToolbarButton title="Divider" onClick={run(() => chain().setHorizontalRule().run())}>
-              <Minus />
-            </ToolbarButton>
+            {groups.map((group, g) => (
+              <React.Fragment key={g}>
+                {g > 0 && (
+                  <Sep
+                    className={
+                      group.every((t) => !t.core) || groups.slice(0, g).flat().every((t) => !t.core) ? "hidden @panel-sm:block" : undefined
+                    }
+                  />
+                )}
+                {group.map((tool) =>
+                  tool.title === "Link" ? (
+                    <LinkButton key="link" editor={editor} />
+                  ) : (
+                    <ToolbarButton
+                      key={tool.title}
+                      title={tool.title}
+                      active={tool.active}
+                      onClick={tool.run}
+                      className={tool.core ? undefined : "hidden @panel-sm:inline-flex"}
+                    >
+                      {tool.icon}
+                    </ToolbarButton>
+                  ),
+                )}
+              </React.Fragment>
+            ))}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<ToolbarButton title="More formatting" className="@panel-sm:hidden" />}>
+                <MoreHorizontal />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                {groups.flat().filter((t) => !t.core).map((tool) => (
+                  <DropdownMenuItem key={tool.title} onClick={tool.run} className={cn(tool.active && "bg-muted")}>
+                    {tool.icon} {tool.title}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </>
         )}
-        <span className="ml-auto flex items-center gap-0.5">
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
           {title !== undefined && profile && (
             <Button
               type="button"
@@ -233,7 +290,7 @@ export function TaskEditor({ value, onChange, placeholder, className, title }: T
               onClick={() => void draftWithAi()}
               loading={drafting}
               title={value.trim() ? "Restructure with AI" : "Draft with AI"}
-              className="text-muted-foreground"
+              className="text-muted-foreground pointer-coarse:h-11"
             >
               <Sparkles data-icon="inline-start" />
               AI

@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, CalendarIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Empty } from "@/components/empty"
+import { useIsNarrow } from "@/hooks/use-device"
 import type { Task } from "@/lib/tasks-board"
 import { PRIORITY_LABEL, TYPE_LABEL, taskKey } from "@/lib/tasks-board"
 import {
@@ -32,10 +32,14 @@ import {
   TypeIcon,
   TypePicker,
 } from "../fields"
+import { TaskRow } from "../task-card"
+import { INSET_X } from "../modes"
 import type { ViewProps } from "../types"
 
-/** Which sort a column header toggles, when it has a natural one. */
-const SORT_OF: Partial<Record<TableColumn, SortBy>> = {
+/** Which sort a header click toggles: every column `SORT_BYS` knows. */
+const SORT_OF: Partial<Record<TableColumn | "key" | "title", SortBy>> = {
+  key: "key",
+  title: "title",
   priority: "priority",
   due: "due",
   created: "created",
@@ -43,20 +47,34 @@ const SORT_OF: Partial<Record<TableColumn, SortBy>> = {
   estimate: "estimate",
 }
 
-/* ── The frozen columns ──
-   Key and Title are frozen so the row stays identifiable while the fields
-   scroll. On a phone that inverted itself: checkbox + key + title is ~23rem of
-   a 23rem viewport, so the whole screen was frozen and there was nothing left
-   to scroll the other columns into. Below `@panel-sm` they scroll with
-   everything else — the title is the first thing on the row anyway, so nothing
-   is lost but the freeze.
+/** Each column's width, so the table is as wide as its columns and no wider. */
+const COL_WIDTH: Record<TableColumn, string> = {
+  type: "w-36",
+  status: "w-36",
+  priority: "w-36",
+  assignee: "w-36",
+  labels: "w-36",
+  sprint: "w-36",
+  parent: "w-36",
+  estimate: "w-36",
+  progress: "w-36",
+  start: "w-28",
+  due: "w-28",
+  created: "w-28",
+  updated: "w-28",
+}
 
-   Their background cannot be the row's alpha tint, either: an alpha background
-   lets the columns sliding underneath show through, which is what `bg-inherit`
-   (inheriting a transparent `<tr>`) did at every width. Same colours, resolved
-   against the page instead of stacked on it. */
+/* ── The frozen columns ──
+   Select, Key and Title are frozen from `@panel-sm` so the row stays
+   identifiable while the fields scroll; below it the narrow form is drawn
+   instead. Their background cannot be the row's alpha tint: an alpha
+   background lets the columns sliding underneath show through. Same colours,
+   resolved against the page instead of stacked on it. */
 const STUCK = "@panel-sm:sticky bg-background group-hover:bg-muted"
 const STUCK_SELECTED = "bg-muted"
+const STICK_SELECT = "left-0 w-10"
+const STICK_KEY = "left-10 w-24"
+const STICK_TITLE = "left-34 w-[28rem] min-w-72"
 
 const fmtDate = (ms: number | null) =>
   ms == null ? "" : new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" })
@@ -64,21 +82,75 @@ const fmtDate = (ms: number | null) =>
 /**
  * The table: every task a row, every field a column, edited in place. The
  * column set and its order are the view's (`view.columns`), so a saved view
- * remembers them; a header with a natural sort toggles it.
+ * remembers them; a header with a sort toggles it. On a narrow panel it is a
+ * card of rows instead — the chosen columns read as text, edited in the detail.
  */
-export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx, facets, onOpen, onUpdate, onViewChange }: ViewProps) {
+export function TableView({ board, statuses, sprints, tasks, view, ctx, facets, onOpen, onUpdate, onViewChange }: ViewProps) {
   const columns = view.columns as TableColumn[]
   const statusOf = (id: string) => statuses.find((s) => s.id === id)
   const sprintOf = (id: string | null) => (id ? sprints.find((s) => s.id === id) : undefined)
   const allSelected = tasks.length > 0 && tasks.every((t) => ctx.selected.has(t.id))
   /** Whether the press that toggled a row's box held shift: a range select. */
   const shift = React.useRef(false)
+  const root = React.useRef<HTMLDivElement>(null)
+  const narrow = useIsNarrow(root)
 
-  const toggleSort = (col: TableColumn) => {
-    const sortBy = SORT_OF[col]
-    if (!sortBy) return
+  const toggleSort = (sortBy: SortBy) => {
     if (view.sortBy === sortBy) onViewChange({ sortDir: view.sortDir === "asc" ? "desc" : "asc" })
     else onViewChange({ sortBy, sortDir: "asc" })
+  }
+
+  /** A header cell's words, as a sort toggle where the column has one. */
+  const head = (col: TableColumn | "key" | "title", label: string) => {
+    const sortBy = SORT_OF[col]
+    if (!sortBy) return label
+    const active = view.sortBy === sortBy
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(sortBy)}
+        className={cn("inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50", active && "text-foreground")}
+      >
+        {label}
+        {active && (view.sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
+      </button>
+    )
+  }
+
+  /** A column's value as plain words, for the narrow form's second line. */
+  const text = (task: Task, col: TableColumn): string | null => {
+    switch (col) {
+      case "type":
+        return TYPE_LABEL[task.type]
+      case "status":
+        return statusOf(task.statusId)?.name ?? null
+      case "priority":
+        return PRIORITY_LABEL[task.priority]
+      case "assignee":
+        return task.assignee
+      case "labels":
+        return task.labels.length ? task.labels.join(", ") : null
+      case "sprint":
+        return sprintOf(task.sprintId)?.name ?? null
+      case "parent": {
+        const parent = ctx.parentOf(task)
+        return parent ? taskKey(parent, board.key) : null
+      }
+      case "estimate":
+        return task.estimate == null ? null : `${task.estimate} pts`
+      case "start":
+        return task.startAt == null ? null : `Starts ${fmtDate(task.startAt)}`
+      case "due":
+        return dueLabel(task.dueAt)
+      case "progress": {
+        const p = checklistProgress(task)
+        return p.total ? `${p.done}/${p.total} checked` : null
+      }
+      case "created":
+        return `Created ${fmtDate(task.createdAt)}`
+      case "updated":
+        return `Updated ${fmtDate(task.updatedAt)}`
+    }
   }
 
   const patch = (task: Task, input: Parameters<typeof onUpdate>[1]) => void onUpdate(task.id, input)
@@ -225,39 +297,59 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
     }
   }
 
+  if (narrow) {
+    /* The row already says key, status and due; the line under it says the
+       rest of what the reader chose to see. */
+    const extra = columns.filter((c) => c !== "status" && c !== "due")
+    return (
+      <div ref={root} className="h-full overflow-y-auto">
+        <div className={cn("mx-auto grid w-full max-w-6xl gap-6 py-3 pb-[calc(var(--tasks-foot,0px)+0.75rem)]", INSET_X)}>
+          <div className="divide-y overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10">
+            {tasks.map((task) => {
+              const line = extra.map((c) => text(task, c)).filter(Boolean).join(" · ")
+              return (
+                <div key={task.id}>
+                  <TaskRow task={task} status={statusOf(task.statusId) ?? null} ctx={ctx} onClick={() => onOpen(task)} />
+                  {line && (
+                    <p onClick={() => onOpen(task)} className="-mt-1 cursor-pointer truncate px-3 pb-2 ps-18 text-xs text-muted-foreground">
+                      {line}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    /* `overscroll-x-contain`: this table is always wider than the panel, so a
+    /* `overscroll-x-contain`: this table is often wider than the panel, so a
        sideways swipe is the normal way to read it — and reaching the last
        column must not hand the gesture to the browser's back-navigation. */
-    <div className="min-h-0 flex-1 overflow-auto overscroll-x-contain p-3 pb-[max(0.75rem,var(--safe-bottom))]">
-      <table className="w-full min-w-[56rem] border-separate border-spacing-0 text-sm">
-        <thead className="sticky top-0 z-10 bg-background">
-          <tr className="text-left text-xs font-medium text-muted-foreground">
-            <th className="w-8 border-b px-2 py-2">
+    <div ref={root} className="h-full overflow-auto overscroll-x-contain">
+      {/* The inset is the inner box's, not the scroller's: sticky cells stick
+          to the scroller's padding edge, so padding there would let rows show
+          through above the header and beside the frozen columns. */}
+      <div className={cn("w-max min-w-full py-3 pb-[calc(var(--tasks-foot,0px)+0.75rem)]", INSET_X)}>
+      <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+        <thead className="sticky top-0 z-20">
+          <tr className="h-9 text-left text-xs font-medium text-muted-foreground">
+            <th className={cn("z-30 border-b bg-background px-2", STUCK, STICK_SELECT)}>
               <Checkbox
                 checked={allSelected}
                 onCheckedChange={() => ctx.onToggleSelect?.(allSelected ? "!none" : "!all", false)}
                 aria-label="Select all"
               />
             </th>
-            <th className="@panel-sm:sticky left-8 z-20 w-20 border-b bg-background px-2 py-2">Key</th>
-            <th className="@panel-sm:sticky left-28 z-20 min-w-[12rem] @panel-sm:min-w-[16rem] border-b bg-background px-2 py-2">Title</th>
-            {columns.map((col) => {
-              const sortable = SORT_OF[col]
-              const active = sortable && view.sortBy === sortable
-              return (
-                <th key={col} className="border-b px-2 py-2 whitespace-nowrap">
-                  {sortable ? (
-                    <button type="button" onClick={() => toggleSort(col)} className={cn("inline-flex items-center gap-1 hover:text-foreground", active && "text-foreground")}>
-                      {COLUMN_LABEL[col]}
-                      {active && (view.sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
-                    </button>
-                  ) : (
-                    COLUMN_LABEL[col]
-                  )}
-                </th>
-              )
-            })}
+            <th className={cn("z-30 border-b bg-background px-2", STUCK, STICK_KEY)}>{head("key", "Key")}</th>
+            <th className={cn("z-30 border-b bg-background px-2", STUCK, STICK_TITLE)}>{head("title", "Title")}</th>
+            {columns.map((col) => (
+              <th key={col} className={cn("border-b bg-background px-2 whitespace-nowrap", COL_WIDTH[col])}>
+                {head(col, COLUMN_LABEL[col])}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -267,8 +359,10 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
               <tr key={task.id} className={cn("group hover:bg-muted", selected && "bg-muted", task.archived && "opacity-60")}>
                 <td
                   className={cn(
-                    "relative border-b px-2 py-1 before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
-                    selected && "before:opacity-100"
+                    "relative z-10 border-b px-2 py-1 before:pointer-events-none before:absolute before:inset-y-0 before:start-0 before:w-0.5 before:bg-primary before:opacity-0",
+                    STUCK,
+                    STICK_SELECT,
+                    selected && cn(STUCK_SELECTED, "before:opacity-100"),
                   )}
                 >
                   <Checkbox
@@ -282,19 +376,21 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
                     aria-label={`Select ${task.title}`}
                   />
                 </td>
-                <td className={cn("left-8 z-10 border-b px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground", STUCK, selected && STUCK_SELECTED)}>{taskKey(task, board.key)}</td>
-                <td className={cn("left-28 z-10 border-b px-2 py-1", STUCK, selected && STUCK_SELECTED)}>
+                <td className={cn("z-10 border-b px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground", STUCK, STICK_KEY, selected && STUCK_SELECTED)}>
+                  {taskKey(task, board.key)}
+                </td>
+                <td className={cn("z-10 border-b px-2 py-1", STUCK, STICK_TITLE, selected && STUCK_SELECTED)}>
                   <button
                     type="button"
                     onClick={() => onOpen(task)}
-                    className={cn("max-w-[32rem] truncate text-left font-medium hover:underline", task.completedAt != null && "text-muted-foreground line-through")}
+                    className={cn("block max-w-[27rem] truncate text-left font-medium hover:underline", task.completedAt != null && "text-muted-foreground line-through")}
                     title={task.title}
                   >
                     {task.title}
                   </button>
                 </td>
                 {columns.map((col) => (
-                  <td key={col} className="border-b px-1 py-0.5 whitespace-nowrap">
+                  <td key={col} className={cn("border-b px-1 py-0.5 whitespace-nowrap", COL_WIDTH[col])}>
                     {cell(task, col)}
                   </td>
                 ))}
@@ -303,9 +399,7 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
           })}
         </tbody>
       </table>
-      {tasks.length === 0 && (
-        <Empty className="mt-3">{allTasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}</Empty>
-      )}
+      </div>
     </div>
   )
 }

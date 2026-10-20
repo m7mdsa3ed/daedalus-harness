@@ -29,14 +29,12 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  SquareKanban,
   Trash2,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Empty } from "@/components/empty"
+import { Count } from "@/components/settings/primitives"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +46,8 @@ import { COLOR_DOT, type BoardStatus } from "@/lib/boards"
 import type { Task } from "@/lib/tasks-board"
 import { TaskCard, TaskCardOverlay } from "../task-card"
 import { QuickAdd } from "../quick-add"
+import { ICON_BTN } from "../fields"
+import { INSET_X } from "../modes"
 import type { ColumnOps, ViewProps } from "../types"
 
 /** Ordered task lists per column id. Columns come from the board, so a status
@@ -94,6 +94,10 @@ const dropAnimation: DropAnimation = {
   sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: "0.4" } } }),
 }
 
+/** A column's width: a fixed strip where the panel has room, nearly the
+    panel on a narrow one (so the snap reads as a pager), never the viewport. */
+const COLUMN_W = "w-[min(18rem,calc(100cqw-3rem))] shrink-0 snap-start"
+
 /** One kanban column (a status): the drop target for its tasks. */
 function Column({
   status,
@@ -126,43 +130,43 @@ function Column({
     <div
       ref={setNodeRef}
       className={cn(
-        /* On a phone a column is nearly the viewport and snaps into place, so
-           the horizontal scroller reads as a pager rather than as a strip of
-           half-visible columns; from `sm` up it is the fixed width it was. */
-        "flex max-h-full w-[85vw] max-w-[19rem] shrink-0 snap-start flex-col rounded-xl bg-muted/50 sm:w-72 sm:max-w-none",
-        isOver && "ring-1 ring-primary/40",
+        COLUMN_W,
+        "flex max-h-full flex-col rounded-2xl bg-muted/50 p-2",
         over && "ring-1 ring-destructive/40",
+        isOver && "ring-2 ring-primary/40",
       )}
     >
-      <div className="flex items-center justify-between gap-1 px-3 py-2.5">
-        <span className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
-          <span className={cn("size-2 shrink-0 rounded-full", status.color ? COLOR_DOT[status.color] : "bg-muted-foreground/40")} />
-          <span className="truncate">{status.name}</span>
-          <Badge
-            variant={over ? "destructive" : "secondary"}
-            className="tabular-nums"
-            title={status.wipLimit != null ? `Work-in-progress limit ${status.wipLimit}` : undefined}
-          >
+      <div className="flex h-10 shrink-0 items-center gap-2 px-1">
+        <span className={cn("size-2 shrink-0 rounded-full", status.color ? COLOR_DOT[status.color] : "bg-muted-foreground/40")} />
+        <span className="min-w-0 truncate text-sm font-medium">{status.name}</span>
+        <span title={status.wipLimit != null ? `Work-in-progress limit ${status.wipLimit}` : undefined}>
+          <Count className={cn(over && "bg-destructive/10 text-destructive")}>
             {count}
             {status.wipLimit != null && `/${status.wipLimit}`}
-          </Badge>
-          {points > 0 && <span className="text-xs font-normal tabular-nums text-muted-foreground">{points} pts</span>}
+          </Count>
         </span>
-        <span className="flex shrink-0 items-center">
+        {points > 0 && <span className="hidden text-xs tabular-nums text-muted-foreground @panel-sm:inline">{points} pts</span>}
+        <span className="ms-auto flex shrink-0 items-center gap-1">
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             onClick={() => setAdding(true)}
             aria-label={`Add task to ${status.name}`}
-            className="text-muted-foreground"
+            className={cn(ICON_BTN, "text-muted-foreground")}
           >
             <Plus />
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button type="button" variant="ghost" size="icon-sm" aria-label={`${status.name} column options`} className="text-muted-foreground">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`${status.name} column options`}
+                  className={cn(ICON_BTN, "text-muted-foreground")}
+                >
                   <MoreHorizontal />
                 </Button>
               }
@@ -191,20 +195,18 @@ function Column({
           </DropdownMenu>
         </span>
       </div>
-      <div className="flex min-h-[2rem] flex-1 flex-col gap-2 overflow-y-auto p-2">
+      {/* The min-height is the drop area of an empty column. The 4px of padding
+          (taken back by the margin) keeps a card's ring and focus ring clear of
+          the scroller's clip. */}
+      <div className="-mx-1 flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-1">
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
           {tasks.map((task) => (
             <TaskCard key={task.id} task={task} ctx={ctx} onClick={() => onOpen(task)} />
           ))}
         </SortableContext>
-        {tasks.length === 0 && (
-          <Empty icon={SquareKanban}>
-            Drop tasks here
-          </Empty>
-        )}
       </div>
-      <div className="p-2 pt-0">
-        <QuickAdd onCreate={(title) => onCreate(status.id, title)} compact open={adding} onOpenChange={setAdding} />
+      <div className="sticky bottom-0 shrink-0 pt-1">
+        <QuickAdd onCreate={(title) => onCreate(status.id, title)} open={adding} onOpenChange={setAdding} />
       </div>
     </div>
   )
@@ -400,7 +402,12 @@ export function KanbanView({
   const activeTask = activeId != null ? allTasks.find((t) => t.id === activeId) : undefined
 
   return (
-    <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto p-3 pb-[max(0.75rem,var(--safe-bottom))] sm:snap-none">
+    <div
+      className={cn(
+        "flex h-full snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain pb-[calc(var(--tasks-foot,0px)+0.75rem)] @panel-sm:snap-none",
+        INSET_X,
+      )}
+    >
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
@@ -438,7 +445,12 @@ export function KanbanView({
           document.body,
         )}
       </DndContext>
-      <Button type="button" variant="outline" onClick={columns.onAdd} className="w-40 shrink-0 snap-start justify-start border-dashed text-muted-foreground sm:w-56">
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={columns.onAdd}
+        className={cn(COLUMN_W, "h-10 justify-start rounded-2xl border border-dashed text-muted-foreground pointer-coarse:h-11")}
+      >
         <Plus /> Add column
       </Button>
     </div>

@@ -1,17 +1,15 @@
 import * as React from "react"
 import { uuid } from "@/lib/uuid"
-import { ChevronDown, ChevronUp, GripVertical, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Field as FieldRoot, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Field } from "@/components/settings/primitives"
+import { ChoiceTiles, FIELD_GRID, Field, Section, Segmented } from "@/components/settings/primitives"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -32,7 +30,6 @@ import {
   COLOR_LABEL,
   FIELD_TYPES,
   STATUS_CATEGORIES,
-  VIEW_KINDS,
   type Board,
   type BoardColor,
   type BoardStatus,
@@ -57,7 +54,8 @@ import {
   useUpdateStatus,
   useUpdateView,
 } from "@/lib/queries/boards"
-import { fromDateInput, toDateInput } from "./fields"
+import { ICON_BTN, fromDateInput, toDateInput } from "./fields"
+import { MODES } from "./modes"
 
 /* The edits a board needs, each as its own dialog rather than one polymorphic
    form: naming a thing and deciding where a column's tasks go are different
@@ -67,14 +65,14 @@ import { fromDateInput, toDateInput } from "./fields"
 /** A swatch row — the whole palette. */
 export function ColorPicker({ value, onChange }: { value: BoardColor | null; onChange: (color: BoardColor | null) => void }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1">
       <button
         type="button"
         onClick={() => onChange(null)}
         aria-label="No colour"
         aria-pressed={value === null}
         className={cn(
-          "grid size-7 place-items-center rounded-full border text-xs text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          "grid size-8 place-items-center rounded-full border text-xs pointer-coarse:size-11 text-muted-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
           value === null ? "border-primary bg-muted" : "border-transparent bg-muted",
         )}
       >
@@ -89,7 +87,7 @@ export function ColorPicker({ value, onChange }: { value: BoardColor | null; onC
           title={COLOR_LABEL[color]}
           aria-pressed={value === color}
           className={cn(
-            "grid size-7 place-items-center rounded-full border outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            "grid size-8 place-items-center rounded-full border outline-none pointer-coarse:size-11 transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
             value === color ? "border-primary" : "border-transparent",
           )}
         >
@@ -97,6 +95,40 @@ export function ColorPicker({ value, onChange }: { value: BoardColor | null; onC
         </button>
       ))}
     </div>
+  )
+}
+
+const FIELD_TYPE_LABEL: Record<CustomFieldDef["type"], string> = {
+  text: "Text",
+  number: "Number",
+  select: "Select",
+  date: "Date",
+  checkbox: "Checkbox",
+  url: "URL",
+}
+
+/** A column's colour as one swatch that opens the palette. */
+function ColumnSwatch({ value, onChange }: { value: BoardColor | null; onChange: (color: BoardColor | null) => void }) {
+  const [open, setOpen] = React.useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Colour: ${value ? COLOR_LABEL[value] : "none"}`} title="Colour" className={ICON_BTN}>
+            <span className={cn("size-3.5 rounded-full", value ? COLOR_DOT[value] : "border border-dashed border-muted-foreground/60")} />
+          </Button>
+        }
+      />
+      <PopoverContent align="end" className="w-auto max-w-72 p-2">
+        <ColorPicker
+          value={value}
+          onChange={(color) => {
+            onChange(color)
+            setOpen(false)
+          }}
+        />
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -234,179 +266,198 @@ export function BoardDialog({
         </ResponsiveDialogHeader>
         {/* The footer is partitioned out of the children, so the buttons hang
             off the form by id rather than by nesting. */}
-        <form id="board-dialog-form" onSubmit={submit} className="grid content-start gap-4">
-            <div className="grid gap-4 @panel-sm:grid-cols-[minmax(0,1fr)_7rem]">
-              <Field htmlFor="board-name" label="Name">
-                <Input id="board-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Web platform" maxLength={120} />
+        <form id="board-dialog-form" onSubmit={submit} className="flex flex-col">
+          <Section label={board ? "Details" : undefined}>
+            <div className="grid gap-4">
+              <div className={FIELD_GRID}>
+                <Field htmlFor="board-name" label="Name">
+                  <Input id="board-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Web platform" maxLength={120} />
+                </Field>
+                <Field
+                  htmlFor="board-key"
+                  label="Key"
+                  hint={
+                    <>
+                      Tasks are <span className="font-mono">{key || "KEY"}-1</span>, <span className="font-mono">{key || "KEY"}-2</span>… Changing the key renames them all.
+                    </>
+                  }
+                >
+                  <Input
+                    id="board-key"
+                    value={key}
+                    onChange={(e) => {
+                      setKeyTouched(true)
+                      setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))
+                    }}
+                    placeholder="WEB"
+                    className="font-mono"
+                  />
+                </Field>
+              </div>
+              <Field label="Colour">
+                <ColorPicker value={color} onChange={setColor} />
               </Field>
-              <Field htmlFor="board-key" label="Key">
-                <Input
-                  id="board-key"
-                  value={key}
-                  onChange={(e) => {
-                    setKeyTouched(true)
-                    setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))
-                  }}
-                  placeholder="WEB"
-                  className="font-mono"
-                />
+              <Field htmlFor="board-desc" label="Description">
+                <Textarea id="board-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this board is for" className="min-h-16" />
               </Field>
-              <p className="text-xs text-muted-foreground @panel-sm:col-span-2">
-                Every task on the board is <span className="font-mono">{key || "KEY"}-1</span>, <span className="font-mono">{key || "KEY"}-2</span>… Changing the key renames them all.
-              </p>
+              <Field label="Project">
+                <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue>{projects.find((p) => p.id === projectId)?.name ?? "No project"}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No project</SelectItem>
+                    {projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
             </div>
-            <Field label="Colour">
-              <ColorPicker value={color} onChange={setColor} />
-            </Field>
-            <Field htmlFor="board-desc" label="Description">
-              <Textarea id="board-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this board is for" className="min-h-16" />
-            </Field>
-            <Field label="Project">
-              <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
-                <SelectTrigger className="w-full">
-                  <SelectValue>{projects.find((p) => p.id === projectId)?.name ?? "No project"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">No project</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+          </Section>
 
-            {board && (
-              <Field
-                label="Columns"
-                hint="A task entering a Done column is completed. A WIP limit is shown, never enforced. Column edits save immediately."
-              >
-                <ul className="grid gap-1 rounded-xl border p-1">
-                  {statuses.map((s, i) => (
-                    <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-muted @panel-sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto]">
-                      <GripVertical className="size-3.5 text-muted-foreground" />
-                      <Input
-                        defaultValue={s.name}
-                        onBlur={(e) => {
-                          const v = e.target.value.trim()
-                          if (v && v !== s.name) void patchStatus(s, { name: v })
-                        }}
-                        className="h-8"
-                        aria-label="Column name"
-                      />
-                      <span className="inline-flex">
-                        <Button type="button" variant="ghost" size="icon-sm" disabled={i === 0} onClick={() => moveColumn(s, -1)} aria-label="Move up" className="text-muted-foreground">
-                          <ChevronUp />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon-sm" disabled={i === statuses.length - 1} onClick={() => moveColumn(s, 1)} aria-label="Move down" className="text-muted-foreground">
-                          <ChevronDown />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon-sm" disabled={statuses.length <= 1} onClick={() => onDeleteStatus(s)} aria-label="Delete column" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-                          <Trash2 />
-                        </Button>
-                      </span>
-                      {/* The three controls rejoin the flat grid on desktop. */}
-                      <div className="col-span-full grid grid-cols-[minmax(0,1fr)_4.5rem_minmax(0,1fr)] gap-1.5 @panel-sm:contents">
-                        <NativeSelect size="sm" className="w-full" value={s.category} onChange={(e) => void patchStatus(s, { category: e.target.value as StatusCategory })} aria-label="Category">
-                          {STATUS_CATEGORIES.map((c) => (
-                            <NativeSelectOption key={c} value={c}>
-                              {CATEGORY_LABEL[c]}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                        <Input
-                          type="number"
-                          min={1}
-                          defaultValue={s.wipLimit ?? ""}
-                          onBlur={(e) => {
-                            const v = e.target.value === "" ? null : Number(e.target.value)
-                            if (v !== s.wipLimit) void patchStatus(s, { wipLimit: v })
-                          }}
-                          placeholder="WIP"
-                          className="h-8"
-                          aria-label="WIP limit"
-                        />
-                        <NativeSelect size="sm" className="w-full" value={s.color ?? ""} onChange={(e) => void patchStatus(s, { color: (e.target.value || null) as BoardColor | null })} aria-label="Colour">
-                          <NativeSelectOption value="">No colour</NativeSelectOption>
-                          {BOARD_COLORS.map((c) => (
-                            <NativeSelectOption key={c} value={c}>
-                              {COLOR_LABEL[c]}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                      </div>
-                    </li>
-                  ))}
-                  <li className="flex items-center gap-1.5 px-1 py-1">
+          {board && (
+            <Section
+              label="Columns"
+              count={statuses.length}
+              hint="Column changes save as you make them. A task entering a Done column is completed; a WIP limit is shown, never enforced."
+            >
+              <ul className="grid gap-1 rounded-2xl p-2 ring-1 ring-foreground/10">
+                {statuses.map((s, i) => (
+                  <li
+                    key={s.id}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg p-1 hover:bg-muted/50 @panel-md:grid-cols-[minmax(0,1fr)_auto_5rem_auto_auto]"
+                  >
                     <Input
-                      value={newColumn}
-                      onChange={(e) => setNewColumn(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          addColumn()
-                        }
+                      defaultValue={s.name}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim()
+                        if (v && v !== s.name) void patchStatus(s, { name: v })
                       }}
-                      placeholder="New column name…"
-                      className="h-8"
+                      className="h-8 pointer-coarse:h-11"
+                      aria-label="Column name"
                     />
-                    <Button type="button" size="sm" variant="outline" onClick={addColumn} disabled={!newColumn.trim()}>
-                      <Plus data-icon="inline-start" /> Add
-                    </Button>
-                  </li>
-                </ul>
-              </Field>
-            )}
-
-            {board && (
-              <Field label="Custom fields" hint="Extra properties every task on this board can carry. Saved with the board.">
-                <ul className="grid gap-1 rounded-xl border p-1">
-                  {fields.map((f) => (
-                    <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-lg px-1 py-1 @panel-sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_auto]">
-                      <Input value={f.name} onChange={(e) => setField(f.id, { name: e.target.value })} placeholder="Field name" className="h-8" aria-label="Field name" />
-                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => setFields((fs) => fs.filter((x) => x.id !== f.id))} aria-label="Remove field" className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                    {/* Narrow: name | moves on the first line, category | WIP + colour on
+                        the second. From @panel-md every control is a column of one row. */}
+                    <Segmented
+                      label={`${s.name} category`}
+                      value={s.category}
+                      onChange={(category: StatusCategory) => void patchStatus(s, { category })}
+                      options={STATUS_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+                      className="order-2 @panel-md:order-none"
+                    />
+                    <div className="order-2 flex items-center gap-2 @panel-md:contents">
+                      <Input
+                        type="number"
+                        min={1}
+                        defaultValue={s.wipLimit ?? ""}
+                        onBlur={(e) => {
+                          const v = e.target.value === "" ? null : Number(e.target.value)
+                          if (v !== s.wipLimit) void patchStatus(s, { wipLimit: v })
+                        }}
+                        placeholder="WIP"
+                        className="h-8 w-20 pointer-coarse:h-11 @panel-md:w-full"
+                        aria-label="WIP limit"
+                      />
+                      <ColumnSwatch value={s.color} onChange={(color) => void patchStatus(s, { color })} />
+                    </div>
+                    <span className="order-1 inline-flex @panel-md:order-none">
+                      <Button type="button" variant="ghost" size="icon-sm" disabled={i === 0} onClick={() => moveColumn(s, -1)} aria-label="Move up" className={cn(ICON_BTN, "text-muted-foreground")}>
+                        <ChevronUp />
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon-sm" disabled={i === statuses.length - 1} onClick={() => moveColumn(s, 1)} aria-label="Move down" className={cn(ICON_BTN, "text-muted-foreground")}>
+                        <ChevronDown />
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon-sm" disabled={statuses.length <= 1} onClick={() => onDeleteStatus(s)} aria-label="Delete column" className={cn(ICON_BTN, "text-muted-foreground hover:bg-destructive/10 hover:text-destructive")}>
                         <Trash2 />
                       </Button>
-                      {/* Type and options rejoin the flat grid on desktop. */}
-                      <div className="col-span-full grid grid-cols-[7rem_minmax(0,1fr)] gap-1.5 @panel-sm:contents">
-                        <NativeSelect size="sm" className="w-full" value={f.type} onChange={(e) => setField(f.id, { type: e.target.value as CustomFieldDef["type"] })} aria-label="Field type">
-                          {FIELD_TYPES.map((t) => (
-                            <NativeSelectOption key={t} value={t}>
-                              {t}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                        {f.type === "select" ? (
-                          <Input
-                            value={(f.options ?? []).join(", ")}
-                            onChange={(e) =>
-                              setField(f.id, {
-                                options: e.target.value
-                                  .split(",")
-                                  .map((o) => o.trim())
-                                  .filter(Boolean),
-                              })
-                            }
-                            placeholder="Options, comma-separated"
-                            className="h-8"
-                            aria-label="Options"
-                          />
-                        ) : (
-                          <span />
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                  <li className="px-1 py-1">
-                    <Button type="button" size="sm" variant="outline" onClick={() => setFields((fs) => [...fs, { id: uuid(), name: "", type: "text" }])}>
-                      <Plus data-icon="inline-start" /> Add field
-                    </Button>
+                    </span>
                   </li>
-                </ul>
-              </Field>
-            )}
-          <ErrorNote error={error} />
+                ))}
+                <li className="flex items-center gap-2 p-1">
+                  <Input
+                    value={newColumn}
+                    onChange={(e) => setNewColumn(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        addColumn()
+                      }
+                    }}
+                    placeholder="New column name…"
+                    aria-label="New column name"
+                    className="h-8 pointer-coarse:h-11"
+                  />
+                  <Button type="button" size="sm" variant="outline" onClick={addColumn} disabled={!newColumn.trim()} className="pointer-coarse:h-11">
+                    <Plus data-icon="inline-start" /> Add
+                  </Button>
+                </li>
+              </ul>
+            </Section>
+          )}
+
+          {board && (
+            <Section label="Fields" count={fields.length} hint="Extra properties every task on this board can carry. Saved with the board.">
+              <ul className="grid gap-1 rounded-2xl p-2 ring-1 ring-foreground/10">
+                {fields.map((f) => (
+                  <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg p-1 @panel-md:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]">
+                    <Input value={f.name} onChange={(e) => setField(f.id, { name: e.target.value })} placeholder="Field name" className="h-8 pointer-coarse:h-11" aria-label="Field name" />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setFields((fs) => fs.filter((x) => x.id !== f.id))}
+                      aria-label="Remove field"
+                      className={cn(ICON_BTN, "text-muted-foreground hover:bg-destructive/10 hover:text-destructive @panel-md:order-last")}
+                    >
+                      <Trash2 />
+                    </Button>
+                    {/* Type and options take the second line on a narrow panel and rejoin the row from @panel-md. */}
+                    <div className="col-span-full grid grid-cols-[8rem_minmax(0,1fr)] gap-2 @panel-md:contents">
+                      <Select value={f.type} onValueChange={(v) => v && setField(f.id, { type: v as CustomFieldDef["type"] })}>
+                        <SelectTrigger size="sm" className="w-full pointer-coarse:h-11" aria-label="Field type">
+                          <SelectValue>{FIELD_TYPE_LABEL[f.type]}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FIELD_TYPES.map((t) => (
+                            <SelectItem key={t} value={t}>
+                              {FIELD_TYPE_LABEL[t]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {f.type === "select" ? (
+                        <Input
+                          value={(f.options ?? []).join(", ")}
+                          onChange={(e) =>
+                            setField(f.id, {
+                              options: e.target.value
+                                .split(",")
+                                .map((o) => o.trim())
+                                .filter(Boolean),
+                            })
+                          }
+                          placeholder="Options, comma-separated"
+                          className="h-8 pointer-coarse:h-11"
+                          aria-label="Options"
+                        />
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+                  </li>
+                ))}
+                <li className="p-1">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setFields((fs) => [...fs, { id: uuid(), name: "", type: "text" }])} className="pointer-coarse:h-11">
+                    <Plus data-icon="inline-start" /> Add field
+                  </Button>
+                </li>
+              </ul>
+            </Section>
+          )}
+          <ErrorNote error={error} className="mt-4" />
         </form>
         <ResponsiveDialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
@@ -464,28 +515,43 @@ export function DeleteBoardDialog({ open, onOpenChange, board, taskCount, onDele
 
 // ---- columns ----
 
-/** Add a column with everything a column has, from the kanban's "+ Add column". */
-export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; onOpenChange: (open: boolean) => void; boardId: string }) {
+/** Add a column with everything a column has, or edit one (`status` set): the
+    kanban's "+ Add column" and a column's "Edit column…". */
+export function ColumnDialog({
+  open,
+  onOpenChange,
+  boardId,
+  status,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  boardId: string
+  status?: BoardStatus | null
+}) {
   const create = useCreateStatus()
-  const { busy, error, run } = useSubmit(onOpenChange, "Couldn't add the column")
+  const update = useUpdateStatus()
+  const { busy, error, run } = useSubmit(onOpenChange, status ? "Couldn't save the column" : "Couldn't add the column")
   const [name, setName] = React.useState("")
   const [color, setColor] = React.useState<BoardColor | null>(null)
   const [category, setCategory] = React.useState<StatusCategory>("in_progress")
   const [wip, setWip] = React.useState("")
   React.useEffect(() => {
-    if (open) {
-      setName("")
-      setColor(null)
-      setCategory("in_progress")
-      setWip("")
-    }
-  }, [open])
+    if (!open) return
+    setName(status?.name ?? "")
+    setColor(status?.color ?? null)
+    setCategory(status?.category ?? "in_progress")
+    setWip(status?.wipLimit != null ? String(status.wipLimit) : "")
+    // By id: a refetch hands over a new object for the same column, and must not wipe the edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, status?.id])
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="sm:max-w-md">
         <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>New column</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>A column is a status a task can be in. It is added at the end.</ResponsiveDialogDescription>
+          <ResponsiveDialogTitle>{status ? "Edit column" : "New column"}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            {status ? "A Done column completes the tasks that enter it." : "A column is a status a task can be in. It is added at the end."}
+          </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
         <form
           id="column-dialog-form"
@@ -493,29 +559,30 @@ export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; o
           onSubmit={(e) => {
             e.preventDefault()
             if (!name.trim()) return
+            const input = { name: name.trim(), color, category, wipLimit: wip ? Number(wip) : null }
             void run(async () => {
-              await create.mutateAsync({ boardId, input: { name: name.trim(), color, category, wipLimit: wip ? Number(wip) : null } })
+              if (status) await update.mutateAsync({ id: status.id, input })
+              else await create.mutateAsync({ boardId, input })
             })
           }}
         >
-            <Field htmlFor="col-name" label="Name">
-              <Input id="col-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. In review" maxLength={60} />
-            </Field>
-            <Field label="Category">
-              <ToggleGroup aria-label="Category" variant="outline" size="sm" spacing={0} value={[category]} onValueChange={(next) => next[0] && setCategory(next[0] as StatusCategory)}>
-                {STATUS_CATEGORIES.map((c) => (
-                  <ToggleGroupItem key={c} value={c}>
-                    {CATEGORY_LABEL[c]}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </Field>
-            <Field htmlFor="col-wip" label="WIP limit">
-              <Input id="col-wip" type="number" min={1} value={wip} onChange={(e) => setWip(e.target.value)} placeholder="Optional" className="w-28" />
-            </Field>
-            <Field label="Colour">
-              <ColorPicker value={color} onChange={setColor} />
-            </Field>
+          <Field htmlFor="col-name" label="Name">
+            <Input id="col-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. In review" maxLength={60} />
+          </Field>
+          <Field label="Category">
+            <Segmented
+              label="Category"
+              value={category}
+              onChange={setCategory}
+              options={STATUS_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))}
+            />
+          </Field>
+          <Field htmlFor="col-wip" label="WIP limit" hint="Shown on the column, never enforced.">
+            <Input id="col-wip" type="number" min={1} value={wip} onChange={(e) => setWip(e.target.value)} placeholder="Optional" className="w-28" />
+          </Field>
+          <Field label="Colour">
+            <ColorPicker value={color} onChange={setColor} />
+          </Field>
           <ErrorNote error={error} />
         </form>
         <ResponsiveDialogFooter>
@@ -523,7 +590,7 @@ export function ColumnDialog({ open, onOpenChange, boardId }: { open: boolean; o
             Cancel
           </Button>
           <Button type="submit" form="column-dialog-form" loading={busy} disabled={!name.trim()}>
-            Add column
+            {status ? "Save" : "Add column"}
           </Button>
         </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
@@ -627,7 +694,7 @@ export function SprintDialog({ open, onOpenChange, boardId, sprint }: { open: bo
             <Field htmlFor="sprint-goal" label="Goal">
               <Textarea id="sprint-goal" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="What done looks like" className="min-h-14" />
             </Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className={FIELD_GRID}>
               <Field htmlFor="sprint-start" label="Start">
                 <Input id="sprint-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
               </Field>
@@ -738,13 +805,13 @@ export function SaveViewDialog({ open, onOpenChange, boardId, state, existing, o
               <Input id="view-name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. My open bugs" maxLength={80} />
             </Field>
             <Field label="Layout">
-              <ToggleGroup aria-label="Layout" variant="outline" size="sm" value={[kind]} onValueChange={(next) => next[0] && setKind(next[0] as ViewKind)} className="flex-wrap">
-                {VIEW_KINDS.map((k) => (
-                  <ToggleGroupItem key={k} value={k} className="capitalize">
-                    {k}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
+              {/* Sprints is the workspace's planning mode, not a saved layout. */}
+              <ChoiceTiles
+                label="Layout"
+                value={kind}
+                onChange={setKind}
+                choices={MODES.filter((m): m is (typeof MODES)[number] & { id: ViewKind } => m.id !== "sprints").map((m) => ({ value: m.id, label: m.label, icon: m.icon }))}
+              />
             </Field>
             {existing && (
               <label className="flex items-center gap-2 text-sm">

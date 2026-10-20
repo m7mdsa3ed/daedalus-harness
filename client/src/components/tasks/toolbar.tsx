@@ -1,54 +1,27 @@
 import * as React from "react"
-import {
-  ArrowUpDown,
-  Bookmark,
-  CalendarDays,
-  Check,
-  ChartGantt,
-  Columns3,
-  Filter,
-  Group,
-  List,
-  Plus,
-  Rocket,
-  SearchIcon,
-  SquareKanban,
-  Table2,
-  Trash2,
-  X,
-} from "lucide-react"
+import { Bookmark, Check, LogOut, Plus, Save, SlidersHorizontal, Trash2, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { Count } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Separator } from "@/components/ui/separator"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { FiltersBar, type FilterFieldDef, type FilterSchemaValue } from "@/components/ui/filters-bar"
+import { Segmented } from "@/components/settings/primitives"
+import { useConfirm } from "@/components/confirm-dialog"
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { COLOR_DOT, type BoardStatus, type BoardView, type Sprint, type ViewKind } from "@/lib/boards"
-import {
-  PRIORITY_LABEL,
-  TASK_PRIORITIES,
-  TASK_TYPES,
-  TYPE_LABEL,
-  taskKey,
-  type Task,
-  type TaskPriority,
-  type TaskType,
-} from "@/lib/tasks-board"
+import { COLOR_DOT, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
+import { PRIORITY_LABEL, TASK_PRIORITIES, TASK_TYPES, TYPE_LABEL, taskKey, type Task, type TaskPriority, type TaskType } from "@/lib/tasks-board"
 import {
   COLUMN_LABEL,
   EMPTY_FILTERS,
@@ -61,93 +34,39 @@ import {
   type DueWindow,
   type GroupBy,
   type SortBy,
-  type TableColumn,
   type TaskFilters,
   type ViewState,
 } from "@/lib/tasks-view"
-import { AssigneeAvatar, LabelChip, PriorityIcon, TypeIcon } from "./fields"
+import { AssigneeAvatar, PriorityIcon, TypeIcon } from "./fields"
+import { INSET_X, MODES, type WorkspaceMode } from "./modes"
 
-export type WorkspaceMode = ViewKind | "sprints"
+export type { WorkspaceMode } from "./modes"
 
-const MODES: { id: WorkspaceMode; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "board", label: "Board", icon: SquareKanban },
-  { id: "list", label: "List", icon: List },
-  { id: "table", label: "Table", icon: Table2 },
-  { id: "calendar", label: "Calendar", icon: CalendarDays },
-  { id: "timeline", label: "Timeline", icon: ChartGantt },
-  { id: "sprints", label: "Sprints", icon: Rocket },
+const DUE_OPTIONS: { value: DueWindow; label: string }[] = [
+  { value: "any", label: "Any time" },
+  { value: "overdue", label: "Overdue" },
+  { value: "today", label: "Today" },
+  { value: "week", label: "Next 7 days" },
+  { value: "none", label: "No date" },
 ]
 
-/* ── ClickUp-style view tabs ──
-   Prominent pill buttons with icons, the active one highlighted. */
-function ViewTabs({ mode, onChange }: { mode: WorkspaceMode; onChange: (m: WorkspaceMode) => void }) {
-  return (
-    <ToggleGroup
-      aria-label="View"
-      variant="outline"
-      size="sm"
-      spacing={0}
-      value={[mode]}
-      onValueChange={(next) => next[0] && onChange(next[0] as WorkspaceMode)}
-      className="shrink-0"
-    >
-      {MODES.map(({ id, label, icon: Icon }) => (
-        <ToggleGroupItem key={id} value={id} title={label} className="text-muted-foreground aria-pressed:text-foreground">
-          <Icon />
-          <span className="hidden @panel-sm:inline">{label}</span>
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  )
-}
-
-/** A facet inside the filter popover: a heading and a wrapping row of chips. */
-function Facet<T extends string>({
-  title,
-  options,
-  value,
-  onChange,
-  render,
-}: {
-  title: string
-  options: { id: T; label: React.ReactNode }[]
-  value: T[]
-  onChange: (next: T[]) => void
-  render?: (id: T) => React.ReactNode
-}) {
-  if (options.length === 0) return null
-  const toggle = (id: T) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
-  return (
-    <div className="grid gap-1.5">
-      <p className="text-xs font-medium text-muted-foreground">{title}</p>
-      <div className="flex flex-wrap gap-1">
-        {options.map((o) => (
-          <Button
-            key={o.id}
-            type="button"
-            size="xs"
-            variant={value.includes(o.id) ? "secondary" : "ghost"}
-            onClick={() => toggle(o.id)}
-            aria-pressed={value.includes(o.id)}
-            className={cn(!value.includes(o.id) && "text-muted-foreground")}
-          >
-            {render ? render(o.id) : o.label}
-          </Button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-const DUE_OPTIONS: { id: DueWindow; label: string }[] = [
-  { id: "overdue", label: "Overdue" },
-  { id: "today", label: "Today" },
-  { id: "week", label: "Next 7 days" },
-  { id: "none", label: "No date" },
+const ARCHIVED_OPTIONS: { value: TaskFilters["archived"]; label: string }[] = [
+  { value: "hide", label: "Hide" },
+  { value: "all", label: "Include" },
+  { value: "only", label: "Only" },
 ]
 
-/** The filter popover — same shape as before but with a cleaner header. */
-export function FilterPopover({
+/* The filter "Unassigned" is the empty string in `TaskFilters`; a command list
+   cannot hold an empty value, so it travels under a name of its own here. */
+const UNASSIGNED = "__unassigned"
+const toAssigneeOption = (a: string) => (a === "" ? UNASSIGNED : a)
+const fromAssigneeOption = (a: string) => (a === UNASSIGNED ? "" : a)
+
+const MULTI_KEYS = ["statusIds", "priorities", "types", "assignees", "labels", "sprintIds", "parentIds"] as const
+
+/** The search and every facet, as `FiltersBar` fields over one `TaskFilters`.
+    The bar draws a popover on a wide panel and a sheet on a narrow one. */
+function TaskFiltersBar({
   filters,
   onChange,
   statuses,
@@ -155,6 +74,7 @@ export function FilterPopover({
   epics,
   facets,
   boardKey,
+  narrow,
 }: {
   filters: TaskFilters
   onChange: (next: TaskFilters) => void
@@ -163,318 +83,164 @@ export function FilterPopover({
   epics: Task[]
   facets: { assignees: string[]; labels: string[] }
   boardKey: string
+  narrow: boolean
 }) {
-  const count = activeFilterCount(filters)
-  const set = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => onChange({ ...filters, [key]: value })
+  const fields: FilterFieldDef[] = [
+    { id: "statusIds", label: "Status", type: "multi-select", placeholder: "Any status", options: statuses.map((s) => ({ value: s.id, label: s.name })) },
+    {
+      id: "priorities",
+      label: "Priority",
+      type: "multi-select",
+      placeholder: "Any priority",
+      options: [...TASK_PRIORITIES].reverse().map((p) => ({ value: p, label: PRIORITY_LABEL[p] })),
+    },
+    { id: "types", label: "Type", type: "multi-select", placeholder: "Any type", options: TASK_TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] })) },
+    {
+      id: "assignees",
+      label: "Assignee",
+      type: "multi-select",
+      placeholder: "Anyone",
+      options: [{ value: UNASSIGNED, label: "Unassigned" }, ...facets.assignees.map((a) => ({ value: a, label: a }))],
+    },
+    { id: "labels", label: "Label", type: "multi-select", placeholder: "Any label", options: facets.labels.map((l) => ({ value: l, label: l })) },
+    {
+      id: "sprintIds",
+      label: "Sprint",
+      type: "multi-select",
+      placeholder: "Any sprint",
+      options: [{ value: "backlog", label: "Backlog" }, ...sprints.filter((s) => s.state !== "closed").map((s) => ({ value: s.id, label: s.name }))],
+    },
+    {
+      id: "parentIds",
+      label: "Parent",
+      type: "multi-select",
+      placeholder: "Any parent",
+      searchPlaceholder: "Search epics…",
+      options: [{ value: "none", label: "Top level only" }, ...epics.map((e) => ({ value: e.id, label: `${taskKey(e, boardKey)} ${e.title}` }))],
+    },
+    { id: "due", label: "Due", type: "select", options: DUE_OPTIONS },
+    { id: "archived", label: "Archived", type: "segmented", options: ARCHIVED_OPTIONS },
+  ]
+  const values: FilterSchemaValue = {
+    statusIds: filters.statusIds,
+    priorities: filters.priorities,
+    types: filters.types,
+    assignees: filters.assignees.map(toAssigneeOption),
+    labels: filters.labels,
+    sprintIds: filters.sprintIds,
+    parentIds: filters.parentIds,
+    due: filters.due,
+    archived: filters.archived,
+  }
+  const change = (id: string, value: string[] | string | boolean) => {
+    if ((MULTI_KEYS as readonly string[]).includes(id)) {
+      const list = Array.isArray(value) ? value : []
+      onChange({ ...filters, [id]: id === "assignees" ? list.map(fromAssigneeOption) : list })
+    } else if (id === "due") {
+      onChange({ ...filters, due: (value || "any") as DueWindow })
+    } else if (id === "archived") {
+      onChange({ ...filters, archived: (value || "hide") as TaskFilters["archived"] })
+    }
+  }
+  return (
+    <FiltersBar
+      // `contents`: the search, the filter button and the toolbar's own
+      // controls wrap as one row rather than as a bar inside a bar.
+      className="contents"
+      narrow={narrow}
+      search={{ value: filters.query, onChange: (query) => onChange({ ...filters, query }), placeholder: "Search tasks…" }}
+      fields={fields}
+      values={values}
+      onFilterChange={change}
+      filterCount={activeFilterCount(filters)}
+      onClearFilters={() => onChange({ ...EMPTY_FILTERS, query: filters.query })}
+    />
+  )
+}
+
+/** Group, sort and table columns: how the visible list is laid out. */
+function DisplayPopover({ mode, view, onChange, narrow }: { mode: WorkspaceMode; view: ViewState; onChange: (patch: Partial<ViewState>) => void; narrow: boolean }) {
+  const groupLabel = (g: GroupBy) => (g === "none" ? "Status (default)" : GROUP_LABEL[g])
   return (
     <Popover>
       <PopoverTrigger
         render={
-          <Button type="button" variant={count > 0 ? "secondary" : "outline"} size="sm" className={cn(count === 0 && "border-dashed text-muted-foreground")}>
-            <Filter data-icon="inline-start" />
-            <span className="hidden @panel-sm:inline">Filter</span>
-            {count > 0 && <Count>{count}</Count>}
+          <Button type="button" variant="outline" size="sm" title="Display" className="pointer-coarse:h-11">
+            <SlidersHorizontal data-icon="inline-start" />
+            <span className="hidden @panel-sm:inline">Display</span>
           </Button>
         }
       />
-      <PopoverContent align="start" className="w-[min(22rem,calc(var(--float-w)-2rem))] gap-3 p-3">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium">Filters</p>
-          {count > 0 && (
-            <Button type="button" variant="ghost" size="xs" onClick={() => onChange({ ...EMPTY_FILTERS, query: filters.query })} className="text-muted-foreground">
-              <X data-icon="inline-start" /> Clear all
-            </Button>
-          )}
-        </div>
-        <div className="grid max-h-[min(28rem,var(--available-height))] gap-4 overflow-y-auto">
-          <Facet
-            title="Status"
-            options={statuses.map((s) => ({ id: s.id, label: s.name }))}
-            value={filters.statusIds}
-            onChange={(v) => set("statusIds", v)}
-            render={(id) => {
-              const s = statuses.find((x) => x.id === id)!
-              return (
-                <>
-                  <span className={cn("size-1.5 rounded-full", s.color ? COLOR_DOT[s.color] : "bg-muted-foreground/40")} />
-                  {s.name}
-                </>
-              )
-            }}
-          />
-          <Facet
-            title="Priority"
-            options={[...TASK_PRIORITIES].reverse().map((p) => ({ id: p, label: PRIORITY_LABEL[p] }))}
-            value={filters.priorities}
-            onChange={(v) => set("priorities", v as TaskPriority[])}
-            render={(id) => (
-              <>
-                <PriorityIcon priority={id} className="size-3" />
-                {PRIORITY_LABEL[id]}
-              </>
-            )}
-          />
-          <Facet
-            title="Type"
-            options={TASK_TYPES.map((t) => ({ id: t, label: TYPE_LABEL[t] }))}
-            value={filters.types}
-            onChange={(v) => set("types", v as TaskType[])}
-            render={(id) => (
-              <>
-                <TypeIcon type={id} className="size-3" />
-                {TYPE_LABEL[id]}
-              </>
-            )}
-          />
-          <Facet
-            title="Assignee"
-            options={[{ id: "", label: "Unassigned" }, ...facets.assignees.map((a) => ({ id: a, label: a }))]}
-            value={filters.assignees}
-            onChange={(v) => set("assignees", v)}
-            render={(id) => (
-              <>
-                <AssigneeAvatar name={id || null} size="xs" />
-                {id || "Unassigned"}
-              </>
-            )}
-          />
-          <Facet
-            title="Label"
-            options={facets.labels.map((l) => ({ id: l, label: l }))}
-            value={filters.labels}
-            onChange={(v) => set("labels", v)}
-            render={(id) => <LabelChip label={id} />}
-          />
-          <Facet
-            title="Sprint"
-            options={[{ id: "backlog", label: "Backlog" }, ...sprints.filter((s) => s.state !== "closed").map((s) => ({ id: s.id, label: s.name }))]}
-            value={filters.sprintIds}
-            onChange={(v) => set("sprintIds", v)}
-          />
-          <Facet
-            title="Parent"
-            options={[{ id: "none", label: "Top level only" }, ...epics.map((e) => ({ id: e.id, label: `${taskKey(e, boardKey)} ${e.title}` }))]}
-            value={filters.parentIds}
-            onChange={(v) => set("parentIds", v)}
-          />
-          <Facet
-            title="Due"
-            options={DUE_OPTIONS}
-            value={filters.due === "any" ? [] : [filters.due]}
-            onChange={(v) => set("due", (v.find((d) => d !== filters.due) ?? "any") as DueWindow)}
-          />
-          <Facet
-            title="Archived"
+      <PopoverContent align="end" className="grid w-72 gap-4 p-4">
+        {mode === "list" && (
+          <div className="grid gap-2">
+            <Label>Group</Label>
+            <Select value={view.groupBy} onValueChange={(v) => v && onChange({ groupBy: v as GroupBy })}>
+              <SelectTrigger className="w-full">
+                <SelectValue>{groupLabel(view.groupBy)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {GROUP_BYS.map((g) => (
+                  <SelectItem key={g} value={g}>
+                    {groupLabel(g)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        <div className="grid gap-2">
+          <Label>Sort</Label>
+          <Select value={view.sortBy} onValueChange={(v) => v && onChange({ sortBy: v as SortBy })}>
+            <SelectTrigger className="w-full">
+              <SelectValue>{SORT_LABEL[view.sortBy]}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_BYS.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {SORT_LABEL[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Segmented
+            label="Sort direction"
+            value={view.sortDir}
+            onChange={(sortDir) => onChange({ sortDir })}
             options={[
-              { id: "all", label: "Include archived" },
-              { id: "only", label: "Only archived" },
+              { value: "asc", label: "Asc" },
+              { value: "desc", label: "Desc" },
             ]}
-            value={filters.archived === "hide" ? [] : [filters.archived]}
-            onChange={(v) => set("archived", (v.find((d) => d !== filters.archived) ?? "hide") as TaskFilters["archived"])}
           />
         </div>
+        {mode === "table" && (
+          <div className="grid gap-2">
+            <Label>Columns</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {TABLE_COLUMNS.map((c) => (
+                <Label key={c} className="font-normal">
+                  <Checkbox
+                    checked={view.columns.includes(c)}
+                    onCheckedChange={(checked) =>
+                      onChange({
+                        columns: checked ? TABLE_COLUMNS.filter((x) => x === c || view.columns.includes(x)) : view.columns.filter((x) => x !== c),
+                      })
+                    }
+                  />
+                  {COLUMN_LABEL[c]}
+                </Label>
+              ))}
+            </div>
+            {narrow && <p className="text-xs text-muted-foreground">Listed under each row at this width.</p>}
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )
 }
 
-/** ClickUp-style filter pill: shows the active filter with a remove button. */
-function FilterPill({
-  label,
-  onRemove,
-  children,
-}: {
-  label: string
-  onRemove: () => void
-  children?: React.ReactNode
-}) {
-  return (
-    <Badge variant="secondary">
-      {children}
-      <span className="max-w-32 truncate">{label}</span>
-      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="-mr-1 rounded-full hover:bg-muted">
-        <X />
-      </button>
-    </Badge>
-  )
-}
-
-/** Extract the active filter pills from the filter state. */
-function ActiveFilterPills({
-  filters,
-  onChange,
-  statuses,
-}: {
-  filters: TaskFilters
-  onChange: (next: TaskFilters) => void
-  statuses: BoardStatus[]
-}) {
-  const pills: React.ReactNode[] = []
-  const removeStr = (key: "assignees" | "labels", value: string) => {
-    onChange({ ...filters, [key]: (filters[key] as string[]).filter((v) => v !== value) })
-  }
-  const removeArr = (key: "statusIds", value: string) => {
-    onChange({ ...filters, [key]: filters[key].filter((v) => v !== value) })
-  }
-  const removePrio = (value: TaskPriority) => {
-    onChange({ ...filters, priorities: filters.priorities.filter((v) => v !== value) })
-  }
-  const removeType = (value: TaskType) => {
-    onChange({ ...filters, types: filters.types.filter((v) => v !== value) })
-  }
-
-  for (const sid of filters.statusIds) {
-    const s = statuses.find((x) => x.id === sid)
-    if (s) pills.push(<FilterPill key={`status-${sid}`} label={s.name} onRemove={() => removeArr("statusIds", sid)}><span className={cn("size-1.5 rounded-full", s.color ? COLOR_DOT[s.color] : "bg-muted-foreground/40")} /></FilterPill>)
-  }
-  for (const p of filters.priorities) {
-    pills.push(<FilterPill key={`p-${p}`} label={PRIORITY_LABEL[p]} onRemove={() => removePrio(p)}><PriorityIcon priority={p} className="size-3" /></FilterPill>)
-  }
-  for (const t of filters.types) {
-    pills.push(<FilterPill key={`t-${t}`} label={TYPE_LABEL[t]} onRemove={() => removeType(t)}><TypeIcon type={t} className="size-3" /></FilterPill>)
-  }
-  for (const a of filters.assignees) {
-    pills.push(<FilterPill key={`a-${a}`} label={a || "Unassigned"} onRemove={() => removeStr("assignees", a)}><AssigneeAvatar name={a || null} size="xs" /></FilterPill>)
-  }
-  for (const l of filters.labels) {
-    pills.push(<FilterPill key={`l-${l}`} label={l} onRemove={() => removeStr("labels", l)}><LabelChip label={l} /></FilterPill>)
-  }
-  if (filters.due !== "any") {
-    const dueLabel = DUE_OPTIONS.find((d) => d.id === filters.due)?.label ?? filters.due
-    pills.push(<FilterPill key="due" label={dueLabel} onRemove={() => onChange({ ...filters, due: "any" })} />)
-  }
-  if (filters.archived !== "hide") {
-    pills.push(<FilterPill key="archived" label={filters.archived === "only" ? "Archived only" : "Include archived"} onRemove={() => onChange({ ...filters, archived: "hide" })} />)
-  }
-
-  if (pills.length === 0) return null
-  return <div className="flex flex-wrap items-center gap-1">{pills}</div>
-}
-
-/** ClickUp-style sort button: icon + label + direction indicator. */
-function SortButton({
-  view,
-  onChange,
-  sortable,
-}: {
-  view: ViewState
-  onChange: (patch: Partial<ViewState>) => void
-  sortable: boolean
-}) {
-  if (!sortable) return null
-  const active = view.sortBy !== "manual"
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
-            <ArrowUpDown data-icon="inline-start" />
-            <span className="hidden @panel-sm:inline">
-              {SORT_LABEL[view.sortBy]}
-              {active && (view.sortDir === "asc" ? " ↑" : " ↓")}
-            </span>
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="start" className="w-44">
-        <DropdownMenuRadioGroup value={view.sortBy} onValueChange={(v) => onChange({ sortBy: v as SortBy })}>
-          <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-          {SORT_BYS.map((s) => (
-            <DropdownMenuRadioItem key={s} value={s}>
-              {SORT_LABEL[s]}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup value={view.sortDir} onValueChange={(v) => onChange({ sortDir: v as "asc" | "desc" })}>
-          <DropdownMenuRadioItem value="asc">Ascending</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="desc">Descending</DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/** ClickUp-style group button. */
-function GroupButton({
-  view,
-  onChange,
-  groupable,
-}: {
-  view: ViewState
-  onChange: (patch: Partial<ViewState>) => void
-  groupable: boolean
-}) {
-  if (!groupable) return null
-  const active = view.groupBy !== "none"
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
-            <Group data-icon="inline-start" />
-            <span className="hidden @panel-sm:inline">{GROUP_LABEL[view.groupBy]}</span>
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="start" className="w-44">
-        <DropdownMenuRadioGroup value={view.groupBy} onValueChange={(v) => onChange({ groupBy: v as GroupBy })}>
-          <DropdownMenuLabel>Group by</DropdownMenuLabel>
-          {GROUP_BYS.map((g) => (
-            <DropdownMenuRadioItem key={g} value={g}>
-              {g === "none" ? "Status (default)" : GROUP_LABEL[g]}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/** ClickUp-style columns button (table view only). */
-function ColumnsButton({
-  view,
-  onChange,
-}: {
-  view: ViewState
-  onChange: (patch: Partial<ViewState>) => void
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button type="button" variant="outline" size="sm" className="text-muted-foreground">
-            <Columns3 data-icon="inline-start" />
-            <span className="hidden @panel-sm:inline">Columns</span>
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="start" className="w-44">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Columns</DropdownMenuLabel>
-          {TABLE_COLUMNS.map((c) => (
-            <DropdownMenuCheckboxItem
-              key={c}
-              checked={view.columns.includes(c)}
-              onCheckedChange={(checked) =>
-                onChange({
-                  columns: checked
-                    ? TABLE_COLUMNS.filter((x) => x === c || view.columns.includes(x))
-                    : view.columns.filter((x) => x !== c),
-                })
-              }
-            >
-              {COLUMN_LABEL[c as TableColumn]}
-            </DropdownMenuCheckboxItem>
-          ))}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/** Saved views dropdown — ClickUp-style bookmark button. */
-function SavedViewsButton({
+/** Saved views: pick, save, update, leave, delete. */
+function ViewsMenu({
   savedViews,
   activeViewId,
   onPickView,
@@ -484,61 +250,157 @@ function SavedViewsButton({
   savedViews: BoardView[]
   activeViewId: string | null
   onPickView: (view: BoardView | null) => void
-  onSaveView: () => void
+  onSaveView: (update: boolean) => void
   onDeleteView: (view: BoardView) => void
 }) {
-  const active = !!activeViewId
+  const confirm = useConfirm()
+  const active = savedViews.find((v) => v.id === activeViewId) ?? null
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button type="button" variant={active ? "secondary" : "outline"} size="sm" className={cn(!active && "text-muted-foreground")}>
+          <Button type="button" variant="outline" size="sm" className="max-w-48 pointer-coarse:h-11">
             <Bookmark data-icon="inline-start" />
-            <span className="hidden @panel-sm:inline">{savedViews.find((v) => v.id === activeViewId)?.name ?? "Views"}</span>
+            <span className="truncate">{active?.name ?? "Views"}</span>
           </Button>
         }
       />
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Saved views</DropdownMenuLabel>
-          {savedViews.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">None yet — set up filters, then save.</p>}
-          {savedViews.map((v) => (
-            <DropdownMenuItem key={v.id} onClick={() => onPickView(v)}>
-              {v.id === activeViewId ? <Check className="size-4 text-primary" /> : <span className="size-4" />}
-              <span className="flex-1 truncate">{v.name}</span>
-              <span className="text-xs text-muted-foreground">{v.kind}</span>
-              <button
-                type="button"
-                aria-label={`Delete view ${v.name}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onDeleteView(v)
-                }}
-                className="grid size-5 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Trash2 className="size-3" />
-              </button>
-            </DropdownMenuItem>
-          ))}
+          {savedViews.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">None yet. Set up filters, then save.</p>}
+          {savedViews.map((v) => {
+            const Icon = MODES.find((m) => m.id === v.kind)?.icon ?? Bookmark
+            return (
+              <DropdownMenuItem key={v.id} onClick={() => onPickView(v)}>
+                <Icon />
+                <span className="flex-1 truncate">{v.name}</span>
+                {v.id === activeViewId && <Check className="text-primary" />}
+              </DropdownMenuItem>
+            )
+          })}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onSaveView}>
-          <Plus className="size-4" /> {activeViewId ? "Update / save as…" : "Save current view…"}
+        <DropdownMenuItem onClick={() => onSaveView(false)}>
+          <Plus /> Save view…
         </DropdownMenuItem>
-        {activeViewId && (
-          <DropdownMenuItem onClick={() => onPickView(null)}>
-            <X className="size-4" /> Leave view
-          </DropdownMenuItem>
+        {active && (
+          <>
+            <DropdownMenuItem onClick={() => onSaveView(true)}>
+              <Save /> Update “{active.name}”…
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onPickView(null)}>
+              <LogOut /> Leave view
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={async () => {
+                if (await confirm({ title: `Delete “${active.name}”?`, description: "The saved view goes for everyone. Tasks are not touched.", confirmLabel: "Delete", destructive: true }))
+                  onDeleteView(active)
+              }}
+            >
+              <Trash2 /> Delete “{active.name}”…
+            </DropdownMenuItem>
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
 }
 
-/** The full ClickUp-style toolbar: view tabs + filter/search + controls. */
+function FilterPill({ label, onRemove, children }: { label: string; onRemove: () => void; children?: React.ReactNode }) {
+  return (
+    <Badge variant="outline" className="h-7 gap-1.5 pe-0.5 pointer-coarse:h-9">
+      {children}
+      <span className="max-w-40 truncate">{label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove filter ${label}`}
+        className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:size-8"
+      >
+        <X className="size-3.5" />
+      </button>
+    </Badge>
+  )
+}
+
+/** Every active facet as a removable pill, then "Clear all". Wraps, never scrolls. */
+function ActiveFilterPills({
+  filters,
+  onChange,
+  statuses,
+  sprints,
+  epics,
+  boardKey,
+}: {
+  filters: TaskFilters
+  onChange: (next: TaskFilters) => void
+  statuses: BoardStatus[]
+  sprints: Sprint[]
+  epics: Task[]
+  boardKey: string
+}) {
+  if (activeFilterCount(filters) === 0) return null
+  const without = <K extends (typeof MULTI_KEYS)[number]>(key: K, value: string) =>
+    onChange({ ...filters, [key]: (filters[key] as string[]).filter((v) => v !== value) })
+  const pills: React.ReactNode[] = []
+  for (const id of filters.statusIds) {
+    const s = statuses.find((x) => x.id === id)
+    if (s)
+      pills.push(
+        <FilterPill key={`s-${id}`} label={s.name} onRemove={() => without("statusIds", id)}>
+          <span className={cn("size-2 rounded-full", s.color ? COLOR_DOT[s.color] : "bg-muted-foreground/40")} />
+        </FilterPill>,
+      )
+  }
+  for (const p of filters.priorities as TaskPriority[])
+    pills.push(
+      <FilterPill key={`p-${p}`} label={PRIORITY_LABEL[p]} onRemove={() => without("priorities", p)}>
+        <PriorityIcon priority={p} />
+      </FilterPill>,
+    )
+  for (const t of filters.types as TaskType[])
+    pills.push(
+      <FilterPill key={`t-${t}`} label={TYPE_LABEL[t]} onRemove={() => without("types", t)}>
+        <TypeIcon type={t} />
+      </FilterPill>,
+    )
+  for (const a of filters.assignees)
+    pills.push(
+      <FilterPill key={`a-${a}`} label={a || "Unassigned"} onRemove={() => without("assignees", a)}>
+        <AssigneeAvatar name={a || null} size="xs" />
+      </FilterPill>,
+    )
+  for (const l of filters.labels) pills.push(<FilterPill key={`l-${l}`} label={l} onRemove={() => without("labels", l)} />)
+  for (const id of filters.sprintIds) {
+    const name = id === "backlog" ? "Backlog" : sprints.find((s) => s.id === id)?.name
+    if (name) pills.push(<FilterPill key={`sp-${id}`} label={`Sprint: ${name}`} onRemove={() => without("sprintIds", id)} />)
+  }
+  for (const id of filters.parentIds) {
+    const epic = epics.find((e) => e.id === id)
+    const name = id === "none" ? "Top level only" : epic ? `${taskKey(epic, boardKey)} ${epic.title}` : null
+    if (name) pills.push(<FilterPill key={`pa-${id}`} label={id === "none" ? name : `Parent: ${name}`} onRemove={() => without("parentIds", id)} />)
+  }
+  if (filters.due !== "any")
+    pills.push(<FilterPill key="due" label={`Due: ${DUE_OPTIONS.find((d) => d.value === filters.due)?.label ?? filters.due}`} onRemove={() => onChange({ ...filters, due: "any" })} />)
+  if (filters.archived !== "hide")
+    pills.push(<FilterPill key="archived" label={filters.archived === "only" ? "Archived only" : "Including archived"} onRemove={() => onChange({ ...filters, archived: "hide" })} />)
+  return (
+    <div className={cn("flex flex-wrap items-center gap-2 pb-3", INSET_X)}>
+      {pills}
+      <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ ...EMPTY_FILTERS, query: filters.query })} className="text-muted-foreground pointer-coarse:h-11">
+        Clear all
+      </Button>
+    </div>
+  )
+}
+
+/** The toolbar under the view switch: search and filters, display, saved
+    views and the count on one wrapping row, then the active filters as pills. */
 export function Toolbar({
   mode,
-  onMode,
   view,
   onChange,
   statuses,
@@ -551,12 +413,11 @@ export function Toolbar({
   onPickView,
   onSaveView,
   onDeleteView,
-  onNewTask,
   visible,
   total,
+  narrow,
 }: {
   mode: WorkspaceMode
-  onMode: (m: WorkspaceMode) => void
   view: ViewState
   onChange: (patch: Partial<ViewState>) => void
   statuses: BoardStatus[]
@@ -567,56 +428,26 @@ export function Toolbar({
   savedViews: BoardView[]
   activeViewId: string | null
   onPickView: (view: BoardView | null) => void
-  onSaveView: () => void
+  /** `true` asks to update the active view; `false` to save a new one. */
+  onSaveView: (update: boolean) => void
   onDeleteView: (view: BoardView) => void
-  onNewTask: () => void
   visible: number
   total: number
+  /** The workspace is narrower than `@panel-sm` (measured by the shell). */
+  narrow: boolean
 }) {
-  const groupable = mode === "list"
-  const sortable = mode !== "board" && mode !== "calendar" && mode !== "timeline"
+  const setFilters = (filters: TaskFilters) => onChange({ filters })
   return (
-    <div className="flex flex-col gap-2 border-b px-3 py-2 @panel-sm:px-4">
-      {/* Row 1: View tabs + search + new task */}
-      <div className="flex flex-wrap items-center gap-2">
-        <ViewTabs mode={mode} onChange={onMode} />
-        <InputGroup className="h-8 min-w-0 flex-1 @panel-sm:max-w-xs">
-          <InputGroupAddon>
-            <SearchIcon />
-          </InputGroupAddon>
-          <InputGroupInput
-            value={view.filters.query}
-            onChange={(e) => onChange({ filters: { ...view.filters, query: e.target.value } })}
-            placeholder="Search tasks…"
-            aria-label="Search tasks"
-          />
-          {view.filters.query && (
-            <InputGroupAddon align="inline-end">
-              <InputGroupButton size="icon-xs" onClick={() => onChange({ filters: { ...view.filters, query: "" } })} aria-label="Clear search">
-                <X />
-              </InputGroupButton>
-            </InputGroupAddon>
-          )}
-        </InputGroup>
-        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-          {visible === total ? `${total} tasks` : `${visible} of ${total}`}
+    <>
+      <div className={cn("flex flex-wrap items-center gap-2 py-3", INSET_X)}>
+        <TaskFiltersBar filters={view.filters} onChange={setFilters} statuses={statuses} sprints={sprints} epics={epics} facets={facets} boardKey={boardKey} narrow={narrow} />
+        {(mode === "list" || mode === "table" || mode === "sprints") && <DisplayPopover mode={mode} view={view} onChange={onChange} narrow={narrow} />}
+        <ViewsMenu savedViews={savedViews} activeViewId={activeViewId} onPickView={onPickView} onSaveView={onSaveView} onDeleteView={onDeleteView} />
+        <span className="ms-auto hidden text-sm tabular-nums text-muted-foreground @panel-sm:inline">
+          {visible === total ? `${total} ${total === 1 ? "task" : "tasks"}` : `${visible} of ${total}`}
         </span>
-        <Button type="button" size="sm" onClick={onNewTask}>
-          <Plus />
-          <span className="hidden min-[380px]:inline">New task</span>
-        </Button>
       </div>
-
-      {/* Row 2: Filter pill bar + group/sort/columns + saved views */}
-      <div className="flex flex-wrap items-center gap-1.5 @max-panel-sm:flex-nowrap @max-panel-sm:overflow-x-auto">
-        <FilterPopover filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} sprints={sprints} epics={epics} facets={facets} boardKey={boardKey} />
-        <ActiveFilterPills filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} />
-        <Separator orientation="vertical" className="h-4" />
-        <GroupButton view={view} onChange={onChange} groupable={groupable} />
-        <SortButton view={view} onChange={onChange} sortable={sortable} />
-        {mode === "table" && <ColumnsButton view={view} onChange={onChange} />}
-        <SavedViewsButton savedViews={savedViews} activeViewId={activeViewId} onPickView={onPickView} onSaveView={onSaveView} onDeleteView={onDeleteView} />
-      </div>
-    </div>
+      <ActiveFilterPills filters={view.filters} onChange={setFilters} statuses={statuses} sprints={sprints} epics={epics} boardKey={boardKey} />
+    </>
   )
 }

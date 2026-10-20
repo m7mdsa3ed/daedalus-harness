@@ -1,9 +1,12 @@
 import * as React from "react"
-import { CalendarIcon, ChevronDown } from "lucide-react"
+import { CalendarIcon, ChevronDown, CornerDownRight, Rocket, Tag } from "lucide-react"
 
+import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -26,6 +29,7 @@ import {
   DatePicker,
   LabelChip,
   LabelsPicker,
+  NumberPicker,
   ParentPicker,
   PriorityIcon,
   PriorityPicker,
@@ -89,13 +93,17 @@ export function NewTaskDialog({
   )
   const [draft, setDraft] = React.useState<TaskInput>(blank)
   const [more, setMore] = React.useState(false)
+  const [another, setAnother] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<InlineError | null>(null)
   const [editorKey, setEditorKey] = React.useState(0)
 
   React.useEffect(() => {
     if (open) {
-      setDraft(loadNewTaskDraft(serverId, board.id) ?? blank())
+      const next = loadNewTaskDraft(serverId, board.id) ?? blank()
+      setDraft(next)
+      // The extra chips are shown when anything behind them already has a value.
+      setMore(!!(next.labels?.length || next.sprintId || next.parentId || next.startAt != null || next.estimate != null))
       setError(null)
       setEditorKey((k) => k + 1)
     }
@@ -133,123 +141,115 @@ export function NewTaskDialog({
     }
   }
 
+  const chip = cn(CHIP, "border border-input px-2")
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="sm:max-w-2xl">
-        <ResponsiveDialogHeader>
+        <ResponsiveDialogHeader className="flex-row items-center gap-2">
           <ResponsiveDialogTitle>New task</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>
-            On <span className="font-medium text-foreground">{board.name}</span>
-            {parent ? (
-              <>
-                {" "}
-                under <span className="font-medium text-foreground">{taskKey(parent, board.key)} {parent.title}</span>
-              </>
-            ) : null}
-            .
+          <Badge variant="outline" className="font-mono">
+            {board.key}
+          </Badge>
+          <ResponsiveDialogDescription className="sr-only">
+            On {board.name}
+            {parent ? ` under ${taskKey(parent, board.key)} ${parent.title}` : ""}
           </ResponsiveDialogDescription>
+          <span className="ms-auto">
+            <AiFormBuilder
+              title="task"
+              value={draft as Record<string, unknown>}
+              onApply={(next) => patch(next as Partial<TaskInput>)}
+              schema={{
+                type: "object",
+                properties: {
+                  title: { type: "string", description: "Concise task title.", examples: ["Handle empty API responses"] },
+                  description: { type: "string", description: "Context, goal, acceptance criteria, and implementation notes in Markdown." },
+                  type: { type: "string", enum: ["task", "bug", "story", "epic"], description: "Task category." },
+                  priority: { type: "string", enum: ["lowest", "low", "medium", "high", "urgent"], description: "Urgency." },
+                  statusId: { type: "string", enum: statuses.map((status) => status.id), description: "One of the current board status ids." },
+                  labels: { type: "array", items: { type: "string" }, description: "Short tags describing area or theme." },
+                  assignee: { type: ["string", "null"], enum: [...facets.assignees, null], description: "Assignee name, or null." },
+                  estimate: { type: ["integer", "null"], description: "Story-point estimate, or null." },
+                },
+                required: ["title", "description", "type", "priority", "statusId"],
+                additionalProperties: false,
+              }}
+            />
+          </span>
         </ResponsiveDialogHeader>
         {/* The footer is partitioned out of the children, so the buttons hang
             off the form by id rather than by nesting. `contents`, so the
             fields stand in the dialog body's own rhythm. */}
-        <form id="new-task-form" onSubmit={(e) => void submit(e)} className="contents">
-            <div className="flex justify-end">
-              <AiFormBuilder
-                title="task"
-                value={draft as Record<string, unknown>}
-                onApply={(next) => patch(next as Partial<TaskInput>)}
-                schema={{
-                  type: "object",
-                  properties: {
-                    title: { type: "string", description: "Concise task title.", examples: ["Handle empty API responses"] },
-                    description: { type: "string", description: "Context, goal, acceptance criteria, and implementation notes in Markdown." },
-                    type: { type: "string", enum: ["task", "bug", "story", "epic"], description: "Task category." },
-                    priority: { type: "string", enum: ["lowest", "low", "medium", "high", "urgent"], description: "Urgency." },
-                    statusId: { type: "string", enum: statuses.map((status) => status.id), description: "One of the current board status ids." },
-                    labels: { type: "array", items: { type: "string" }, description: "Short tags describing area or theme." },
-                    assignee: { type: ["string", "null"], enum: [...facets.assignees, null], description: "Assignee name, or null." },
-                    estimate: { type: ["integer", "null"], description: "Story-point estimate, or null." },
-                  },
-                  required: ["title", "description", "type", "priority", "statusId"],
-                  additionalProperties: false,
-                }}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="new-task-title" className="sr-only">
-                Title
-              </Label>
-              <Input
-                id="new-task-title"
-                autoFocus
-                value={draft.title ?? ""}
-                onChange={(e) => patch({ title: e.target.value })}
-                placeholder="What needs doing?"
-                className="h-10 text-base"
-              />
-            </div>
+        <form id="new-task-form" onSubmit={(e) => void submit(e, another)} className="contents">
+          <Label htmlFor="new-task-title" className="sr-only">
+            Title
+          </Label>
+          <Input
+            id="new-task-title"
+            autoFocus
+            value={draft.title ?? ""}
+            onChange={(e) => patch({ title: e.target.value })}
+            placeholder="What needs doing?"
+            className="h-11 rounded-none border-0 bg-transparent px-0 text-lg font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
+          />
 
-            <div className="flex flex-wrap items-center gap-1">
-              <TypePicker
-                value={draft.type ?? "task"}
-                onChange={(type) => patch({ type })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <TypeIcon type={draft.type ?? "task"} /> {TYPE_LABEL[draft.type ?? "task"]}
-                  </button>
-                }
-              />
-              <StatusPicker
-                value={draft.statusId ?? ""}
-                statuses={statuses}
-                onChange={(statusId) => patch({ statusId })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <StatusPill status={statuses.find((s) => s.id === draft.statusId)} />
-                  </button>
-                }
-              />
-              <PriorityPicker
-                value={draft.priority ?? "medium"}
-                onChange={(priority) => patch({ priority })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <PriorityIcon priority={draft.priority ?? "medium"} /> {PRIORITY_LABEL[draft.priority ?? "medium"]}
-                  </button>
-                }
-              />
-              <AssigneePicker
-                value={draft.assignee ?? null}
-                suggestions={facets.assignees}
-                onChange={(assignee) => patch({ assignee })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <AssigneeAvatar name={draft.assignee ?? null} size="xs" /> {draft.assignee ?? "Assignee"}
-                  </button>
-                }
-              />
-              <DatePicker
-                value={draft.dueAt ?? null}
-                onChange={(dueAt) => patch({ dueAt })}
-                trigger={
-                  <button type="button" className={CHIP}>
-                    <CalendarIcon className="size-3.5 text-muted-foreground" /> {dueLabel(draft.dueAt ?? null) ?? "Due date"}
-                  </button>
-                }
-              />
-              <button type="button" onClick={() => setMore((m) => !m)} className={CHIP} aria-expanded={more}>
-                <ChevronDown className={`size-3.5 transition-transform ${more ? "rotate-180" : ""}`} /> {more ? "Fewer" : "More"}
-              </button>
-            </div>
-
+          <div className="flex flex-wrap items-center gap-2">
+            <TypePicker
+              value={draft.type ?? "task"}
+              onChange={(type) => patch({ type })}
+              trigger={
+                <button type="button" className={chip}>
+                  <TypeIcon type={draft.type ?? "task"} /> {TYPE_LABEL[draft.type ?? "task"]}
+                </button>
+              }
+            />
+            <StatusPicker
+              value={draft.statusId}
+              statuses={statuses}
+              onChange={(statusId) => patch({ statusId })}
+              trigger={
+                <button type="button" className={chip}>
+                  <StatusPill status={statuses.find((s) => s.id === draft.statusId)} />
+                </button>
+              }
+            />
+            <PriorityPicker
+              value={draft.priority ?? "medium"}
+              onChange={(priority) => patch({ priority })}
+              trigger={
+                <button type="button" className={chip}>
+                  <PriorityIcon priority={draft.priority ?? "medium"} /> {PRIORITY_LABEL[draft.priority ?? "medium"]}
+                </button>
+              }
+            />
+            <AssigneePicker
+              value={draft.assignee ?? null}
+              suggestions={facets.assignees}
+              onChange={(assignee) => patch({ assignee })}
+              trigger={
+                <button type="button" className={chip}>
+                  <AssigneeAvatar name={draft.assignee ?? null} size="xs" /> <span className="truncate">{draft.assignee ?? "Assignee"}</span>
+                </button>
+              }
+            />
+            <DatePicker
+              value={draft.dueAt ?? null}
+              onChange={(dueAt) => patch({ dueAt })}
+              trigger={
+                <button type="button" className={chip}>
+                  <CalendarIcon className="size-3.5 text-muted-foreground" /> {dueLabel(draft.dueAt ?? null) ?? "Due date"}
+                </button>
+              }
+            />
             {more && (
-              <div className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/50 p-2">
+              <>
                 <LabelsPicker
                   value={draft.labels ?? []}
                   suggestions={facets.labels}
                   onChange={(labels) => patch({ labels })}
                   trigger={
-                    <button type="button" className={`${CHIP} flex-wrap`}>
+                    <button type="button" className={cn(chip, "h-auto min-h-7 flex-wrap py-0.5")}>
+                      <Tag className="size-3.5 text-muted-foreground" />
                       {(draft.labels ?? []).length === 0 ? "Labels" : (draft.labels ?? []).map((l) => <LabelChip key={l} label={l} />)}
                     </button>
                   }
@@ -259,8 +259,9 @@ export function NewTaskDialog({
                   sprints={sprints}
                   onChange={(sprintId) => patch({ sprintId })}
                   trigger={
-                    <button type="button" className={CHIP}>
-                      {sprints.find((s) => s.id === draft.sprintId)?.name ?? "Sprint: backlog"}
+                    <button type="button" className={chip}>
+                      <Rocket className="size-3.5 text-muted-foreground" />
+                      <span className="truncate">{sprints.find((s) => s.id === draft.sprintId)?.name ?? "Backlog"}</span>
                     </button>
                   }
                 />
@@ -271,13 +272,15 @@ export function NewTaskDialog({
                   exclude={new Set()}
                   onChange={(parentId) => patch({ parentId })}
                   trigger={
-                    <button type="button" className={CHIP}>
+                    <button type="button" className={chip}>
                       {parent ? (
                         <>
                           <TypeIcon type={parent.type} /> {taskKey(parent, board.key)}
                         </>
                       ) : (
-                        "Parent / epic"
+                        <>
+                          <CornerDownRight className="size-3.5 text-muted-foreground" /> Parent
+                        </>
                       )}
                     </button>
                   }
@@ -286,52 +289,51 @@ export function NewTaskDialog({
                   value={draft.startAt ?? null}
                   onChange={(startAt) => patch({ startAt })}
                   trigger={
-                    <button type="button" className={CHIP}>
-                      <CalendarIcon className="size-3.5 text-muted-foreground" /> {draft.startAt != null ? `Starts ${new Date(draft.startAt).toLocaleDateString()}` : "Start date"}
+                    <button type="button" className={chip}>
+                      <CalendarIcon className="size-3.5 text-muted-foreground" />{" "}
+                      {draft.startAt != null ? `Starts ${new Date(draft.startAt).toLocaleDateString()}` : "Start date"}
                     </button>
                   }
                 />
-                <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  Points
-                  <Input
-                    inputMode="numeric"
-                    value={draft.estimate ?? ""}
-                    onChange={(e) => patch({ estimate: e.target.value === "" ? null : Math.max(0, Math.round(Number(e.target.value)) || 0) })}
-                    className="h-8 w-16"
-                  />
-                </label>
-              </div>
+                <NumberPicker
+                  value={draft.estimate ?? null}
+                  onChange={(estimate) => patch({ estimate })}
+                  trigger={
+                    <button type="button" className={chip}>
+                      <span className="tabular-nums">{draft.estimate ?? "–"}</span> points
+                    </button>
+                  }
+                />
+              </>
             )}
+            <button type="button" onClick={() => setMore((m) => !m)} className={cn(CHIP, "text-muted-foreground")} aria-expanded={more}>
+              <ChevronDown className={cn("size-3.5 transition-transform", more && "rotate-180")} /> {more ? "Fewer" : "More"}
+            </button>
+          </div>
 
-            <TaskEditor
-              key={editorKey}
-              value={draft.description ?? ""}
-              onChange={(description) => patch({ description })}
-              placeholder="Describe the task… **bold**, `code`, links and lists work."
-              className="[&_.ProseMirror]:min-h-[10rem]"
-            />
+          <TaskEditor
+            key={editorKey}
+            value={draft.description ?? ""}
+            onChange={(description) => patch({ description })}
+            placeholder="Describe the task… **bold**, `code`, links and lists work."
+            className="[&_.ProseMirror]:min-h-[10rem]"
+          />
 
-            <ErrorNote error={error} />
-          </form>
+          <ErrorNote error={error} />
+        </form>
 
-          <ResponsiveDialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              className="sm:mr-auto"
-              form="new-task-form"
-              disabled={busy || !draft.title?.trim()}
-              onClick={(e) => void submit(e, true)}
-            >
-              Create another
-            </Button>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="new-task-form" loading={busy} disabled={!draft.title?.trim()}>
-              Create task
-            </Button>
-          </ResponsiveDialogFooter>
+        <ResponsiveDialogFooter className="flex-row items-center">
+          <label className="me-auto flex min-h-11 cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <Switch checked={another} onCheckedChange={setAnother} />
+            Create another
+          </label>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="new-task-form" loading={busy} disabled={!draft.title?.trim()}>
+            Create
+          </Button>
+        </ResponsiveDialogFooter>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )

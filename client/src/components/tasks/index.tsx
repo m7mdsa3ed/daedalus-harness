@@ -8,7 +8,10 @@ import {
   FolderKanban,
   MoreHorizontal,
   Plus,
+  Rocket,
   Settings2,
+  Signal,
+  SquareKanban,
   Trash2,
   X,
 } from "lucide-react"
@@ -22,6 +25,7 @@ import { useServer } from "@/lib/server-context"
 import { loadNewTaskDraft } from "@/lib/task-drafts"
 import type { BoardLocation } from "@/lib/tasks-location"
 import { useProjects } from "@/lib/queries/catalog"
+import { useIsNarrow } from "@/hooks/use-device"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,11 +37,17 @@ import { ProjectIcon } from "@/components/entity-icon"
 import { ErrorNote } from "@/components/error-note"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { Item } from "@/components/ui/item"
+import { Progress } from "@/components/ui/progress"
 import { Empty } from "@/components/empty"
-import { COLOR_DOT, listsOf, sprintsOf, statusesOf, viewsOf, type Board, type BoardList, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
+import { useConfirm } from "@/components/confirm-dialog"
+import { Count, TabBar } from "@/components/settings/primitives"
+import { COLOR_DOT, listsOf, sprintsOf, statusesOf, viewsOf, type Board, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
 import { taskKey, type ReorderEntry, type Task, type TaskInput } from "@/lib/tasks-board"
 import {
   DEFAULT_VIEW,
+  EMPTY_FILTERS,
+  activeFilterCount,
   facetsOf,
   matchesFilters,
   matchesQuery,
@@ -59,9 +69,10 @@ import {
   useUpdateTask,
   useDeleteSprint,
 } from "@/lib/queries/boards"
-import { AssigneeAvatar, AssigneePicker, CHIP, PriorityIcon, PriorityPicker, SprintPicker, StatusPicker, StatusPill } from "./fields"
+import { AssigneeAvatar, AssigneePicker, ICON_BTN, PriorityIcon, PriorityPicker, SprintPicker, StatusPicker, StatusPill } from "./fields"
 import type { CardContext } from "./task-card"
-import { Toolbar, type WorkspaceMode } from "./toolbar"
+import { Toolbar } from "./toolbar"
+import { INSET_X, MODES, type WorkspaceMode } from "./modes"
 import { KanbanView } from "./views/kanban"
 import { ListView } from "./views/list"
 import { TableView } from "./views/table"
@@ -100,6 +111,9 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+/** One kanban column's width — the skeleton draws its columns at it too. */
+const COLUMN_W = "w-[min(18rem,calc(100cqw-3rem))]"
+
 /**
  * Weave the tasks a filter is hiding back into a column's new order.
  *
@@ -130,7 +144,21 @@ function weaveHidden(fullOrder: Task[], visibleNewOrder: string[], moved: Set<st
   return out
 }
 
-/** The left rail: every board, the current one's sprints, and its saved views. */
+/** A board's face: its project's mark, else its colour dot. */
+function BoardMark({ board }: { board: Board }) {
+  const projects = useProjects()
+  const project = board.projectId ? projects.find((p) => p.id === board.projectId) : undefined
+  return project ? (
+    <ProjectIcon project={project} className="size-4" />
+  ) : (
+    <span className={cn("size-2.5 shrink-0 rounded-full", board.color ? COLOR_DOT[board.color] : "bg-muted-foreground/40")} />
+  )
+}
+
+const RAIL_ROW = "w-full rounded-lg text-start hover:bg-muted"
+const RAIL_HEAD = "px-3 pb-1 text-xs font-medium text-muted-foreground"
+
+/** The left rail, from `@panel-lg`: every board, the current one's sprint, and its saved views. */
 function BoardRail({
   boards,
   current,
@@ -144,10 +172,9 @@ function BoardRail({
   onPickView,
   onNewBoard,
   onSprints,
-  className,
 }: {
   boards: Board[]
-  current: Board | null
+  current: Board
   counts: Map<string, number>
   sprints: Sprint[]
   views: BoardView[]
@@ -158,100 +185,190 @@ function BoardRail({
   onPickView: (view: BoardView) => void
   onNewBoard: () => void
   onSprints: () => void
-  className?: string
 }) {
-  const projects = useProjects()
   const active = sprints.find((s) => s.state === "active")
   const progress = active ? sprintProgress(allTasks, active.id, statuses) : null
+  const pct = progress?.total ? Math.round((progress.done / progress.total) * 100) : 0
   return (
-    <aside className={cn("flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r px-2 py-3", className)}>
+    <aside className="hidden min-h-0 flex-col gap-6 overflow-y-auto border-e p-2 @panel-lg:flex">
+      <nav aria-label="Boards" className="grid gap-0.5">
+        <span className={RAIL_HEAD}>Boards</span>
+        {boards.map((b) => (
+          <Item
+            key={b.id}
+            size="xs"
+            render={<button type="button" />}
+            onClick={() => onPick(b)}
+            aria-current={b.id === current.id ? "page" : undefined}
+            className={cn(RAIL_ROW, "flex-nowrap", b.id === current.id && "bg-muted font-medium")}
+          >
+            <BoardMark board={b} />
+            <span className="min-w-0 flex-1 truncate">{b.name}</span>
+            <span className="font-mono text-xs text-muted-foreground">{b.key}</span>
+            <Count>{counts.get(b.id) ?? 0}</Count>
+          </Item>
+        ))}
+        <Item size="xs" render={<button type="button" />} onClick={onNewBoard} className={cn(RAIL_ROW, "flex-nowrap text-muted-foreground")}>
+          <Plus className="size-4" /> New board
+        </Item>
+      </nav>
       <div className="grid gap-0.5">
-        <div className="flex items-center justify-between px-2 pb-1">
-          <span className="text-xs font-medium text-muted-foreground">Boards</span>
-          <Button type="button" variant="ghost" size="icon-xs" onClick={onNewBoard} aria-label="New board" className="text-muted-foreground">
-            <Plus />
-          </Button>
-        </div>
-        {boards.map((b) => {
-          const project = b.projectId ? projects.find((p) => p.id === b.projectId) : undefined
-          return (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => onPick(b)}
-              aria-current={b.id === current?.id ? "page" : undefined}
-              className={cn(
-                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                b.id === current?.id && "bg-muted font-medium",
-              )}
-            >
-              {project ? <ProjectIcon project={project} className="size-4" /> : <span className={cn("size-2.5 shrink-0 rounded-full", b.color ? COLOR_DOT[b.color] : "bg-muted-foreground/40")} />}
-              <span className="min-w-0 flex-1 truncate">{b.name}</span>
-              <span className="font-mono text-xs text-muted-foreground">{b.key}</span>
-              <span className="text-xs tabular-nums text-muted-foreground">{counts.get(b.id) ?? 0}</span>
-            </button>
-          )
-        })}
-      </div>
-      {current && (
-        <div className="grid gap-0.5">
-          <span className="px-2 pb-1 text-xs font-medium text-muted-foreground">Sprint</span>
+        <span className={RAIL_HEAD}>Sprint</span>
+        <Item size="xs" render={<button type="button" />} onClick={onSprints} className={cn(RAIL_ROW, "grid gap-1.5")}>
           {active && progress ? (
-            <button type="button" onClick={onSprints} className="grid gap-1 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted">
-              <span className="flex items-center justify-between">
-                <span className="truncate font-medium">{active.name}</span>
-                <span className="tabular-nums text-muted-foreground">
+            <>
+              <span className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-medium">{active.name}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">
                   {progress.done}/{progress.total}
                 </span>
               </span>
-              <span className="h-1 overflow-hidden rounded-full bg-muted">
-                <span className="block h-full rounded-full bg-success" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
-              </span>
-              {active.endAt != null && <span className="text-xs text-muted-foreground">Ends {new Date(active.endAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
-            </button>
+              <Progress value={pct} aria-label="Sprint progress" className="[&_[data-slot=progress-track]]:h-1.5" />
+              {active.endAt != null && (
+                <span className="text-xs text-muted-foreground">Ends {new Date(active.endAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+              )}
+            </>
           ) : (
-            <button type="button" onClick={onSprints} className="rounded-lg px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted">
-              No active sprint — plan one
-            </button>
+            <span className="text-xs text-muted-foreground">No active sprint — plan one</span>
           )}
-        </div>
-      )}
-      {current && views.length > 0 && (
-        <div className="grid gap-0.5">
-          <span className="px-2 pb-1 text-xs font-medium text-muted-foreground">Views</span>
-          {views.map((v) => (
-            <button key={v.id} type="button" onClick={() => onPickView(v)} className={cn("flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted", v.id === activeViewId && "bg-muted font-medium")}>
-              <span className="min-w-0 flex-1 truncate">{v.name}</span>
-              <span className="text-xs text-muted-foreground">{v.kind}</span>
-            </button>
-          ))}
-        </div>
+        </Item>
+      </div>
+      {views.length > 0 && (
+        <nav aria-label="Saved views" className="grid gap-0.5">
+          <span className={RAIL_HEAD}>Views</span>
+          {views.map((v) => {
+            const Icon = MODES.find((m) => m.id === v.kind)?.icon ?? SquareKanban
+            return (
+              <Item
+                key={v.id}
+                size="xs"
+                render={<button type="button" />}
+                onClick={() => onPickView(v)}
+                aria-current={v.id === activeViewId ? "true" : undefined}
+                className={cn(RAIL_ROW, "flex-nowrap", v.id === activeViewId && "bg-muted font-medium")}
+              >
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">{v.name}</span>
+              </Item>
+            )
+          })}
+        </nav>
       )}
     </aside>
   )
 }
 
-/** The bar that appears over a multi-select: the bulk verbs. */
-function BulkBar({ count, statuses, sprints, facets, onPatch, onDelete, onClear }: { count: number; statuses: BoardStatus[]; sprints: Sprint[]; facets: { assignees: string[]; labels: string[] }; onPatch: (patch: Parameters<ReturnType<typeof useBulkUpdateTasks>["mutateAsync"]>[0]["patch"]) => void; onDelete: () => void; onClear: () => void }) {
+type BulkPatch = Parameters<ReturnType<typeof useBulkUpdateTasks>["mutateAsync"]>[0]["patch"]
+
+/** The value every task in `tasks` shares, else undefined (a mixed picker). */
+function shared<T>(tasks: Task[], pick: (t: Task) => T): T | undefined {
+  if (tasks.length === 0) return undefined
+  const first = pick(tasks[0])
+  return tasks.every((t) => pick(t) === first) ? first : undefined
+}
+
+const BULK_BTN = "pointer-coarse:h-11"
+
+/** A selection's verbs, floating over the foot of the view at every width. */
+function BulkBar({
+  tasks,
+  statuses,
+  sprints,
+  facets,
+  onPatch,
+  onDelete,
+  onClear,
+}: {
+  tasks: Task[]
+  statuses: BoardStatus[]
+  sprints: Sprint[]
+  facets: { assignees: string[]; labels: string[] }
+  onPatch: (patch: BulkPatch) => void
+  onDelete: () => void
+  onClear: () => void
+}) {
+  const statusId = shared(tasks, (t) => t.statusId)
+  const priority = shared(tasks, (t) => t.priority)
+  const assignee = shared(tasks, (t) => t.assignee)
+  const sprintId = shared(tasks, (t) => t.sprintId)
+  const status = statuses.find((s) => s.id === statusId)
   return (
-    <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted/50 px-3 py-1.5 text-sm @panel-sm:px-4">
-      <span className="mr-1 shrink-0 font-medium">{count} selected</span>
-      <StatusPicker value="" statuses={statuses} onChange={(statusId) => onPatch({ statusId })} trigger={<button type="button" className={CHIP}><StatusPill status={undefined} /> Status <ChevronDown className="size-3" /></button>} />
-      <PriorityPicker value="medium" onChange={(priority) => onPatch({ priority })} trigger={<button type="button" className={CHIP}><PriorityIcon priority="medium" /> Priority <ChevronDown className="size-3" /></button>} />
-      <AssigneePicker value={null} suggestions={facets.assignees} onChange={(assignee) => onPatch({ assignee })} trigger={<button type="button" className={CHIP}><AssigneeAvatar name={null} size="xs" /> Assignee <ChevronDown className="size-3" /></button>} />
-      <SprintPicker value={null} sprints={sprints} onChange={(sprintId) => onPatch({ sprintId })} trigger={<button type="button" className={CHIP}>Sprint <ChevronDown className="size-3" /></button>} />
-      <button type="button" onClick={() => onPatch({ archived: true })} className={CHIP}>
-        <Archive className="size-3.5" /> Archive
-      </button>
-      <button type="button" onClick={() => onPatch({ archived: false })} className={CHIP}>
-        <ArchiveRestore className="size-3.5" /> Restore
-      </button>
-      <button type="button" onClick={onDelete} className={cn(CHIP, "text-destructive hover:bg-destructive/10")}>
-        <Trash2 className="size-3.5" /> Delete
-      </button>
-      <button type="button" onClick={onClear} className={cn(CHIP, "ml-auto shrink-0")}>
-        <X className="size-3.5" /> Clear
-      </button>
+    <div
+      role="toolbar"
+      aria-label="Selection"
+      className="absolute inset-x-0 bottom-[calc(var(--safe-bottom,0px)+0.75rem)] z-20 mx-auto flex w-fit max-w-[calc(100%-1.5rem)] items-center gap-1 rounded-2xl bg-popover p-1.5 shadow-lg ring-1 ring-foreground/10"
+    >
+      <span className="flex shrink-0 items-center gap-1.5 px-1.5 text-sm font-medium">
+        <Count>{tasks.length}</Count>
+        <span className="hidden @panel-sm:inline">selected</span>
+      </span>
+      <StatusPicker
+        value={statusId}
+        statuses={statuses}
+        onChange={(statusId) => onPatch({ statusId })}
+        trigger={
+          <Button type="button" variant="ghost" size="sm" title="Status" className={BULK_BTN}>
+            {status ? <StatusPill status={status} compact /> : <StatusPill status={undefined} />}
+            <span className="hidden @panel-sm:inline">Status</span>
+          </Button>
+        }
+      />
+      <PriorityPicker
+        value={priority}
+        onChange={(priority) => onPatch({ priority })}
+        trigger={
+          <Button type="button" variant="ghost" size="sm" title="Priority" className={BULK_BTN}>
+            {priority ? <PriorityIcon priority={priority} /> : <Signal className="text-muted-foreground" />}
+            <span className="hidden @panel-sm:inline">Priority</span>
+          </Button>
+        }
+      />
+      <AssigneePicker
+        value={assignee}
+        suggestions={facets.assignees}
+        onChange={(assignee) => onPatch({ assignee })}
+        trigger={
+          <Button type="button" variant="ghost" size="sm" title="Assignee" className={BULK_BTN}>
+            <AssigneeAvatar name={assignee ?? null} size="xs" />
+            <span className="hidden @panel-sm:inline">Assignee</span>
+          </Button>
+        }
+      />
+      <SprintPicker
+        value={sprintId}
+        sprints={sprints}
+        onChange={(sprintId) => onPatch({ sprintId })}
+        trigger={
+          <Button type="button" variant="ghost" size="sm" title="Sprint" className={BULK_BTN}>
+            <Rocket className="text-muted-foreground" />
+            <span className="hidden @panel-sm:inline">Sprint</span>
+          </Button>
+        }
+      />
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="More actions" className={ICON_BTN}>
+              <MoreHorizontal />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end" side="top" className="w-44">
+          <DropdownMenuItem onClick={() => onPatch({ archived: true })}>
+            <Archive /> Archive
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onPatch({ archived: false })}>
+            <ArchiveRestore /> Restore
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={onDelete}>
+            <Trash2 /> Delete…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button type="button" variant="ghost" size="icon-sm" onClick={onClear} aria-label="Clear selection" title="Clear selection" className={ICON_BTN}>
+        <X />
+      </Button>
     </div>
   )
 }
@@ -288,16 +405,16 @@ function useRouteBoardLocation(): BoardLocation {
   }
 }
 
-/** Columns of cards — the shape the board view fills, so the frame is already
-    where it will be when the task read answers. */
+/** Columns of cards at the kanban's own width — the shape the board view
+    fills, so the frame is already where it will be when the task read answers. */
 function BoardColumnsSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
+    <div aria-busy="true" className={cn("flex h-full gap-3 overflow-hidden pb-3", INSET_X)}>
       {[...Array(4).keys()].map((column) => (
-        <div key={column} className="flex w-72 shrink-0 flex-col gap-2">
-          <Skeleton className="h-4 w-24" />
+        <div key={column} className={cn(COLUMN_W, "flex shrink-0 flex-col gap-2 self-start rounded-2xl bg-muted/50 p-2")}>
+          <Skeleton className="m-1 h-4 w-24" />
           {[...Array(column === 0 ? 3 : 2).keys()].map((card) => (
-            <Skeleton key={card} className="h-20 w-full rounded-xl" />
+            <Skeleton key={card} className="h-20 w-full rounded-lg" />
           ))}
         </div>
       ))}
@@ -305,39 +422,57 @@ function BoardColumnsSkeleton() {
   )
 }
 
-/** The board's frame before its reads answer: the rail, the header and the
-    columns in their sizes. A pending board used to draw as a board with no
-    cards, which is a claim about the data rather than about the read. */
-function BoardSkeleton() {
+/** The list, table, calendar and sprint modes while the task read is out: one card of rows. */
+function BoardRowsSkeleton() {
   return (
-    <div aria-busy="true" className="@container flex min-h-0 flex-1">
-      <div className="hidden w-56 shrink-0 space-y-1 border-r p-2 @panel-md:block">
-        {[...Array(4).keys()].map((index) => (
-          <div key={index} className="flex items-center gap-2 rounded-md px-2 py-1.5">
-            <Skeleton className="size-3.5 shrink-0 rounded-sm" />
+    <div aria-busy="true" className={cn("mx-auto w-full max-w-6xl py-3", INSET_X)}>
+      <div className="divide-y overflow-hidden rounded-2xl bg-card ring-1 ring-foreground/10">
+        {[...Array(8).keys()].map((index) => (
+          <div key={index} className="flex h-11 items-center gap-3 px-3">
+            <Skeleton className="size-4 rounded-sm" />
             <Skeleton className="h-3 flex-1" />
+            <Skeleton className="size-6 rounded-full" />
           </div>
         ))}
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 border-b px-3 py-2 @panel-sm:px-4">
-          <Skeleton className="h-4 w-40" />
-          <Skeleton className="ml-auto h-7 w-32" />
-        </div>
-        <BoardColumnsSkeleton />
       </div>
     </div>
   )
 }
 
-/** The list, table, calendar and sprint modes while the task read is out. */
-function BoardRowsSkeleton() {
+/** The board's frame before its reads answer: the rail, the header, the tab
+    bar, the toolbar and the columns in their sizes. A pending board used to
+    draw as a board with no cards, which is a claim about the data rather than
+    about the read. */
+function BoardSkeleton() {
   return (
-    <div aria-busy="true" className="min-h-0 flex-1 space-y-1.5 overflow-hidden p-3">
-      {[...Array(9).keys()].map((index) => (
-        <Skeleton key={index} className="h-9 w-full rounded-lg" />
-      ))}
-    </div>
+    <>
+      <div aria-busy="true" className="hidden flex-col gap-1 border-e p-2 @panel-lg:flex">
+        {[...Array(4).keys()].map((index) => (
+          <div key={index} className="flex h-9 items-center gap-2 px-3">
+            <Skeleton className="size-3.5 shrink-0 rounded-full" />
+            <Skeleton className="h-3 flex-1" />
+          </div>
+        ))}
+      </div>
+      <div aria-busy="true" className="flex min-h-0 min-w-0 flex-col">
+        <div className={cn("flex h-12 items-center gap-2", INSET_X)}>
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="ms-auto h-8 w-24" />
+        </div>
+        <div className={cn("flex h-9 items-center gap-4 border-b", INSET_X)}>
+          {[...Array(4).keys()].map((index) => (
+            <Skeleton key={index} className="h-3 w-14" />
+          ))}
+        </div>
+        <div className={cn("flex items-center gap-2 py-3", INSET_X)}>
+          <Skeleton className="h-9 w-full max-w-sm" />
+          <Skeleton className="h-9 w-24" />
+        </div>
+        <div className="min-h-0 flex-1">
+          <BoardColumnsSkeleton />
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -345,6 +480,11 @@ function BoardRowsSkeleton() {
 export function BoardWorkspace({ location, actions }: { location: BoardLocation; actions: Actions }) {
   const server = useServer()
   const projects = useProjects()
+  const confirm = useConfirm()
+  /* The root is the container every `@panel-*` in the workspace measures, and
+     the box `useIsNarrow` watches — so it is mounted in every state. */
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  const narrow = useIsNarrow(rootRef)
 
   const tasksQuery = useTasksQuery()
   const tasks = React.useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
@@ -522,11 +662,12 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
   }, [server.id, boardId])
   const [boardDialog, setBoardDialog] = React.useState<{ open: boolean; board: Board | null }>({ open: false, board: null })
   const [deletingBoard, setDeletingBoard] = React.useState(false)
-  const [columnDialog, setColumnDialog] = React.useState(false)
+  const [columnDialog, setColumnDialog] = React.useState<{ open: boolean; status: BoardStatus | null }>({ open: false, status: null })
   const [deletingStatus, setDeletingStatus] = React.useState<BoardStatus | null>(null)
   const [sprintDialog, setSprintDialog] = React.useState<{ open: boolean; sprint: Sprint | null }>({ open: false, sprint: null })
   const [completingSprint, setCompletingSprint] = React.useState<Sprint | null>(null)
-  const [savingView, setSavingView] = React.useState(false)
+  /** "new" saves a view of its own; "update" rewrites the active one. */
+  const [savingView, setSavingView] = React.useState<"new" | "update" | null>(null)
 
   const ctx: CardContext = {
     boardKey: board?.key ?? "TASK",
@@ -536,26 +677,51 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
     onToggleSelect: toggleSelect,
   }
 
-  if (boardsError) {
-    /* A read that failed is a failure, not a wait: the skeleton below would
-       otherwise shimmer forever over a page that is never going to fill. */
-    return (
-      <div className="p-6">
-        <ErrorNote error={inlineFromQuery(boardsError, "Couldn't read the boards")} />
-      </div>
-    )
-  }
+  const newBoard = () => setBoardDialog({ open: true, board: null })
+  /* Mounted in every state, the "no boards yet" one included — its action is
+     the only way out of it. */
+  const boardDialogEl = (
+    <BoardDialog
+      open={boardDialog.open}
+      onOpenChange={(open) => setBoardDialog((s) => ({ ...s, open }))}
+      board={boardDialog.board}
+      statuses={boardDialog.board ? statuses : []}
+      projects={projects}
+      onCreated={(b) => openBoard(b.id)}
+      onDeleteStatus={setDeletingStatus}
+    />
+  )
+  const ROOT = "@container relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] @panel-lg:grid-cols-[15rem_minmax(0,1fr)]"
 
-  if (!loaded || !board) {
-    /* "Loading boards…" as a sentence was the whole state, and it read as an
-       empty board with a caption. A board that genuinely has none is the only
-       case that gets words. */
-    return loaded && boards.length === 0 ? (
-      <div className="grid flex-1 place-items-center p-8">
-        <Empty size="lg" icon={FolderKanban}>No boards yet.</Empty>
+  if (boardsError || !loaded || !board) {
+    return (
+      <div ref={rootRef} className={ROOT}>
+        {boardsError ? (
+          /* A read that failed is a failure, not a wait: the skeleton would
+             otherwise shimmer forever over a page that is never going to fill. */
+          <div className="col-span-full p-6">
+            <ErrorNote error={inlineFromQuery(boardsError, "Couldn't read the boards")} />
+          </div>
+        ) : loaded && boards.length === 0 ? (
+          /* A board that genuinely has none is the only case that gets words. */
+          <div className="col-span-full grid place-items-center p-8">
+            <Empty
+              size="lg"
+              icon={SquareKanban}
+              action={
+                <Button type="button" size="sm" onClick={newBoard} className="pointer-coarse:h-11">
+                  <Plus data-icon="inline-start" /> New board
+                </Button>
+              }
+            >
+              No boards yet.
+            </Empty>
+          </div>
+        ) : (
+          <BoardSkeleton />
+        )}
+        {boardDialogEl}
       </div>
-    ) : (
-      <BoardSkeleton />
     )
   }
 
@@ -577,11 +743,46 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
 
   const doneIds = new Set(statuses.filter((s) => s.category === "done").map((s) => s.id))
   const completing = completingSprint ? boardTasks.filter((t) => t.sprintId === completingSprint.id && !t.archived) : []
+  const liveCount = boardTasks.filter((t) => !t.archived).length
+  const project = board.projectId ? projects.find((p) => p.id === board.projectId) : undefined
+  const selectedTasks = boardTasks.filter((t) => selected.has(t.id))
+  const clearFilters = () => onViewChange({ filters: { ...EMPTY_FILTERS, query: view.filters.query } })
+  const openNewTask = () => setNewTask({ open: true, defaults: {} })
+
+  /* What the shell says instead of a view: a board with nothing on it, or
+     filters that let nothing through. The kanban keeps its columns either way
+     (they are where a first card goes), and so do the sprints (where a first
+     sprint is planned). */
+  const emptyState =
+    mode === "board" || mode === "sprints" ? null : liveCount === 0 && activeFilterCount(view.filters) === 0 && !view.filters.query ? (
+      <Empty
+        size="lg"
+        icon={SquareKanban}
+        action={
+          <Button type="button" size="sm" onClick={openNewTask} className="pointer-coarse:h-11">
+            <Plus data-icon="inline-start" /> New task
+          </Button>
+        }
+      >
+        No tasks yet.
+      </Empty>
+    ) : visible.length === 0 ? (
+      <Empty
+        action={
+          activeFilterCount(view.filters) > 0 ? (
+            <Button type="button" variant="outline" size="sm" onClick={clearFilters} className="pointer-coarse:h-11">
+              Clear filters
+            </Button>
+          ) : undefined
+        }
+      >
+        No tasks match these filters.
+      </Empty>
+    ) : null
 
   return (
-    <div className="@container flex min-h-0 flex-1">
+    <div ref={rootRef} className={ROOT}>
       <BoardRail
-        className="hidden @panel-md:flex"
         boards={boards}
         current={board}
         counts={counts}
@@ -592,85 +793,119 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
         statuses={statuses}
         onPick={(b) => openBoard(b.id)}
         onPickView={pickView}
-        onNewBoard={() => setBoardDialog({ open: true, board: null })}
+        onNewBoard={newBoard}
         onSprints={() => setMode("sprints")}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-col">
         {/* Board header. */}
-        <header className="flex items-center gap-2 border-b px-3 py-2 @panel-sm:px-4">
+        <header className={cn("flex h-12 shrink-0 items-center gap-2", INSET_X)}>
           <DropdownMenu>
             {/* The board is the page: its name is the page's heading, and the
                 switcher it opens is the heading's own control. */}
-            <h1 className="flex min-w-0 text-sm font-medium">
+            <h1 className="flex min-w-0">
               <DropdownMenuTrigger
                 render={
-                  <button type="button" className="flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                    <span className={cn("size-2.5 shrink-0 rounded-full", board.color ? COLOR_DOT[board.color] : "bg-muted-foreground/40")} />
+                  <Button type="button" variant="ghost" size="sm" className="max-w-[min(24rem,60cqw)] font-heading pointer-coarse:h-11">
+                    <BoardMark board={board} />
                     <span className="truncate">{board.name}</span>
-                    <span className="font-mono text-xs font-normal text-muted-foreground">{board.key}</span>
-                    <ChevronDown className="size-3.5 text-muted-foreground @panel-md:hidden" />
-                  </button>
+                    <ChevronDown data-icon="inline-end" className="text-muted-foreground" />
+                  </Button>
                 }
               />
             </h1>
-            <DropdownMenuContent align="start" className="w-56 @panel-md:hidden">
+            <DropdownMenuContent align="start" className="w-64">
               {boards.map((b) => (
                 <DropdownMenuItem key={b.id} onClick={() => openBoard(b.id)}>
-                  <span className={cn("size-2 rounded-full", b.color ? COLOR_DOT[b.color] : "bg-muted-foreground/40")} />
+                  <BoardMark board={b} />
                   <span className="flex-1 truncate">{b.name}</span>
                   <span className="font-mono text-xs text-muted-foreground">{b.key}</span>
-                  <span className="text-xs tabular-nums text-muted-foreground">{counts.get(b.id) ?? 0}</span>
+                  <Count>{counts.get(b.id) ?? 0}</Count>
                 </DropdownMenuItem>
               ))}
+              {savedViews.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  {savedViews.map((v) => {
+                    const Icon = MODES.find((m) => m.id === v.kind)?.icon ?? SquareKanban
+                    return (
+                      <DropdownMenuItem key={v.id} onClick={() => pickView(v)}>
+                        <Icon />
+                        <span className={cn("flex-1 truncate", v.id === activeViewId && "font-medium")}>{v.name}</span>
+                      </DropdownMenuItem>
+                    )
+                  })}
+                </>
+              )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setBoardDialog({ open: true, board: null })}>
-                <Plus className="size-4" /> New board…
+              <DropdownMenuItem onClick={newBoard}>
+                <Plus /> New board…
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {board.projectId && (() => {
-            const project = projects.find((p) => p.id === board.projectId)
-            return project ? (
-              <span className="hidden items-center gap-1 text-xs text-muted-foreground @panel-sm:inline-flex">
-                <ProjectIcon project={project} className="size-4" /> {project.name}
-              </span>
-            ) : null
-          })()}
-          {board.description && <span className="hidden truncate text-xs text-muted-foreground @panel-md:inline">{board.description}</span>}
-          <span className="ml-auto flex items-center gap-1">
-            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setBoardDialog({ open: true, board })} aria-label="Board settings" title="Board settings" className="text-muted-foreground">
+          {project && (
+            <span className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground @panel-sm:inline-flex">
+              <ProjectIcon project={project} className="size-4" /> {project.name}
+            </span>
+          )}
+          {board.description && <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground @panel-lg:block">{board.description}</span>}
+          <span className="ms-auto flex shrink-0 items-center gap-1">
+            <Button type="button" size="sm" onClick={openNewTask} title="New task" className="pointer-coarse:h-11">
+              <Plus data-icon="inline-start" />
+              <span className="hidden @panel-sm:inline">New task</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setBoardDialog({ open: true, board })}
+              aria-label="Board settings"
+              title="Board settings"
+              className={cn("hidden text-muted-foreground @panel-sm:inline-flex", ICON_BTN)}
+            >
               <Settings2 />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Board options" className="text-muted-foreground">
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Board options" title="Board options" className={cn("text-muted-foreground", ICON_BTN)}>
                     <MoreHorizontal />
                   </Button>
                 }
               />
               <DropdownMenuContent align="end" className={MENU_WIDTH}>
-                <DropdownMenuItem onClick={() => setBoardDialog({ open: true, board: null })}>
-                  <Plus className="size-4" /> New board…
+                {narrow && (
+                  <DropdownMenuItem onClick={() => setBoardDialog({ open: true, board })}>
+                    <Settings2 /> Board settings…
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={newBoard}>
+                  <Plus /> New board…
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setColumnDialog(true)}>
-                  <FolderKanban className="size-4" /> Add column…
+                <DropdownMenuItem onClick={() => setColumnDialog({ open: true, status: null })}>
+                  <FolderKanban /> Add column…
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setSprintDialog({ open: true, sprint: null })}>
-                  <Plus className="size-4" /> New sprint…
+                  <Rocket /> New sprint…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem disabled={boards.length <= 1} onClick={() => setDeletingBoard(true)} variant="destructive">
-                  <Trash2 className="size-4" /> Delete board…
+                  <Trash2 /> Delete board…
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </span>
         </header>
 
+        <TabBar
+          label="Layout"
+          items={MODES.map((m) => ({ id: m.id, label: m.label, icon: m.icon, count: narrow && m.id === mode ? visible.length : undefined }))}
+          value={mode}
+          onChange={(id) => setMode(id as WorkspaceMode)}
+          className={cn("mb-0 shrink-0", INSET_X)}
+        />
+
         <Toolbar
           mode={mode}
-          onMode={setMode}
           view={view}
           onChange={onViewChange}
           statuses={statuses}
@@ -681,7 +916,7 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
           savedViews={savedViews}
           activeViewId={activeViewId}
           onPickView={pickView}
-          onSaveView={() => setSavingView(true)}
+          onSaveView={(update) => setSavingView(update ? "update" : "new")}
           onDeleteView={(v) =>
             deleteViewMut
               .mutateAsync(v.id)
@@ -690,87 +925,95 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
               })
               .catch((err) => reportError(err, "Couldn't delete the view"))
           }
-          onNewTask={() => setNewTask({ open: true, defaults: {} })}
           visible={visible.length}
-          total={boardTasks.filter((t) => !t.archived).length}
+          total={liveCount}
+          narrow={narrow}
         />
 
-        {selected.size > 0 && (
-          <BulkBar
-            count={selected.size}
-            statuses={statuses}
-            sprints={sprints}
-            facets={facets}
-            onPatch={(patch) =>
-              bulkMut
-                .mutateAsync({ ids: [...selected], patch })
-                .then((rows) => toast.success(`${rows.length} ${rows.length === 1 ? "task" : "tasks"} updated`))
-                .catch((err) => reportError(err, "Couldn't update the selection"))
-            }
-            onDelete={() => {
-              if (!window.confirm(`Delete ${selected.size} ${selected.size === 1 ? "task" : "tasks"}? This cannot be undone.`)) return
-              Promise.all([...selected].map((id) => deleteTaskMut.mutateAsync(id)))
-                .then(() => {
-                  toast.success("Deleted")
-                  setSelected(new Set())
-                })
-                .catch((err) => reportError(err, "Couldn't delete the selection"))
-            }}
-            onClear={() => setSelected(new Set())}
-          />
-        )}
-
-        {tasksError && !tasksQuery.data ? (
-          <div className="p-3">
-            <ErrorNote error={tasksError} onRetry={() => void tasksQuery.refetch()} />
-          </div>
-        ) : tasksQuery.isPending ? (
-          /* The board and its columns are known; the cards are not. Drawing
-             them empty says "no tasks", which is the one thing it must not. */
-          mode === "board" ? (
-            <BoardColumnsSkeleton />
+        <div
+          className="relative min-h-0 flex-1 overflow-hidden"
+          /* What a view's end pads past: the home indicator, and the floating bulk bar while a selection exists. */
+          style={{ "--tasks-foot": selected.size > 0 ? "calc(var(--safe-bottom, 0px) + 5rem)" : "var(--safe-bottom, 0px)" } as React.CSSProperties}
+        >
+          {tasksError && !tasksQuery.data ? (
+            <div className={cn("py-3", INSET_X)}>
+              <ErrorNote error={tasksError} onRetry={() => void tasksQuery.refetch()} />
+            </div>
+          ) : tasksQuery.isPending ? (
+            /* The board and its columns are known; the cards are not. Drawing
+               them empty says "no tasks", which is the one thing it must not. */
+            mode === "board" ? (
+              <BoardColumnsSkeleton />
+            ) : (
+              <BoardRowsSkeleton />
+            )
+          ) : emptyState ? (
+            <div className={cn("mx-auto grid h-full w-full max-w-6xl content-start py-3", INSET_X)}>{emptyState}</div>
           ) : (
-            <BoardRowsSkeleton />
-          )
-        ) : (
-          <>
-          {mode === "board" && (
-            <KanbanView
-              {...viewProps}
-              onMove={handleMove}
-              columns={{
-                onAdd: () => setColumnDialog(true),
-                onEdit: () => setBoardDialog({ open: true, board }),
-                onDelete: setDeletingStatus,
-                onMove: moveColumn,
+            <>
+              {mode === "board" && (
+                <KanbanView
+                  {...viewProps}
+                  onMove={handleMove}
+                  columns={{
+                    onAdd: () => setColumnDialog({ open: true, status: null }),
+                    onEdit: (status) => setColumnDialog({ open: true, status }),
+                    onDelete: setDeletingStatus,
+                    onMove: moveColumn,
+                  }}
+                />
+              )}
+              {mode === "list" && <ListView {...viewProps} />}
+              {mode === "table" && <TableView {...viewProps} />}
+              {mode === "calendar" && <CalendarView {...viewProps} />}
+              {mode === "timeline" && <TimelineView {...viewProps} />}
+              {mode === "sprints" && (
+                <BacklogView
+                  {...viewProps}
+                  sprintOps={{
+                    onCreate: () => setSprintDialog({ open: true, sprint: null }),
+                    onEdit: (sprint) => setSprintDialog({ open: true, sprint }),
+                    onStart: (sprint) =>
+                      startSprintMut
+                        .mutateAsync(sprint.id)
+                        .then(() => toast.success(`${sprint.name} started`))
+                        .catch((err) => reportError(err, "Couldn't start the sprint")),
+                    onComplete: setCompletingSprint,
+                    // The sprints view asks first (useConfirm on its ⋯ row).
+                    onDelete: (sprint) =>
+                      void deleteSprintMut.mutateAsync(sprint.id).catch((err) => reportError(err, "Couldn't delete the sprint")),
+                  }}
+                />
+              )}
+            </>
+          )}
+
+          {selected.size > 0 && (
+            <BulkBar
+              tasks={selectedTasks}
+              statuses={statuses}
+              sprints={sprints}
+              facets={facets}
+              onPatch={(patch) =>
+                bulkMut
+                  .mutateAsync({ ids: [...selected], patch })
+                  .then((rows) => toast.success(`${rows.length} ${rows.length === 1 ? "task" : "tasks"} updated`))
+                  .catch((err) => reportError(err, "Couldn't update the selection"))
+              }
+              onDelete={async () => {
+                const n = selected.size
+                if (!(await confirm({ title: `Delete ${n} ${n === 1 ? "task" : "tasks"}?`, description: "This cannot be undone.", confirmLabel: "Delete", destructive: true }))) return
+                Promise.all([...selected].map((id) => deleteTaskMut.mutateAsync(id)))
+                  .then(() => {
+                    toast.success("Deleted")
+                    setSelected(new Set())
+                  })
+                  .catch((err) => reportError(err, "Couldn't delete the selection"))
               }}
+              onClear={() => setSelected(new Set())}
             />
           )}
-          {mode === "list" && <ListView {...viewProps} />}
-          {mode === "table" && <TableView {...viewProps} />}
-          {mode === "calendar" && <CalendarView {...viewProps} />}
-          {mode === "timeline" && <TimelineView {...viewProps} />}
-          {mode === "sprints" && (
-            <BacklogView
-              {...viewProps}
-              sprintOps={{
-                onCreate: () => setSprintDialog({ open: true, sprint: null }),
-                onEdit: (sprint) => setSprintDialog({ open: true, sprint }),
-                onStart: (sprint) =>
-                  startSprintMut
-                    .mutateAsync(sprint.id)
-                    .then(() => toast.success(`${sprint.name} started`))
-                    .catch((err) => reportError(err, "Couldn't start the sprint")),
-                onComplete: setCompletingSprint,
-                onDelete: (sprint) => {
-                  if (!window.confirm(`Delete ${sprint.name}? Its tasks return to the backlog.`)) return
-                  deleteSprintMut.mutateAsync(sprint.id).catch((err) => reportError(err, "Couldn't delete the sprint"))
-                },
-              }}
-            />
-          )}
-          </>
-        )}
+        </div>
       </div>
 
       <TaskDetailDialog
@@ -801,17 +1044,14 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
         onCreate={onCreate}
       />
 
-      <BoardDialog
-        open={boardDialog.open}
-        onOpenChange={(open) => setBoardDialog((s) => ({ ...s, open }))}
-        board={boardDialog.board}
-        statuses={boardDialog.board ? statuses : []}
-        projects={projects}
-        onCreated={(b) => openBoard(b.id)}
-        onDeleteStatus={setDeletingStatus}
-      />
+      {boardDialogEl}
       <DeleteBoardDialog open={deletingBoard} onOpenChange={setDeletingBoard} board={board} taskCount={boardTasks.length} onDeleted={() => openBoard()} />
-      <ColumnDialog open={columnDialog} onOpenChange={setColumnDialog} boardId={board.id} />
+      <ColumnDialog
+        open={columnDialog.open}
+        onOpenChange={(open) => setColumnDialog((s) => ({ ...s, open }))}
+        boardId={board.id}
+        status={columnDialog.status}
+      />
       <DeleteStatusDialog
         open={deletingStatus !== null}
         onOpenChange={(open) => !open && setDeletingStatus(null)}
@@ -828,11 +1068,11 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
         doneCount={completing.filter((t) => doneIds.has(t.statusId)).length}
       />
       <SaveViewDialog
-        open={savingView}
-        onOpenChange={setSavingView}
+        open={savingView !== null}
+        onOpenChange={(open) => !open && setSavingView(null)}
         boardId={board.id}
         state={{ ...view, kind: mode === "sprints" ? "list" : mode }}
-        existing={savedViews.find((v) => v.id === activeViewId) ?? null}
+        existing={savingView === "update" ? (savedViews.find((v) => v.id === activeViewId) ?? null) : null}
         onSaved={(v) => {
           setActiveViewId(v.id)
           localStorage.setItem(savedKey(board.id), v.id)
@@ -842,4 +1082,3 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
     </div>
   )
 }
-
