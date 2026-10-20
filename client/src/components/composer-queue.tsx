@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
+import { useLayoutOptionsContext } from "@/lib/layout-options"
 
 export function ComposerQueue({
   sessionId,
@@ -197,16 +198,21 @@ function QueuedMessageRow({
       .finally(() => setBusy(false))
   }
 
+  const { steerRingGradient } = useLayoutOptionsContext()
   return (
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       aria-busy={busy || undefined}
       className={cn(
-        /* Every row is waiting on the agent — a steer for the step boundary, a
-           queued one for the turn's end — so it wears the busy ring a loading
-           Button does (push/pull). */
-        "group/queued harness-busy-ring relative flex min-w-0 flex-col gap-1 rounded-2xl border border-dashed bg-muted/50 p-2",
+        /* A steer is already on the wire and lands at the next step boundary,
+           so it wears the busy ring a loading Button does (push/pull) — slower
+           (`harness-busy-ring-slow`), and in the chart colours when the reader
+           asked for it. A queued row is waiting on the turn's end, which the
+           working line already says, so it draws no ring. */
+        "group/queued relative flex min-w-0 flex-col gap-1 rounded-2xl border border-dashed bg-muted/50 p-2",
+        item.steer && "harness-busy-ring harness-busy-ring-slow",
+        item.steer && steerRingGradient && "harness-busy-ring-gradient",
         "transition-colors hover:bg-muted",
         busy && "opacity-50",
         isDragging && "z-10 bg-muted"

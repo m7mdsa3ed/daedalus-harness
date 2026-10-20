@@ -55,6 +55,7 @@ import {
   UserRound,
   ListTree,
   Maximize2,
+  Palette,
   MessageSquareText,
   RotateCcw,
   Rows3,
@@ -363,6 +364,13 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         title: "Calm motion",
         description:
           "Drop the row entrance animation, the shimmer on a running turn and the streaming reveal. Colour still says what is live.",
+      },
+      {
+        key: "steerRingGradient",
+        icon: Palette,
+        title: "Gradient steering ring",
+        description:
+          "The ring that travels around a steering message while it waits to reach the agent, in the chart colours instead of the primary one.",
       },
     ],
     pickers: ["streamSpeed"],

@@ -922,6 +922,24 @@
   mask-composite: exclude;
   animation: harness-ring-spin 1.1s linear infinite;
 }
+/* A wait measured in steps, not a click (a steering message): the same arc,
+   at a pace that reads as patience rather than urgency. */
+.harness-busy-ring-slow::after {
+  animation-duration: 2.8s;
+}
+/* The reader's option (`steerRingGradient`): a longer arc through the chart
+   colours instead of one primary tail — the theme's own hues, so it follows
+   every palette. */
+.harness-busy-ring-gradient::after {
+  background: conic-gradient(
+    from var(--harness-ring-angle),
+    transparent 0 40%,
+    var(--chart-1) 55%,
+    var(--chart-2) 70%,
+    var(--chart-3) 85%,
+    var(--chart-4) 100%
+  );
+}
 
 
 

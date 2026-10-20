@@ -184,6 +184,9 @@ export interface LayoutOptions {
   showTokens: boolean
   /** Drop the row entrance animation and the running-turn shimmer. */
   calmMotion: boolean
+  /** The busy ring a steering message wears while it waits for the step
+   *  boundary: one primary arc (off) or a gradient of the chart colours (on). */
+  steerRingGradient: boolean
   /** How fast a live turn's prose is revealed (lib/stream-pace) — the other
    *  half of the reveal, and the half that used to be a constant. Deliberately
    *  *not* folded into calm motion: pacing is when a word appears, not whether
@@ -259,6 +262,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   showStatusDetail: false,
   showTokens: false,
   calmMotion: false,
+  steerRingGradient: false,
   answersOnly: false,
   streamSpeed: "natural",
   sidebarVariant: "sidebar",
