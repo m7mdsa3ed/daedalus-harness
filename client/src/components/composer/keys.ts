@@ -20,6 +20,7 @@ interface KeyConsumer {
 export function composerKeyDown({
   slash,
   commands,
+  completion,
   mentions,
   history,
   isMobile,
@@ -29,6 +30,9 @@ export function composerKeyDown({
 }: {
   slash: KeyConsumer
   commands: KeyConsumer
+  /** Tab on a ghost, when no menu is offering anything
+      (`composer/fim-completion.ts`). */
+  completion: KeyConsumer
   mentions: KeyConsumer
   history: KeyConsumer
   /** The panel's width, not the device's pointer. */
@@ -43,6 +47,9 @@ export function composerKeyDown({
     // Then the `!` project menu — the other start-anchored completers. The two
     // cannot both be open (`!/name` holds no lone token) but the order is stated.
     if (commands.onKeyDown(e)) return
+    // Then the ghost text a completion model drew at the caret: it takes Tab and
+    // Escape, and declines (returns false) whenever there is nothing drawn.
+    if (completion.onKeyDown(e)) return
     // Then the `@` menu, for the same reason.
     if (mentions.onKeyDown(e)) return
     if (history.onKeyDown(e)) return

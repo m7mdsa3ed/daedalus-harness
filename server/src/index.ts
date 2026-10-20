@@ -9,6 +9,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { migrateLegacyPrompts } from "./legacy-prompts.js";
+import { migrateScheduledMessages } from "./scheduled-migration.js";
 import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
 import { seedDefaultModelRoles } from "./model-roles.js";
@@ -37,6 +38,8 @@ import { addNotification } from "./notifications.js";
 import { backfillSearchIndex } from "./search.js";
 import { bearerToken } from "./routes/helpers.js";
 import { miscRoutes } from "./routes/misc.js";
+import { fimRoutes } from "./routes/fim.js";
+import { sideModelRoutes } from "./routes/side-models.js";
 import { voiceRoutes } from "./routes/voice.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { spaceRoutes } from "./routes/spaces.js";
@@ -69,6 +72,8 @@ configurePauseHooks({ port: config.port });
 await seedAgents();
 // Legacy saved prompts and personas become slash commands, once.
 await migrateLegacyPrompts();
+// Scheduled messages become session-mode routines, once.
+await migrateScheduledMessages();
 /* Same rules again for the model-prompt library, then the file the runtime
    reads. The write is unconditional and not the seed's: the library is derived
    state, and a boot after a hand-edited `data/` — or after an import, which
@@ -268,6 +273,8 @@ app.use("/api/sessions/:id/spans/:spanId", compress());
    every key, and it is not scoped to one trigger). The
    backup route additionally refuses `?token=` — see routes/misc.ts. */
 miscRoutes(app, { config, sessions, push });
+fimRoutes(app);
+sideModelRoutes(app);
 profileRoutes(app, { sessions });
   spaceRoutes(app);
   workspaceRoutes(app);

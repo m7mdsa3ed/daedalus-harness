@@ -27,6 +27,8 @@ import {
 } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
+import { Plugin } from "@tiptap/pm/state"
+import { Decoration, DecorationSet } from "@tiptap/pm/view"
 import { ClipboardListIcon, TextQuoteIcon, XIcon } from "lucide-react"
 
 import {
@@ -48,6 +50,14 @@ import {
   posToOffset,
   textToContent,
 } from "@/components/composer/editor-text"
+
+/** A suggestion the composer draws but does not hold: `text` at offset `at`,
+    in the same offsets `TextSurface` speaks. The ghost is never part of the
+    string — Tab is what puts it there (`composer/fim-completion.ts`). */
+export interface ComposerGhost {
+  at: number
+  text: string
+}
 
 /** What the composer's helpers read off the box — a textarea's shape. */
 export interface TextSurface {
@@ -267,6 +277,36 @@ const Link = Node.create({
   },
 })
 
+/* ── The ghost ──
+   A completion drawn at the caret as a widget decoration, which is what keeps it
+   out of the document: `text` is the exact message sent (`editor-text.ts`), so a
+   suggestion must never be a node. It reads from a box the component owns rather
+   than from the document — the same reason the placeholder is a decoration and
+   needs a transaction to redraw. `side: 1` puts it after the character at the
+   caret, which is where a completion belongs. */
+const ghostPlacement = (doc: Parameters<typeof offsetToPos>[0], ghost: ComposerGhost): DecorationSet => {
+  const span = document.createElement("span")
+  span.className =
+    "pointer-events-none select-none whitespace-pre-wrap text-muted-foreground/60"
+  span.setAttribute("aria-hidden", "true")
+  span.setAttribute("contenteditable", "false")
+  span.textContent = ghost.text
+  return DecorationSet.create(doc, [Decoration.widget(offsetToPos(doc, ghost.at), span, { side: 1 })])
+}
+
+/* The "asking" mark, drawn where the ghost will land: the caret the request was
+   made at, so the indicator sits on the line being typed on rather than in the
+   toolbar three rows down. A spinning ring, pure CSS, so it animates without a
+   transaction — ProseMirror never redraws it. */
+const pendingPlacement = (doc: Parameters<typeof offsetToPos>[0], at: number): DecorationSet => {
+  const ring = document.createElement("span")
+  ring.className =
+    "pointer-events-none ml-0.5 inline-block size-2.5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground align-middle"
+  ring.setAttribute("aria-hidden", "true")
+  ring.setAttribute("contenteditable", "false")
+  return DecorationSet.create(doc, [Decoration.widget(offsetToPos(doc, at), ring, { side: 1 })])
+}
+
 /* A line break is a new paragraph whichever key made it: the string has one
    kind of newline, so the document does too. */
 const LineBreaks = Extension.create({
@@ -288,6 +328,8 @@ export function ComposerEditor({
   coarse,
   pastes,
   placeholder,
+  ghost,
+  pending,
   disabled,
   ariaLabel,
   className,
@@ -305,6 +347,12 @@ export function ComposerEditor({
   coarse: boolean
   pastes: Paste[]
   placeholder: string
+  /** A completion to draw at the caret, or null. Drawn from editor state, never
+      written into `text`. */
+  ghost?: ComposerGhost | null
+  /** Where the completion lane is still working, as an offset: the spinner sits
+      at that caret. Null when nothing is on the wire. */
+  pending?: number | null
   disabled?: boolean
   ariaLabel: string
   className?: string
@@ -317,6 +365,33 @@ export function ComposerEditor({
   const latest = React.useRef({ onChange, onSelect, onPaste, placeholder })
   latest.current = { onChange, onSelect, onPaste, placeholder }
   const editorContentRef = React.useRef<HTMLDivElement>(null)
+  /* What the decorations read. A ref, not state: the plugin asks on every
+     redraw, and the effect below is what redraws it. */
+  const markRef = React.useRef<{ ghost: ComposerGhost | null; pending: number | null }>({
+    ghost: ghost ?? null,
+    pending: pending ?? null,
+  })
+  const Ghost = React.useMemo(
+    () =>
+      Extension.create({
+        name: "composerGhost",
+        addProseMirrorPlugins() {
+          return [
+            new Plugin({
+              props: {
+                decorations: (state) => {
+                  const current = markRef.current
+                  if (current.ghost?.text) return ghostPlacement(state.doc, current.ghost)
+                  if (current.pending !== null) return pendingPlacement(state.doc, current.pending)
+                  return null
+                },
+              },
+            }),
+          ]
+        },
+      }),
+    []
+  )
   const pasteIds = new Set(pastes.map((p) => p.n))
   const pasteIdsRef = React.useRef(pasteIds)
   pasteIdsRef.current = pasteIds
@@ -347,6 +422,7 @@ export function ComposerEditor({
       Quote,
       Link,
       LineBreaks,
+      Ghost,
     ],
     content: textToContent(value, pasteIds),
     editorProps: {
@@ -410,6 +486,46 @@ export function ComposerEditor({
   React.useEffect(() => {
     editor.view.dispatch(editor.state.tr.setMeta("addToHistory", false))
   }, [editor, placeholder])
+
+  /* The ghost: the box moves first, then one no-op transaction draws or clears
+     it, `addToHistory: false` so a suggestion is never an undo step.
+
+     The caret is put back in the same breath, and that is the whole of this
+     effect's complexity. The widget lands *at* the caret — inside a
+     contenteditable — and Chrome re-guesses the selection around a non-editable
+     node unreliably, so the reader's caret drifts and they have to point it at
+     the end of their sentence again. Two things keep it still: the redraw only
+     happens when the ghost actually changed (typing with no suggestion draws
+     nothing, so it dispatches nothing), and the caret is restated on the next
+     frame — after the browser has finished its own correction — to the offset it
+     had before, but only while it still holds that offset. A keystroke in
+     between wins: the guard compares offsets and declines. */
+  React.useEffect(() => {
+    const next = { ghost: ghost ?? null, pending: pending ?? null }
+    const previous = markRef.current
+    if (
+      previous.ghost?.at === next.ghost?.at &&
+      previous.ghost?.text === next.ghost?.text &&
+      previous.pending === next.pending
+    ) {
+      return
+    }
+    markRef.current = next
+
+    /* Only a caret, never a selection: restating a position would collapse text
+       the reader had chosen. */
+    const selection = editor.state.selection
+    const held = editor.isFocused && selection.empty ? posToOffset(editor.state.doc, selection.head) : null
+    editor.view.dispatch(editor.state.tr.setMeta("addToHistory", false))
+    if (held === null) return
+
+    const frame = requestAnimationFrame(() => {
+      if (editor.isDestroyed || !editor.isFocused) return
+      if (posToOffset(editor.state.doc, editor.state.selection.head) !== held) return
+      editor.commands.setTextSelection(offsetToPos(editor.state.doc, held))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [editor, ghost, pending])
 
   React.useImperativeHandle(
     ref,

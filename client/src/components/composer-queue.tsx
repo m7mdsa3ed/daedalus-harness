@@ -20,6 +20,7 @@ import { UserMessageText } from "@/components/thread-items/user-message"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
+import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
 export function ComposerQueue({
@@ -101,13 +102,14 @@ export function ComposerQueue({
           {editable.length > 1 && (
             <button
               type="button"
-              className="text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50"
+              className={cn("inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50", busy && "harness-busy-ring rounded-sm disabled:opacity-100")}
               disabled={!canSend || busy}
               title={`${running ? "Stop the running turn and send" : "Send"} ${
                 pickedIds.length > 0 ? "the selected messages" : "every queued message"
               } together as one`}
               onClick={() => sendMany(pickedIds)}
             >
+              {busy && <Spinner className="size-3" />}
               {pickedIds.length > 0 ? `Send ${pickedIds.length} selected` : "Send all"}
             </button>
           )}
@@ -170,20 +172,22 @@ function QueuedMessageRow({
   /** Draws the grip. A steer never has one: it is already on the wire. */
   sortable: boolean
 }) {
-  const [busy, setBusy] = React.useState(false)
+  /* Which action is running, so its own button wears the ring and spinner. */
+  const [action, setBusy] = React.useState<"steer" | "send" | "edit" | "remove" | false>(false)
+  const busy = action !== false
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
     disabled: !sortable,
   })
 
-  const run = (op: Promise<unknown>) => {
-    setBusy(true)
+  const run = (which: "steer" | "send" | "remove", op: Promise<unknown>) => {
+    setBusy(which)
     void op.catch(() => {}).finally(() => setBusy(false))
   }
   /* Removed first, filled second, and the fill only on success: a message that
      is in the box *and* still in the queue is one that gets said twice. */
   const edit = () => {
-    setBusy(true)
+    setBusy("edit")
     void actions
       .queueRemove(sessionId, item.id)
       .then(() => onEdit(item.text))
@@ -249,43 +253,43 @@ function QueuedMessageRow({
             {running && (
               <button
                 type="button"
-                className="inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50", action === "steer" && "harness-busy-ring rounded-sm disabled:opacity-100")}
                 disabled={!canSend || busy}
                 title="Steer: send this into the running turn without stopping it"
-                onClick={() => run(actions.queueSteer(sessionId, item.id))}
+                onClick={() => run("steer", actions.queueSteer(sessionId, item.id))}
               >
-                <CornerDownRightIcon className="size-3" />
+                {action === "steer" ? <Spinner className="size-3" /> : <CornerDownRightIcon className="size-3" />}
                 Steer
               </button>
             )}
             <button
               type="button"
-              className="inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50"
+              className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 disabled:opacity-50", action === "send" && "harness-busy-ring rounded-sm disabled:opacity-100")}
               disabled={!canSend || busy}
               title={running ? "Stop the running turn and send this now" : "Send this now"}
-              onClick={() => run(actions.queueSendNow(sessionId, [item.id]))}
+              onClick={() => run("send", actions.queueSendNow(sessionId, [item.id]))}
             >
-              <SendHorizontalIcon className="size-3" />
+              {action === "send" ? <Spinner className="size-3" /> : <SendHorizontalIcon className="size-3" />}
               Send now
             </button>
             <button
               type="button"
-              className="inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+              className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50", action === "edit" && "harness-busy-ring rounded-sm disabled:opacity-100")}
               disabled={!canEdit || busy}
               title="Take it back to the composer — this removes it from the queue"
               onClick={edit}
             >
-              <PencilIcon className="size-3" />
+              {action === "edit" ? <Spinner className="size-3" /> : <PencilIcon className="size-3" />}
               Edit
             </button>
             <button
               type="button"
-              className="inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-destructive disabled:opacity-50"
+              className={cn("inline-flex min-h-6 items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-destructive disabled:opacity-50", action === "remove" && "harness-busy-ring rounded-sm disabled:opacity-100")}
               disabled={!canEdit || busy}
               title="Remove from queue"
-              onClick={() => run(actions.queueRemove(sessionId, item.id))}
+              onClick={() => run("remove", actions.queueRemove(sessionId, item.id))}
             >
-              <XIcon className="size-3" />
+              {action === "remove" ? <Spinner className="size-3" /> : <XIcon className="size-3" />}
               Remove
             </button>
           </div>
@@ -298,6 +302,7 @@ function QueuedMessageRow({
             removable={canEdit && !busy}
             onRemove={(id) =>
               run(
+                "remove",
                 actions.queueUpdate(
                   sessionId,
                   item.id,

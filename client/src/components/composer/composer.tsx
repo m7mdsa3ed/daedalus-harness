@@ -49,7 +49,7 @@
      one go, from the "+" menu.
 
    Everything about what a *send* is — the empty rule, the upload gate, the
-   draft/pastes/attachments carried back on failure, `beforeSend`, `/schedule`
+   draft/pastes/attachments carried back on failure, `beforeSend`, `/automate`
    interception — is unchanged from the version that lived in thread-view.tsx,
    and the comments on it travelled with it.
 
@@ -77,6 +77,7 @@ import {
   PhoneOff,
   Play,
   Square,
+  TriangleAlert,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -85,6 +86,7 @@ import { McpPicker } from "@/components/composer/mcp-picker"
 import { optionKey, useAgentCommands } from "@/lib/agent-options"
 import {
   AgentsIndicator,
+  AutomationsIndicator,
   ChangesIndicator,
   ContextIndicator,
   RepoIndicator,
@@ -110,6 +112,8 @@ import {
   useSlashCommands,
 } from "@/components/slash-commands"
 import { ProjectCommandMenu, shellLineFor, useProjectCommands } from "@/components/project-commands"
+import { useFimCompletion } from "@/components/composer/fim-completion"
+import { threadRecap } from "@/lib/thread/recap"
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
 import { useVoice } from "@/hooks/use-voice"
@@ -148,7 +152,7 @@ import {
   useShellHistory,
   useThreadMcp,
 } from "@/lib/queries"
-import { currentThreadId, schedulePath } from "@/lib/router"
+import { currentThreadId, newAutomationPath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
 import { formatChord } from "@/lib/shortcuts"
 import { composerLock } from "@/lib/thread/phase"
@@ -322,14 +326,13 @@ export function Composer({
   const lock = composerLock(thread.phase, draft)
   const disabled = !lock.typable
 
-  /* The schedule form, pre-filled. Reached two ways — `/schedule` typed into
-     the box and "Schedule…" in the send menu — and both are the same move:
-     the text goes to the form expanded (the form stores it on the server,
-     where the sidecar a token points into does not exist) and the draft is
-     deliberately NOT cleared, because nothing has been sent and the form is a
-     place you can back out of. */
-  const openSchedule = (message: string) => {
-    void navigate(schedulePath(sessionId), {
+  /* The automation form, pinned to this thread and pre-filled: `/automate`
+     typed into the box. The text goes to the form expanded (the form stores it
+     on the server, where the sidecar a token points into does not exist) and
+     the draft is deliberately NOT cleared, because nothing has been sent and
+     the form is a place you can back out of. */
+  const openAutomation = (message: string) => {
+    void navigate(newAutomationPath(sessionId), {
       state: {
         defaultText: expandPastes(message, pastes),
         returnTo: location.pathname + location.search,
@@ -341,8 +344,8 @@ export function Composer({
      carries the exact text and a Retry button, which is a better home for it
      than a textarea the user has since typed into.
 
-     `/schedule` is intercepted here rather than sent: it is the harness's own
-     command (see slash-commands.tsx), so its text opens the schedule form
+     `/automate` is intercepted here rather than sent: it is the harness's own
+     command (see slash-commands.tsx), so its text opens the automation form
      pre-filled instead of reaching the agent. */
   /* The prompt history is the server's and global (lib/composer-history): what
      Up walks, and what the history page lists. Read here so a recall is served
@@ -391,8 +394,8 @@ export function Composer({
       return
     }
     const command = draft ? null : harnessCommandFor(value, thread.availableCommands)
-    if (command?.name === "schedule") {
-      openSchedule(command.args)
+    if (command?.name === "automate") {
+      openAutomation(command.args)
       return
     }
     /* Gated on the capability rather than on the menu, because the menu is only
@@ -516,7 +519,7 @@ export function Composer({
   /* Running an agent command is just sending `/name args` as the prompt — the
      agent resolves it — so the menu only completes the name. Drafts advertise
      no commands (no process yet); they are also offered no harness commands,
-     because `/schedule` needs a thread the server knows about to schedule
+     because `/automate` needs a thread the server knows about to schedule
      against, which a draft is not until its first message. */
   /* A draft has no process, so it is offered none of these. `/compact` is
      dropped again where the runtime does not take the request — offering a
@@ -684,6 +687,37 @@ export function Composer({
       selected.add(picked.id)
       actions.configureDraft(meta.id, { mcpServerIds: [...selected] })
     },
+  })
+
+  /* The completion lane's ghost text (fim-completion.ts). Both callbacks are
+     memoised because the hook debounces on their identity — a fresh function
+     every render would re-arm the timer forever. */
+  const fimCaret = React.useCallback(() => {
+    const surface = composerRef.current
+    if (!surface) return null
+    /* A selection is not a place to fill: the gap would replace text the reader
+       chose, which is an edit, not a suggestion. */
+    return surface.selectionStart === surface.selectionEnd ? surface.selectionStart : null
+  }, [])
+  const fimInsert = React.useCallback(
+    (gap: string, at: number) => {
+      const current = textRef.current
+      const next = current.slice(0, at) + gap + current.slice(at)
+      setText(next)
+      mentions.requestCaret(at + gap.length)
+      return next
+    },
+    [mentions.requestCaret, setText]
+  )
+  /* What the thread has said, so a gap can be finished as a *reply*: capped and
+     cheap (`thread/recap.ts`), and it only moves when the conversation does. */
+  const fimContext = React.useMemo(() => threadRecap(thread.items), [thread.items])
+  const fim = useFimCompletion({
+    text,
+    caret: fimCaret,
+    insert: fimInsert,
+    enabled: !disabled,
+    context: fimContext,
   })
 
   const { insertMention, insertCommand, insertProjectCommand, insertCodeBlock } = textInsertions({
@@ -935,6 +969,7 @@ export function Composer({
                 <>
                   <TodoIndicator thread={thread} />
                   <AgentsIndicator thread={thread} />
+                  {!draft && <AutomationsIndicator sessionId={sessionId} />}
                   <ChangesIndicator changes={changes} />
                   <RepoIndicator meta={meta} />
                   <ContextIndicator
@@ -1065,12 +1100,15 @@ export function Composer({
           onSelect={mentions.onSelect}
           onPaste={onPaste}
           pastes={shownPastes}
+          ghost={fim.ghost}
+          pending={fim.pending}
           onOverflowChange={onEditorOverflowChange}
           expanded={expanded}
           coarse={coarse}
           onKeyDown={composerKeyDown({
             slash,
             commands,
+            completion: fim,
             mentions,
             history,
             isMobile,
@@ -1155,6 +1193,26 @@ export function Composer({
             {/* The MCPs it will carry, read and picked here beside the model. */}
             {meta && <McpPicker meta={meta} actions={actions} keys={routed || autoFocus} />}
           </div>
+          {/* The completion lane at work. It sits in this row rather than over
+              the text because nothing about it is positioned: it is a fact about
+              the box, like the length. A failure takes the same slot for one
+              line — silence there reads as "the feature is off", which is the
+              wrong conclusion to draw from a bad key. Either clears on the next
+              keystroke, and the full words are in the title. */}
+          {/* Only the failure takes this row: "asking" is drawn at the caret
+              itself (`ComposerEditor`), which is where the reader is looking. A
+              failure has no line to sit on, so it says its one word here, with
+              the server's own message in the title. */}
+          {fim.status.kind === "failed" && (
+            <span
+              className="flex shrink-0 items-center gap-1 px-1 text-[10px] text-muted-foreground"
+              aria-live="polite"
+              title={fim.status.error ?? "The completion lane did not answer"}
+            >
+              <TriangleAlert className="size-3 text-destructive" />
+              <span className="hidden @panel-sm:inline">No completion</span>
+            </span>
+          )}
           {/* How long the prompt is, once that is worth knowing. The token
               figure is an estimate and is printed as one (the tilde); it is
               there so a pasted document reads as "about 3k tokens" before it
@@ -1289,6 +1347,7 @@ export function Composer({
             className={cn("shrink-0 rounded-key bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100", iconFit)}
             onClick={() => void send()}
             disabled={!canSend}
+            loading={gated}
             title={sendTitle}
             aria-label={sendTitle}
           >
