@@ -1717,6 +1717,16 @@ html[data-window-controls-overlay="true"] {
    last. Each piece is its row's own pseudo, so an opened row stretches the
    trunk with it and the run's clip folds the line away with the rows.
    Logical properties, so RTL mirrors it. */
+/* The line's colour is opaque: `--border` is translucent in a dark palette,
+   and the pieces meet with a pixel or two of overlap (the elbow leaving the
+   trunk, the gap both rows reach over) — stacked, those overlaps read as
+   darker ticks down the line. The same weight as a border, mixed solid
+   against the transcript's ground. Declared on the header too, whose stretch
+   is drawn outside the rail. */
+.run-rail,
+.run-rail-head {
+  --rail-color: color-mix(in oklab, var(--foreground) 14%, var(--surface, var(--background)));
+}
 .run-rail {
   --rail-x: -18.5px;
   --rail-mark-y: 14px;
@@ -1744,8 +1754,8 @@ html[data-window-controls-overlay="true"] {
   top: calc(var(--rail-up) * -1);
   width: calc(var(--rail-x) * -1);
   height: calc(var(--rail-mark-y) + var(--rail-up));
-  border-inline-start: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  border-inline-start: 1px solid var(--rail-color);
+  border-bottom: 1px solid var(--rail-color);
   border-end-start-radius: 6px;
 }
 /* The trunk going on to the next row, from above the elbow's curve. */
@@ -1754,7 +1764,7 @@ html[data-window-controls-overlay="true"] {
   top: calc(var(--rail-mark-y) - 6px);
   bottom: calc(var(--rail-gap) * -1);
   width: 1px;
-  background: var(--border);
+  background: var(--rail-color);
 }
 /* A row with no mark: the trunk alone, beside it — on to the next row, or
    ending on its top edge when it is the last. */
@@ -1763,7 +1773,7 @@ html[data-window-controls-overlay="true"] {
   height: var(--rail-up);
   border: 0;
   border-radius: 0;
-  background: var(--border);
+  background: var(--rail-color);
 }
 .run-rail-plain.run-rail-tail::before {
   height: auto;
@@ -1778,7 +1788,7 @@ html[data-window-controls-overlay="true"] {
   top: calc(var(--rail-up) * -1);
   bottom: calc(var(--rail-gap) * -1);
   width: 1px;
-  background: var(--border);
+  background: var(--rail-color);
 }
 /* The header's stretch: from just under its chevron (the 14px centre + the
    size-3.5 glyph's 7px + 1px of air) to its own bottom edge. 13.5px = the
@@ -1788,7 +1798,7 @@ html[data-window-controls-overlay="true"] {
   top: 22px;
   bottom: 0;
   width: 1px;
-  background: var(--border);
+  background: var(--rail-color);
 }
 
 /* ── Drawing it ──
