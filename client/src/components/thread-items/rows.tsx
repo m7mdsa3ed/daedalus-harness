@@ -103,9 +103,6 @@ import {
   RAIL_TAIL,
   RAIL_THROUGH,
   RUN_RAIL_CLASS,
-  InRail,
-  STEP_GUTTER,
-  isStepRow,
   railPlain,
   useRailSlots,
 } from "@/components/thread-items/rail"
@@ -326,7 +323,6 @@ export const ToolRun = React.memo(function ToolRun({
             className="-mx-1 overflow-hidden px-1"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
-            <InRail.Provider value>
             <div className={branch ? "space-y-0.5 pt-0.5" : RUN_RAIL_CLASS}>
             {hidden > 0 && (
               <div className={branch ? undefined : RAIL_THROUGH} style={branch ? { paddingInlineStart: gutter } : undefined}>
@@ -378,7 +374,6 @@ export const ToolRun = React.memo(function ToolRun({
               </div>
             ))}
             </div>
-            </InRail.Provider>
           </m.div>
         )}
       </AnimatePresence>
@@ -424,29 +419,6 @@ export const RowView = React.memo(function RowView({
       (see ThreadItemView); prose streams visibly on its own. */
   streaming?: boolean
 }) {
-  /* A step at the top level takes the rail's indent (`InRail`), so its mark
-     stands in the column a group's steps — and its stack — do. */
-  const inRail = React.useContext(InRail)
-  if (!inRail && isStepRow(row.kind)) {
-    return (
-      <div className={STEP_GUTTER}>
-        <InRail.Provider value>
-          <RowView
-            row={row}
-            onContinue={onContinue}
-            onRetry={onRetry}
-            onRetryAsPaths={onRetryAsPaths}
-            onDismiss={onDismiss}
-            onRewind={onRewind}
-            onFork={onFork}
-            showTimestamps={showTimestamps}
-            streaming={streaming}
-            compactError={compactError}
-          />
-        </InRail.Provider>
-      </div>
-    )
-  }
   if (row.kind === "run")
     return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
   if (row.kind === "tool-group")
@@ -581,7 +553,6 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             className="-mx-1 overflow-hidden px-1"
           >
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
-            <InRail.Provider value>
             <div className={RUN_RAIL_CLASS}>
               {rows.map((inner, index) => (
                 <div key={inner.id} style={railSlot(inner.id)} className={cn(RAIL_ELBOW, railPlain(inner.kind), index < rows.length - 1 && RAIL_TAIL)}>
@@ -593,7 +564,6 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
                 </div>
               ))}
             </div>
-            </InRail.Provider>
           </m.div>
         )}
       </AnimatePresence>
@@ -953,7 +923,6 @@ function SubagentTranscript({
   const hidden = all.length - rows.length
   const railSlot = useRailSlots([...rows.map((row) => row.id), ...(active ? ["working"] : [])], true, hidden > 0)
   return (
-    <InRail.Provider value>
     <div className={RUN_RAIL_CLASS}>
       {hidden > 0 && onEarlier && (
         <div className={RAIL_THROUGH}>
@@ -990,7 +959,6 @@ function SubagentTranscript({
         </div>
       )}
     </div>
-    </InRail.Provider>
   )
 }
 
