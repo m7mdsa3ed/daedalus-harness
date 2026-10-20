@@ -370,7 +370,7 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
         icon: Palette,
         title: "Gradient steering ring",
         description:
-          "The ring that travels around a steering message while it waits to reach the agent, in the chart colours instead of the primary one.",
+          "The ring that travels around a steering message while it waits to reach the agent, in the chart colours instead of the primary one. Queued messages keep the plain ring.",
       },
     ],
     pickers: ["streamSpeed"],

@@ -185,7 +185,8 @@ export interface LayoutOptions {
   /** Drop the row entrance animation and the running-turn shimmer. */
   calmMotion: boolean
   /** The busy ring a steering message wears while it waits for the step
-   *  boundary: one primary arc (off) or a gradient of the chart colours (on). */
+   *  boundary: one primary arc (off) or a gradient of the chart colours (on).
+   *  Queued rows keep the primary arc either way. */
   steerRingGradient: boolean
   /** How fast a live turn's prose is revealed (lib/stream-pace) — the other
    *  half of the reveal, and the half that used to be a constant. Deliberately

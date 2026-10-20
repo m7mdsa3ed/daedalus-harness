@@ -205,13 +205,12 @@ function QueuedMessageRow({
       style={{ transform: CSS.Transform.toString(transform), transition }}
       aria-busy={busy || undefined}
       className={cn(
-        /* A steer is already on the wire and lands at the next step boundary,
-           so it wears the busy ring a loading Button does (push/pull) — slower
-           (`harness-busy-ring-slow`), and in the chart colours when the reader
-           asked for it. A queued row is waiting on the turn's end, which the
-           working line already says, so it draws no ring. */
-        "group/queued relative flex min-w-0 flex-col gap-1 rounded-2xl border border-dashed bg-muted/50 p-2",
-        item.steer && "harness-busy-ring harness-busy-ring-slow",
+        /* Every row is waiting on the agent — a steer for the next step
+           boundary, a queued one for the turn's end — so each wears the busy
+           ring a loading Button does (push/pull), slower: a wait measured in
+           steps, not a click. A steer, the one already on the wire, can wear
+           it in the chart colours when the reader asked for that. */
+        "group/queued harness-busy-ring harness-busy-ring-slow relative flex min-w-0 flex-col gap-1 rounded-2xl border border-dashed bg-muted/50 p-2",
         item.steer && steerRingGradient && "harness-busy-ring-gradient",
         "transition-colors hover:bg-muted",
         busy && "opacity-50",
