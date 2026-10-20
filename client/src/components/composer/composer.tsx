@@ -1003,10 +1003,9 @@ export function Composer({
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-          It wears the stock card edge (`ring-1 ring-foreground/10`) over the
-          composer's own ground, and focus shows the stock focus ring (a ring,
-          not a layout shift); the caret alone is not the signal. The only other
-          ring is destructive, while voice is listening.
+          It draws no edge and no focus ring: the composer's own ground meeting
+          the page is the seam, like the shelf above it. Its only ring is
+          destructive, while voice is listening.
 
           It is also the drop target, and deliberately the whole card rather
           than the textarea: a file aimed at "the composer" lands on the button
@@ -1018,7 +1017,7 @@ export function Composer({
         aria-hidden={away || undefined}
         inert={away || undefined}
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-composer p-composer-pad ring-1 ring-foreground/10 focus-within:ring-[3px] focus-within:ring-ring/50",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-composer p-composer-pad",
           /* The morph: clipped down to the pill's box (`--composer-pill` square,
              bottom right) while away. Open is a negative inset, not `none`, so the
              two shapes interpolate. A

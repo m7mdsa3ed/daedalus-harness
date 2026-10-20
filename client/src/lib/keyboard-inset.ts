@@ -177,6 +177,7 @@ export function startKeyboardInset(): () => void {
 
   let frame = 0
   let last = -1
+  const scrolled = new Set<Element | Document>()
   const publish = () => {
     frame = 0
     // The keyboard's own height where it is readable, and what the visual
@@ -189,6 +190,14 @@ export function startKeyboardInset(): () => void {
     const covered = Math.max(fromKeyboard, fromViewport)
     const inset = covered > MIN_KEYBOARD_PX ? Math.round(covered) : 0
     setState(inset === 0 ? CLOSED : { height: inset })
+    // The browser's scroll is undone only while the lift is doing its job.
+    if (inset > 0) {
+      for (const box of scrolled) {
+        if (box instanceof Element) box.scrollTop = 0
+        else if (window.scrollX || window.scrollY) window.scrollTo(0, 0)
+      }
+    }
+    scrolled.clear()
     if (inset === last) return
     last = inset
     root.style.setProperty(KEYBOARD_INSET, `${inset}px`)
@@ -203,18 +212,22 @@ export function startKeyboardInset(): () => void {
      scrolls programmatically; only the scrollbar is gone). Nothing scrolls them
      back, so the app sat a keyboard's height up — the strip off the top, the
      shell's ground showing under the composer. Neither is ever meant to be
-     scrolled, so any offset on one is undone as it happens.
+     scrolled, so an offset on one is undone — on the next measure, and only
+     when a keyboard was measured. A browser that reports none (the viewport
+     never shrinks, no VirtualKeyboard) leaves the inset at 0 and the lift idle;
+     there that scroll is what keeps the composer above the keys, and undoing
+     it unconditionally sat the composer under the keyboard.
      ponytail: keyed on computed overflow-y; a box that scrolls itself on purpose
      must be `auto`/`scroll` (hide the bar with `no-scrollbar`), never `hidden`. */
   const unscroll = (event: Event) => {
     const target = event.target
     if (target === document) {
-      if (window.scrollX || window.scrollY) window.scrollTo(0, 0)
-      return
+      if (window.scrollX || window.scrollY) scrolled.add(document)
+    } else if (target instanceof Element && target.scrollTop !== 0) {
+      const { overflowY } = getComputedStyle(target)
+      if (overflowY === "hidden" || overflowY === "clip") scrolled.add(target)
     }
-    if (!(target instanceof Element) || target.scrollTop === 0) return
-    const { overflowY } = getComputedStyle(target)
-    if (overflowY === "hidden" || overflowY === "clip") target.scrollTop = 0
+    if (scrolled.size) schedule()
   }
 
   publish()
