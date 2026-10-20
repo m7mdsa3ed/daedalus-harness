@@ -83,7 +83,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { McpPicker } from "@/components/composer/mcp-picker"
-import { READING_MARK } from "@/components/composer/indicator"
+import { KEY_MARK } from "@/components/composer/indicator"
 import { optionKey, useAgentCommands } from "@/lib/agent-options"
 import {
   AgentsIndicator,
@@ -1218,7 +1218,7 @@ export function Composer({
               aria-label={expanded ? "Collapse composer" : "Expand composer"}
               aria-pressed={expanded}
             >
-              {expanded ? <Minimize2 className={READING_MARK} /> : <Maximize2 className={READING_MARK} />}
+              {expanded ? <Minimize2 className={KEY_MARK} /> : <Maximize2 className={KEY_MARK} />}
             </Button>
           )}
           {voice.supported && (voice.listening || (!hasContent && !gated)) && (
@@ -1236,7 +1236,7 @@ export function Composer({
               title={voice.listening ? "Stop listening" : "Voice input"}
               aria-pressed={voice.listening}
             >
-              <Mic className={READING_MARK} />
+              <Mic className={KEY_MARK} />
             </Button>
           )}
           {voiceBackend && voiceCall && (
@@ -1251,7 +1251,7 @@ export function Composer({
               title={voiceChord ? `${inCall ? "End voice call" : "Voice call"} (${voiceChord})` : inCall ? "End voice call" : "Voice call"}
               aria-pressed={inCall}
             >
-              <AudioLines className={READING_MARK} />
+              <AudioLines className={KEY_MARK} />
             </Button>
           )}
           {/* Pause is the harness's own agent's, not ACP's: the runtime holds
@@ -1287,7 +1287,7 @@ export function Composer({
                     : "Pause at the next step"
               }
             >
-              {thread.paused ? <Play className={READING_MARK} /> : <Pause className={READING_MARK} />}
+              {thread.paused ? <Play className={KEY_MARK} /> : <Pause className={KEY_MARK} />}
             </Button>
           )}
           {thread.turnActive && (
@@ -1307,7 +1307,7 @@ export function Composer({
               }
               title="Stop"
             >
-              <Square className={cn(READING_MARK, "fill-current")} />
+              <Square className="size-3 fill-current" />
             </Button>
           )}
           {/* Always drawn, even on an empty box: the affordance you aim at
@@ -1323,7 +1323,7 @@ export function Composer({
             title={sendTitle}
             aria-label={sendTitle}
           >
-            {gated ? <Spinner className={READING_MARK} /> : <ArrowUp className={READING_MARK} strokeWidth={2.5} />}
+            {gated ? <Spinner className={KEY_MARK} /> : <ArrowUp className={KEY_MARK} strokeWidth={2.5} />}
           </Button>
         </div>
       </div>

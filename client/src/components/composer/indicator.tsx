@@ -125,6 +125,12 @@ export function Ring({ percent, className }: { percent: number; className?: stri
 /** How big a reading's mark is — the dial in `Ring` or a lucide glyph. */
 export const READING_MARK = "size-4"
 
+/** A composer key's glyph (the toolbar, "+", Enhance): 14px in the 24px
+    (`icon-xs`) or 32px (`icon-sm`) key. `READING_MARK`'s 16px filled two thirds
+    of a 24px key, which made the row — the filled Send and Stop above all —
+    read heavier than the text it sits under. */
+export const KEY_MARK = "size-3.5"
+
 /** The button geometry, minus the mark's own colour. */
 export const READING_TRIGGER =
   "relative shrink-0 rounded-pill @panel-sm:w-auto! @panel-sm:gap-1 @panel-sm:px-1"

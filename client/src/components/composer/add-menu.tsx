@@ -19,7 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ComposerHistorySubmenu } from "@/components/composer/history-menu"
-import { READING_MARK } from "@/components/composer/indicator"
+import { KEY_MARK } from "@/components/composer/indicator"
 import { MENU_WIDTH } from "@/components/menu-row"
 import { useChords } from "@/lib/keybindings"
 import { cn } from "@/lib/utils"
@@ -93,7 +93,7 @@ export function ComposerAddMenu({
             />
           }
         >
-          <Plus className={READING_MARK} />
+          <Plus className={KEY_MARK} />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" className={MENU_WIDTH}>
           <DropdownMenuItem onClick={() => filePicker.current?.click()}>
