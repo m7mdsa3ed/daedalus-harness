@@ -74,13 +74,68 @@ function Row({
     panel has the whole list. */
 const SUBAGENT_ROWS = 4
 
-/** A captioned group of rows under a hairline — the popover's one unit. */
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** A captioned group under a hairline — the popover's one unit. The caption
+    may carry a fact at its end (a count, a share). */
+function Section({ title, meta, children }: { title: string; meta?: string; children: React.ReactNode }) {
   return (
-    <section className="border-t pt-2">
-      <p className="mb-1 text-xs font-medium text-muted-foreground">{title}</p>
-      <dl className="space-y-1">{children}</dl>
+    <section className="space-y-2 border-t pt-3">
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <p className="font-medium text-muted-foreground">{title}</p>
+        {meta && <span className="tabular-nums text-muted-foreground">{meta}</span>}
+      </div>
+      {children}
     </section>
+  )
+}
+
+/** One figure at a glance: a caption over its value, in a muted tile. Laid
+    out in a row of up to three, so the numbers the eye looks for first — the
+    bill, the last turn, the speed — are read across, not hunted down a list. */
+function Tile({ label, value, hint, valueClass }: { label: string; value: string; hint?: string; valueClass?: string }) {
+  return (
+    <div className="min-w-0 flex-1 basis-0 rounded-lg bg-muted/50 px-2.5 py-2">
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className={cn("truncate text-sm font-medium tabular-nums", valueClass)}>{value}</p>
+      {hint && <p className="truncate text-xs tabular-nums text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+/** A billed-token part: its colour in the stacked bar and its legend row. */
+interface Part {
+  label: string
+  tokens: number
+  color: string
+  hint?: string
+}
+
+/** What the session was billed for, as one bar of its parts and a legend —
+    the shape of the bill, which a column of numbers made the reader assemble. */
+function BilledBar({ parts }: { parts: Part[] }) {
+  const total = parts.reduce((n, part) => n + part.tokens, 0)
+  if (total <= 0) return null
+  return (
+    <>
+      <div className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted" aria-hidden>
+        {parts.map((part) =>
+          part.tokens > 0 ? (
+            <div key={part.label} className="h-full" style={{ width: `${(part.tokens / total) * 100}%`, background: part.color }} />
+          ) : null
+        )}
+      </div>
+      <dl className="space-y-1">
+        {parts.map((part) =>
+          part.tokens > 0 ? (
+            <div key={part.label} className="flex items-center gap-2 text-sm">
+              <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: part.color }} />
+              <dt className="min-w-0 flex-1 truncate text-muted-foreground">{part.label}</dt>
+              {part.hint && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{part.hint}</span>}
+              <dd className="shrink-0 font-medium tabular-nums">{formatTokens(part.tokens)}</dd>
+            </div>
+          ) : null
+        )}
+      </dl>
+    </>
   )
 }
 
@@ -172,9 +227,9 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
   if (!quota) {
     if (!pending) return null
     return (
-      <div className="border-t pt-2">
+      <div className="border-t pt-3">
         <p className="text-xs font-medium text-muted-foreground">Plan</p>
-        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground" aria-live="polite">
+        <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground" aria-live="polite">
           <Spinner aria-hidden className="size-3" />
           Reading plan usage…
         </p>
@@ -193,15 +248,15 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
   }
 
   return (
-    <div className="border-t pt-2">
+    <div className="border-t pt-3">
       <p className="text-xs font-medium text-muted-foreground">Plan</p>
       {quota.windows.length === 0 && accounts.length === 0 ? (
-        <p className="mt-1 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
       ) : accounts.length > 0 ? (
         /* A gateway's reading, at a glance's measure: the account is the
            heading — a thread that spends one of four accounts has to be told
            which — and its own bars sit under it. */
-        <div className="mt-1 max-h-48 space-y-1 overflow-y-auto overscroll-contain pr-1">
+        <div className="mt-2 max-h-48 space-y-1 overflow-y-auto overscroll-contain pr-1">
           {accounts.map((account, index) => {
             const windows = windowsByGroup.get(account.group) ?? []
             const accountPeak = windows.reduce<QuotaWindow | null>(
@@ -240,7 +295,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
           })}
         </div>
       ) : (
-        <div className="mt-1 space-y-2">
+        <div className="mt-2 space-y-3">
           {quota.windows.map((window) => (
             <WindowBar key={window.id} window={window} label={windowTitle(window)} />
           ))}
@@ -372,32 +427,35 @@ export function ContextIndicator({
       />
       <ReadingPopoverContent
         side={side}
+        wide
         heading="Context window"
-        meta={context ? `${about}${percent}%` : undefined}
+        meta={estimated ? "Size estimated" : undefined}
+        action={context ? <OpenInInspector tab="tokens" label="Token breakdown" onOpen={() => setOpen(false)} /> : undefined}
+        className="gap-3"
       >
-        {/* The window: one figure in the heading and a plain fill. What the prompt is
-            made of is the inspector's Tokens panel's to say, estimates included. */}
-        <p className="-mt-1 text-xs text-muted-foreground tabular-nums">
-          {context
-            ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} · ${about}${formatTokens(Math.max(0, context.size - context.used))} free`
-            : "Not reported by this agent"}
-        </p>
-        {context && (
-          <div
-            className="flex h-2 w-full gap-px overflow-hidden rounded-pill bg-muted"
-            role="progressbar"
-            aria-label="Context window used"
-            aria-valuenow={percent}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div className="h-full bg-foreground/60 transition-all" style={{ width: `${Math.min(100, (context.used / context.size) * 100)}%` }} />
+        {/* The window, first and largest: the dial the footer wears, at a size
+            that can hold its own figure, beside what is held and what is left.
+            What the prompt is made of is the Tokens panel's to say. */}
+        <div className="flex items-center gap-3">
+          <div className="relative grid size-14 shrink-0 place-items-center">
+            <Ring percent={percent} className="absolute inset-0 size-14 text-foreground" />
+            <span className="text-sm font-medium tabular-nums">{context ? `${about}${percent}%` : "—"}</span>
           </div>
-        )}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium tabular-nums">
+              {context ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)}` : "Not reported"}
+            </p>
+            <p className="truncate text-xs tabular-nums text-muted-foreground">
+              {context
+                ? `${about}${formatTokens(Math.max(0, context.size - context.used))} free`
+                : "This agent does not report its window"}
+            </p>
+          </div>
+        </div>
         {estimated && (
           <p className="text-xs text-muted-foreground">
-            This model's window size isn't in the catalog, so the size is a default and every
-            share is approximate.
+            This model's window size isn't in the catalog, so the size is a default and every share is
+            approximate.
           </p>
         )}
         {context && !estimated && percent >= COMPACTION_WARN && (
@@ -406,55 +464,71 @@ export function ContextIndicator({
           </Notice>
         )}
 
-        {context && <OpenInInspector tab="tokens" label="Token breakdown" onOpen={() => setOpen(false)} />}
-
-        {/* Billed, not held: every request re-sends the context, so these run
-            far above the window. Totals over the session; a revive resets them. */}
+        {/* The three numbers looked for first, read across. Billed, not held:
+            every request re-sends the context, so these run far above the
+            window. Totals over the session; a revive resets them. */}
         {usage && (
-          <Section title={`Session · ${requests} ${requests === 1 ? "request" : "requests"}`}>
-            <Row label="Prompt" value={formatTokens(prompt)} />
-            {cached > 0 && <Row label="↳ from cache" hint={cacheRate !== null ? `${cacheRate}%` : undefined} value={formatTokens(cached)} valueClass={cacheTone} />}
-            {usage.cachedWriteTokens ? <Row label="↳ cache write" value={formatTokens(usage.cachedWriteTokens)} /> : null}
-            <Row label="↳ fresh" value={formatTokens(usage.inputTokens)} />
-            <Row label="Output" value={formatTokens(usage.outputTokens)} />
-            {usage.thoughtTokens ? <Row label="↳ thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
-            <Row label="Total billed" value={formatTokens(usage.totalTokens)} />
-            {lastTurn && <Row label="Last turn" value={formatTokens(lastTurn.totalTokens)} />}
+          <div className="flex gap-2">
+            <Tile label="Billed" value={formatTokens(usage.totalTokens)} hint={`${requests} ${requests === 1 ? "request" : "requests"}`} />
+            <Tile label="Last turn" value={lastTurn ? formatTokens(lastTurn.totalTokens) : "—"} />
             {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
-            {context?.cost && (
-              <Row label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
+            {context?.cost ? (
+              <Tile label="Cost" value={`${context.cost.amount.toFixed(2)} ${context.cost.currency}`} />
+            ) : (
+              <Tile label="Cache hit" value={cacheRate !== null ? `${cacheRate}%` : "—"} valueClass={cacheTone} />
             )}
+          </div>
+        )}
+
+        {usage && (
+          <Section title="Billed tokens" meta={cacheRate !== null && context?.cost ? `${cacheRate}% from cache` : undefined}>
+            <BilledBar
+              parts={[
+                { label: "From cache", tokens: cached, color: "var(--chart-2)", hint: cacheRate !== null ? `${cacheRate}%` : undefined },
+                { label: "Cache write", tokens: usage.cachedWriteTokens ?? 0, color: "var(--chart-3)" },
+                { label: "Fresh input", tokens: usage.inputTokens, color: "var(--chart-1)" },
+                {
+                  label: "Output",
+                  tokens: usage.outputTokens,
+                  color: "var(--chart-4)",
+                  hint: usage.thoughtTokens ? `${formatTokens(usage.thoughtTokens)} thinking` : undefined,
+                },
+              ]}
+            />
+          </Section>
+        )}
+
+        {(avgRate || ttftMs !== null || toolDurationMs > 0) && (
+          <Section title="Speed">
+            <div className="flex gap-2">
+              {ttftMs !== null && <Tile label="First token" value={`${ttftMs}ms`} />}
+              {avgRate && (
+                <Tile
+                  label="Output"
+                  value={avgRate}
+                  hint={minRate && maxRate ? `${minRate.replace(" tok/s", "")}–${maxRate}` : undefined}
+                />
+              )}
+              {toolDurationMs > 0 && <Tile label="In tools" value={formatDuration(toolDurationMs)} />}
+            </div>
           </Section>
         )}
 
         {/* Each child's own bill, apart from the session's: some runtimes count a
             child in the turn that launched it, so adding them would double those. */}
         {spend.length > 0 && (
-          <Section title={`Subagents · ${spend.length}`}>
-            {spend.slice(0, SUBAGENT_ROWS).map((child) => (
-              <Row
-                key={child.id}
-                label={child.name}
-                hint={[child.workflow && "workflow", spendTime(child)].filter(Boolean).join(" · ") || undefined}
-                value={formatTokens(child.tokens)}
-              />
-            ))}
-            {spend.length > SUBAGENT_ROWS && <Row label={`${spend.length - SUBAGENT_ROWS} more`} value="" />}
-            <Row label="Total billed" value={formatTokens(spendTotal)} />
-          </Section>
-        )}
-
-        {(avgRate || ttftMs !== null || toolDurationMs > 0) && (
-          <Section title="Speed">
-            {ttftMs !== null && <Row label="First token" value={`${ttftMs}ms`} />}
-            {avgRate && (
-              <Row
-                label="Output"
-                hint={minRate && maxRate ? `${minRate.replace(" tok/s", "")}–${maxRate}` : undefined}
-                value={avgRate}
-              />
-            )}
-            {toolDurationMs > 0 && <Row label="In tool calls" value={formatDuration(toolDurationMs)} />}
+          <Section title="Subagents" meta={`${spend.length} · ${formatTokens(spendTotal)}`}>
+            <dl className="space-y-1">
+              {spend.slice(0, SUBAGENT_ROWS).map((child) => (
+                <Row
+                  key={child.id}
+                  label={child.name}
+                  hint={[child.workflow && "workflow", spendTime(child)].filter(Boolean).join(" · ") || undefined}
+                  value={formatTokens(child.tokens)}
+                />
+              ))}
+              {spend.length > SUBAGENT_ROWS && <Row label={`${spend.length - SUBAGENT_ROWS} more`} value="" />}
+            </dl>
           </Section>
         )}
         <PlanUsage thread={thread} meta={meta} actions={actions} />
