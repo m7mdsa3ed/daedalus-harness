@@ -847,6 +847,10 @@ export function ThreadView({
                     separates one turn from the next when Turn dividers is on. */
                 const isUser = row.kind === "user"
                 const divider = options.stepDividers && isUser && i !== firstUserIndex
+                /* Messages sent back to back (steers, a queue draining) read as
+                   one run: only its last says the time, like a chat's grouped
+                   bubbles — a clock under each said the same minute four times. */
+                const runContinues = isUser && rows[i + 1]?.kind === "user"
                 const handlers = handlersFor(row.id)
                 const finishedUserTurn =
                   row.kind === "user" && !!row.turnId && !row.local && !thread.turnActive
@@ -911,7 +915,7 @@ export function ThreadView({
                       /* The newest failure is the foot's own while it is live;
                          older ones are history and stay whole rows. */
                       compactError={status?.kind === "turn-failed" && status.itemId === row.id}
-                      showTimestamps={options.showTimestamps}
+                      showTimestamps={options.showTimestamps && !runContinues}
                       streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
                     />
                   </Entrance>
