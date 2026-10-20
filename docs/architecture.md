@@ -187,8 +187,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `dist/` sits one level under `server/` exactly like `src/`, so every
   `join(dirname(fileURLToPath(import.meta.url)), "..")` — `data/`, `drizzle.config.ts` —
   resolves to the same directory built as it does under tsx. `pnpm serve` runs it; `pnpm
-  pm2:start` builds, pushes the schema and (re)starts `ecosystem.config.cjs` on **port
-  4001**, `pm2:stop` / `pm2:logs` for
+  pm2:start` builds, pushes the schema and
+  (re)starts `ecosystem.config.cjs` on **port 4001**, `pm2:stop` / `pm2:logs` for
   the rest. The port there is `DAEDALUS_PORT` in the env, not `data/config.json`: `pnpm dev`
   reads that same file, so a port written into it would move dev too. `loadConfig` therefore
   lets the env win for `host`/`port` and *only* those — token, FCM and idle timeout stay the
@@ -196,6 +196,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the override. One instance, fork mode: the agent child processes, the WebSocket peers and
   the Postgres pool belongs to this process, and a cluster fork could not see another
   fork's bridges.
+
+- **A deploy is the owner's `git pull && pnpm pm2:start`.** The server never updates itself;
+  About prints that line. Which client builds a deployed server still serves is
+  `docs/protocol.md` "Versioning".
 
 - **The client deploys on Vercel as `vite build`, never `tsc -b`** (`client/vercel.json`).
   The client's tsconfig paths reach into `../server/src` (`@daedalus/protocol`, `/delivery`,

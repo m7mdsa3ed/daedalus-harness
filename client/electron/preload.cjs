@@ -7,6 +7,9 @@ const { contextBridge, ipcRenderer } = require("electron")
 // The reader can turn the material off (main.cjs `window-translucent.json`), so main answers.
 const vibrancy = ipcRenderer.sendSync("get-window-translucent-sync") === true
 
+// Main runs electron-updater only when packaged against a built client.
+const updaterActive = ipcRenderer.sendSync("update-active-sync") === true
+
 contextBridge.exposeInMainWorld("desktop", {
   isElectron: true,
   platform: process.platform,
@@ -63,6 +66,15 @@ contextBridge.exposeInMainWorld("desktop", {
     pick: (guestId) => ipcRenderer.invoke("preview-pick", guestId),
     cancel: (guestId) => ipcRenderer.invoke("preview-pick-cancel", guestId),
   },
+  /** electron-updater (main.cjs "Updates"): `check` resolves `{available, version?}`
+      once a found update has downloaded; `install` quits into it, and rejects
+      when nothing has been downloaded. Absent where main runs no updater. */
+  update: updaterActive
+    ? {
+        check: () => ipcRenderer.invoke("update:check"),
+        install: () => ipcRenderer.invoke("update:install"),
+      }
+    : undefined,
   /** A ShortcutId the native menu, the tray or the quick-entry hotkey asked
       the renderer to run. Returns an unsubscribe. */
   onShortcut: (handler) => {

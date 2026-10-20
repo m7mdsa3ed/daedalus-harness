@@ -7,6 +7,7 @@ import { ConfirmProvider } from "@/components/confirm-dialog"
 import { PromptProvider } from "@/components/prompt-dialog"
 import { CatalogFormProvider } from "@/lib/catalog-add"
 import { ConnectScreen } from "@/components/connect-screen"
+import { IncompatibleServer } from "@/components/incompatible-server"
 import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
@@ -16,6 +17,8 @@ import { mountThemeSync } from "@/lib/custom-theme-sync"
 import { makeQueryClient } from "@/lib/queries/client"
 import { persistOptionsFor } from "@/lib/queries/persist"
 import { useProfiles } from "@/lib/queries/catalog"
+import { useServerHealth } from "@/lib/queries/surfaces"
+import { compatOf } from "@/lib/compat"
 import { navigateTo } from "@/lib/router"
 import { ServerProvider } from "@/lib/server-context"
 import { currentRegistry } from "@/lib/thread/registry"
@@ -110,10 +113,40 @@ function Connected({
         {/* Inside the cache, not beside PromptProvider: the shared project and
             profile forms it mounts read the catalog and the connection. */}
         <CatalogFormProvider>
-          <ConnectedShell settings={settings} onAddServer={onAddServer} />
+          <CompatGate settings={settings} onAddServer={onAddServer}>
+            <ConnectedShell settings={settings} onAddServer={onAddServer} />
+          </CompatGate>
         </CatalogFormProvider>
       </PersistQueryClientProvider>
     </ServerProvider>
+  )
+}
+
+/** Holds the shell back only on a definite answer that this build and the
+    server cannot work together. Loading, a failed read and offline all let it
+    through: unreachable is not incompatible, and the reconnect UI owns it. */
+function CompatGate({
+  settings,
+  onAddServer,
+  children,
+}: {
+  settings: ServerSettings
+  onAddServer: () => void
+  children: React.ReactNode
+}) {
+  const health = useServerHealth(settings)
+  /* The answer is persisted, so a failed or paused (offline) re-read would
+     otherwise keep painting the last one — which may predate a server update. */
+  const fresh = !health.isError && health.fetchStatus !== "paused"
+  const compat = health.data && fresh ? compatOf(health.data) : "ok"
+  if (compat === "ok") return children
+  return (
+    <IncompatibleServer
+      compat={compat}
+      settings={settings}
+      onAddServer={onAddServer}
+      onRecheck={() => void health.refetch()}
+    />
   )
 }
 

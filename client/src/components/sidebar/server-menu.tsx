@@ -4,8 +4,12 @@
    and Settings › General for the rest (rename, forget, teardown before
    disconnect). The name and the address are the button's tooltip now; the row
    it used to fill is gone, which is what made room for the icons beside it.
-   It is the app's dropdown menu, like the spaces switcher beside it. */
+   It is the app's dropdown menu, like the spaces switcher beside it.
+   Each row says when that server and this build cannot work together — read
+   from its `/api/health` while the menu is open. Switching to one is still
+   allowed; the gate on the other side explains it. */
 import * as React from "react"
+import { useQueries } from "@tanstack/react-query"
 import { ChevronRightIcon, Plus, ServerIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
@@ -16,7 +20,10 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
+import { StatusBadge } from "@/components/settings/primitives"
 import { useSidebar } from "@/components/ui/sidebar"
+import { compatOf } from "@/lib/compat"
+import { healthQuery } from "@/lib/queries"
 import { settingsPath } from "@/lib/router"
 import { loadServers, setActiveServer, type ServerSettings } from "@/lib/settings"
 import { FooterMenuButton } from "./footer-menu"
@@ -30,6 +37,34 @@ function serverHost(url: string): string {
   } catch {
     return url
   }
+}
+
+const COMPAT_LABEL = { "server-old": "Update server", "client-old": "Update app" } as const
+
+/** The rows, a component of their own so the health reads live and die with
+    the open menu (the popup unmounts on close) rather than polling from the
+    footer. A server that does not answer draws no badge: unreachable is not
+    incompatible. */
+function ServerRows({ servers }: { servers: ServerSettings[] }) {
+  const health = useQueries({
+    queries: servers.map((server) => ({ ...healthQuery(server), retry: false })),
+  })
+  return servers.map((server, i) => {
+    const data = health[i]?.data
+    const compat = data ? compatOf(data) : "ok"
+    return (
+      <DropdownMenuRadioItem key={server.id} value={server.id}>
+        <ServerIcon />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate">{server.name}</span>
+          <span className="truncate font-mono text-[11px] text-muted-foreground">
+            {serverHost(server.url)}
+          </span>
+        </span>
+        {compat !== "ok" && <StatusBadge tone="warn">{COMPAT_LABEL[compat]}</StatusBadge>}
+      </DropdownMenuRadioItem>
+    )
+  })
 }
 
 export function ServerIconButton({
@@ -66,17 +101,7 @@ export function ServerIconButton({
           value={settings.id}
           onValueChange={(next) => next && next !== settings.id && setActiveServer(next)}
         >
-          {servers.map((server) => (
-            <DropdownMenuRadioItem key={server.id} value={server.id}>
-              <ServerIcon />
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate">{server.name}</span>
-                <span className="truncate font-mono text-[11px] text-muted-foreground">
-                  {serverHost(server.url)}
-                </span>
-              </span>
-            </DropdownMenuRadioItem>
-          ))}
+          <ServerRows servers={servers} />
         </DropdownMenuRadioGroup>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />

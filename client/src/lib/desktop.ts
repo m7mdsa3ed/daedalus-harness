@@ -62,6 +62,21 @@ export async function setWindowTranslucent(value: boolean): Promise<string> {
   return result && !result.ok ? result.error : ""
 }
 
+/* ── Updates ──
+   electron-updater behind the preload bridge (main.cjs "Updates"); what
+   lib/client-update.ts calls when a server needs a newer client. */
+export const hasDesktopUpdater = (): boolean => !!desktop?.update
+
+/** Resolves once a found update has downloaded, so `installDesktopUpdate` can follow. */
+export async function checkDesktopUpdate(): Promise<{ available: boolean; version?: string }> {
+  return (await desktop?.update?.check()) ?? { available: false }
+}
+
+/** Quit into the downloaded update; rejects when there is none. */
+export async function installDesktopUpdate(): Promise<void> {
+  await desktop?.update?.install()
+}
+
 export function useQuickEntry(): {
   accelerator: string
   error: string

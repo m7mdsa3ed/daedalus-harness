@@ -181,6 +181,9 @@ export default defineConfig({
          function both ends have to run so a chip's forecast and the bridge's
          branch cannot disagree about the same file. */
       "@daedalus/delivery": path.resolve(import.meta.dirname, "../server/src/delivery.ts"),
+      /* The wire contract's numbers, frozen into this bundle at build time so
+         it can compare them with what each server reports (lib/compat.ts). */
+      "@daedalus/compat": path.resolve(import.meta.dirname, "../server/src/compat.ts"),
     },
   },
 });

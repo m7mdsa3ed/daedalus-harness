@@ -418,9 +418,9 @@ export function createCore(deps: CoreDeps) {
   }
 
   /* Point the window-level watchers — `online`, `visibilitychange`, the
-     shared health probe and the park poll — at this connection's registry and
-     session refresh action. */
-  watchNetwork({ settings, registry: threads, refreshSessions })
+     shared health probe and the park poll — at this connection's registry,
+     session refresh action and query cache. */
+  watchNetwork({ settings, registry: threads, refreshSessions, queryClient: deps.queryClient })
 
   /** Reattach, reviving the agent if it is gone. The connection owns the
       guards, the chain and the ladder; this names the entry point the UI

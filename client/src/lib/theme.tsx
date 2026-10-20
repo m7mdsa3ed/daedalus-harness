@@ -317,6 +317,11 @@ declare global {
         pick: (guestId: number) => Promise<PickedElement | null>
         cancel: (guestId: number) => void
       }
+      /** electron-updater: `check` resolves once a found update has downloaded. */
+      update?: {
+        check: () => Promise<{ available: boolean; version?: string }>
+        install: () => Promise<void>
+      }
       /** A ShortcutId the native menu / tray / hotkey wants run; returns an unsubscribe. */
       onShortcut?: (handler: (id: string) => void) => () => void
     }

@@ -3,7 +3,7 @@
    flag, its own refresh button and its own idea of when to re-read. One hook
    family now owns each, with the freshness bargain from client.ts: cached
    data answered instantly, refreshed when stale or on window focus. */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { errorText } from "@/lib/errors"
 import { navigateTo, threadPath } from "@/lib/router"
@@ -19,17 +19,62 @@ import {
 import type { Project, ServerSettings } from "@/lib/settings"
 import { api } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
+import type { HealthCompat } from "@/lib/compat"
+import type { Feature } from "@daedalus/compat"
 
 /* ── App meta ──
    The deployment's version and changelog, for Settings › General's About
    group. `staleTime` rather than the default because the answer only changes
    on a deploy, and the settings page reads it on every mount. */
 export type ChangelogEntry = { version: string; date: string | null; markdown: string }
-export type AppMeta = { version: string; changelog: ChangelogEntry[] }
+/** `features` is absent on a server older than versioning, which reads as []. */
+export type AppMeta = { version: string; changelog: ChangelogEntry[]; features?: string[] }
 
-export function useAppMeta() {
-  const settings = useServer()
-  return useApiQuery<AppMeta>(appMetaKey(settings), "/api/meta", { staleTime: 5 * 60_000 })
+/** `settings` names a server other than the active one (the compatibility
+    gate's); omitted, it is the active connection like every other hook. */
+export function useAppMeta(settings?: ServerSettings) {
+  const active = useServer()
+  const server = settings ?? active
+  return useQuery({
+    queryKey: appMetaKey(server),
+    queryFn: ({ signal }) => api<AppMeta>(server, "/api/meta", { signal }),
+    staleTime: 5 * 60_000,
+  })
+}
+
+/** Whether the server offers an additive capability (`FEATURES` in
+    server/src/compat.ts). False while the meta is unknown, so a gated control
+    appears once the server says so rather than vanishing when it does not. */
+export function useFeature(feature: Feature, settings?: ServerSettings): boolean {
+  return (useAppMeta(settings).data?.features ?? []).includes(feature)
+}
+
+/* ── Server health ──
+   The contract numbers the compatibility gate compares (`compatOf`). The route
+   is unauthenticated, so this answers on a server whose token has gone bad —
+   the gate must be able to say "too old" before anything else can be read.
+   Persisted like every read (queries/persist.ts), deliberately: a server
+   known to be incompatible paints the gate on a reload instead of a flash of
+   the shell, and the buster drops the answer when this build is replaced. */
+export type ServerHealth = HealthCompat & {
+  ok: boolean
+  name: string
+  authorized: boolean
+  webSearch: boolean
+}
+
+/** The one definition of a server's health read — the gate's hook and the
+    server menu's per-row reads share the key, so they share this too. */
+export const healthQuery = (server: ServerSettings) =>
+  queryOptions({
+    queryKey: healthKey(server),
+    queryFn: ({ signal }) => api<ServerHealth>(server, "/api/health", { signal }),
+    staleTime: 60_000,
+  })
+
+export function useServerHealth(settings?: ServerSettings) {
+  const active = useServer()
+  return useQuery(healthQuery(settings ?? active))
 }
 
 /* ── A link's title and mark ──
@@ -58,7 +103,7 @@ import {
   type KnowledgeEntryAcross,
 } from "@/lib/workspace/knowledge-api"
 import { fetchProjectStats, type ProjectStats } from "@/lib/workspace/project-stats"
-import type { BranchList, GitCommit, GitRepo, GitStatus } from "@/lib/workspace/git-api"
+import type { BranchList, GitRepo, GitStatus } from "@/lib/workspace/git-api"
 import {
   addHelper,
   deleteHelper,
@@ -73,11 +118,11 @@ import {
   allQuotaKey,
   appMetaKey,
   composerHistoryKey,
+  healthKey,
   linkPreviewKey,
   notificationsKey,
   projectKnowledgeKey,
   projectGitBranchesKey,
-  projectGitLogKey,
   projectGitStatusKey,
   projectReposKey,
   projectScriptsKey,
@@ -160,20 +205,6 @@ export function useGitStatus(projectId: string, repo: string, enabled = true) {
   return useApiQuery<GitStatus>(
     projectGitStatusKey(useServer(), projectId, repo),
     `/api/projects/${encodeURIComponent(projectId)}/git/status${search}`,
-    { enabled }
-  )
-}
-
-/** The newest commits on one repository. `limit` is the caller's, because the
-    surfaces asking differ by an order of magnitude — a glance in the composer's
-    popover is five, the panel's history is a page. */
-export function useGitLog(projectId: string, repo: string, limit: number, enabled = true, all = false) {
-  const search = new URLSearchParams({ limit: String(limit) })
-  if (repo) search.set("repo", repo)
-  if (all) search.set("all", "1")
-  return useApiQuery<GitCommit[]>(
-    projectGitLogKey(useServer(), projectId, repo).concat([limit, all]),
-    `/api/projects/${encodeURIComponent(projectId)}/git/log?${search.toString()}`,
     { enabled }
   )
 }

@@ -145,6 +145,67 @@ export async function applyPwaUpdate(): Promise<void> {
     say so after the toast has been dismissed. */
 export const pwaUpdateReady = (): boolean => applyUpdate !== null
 
+/** What `onRegisteredSW` handed over; null in the desktop shell, off https, or
+    before registration lands. */
+let registration: ServiceWorkerRegistration | null = null
+
+/** Does a worker control this page — the PWA's own update door
+    (lib/client-update.ts)? A page with no controller came from the network,
+    so a plain reload already fetches the newest build. */
+export const hasPwaWorker = (): boolean => registration !== null && !!navigator.serviceWorker?.controller
+
+/** Called by `onNeedRefresh`, once `applyUpdate` is set, for a check waiting on it. */
+let onUpdateReady: (() => void) | null = null
+
+/**
+ * Find a newer build now and apply it — the compatibility gate's Update
+ * (lib/client-update.ts). That press is the person saying yes, so this is the
+ * prompt-mode offer answered early, not a worker reloading the page on its
+ * own. Resolves false when nothing newer is published.
+ */
+export async function checkForPwaUpdate(): Promise<boolean> {
+  if (applyUpdate) {
+    await reloadIntoUpdate()
+    return true
+  }
+  if (!registration) return false
+  await registration.update()
+  const worker = registration.installing ?? registration.waiting
+  // No controller means this page came from the network, not the precache:
+  // there is no old version to swap out, and `onNeedRefresh` never fires.
+  if (!worker || !navigator.serviceWorker.controller) return false
+  // The install is a download (watchInstalling draws it); `onNeedRefresh` is
+  // its end, and the one place that knows how to hand over.
+  const ready = await new Promise<boolean>((resolve) => {
+    // A fast install can land during the `update()` await, before this hook exists.
+    if (applyUpdate) return resolve(true)
+    onUpdateReady = () => resolve(true)
+    const settle = () => {
+      if (worker.state === "redundant") resolve(false)
+      // workbox-window stops listening for `updatefound` after its first
+      // external one, so a worker installed after a failed install never
+      // raises `onNeedRefresh`: "installed" is the end either way.
+      else if (worker.state === "installed" || worker.state === "activated") resolve(true)
+    }
+    worker.addEventListener("statechange", settle)
+    settle()
+  })
+  onUpdateReady = null
+  if (!ready) throw new Error("The new app build failed to install.")
+  if (applyUpdate) await reloadIntoUpdate()
+  else handOverDirectly()
+  return true
+}
+
+/** The hand-over `onNeedRefresh` would have wired, done by hand: the worker
+    (sw.ts) skips waiting on this message, and the new controller is the cue. */
+function handOverDirectly(): void {
+  navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload(), { once: true })
+  const waiting = registration?.waiting
+  if (waiting) waiting.postMessage({ type: "SKIP_WAITING" })
+  else window.location.reload()
+}
+
 function announceInstalling(): void {
   installing = true
   toast.loading(INSTALLING_TITLE, {
@@ -182,6 +243,18 @@ function watchProgress(): void {
   })
 }
 
+/** Hand over to the waiting worker and reload. Replaces the offer in place:
+    the reload is one round trip through the worker away, and a button that
+    stays drawn after a click reads as one that did not take. */
+async function reloadIntoUpdate(): Promise<void> {
+  toast.loading("Updating Daedalus…", {
+    id: UPDATE_TOAST_ID,
+    description: "Reloading with the new version.",
+    duration: Infinity,
+  })
+  await applyPwaUpdate()
+}
+
 function offerUpdate(): void {
   installing = false
   progress = null
@@ -191,17 +264,7 @@ function offerUpdate(): void {
     duration: Infinity,
     action: {
       label: "Reload",
-      onClick: () => {
-        // Replaces the offer in place: the reload is one round trip through
-        // the worker away, and a button that stays drawn after a click reads
-        // as one that did not take.
-        toast.loading("Updating Daedalus…", {
-          id: UPDATE_TOAST_ID,
-          description: "Reloading with the new version.",
-          duration: Infinity,
-        })
-        void applyPwaUpdate()
-      },
+      onClick: () => void reloadIntoUpdate(),
     },
     // "Later" is the toast's own close button now — the Base UI card carries
     // one on every toast, so a second dismiss control would be two ways to say
@@ -259,20 +322,22 @@ function registerAppWorker(): void {
       // the whole point: the running JS and the precache must not disagree.
       applyUpdate = () => updateSW(true)
       offerUpdate()
+      onUpdateReady?.()
     },
-    onRegisteredSW(_swUrl, registration) {
-      if (!registration) return
+    onRegisteredSW(_swUrl, registered) {
+      if (!registered) return
+      registration = registered
       // An update found by this very registration can beat the callback that
       // hands us the registration, so the worker already in flight is checked
       // as well as the ones announced later.
-      watchInstalling(registration.installing)
-      registration.addEventListener("updatefound", () => {
-        watchInstalling(registration.installing)
+      watchInstalling(registered.installing)
+      registered.addEventListener("updatefound", () => {
+        watchInstalling(registered.installing)
       })
       setInterval(() => {
         // Offline, `update()` rejects — there is nothing to do about that but
         // wait for the next tick.
-        void registration.update().catch(() => undefined)
+        void registered.update().catch(() => undefined)
       }, UPDATE_INTERVAL_MS)
     },
     onRegisterError(error) {

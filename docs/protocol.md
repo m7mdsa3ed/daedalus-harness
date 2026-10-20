@@ -574,6 +574,54 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   user pay for another scan to see it. "Select all" spans every group on screen, because the
   question a recovery asks ("everything from Tuesday") is rarely one directory.
 
+## Versioning: client and server builds
+
+- **A client build and a server build are compared by one integer, and features by name.**
+  The client is not the server's: it stores several servers (`daedalus.servers`), a desktop
+  build lives on a machine for months, and each server is deployed when its owner pulls — so
+  any client meets any server, and neither can assume the other's commit.
+  `server/src/compat.ts` is the whole contract: `API` (the wire level this build speaks),
+  `MIN_SERVER_API` (the oldest server this client still drives), `MIN_CLIENT_API` (the oldest
+  client this server still serves) and `FEATURES` (with `type Feature`). Both halves compile
+  it in — the client through the `@daedalus/compat` alias, a *value* import like
+  `@daedalus/delivery` — so each bundle freezes the numbers it was cut with, and one file is
+  what keeps two builds from disagreeing about the same constant. On the wire,
+  **`GET /api/health` says `api` and `minClientApi` unauthenticated** (the gate has to be
+  able to ask before a token is known to be good, and the connect screen already pings it),
+  and **`GET /api/meta` says `features`** behind the token. A server older than the file sends
+  no `api` at all, and **a missing `api` reads as 0** — the baseline, never an error.
+- **The answer is `compatOf`, and only a definite one blocks.** `client/src/lib/compat.ts` is
+  pure: `server-old` when the server's `api` is under this build's `MIN_SERVER_API`,
+  `client-old` when this build's `API` is under the server's `minClientApi`, else `ok`. The
+  server *says* its minimum and refuses nothing; the client blocks itself. The gate is in
+  `App.tsx`'s `Connected` and renders `components/incompatible-server.tsx` in place of the
+  app **only on `server-old`/`client-old`** — never while the health read is loading and
+  never when it failed, because an offline server is the connection's to say (the transcript
+  foot, the reconnect ladder) and a gate that read "unknown" as "incompatible" would lock the
+  app every time the network blinked. It re-reads on window focus and on network-watch
+  recovery (`healthKey(settings)`, scoped per server), which is when a server that was
+  upgraded under an open tab is noticed. `client-old` offers an update through
+  `lib/client-update.ts` (`requestClientUpdate`); `server-old` can only say what to run on
+  the server. The server menu badges each stored server with its own answer, so an outdated
+  one is visible before it is switched to.
+- **An additive change is a `FEATURES` entry, never a bump; a reader gates on the name.** A
+  new route, an optional field, a new event kind: the server lists a name, and
+  `useFeature(feature, settings)` (`lib/queries/surfaces.ts`, off the `/api/meta` query) is how
+  a surface asks. **Never compare semver or `api` to decide whether something exists** —
+  semver (`meta.ts`, the CHANGELOG) is for people, and a level says only what was *removed*.
+  Everything that existed when versioning began is the baseline and is not listed.
+- **A breaking change is three releases: expand, migrate, contract.** Expand: the client
+  learns to read both shapes and ships first. Migrate: the server switches shape and bumps
+  `API`. Contract: a later client drops the old reader and raises `MIN_SERVER_API`. **The
+  support window is one level** — a client drives servers at `API` and `API - 1` — and
+  **raising either minimum is a CHANGELOG line** ("API n"), because it is the moment a build
+  in somebody's hands stops working. The **first** bump additionally waits until a desktop
+  build that contains the gate is installed: an older desktop build has no gate, so it would
+  meet the new server without being told and simply break.
+- **The server never updates itself.** It is a pm2 process in someone's checkout, and pulling
+  code into a running agent host is the owner's decision; About says `git pull && pnpm
+  pm2:start`. The client's two update paths are `docs/pwa-and-notifications.md` "Updates".
+
 ## Capabilities we advertise
 
 - **A capability we don't advertise is a feature the agent turns off.** The `initialize`

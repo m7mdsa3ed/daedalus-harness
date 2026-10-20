@@ -81,6 +81,32 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   row's body (`addNotification`), so a notice says the same thing on every
   surface.
 
+## Updates: the forced path and the desktop updater
+
+- **A server that needs a newer client asks for one through one door, whichever shell it
+  is.** The compatibility gate (`docs/protocol.md` "Versioning") answers `client-old` with
+  an Update button, and that button calls `requestClientUpdate()` in
+  `lib/client-update.ts`; `clientUpdateVia()` says which mechanism it will use, so the gate
+  can word the button before it is pressed. Three answers: **`"pwa"`** — a service worker
+  controls the page, and `checkForPwaUpdate` (`lib/pwa.tsx`) asks it for a newer build now
+  instead of waiting for the hourly check, then hands over through the same `updateSW(true)`
+  the Reload toast uses (or posts `SKIP_WAITING` itself when workbox never raised the offer —
+  it stops listening after its first external update): the press is the user's call, which
+  is the only thing that rule ever asked for. **`"desktop"`** — a packaged Electron shell,
+  below; a dev or unpacked one gets no `update` bridge and falls to `"reload"`. **`"reload"`** — a plain tab
+  with neither, where reloading fetches whatever the client host now serves. It rejects with
+  a reason the gate shows (through `lib/errors.ts`), never silently.
+- **The desktop shell updates itself with electron-updater, on a generic feed.** The feed
+  URL is `DAEDALUS_UPDATE_URL` **at build time** — the harness has no build-time *client*
+  config, but the shell's own feed is a fact about who published the binary, not about
+  which server it talks to. Unset, the build has no `app-update.yml`: background checks fail
+  and are logged, never a dialog, which is what a locally built shell wants. The version electron-builder stamps is the root
+  `package.json`'s (passed through `extraMetadata`), the one the CHANGELOG bumps, not
+  `client/package.json`'s, so the feed and About agree. **macOS needs a signed build** —
+  Squirrel.Mac will not apply an unsigned update — so an unsigned mac build can only be
+  replaced by hand. A desktop build older than the gate has no gate at all, which is why
+  the first `API` bump waits for one that has it to be installed.
+
 ## A click opens the thread's tab, in the page
 
 - **A worker notification's click steers the window it controls, never reloads it.**

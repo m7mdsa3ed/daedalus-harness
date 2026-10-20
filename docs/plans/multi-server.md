@@ -348,6 +348,19 @@ reference UUIDs, so non-primary panels work in the primary's layout),
 `settings/knowledge.tsx`, `tasks-board/*` (active-server homes by contract),
 scheduled-message UI (joins by session UUID; mutations resolve per row in actions).
 
+## Versioning
+
+Servers run different builds, so the unified view must ask each one whether this client
+can drive it (`docs/protocol.md` "Versioning"). `ServerInfo.status` gains
+`"incompatible"`, set from `compatOf()` over that server's `/api/health` (`healthKey`, per
+server) — and only on a definite `server-old`/`client-old`, never on a failed read, which
+stays `offline`. An incompatible server's rows are badged like an offline one's, and its
+`ThreadSocket`s are never opened: a socket speaking the wrong contract fails in ways the
+reducer cannot tell from a bug. The primary server keeps the full-screen gate. Feature
+checks follow the row: `useFeature(feature, settings)` is passed the row's own server
+(`serverForSession`/`serverForProject`), never `loadSettings()`, because one server having
+a feature says nothing about another.
+
 ## Edge cases
 
 - **Active server offline at boot**: `boots[0]` rejects → existing toast, `loaded`

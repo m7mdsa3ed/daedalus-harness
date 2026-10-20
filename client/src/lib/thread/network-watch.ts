@@ -1,3 +1,5 @@
+import type { QueryClient } from "@tanstack/react-query"
+import { appMetaKey, healthKey } from "../queries/keys"
 import { api, type ServerSettings } from "../settings"
 import type { ThreadRegistry } from "./registry"
 
@@ -31,6 +33,7 @@ let current: {
   settings: ServerSettings
   registry: ThreadRegistry
   refreshSessions: () => Promise<unknown>
+  queryClient: QueryClient
 } | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let probeCache: { at: number; promise: Promise<boolean> } | null = null
@@ -81,6 +84,18 @@ export function startHealthPoll(): void {
 function retryWaiting(): void {
   if (typeof navigator !== "undefined" && !navigator.onLine) return
   for (const conn of current?.registry.recovering() ?? []) conn.retryNow(serverReachable)
+  rereadServer()
+}
+
+/* Coming back may be coming back to a different build: a deploy under an open
+   tab is exactly what parks threads. The contract numbers and the feature list
+   are re-read, so the compatibility gate and `useFeature` answer for the
+   server that is there now rather than the one that went away. */
+function rereadServer(): void {
+  if (!current) return
+  const { queryClient, settings } = current
+  void queryClient.invalidateQueries({ queryKey: healthKey(settings) })
+  void queryClient.invalidateQueries({ queryKey: appMetaKey(settings) })
 }
 
 /**
@@ -95,6 +110,7 @@ export function watchNetwork(next: {
   settings: ServerSettings
   registry: ThreadRegistry
   refreshSessions: () => Promise<unknown>
+  queryClient: QueryClient
 }): void {
   current = next
   if (listenersInstalled || typeof window === "undefined") return

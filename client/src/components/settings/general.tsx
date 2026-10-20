@@ -26,7 +26,9 @@ import type { TableAction } from "@/components/ui/data-table"
 import { Group, PageHeader, Row, Section, StatusBadge } from "./primitives"
 import { errorText } from "@/lib/errors"
 import { useAppMeta } from "@/lib/queries"
+import { SERVER_UPDATE_COMMAND } from "@/lib/compat"
 import { ChangelogDialog } from "@/components/changelog-dialog"
+import { CopyButton } from "@/components/ui/copy-button"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { useTableFilter } from "@/lib/use-table-filter"
@@ -249,6 +251,12 @@ function AboutStrip() {
         </Row>
         <Row title="Client" subtitle="The build this device is running.">
           <StatusBadge tone="info" dot={false}>{__APP_VERSION__}</StatusBadge>
+        </Row>
+        <Row title="Update the server" subtitle="Run on the server host, in the harness checkout.">
+          <span className="flex min-w-0 items-center gap-1">
+            <code className="min-w-0 truncate rounded-md bg-muted px-2 py-0.5 font-mono text-xs">{SERVER_UPDATE_COMMAND}</code>
+            <CopyButton text={SERVER_UPDATE_COMMAND} size="icon-sm" className="shrink-0 pointer-coarse:size-11" />
+          </span>
         </Row>
         <Row title="Changelog" subtitle="What changed in each release.">
           <Button

@@ -303,6 +303,67 @@ ipcMain.handle("open-thread-window", (_event, sessionId) => {
   return true
 })
 
+/* ── Updates ──
+   electron-updater against the generic feed the build was given
+   (`DAEDALUS_UPDATE_URL` → `publish`, scripts/electron-dist.mjs). Packaged runs
+   only: a dev shell is a vite server, and an unpacked one has no app-update.yml.
+   A build made without a feed has none either, so every background check fails
+   — logged, never a dialog, because "nobody published one" is not news to the
+   person at the window. macOS applies only a *signed* update; an unsigned build
+   logs the refusal here and stays put. Required lazily, so a dev run never loads
+   it at all. */
+const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
+let updater = null
+let updateDownloaded = false
+let updateTimer = null
+const logUpdateError = (error) => console.warn(`[daedalus] update: ${error?.message ?? error}`)
+
+function getUpdater() {
+  if (!app.isPackaged || DEV_URL) return null
+  if (!updater) {
+    updater = require("electron-updater").autoUpdater
+    updater.autoDownload = true
+    // An updater with no listener for "error" throws it; this is that listener.
+    updater.on("error", logUpdateError)
+    updater.on("update-downloaded", () => {
+      updateDownloaded = true
+    })
+  }
+  return updater
+}
+
+/* Whether there is an updater at all, asked synchronously by preload so the
+   renderer is never handed an `update` bridge that can only answer "no" — a
+   dev or unpacked shell falls back to a reload, which does fetch a newer client. */
+ipcMain.on("update-active-sync", (event) => {
+  event.returnValue = app.isPackaged && !DEV_URL
+})
+
+/** Check now and every six hours; once per run, whatever reopens the window. */
+function startUpdateChecks() {
+  if (updateTimer || !getUpdater()) return
+  const check = () => void getUpdater().checkForUpdatesAndNotify().catch(logUpdateError)
+  check()
+  updateTimer = setInterval(check, UPDATE_INTERVAL_MS)
+}
+
+/* The renderer's "get a newer build" (lib/client-update.ts). With autoDownload
+   on, a found update is already downloading, and the answer waits for it: the
+   caller's next move is `update:install`, which needs the file on disk. A
+   failed check rejects — the person asked, so the reason is theirs to read. */
+ipcMain.handle("update:check", async () => {
+  const u = getUpdater()
+  if (!u) return { available: false }
+  const result = await u.checkForUpdates()
+  if (!result?.isUpdateAvailable) return { available: false }
+  await result.downloadPromise
+  return { available: true, version: result.updateInfo.version }
+})
+ipcMain.handle("update:install", () => {
+  if (!updateDownloaded) throw new Error("No desktop update has been downloaded yet.")
+  getUpdater().quitAndInstall()
+})
+
 /* Serve dist/ over local http (not file://) so the service worker (FCM) and
    absolute paths work like the web build. ponytail: static files only. */
 const MIME = {
@@ -857,6 +918,7 @@ async function createWindow() {
     // Once per run: a window reopened on macOS must land on the same origin.
     server ??= await startStaticServer(path.join(app.getAppPath(), "dist"))
     await win.loadURL(`http://127.0.0.1:${server.port}/`)
+    startUpdateChecks()
   }
 }
 

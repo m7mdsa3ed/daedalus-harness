@@ -26,6 +26,7 @@ import { clearNotifications, listNotifications, markNotificationsRead, unreadNot
 import { addComposerHistory, clearComposerHistory, listComposerHistory } from "../composer-history.js";
 import type { SessionManager } from "../sessions.js";
 import { appVersion, changelog } from "../meta.js";
+import { API, FEATURES, MIN_CLIENT_API } from "../compat.js";
 import { resolveLinkPreview } from "../link-preview.js";
 import { CATEGORIES, PROFILES, mapsConfig, nearby, placePhoto, route, searchPlaces } from "../geo.js";
 import { bearerToken, workspace } from "./helpers.js";
@@ -132,12 +133,17 @@ export function miscRoutes(
   app.get("/api/health", (c) => {
     const token = bearerToken(c.req.header("authorization"), c.req.query("token"));
     // `webSearch` is only whether the search API is configured — never the token.
-    return c.json({ ok: true, name: "daedalus", authorized: token === config.token, webSearch: Boolean(readWebSearch()) });
+    // The contract numbers ride the unauthenticated route because the gate must be able to
+    // say "too old" before a token is known good (`compat.ts`).
+    return c.json({
+      ok: true, name: "daedalus", authorized: token === config.token, webSearch: Boolean(readWebSearch()),
+      api: API, minClientApi: MIN_CLIENT_API,
+    });
   });
 
   /* The deployment's version and parsed changelog — what Settings › General's
      About group shows. Authed like every route under the global middleware. */
-  app.get("/api/meta", (c) => c.json({ version: appVersion(), changelog: changelog() }));
+  app.get("/api/meta", (c) => c.json({ version: appVersion(), changelog: changelog(), features: FEATURES }));
 
   /* A pasted link's title and mark for its composer chip — fetched here and
      inlined (`link-preview.ts`), so the browser asks the page nothing. */

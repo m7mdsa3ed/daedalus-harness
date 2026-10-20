@@ -14,8 +14,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   WebSocket (`src/protocol.ts`). It owns profiles (provider config + the MCP/skill/command
   links its threads get), projects (a cwd and a name — nothing linked), the library,
   bearer auth, the event log and FCM push. `data/` holds secrets — gitignored, never commit.
-- **Storage is SQLite via Drizzle** (`server/src/db/`), better-sqlite3, synchronous because
-  spawn paths are. Every query goes through the `db` exported by `db/index.ts`. Links are join
+- **Storage is PostgreSQL via Drizzle** (`server/src/db/`, node-postgres pooled, so database
+  work is async; `DATABASE_URL` wins over `data/config.json`'s `databaseUrl`). Every query goes
+  through the `db` exported by `db/index.ts`. Links are join
   tables with `ON DELETE CASCADE`, so a dangling id cannot exist and nothing filters for one.
   `data/config.json` is the deliberate holdout: bootstrap only, needed before any database.
 - **`client/`** — Vite + React 19 + Tailwind v4 + shadcn on **Base UI, NOT Radix**: compose
@@ -57,9 +58,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   config path, install line or id.
 - **Whether an agent is installed is measured, never assumed** (`server/src/agent-status.ts`),
   and versions come from the ACP `initialize` answer, never a parsed `--version`.
-- **Deployed built, not with tsx**: `pnpm pm2:start` builds, pushes the schema and starts on
-  port **4001** from `DAEDALUS_PORT` (env wins over `data/config.json` for `host`/`port` and
-  only those). One instance, fork mode.
+- **Deployed built, not with tsx**: `pnpm pm2:start` builds, pushes the schema and
+  starts on port **4001** from `DAEDALUS_PORT` (env wins over `data/config.json` for
+  `host`/`port` and only those). One instance, fork mode.
 - **The PWA needs https, so dev has `pnpm dev:tunnel`.** It does not start the server, and
   while it runs both ports are public behind only the bearer token.
 
@@ -99,6 +100,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   doomed socket's events are dropped** — a cleared journal being refilled is the transcript
   already on screen, said again — and **a replay that replaces a transcript commits once,
   not per frame** (`seamless`).
+- **Client and server builds are versioned by one integer and gated on feature names**
+  (`server/src/compat.ts`, both halves via `@daedalus/compat`): `/api/health` says `api` and
+  `minClientApi` unauthenticated, `/api/meta` says `features`, a missing `api` is 0. Additive =
+  a `FEATURES` entry and no bump, read with `useFeature`; **never compare versions**. Breaking =
+  expand (client reads both shapes, ships first), migrate (bump `API`), contract (drop the old
+  reader, raise `MIN_SERVER_API`); one level of support, a raise is a CHANGELOG line. Only a
+  definite answer blocks (`incompatible-server.tsx`), never loading/offline. The server never
+  self-updates. → `docs/protocol.md` "Versioning".
 - **The ACP SDK is named in one file per half** — `server/src/acp.ts`, `agent/src/acp.ts`,
   the client's `@daedalus/acp`. Import `acp` from there, never from the package. The version
   is pinned exactly in all three manifests.

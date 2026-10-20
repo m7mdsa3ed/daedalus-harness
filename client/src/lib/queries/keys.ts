@@ -59,6 +59,10 @@ export const modelRolesKey = (s: ServerSettings) => scope(s).concat(["model-role
 /** The coding-plan presets a new profile starts from — read once per session,
     since the list is the server build's and the catalogs are models.dev's. */
 export const profilePresetsKey = (s: ServerSettings) => scope(s).concat(["profile-presets"])
+/** A server's contract numbers (`GET /api/health`, unauthenticated), read by
+    the compatibility gate for the active server and by the server menu for
+    every stored one — so the key takes the server it is about, not the active. */
+export const healthKey = (s: ServerSettings) => scope(s).concat(["health"])
 /** The deployment's app version and parsed changelog (`GET /api/meta`). */
 export const appMetaKey = (s: ServerSettings) => scope(s).concat(["app-meta"])
 /** A pasted link's title and mark, the composer chip's (`GET /api/link-preview`).

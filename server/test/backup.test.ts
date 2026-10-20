@@ -511,6 +511,13 @@ async function routeTest(name: string, fn: () => Promise<void>) {
     // And without `secrets=1` the download is the redacted one.
     assert.equal("apiKey" in parsed.data.profiles[0]!, false, "secrets stay opt-in");
   });
+
+  // Riding along on the mounted routes: the wire contract the client's gate reads (`compat.ts`).
+  await routeTest("health says the contract numbers without a token", async () => {
+    const body = (await (await app.request("/api/health")).json()) as { api?: unknown; minClientApi?: unknown };
+    assert.equal(typeof body.api, "number");
+    assert.equal(typeof body.minClientApi, "number");
+  });
 }
 
 await wipe();
