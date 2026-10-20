@@ -89,7 +89,6 @@ import {
   AutomationsIndicator,
   ChangesIndicator,
   ContextIndicator,
-  RepoIndicator,
   TodoIndicator,
 } from "@/components/composer-status"
 import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
@@ -971,7 +970,6 @@ export function Composer({
                   <AgentsIndicator thread={thread} />
                   {!draft && <AutomationsIndicator sessionId={sessionId} />}
                   <ChangesIndicator changes={changes} />
-                  <RepoIndicator meta={meta} />
                   <ContextIndicator
                     thread={thread}
                     meta={meta}

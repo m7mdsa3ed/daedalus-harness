@@ -14,8 +14,6 @@
                                       line shares;
    — `composer/changes-indicator.tsx` what the last writing turn did to the
                                       worktree;
-   — `composer/repo-indicator.tsx`    which branch the work lands on, and the
-                                      writes a repository takes from here;
    — `composer/activity-line.tsx`     `workingMessage` and `PhaseLine`.
 
    This file is the barrel those importers still resolve through. The
@@ -28,5 +26,4 @@ export { TodoIndicator } from "@/components/composer/todo-indicator"
 export { AgentsIndicator, runningAgents } from "@/components/composer/agents-indicator"
 export { AutomationsIndicator } from "@/components/composer/automations-indicator"
 export { ChangesIndicator } from "@/components/composer/changes-indicator"
-export { RepoIndicator } from "@/components/composer/repo-indicator"
 export { PhaseLine, workingMessage } from "@/components/composer/activity-line"
