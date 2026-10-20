@@ -1679,11 +1679,6 @@ html[data-window-controls-overlay="true"] {
   animation: harness-rail-draw var(--dur-slow) var(--ease) backwards;
   animation-delay: calc(min(var(--item-i, 0), 6) * 60ms);
 }
-/* The trunk past a step draws after the elbow into its mark: the line reaches
-   the step, then goes on to the next one — downward, in order. */
-.harness-rail-draw.run-rail-tail::after {
-  animation-delay: calc(min(var(--item-i, 0), 6) * 60ms + 120ms);
-}
 
 /* ── A run's rail ──
    One trunk under the parent row's mark, and an elbow from it into each
@@ -1768,6 +1763,51 @@ html[data-window-controls-overlay="true"] {
   bottom: calc(var(--rail-gap) * -1);
   width: 1px;
   background: var(--border);
+}
+
+/* ── Drawing it ──
+   One pen, start to end, at one speed: the header's stretch, then each row's
+   elbow — down the trunk, then across into the mark — then its tail, then the
+   next row. Every piece is `linear` and starts as the one above it finishes
+   (`--rail-i` is the row's slot in that sequence, set by rows.tsx: the rows
+   new in this render, after one slot for anything already drawn), so the
+   pieces read as one line being drawn rather than as segments easing in on
+   their own clocks — which is what drew it end-first: the header borrowed the
+   transcript row's `--item-i` and waited behind every step. The rows'
+   entrance (`harness-item-in`) is on an inner box, never on the box these
+   pseudos hang off, so the line does not slide or fade with its row.
+   Each rule is one class (0,1,1) and sits before the reduced-motion and calm
+   blocks, whose `.harness-rail-draw` rules therefore still switch it off. */
+.run-rail-head::after {
+  animation: harness-rail-draw 40ms linear backwards;
+  animation-delay: 0ms;
+}
+.run-rail-through::before {
+  animation: harness-rail-draw 90ms linear backwards;
+  animation-delay: 40ms;
+}
+.run-rail-step::before {
+  animation: harness-rail-elbow 60ms linear backwards;
+  animation-delay: calc(40ms + min(var(--rail-i, 0), 12) * 100ms);
+}
+.run-rail-tail::after {
+  animation: harness-rail-draw 40ms linear backwards;
+  animation-delay: calc(100ms + min(var(--rail-i, 0), 12) * 100ms);
+}
+[dir="rtl"] .run-rail-step::before {
+  animation-name: harness-rail-elbow-rtl;
+}
+/* The elbow: the trunk's 1px column top to bottom, then the turn and the
+   run across to the mark — clip insets, so it is drawn, not faded. */
+@keyframes harness-rail-elbow {
+  0% { clip-path: inset(0 calc(100% - 1px) 100% 0); }
+  45% { clip-path: inset(0 calc(100% - 1px) 0 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+@keyframes harness-rail-elbow-rtl {
+  0% { clip-path: inset(0 0 100% calc(100% - 1px)); }
+  45% { clip-path: inset(0 0 0 calc(100% - 1px)); }
+  100% { clip-path: inset(0 0 0 0); }
 }
 
 /* ── A step assembling itself ──

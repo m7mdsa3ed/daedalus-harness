@@ -1,3 +1,5 @@
+import * as React from "react"
+
 /* ── A run's rail ── the geometry the steps inside a folded run hang off, and
    the "N earlier steps" line that heads a peeking one. Constants and one leaf
    button: nothing here recurses back into the row tree, so it lives apart from
@@ -29,6 +31,26 @@ export const RAIL_TAIL = "run-rail-tail"
 /** A straight length of the trunk, for a row on the rail that is not a step
     (the "N earlier steps" line). */
 export const RAIL_THROUGH = "run-rail-through harness-rail-draw"
+
+/** Each row's slot in the rail's drawing sequence (index.css "Drawing it"), as
+    the `--rail-i` style for its wrapper. Rows already drawn hold slot 0; rows
+    new in this render follow in order one slot after them (after the "N
+    earlier" line too, when there is one), so a step joining the rail draws
+    after the tail above it and a rail opening draws top to bottom. `mounted`
+    false forgets what was drawn, so a rail that closes and reopens redraws. */
+export function useRailSlots(ids: string[], mounted: boolean, leading = false) {
+  const drawn = React.useRef(new Set<string>())
+  const before = drawn.current
+  const fresh = ids.filter((id) => !before.has(id))
+  const offset = leading || fresh.length < ids.length ? 1 : 0
+  React.useEffect(() => {
+    drawn.current = mounted ? new Set(ids) : new Set()
+  })
+  return (id: string): React.CSSProperties => {
+    const at = fresh.indexOf(id)
+    return { "--rail-i": at < 0 ? 0 : at + offset } as React.CSSProperties
+  }
+}
 
 /** "N earlier steps" — the top of a peeking rail. The steps' own ground
     (`-mx-1 px-1 py-0.5`, rounded-xl), its text starting at the title column

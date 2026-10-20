@@ -103,6 +103,7 @@ import {
   RAIL_TAIL,
   RAIL_THROUGH,
   RUN_RAIL_CLASS,
+  useRailSlots,
 } from "@/components/thread-items/rail"
 import { UserMessageText } from "@/components/thread-items/user-message"
 import {
@@ -226,6 +227,15 @@ export const ToolRun = React.memo(function ToolRun({
   React.useEffect(() => {
     shown.current = new Set(showing.map((item) => item.id))
   })
+  /* Each row's slot in the rail's one drawing sequence (index.css "Drawing
+     it"): rows already drawn hold slot 0 and draw nothing new; rows new in this
+     render follow in order, one slot after them — so a step joining a live run
+     draws after the tail above it, and a run opening draws top to bottom. */
+  const railOffset = hidden > 0 || showing.some((item) => already.has(item.id)) ? 1 : 0
+  const railSlot = (id: string) => {
+    const entering = entranceIndex.get(id)
+    return entering === undefined ? 0 : entering + railOffset
+  }
 
   /* The Branch layout draws the run as a commit graph instead of the elbow
      rail: lanes from the steps' own timing (`lib/tool-graph.ts`). */
@@ -323,9 +333,12 @@ export const ToolRun = React.memo(function ToolRun({
             {showing.map((item, index) => (
               <div
                 key={item.id}
-                style={{ ...stagger(entranceIndex.get(item.id) ?? -1), ...(branch ? { paddingInlineStart: gutter } : null) }}
+                style={{
+                  ...stagger(entranceIndex.get(item.id) ?? -1),
+                  ...(branch ? { paddingInlineStart: gutter } : { "--rail-i": railSlot(item.id) }),
+                } as React.CSSProperties}
                 className={cn(
-                  !already.has(item.id) && "harness-item-in",
+                  branch && !already.has(item.id) && "harness-item-in",
                   branch ? "relative flow-root" : RAIL_ELBOW,
                   !branch && index < showing.length - 1 && RAIL_TAIL
                 )}
@@ -339,19 +352,23 @@ export const ToolRun = React.memo(function ToolRun({
                     last={index === showing.length - 1}
                   />
                 )}
-                {/* Nested rows retain their own same-view fold; direct items use
-                    the ordinary step renderer and preserve a live thought tail. */}
-                {item.kind === "run" ? (
-                  <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} />
-                ) : item.kind === "tool" ? (
-                  <ToolStep item={item} showTimestamp={showTimestamps} />
-                ) : (
-                  <ThreadItemView
-                    item={item}
-                    showTimestamps={showTimestamps}
-                    streaming={tail && index === showing.length - 1}
-                  />
-                )}
+                {/* The entrance rides an inner box: the rail is this wrapper's
+                    pseudos, and a row sliding in must not take the line with it. */}
+                <div className={cn(!branch && !already.has(item.id) && "harness-item-in")}>
+                  {/* Nested rows retain their own same-view fold; direct items use
+                      the ordinary step renderer and preserve a live thought tail. */}
+                  {item.kind === "run" ? (
+                    <RowView row={item} showTimestamps={showTimestamps} streaming={tail && index === showing.length - 1} />
+                  ) : item.kind === "tool" ? (
+                    <ToolStep item={item} showTimestamp={showTimestamps} />
+                  ) : (
+                    <ThreadItemView
+                      item={item}
+                      showTimestamps={showTimestamps}
+                      streaming={tail && index === showing.length - 1}
+                    />
+                  )}
+                </div>
               </div>
             ))}
             </div>
@@ -475,6 +492,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
   const failed = tools.filter((tool) => tool.status === "failed").length
   const summary = summarise(tools)
 
+  const railSlot = useRailSlots(rows.map((row) => row.id), open)
   return (
     <div>
       <button
@@ -535,7 +553,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={RUN_RAIL_CLASS}>
               {rows.map((inner, index) => (
-                <div key={inner.id} className={cn(RAIL_ELBOW, index < rows.length - 1 && RAIL_TAIL)}>
+                <div key={inner.id} style={railSlot(inner.id)} className={cn(RAIL_ELBOW, index < rows.length - 1 && RAIL_TAIL)}>
                   <RowView
                     row={inner}
                     showTimestamps={showTimestamps}
@@ -901,6 +919,7 @@ function SubagentTranscript({
 }) {
   const rows = limit ? all.slice(-limit) : all
   const hidden = all.length - rows.length
+  const railSlot = useRailSlots([...rows.map((row) => row.id), ...(active ? ["working"] : [])], true, hidden > 0)
   return (
     <div className={RUN_RAIL_CLASS}>
       {hidden > 0 && onEarlier && (
@@ -909,19 +928,15 @@ function SubagentTranscript({
         </div>
       )}
       {rows.map((row, i) => (
-        <div
-          key={row.id}
-          className={cn(
-            "harness-item-in",
-            RAIL_ELBOW,
-            (i < rows.length - 1 || active) && RAIL_TAIL
-          )}
-        >
-          <RowView
-            row={row}
-            showTimestamps={showTimestamps}
-            streaming={active && i === rows.length - 1}
-          />
+        <div key={row.id} style={railSlot(row.id)} className={cn(RAIL_ELBOW, (i < rows.length - 1 || active) && RAIL_TAIL)}>
+          {/* The entrance on an inner box, so the rail does not slide with it. */}
+          <div className="harness-item-in">
+            <RowView
+              row={row}
+              showTimestamps={showTimestamps}
+              streaming={active && i === rows.length - 1}
+            />
+          </div>
         </div>
       ))}
       {/* The subagent's own working line, at the foot of its rail: the thread's
@@ -931,6 +946,7 @@ function SubagentTranscript({
       {active && (
         <div
           aria-label="Subagent working"
+          style={railSlot("working")}
           className={cn("flex items-center gap-2 py-0.5 text-sm leading-6 text-primary", RAIL_ELBOW)}
         >
           {/* The steps' mark slot, so the Logo stands in their mark column. */}
