@@ -1,4 +1,4 @@
-import type { ProfileUsageKind } from "./db/index.js";
+import type { ModelDef, ProfileUsageKind } from "./db/index.js";
 import { searchModelsDev, toCandidate, type ModelsDevCandidate } from "./models-dev.js";
 
 /*
@@ -56,8 +56,15 @@ export interface ProfilePreset {
   /** Per-agent base URLs, in the shape `profiles.agents` stores. Only the
       agents the plan serves; an empty link means "the shared baseUrl". */
   agents: Record<string, { baseUrl?: string }>;
-  /** The models.dev provider whose catalog is the plan's. */
+  /** The models.dev provider whose catalog is the plan's. Empty for a provider
+      models.dev does not list at all (a decision-only one), where `seedModels`
+      is the whole catalog. */
   modelsDevProvider: string;
+  /** Models models.dev cannot describe — decision and completion entries, whose
+      kind and wire ARE the point. They come first, and a models.dev hit with the
+      same id never overwrites one: a provider's catalog calls jev a chat model
+      because that is the only shape it has a word for. */
+  seedModels?: ModelDef[];
   /** Preferred default, when the catalog has it. */
   defaultModel: string;
   /** Model for the agent's cheap side-jobs, when the plan serves one worth
@@ -68,9 +75,11 @@ export interface ProfilePreset {
   usage: ProfileUsageKind;
 }
 
-/** What `GET /api/profile-presets` answers: the preset plus its catalog. */
+/** What `GET /api/profile-presets` answers: the preset plus its catalog. A
+    seeded entry has no models.dev provenance to carry, which is why the array
+    is the union rather than the enriched shape. */
 export interface ResolvedProfilePreset extends ProfilePreset {
-  models: ModelsDevCandidate[];
+  models: (ModelDef | ModelsDevCandidate)[];
   /** True when models.dev could not be reached, so an empty `models` is a
       failure to read and not a plan with no models. */
   modelsUnavailable: boolean;
@@ -230,6 +239,57 @@ export const PROFILE_PRESETS: ProfilePreset[] = [
     defaultModel: "anthropic/claude-sonnet-5",
     usage: "openrouter",
   },
+  /* ── Providers that are not chat at all (docs/plans/model-kinds.md) ──
+     Both are ordinary profiles with `kind`/`wire` on their models, which is the
+     point: a model that cannot drive a turn still belongs in a catalogue, and
+     the thread's own pickers filter it out on `kind`. Nothing special-cases the
+     provider, and nothing calls these models yet — the row is the artifact. */
+  {
+    id: "typesafe-jev",
+    name: "TypeSafe (Jev)",
+    description:
+      "Jev answers typed questions with probabilities and generates no text, so it can never drive a thread. Kev serves the same contract locally: point baseUrl at your own server and keep the wire.",
+    keyUrl: "https://typesafe.ai",
+    logoUrl: "",
+    baseUrl: "https://api.typesafe.ai",
+    agents: { [DAEDALUS]: {}, [OPENCODE]: {} },
+    modelsDevProvider: "",
+    seedModels: [
+      {
+        id: "jev-1.13.0",
+        label: "Jev 1.13",
+        reasoningEfforts: [],
+        kind: "decision",
+        wire: "systemone",
+        description: "System One classifier: noul, choice and score questions.",
+      },
+    ],
+    defaultModel: "jev-1.13.0",
+    usage: "none",
+  },
+  {
+    id: "deepseek-fim",
+    name: "DeepSeek (fill-in-the-middle)",
+    description:
+      "DeepSeek's FIM endpoint on the /beta base: prompt and suffix in, the text between them out. A completion model is not a thread's model, so it never appears in a thread's picker.",
+    keyUrl: "https://platform.deepseek.com/api_keys",
+    logoUrl: logo("deepseek"),
+    baseUrl: "https://api.deepseek.com/beta",
+    agents: { [DAEDALUS]: {} },
+    modelsDevProvider: "",
+    seedModels: [
+      {
+        id: "deepseek-v4-pro",
+        label: "DeepSeek V4 Pro (FIM)",
+        reasoningEfforts: [],
+        kind: "completion",
+        wire: "openai-completions",
+        description: "Fill-in-the-middle completion: prompt + suffix.",
+      },
+    ],
+    defaultModel: "deepseek-v4-pro",
+    usage: "none",
+  },
 ];
 
 export function getProfilePreset(id: string): ProfilePreset | undefined {
@@ -245,13 +305,27 @@ export function getProfilePreset(id: string): ProfilePreset | undefined {
 export async function resolveProfilePresets(): Promise<ResolvedProfilePreset[]> {
   return Promise.all(
     PROFILE_PRESETS.map(async (preset) => {
-      try {
-        const hits = await searchModelsDev("", { provider: preset.modelsDevProvider, limit: 200 });
-        return { ...preset, models: hits.map(toCandidate), modelsUnavailable: false };
-      } catch (err) {
-        console.warn(`profile preset ${preset.id}: models.dev unavailable`, err);
-        return { ...preset, models: [], modelsUnavailable: true };
+      const seeds = preset.seedModels ?? [];
+      let hits: ModelsDevCandidate[] = [];
+      let unreadable = false;
+      if (preset.modelsDevProvider) {
+        try {
+          hits = (await searchModelsDev("", { provider: preset.modelsDevProvider, limit: 200 })).map(toCandidate);
+        } catch (err) {
+          console.warn(`profile preset ${preset.id}: models.dev unavailable`, err);
+          unreadable = true;
+        }
       }
+      const seeded = new Set(seeds.map((model) => model.id));
+      const models = [...seeds, ...hits.filter((hit) => !seeded.has(hit.id))];
+      return {
+        ...preset,
+        models,
+        /* "Unavailable" is only a failure to read when there is nothing to show
+           instead — a preset that carries its own models is complete without
+           models.dev. */
+        modelsUnavailable: unreadable && models.length === 0,
+      };
     }),
   );
 }

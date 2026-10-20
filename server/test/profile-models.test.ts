@@ -10,7 +10,9 @@
 // Run: pnpm test:profile-models
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
-import { profiles as profilesTable, db } from "../src/db/index.js";
+import { Hono } from "hono";
+import { profiles as profilesTable, db, type ModelKind, type ModelWire } from "../src/db/index.js";
+import { profileRoutes } from "../src/routes/profiles.js";
 import {
   ProfileInputSchema,
   createProfile,
@@ -35,7 +37,10 @@ async function test(name: string, fn: () => Promise<void>) {
 
 /** Exactly what the route does, minus Hono. Kept in step with
     `routes/profiles.ts` — if that append grows a rule, this grows it too. */
-async function addModel(profileId: string, model: { id: string; label: string }) {
+async function addModel(
+  profileId: string,
+  model: { id: string; label: string; kind?: ModelKind; wire?: ModelWire },
+) {
   const profile = await getProfile(profileId);
   if (!profile) return { error: "unknown profile" as const };
   if (profile.virtual) return { error: "virtual" as const };
@@ -119,6 +124,57 @@ await test("the save schema keeps a model's user-written picker fields", async (
   });
   assert.equal(parsed.models[0]?.group, "Speed", "a typed group survives the parse");
   assert.equal(parsed.models[0]?.iconUrl, "https://models.dev/logos/x.svg");
+});
+
+await test("the save schema keeps a model's kind and wire", async () => {
+  /* The same stripping rule, for the one field pair that decides where a model
+     may be offered: `kind`/`wire` (docs/plans/model-kinds.md). A decision model
+     that came back as a chat model is one a thread is started on, so the shape
+     has to survive a save untouched — and an entry that names neither still
+     reads as the chat model it was. */
+  const parsed = ProfileInputSchema.parse({
+    name: "decision",
+    agents: { daedalus: {} },
+    models: [
+      { id: "jev-1.13.0", label: "Jev 1.13", reasoningEfforts: [], kind: "decision", wire: "systemone" },
+      { id: "chat-model", label: "Chat", reasoningEfforts: [] },
+    ],
+  });
+  assert.equal(parsed.models[0]?.kind, "decision");
+  assert.equal(parsed.models[0]?.wire, "systemone");
+  assert.equal(parsed.models[1]?.kind, undefined, "absent stays absent, so an old entry is unchanged");
+});
+
+await test("a model's kind survives the write and the read-back", async () => {
+  await addModel(seeded.id, { id: "jev-1.13.0", label: "Jev 1.13", kind: "decision", wire: "systemone" });
+  const stored = (await getProfile(seeded.id))!.models.find((m) => m.id === "jev-1.13.0");
+  assert.equal(stored?.kind, "decision", "the kind reached the jsonb column");
+  assert.equal(stored?.wire, "systemone");
+});
+
+await test("the model test refuses a model whose kind is not chat", async () => {
+  /* `/test-model` sends a chat completion. A decision model answers System One,
+     and the gateway's own refusal ("ModelProtocolUnsupported") reads like a
+     broken row rather than a test that cannot ask — so the refusal is ours,
+     before anything is spent, and it names the kind. */
+  await addModel(seeded.id, { id: "jev-1.13-free", label: "Jev", kind: "decision", wire: "systemone" });
+  const app = new Hono();
+  profileRoutes(app, { sessions: {} as never });
+  const post = (body: unknown) =>
+    app.request(`/api/profiles/${seeded.id}/test-model`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const refused = await post({ model: "jev-1.13-free" });
+  assert.equal(refused.status, 400);
+  assert.match(((await refused.json()) as { error: string }).error, /decision model/);
+
+  /* An unsaved row says the same thing from its own body, before it is stored. */
+  const unsaved = await post({ model: "brand-new", kind: "completion" });
+  assert.equal(unsaved.status, 400);
+  assert.match(((await unsaved.json()) as { error: string }).error, /completion model/);
 });
 
 /* Duplicating has the same credential bargain: the copy is made server-side

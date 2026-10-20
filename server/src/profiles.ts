@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { eq, like } from "drizzle-orm";
 import { z } from "zod";
 import {
+  MODEL_KINDS,
+  MODEL_WIRES,
   USAGE_KINDS,
   agentOptions as agentOptionsTable,
   agentQuota as agentQuotaTable,
@@ -46,6 +48,14 @@ export const ProfileInputSchema = z.object({
         // `ModelDef.group`). Declared here or Zod strips it on save and the
         // group is gone the moment the form is submitted.
         group: z.string().optional(),
+        // What the model is and how it is called (schema.ts `ModelDef.kind`/
+        // `wire`, docs/plans/model-kinds.md). Absent = a chat model, so a payload
+        // from a client that predates kinds still means what it always meant.
+        // Declared here for the same reason `group` is: Zod strips what it does
+        // not know, and a decision model that comes back as a chat model is one
+        // the picker offers for a thread.
+        kind: z.enum(MODEL_KINDS).optional(),
+        wire: z.enum(MODEL_WIRES).optional(),
         // Retired (`docs/model-roles.md`): the role → model map moved onto the
         // thread (`sessions.helper_models`) and nothing reads this any more. Left
         // declared so Zod does not strip a legacy field off an old payload.

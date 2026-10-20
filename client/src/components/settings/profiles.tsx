@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Copy, Cpu, ExternalLink, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Copy, Cpu, ExternalLink, Eye, EyeOff, KeyRound, Pencil, Plus, Power, PowerOff, RefreshCw, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
@@ -34,6 +34,7 @@ import {
   api,
   ApiError,
   profileAgentIds,
+  type ModelKind,
   type Profile,
   type ProfileAgentLink,
   type ProfilePreset,
@@ -147,7 +148,6 @@ const hostOf = (url: string) => URL.parse(url)?.host ?? url
 
 /* The switches act at once, so a click on one must not also be the row's own
    click (which opens the editor). */
-const stop = (e: React.SyntheticEvent) => e.stopPropagation()
 
 function KeyStatus({ profile }: { profile: Profile }) {
   return <StatusBadge tone={profile.hasApiKey ? "ok" : "warn"}>{profile.hasApiKey ? "Key set" : "No key"}</StatusBadge>
@@ -166,37 +166,8 @@ function AgentBadges({ profile, nameOf }: { profile: Profile; nameOf: (id: strin
   )
 }
 
-/** "Shown" and "Enabled": kept, not deleted. Either flag still leaves the
-    profile spawning the threads already on it. Hiding is the pickers only —
-    the usage page keeps reading the plan; disabling closes everywhere, usage
-    included. State-labelled, since two bare switches would not say which was
-    which. */
-function FlagSwitch({
-  on,
-  label,
-  aria,
-  onChange,
-  showLabel = false,
-}: {
-  on: boolean
-  label: string
-  aria: string
-  onChange: (on: boolean) => void
-  showLabel?: boolean
-}) {
-  return (
-    <label
-      className="inline-flex cursor-pointer items-center gap-1.5 py-1 text-xs text-muted-foreground pointer-coarse:min-h-11"
-      onClick={stop}
-    >
-      <Switch checked={on} onCheckedChange={onChange} aria-label={aria} />
-      {showLabel && label}
-    </label>
-  )
-}
-
-/** Disabled outranks hidden, as the sort does. Shown/Enabled say it too, but a
-    word beside the name is readable without finding the switch. */
+/** Disabled outranks hidden, as the sort does, and the word beside the name is
+    the whole state reading now that the two switches are menu items. */
 function StateBadge({ profile }: { profile: Profile }) {
   if (!profile.disabled && !profile.hidden) return null
   return (
@@ -211,8 +182,32 @@ const hasPlanUsage = (profile: Profile) => !!profile.usage && profile.usage.kind
 const profileMark = (p: Profile) => <ProfileIcon profile={p} className="size-5" />
 const profileRowId = (p: Profile) => p.id
 
-const modelsLine = (profile: Profile) =>
-  `${profile.models.length} ${profile.models.length === 1 ? "model" : "models"}`
+/** The kinds a catalogue can hold, in the order they are drawn: a thread's own
+    model first, then the two lanes that answer something else. */
+const KINDS: ModelKind[] = ["chat", "decision", "completion"]
+const KIND_LABEL: Record<ModelKind, string> = { chat: "Chat", decision: "Decision", completion: "Completion" }
+
+/** What this provider can be asked for, and how much of it — the one fact a
+    catalogue's length hides. `kind` is absent on every model saved before kinds
+    existed, and absent means chat. */
+const kindsOf = (profile: Profile): { kind: ModelKind; count: number }[] => {
+  const counts = new Map<ModelKind, number>()
+  for (const model of profile.models) {
+    const kind = model.kind ?? "chat"
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  }
+  return KINDS.filter((kind) => counts.has(kind)).map((kind) => ({ kind, count: counts.get(kind) ?? 0 }))
+}
+
+/** One kind a profile holds, with how many of it. */
+function KindChip({ kind, count }: { kind: ModelKind; count: number }) {
+  return (
+    <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px] font-normal text-muted-foreground">
+      <span className="tabular-nums text-foreground">{count}</span>
+      {KIND_LABEL[kind].toLowerCase()}
+    </Badge>
+  )
+}
 
 export function ProfilesPage() {
   const { settings, actions } = useSettingsPage()
@@ -405,6 +400,10 @@ export function ProfilesPage() {
     fields: [
       { id: "state", label: "State", of: (p) => (p.disabled ? "Disabled" : p.hidden ? "Hidden" : "Active") },
       { id: "key", label: "Key", of: (p) => (p.hasApiKey ? "Has key" : "Needs key") },
+      /* A profile answers several kinds at once and matches when any picked one
+         is among them; the hook draws the field only when more than one kind
+         exists in the list at all. */
+      { id: "kinds", label: "Model type", of: (p) => kindsOf(p).map(({ kind }) => KIND_LABEL[kind]) },
     ],
   })
   /* A search or a pick reaches hidden profiles too (see showHidden). */
@@ -473,11 +472,20 @@ export function ProfilesPage() {
         accessorFn: (p) => p.models.length,
         cell: ({ row }) => {
           const p = row.original
+          const kinds = kindsOf(p)
           return (
-            <div className="min-w-0 max-w-56">
-              <div className="text-sm tabular-nums">
-                {modelsLine(p)}
-                {hasPlanUsage(p) && <span className="text-xs text-muted-foreground"> · plan usage</span>}
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-1">
+                {kinds.length === 0 ? (
+                  <span className="text-xs text-muted-foreground">No models</span>
+                ) : (
+                  kinds.map(({ kind, count }) => <KindChip key={kind} kind={kind} count={count} />)
+                )}
+                {hasPlanUsage(p) && (
+                  <Badge variant="ghost" className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
+                    plan usage
+                  </Badge>
+                )}
               </div>
               {p.defaultModel && (
                 <div className="truncate font-mono text-[11px] text-muted-foreground" title={p.defaultModel}>
@@ -487,39 +495,7 @@ export function ProfilesPage() {
             </div>
           )
         },
-        meta: { className: "hidden @panel-sm:table-cell" },
-      },
-      {
-        id: "shown",
-        header: "Shown",
-        cell: ({ row }) => {
-          const p = row.original
-          return (
-            <FlagSwitch
-              on={!p.hidden}
-              label="Shown"
-              aria={p.hidden ? `Show ${p.name}` : `Hide ${p.name}`}
-              onChange={(on) => verbs.current.toggle(p, { hidden: !on }, on ? "Profile shown" : "Profile hidden")}
-            />
-          )
-        },
-        meta: { className: "w-20" },
-      },
-      {
-        id: "enabled",
-        header: "Enabled",
-        cell: ({ row }) => {
-          const p = row.original
-          return (
-            <FlagSwitch
-              on={!p.disabled}
-              label="Enabled"
-              aria={p.disabled ? `Enable ${p.name}` : `Disable ${p.name}`}
-              onChange={(on) => verbs.current.toggle(p, { disabled: !on }, on ? "Profile enabled" : "Profile disabled")}
-            />
-          )
-        },
-        meta: { className: "w-20" },
+        meta: { className: "hidden @panel-sm:table-cell min-w-40" },
       },
       {
         id: "status",
@@ -532,13 +508,31 @@ export function ProfilesPage() {
     [agentName]
   )
 
-  /* Edit and Duplicate stay on the row; Sync and Delete fold into its menu (the
-     table folds anything past two, destructive last). On a phone the same four
-     are swipe rails and the row's "more" menu. */
+  /* Edit and Duplicate stay on the row; everything else folds into its menu (the
+     table keeps the first two calm actions inline, destructive last). On a phone
+     the same six are swipe rails and the row's "more" menu — which is why the
+     two flags are actions here rather than a column of switches: a phone never
+     had room for them, and a desktop no longer needs two columns saying what
+     `StateBadge` already says beside the name. */
   const rowActions = React.useMemo<TableAction<Profile>[]>(
     () => [
       { id: "edit", label: "Edit", icon: <Pencil />, position: "left", onClick: (p) => verbs.current.edit(p) },
       { id: "duplicate", label: "Duplicate", icon: <Copy />, position: "left", onClick: (p) => verbs.current.duplicate(p) },
+      /* Show/Hide and Enable/Disable are row state, not a second column: they
+         read as the action they perform on the row they are opened on, and the
+         state itself is already said beside the name (`StateBadge`). */
+      {
+        id: "visibility",
+        label: (p) => (p.hidden ? "Show" : "Hide"),
+        icon: (p) => (p.hidden ? <Eye /> : <EyeOff />),
+        onClick: (p) => verbs.current.toggle(p, { hidden: !p.hidden }, p.hidden ? "Profile shown" : "Profile hidden"),
+      },
+      {
+        id: "enabled",
+        label: (p) => (p.disabled ? "Enable" : "Disable"),
+        icon: (p) => (p.disabled ? <Power /> : <PowerOff />),
+        onClick: (p) => verbs.current.toggle(p, { disabled: !p.disabled }, p.disabled ? "Profile enabled" : "Profile disabled"),
+      },
       { id: "sync", label: "Sync to server", icon: <RefreshCw />, onClick: (p) => verbs.current.sync(p) },
       { id: "delete", label: "Delete", icon: <Trash2 />, tone: "danger", onClick: (p) => verbs.current.remove(p) },
     ],
@@ -547,48 +541,48 @@ export function ProfilesPage() {
 
   const mobile = React.useMemo(
     () => ({
-      renderRow: (p: Profile) => (
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
-            <ProfileIcon profile={p} className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className={cn("truncate text-sm font-medium", (p.hidden || p.disabled) && "text-muted-foreground")}>
-                  {p.name}
+      renderRow: (p: Profile) => {
+        const kinds = kindsOf(p)
+        return (
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
+              <ProfileIcon profile={p} className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className={cn("truncate text-sm font-medium", (p.hidden || p.disabled) && "text-muted-foreground")}>
+                    {p.name}
+                  </span>
+                  <StateBadge profile={p} />
                 </span>
-                <StateBadge profile={p} />
-              </span>
-              <span className="shrink-0">
-                <KeyStatus profile={p} />
-              </span>
-            </div>
-            <div className="truncate text-xs text-muted-foreground">
-              {[p.baseUrl ? hostOf(p.baseUrl) : "", modelsLine(p), hasPlanUsage(p) ? "plan usage" : ""]
-                .filter(Boolean)
-                .join(" · ")}
-            </div>
-            <AgentBadges profile={p} nameOf={agentName} />
-            <div className="flex flex-wrap items-center gap-x-4" onClick={stop}>
-              <FlagSwitch
-                showLabel
-                on={!p.hidden}
-                label="Shown"
-                aria={p.hidden ? `Show ${p.name}` : `Hide ${p.name}`}
-                onChange={(on) => verbs.current.toggle(p, { hidden: !on }, on ? "Profile shown" : "Profile hidden")}
-              />
-              <FlagSwitch
-                showLabel
-                on={!p.disabled}
-                label="Enabled"
-                aria={p.disabled ? `Enable ${p.name}` : `Disable ${p.name}`}
-                onChange={(on) => verbs.current.toggle(p, { disabled: !on }, on ? "Profile enabled" : "Profile disabled")}
-              />
+                <span className="shrink-0">
+                  <KeyStatus profile={p} />
+                </span>
+              </div>
+              <div className="truncate text-xs text-muted-foreground">
+                {p.baseUrl ? hostOf(p.baseUrl) : "No endpoint"}
+              </div>
+              {/* The kinds on their own line, as chips: a card has the width for
+                  them, and "what can this provider answer" is the question the
+                  row exists to answer. */}
+              <div className="flex flex-wrap items-center gap-1">
+                {kinds.length === 0 ? (
+                  <span className="text-xs text-muted-foreground">No models</span>
+                ) : (
+                  kinds.map(({ kind, count }) => <KindChip key={kind} kind={kind} count={count} />)
+                )}
+                {hasPlanUsage(p) && (
+                  <Badge variant="ghost" className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
+                    plan usage
+                  </Badge>
+                )}
+              </div>
+              <AgentBadges profile={p} nameOf={agentName} />
             </div>
           </div>
-        </div>
-      ),
+        )
+      },
     }),
     [agentName]
   )

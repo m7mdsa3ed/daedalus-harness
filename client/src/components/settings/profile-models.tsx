@@ -8,10 +8,17 @@ import type { ColumnDef } from "@/lib/table"
 import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
 import { captureError, type InlineError } from "@/lib/errors"
-import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
+import { api, type ModelCandidate, type ModelKind, type ModelWire, type ServerSettings } from "@/lib/settings"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Combobox,
   ComboboxContent,
@@ -56,6 +63,12 @@ export interface ModelRow {
   group: string
   /** Model-role ids this model serves (`ModelRole.id`). */
   roles: string[]
+  /** What the model is (docs/plans/model-kinds.md). A chat model is offered for
+      a thread; a decision or completion model is called by a wire instead and
+      never appears in a thread's picker. */
+  kind: ModelKind
+  /** How a non-chat model is called. Empty on a chat model. */
+  wire: ModelWire | ""
 }
 
 let modelUid = 0
@@ -73,6 +86,8 @@ export const blankModelRow = (): ModelRow => ({
   iconUrl: "",
   group: "",
   roles: [],
+  kind: "chat",
+  wire: "",
 })
 
 export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
@@ -91,6 +106,8 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   iconUrl: candidate.iconUrl ?? "",
   group: candidate.group ?? "",
   roles: candidate.roles ?? [],
+  kind: candidate.kind ?? "chat",
+  wire: candidate.wire ?? "",
 })
 
 export const toModelRows = (models: {
@@ -105,6 +122,8 @@ export const toModelRows = (models: {
   iconUrl?: string
   group?: string
   roles?: string[]
+  kind?: ModelKind
+  wire?: ModelWire
 }[]): ModelRow[] =>
   models.map((m) => ({
     uid: `model-${++modelUid}`,
@@ -120,6 +139,8 @@ export const toModelRows = (models: {
     iconUrl: m.iconUrl ?? "",
     group: m.group ?? "",
     roles: m.roles ?? [],
+    kind: m.kind ?? "chat",
+    wire: m.wire ?? "",
   }))
 
 export function rowsToModels(rows: ModelRow[]) {
@@ -135,6 +156,8 @@ export function rowsToModels(rows: ModelRow[]) {
     iconUrl?: string
     group?: string
     roles?: string[]
+    kind?: ModelKind
+    wire?: ModelWire
   }[] = []
   for (const row of rows) {
     const id = row.id.trim()
@@ -167,6 +190,10 @@ export function rowsToModels(rows: ModelRow[]) {
       ...(row.iconUrl.trim() ? { iconUrl: row.iconUrl.trim() } : {}),
       ...(row.group.trim() ? { group: row.group.trim() } : {}),
       ...(row.roles.length ? { roles: row.roles } : {}),
+      /* A chat model is the default and stays absent, so an entry from before
+         kinds existed and an entry saved today are byte-identical. */
+      ...(row.kind !== "chat" ? { kind: row.kind } : {}),
+      ...(row.kind !== "chat" && row.wire ? { wire: row.wire } : {}),
     })
   }
   return models
@@ -187,6 +214,7 @@ const formatTokens = (tokens: number): string => {
 
 const summaryBadges = (row: ModelRow) => {
   const badges: string[] = []
+  if (row.kind !== "chat") badges.push(row.wire ? `${row.kind} · ${row.wire}` : row.kind)
   const context = Number(row.contextWindow.trim())
   if (context > 0) badges.push(`${formatTokens(Math.round(context))} context`)
   if (row.pricingInput.trim() && row.pricingOutput.trim())
@@ -638,6 +666,51 @@ function ModelEditorFields({
             className="text-xs"
           />
         </Field>
+        <Field
+          label="Kind"
+          hint="What the model is. A chat model is offered for a thread; decision and completion models are called by their wire and never appear in a thread's picker."
+        >
+          <Select
+            value={row.kind}
+            onValueChange={(value: ModelKind | null) =>
+              onPatch({ kind: (value ?? "chat") as ModelKind, ...(value && value !== "chat" ? {} : { wire: "" as const }) })
+            }
+          >
+            <SelectTrigger className="w-full text-xs" aria-label="Model kind">
+              <SelectValue>{row.kind}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="chat">chat — a thread's model</SelectItem>
+              <SelectItem value="decision">decision — typed questions</SelectItem>
+              <SelectItem value="completion">completion — fill the middle</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        {row.kind !== "chat" && (
+          <Field
+            label="Wire"
+            hint="The protocol this model speaks. A definition cannot run a model with no wire."
+          >
+            <Select
+              value={row.wire || null}
+              onValueChange={(value: string | null) => onPatch({ wire: (value ?? "") as ModelWire | "" })}
+            >
+              <SelectTrigger className="w-full text-xs" aria-label="Model wire">
+                <SelectValue>{row.wire || "Pick a wire"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {row.kind === "decision" ? (
+                  <>
+                    <SelectItem value="systemone">systemone — /v1/systemone</SelectItem>
+                    <SelectItem value="systemone-gateway">systemone-gateway — /v1/decisions</SelectItem>
+                  </>
+                ) : (
+                  <SelectItem value="openai-completions">openai-completions — prompt + suffix</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
         <Field label="Context window" hint="Tokens.">
           <Input
             type="number"
@@ -753,11 +826,28 @@ function ModelTest({
   const id = row.id.trim()
   const maxOut = Number(row.maxOutputTokens.trim())
 
+  /* Only a chat model can be proven by this door: it sends a chat completion,
+     and the other two kinds answer a different protocol entirely (the gateway's
+     own refusal is "ModelProtocolUnsupported", which reads like a broken row).
+     A completion model is tested through the lane that calls it — `/api/fim`,
+     against this profile's *saved* credentials, since that route reads the row.
+     A decision model has no lane yet, so `run` is never reached for one. */
+  const completion = row.kind === "completion" && row.wire === "openai-completions"
+
   const run = async () => {
     setTesting(true)
     setResult(null)
     setError(null)
     try {
+      if (completion) {
+        const started = performance.now()
+        const { text } = await api<{ text: string; model: string }>(settings, "/api/fim", {
+          method: "POST",
+          body: JSON.stringify({ profileId, model: id, prompt: "def hello():\n    ", maxTokens: 24 }),
+        })
+        setResult({ ms: performance.now() - started, reply: text.trimEnd() || "(an empty gap)" })
+        return
+      }
       setResult(
         await api<{ ms: number; reply: string; finishReason?: string }>(
           settings,
@@ -766,6 +856,9 @@ function ModelTest({
             method: "POST",
             body: JSON.stringify({
               model: id,
+              /* The row's kind, so a model the profile does not hold yet is
+                 refused by the right name instead of being sent a chat body. */
+              kind: row.kind,
               ...(row.maxOutputTokens.trim() && maxOut > 0 ? { maxOutputTokens: Math.round(maxOut) } : {}),
               ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
               ...(apiKey ? { apiKey } : {}),
@@ -778,6 +871,16 @@ function ModelTest({
     } finally {
       setTesting(false)
     }
+  }
+
+  if (row.kind === "decision") {
+    return (
+      <p className="border-t border-border/40 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+        A decision model answers typed questions — a state plus a map of noul, choice and score
+        questions — and nothing in the harness asks one yet, so there is nothing to send from here.
+        The row keeps its {row.wire || "unset"} wire for the first consumer.
+      </p>
+    )
   }
 
   return (
@@ -795,9 +898,11 @@ function ModelTest({
           <PlugZap className="size-4" /> {testing ? "Testing…" : "Test model"}
         </Button>
         <span className="text-[11px] text-muted-foreground">
-          {row.maxOutputTokens.trim() && maxOut > 0
-            ? `One short completion, sent with max_tokens ${Math.round(maxOut)}.`
-            : "One short completion, with no output cap."}
+          {completion
+            ? "One fill-in-the-middle request, sent to this profile's saved endpoint."
+            : row.maxOutputTokens.trim() && maxOut > 0
+              ? `One short completion, sent with max_tokens ${Math.round(maxOut)}.`
+              : "One short completion, with no output cap."}
         </span>
       </div>
       {result && (

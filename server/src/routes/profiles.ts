@@ -291,9 +291,25 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       maxOutputTokens?: number;
       baseUrl?: string;
       apiKey?: string;
+      /** The row's kind, for a model the profile does not hold yet (the editor
+          tests before saving). The stored row wins when there is one. */
+      kind?: string;
     };
     const model = body.model?.trim() ?? "";
     if (!model) return c.json({ error: "no model to test" }, 400);
+    /* This door sends a chat/completions body, so a model of another kind has
+       nothing here to answer: a decision model speaks System One and a gateway
+       answers "ModelProtocolUnsupported", which reads like a broken row rather
+       than a test that cannot ask. Refused as a configuration answer, with the
+       kind named, so the editor can say what to do instead. */
+    const stored = (await getProfile(c.req.param("id")))?.models.find((m) => m.id === model);
+    const kind = stored?.kind ?? body.kind ?? "chat";
+    if (kind !== "chat") {
+      return c.json(
+        { error: `"${model}" is a ${kind} model, and this test sends a chat completion — there is nothing here it can answer` },
+        400,
+      );
+    }
     const { baseUrl, apiKey } = await formCredentials(c.req.param("id"), body);
     if (!baseUrl) return c.json({ error: "no base URL to test against" }, 400);
     try {
