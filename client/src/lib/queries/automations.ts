@@ -1,11 +1,10 @@
-/* Scheduled messages, routines and their runs/triggers — the automations
-   query family. These were reducer slices read with `refetch-after-mutate`
-   (lib/rest-actions.ts); the rule carries over unchanged, only its mechanism
-   moved: a mutation is not done when the server answers 200, it is done when
-   the cached list is invalidated. */
-import { useQueryClient } from "@tanstack/react-query"
+/* Automations (the server's routines), their runs and triggers — the one query
+   family. A scheduled message is a `runsIn: "session"` automation now, so there
+   is nothing here for `/api/scheduled`. A mutation is not done when the server
+   answers 200, it is done when the cached list is invalidated. */
+import { useQueries, useQueryClient } from "@tanstack/react-query"
 
-import { api, updateScheduled } from "@/lib/settings"
+import { api } from "@/lib/settings"
 import type {
   Routine,
   RoutineInput,
@@ -14,18 +13,15 @@ import type {
   RoutineTrigger,
   RoutineTriggerInput,
   RoutineTriggerPatch,
-  ScheduledMessage,
-  ScheduledPatch,
   ServerSettings,
 } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
 import {
-  allRoutineRunsKey,
-  routineRunsFamilyKey,
-  routineRunsKey,
-  routineTriggersKey,
-  routinesKey,
-  scheduledKey,
+  allAutomationRunsKey,
+  automationRunsFamilyKey,
+  automationRunsKey,
+  automationTriggersKey,
+  automationsKey,
 } from "./keys"
 import { useApiMutation, useApiQuery } from "./helpers"
 
@@ -40,58 +36,11 @@ const patchJson = <T>(settings: ServerSettings, path: string, body: unknown): Pr
 const delJson = (settings: ServerSettings, path: string): Promise<void> =>
   api<void>(settings, path, { method: "DELETE" })
 
-// ---- scheduled messages ----
+// ---- automations ----
 
-/** Scheduled prompts, soonest first. The server owns delivery (scheduler.ts),
-    so the message goes out whether or not this tab is open. */
-export function useScheduled() {
+export function useAutomations() {
   const settings = useServer()
-  return useApiQuery<ScheduledMessage[]>(scheduledKey(settings), "/api/scheduled")
-}
-
-export interface ScheduleInput {
-  sessionId: string
-  text: string
-  nextAt: number
-  everyMs?: number | null
-}
-
-/** Schedule `text` to be sent to a thread's agent at `nextAt` (and again every
-    `everyMs`). The caller is responsible for materializing a draft thread
-    first (the server only schedules threads it knows) — the action in
-    lib/actions does that half and then calls this. */
-export function useCreateSchedule() {
-  const settings = useServer()
-  return useApiMutation<ScheduleInput, ScheduledMessage>(
-    [scheduledKey(settings)],
-    (conn, input) => postJson<ScheduledMessage>(conn, "/api/scheduled", input)
-  )
-}
-
-/** Edit a schedule in place — text, time, recurrence, or pause/resume
-    (`enabled`). Any patch also resets the row's skip state server-side, so
-    resuming a parked schedule is just `{ enabled: true }`. */
-export function useUpdateSchedule() {
-  const settings = useServer()
-  return useApiMutation<{ id: string; patch: ScheduledPatch }, ScheduledMessage>(
-    [scheduledKey(settings)],
-    (conn, { id, patch }) => updateScheduled(conn, id, patch)
-  )
-}
-
-export function useCancelSchedule() {
-  const settings = useServer()
-  return useApiMutation<string, void>(
-    [scheduledKey(settings)],
-    (conn, id) => delJson(conn, `/api/scheduled/${encodeURIComponent(id)}`)
-  )
-}
-
-// ---- routines ----
-
-export function useRoutines() {
-  const settings = useServer()
-  return useApiQuery<Routine[]>(routinesKey(settings), "/api/routines")
+  return useApiQuery<Routine[]>(automationsKey(settings), "/api/routines")
 }
 
 /**
@@ -102,23 +51,23 @@ export function useRoutines() {
  * and "has never run" are different screens (read `isPending`, never
  * `data ?? []`).
  */
-export function useRoutineRuns(
+export function useAutomationRuns(
   routineId: string,
   limit?: number,
   options?: { enabled?: boolean }
 ) {
   const settings = useServer()
   return useApiQuery<RoutineRun[]>(
-    routineRunsKey(settings, routineId, limit),
+    automationRunsKey(settings, routineId, limit),
     `${routinePath(routineId)}/runs${limit ? `?limit=${limit}` : ""}`,
     options
   )
 }
 
-export function useCreateRoutine() {
+export function useCreateAutomation() {
   const settings = useServer()
   return useApiMutation<RoutineInput, Routine>(
-    [routinesKey(settings)],
+    [automationsKey(settings)],
     (conn, input) => postJson<Routine>(conn, "/api/routines", input)
   )
 }
@@ -129,20 +78,20 @@ export function useCreateRoutine() {
  * that a run has completed under this routine, and a patch that could set it
  * would make the blanket-`allow` gate it guards decorative.
  */
-export function useUpdateRoutine() {
+export function useUpdateAutomation() {
   const settings = useServer()
   return useApiMutation<{ id: string; patch: RoutinePatch }, Routine>(
-    [routinesKey(settings)],
+    [automationsKey(settings)],
     (conn, { id, patch }) => patchJson<Routine>(conn, routinePath(id), patch)
   )
 }
 
 /** A routine's runs go with it (the server cascades), so the whole runs
     family goes stale with the delete — the prefix match does that in one. */
-export function useDeleteRoutine() {
+export function useDeleteAutomation() {
   const settings = useServer()
   return useApiMutation<string, void>(
-    [routinesKey(settings), allRoutineRunsKey(settings)],
+    [automationsKey(settings), allAutomationRunsKey(settings)],
     (conn, id) => delJson(conn, routinePath(id))
   )
 }
@@ -158,10 +107,10 @@ export function useDeleteRoutine() {
  * policy says, and it is the run that clears the routine's `dryRunCompleted`
  * gate — so the routine is re-read after it, not just the run list.
  */
-export function useRunRoutine() {
+export function useRunAutomation() {
   const settings = useServer()
   return useApiMutation<{ id: string; text?: string; dryRun?: boolean }, RoutineRun>(
-    (_run, { id }) => [routinesKey(settings), routineRunsFamilyKey(settings, id)],
+    (_run, { id }) => [automationsKey(settings), automationRunsFamilyKey(settings, id)],
     (conn, { id, ...opts }) => postJson<RoutineRun>(conn, `${routinePath(id)}/run`, opts)
   )
 }
@@ -171,10 +120,10 @@ export function useRunRoutine() {
    run's so the list can be re-read: a run row carries its routine, but the
    key is per routine and there is nothing to look it up with once the caller
    has only a run. */
-export function useCancelRoutineRun() {
+export function useCancelAutomationRun() {
   const settings = useServer()
   return useApiMutation<{ routineId: string; runId: string }, { stopped: boolean }>(
-    (_stopped, { routineId }) => [routineRunsFamilyKey(settings, routineId)],
+    (_stopped, { routineId }) => [automationRunsFamilyKey(settings, routineId)],
     (conn, { runId }) =>
       postJson<{ stopped: boolean }>(conn, `/api/routines/runs/${encodeURIComponent(runId)}/cancel`, {})
   )
@@ -185,18 +134,34 @@ export function useCancelRoutineRun() {
    only thing on it that no other screen shows. The query cache is exactly the
    one-reader cache the old comment said a reducer slice should not be. */
 
-export function useRoutineTriggers(routineId: string) {
+/** The triggers a new automation is written with, one after another (the
+    server arms each clock on its next sweep). Not bound to an id because the
+    id does not exist until the create answers. */
+export function useCreateAutomationTriggers() {
+  const settings = useServer()
+  return useApiMutation<{ routineId: string; inputs: RoutineTriggerInput[] }, RoutineTrigger[]>(
+    (_made, { routineId }) => [automationTriggersKey(settings, routineId)],
+    async (conn, { routineId, inputs }) => {
+      const made: RoutineTrigger[] = []
+      for (const input of inputs)
+        made.push(await postJson<RoutineTrigger>(conn, `${routinePath(routineId)}/triggers`, input))
+      return made
+    }
+  )
+}
+
+export function useAutomationTriggers(routineId: string) {
   const settings = useServer()
   return useApiQuery<RoutineTrigger[]>(
-    routineTriggersKey(settings, routineId),
+    automationTriggersKey(settings, routineId),
     `${routinePath(routineId)}/triggers`
   )
 }
 
-export function useCreateRoutineTrigger(routineId: string) {
+export function useCreateAutomationTrigger(routineId: string) {
   const settings = useServer()
   return useApiMutation<RoutineTriggerInput, RoutineTrigger>(
-    [routineTriggersKey(settings, routineId)],
+    [automationTriggersKey(settings, routineId)],
     (conn, input) => postJson<RoutineTrigger>(conn, `${routinePath(routineId)}/triggers`, input)
   )
 }
@@ -204,25 +169,25 @@ export function useCreateRoutineTrigger(routineId: string) {
 /** Optimistic at the call site (these are switches and a cron field being
     typed into — a full re-read per keystroke would fight the caret); the
     server's answer replaces the row, so a rejected patch snaps back. */
-export function useUpdateRoutineTrigger(routineId: string) {
+export function useUpdateAutomationTrigger(routineId: string) {
   const settings = useServer()
   const qc = useQueryClient()
   return useApiMutation<{ id: string; patch: RoutineTriggerPatch }, RoutineTrigger>(
-    [routineTriggersKey(settings, routineId)],
+    [automationTriggersKey(settings, routineId)],
     (conn, { id, patch }) =>
       patchJson<RoutineTrigger>(conn, `/api/routines/triggers/${encodeURIComponent(id)}`, patch),
     (updated) => {
-      qc.setQueryData<RoutineTrigger[]>(routineTriggersKey(settings, routineId), (prev) =>
+      qc.setQueryData<RoutineTrigger[]>(automationTriggersKey(settings, routineId), (prev) =>
         prev?.map((t) => (t.id === updated.id ? updated : t))
       )
     }
   )
 }
 
-export function useDeleteRoutineTrigger(routineId: string) {
+export function useDeleteAutomationTrigger(routineId: string) {
   const settings = useServer()
   return useApiMutation<string, void>(
-    [routineTriggersKey(settings, routineId)],
+    [automationTriggersKey(settings, routineId)],
     (conn, id) => delJson(conn, `/api/routines/triggers/${encodeURIComponent(id)}`)
   )
 }
@@ -235,10 +200,10 @@ export function useDeleteRoutineTrigger(routineId: string) {
  * is a new mint. It is deliberately not put in the store: a credential that
  * outlives the dialog it was shown in is a credential in a state dump.
  */
-export function useMintRoutineTriggerToken(routineId: string) {
+export function useMintAutomationTriggerToken(routineId: string) {
   const settings = useServer()
   return useApiMutation<string, string>(
-    [routineTriggersKey(settings, routineId)],
+    [automationTriggersKey(settings, routineId)],
     (conn, id) =>
       postJson<{ token: string }>(conn, `/api/routines/triggers/${encodeURIComponent(id)}/token`, {}).then(
         ({ token }) => token
@@ -249,10 +214,44 @@ export function useMintRoutineTriggerToken(routineId: string) {
 /** Take the token away without deleting the trigger — a rotation backed out
     of, or one believed leaked. The trigger stays, inert to everything outside
     the server process. */
-export function useRevokeRoutineTriggerToken(routineId: string) {
+export function useRevokeAutomationTriggerToken(routineId: string) {
   const settings = useServer()
   return useApiMutation<string, void>(
-    [routineTriggersKey(settings, routineId)],
+    [automationTriggersKey(settings, routineId)],
     (conn, id) => delJson(conn, `/api/routines/triggers/${encodeURIComponent(id)}/token`)
   )
+}
+
+// ---- list reads ----
+
+/**
+ * What the list page reads beyond the automations themselves: the newest run
+ * and the triggers of each. One small request each, on the visit and never on
+ * a timer; the mutations above invalidate the same keys, so a row moves with
+ * the detail page. `undefined` = not read yet, `null` = never run.
+ */
+export function useAutomationReads(automations: Routine[]) {
+  const settings = useServer()
+  const runs = useQueries({
+    queries: automations.map((r) => ({
+      queryKey: automationRunsKey(settings, r.id, 1),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api<RoutineRun[]>(settings, `${routinePath(r.id)}/runs?limit=1`, { signal }),
+    })),
+  })
+  const triggers = useQueries({
+    queries: automations.map((r) => ({
+      queryKey: automationTriggersKey(settings, r.id),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api<RoutineTrigger[]>(settings, `${routinePath(r.id)}/triggers`, { signal }),
+    })),
+  })
+  const latest: Record<string, RoutineRun | null | undefined> = {}
+  const triggersOf: Record<string, RoutineTrigger[] | undefined> = {}
+  automations.forEach((r, i) => {
+    const data = runs[i]?.data
+    latest[r.id] = data === undefined ? undefined : (data[0] ?? null)
+    triggersOf[r.id] = triggers[i]?.data
+  })
+  return { latest, triggers: triggersOf }
 }

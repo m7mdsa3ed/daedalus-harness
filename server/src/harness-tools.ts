@@ -757,14 +757,14 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "schedules_list",
     title: "List schedules",
-    description: "Prompts scheduled to be delivered to a thread.",
+    description: "DEPRECATED, use automations_list. Prompts scheduled to be delivered to a thread (routines with runsIn \"session\").",
     method: "GET",
     path: "/api/scheduled",
   },
   {
     name: "schedules_create",
     title: "Schedule a message",
-    description: "Queue a prompt for a thread ({sessionId, text, nextAt, everyMs?}).",
+    description: "DEPRECATED, use automations_create with runsIn \"session\". Queue a prompt for a thread ({sessionId, text, nextAt, everyMs?}).",
     method: "POST",
     path: "/api/scheduled",
     data: true,
@@ -772,7 +772,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "schedules_update",
     title: "Update a schedule",
-    description: "Edit a schedule ({text?, nextAt?, everyMs?, enabled?}).",
+    description: "DEPRECATED, use automations_update. Edit a schedule ({text?, nextAt?, everyMs?, enabled?}).",
     method: "PATCH",
     path: "/api/scheduled/:id",
     params: id,
@@ -781,7 +781,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "schedules_delete",
     title: "Delete a schedule",
-    description: "Remove a scheduled message.",
+    description: "DEPRECATED, use automations_delete. Remove a scheduled message.",
     method: "DELETE",
     path: "/api/scheduled/:id",
     params: id,
@@ -791,14 +791,14 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "routines_list",
     title: "List routines",
-    description: "The routines (a prompt, a workflow or a script on a schedule or a trigger).",
+    description: "The routines, a.k.a. automations (a prompt or a declarative workflow, run in a new thread or delivered into one existing thread via runsIn \"session\"; fired by schedule, api, git or manual triggers).",
     method: "GET",
     path: "/api/routines",
   },
   {
     name: "routines_create",
     title: "Create a routine",
-    description: "Add a routine. Read routines_list for the shape (kind, schedule, project, profile/agent, body).",
+    description: "Add a routine. Read routines_list for the shape: {name, runsIn?: thread|session, sessionId? (session), catchup?: once|none, worktree?, projectId/profileId/agentId (thread mode; derived from the thread in session mode), body: {kind: prompt, text} or {kind: workflow, definition}, autonomy?}. Add triggers with routine_triggers_create (kind schedule: cron+tz, intervalMs or atMs; api; git; manual).",
     method: "POST",
     path: "/api/routines",
     data: true,
@@ -847,7 +847,7 @@ export const HARNESS_TOOLS: HarnessTool[] = [
   {
     name: "routine_triggers_list",
     title: "List routine triggers",
-    description: "The triggers (webhook, git, ...) attached to a routine.",
+    description: "The triggers (schedule, api, git, manual) attached to a routine.",
     method: "GET",
     path: "/api/routines/:id/triggers",
     params: id,
@@ -995,3 +995,14 @@ export const HARNESS_TOOLS: HarnessTool[] = [
     query: { limit: z.number().int().optional() },
   },
 ];
+
+/* `automations_*`: the routines operations under their product name. Same routes,
+   same fields; `routines_*` / `routine_*` stay as aliases for saved prompts and
+   workflows that already call them. */
+for (const tool of HARNESS_TOOLS.filter((t) => /^routines?_/.test(t.name))) {
+  HARNESS_TOOLS.push({
+    ...tool,
+    name: tool.name.replace(/^routines_/, "automations_").replace(/^routine_/, "automation_"),
+    title: tool.title.replace(/routine/g, "automation").replace(/Routine/g, "Automation"),
+  });
+}

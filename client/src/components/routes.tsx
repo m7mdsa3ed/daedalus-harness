@@ -28,7 +28,7 @@
    settings sections' pages are bound on their rows in `settings/sections.ts`,
    the other module allowed to name them — by dynamic import only. */
 import * as React from "react"
-import { Navigate, Route } from "react-router"
+import { Navigate, Route, useLocation, useParams, type Params } from "react-router"
 import { LandingPage } from "@/components/landing/landing-page"
 import { PageFrame } from "@/components/page-primitives"
 import {
@@ -38,10 +38,16 @@ import {
   type SettingsSectionId,
 } from "@/components/settings/sections"
 import { lazyPage } from "@/lib/lazy-page"
-import { settingsRootPath } from "@/lib/router"
+import {
+  automationPath,
+  automationRunPath,
+  automationsPath,
+  newAutomationPath,
+  settingsRootPath,
+} from "@/lib/router"
 import type { Actions } from "@/lib/actions"
 import { useProjects } from "@/lib/queries/catalog"
-import { useRoutines } from "@/lib/queries/routines"
+import { useAutomations } from "@/lib/queries/automations"
 import type { ServerSettings } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
 
@@ -60,8 +66,7 @@ const SettingsOverviewPage = lazyPage(
 
 const ProjectPage = lazyPage(() => import("@/components/project-page"), "ProjectPage")
 const TracePage = lazyPage(() => import("@/components/trace-page"), "TracePage")
-const RoutinesPage = lazyPage(() => import("@/components/routines-page"), "RoutinesPage")
-const SchedulePage = lazyPage(() => import("@/components/schedule-page"), "SchedulePage")
+const AutomationsPage = lazyPage(() => import("@/components/automations/page"), "AutomationsPage")
 const NotificationsInboxPage = lazyPage(
   () => import("@/components/notifications/page"),
   "NotificationsInboxPage"
@@ -92,6 +97,13 @@ const SETTINGS_ROUTES = (
   </React.Fragment>
 ))
 
+/** A path that moved: /routines* and /schedules* are /automations* now. */
+function LegacyRedirect({ to }: { to: (params: Readonly<Params>, search: string) => string }) {
+  const params = useParams()
+  const { search } = useLocation()
+  return <Navigate to={to(params, search)} replace />
+}
+
 /** What a page route is called — a page tab's title. Beside the route table
     because adding a page is adding a name for it: the section over the page's
     own name. `null` only for a path that is a thread's (the chat panel names
@@ -99,13 +111,13 @@ const SETTINGS_ROUTES = (
     kind, and the tab is renamed when the name arrives — never "Page".
 
     The crumb is dropped where it would only repeat the title — the settings
-    overview *is* "Settings", the schedule list *is* "Schedules" — so a page
+    overview *is* "Settings", the automation list *is* "Automations" — so a page
     that is its own section stays one line rather than saying its name twice
     in two sizes. */
 export function usePageHeading(): (path: string) => PageHeading | null {
   const sessions = useStoreSelect((state) => state.sessions)
   const projects = useProjects()
-  const routines = useRoutines().data ?? []
+  const automations = useAutomations().data ?? []
   return (path) => {
     const pathname = path.split("?")[0]
     const [, first = "", seg = ""] = pathname.split("/")
@@ -116,27 +128,16 @@ export function usePageHeading(): (path: string) => PageHeading | null {
         title: which ? sectionMeta(which).label : "Settings",
       }
     }
-    if (first === "schedules")
+    if (first === "automations")
       return {
-        crumb: seg ? "Schedules" : undefined,
+        crumb: seg ? "Automations" : undefined,
         title: pathname.endsWith("/new")
-          ? "New schedule"
-          : pathname.endsWith("/edit")
-            ? "Edit schedule"
-            : seg
-              ? "Schedule"
-              : "All schedules",
-      }
-    if (first === "routines")
-      return {
-        crumb: seg ? "Routines" : undefined,
-        title: pathname.endsWith("/new")
-          ? "New routine"
+          ? "New automation"
           : seg
             ? pathname.includes("/runs/")
-              ? `${routines.find((r) => r.id === seg)?.name ?? "Routine"} run`
-              : (routines.find((r) => r.id === seg)?.name ?? "Routine")
-            : "All routines",
+              ? `${automations.find((r) => r.id === seg)?.name ?? "Automation"} run`
+              : (automations.find((r) => r.id === seg)?.name ?? "Automation")
+            : "Automations",
       }
     if (first === "board") return { crumb: "Workspace", title: "Tasks" }
     if (first === "notifications") return { crumb: "Workspace", title: "Inbox" }
@@ -191,38 +192,38 @@ export function pageRoutes({
         {/* /settings/<unknown> — back to the overview, which lists what exists. */}
         <Route path="*" element={<Navigate to={settingsRootPath()} replace />} />
       </Route>
-      {/* /schedules is the list, /schedules/new the creation form and
-          /schedules/<id> one schedule — one component reads the path (see
-          SchedulePage). The form keeps a form's measure; the list and the
-          detail page carry tiles and two columns, so they get the width
-          the project page has. */}
-      {["/schedules", "/schedules/new", "/schedules/:scheduleId", "/schedules/:scheduleId/edit"].map((path) => (
-        <Route
-          key={path}
-          path={path}
-          element={
-            <PageFrame width={path === "/schedules/new" ? "form" : "wide"}>
-              <SchedulePage actions={actions} />
-            </PageFrame>
-          }
-        />
-      ))}
-      {/* /routines is the list, /routines/new the form, /routines/<id> one
-          routine — one component reads the path (see RoutinesPage). Every
-          one of them is `wide`, the form included: the autonomy control is
-          ten labelled rows each with a three-way choice trailing it, and at
-          a form's measure the label wraps under the control it belongs to. */}
-      {["/routines", "/routines/new", "/routines/:routineId", "/routines/:routineId/runs/:runId"].map((path) => (
+      {/* /automations is the list, /automations/new the gallery and form,
+          /automations/<id> one automation and .../runs/<runId> one run — one
+          component reads the path (see AutomationsPage). Every one of them is
+          `wide`, the form included: the autonomy control is ten labelled rows
+          each with a three-way choice trailing it, and at a form's measure the
+          label wraps under the control it belongs to. */}
+      {["/automations", "/automations/new", "/automations/:automationId", "/automations/:automationId/runs/:runId"].map((path) => (
         <Route
           key={path}
           path={path}
           element={
             <PageFrame width="wide">
-              <RoutinesPage actions={actions} />
+              <AutomationsPage actions={actions} />
             </PageFrame>
           }
         />
       ))}
+      {/* The old places, kept as redirects: bookmarks, notifications and
+          pushes already out in the world point at them. */}
+      <Route path="/routines" element={<LegacyRedirect to={() => automationsPath()} />} />
+      <Route path="/routines/new" element={<LegacyRedirect to={() => newAutomationPath()} />} />
+      <Route path="/routines/:routineId" element={<LegacyRedirect to={(p) => automationPath(p.routineId!)} />} />
+      <Route
+        path="/routines/:routineId/runs/:runId"
+        element={<LegacyRedirect to={(p) => automationRunPath(p.routineId!, p.runId!)} />}
+      />
+      <Route path="/schedules" element={<LegacyRedirect to={() => automationsPath()} />} />
+      <Route
+        path="/schedules/new"
+        element={<LegacyRedirect to={(_p, search) => newAutomationPath(new URLSearchParams(search).get("session") ?? undefined)} />}
+      />
+      <Route path="/schedules/*" element={<LegacyRedirect to={() => automationsPath()} />} />
       {/* The inbox as a place — the header's bell is the glance at it. */}
       <Route
         path="/notifications"

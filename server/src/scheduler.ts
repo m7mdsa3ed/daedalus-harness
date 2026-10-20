@@ -1,47 +1,59 @@
-import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
-import { and, asc, eq, lt, lte } from "drizzle-orm";
-import { db, routineTriggers as triggersTable, scheduledMessages as scheduledTable } from "./db/index.js";
-import { getProfile } from "./profiles.js";
-import { getProject } from "./projects.js";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { db, routineTriggers as triggersTable } from "./db/index.js";
 import {
   activeRoutineEngine,
+  createRoutine,
+  createTrigger,
+  deleteRoutine,
   getRoutine,
   lastRunHeadOid,
+  listRoutines,
   markTriggerArmed,
   markTriggerError,
   markTriggerFired,
   projectHeadOid,
+  promptThread,
   recordSkippedRun,
+  updateRoutine,
+  type Routine,
   type RoutineEngine,
   type RoutineTrigger,
 } from "./routines.js";
 import type { SessionManager } from "./sessions.js";
 
 /**
- * A scheduled message: the server delivers `text` to a thread's agent at
- * `nextAt`, and — for a recurring row — again every `everyMs` until cancelled.
+ * The clock: one sweep over `routine_triggers`, and the thin legacy surface of
+ * what used to be "scheduled messages".
  *
- * Delivery is the SERVER's job, not a browser tab's. The PWA's whole bargain is
- * "the server is the ACP client", and a scheduled turn has to happen when
- * nobody is looking; the sweep below is the same periodic-loop shape as the
- * idle-retirement one in SessionManager, and it fires even while every client
- * is closed (the thread's peers just get the resulting `turn_started`/`update`
- * events, exactly the way a push would).
+ * A scheduled message is now a routine with `runsIn: "session"` and one schedule
+ * trigger (see docs/plans/automations.md); the engine delivers the text through
+ * `promptThread`, a `skipped` run says why a delivery did not happen, and
+ * `scheduled_messages` is only read once, by the boot migration
+ * (`scheduled-migration.ts`). `createScheduled`/`fire` keep their signatures
+ * because `workflows.ts` calls them; the `*Scheduled` CRUD behind
+ * `/api/scheduled*` is a DEPRECATED alias over the routine model.
  *
- * The same loop also fires **routine schedule triggers** (`routines.ts`), and
- * that is one loop on purpose rather than two intervals: a routine and a
- * scheduled message that came due in the same second then have an ordering
- * instead of a race for the machine. The two are not otherwise folded together
- * and must not be — a scheduled message delivers text into ONE existing thread
- * over and over, a routine has no thread at all and mints a fresh one per fire.
- * Everything below the `routine triggers` banner is the trigger half: when a
- * trigger is next due, and whether its condition still holds when it is. What
- * happens after that is `RoutineEngine.fire`'s, and nothing here knows anything
- * about it.
+ * Everything below the `routine triggers` banner is the clock itself: when a
+ * trigger is next due, whether it was missed, and whether its condition still
+ * holds. What happens after that is `RoutineEngine.fire`'s.
  */
 
-export type ScheduledMessage = typeof scheduledTable.$inferSelect;
+/** The legacy wire shape of a scheduled message, derived from a routine and its
+    trigger. `enabled` stays 0/1 for the old callers. DEPRECATED. */
+export interface ScheduledMessage {
+  /** The routine's id. */
+  id: string;
+  sessionId: string;
+  text: string;
+  nextAt: number;
+  everyMs: number | null;
+  enabled: number;
+  skippedAt: number | null;
+  lastError: string | null;
+  skipCount: number;
+  createdAt: number;
+}
 
 export interface ScheduledMessageInput {
   sessionId: string;
@@ -50,27 +62,74 @@ export interface ScheduledMessageInput {
   nextAt: number;
   /** Recurrence interval in ms; null = one-shot. */
   everyMs?: number | null;
+  /** The harness's own notice: hidden from lists, deleted once delivered. */
+  ephemeral?: boolean;
 }
 
-export async function listScheduled(): Promise<ScheduledMessage[]> {
-  return await db.select().from(scheduledTable).orderBy(asc(scheduledTable.nextAt));
-}
-
-export async function createScheduled(input: ScheduledMessageInput): Promise<ScheduledMessage> {
-  const row: ScheduledMessage = {
-    id: randomUUID(),
-    sessionId: input.sessionId,
-    text: input.text,
-    nextAt: input.nextAt,
-    everyMs: input.everyMs ?? null,
-    enabled: 1,
-    skippedAt: null,
-    lastError: null,
-    skipCount: 0,
-    createdAt: Date.now(),
+function scheduledView(routine: Routine, trigger: RoutineTrigger): ScheduledMessage {
+  return {
+    id: routine.id,
+    sessionId: routine.sessionId ?? "",
+    text: routine.body.kind === "prompt" ? routine.body.text : "",
+    nextAt: trigger.nextFireAt ?? trigger.atMs ?? 0,
+    everyMs: trigger.intervalMs,
+    enabled: routine.enabled ? 1 : 0,
+    skippedAt: trigger.lastError ? (trigger.lastFiredAt ?? routine.updatedAt) : null,
+    lastError: trigger.lastError,
+    skipCount: trigger.lastError ? 1 : 0,
+    createdAt: routine.createdAt,
   };
-  await db.insert(scheduledTable).values(row);
-  return row;
+}
+
+/** A spent one-off (it fired, or was missed past catch-up) is disabled by the
+    sweep. The old table deleted such a row, so the legacy list hides it. */
+const spent = (t: RoutineTrigger) => t.atMs !== null && !t.enabled;
+
+async function scheduleTriggerOf(routineId: string): Promise<RoutineTrigger | undefined> {
+  return (await db
+    .select()
+    .from(triggersTable)
+    .where(and(eq(triggersTable.routineId, routineId), eq(triggersTable.kind, "schedule")))
+    .orderBy(asc(triggersTable.createdAt))
+    .limit(1))[0];
+}
+
+/** @deprecated Use the routines API (`runsIn: "session"`). */
+export async function listScheduled(): Promise<ScheduledMessage[]> {
+  const routines = (await listRoutines()).filter((r) => r.runsIn === "session");
+  if (routines.length === 0) return [];
+  const triggers = await db
+    .select()
+    .from(triggersTable)
+    .where(and(inArray(triggersTable.routineId, routines.map((r) => r.id)), eq(triggersTable.kind, "schedule")))
+    .orderBy(asc(triggersTable.createdAt));
+  const out: ScheduledMessage[] = [];
+  for (const routine of routines) {
+    const trigger = triggers.find((t) => t.routineId === routine.id);
+    if (trigger && !spent(trigger)) out.push(scheduledView(routine, trigger));
+  }
+  return out.sort((a, b) => a.nextAt - b.nextAt);
+}
+
+/** @deprecated Use the routines API (`runsIn: "session"`). Signature is relied
+    on by `workflows.ts`. */
+export async function createScheduled(input: ScheduledMessageInput): Promise<ScheduledMessage> {
+  const routine = await createRoutine({
+    name: input.text.replace(/\s+/g, " ").trim().slice(0, 60) || "Scheduled message",
+    runsIn: "session",
+    sessionId: input.sessionId,
+    body: { kind: "prompt", text: input.text },
+  }, { ephemeral: input.ephemeral });
+  const every = input.everyMs ?? null;
+  const trigger = await createTrigger(routine.id, {
+    kind: "schedule",
+    atMs: every === null ? input.nextAt : null,
+    intervalMs: every,
+  });
+  /* Armed directly with the caller's own slot: the sweep would otherwise arm a
+     null clock from "now", and `nextAt` is the point of the call. */
+  await markTriggerArmed(trigger.id, input.nextAt);
+  return scheduledView((await getRoutine(routine.id))!, (await scheduleTriggerOf(routine.id))!);
 }
 
 export interface ScheduledPatch {
@@ -82,94 +141,46 @@ export interface ScheduledPatch {
 }
 
 /**
- * Edit a schedule in place. Any edit also resets the skip state — the user
- * touching the row is the signal that whatever made it undeliverable (a
- * trashed thread, a typo'd time) has been dealt with, so the sweep tries again.
+ * Edit a schedule in place. Any edit also resets the trigger's error — the user
+ * touching the row is the signal that whatever made it undeliverable has been
+ * dealt with, so the sweep tries again (and a one-off that was spent is re-armed).
+ * @deprecated Use the routines API.
  */
 export async function updateScheduled(id: string, patch: ScheduledPatch): Promise<ScheduledMessage | undefined> {
-  const set: Partial<ScheduledMessage> = { skippedAt: null, lastError: null, skipCount: 0 };
-  if (patch.text !== undefined) set.text = patch.text;
-  if (patch.nextAt !== undefined) set.nextAt = patch.nextAt;
-  if (patch.everyMs !== undefined) set.everyMs = patch.everyMs;
-  if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
-  const changed = ((await db.update(scheduledTable).set(set).where(eq(scheduledTable.id, id))).rowCount ?? 0);
-  if (changed === 0) return undefined;
-  return (await db.select().from(scheduledTable).where(eq(scheduledTable.id, id)).limit(1))[0];
+  const routine = await getRoutine(id);
+  const trigger = routine?.runsIn === "session" ? await scheduleTriggerOf(id) : undefined;
+  if (!routine || !trigger) return undefined;
+  await updateRoutine(id, {
+    ...(patch.text !== undefined ? { body: { kind: "prompt" as const, text: patch.text } } : {}),
+    ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+  });
+  const set: Partial<RoutineTrigger> = { lastError: null, enabled: true };
+  if (patch.nextAt !== undefined || patch.everyMs !== undefined) {
+    const every = patch.everyMs !== undefined ? patch.everyMs : trigger.intervalMs;
+    set.intervalMs = every;
+    set.atMs = every ? null : (patch.nextAt ?? trigger.atMs ?? trigger.nextFireAt ?? Date.now());
+    set.nextFireAt = patch.nextAt ?? null;
+    set.lastFiredAt = null;
+  }
+  await db.update(triggersTable).set(set).where(eq(triggersTable.id, trigger.id));
+  return scheduledView((await getRoutine(id))!, (await scheduleTriggerOf(id))!);
 }
 
+/** @deprecated Use the routines API. */
 export async function deleteScheduled(id: string): Promise<boolean> {
-  return ((await db.delete(scheduledTable).where(eq(scheduledTable.id, id))).rowCount ?? 0) > 0;
-}
-
-/**
- * One due row. Consume a one-shot, or roll a recurring one forward to its next
- * future slot — and only then try to deliver it. Rolling forward before firing
- * keeps a slow respawn from delaying the recurrence, and skipping the overdue
- * slots means a server that was down overnight fires a daily schedule once on
- * boot rather than replaying every missed interval.
- *
- * A trashed or vanished thread does NOT get scheduled turns: the row is left
- * where it is (not advanced, not consumed) so the user can fix the thread or
- * cancel the schedule, rather than the server silently firing forever at a
- * thread nobody can see. Each such sweep stamps `skippedAt`/`lastError` and
- * counts the skip; past MAX_SCHEDULE_SKIPS the sweep stops selecting the row
- * (it stays listable, and any PATCH resets the count) instead of re-matching
- * it every 15 seconds forever.
- */
-export const MAX_SCHEDULE_SKIPS = 20;
-
-async function deliver(row: ScheduledMessage, manager: SessionManager): Promise<void> {
-  const session = manager.get(row.sessionId);
-  if (!session || session.deletedAt !== null) {
-    await db.update(scheduledTable)
-      .set({
-        skippedAt: Date.now(),
-        lastError: session ? "the thread is in the trash" : "the thread no longer exists",
-        skipCount: row.skipCount + 1,
-      })
-      .where(eq(scheduledTable.id, row.id));
-    return;
-  }
-
-  if (row.everyMs !== null) {
-    let nextAt = row.nextAt + row.everyMs;
-    while (nextAt <= Date.now()) nextAt += row.everyMs;
-    await db.update(scheduledTable)
-      .set({ nextAt, skippedAt: null, lastError: null, skipCount: 0 })
-      .where(eq(scheduledTable.id, row.id));
-  } else {
-    await db.delete(scheduledTable).where(eq(scheduledTable.id, row.id));
-  }
-
-  void fire(row.sessionId, row.text, manager);
+  const routine = await getRoutine(id);
+  if (!routine || routine.runsIn !== "session") return false;
+  return await deleteRoutine(id);
 }
 
 /** Send one prompt, reviving the thread's process first if it has no live one.
-    A prompt that lands mid-turn is queued behind it (see SessionManager.prompt). */
+    A prompt that lands mid-turn is queued behind it (see SessionManager.prompt).
+    Never throws: it is the fire-and-forget door `workflows.ts` uses. */
 export async function fire(sessionId: string, text: string, manager: SessionManager): Promise<void> {
   const session = manager.get(sessionId);
   if (!session || session.deletedAt !== null) return;
   try {
-    if (session.bridge && !session.exited) {
-      // A live bridge may still be booting (acpSessionId unset until session/new
-      // answers). `ready` is the handshake's own promise; awaiting it is cheap
-      // when it has already resolved. It never rejects as unhandled — start()
-      // attached a catch handler when the bridge was created.
-      await session.bridge.ready;
-      await manager.prompt(sessionId, text);
-      return;
-    }
-    // Idle-retired or pre-restart: revive the way the client's "open a closed
-    // thread" does — respawn + session/load — then send.
-    const profile = await getProfile(session.profileId);
-    const project = await getProject(session.projectId);
-    if (!profile || !project) return;
-    await manager.respawn(sessionId, profile, session.agentId, project, session.model, session.effort, { revive: true });
-    const revived = manager.get(sessionId);
-    if (revived?.bridge && !revived.exited) {
-      await revived.bridge.ready;
-      await manager.prompt(sessionId, text);
-    }
+    await promptThread(manager, sessionId, text);
   } catch (error) {
     console.error(`[scheduler] failed to deliver to ${sessionId}`, error);
   }
@@ -203,6 +214,14 @@ const MAX_STAGGER_MS = 300_000;
  * ours is `MAX_LIVE_ROUTINE_RUNS` plus the routine's own `overlap`.
  */
 const MIN_FIRE_GAP_MS = 60_000;
+
+/** A fire later than this behind its slot was missed, not merely late: two
+    sweeps and some. Below it a trigger is on time. */
+const LATE_MS = 120_000;
+/** The oldest missed slot a `catchup: "once"` routine still runs for. */
+const CATCHUP_WINDOW_MS = 7 * 24 * 3600_000;
+/** Most missed slots counted, so a pathological expression cannot spin. */
+const MISSED_COUNT_CAP = 1000;
 
 /** How many slots the floor may walk past before the expression is treated as
     unresolvable. A `* * * * * *` behind a one-minute floor walks sixty; the
@@ -255,7 +274,7 @@ export interface Slot {
 export type SlotInput = Pick<
   RoutineTrigger,
   "routineId" | "kind" | "cron" | "tz" | "atMs" | "lastFiredAt"
->;
+> & Partial<Pick<RoutineTrigger, "intervalMs" | "nextFireAt">>;
 
 /**
  * When this trigger should next fire, stagger included.
@@ -282,6 +301,16 @@ export function nextSlot(trigger: SlotInput, from = Date.now()): Slot {
      Spent once it has fired, which `last_fired_at` is what records. */
   if (trigger.atMs !== null) {
     return { at: trigger.lastFiredAt === null ? trigger.atMs : null };
+  }
+  /* A fixed interval, anchored on the slot it last had (`nextFireAt`) so it
+     does not drift by the sweep's lateness, never staggered, and rolled past
+     `from` so slots missed while off collapse to the next future one. With no
+     anchor it is an interval from the last fire, else from now. */
+  if (trigger.intervalMs != null) {
+    const every = Math.max(MIN_FIRE_GAP_MS, trigger.intervalMs);
+    let at = trigger.nextFireAt ?? (trigger.lastFiredAt ?? from) + every;
+    if (at <= from) at += Math.ceil((from - at + 1) / every) * every;
+    return { at };
   }
   if (!trigger.cron) return { at: null };
 
@@ -314,10 +343,9 @@ export function nextSlot(trigger: SlotInput, from = Date.now()): Slot {
   }
 }
 
-/** True while a routine sweep is in flight. The scheduled-message half is
-    synchronous and cannot overlap; this half reads git and awaits the engine,
-    so a slow project must not let the next tick start a second pass over the
-    same due rows. */
+/** True while a sweep is in flight. It reads git and awaits the engine, so a
+    slow project must not let the next tick start a second pass over the same
+    due rows. */
 let routineSweepRunning = false;
 
 /**
@@ -331,9 +359,8 @@ let routineSweepRunning = false;
  */
 async function sweepRoutines(): Promise<void> {
   const engine = activeRoutineEngine();
-  /* No engine means this process never built one (a test that only wants the
-     message half). Not an error, and nothing to say about it every fifteen
-     seconds. */
+  /* No engine means this process never built one. Not an error, and nothing to
+     say about it every fifteen seconds. */
   if (!engine) return;
 
   const triggers = await db
@@ -405,6 +432,32 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
     return;
   }
 
+  /* A slot missed (the server was off, asleep, or stuck) rather than merely
+     late. `catchup: "once"` runs the latest one if it is within a week and
+     logs the older ones as one skipped "missed" row; `none`, or anything older
+     than the window, only logs. Always visible, never silent. */
+  if (trigger.nextFireAt !== null && now - trigger.nextFireAt > LATE_MS) {
+    const missed = missedSlots(trigger, now);
+    const runIt = routine.catchup === "once" && now - trigger.nextFireAt <= CATCHUP_WINDOW_MS;
+    const older = runIt ? missed - 1 : missed;
+    if (older > 0) {
+      await recordSkippedRun(routine.id, {
+        source: "schedule",
+        triggerId: trigger.id,
+        code: "missed",
+        reason: `${older} scheduled run(s) were missed while the server was not running${runIt ? "" : routine.catchup === "none" ? " (catch-up is off)" : " (older than 7 days)"}`,
+      });
+    }
+    if (!runIt) {
+      await markTriggerArmed(trigger.id, next.at);
+      if (trigger.atMs !== null) {
+        if (routine.ephemeral) await deleteRoutine(routine.id);
+        else await db.update(triggersTable).set({ enabled: false }).where(eq(triggersTable.id, trigger.id));
+      }
+      return;
+    }
+  }
+
   /* Conditions are checked at FIRE time and never at edit time: what they ask
      about is the world, and the world moves between the two. */
   let headOid: string | null = null;
@@ -418,6 +471,7 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
       await recordSkippedRun(routine.id, {
         source: "schedule",
         triggerId: trigger.id,
+        code: "unchanged",
         reason: "nothing has changed in the project since the last run",
         headOid,
       });
@@ -435,13 +489,45 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
        hammer itself — putting the sweep behind it would silently drop scheduled
        work the moment a routine had several triggers. `fire` answers as soon as
        the run row exists, so a thirty-minute review does not hold the loop. */
-    await engine.fire(routine.id, { source: "schedule", triggerId: trigger.id, headOid });
-    await markTriggerFired(trigger.id, now, next.at, headOid);
+    const view = await engine.fire(routine.id, { source: "schedule", triggerId: trigger.id, headOid });
+    /* A delivery into a thread that is gone is the trigger's error too, which
+       is where the legacy list (and a form) reads "why is this stuck". */
+    if (view.status === "skipped" && view.skipReason?.startsWith("thread-")) {
+      await markTriggerError(trigger.id, view.error, next.at);
+    } else {
+      await markTriggerFired(trigger.id, now, next.at, headOid);
+    }
   } catch (error) {
     /* `fire` only throws for an unknown routine; everything it decides is a
        `skipped` row. Recorded on the trigger with the clock still rolled
        forward, so one bad night does not stop the schedule. */
     await markTriggerError(trigger.id, describe(error), next.at);
+  }
+  /* A one-off is spent by firing: disabled, so it reads "ran" and cannot be
+     re-armed from its still-valid `at_ms`. */
+  if (trigger.atMs !== null) {
+    if (routine.ephemeral) await deleteRoutine(routine.id);
+    else await db.update(triggersTable).set({ enabled: false }).where(eq(triggersTable.id, trigger.id));
+  }
+}
+
+/** How many slots a trigger has had due since `nextFireAt` (itself included),
+    for the "N missed" row. Stagger is ignored: it shifts the count by at most
+    the edge slot. */
+function missedSlots(trigger: RoutineTrigger, now: number): number {
+  const first = trigger.nextFireAt!;
+  if (trigger.atMs !== null) return 1;
+  if (trigger.intervalMs != null) {
+    return Math.min(MISSED_COUNT_CAP, 1 + Math.floor((now - first) / Math.max(MIN_FIRE_GAP_MS, trigger.intervalMs)));
+  }
+  if (!trigger.cron) return 1;
+  try {
+    const cron = new Cron(trigger.cron, trigger.tz ? { timezone: trigger.tz } : {});
+    let count = 1;
+    for (let slot = cron.nextRun(new Date(first)); slot && slot.getTime() <= now && count < MISSED_COUNT_CAP; slot = cron.nextRun(slot)) count += 1;
+    return count;
+  } catch {
+    return 1;
   }
 }
 
@@ -454,43 +540,29 @@ function describe(error: unknown): string {
 const SWEEP_MS = 15_000;
 let timer: ReturnType<typeof setInterval> | null = null;
 
-/** Start the delivery sweep. Idempotent; one loop for the whole process. */
-export function startScheduler(manager: SessionManager): void {
+/** One pass of the sweep, awaited. Tests drive the clock with this; the timer
+    below is the only other caller. */
+export async function sweepNow(): Promise<void> {
+  await sweepRoutines();
+}
+
+/** Start the sweep. Idempotent; one loop for the whole process. The manager is
+    unused (the engine holds it); the parameter stays so `index.ts` is unchanged. */
+export function startScheduler(_manager?: SessionManager): void {
   if (timer) return;
-  const sweep = async () => {
-    try {
-      const due = await db
-        .select()
-        .from(scheduledTable)
-        .where(and(
-          lte(scheduledTable.nextAt, Date.now()),
-          eq(scheduledTable.enabled, 1),
-          lt(scheduledTable.skipCount, MAX_SCHEDULE_SKIPS),
-        ))
-        .orderBy(asc(scheduledTable.nextAt));
-      for (const row of due) deliver(row, manager);
-    } catch (error) {
-      console.error("[scheduler] sweep failed", error);
-    }
-    /* The routine half, after the message half and never interleaved with it,
-       so the ordering of two things due in the same second is a decision rather
-       than a race. Not awaited — the loop is a timer, not a queue — but guarded
-       against overlapping itself. */
-    if (!routineSweepRunning) {
-      routineSweepRunning = true;
-      void sweepRoutines()
-        .catch((error) => console.error("[scheduler] routine sweep failed", error))
-        .finally(() => {
-          routineSweepRunning = false;
-        });
-    }
+  const sweep = () => {
+    if (routineSweepRunning) return;
+    routineSweepRunning = true;
+    void sweepRoutines()
+      .catch((error) => console.error("[scheduler] sweep failed", error))
+      .finally(() => {
+        routineSweepRunning = false;
+      });
   };
-  /* Run once on boot: schedules that came due while the server was down fire
-     now, and every trigger left with a null clock by a CRUD write (or by a
-     restart mid-edit) is armed. index.ts calls this AFTER
-     `RoutineEngine.recoverAtBoot()`, which is what makes the first sweep safe —
-     the runs that process left behind are already closed by the time a trigger
-     here can start another. */
+  /* Run once on boot: triggers that came due while the server was down are
+     caught up (or logged as missed) now, and every trigger left with a null
+     clock by a CRUD write is armed. index.ts calls this AFTER
+     `RoutineEngine.recoverAtBoot()`, which is what makes the first sweep safe. */
   sweep();
   timer = setInterval(sweep, SWEEP_MS).unref();
 }

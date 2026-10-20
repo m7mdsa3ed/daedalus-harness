@@ -34,6 +34,30 @@ import type { AutonomyPolicy } from "../autonomy.js";
  *     the tail costs nothing to keep and a replay is a range scan.
  */
 
+/** What a model *is*, so it is offered in the right place and called the right
+    way. Absent means "chat", which is every entry from before kinds existed.
+    A "decision" model answers typed questions (Jev, Kev); a "completion" model
+    fills the gap between `prompt` and `suffix` (Codestral, DeepSeek). Neither
+    can drive a turn: the spawn path never reads this, the pickers filter on it,
+    and `probe.ts`/models.dev enrichment stay chat-only.
+    See docs/plans/model-kinds.md. */
+export const MODEL_KINDS = ["chat", "decision", "completion"] as const;
+export type ModelKind = (typeof MODEL_KINDS)[number];
+
+/** How a non-chat kind is called — the wire is a column, exactly as
+    `AgentDef.quotaProbe.kind` is, so a protocol is never guessed from an id.
+    Declared and saved; nothing calls one yet (no adapter ships with this
+    column), which is why a wire is optional even on a non-chat kind: an entry
+    that names one is ready for the adapter that reads it, and an entry that
+    names none is still only a catalogue row. `systemone` is TypeSafe's own
+    contract, at `{origin}/v1/systemone`, and Kev serves it unchanged;
+    `systemone-gateway` is the same body on a gateway's `/v1/decisions`
+    (Portkey, LiteLLM); `openai-completions` is the legacy completions shape
+    with `suffix`, which DeepSeek's `/beta` base and Mistral's
+    `/v1/fim/completions` both speak. */
+export const MODEL_WIRES = ["systemone", "systemone-gateway", "openai-completions"] as const;
+export type ModelWire = (typeof MODEL_WIRES)[number];
+
 /** One model in a profile's catalog. Nested, and only ever read as a whole.
     The optional metadata past `reasoningEfforts` is filled from models.dev (or
     an agent's own advertising) and is display/enrichment only — nothing at
@@ -61,6 +85,12 @@ export interface ModelDef {
       Models with the same group are shown under a shared heading; models
       without a group appear at the end with no heading. */
   group?: string;
+  /** What the model is. Absent = "chat"; nothing at spawn time reads it. */
+  kind?: ModelKind;
+  /** How a non-chat kind is called. Absent on a chat model, and absent on a
+      decision/completion model whose wire has not been chosen — which the
+      adapter refuses to call rather than guessing a protocol. */
+  wire?: ModelWire;
 }
 
 /** `{name, value}` pairs — the shape the MCP library already stores. */
@@ -1176,6 +1206,13 @@ export interface RoutineActionRecord {
     from becoming two agents in one cwd; `queue` waits for the live run. */
 export type RoutineOverlap = "skip" | "queue";
 
+/** `thread` mints a new thread per fire (the original routine). `session`
+    delivers the prompt into the one existing thread named by `session_id` —
+    what a scheduled message was; see docs/plans/automations.md. */
+export type RoutineRunsIn = "thread" | "session";
+/** What a fire does for slots missed while the server was off or asleep. */
+export type RoutineCatchup = "once" | "none";
+
 /**
  * A saved thread-start that fires on its own.
  *
@@ -1239,13 +1276,34 @@ export const routines = pgTable(
         until it has — the difference between an informed grant and a dismissed
         dialog, and it costs exactly this boolean. */
     dryRunCompleted: boolean("dry_run_completed").notNull().default(false),
+    /** Where a fire lands — see RoutineRunsIn. */
+    runsIn: text("runs_in", { enum: ["thread", "session"] })
+      .$type<RoutineRunsIn>()
+      .notNull()
+      .default("thread"),
+    /** The thread a `session`-mode routine delivers into. Not a foreign key
+        (a restore must not depend on the thread being in the bundle): a thread
+        that is gone is a `skipped` run saying so, and five of them in a row
+        disable the routine. Null for `thread` mode. */
+    sessionId: text("session_id"),
+    /** Slots missed while the process was down: `once` fires the latest (within
+        7 days), `none` only records them as skipped. */
+    catchup: text("catchup", { enum: ["once", "none"] })
+      .$type<RoutineCatchup>()
+      .notNull()
+      .default("once"),
+    /** Run each thread in its own worktree. Stored; `thread` mode only. */
+    worktree: boolean("worktree").notNull().default(false),
+    /** The harness's own one-off notice (`workflows.ts` through
+        `createScheduled`): never listed, deleted once it has fired. */
+    ephemeral: boolean("ephemeral").notNull().default(false),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("routines_project").on(t.projectId)],
 );
 
-export type RoutineTriggerKind = "schedule" | "api" | "git";
+export type RoutineTriggerKind = "schedule" | "api" | "git" | "manual";
 
 /**
  * One way a routine fires. Several per routine, combinable, each enabled on its
@@ -1261,7 +1319,7 @@ export const routineTriggers = pgTable(
     routineId: text("routine_id")
       .notNull()
       .references(() => routines.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["schedule", "api", "git"] }).$type<RoutineTriggerKind>().notNull(),
+    kind: text("kind", { enum: ["schedule", "api", "git", "manual"] }).$type<RoutineTriggerKind>().notNull(),
     enabled: boolean("enabled").notNull().default(true),
     // ── schedule ──
     /** 5-field cron. Null for a one-off (`at_ms`) and for the other kinds.
@@ -1271,6 +1329,9 @@ export const routineTriggers = pgTable(
     tz: text("tz"),
     /** Epoch ms of a one-off fire; null for a recurring one. */
     atMs: bigint("at_ms", { mode: "number" }),
+    /** Fixed recurrence in ms, beside `cron` (an odd interval has no clean cron
+        form). Anchored on `next_fire_at`, not staggered. Null for cron/one-off. */
+    intervalMs: bigint("interval_ms", { mode: "number" }),
     /** Checked at fire time, never at edit time. Today only
         `{gitChangedSince: "lastRun"}` — one HEAD read against what the last run
         recorded, which is the difference between a nightly review that reports
@@ -1365,6 +1426,14 @@ export const routineRuns = pgTable(
         to the same reader, and two would only raise the question of which to
         show. */
     error: text("error"),
+    /** A short code for why a `skipped` run was skipped (`overlap`,
+        `thread-trashed`, `thread-missing`, `missed`, `disabled`, `quota`,
+        `unchanged`, `rate-limit`, `capacity`, `profile-missing`,
+        `project-missing`, `blanket-allow`, `chain-depth`, `workflow-unavailable`).
+        `error` carries the sentence. Null on every other status. */
+    skipReason: text("skip_reason"),
+    /** Inbox state of the run; null until the inbox phase assigns one. */
+    inboxState: text("inbox_state", { enum: ["unread", "read", "archived"] }).$type<"unread" | "read" | "archived">(),
     /** The run's final prose, accumulated from `agent_message_chunk`s the way
         workflows.ts does it and capped at LIMITS.outputBytes. */
     output: text("output"),
@@ -1754,6 +1823,10 @@ export const agentQuota = pgTable("agent_quota", {
 });
 
 /**
+ * DEPRECATED, no longer read or written: scheduled messages are `runs_in =
+ * 'session'` routines (scheduled-migration.ts copies these rows once at boot).
+ * Kept declared so a table push does not drop the rows before that has run.
+ *
  * A scheduled message: send `text` to `session_id`'s agent at `nextAt`, then
  * again every `every_ms` until cancelled. The server owns delivery — a browser
  * tab closing must not be what stops a scheduled turn — which is why it is a

@@ -71,7 +71,7 @@ import {
   partitionSessionOptions,
 } from "@/lib/session-options";
 import { useStoreSelect } from "@/lib/store";
-import { inSpace, profileSupports, type SessionMeta } from "@/lib/settings";
+import { chatModels, inSpace, profileSupports, servesChat, type SessionMeta } from "@/lib/settings";
 import {
   useActiveSpace,
   useAgents,
@@ -109,6 +109,8 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
   const agentProfiles = profiles.filter(
     (p) =>
       profileSupports(p, meta.agentId) &&
+      /* A decision- or completion-only provider has nothing a turn can run on. */
+      servesChat(p) &&
       (p.id === meta.profileId || (!p.hidden && !p.disabled)),
   );
 
@@ -528,12 +530,14 @@ export function DraftConfigPopover({
       !profile.disabled
         ? profile
         : profiles.find(
-            (p) => profileSupports(p, agentId) && !p.hidden && !p.disabled,
+            (p) => profileSupports(p, agentId) && servesChat(p) && !p.hidden && !p.disabled,
           );
     if (!next) return;
     configure({ agentId, profileId: next.id, model: "", effort: "" });
   };
-  const models = profile?.models ?? [];
+  /* Only chat models: a decision model answers typed questions and a completion
+     model fills a gap, and neither can drive a turn (docs/plans/model-kinds.md). */
+  const models = chatModels(profile?.models ?? []);
   const resolvedModel = models.find(
     (m) => m.id === (meta.model || profile?.defaultModel),
   );

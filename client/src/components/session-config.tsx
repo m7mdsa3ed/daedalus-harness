@@ -27,7 +27,7 @@ import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
-import { profileSupports, type SessionMeta } from "@/lib/settings"
+import { chatModels, profileSupports, servesChat, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { useModelRoles } from "@/lib/queries/model-roles"
 import { configView, stagedPicks, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
@@ -109,7 +109,11 @@ export function SessionConfigPopover({
      but the thread's own stays listed if it is the one it runs on, so the menu
      still reads it out. */
   const agentProfiles = profiles.filter(
-    (p) => profileSupports(p, agentId) && (p.id === meta?.profileId || (!p.hidden && !p.disabled))
+    (p) =>
+      profileSupports(p, agentId) &&
+      /* Never a provider whose catalogue is all decisions or completions. */
+      servesChat(p) &&
+      (p.id === meta?.profileId || (!p.hidden && !p.disabled)),
   )
   // Called before the early return below: hooks cannot be conditional.
   // Sibling profiles serving the same agent stand in while this one has no
@@ -176,8 +180,10 @@ export function SessionConfigPopover({
      about effort has not said "this model has no effort control", and hiding
      the agent's working selector on its behalf would be inventing a claim it
      never made. */
-  const overridden = profile.models.length > 0
-  const spawnModel = profile.models.find((m) => m.id === (meta.model || profile.defaultModel))
+  /* Chat models only — a decision/completion model can never be a turn's. */
+  const spawnable = chatModels(profile.models)
+  const overridden = spawnable.length > 0
+  const spawnModel = spawnable.find((m) => m.id === (meta.model || profile.defaultModel))
   const spawnEfforts = spawnModel?.reasoningEfforts ?? []
   const profileEffort = overridden && spawnEfforts.length > 0
   const liveEffort = profileEffort ? undefined : options.effort
@@ -251,7 +257,7 @@ export function SessionConfigPopover({
         value: meta.model || DEFAULT_CHOICE,
         choices: [
           { value: DEFAULT_CHOICE, name: "Profile default" },
-          ...profile.models.map((m) => ({
+          ...spawnable.map((m) => ({
             value: m.id,
             name: m.label,
             icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,

@@ -88,3 +88,25 @@ export const SOURCE_LABEL: Record<string, string> = {
   manual: "Run now",
   routine: "Chained",
 }
+
+/** Why a `skipped` run never started — the server's `skipReason`, in words.
+    Unknown reasons print as they came: a later server may add one. */
+export const SKIP_REASON: Record<string, string> = {
+  missed: "Missed while the server was off",
+  disabled: "Automation was disabled",
+  "thread-trashed": "The pinned thread was trashed",
+  "thread-missing": "The pinned thread no longer exists",
+  quota: "Plan quota below the floor",
+  unchanged: "Nothing changed since the last run",
+  "rate-limit": "Rate limit reached",
+  capacity: "Too many runs already live",
+  "profile-missing": "The profile no longer exists",
+  "project-missing": "The project no longer exists",
+  "blanket-allow": "Blanket allow needs a completed dry run first",
+  "chain-depth": "Chained too deep",
+  "workflow-unavailable": "The workflow is not available",
+  overlap: "The previous run was still going",
+}
+
+export const skipLabel = (reason: string | null | undefined): string | null =>
+  reason ? (SKIP_REASON[reason] ?? reason) : null

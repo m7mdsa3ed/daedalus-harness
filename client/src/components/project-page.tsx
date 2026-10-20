@@ -67,9 +67,8 @@ import { useStartThreadIn } from "@/components/thread-sidebar"
 import type { Actions } from "@/lib/actions"
 import { errorText, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
-import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
-import { scheduleWhen } from "@/lib/schedule"
-import { activityAt, isListed, type HelperCommand, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
+import { automationPath, automationsPath, settingsFormPath, settingsPath, threadPath } from "@/lib/router"
+import { activityAt, isListed, type HelperCommand, type Project, type Routine, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
 import { StatusDot } from "@/components/status-dot"
@@ -81,7 +80,8 @@ import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectRepos, useProjectStats } from "@/lib/queries/surfaces"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
-import { useScheduled } from "@/lib/queries/routines"
+import { useAutomationReads, useAutomations } from "@/lib/queries/automations"
+import { nextFireOf, triggersLine, untilLabel } from "@/components/automations/trigger-summary"
 
 /** Matches the server's `ACTIVITY_DAYS`. The strip is drawn as a fixed run of
     days whatever came back, so a shorter answer simply leaves empty bars. */
@@ -105,9 +105,9 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   /* The live half of the page, split by what moves it. `threads` is the one
      slice a streamed token replaces, and this page genuinely draws from it
      (the running/waiting dots), so it is subscribed to — but on its own, so a
-     `scheduled` or `sessions` refresh no longer drags the rest in with it. */
+     `automations` or `sessions` refresh no longer drags the rest in with it. */
   const sessions = useStoreSelect((store) => store.sessions)
-  const allScheduled = useScheduled().data ?? []
+  const allAutomations = useAutomations().data
   const liveThreads = useStoreSelect((store) => store.threads)
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
@@ -156,14 +156,10 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
      knowledge base; here it is a file the agent already reads every turn, so
      the honest surface is the editor open on it rather than a second store
      that would have to be kept in step with the file. */
-  const scheduled = React.useMemo(() => {
-    const ids = new Set(
-      sessions.filter((s) => s.projectId === project.id).map((s) => s.id)
-    )
-    return allScheduled
-      .filter((row) => ids.has(row.sessionId))
-      .sort((a, b) => a.nextAt - b.nextAt)
-  }, [allScheduled, sessions, project.id])
+  const automations = React.useMemo(
+    () => (allAutomations ?? []).filter((row) => row.projectId === project.id),
+    [allAutomations, project.id]
+  )
 
   return (
     <PageFrame width="wide">
@@ -260,10 +256,11 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           />
           <div className="min-w-0">
             <RuntimesCard stats={stats} />
-            <ScheduledCard
-              scheduled={scheduled}
+            <AutomationsCard
+              automations={automations}
               sessions={sessions}
-              onOpenSchedules={() => void navigate(schedulesPath())}
+              onOpen={(id) => void navigate(automationPath(id))}
+              onManage={() => void navigate(automationsPath())}
             />
             <GlanceCard stats={stats} trashed={trashed} />
           </div>
@@ -888,38 +885,48 @@ function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
   )
 }
 
-function ScheduledCard({
-  scheduled,
+function AutomationsCard({
+  automations,
   sessions,
-  onOpenSchedules,
+  onOpen,
+  onManage,
 }: {
-  scheduled: ScheduledMessage[]
+  automations: Routine[]
   sessions: SessionMeta[]
-  onOpenSchedules: () => void
+  onOpen: (id: string) => void
+  onManage: () => void
 }) {
-  if (scheduled.length === 0) return null
+  const { triggers } = useAutomationReads(automations)
+  if (automations.length === 0) return null
   return (
     <CardShell
-      title="Scheduled"
-      count={scheduled.length}
+      title="Automations"
+      count={automations.length}
       action={
-        <Button variant="ghost" size="sm" onClick={onOpenSchedules}>
+        <Button variant="ghost" size="sm" onClick={onManage}>
           Manage
         </Button>
       }
     >
       <ul className="divide-y divide-border/60">
-        {scheduled.slice(0, 4).map((row) => (
-          <li key={row.id} className="py-2">
-            <p className="truncate text-xs" title={row.text}>
-              {row.text}
-            </p>
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-              {row.enabled ? scheduleWhen(row.nextAt, row.everyMs) : "Paused"} ·{" "}
-              {sessions.find((s) => s.id === row.sessionId)?.title ?? "thread"}
-            </p>
-          </li>
-        ))}
+        {automations.slice(0, 4).map((row) => {
+          const next = row.enabled ? nextFireOf(triggers[row.id]) : null
+          return (
+            <li key={row.id} className="py-2">
+              <button type="button" className="block w-full text-left" onClick={() => onOpen(row.id)}>
+                <p className="truncate text-xs" title={row.name}>
+                  {row.name}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {!row.enabled ? "Paused" : next !== null ? `Next ${untilLabel(next)}` : triggersLine(triggers[row.id]) || "…"} ·{" "}
+                  {row.runsIn === "session"
+                    ? (sessions.find((s) => s.id === row.sessionId)?.title ?? "thread")
+                    : "new thread each time"}
+                </p>
+              </button>
+            </li>
+          )
+        })}
       </ul>
     </CardShell>
   )

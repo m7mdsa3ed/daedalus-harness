@@ -431,6 +431,26 @@ await test("rows whose parent exists nowhere are dropped, not fatal", async () =
   assert.equal(await count(knowledgeTable), 1);
 });
 
+await test("an old bundle's scheduled rows are restored as session-mode routines", async () => {
+  await seed();
+  const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
+  assert.equal(bundle.scheduled.length, 0, "new bundles carry scheduled messages as routines");
+  bundle.scheduled.push(
+    { id: "old-sched", sessionId: "t1", text: "remind me", nextAt: 5_000, everyMs: 600_000, createdAt: 1 },
+    { id: "old-orphan", sessionId: "nope", text: "x", nextAt: 5_000, createdAt: 1 },
+  );
+  const summary = await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
+  assert.equal(summary.scheduled, 1);
+  assert.equal(summary.orphaned, 1);
+  const restored = (await db.select().from(routinesTable).where(eq(routinesTable.id, "old-sched")))[0]!;
+  assert.equal(restored.runsIn, "session");
+  assert.equal(restored.sessionId, "t1");
+  assert.equal(restored.projectId, "w1");
+  const trigger = (await db.select().from(routineTriggersTable).where(eq(routineTriggersTable.routineId, "old-sched")))[0]!;
+  assert.equal(trigger.intervalMs, 600_000);
+  assert.equal(trigger.nextFireAt, 5_000);
+});
+
 await test("a bundle in the wrong format is refused", () => {
   assert.equal(BundleSchema.safeParse({ format: "something-else", version: 1 }).success, false);
   assert.equal(BundleSchema.safeParse({ format: "daedalus-backup", version: 99 }).success, false);

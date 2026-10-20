@@ -23,11 +23,11 @@ export type PageId =
   | "effort"
   /** ACP's permission mode — default / accept edits / plan. */
   | "mode"
-  /** The routines, as things to fire. */
-  | "routines"
-  /** What the routines have been doing — runs across every routine, newest
-      first. A reading page, not a doing one; see `routine-pages.tsx`. */
-  | "routine-activity"
+  /** The automations, as things to fire. */
+  | "automations"
+  /** What the automations have been doing — runs across every automation, newest
+      first. A reading page, not a doing one; see `automation-pages.tsx`. */
+  | "automation-activity"
 
 export interface Palette {
   page: PageId
@@ -71,8 +71,8 @@ export const PAGE_LABEL: Record<PageId, string> = {
   model: "Model",
   effort: "Effort",
   mode: "Permission mode",
-  routines: "Run routine",
-  "routine-activity": "Routine activity",
+  automations: "Run automation",
+  "automation-activity": "Automation activity",
 }
 
 export const PAGE_PLACEHOLDER: Record<PageId, string> = {
@@ -86,6 +86,6 @@ export const PAGE_PLACEHOLDER: Record<PageId, string> = {
   model: "Search models…",
   effort: "Search effort levels…",
   mode: "Search permission modes…",
-  routines: "Search routines…",
-  "routine-activity": "Search recent runs…",
+  automations: "Search automations…",
+  "automation-activity": "Search recent runs…",
 }

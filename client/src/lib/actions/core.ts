@@ -14,12 +14,11 @@ import { pruneDraftAttachments } from "../draft-attachments"
 import { loadDraftSessions, pruneDraftSessions } from "../draft-sessions"
 import { loadLayout, savedThreadIds } from "../workspace/layout"
 import { panelId } from "../workspace/panels"
-import { api, profileSupports, type ServerSettings, type SessionMeta, type SessionPage } from "../settings"
+import { api, profileSupports, type Routine, type RoutineInput, type ServerSettings, type SessionMeta, type SessionPage } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
 import { partitionSessionOptions } from "../session-options"
-import { scheduledKey } from "../queries/keys"
+import { automationsKey } from "../queries/keys"
 import type { useCatalogReader } from "../queries/catalog"
-import type { ScheduleInput } from "../queries/routines"
 import { fetchQuota, planReadable } from "../quota"
 import type { Action, StoreHandle } from "../store"
 import { threadRegistry } from "../thread/registry"
@@ -554,24 +553,22 @@ export function sessionActions(core: ActionsCore) {
     },
 
     /**
-     * For a draft thread, the draft is materialized first (the server only
-     * schedules threads it knows), mirroring `send` — which is why this one
-     * still lives here when every other schedule write moved to the query
-     * hooks (lib/queries/routines.ts): it needs the reducer's draft, and
-     * the reducer is the one slice that did not move. The invalidation is
-     * the refresh.
+     * Create a `runsIn: "session"` automation pinned to `input.sessionId`. For a
+     * draft thread the draft is materialized first (the server only pins
+     * threads it knows), mirroring `send` — which is why this one still lives
+     * here when every other automation write moved to the query hooks
+     * (lib/queries/automations.ts): it needs the reducer's draft, and the
+     * reducer is the one slice that did not move. The invalidation is the
+     * refresh. The caller writes the automation's triggers.
      */
-    async createSchedule(input: ScheduleInput) {
-      // A draft has no server row to schedule against — bring it into being
-      // the way sending its first message would, then schedule the real one.
-      const draft = getState().sessions.find(
-        (s) => s.id === input.sessionId && s.draft
-      )
+    async createSchedule(input: RoutineInput): Promise<Routine> {
+      const draft = getState().sessions.find((s) => s.id === input.sessionId && s.draft)
       if (draft) {
         await createSession(draft)
       }
-      await postJson(settings, "/api/scheduled", input)
-      await queryClient.invalidateQueries({ queryKey: scheduledKey(settings) })
+      const routine = await postJson<Routine>(settings, "/api/routines", { ...input, runsIn: "session" })
+      await queryClient.invalidateQueries({ queryKey: automationsKey(settings) })
+      return routine
     },
 
     /** Reattach to a thread whose socket was closed while the agent process is

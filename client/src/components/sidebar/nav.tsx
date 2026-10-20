@@ -6,7 +6,7 @@
    Deliberately only the rows that start something. Plan usage is not here (nor
    anywhere in the sidebar): it lives on Settings › Usage. */
 import * as React from "react"
-import { CalendarClock, MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
+import { MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -19,9 +19,9 @@ import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-me
 import { Shortcut } from "@/components/shortcut"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
-import { boardPath, routinesPath, schedulesPath } from "@/lib/router"
+import { automationsPath, boardPath } from "@/lib/router"
 import { useLayoutOptions } from "@/lib/layout-options"
-import { useRoutines, useScheduled } from "@/lib/queries/routines"
+import { useAutomations } from "@/lib/queries/automations"
 import { GROUP, MENU, ROW } from "./scale"
 
 /** One nav row. Data rather than four copies of the same JSX: every row is the
@@ -49,12 +49,10 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
-  const inRoutines = location.pathname.startsWith("/routines")
-  const inSchedules = location.pathname.startsWith("/schedules")
-  // Both lists are loaded at boot (the palette and the pages read the same
-  // queries), so the rows can say how much is armed without asking again.
-  const routineCount = useRoutines().data?.length ?? 0
-  const scheduledCount = useScheduled().data?.length ?? 0
+  const inAutomations = location.pathname.startsWith("/automations")
+  // The list is loaded at boot (the palette and the page read the same query),
+  // so the row can say how much is armed without asking again.
+  const automationCount = useAutomations().data?.filter((a) => a.enabled).length ?? 0
   const newThreadChord = useChord("newThread") ?? ""
   const { sidebarShowPlaces } = useLayoutOptions()
 
@@ -83,32 +81,20 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
       isActive: inBoard,
       onClick: () => void navigate(boardPath()),
     },
-    /* Two pages for what happens with nobody watching. The labels are the
-       feature: a routine starts a NEW thread on its own (a clock, a webhook, a
-       commit) and answers the agent's questions itself; a scheduled message
-       speaks into a thread that ALREADY EXISTS. They sit together because
-       "routine" and "scheduled" are not words that tell themselves apart, and
-       the count on each is how much is armed — the number you are asking about
-       before you open it. */
+    /* One page for what happens with nobody watching: a prompt that runs on a
+       clock, a webhook or a commit, in a new thread each time or in one that
+       already exists. The count is how much is armed — the number you are
+       asking about before you open it. */
     {
-      key: "routines",
-      /* A lightning bolt says "instant" — the opposite of a routine. Recurrence
-         is what the row is: the same thing, on its own clock, again. */
+      key: "automations",
+      /* A lightning bolt says "instant" — the opposite of this. Recurrence is
+         what the row is: the same thing, on its own clock, again. */
       icon: <Repeat />,
-      label: "Routines",
-      tooltip: "Routines — threads that start on their own",
-      isActive: inRoutines,
-      count: routineCount,
-      onClick: () => void navigate(routinesPath()),
-    },
-    {
-      key: "scheduled",
-      icon: <CalendarClock />,
-      label: "Scheduled",
-      tooltip: "Scheduled — messages sent into a thread later",
-      isActive: inSchedules,
-      count: scheduledCount,
-      onClick: () => void navigate(schedulesPath()),
+      label: "Automations",
+      tooltip: "Automations — prompts that run on their own",
+      isActive: inAutomations,
+      count: automationCount,
+      onClick: () => void navigate(automationsPath()),
     },
   ]
   /* The three places are the reader's to hide (Settings › Appearance ›

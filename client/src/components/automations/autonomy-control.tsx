@@ -49,7 +49,7 @@ import { cn } from "@/lib/utils"
     and thinks about first, then what it changes, then what it runs. Verbatim
     `acp.ToolKind` — a kind a later ACP release adds simply falls through to
     `default` server-side, which is why nothing here is exhaustive-checked. */
-const KINDS: { kind: acp.ToolKind; label: string; blurb: string; grave?: boolean }[] = [
+export const KINDS: { kind: acp.ToolKind; label: string; blurb: string; grave?: boolean }[] = [
   { kind: "read", label: "Read files", blurb: "Open files in the project directory." },
   { kind: "think", label: "Think and plan", blurb: "Reasoning steps and checklists. Changes nothing." },
   { kind: "search", label: "Search", blurb: "Grep the project, search the web." },

@@ -2,6 +2,7 @@ import { getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { commandFromPrompt } from "./legacy-prompts.js";
+import { routineFromScheduled } from "./scheduled-migration.js";
 import {
   agentOptions as agentOptionsTable,
   USAGE_KINDS,
@@ -23,7 +24,6 @@ import {
   routineRuns as routineRunsTable,
   routineTriggers as routineTriggersTable,
   routines as routinesTable,
-  scheduledMessages as scheduledTable,
   sessionEvents as eventsTable,
   sessionQueue as queueTable,
   sessions as sessionsTable,
@@ -493,6 +493,9 @@ const ScheduledRow = z.object({
   text: str,
   nextAt: int,
   everyMs: int.nullish(),
+  enabled: int.nullish(),
+  lastError: optStr,
+  skipCount: int.nullish(),
   createdAt: int,
 });
 
@@ -556,6 +559,11 @@ const RoutineRow = z.object({
      restore that invented it would unlock one they never did. So it travels
      exactly as it was. */
   dryRunCompleted: z.boolean().default(false),
+  /* Absent in a bundle written before scheduled messages became routines. */
+  runsIn: z.enum(["thread", "session"]).default("thread"),
+  sessionId: optStr,
+  catchup: z.enum(["once", "none"]).default("once"),
+  worktree: z.boolean().default(false),
   createdAt: int,
   updatedAt: int,
   mcpServerIds: z.array(str).default([]),
@@ -566,11 +574,12 @@ const RoutineRow = z.object({
 const RoutineTriggerRow = z.object({
   id: str.min(1),
   routineId: str.min(1),
-  kind: z.enum(["schedule", "api", "git"]),
+  kind: z.enum(["schedule", "api", "git", "manual"]),
   enabled: z.boolean().default(true),
   cron: optStr,
   tz: optStr,
   atMs: int.nullish(),
+  intervalMs: int.nullish(),
   condition: z.object({ gitChangedSince: z.literal("lastRun").optional() }).nullish(),
   /* The clock is carried rather than recomputed: a one-off's slot is a fact
      about when the user asked for it, and a recurring one is re-armed by the
@@ -607,6 +616,8 @@ const RoutineRunRow = z.object({
   dryRun: z.boolean().default(false),
   status: z.enum(["running", "completed", "failed", "blocked", "skipped"]),
   error: optStr,
+  skipReason: optStr,
+  inboxState: z.enum(["unread", "read", "archived"]).nullish(),
   output: optStr,
   verdict: json,
   actions: z.array(json).default([]),
@@ -935,7 +946,9 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     knowledge: await db.select().from(knowledgeTable),
     sessions: withLinks(sessions, await readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
     queue: await db.select().from(queueTable),
-    scheduled: await db.select().from(scheduledTable),
+    /* Scheduled messages travel as routines now; the key stays so an old
+       reader still parses a new bundle, and is still READ on import. */
+    scheduled: [] as z.infer<typeof ScheduledRow>[],
     workflowRuns: await db.select().from(workflowRunsTable),
     routines: withLinks(routines, await readLinks(ROUTINE_LINKS, routines.map((r) => r.id))),
     /* A trigger's token hash is a credential like a profile's key: the key is
@@ -1065,6 +1078,37 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
 }
 
 /**
+ * An old bundle's `scheduled` rows become `session`-mode routines + a schedule
+ * trigger appended to the bundle's own routine lists, so the rest of the import
+ * treats them like any other routine. The owner (profile/agent/project) comes
+ * from the bundled thread; a row whose thread the bundle does not carry is an
+ * orphan, as it always was.
+ */
+function foldLegacyScheduled(bundle: Bundle, summary: ImportSummary): void {
+  if (bundle.scheduled.length === 0) return;
+  const owners = new Map(bundle.sessions.map((s) => [s.id, s]));
+  const have = new Set(bundle.routines.map((r) => r.id));
+  for (const row of bundle.scheduled) {
+    const owner = owners.get(row.sessionId);
+    if (!owner) {
+      summary.orphaned += 1;
+      continue;
+    }
+    if (have.has(row.id)) continue;
+    const { routine, trigger } = routineFromScheduled({ ...row, enabled: row.enabled ?? 1, skipCount: row.skipCount ?? 0 }, owner);
+    bundle.routines.push({
+      ...(routine as object),
+      mcpServerIds: [],
+      skillIds: [],
+      commandIds: [],
+    } as unknown as Bundle["routines"][number]);
+    bundle.routineTriggers.push(trigger as unknown as Bundle["routineTriggers"][number]);
+    summary.scheduled += 1;
+  }
+  bundle.scheduled = [];
+}
+
+/**
  * Write a bundle into the database. Synchronous and in one transaction — the
  * caller has already retired whatever processes the rows it touches belong
  * to, and reloads the SessionManager afterwards.
@@ -1077,6 +1121,8 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
     orphaned: 0, missingSecrets: false,
   };
+
+  foldLegacyScheduled(bundle, summary);
 
   // Read what the install holds BEFORE the transaction empties it — the
   // secrets a redacted bundle is allowed to keep.
@@ -1348,7 +1394,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       for (let i = 0; i < owned.length; i += CHUNK) {
         const ids = owned.slice(i, i + CHUNK);
         await tx.delete(queueTable).where(inArray(queueTable.sessionId, ids));
-        await tx.delete(scheduledTable).where(inArray(scheduledTable.sessionId, ids));
         await tx.delete(workflowRunsTable).where(inArray(workflowRunsTable.parentSessionId, ids));
         if (!bundle.redacted.journals) await tx.delete(eventsTable).where(inArray(eventsTable.sessionId, ids));
       }
@@ -1356,9 +1401,6 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     const queue = keep(bundle.queue);
     insertChunked(tx, queueTable, queue);
     summary.queue = queue.length;
-    const scheduled = keep(bundle.scheduled.map((s) => ({ ...s, everyMs: s.everyMs ?? null })));
-    insertChunked(tx, scheduledTable, scheduled);
-    summary.scheduled = scheduled.length;
     const runs = bundle.workflowRuns.filter((r) => sessionIds.has(r.parentSessionId));
     summary.orphaned += bundle.workflowRuns.length - runs.length;
     insertChunked(
@@ -1384,6 +1426,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         return {
           ...columns,
           description: columns.description ?? null,
+          sessionId: columns.sessionId ?? null,
           output: columns.output ?? null,
         };
       }),
@@ -1423,6 +1466,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         cron: t.cron ?? null,
         tz: t.tz ?? null,
         atMs: t.atMs ?? null,
+        intervalMs: t.intervalMs ?? null,
         condition: t.condition ?? null,
         nextFireAt: t.nextFireAt ?? null,
         secretHash: t.secretHash || (was?.secretHash ?? null),
@@ -1441,6 +1485,8 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       sessionId: r.sessionId ?? null,
       payload: r.payload ?? null,
       error: r.error ?? null,
+      skipReason: r.skipReason ?? null,
+      inboxState: r.inboxState ?? null,
       output: r.output ?? null,
       /* `verdict` is genuinely nullable JSON and `undefined` is not a value the
          driver can bind — a run with no output schema carries none. */

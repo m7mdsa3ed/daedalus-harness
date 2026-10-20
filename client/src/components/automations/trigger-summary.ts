@@ -3,31 +3,24 @@
    is too much and "3 triggers" is too little. The list page never reads
    triggers at all (they are one read per routine, owned by its page); the
    overview does, and this is what it prints. */
-import { CalendarClockIcon, GitBranchIcon, WebhookIcon, type LucideIcon } from "lucide-react"
+import { CalendarClockIcon, GitBranchIcon, HandIcon, WebhookIcon, type LucideIcon } from "lucide-react"
 
+import { triggerLine } from "@/lib/automation-schedule"
 import type { RoutineTrigger, RoutineTriggerKind } from "@/lib/settings"
 
 export const TRIGGER_KIND: Record<RoutineTriggerKind, { label: string; icon: LucideIcon }> = {
   schedule: { label: "Schedule", icon: CalendarClockIcon },
   api: { label: "Webhook", icon: WebhookIcon },
   git: { label: "Commit", icon: GitBranchIcon },
+  manual: { label: "Manual", icon: HandIcon },
 }
-
-const when = (ms: number) =>
-  new Date(ms).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 
 /** The trigger's own terms, without its next fire: "every day at 09:00" is a
     property of the trigger where "fires in 3h" is a property of the clock. */
 export function triggerTerms(trigger: RoutineTrigger): string {
   switch (trigger.kind) {
     case "schedule":
-      if (trigger.atMs !== null) return `Once, ${when(trigger.atMs)}`
-      return trigger.cron ? `Cron ${trigger.cron}${trigger.tz ? ` (${trigger.tz})` : ""}` : "No clock set"
+      return trigger.cron || trigger.atMs !== null || trigger.intervalMs !== null ? triggerLine(trigger) : "No clock set"
     case "api":
       return trigger.hasToken ? "Token minted" : "No token yet — cannot fire from outside"
     case "git": {
@@ -35,6 +28,8 @@ export function triggerTerms(trigger: RoutineTrigger): string {
       const paths = trigger.paths.length === 0 ? "" : ` · ${trigger.paths.length} path rule${trigger.paths.length === 1 ? "" : "s"}`
       return `HEAD moves on ${branch}${paths}`
     }
+    case "manual":
+      return "Only when you press Run now"
   }
 }
 
@@ -61,4 +56,12 @@ export function untilLabel(at: number, now = Date.now()): string {
   const h = Math.round(ms / 3_600_000)
   if (h < 48) return `in ${h}h`
   return `in ${Math.round(ms / 86_400_000)}d`
+}
+
+/** All of an automation's armed triggers in one line, for the list row. */
+export function triggersLine(triggers: RoutineTrigger[] | undefined): string {
+  if (!triggers) return ""
+  const armed = triggers.filter((t) => t.enabled)
+  if (armed.length === 0) return triggers.length === 0 ? "No trigger" : "All triggers off"
+  return armed.map(triggerLine).join(" · ")
 }

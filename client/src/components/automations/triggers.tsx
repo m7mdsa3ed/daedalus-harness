@@ -1,5 +1,5 @@
 /* ── Triggers ──
-   One routine, several front doors: a clock, a webhook, a commit. They share a
+   One automation, several front doors: a clock, a webhook, a commit, or just a button. They share a
    row server-side because everything after the fire is identical whichever door
    was used, and they share this panel for the same reason — the list is one
    list, and only the middle of each card differs.
@@ -16,6 +16,7 @@ import {
   CheckIcon,
   CopyIcon,
   GitBranchIcon,
+  HandIcon,
   KeyRoundIcon,
   PlusIcon,
   Trash2Icon,
@@ -34,69 +35,28 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
 import { captureError, type InlineError } from "@/lib/errors"
 import type { RoutineTrigger, RoutineTriggerKind, RoutineTriggerPatch } from "@/lib/settings"
 import {
-  useCreateRoutineTrigger,
-  useDeleteRoutineTrigger,
-  useMintRoutineTriggerToken,
-  useRevokeRoutineTriggerToken,
-  useRoutineTriggers,
-  useUpdateRoutineTrigger,
-} from "@/lib/queries/routines"
+  useCreateAutomationTrigger,
+  useDeleteAutomationTrigger,
+  useMintAutomationTriggerToken,
+  useRevokeAutomationTriggerToken,
+  useAutomationTriggers,
+  useUpdateAutomationTrigger,
+} from "@/lib/queries/automations"
 import { useServer } from "@/lib/server-context"
+import { defaultPlan, planProblem, planToPatch, planToTrigger, readPlan, type SchedulePlan } from "@/lib/automation-schedule"
+import { SchedulePicker } from "./schedule-picker"
 
 const KIND_META: Record<RoutineTriggerKind, { label: string; icon: typeof CalendarClockIcon; blurb: string }> = {
+  manual: { label: "Manual", icon: HandIcon, blurb: "Only when you press Run now." },
   schedule: { label: "On a schedule", icon: CalendarClockIcon, blurb: "A clock the server keeps, browser or no browser." },
   api: { label: "On a webhook", icon: WebhookIcon, blurb: "A POST to a URL, with a token only you hold." },
   git: { label: "On a commit", icon: GitBranchIcon, blurb: "The project's HEAD moving, debounced." },
-}
-
-/* ── Schedule presets ──
-   The presets WRITE cron and nothing else: there is one representation of a
-   schedule on the row and it is the cron string, so a preset is a way of
-   spelling one rather than a second field that could disagree with it. Which
-   also means an existing trigger's preset is *read back* out of its cron, and a
-   cron that matches no preset simply reads as Custom. */
-type Preset = "hourly" | "daily" | "weekdays" | "weekly" | "custom"
-
-const PRESET_LABEL: Record<Preset, string> = {
-  hourly: "Every hour",
-  daily: "Every day",
-  weekdays: "Every weekday",
-  weekly: "Every week (Monday)",
-  custom: "Custom cron",
-}
-
-const cronFor = (preset: Preset, hour: number): string =>
-  preset === "hourly"
-    ? "0 * * * *"
-    : preset === "daily"
-      ? `0 ${hour} * * *`
-      : preset === "weekdays"
-        ? `0 ${hour} * * 1-5`
-        : `0 ${hour} * * 1`
-
-/** Which preset, if any, a cron string spells. Anything else reads as Custom,
-    which is not a failure: a quarter-hourly cron is one a person meant. */
-function readPreset(cron: string | null): { preset: Preset; hour: number } {
-  if (!cron) return { preset: "daily", hour: 9 }
-  if (cron.trim() === "0 * * * *") return { preset: "hourly", hour: 9 }
-  const match = /^0 (\d{1,2}) \* \* (\*|1-5|1)$/.exec(cron.trim())
-  if (!match) return { preset: "custom", hour: 9 }
-  const hour = Number(match[1])
-  const preset = match[2] === "*" ? "daily" : match[2] === "1-5" ? "weekdays" : "weekly"
-  return { preset, hour }
 }
 
 export function TriggersPanel({ routineId }: { routineId: string }) {
@@ -105,12 +65,12 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
      re-read. The optimistic part stays here and stays local: these are
      switches and a cron field being typed into, and a full re-read per
      keystroke would fight the caret. */
-  const { data: cached, refetch } = useRoutineTriggers(routineId)
-  const addTrigger = useCreateRoutineTrigger(routineId)
-  const patchTrigger = useUpdateRoutineTrigger(routineId)
-  const removeTrigger = useDeleteRoutineTrigger(routineId)
-  const mintToken = useMintRoutineTriggerToken(routineId)
-  const revokeToken = useRevokeRoutineTriggerToken(routineId)
+  const { data: cached, refetch } = useAutomationTriggers(routineId)
+  const addTrigger = useCreateAutomationTrigger(routineId)
+  const patchTrigger = useUpdateAutomationTrigger(routineId)
+  const removeTrigger = useDeleteAutomationTrigger(routineId)
+  const mintToken = useMintAutomationTriggerToken(routineId)
+  const revokeToken = useRevokeAutomationTriggerToken(routineId)
   /** The optimistic overlay, on top of the cache — a patch shows locally the
       moment it is typed and the server's answer replaces the row, so a
       rejected patch snaps back with the note below. */
@@ -132,10 +92,7 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
       /* A new schedule arrives with a null clock on purpose — the sweep arms
          `nextFireAt`. So the cron is written on creation and the row comes back
          inert for a few seconds rather than never firing. */
-      await addTrigger.mutateAsync({
-        kind,
-        ...(kind === "schedule" ? { cron: cronFor("daily", 9), tz: localZone() } : {}),
-      })
+      await addTrigger.mutateAsync(kind === "schedule" ? planToTrigger(defaultPlan()) : { kind })
     } catch (err) {
       setError(captureError(err, "Couldn't add the trigger"))
     }
@@ -168,8 +125,8 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
         title: `Remove this ${KIND_META[trigger.kind].label.toLowerCase()} trigger?`,
         description:
           trigger.hasToken
-            ? "Its token stops working immediately and cannot be recovered. The routine and its run history are untouched."
-            : "The routine and its run history are untouched — it just stops firing this way.",
+            ? "Its token stops working immediately and cannot be recovered. The automation and its run history are untouched."
+            : "The automation and its run history are untouched — it just stops firing this way.",
         destructive: true,
         confirmLabel: "Remove trigger",
       }))
@@ -260,7 +217,7 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
       ) : triggers.length === 0 ? (
         <EmptyCard
           icon={CalendarClockIcon}
-          text="No triggers — this routine only fires when you run it by hand."
+          text="No triggers — this automation only fires when you run it by hand."
           action={addMenu}
         />
       ) : (
@@ -337,6 +294,7 @@ function TriggerCard({
         <ApiFields trigger={trigger} token={token} onMint={onMint} onRevoke={onRevoke} />
       )}
       {trigger.kind === "git" && <GitFields trigger={trigger} onPatch={onPatch} />}
+      {trigger.kind === "manual" && <p className="text-xs text-muted-foreground">{KIND_META.manual.blurb}</p>}
     </FormSection>
   )
 }
@@ -348,77 +306,26 @@ function ScheduleFields({
   trigger: RoutineTrigger
   onPatch: (next: RoutineTriggerPatch) => void
 }) {
-  const read = readPreset(trigger.cron)
-  const [preset, setPreset] = React.useState<Preset>(read.preset)
-  const [hour, setHour] = React.useState(read.hour)
-
-  const write = (nextPreset: Preset, nextHour: number) => {
-    setPreset(nextPreset)
-    setHour(nextHour)
-    // Custom leaves the cron alone: switching to it is a request to type one,
-    // not a request to overwrite whatever is there with a preset's spelling.
-    if (nextPreset !== "custom") onPatch({ cron: cronFor(nextPreset, nextHour) })
+  /* The picker is controlled by a local plan so a half-typed value (a cron
+     being written) is not read back through the stored trigger and snapped to
+     something else; only a plan that validates is written. */
+  const [plan, setPlan] = React.useState<SchedulePlan>(() => readPlan(trigger))
+  const change = (next: SchedulePlan) => {
+    setPlan(next)
+    const patch = planProblem(next) === null ? planToPatch(next) : null
+    if (patch) onPatch(patch)
   }
-
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 @xl:grid-cols-3">
-        <Field label="Repeat">
-          <Select value={preset} onValueChange={(v) => v && write(v as Preset, hour)}>
-            <SelectTrigger className="w-full">
-              <SelectValue>{PRESET_LABEL[preset]}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(PRESET_LABEL) as Preset[]).map((key) => (
-                <SelectItem key={key} value={key}>
-                  {PRESET_LABEL[key]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        {preset !== "hourly" && preset !== "custom" && (
-          <Field label="At (hour)">
-            <Input
-              type="number"
-              min={0}
-              max={23}
-              value={hour}
-              onChange={(e) => write(preset, Math.min(23, Math.max(0, Number(e.target.value) || 0)))}
-            />
-          </Field>
-        )}
-        <Field label="Time zone" hint="IANA name. Blank reads the cron in the server's own zone.">
-          <Input
-            placeholder={localZone()}
-            value={trigger.tz ?? ""}
-            onChange={(e) => onPatch({ tz: e.target.value || null })}
-          />
-        </Field>
-      </div>
-      <Field
-        label="Cron"
-        hint="Five fields, minute first. The presets above are ways of spelling this — there is no second representation."
-      >
-        <Input
-          className="font-mono text-xs"
-          value={trigger.cron ?? ""}
-          onChange={(e) => {
-            setPreset("custom")
-            onPatch({ cron: e.target.value || null })
-          }}
-        />
-      </Field>
+      <SchedulePicker plan={plan} onChange={change} allowManual={false} />
       {/* The condition is checked at fire time, never here: a nightly review
           that reports on yesterday and one that says "nothing happened" thirty
-          times in a row are the same routine with and without this switch. */}
+          times in a row are the same automation with and without this switch. */}
       <label className={`flex items-start gap-2.5 px-3 py-2.5 ${INSET}`}>
         <Switch
           className="mt-0.5"
           checked={trigger.condition?.gitChangedSince === "lastRun"}
-          onCheckedChange={(checked) =>
-            onPatch({ condition: checked ? { gitChangedSince: "lastRun" } : null })
-          }
+          onCheckedChange={(checked) => onPatch({ condition: checked ? { gitChangedSince: "lastRun" } : null })}
         />
         <span className="min-w-0 text-xs">
           <span className="block font-medium text-foreground">Only if the code has changed</span>
@@ -566,13 +473,4 @@ function CopyLine({ value, mono }: { value: string; mono?: boolean }) {
   )
 }
 
-/** The browser's own zone, offered as the placeholder — a person setting "every
-    day at 9" means 9 where they are, and the server's zone is rarely it. */
-const localZone = (): string => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || ""
-  } catch {
-    return ""
-  }
-}
 import { writeClipboard } from "@/lib/clipboard"

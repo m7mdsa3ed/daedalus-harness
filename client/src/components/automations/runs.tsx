@@ -20,10 +20,10 @@ import { EmptyCard, StatusBadge } from "@/components/settings/primitives"
 import { SettingsList, type ListAction, type ListColumn } from "@/components/settings/list"
 import { Button } from "@/components/ui/button"
 import { reportError } from "@/lib/errors"
-import { routineRunPath, threadPath } from "@/lib/router"
+import { automationRunPath, threadPath } from "@/lib/router"
 import type { RoutineRun } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
-import { SOURCE_LABEL, runStatus } from "./status"
+import { SOURCE_LABEL, runStatus, skipLabel } from "./status"
 
 export function RunList({
   routineId,
@@ -127,14 +127,14 @@ export function RunList({
         search={{
           placeholder: "Search runs…",
           matches: (run, n) =>
-            `${runStatus(run.status).label} ${SOURCE_LABEL[run.source] ?? run.source} ${run.error ?? ""} ${run.output ?? ""}`.toLowerCase().includes(n),
+            `${runStatus(run.status).label} ${SOURCE_LABEL[run.source] ?? run.source} ${skipLabel(run.skipReason) ?? ""} ${run.error ?? ""} ${run.output ?? ""}`.toLowerCase().includes(n),
         }}
         fields={[
           { id: "status", label: "Status", of: (run) => run.status, optionLabel: (v) => runStatus(v as RoutineRun["status"]).label },
           { id: "source", label: "Source", of: (run) => run.source, optionLabel: (v) => SOURCE_LABEL[v as RoutineRun["source"]] ?? v },
         ]}
-        onRowClick={(run) => void navigate(routineRunPath(routineId, run.id))}
-        empty={<EmptyCard icon={HistoryIcon} text="This routine has not run yet." />}
+        onRowClick={(run) => void navigate(automationRunPath(routineId, run.id))}
+        empty={<EmptyCard icon={HistoryIcon} text="This automation has not run yet." />}
       />
   )
 }
@@ -198,7 +198,12 @@ function RunResult({ run, hasOutputSchema }: { run: RoutineRun; hasOutputSchema:
   const failedActions = run.actions.filter((a) => !a.ok)
   return (
     <div className="min-w-0 space-y-1 text-xs">
-      {run.error ? (
+      {run.status === "skipped" && (run.skipReason || run.error) ? (
+        <p className="text-pretty text-muted-foreground">
+          <span className="font-medium text-foreground">{skipLabel(run.skipReason) ?? "Skipped"}</span>
+          {run.error && run.error !== skipLabel(run.skipReason) && ` \u2014 ${run.error}`}
+        </p>
+      ) : run.error ? (
         <p className="text-pretty text-destructive">{run.error}</p>
       ) : hasOutputSchema && run.verdict !== null && run.verdict !== undefined ? (
         <pre className="truncate font-mono text-[11px] text-foreground">{compact(run.verdict)}</pre>

@@ -20,7 +20,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { useAgents, useAgentsStatus, useProfiles } from "@/lib/queries/catalog"
-import { profileSupports, type AskChoice, type AskProfiles, type Profile } from "@/lib/settings"
+import { chatModels, profileSupports, type AskChoice, type AskProfiles, type Profile } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 
 /* ── Which profile (and model) `ask_agent` uses, per agent ──
@@ -95,13 +95,13 @@ function AskRows({
         ]}
         onSelect={(value) => onChange(value === ASK ? null : { profileId: value })}
       />
-      {profile && profile.models.length > 0 && (
+      {profile && chatModels(profile.models).length > 0 && (
         <MenuRow
           label="Model"
           value={choice?.model ?? DEFAULT}
           choices={[
             { value: DEFAULT, name: "Profile default" },
-            ...profile.models.map((m) => ({
+            ...chatModels(profile.models).map((m) => ({
               value: m.id,
               name: m.label,
               icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
@@ -304,7 +304,7 @@ export function AskAgentPicker({
             </div>
           )}
 
-          {profile && profile.models.length > 0 && (
+          {profile && chatModels(profile.models).length > 0 && (
             <div className="flex items-center gap-3">
               <span className="w-12 shrink-0 text-xs text-muted-foreground">Model</span>
               <Select
@@ -329,7 +329,7 @@ export function AskAgentPicker({
                   <SelectItem value={DEFAULT}>
                     Profile default{defaultModel ? ` · ${defaultModel.label}` : ""}
                   </SelectItem>
-                  {profile.models.map((m) => (
+                  {chatModels(profile.models).map((m) => (
                     <SelectItem key={m.id} value={m.id}>
                       <span className="flex items-center gap-2">
                         <ModelIcon iconUrl={m.iconUrl} className="size-4" />

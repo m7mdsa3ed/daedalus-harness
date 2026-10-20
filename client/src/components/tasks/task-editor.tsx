@@ -231,7 +231,9 @@ export function TaskEditor({ value, onChange, placeholder, className, title }: T
               onClick={() => void draftWithAi()}
               disabled={drafting}
               title={value.trim() ? "Restructure with AI" : "Draft with AI"}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              className={cn("inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
+                drafting && "harness-busy-ring disabled:opacity-100"
+              )}
             >
               {drafting ? <Spinner className="size-3.5" /> : <Sparkles className="size-3.5" />}
               {drafting ? "Writing…" : "AI"}

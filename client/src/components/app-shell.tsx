@@ -240,10 +240,16 @@ export function AppShell({
      is a dependency on purpose — a sidebar row clicked for a page whose tab was
      just closed is the same path again, and has to open it again. */
   const pagePath = sessionId ? null : location.pathname + location.search
+  /* The dock object is rebuilt whenever any of its readings moves (a running
+     tab publishes state constantly). Depending on it re-ran these effects with
+     a URL still naming the tab just left, and navigateActive then turned the
+     tab you switched to back into the previous one. Read it, don't depend on it. */
+  const dockRef = React.useRef(dock)
+  dockRef.current = dock
   React.useEffect(() => {
     if (!pagePath) return
-    dock.navigateActive(pagePath)
-  }, [pagePath, location.key, dock])
+    dockRef.current.navigateActive(pagePath)
+  }, [pagePath, location.key])
 
   /* ── Which thread the tab follows ──
      The routed thread's *state*, never its row. `sessions` is rewritten by
@@ -287,10 +293,10 @@ export function AppShell({
          tab in front (and nothing happens if it is already showing it). A new
          thread is a new *tab* — that is `startThread` and the + — so by the time
          its route arrives it is the tab in front already. */
-      dock.navigateActive(threadPath(sessionId))
+      dockRef.current.navigateActive(threadPath(sessionId))
       /* Panels a page without a dock asked to open beside this thread. After
          the chat, so they split against it. */
-      for (const entry of consumeQueuedPanels()) dock.openPanel(entry.panel, entry.options)
+      for (const entry of consumeQueuedPanels()) dockRef.current.openPanel(entry.panel, entry.options)
       return
     }
     /* A route for a thread nobody knows about: an unsent draft after a reload
@@ -303,7 +309,7 @@ export function AppShell({
     // redirect above clears the search, and re-running on that would only
     // open the same tab a second time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, routedKnown, ready, spacesKnown, dock, location.key])
+  }, [sessionId, routedKnown, ready, spacesKnown, location.key])
 
   /* Drop tabs whose thread or project is gone — but never against a session
      list that never arrived. `loading` alone is not that test: a failed

@@ -872,6 +872,7 @@ export class WorkflowRunner {
         sessionId: row.parentSessionId,
         text: notification({ id: row.id, name: row.name, status: "failed", error: "server restarted", createdAt: row.createdAt, endedAt: Date.now(), steps }),
         nextAt: Date.now(),
+        ephemeral: true,
       });
     }
     if (rows.length) console.log(`[workflows] closed ${rows.length} run(s) interrupted by the restart`);
@@ -1199,7 +1200,7 @@ export class WorkflowRunner {
     for (const w of run.waiters.splice(0)) w(view);
     if (run.notify && !told) {
       if (error === "server shutting down") {
-        void createScheduled({ sessionId: run.parent.id, text: notification(view, !!run.ask), nextAt: Date.now() }).catch(() => {});
+        void createScheduled({ sessionId: run.parent.id, text: notification(view, !!run.ask), nextAt: Date.now(), ephemeral: true }).catch(() => {});
       } else void fire(run.parent.id, notification(view, !!run.ask), this.manager);
     }
     // Kept for status reads until the parent is done with it; the row is the

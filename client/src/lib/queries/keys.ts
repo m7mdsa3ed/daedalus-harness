@@ -50,6 +50,10 @@ export const commandsKey = (s: ServerSettings) => scope(s).concat(["commands"])
 export const modelPromptsKey = (s: ServerSettings) => scope(s).concat(["model-prompts"])
 /** The rules list (`GET /api/rules`) and individual rule CRUD. */
 export const rulesKey = (s: ServerSettings) => scope(s).concat(["rules"])
+/** A side lane's chosen (profile, model) — the composer's completion lane and
+    the decision lane (`GET /api/fim`, `GET /api/decision`). Shared by every
+    device, because the value belongs to the install. */
+export const sideModelKey = (s: ServerSettings, lane: string) => scope(s).concat(["side-model", lane])
 /** The model-role vocabulary (`GET /api/model-roles`) and its CRUD. */
 export const modelRolesKey = (s: ServerSettings) => scope(s).concat(["model-roles"])
 /** The coding-plan presets a new profile starts from — read once per session,
@@ -62,21 +66,20 @@ export const appMetaKey = (s: ServerSettings) => scope(s).concat(["app-meta"])
 export const linkPreviewKey = (s: ServerSettings, url: string) =>
   scope(s).concat(["link-preview", url])
 
-/* Automations (Phase 3 moves these out of the reducer). */
-export const scheduledKey = (s: ServerSettings) => scope(s).concat(["scheduled"])
-export const routinesKey = (s: ServerSettings) => scope(s).concat(["routines"])
-export const routineRunsKey = (s: ServerSettings, routineId: string, limit?: number) =>
-  scope(s).concat(["routine-runs", routineId, limit ?? "all"])
+/* Automations: one family. A routine is the row; the UI calls it an automation. */
+export const automationsKey = (s: ServerSettings) => scope(s).concat(["automations"])
+export const automationRunsKey = (s: ServerSettings, routineId: string, limit?: number) =>
+  scope(s).concat(["automation-runs", routineId, limit ?? "all"])
 /** Every read of one routine's runs whatever its `limit` — the list page reads
     the newest run alone, the detail page reads them all, and a fire or a stop
     goes stale for both. Mutations invalidate this, never one limit's key. */
-export const routineRunsFamilyKey = (s: ServerSettings, routineId: string) =>
-  scope(s).concat(["routine-runs", routineId])
+export const automationRunsFamilyKey = (s: ServerSettings, routineId: string) =>
+  scope(s).concat(["automation-runs", routineId])
 /** The prefix every runs key hangs off — for invalidating a routine's runs
     without naming the routine (a delete cascades them all). */
-export const allRoutineRunsKey = (s: ServerSettings) => scope(s).concat(["routine-runs"])
-export const routineTriggersKey = (s: ServerSettings, routineId: string) =>
-  scope(s).concat(["routine-triggers", routineId])
+export const allAutomationRunsKey = (s: ServerSettings) => scope(s).concat(["automation-runs"])
+export const automationTriggersKey = (s: ServerSettings, routineId: string) =>
+  scope(s).concat(["automation-triggers", routineId])
 
 /* Ad-hoc read surfaces (Phase 2). */
 export const projectStatsKey = (s: ServerSettings, projectId: string) =>

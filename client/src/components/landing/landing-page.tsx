@@ -23,7 +23,6 @@ import * as React from "react"
 import { useNavigate, useSearchParams } from "react-router"
 import {
   BellIcon,
-  CalendarClockIcon,
   MessageSquarePlusIcon,
   RepeatIcon,
   SettingsIcon,
@@ -41,10 +40,9 @@ import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { ProjectIcon } from "@/components/entity-icon"
 import {
+  automationsPath,
   boardPath,
   projectPath,
-  routinesPath,
-  schedulesPath,
   settingsRootPath,
   threadPath,
 } from "@/lib/router"
@@ -250,11 +248,8 @@ function QuickActions({
       <button type="button" className={chip} onClick={go(boardPath())}>
         <SquareKanbanIcon className="size-4" /> Tasks
       </button>
-      <button type="button" className={chip} onClick={go(routinesPath())}>
-        <RepeatIcon className="size-4" /> Routines
-      </button>
-      <button type="button" className={chip} onClick={go(schedulesPath())}>
-        <CalendarClockIcon className="size-4" /> Scheduled
+      <button type="button" className={chip} onClick={go(automationsPath())}>
+        <RepeatIcon className="size-4" /> Automations
       </button>
       <button type="button" className={chip} onClick={go("/notifications")}>
         <BellIcon className="size-4" /> Inbox

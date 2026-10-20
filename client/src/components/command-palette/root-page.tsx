@@ -82,7 +82,7 @@ import { currentChoiceLabel } from "@/lib/session-options"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
+import { boardPath, newAutomationPath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
 import { runShortcut } from "@/hooks/use-hotkey"
 import {
   activityAt,
@@ -96,7 +96,7 @@ import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
 import { usePins } from "@/lib/pins"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
-import { useRoutines } from "@/lib/queries/routines"
+import { useAutomations } from "@/lib/queries/automations"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { usePrompt } from "@/components/prompt-dialog"
@@ -130,7 +130,7 @@ export function RootPage() {
   const projects = useProjects()
   const profiles = useProfiles()
   const agents = useAgents()
-  const routines = useRoutines().data ?? []
+  const automations = useAutomations().data ?? []
   /* See search-page: a running mark per row, without subscribing to the
      stream that produces it. */
   const liveTurnActive = useLiveTurnActive()
@@ -211,18 +211,18 @@ export function RootPage() {
       onSelect: () => palette.descend("thread-search"),
     })
   }
-  if (routines.length > 0) {
+  if (automations.length > 0) {
     /* The one surface that answers "what have these been doing while I wasn't
        watching?" — one chord away on purpose, because a standing grant to act
        unattended is only tolerable if checking on it is cheap. */
     items.push({
-      id: "jump:routine-activity",
+      id: "jump:automation-activity",
       group: "Jump",
-      title: "Routine activity…",
+      title: "Automation activity…",
       keywords: "runs verdicts automation history blocked failed digest what happened",
       icon: <Zap />,
-      subtitle: "Every routine's recent runs, newest first",
-      onSelect: () => palette.descend("routine-activity"),
+      subtitle: "Every automation's recent runs, newest first",
+      onSelect: () => palette.descend("automation-activity"),
     })
   }
   if (projects.length > 0) {
@@ -320,26 +320,26 @@ export function RootPage() {
     subtitle: "Adopt sessions an agent already holds — Claude Code, Codex, OpenCode",
     onSelect: () => palette.run(palette.importThreads),
   })
-  /* Under Create because that is what a routine makes: threads, without you.
+  /* Under Create because that is what an automation makes: threads, or messages, without you.
      The activity row is under Jump instead — it goes somewhere to read. */
   items.push({
-    id: "create:routine",
+    id: "create:automation",
     group: "Create",
-    title: "New routine",
+    title: "New automation",
     keywords: "automation schedule cron webhook git trigger unattended fires on its own",
     icon: <Zap />,
-    subtitle: "A thread that starts itself — on a schedule, a webhook or a push",
-    onSelect: () => palette.run(() => void navigate(newRoutinePath())),
+    subtitle: "A prompt that runs itself — on a schedule, a webhook or a push",
+    onSelect: () => palette.run(() => void navigate(newAutomationPath())),
   })
-  if (routines.length > 0) {
+  if (automations.length > 0) {
     items.push({
-      id: "create:run-routine",
+      id: "create:run-automation",
       group: "Create",
-      title: "Run routine…",
+      title: "Run automation…",
       keywords: "automation fire now start trigger",
       icon: <Zap />,
-      meta: [{ label: `${routines.length} routine${routines.length === 1 ? "" : "s"}`, dim: true }],
-      onSelect: () => palette.descend("routines"),
+      meta: [{ label: `${automations.length} automation${automations.length === 1 ? "" : "s"}`, dim: true }],
+      onSelect: () => palette.descend("automations"),
     })
   }
   items.push({

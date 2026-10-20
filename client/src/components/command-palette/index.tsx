@@ -77,7 +77,7 @@ import {
   ThemePage,
 } from "./choice-pages"
 import { RootPage } from "./root-page"
-import { RoutineActivityPage, RunRoutinePage } from "./routine-pages"
+import { AutomationActivityPage, RunAutomationPage } from "./automation-pages"
 import { SearchPage } from "./search-page"
 import { PaletteRowsProvider, Row, toMenuItems, type PaletteGroup } from "./list"
 
@@ -395,9 +395,9 @@ const PageBody = React.memo(function PageBody({ page }: { page: PageId }) {
       return <EffortPage />
     case "mode":
       return <ModePage />
-    case "routines":
-      return <RunRoutinePage />
-    case "routine-activity":
-      return <RoutineActivityPage />
+    case "automations":
+      return <RunAutomationPage />
+    case "automation-activity":
+      return <AutomationActivityPage />
   }
 })

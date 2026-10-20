@@ -14,20 +14,20 @@ import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer
    therefore no catalog, so only harness commands open the menu there.
 
    **A second kind of command is the harness's own** (`HARNESS_COMMANDS`), and
-   it is the one thing here the send path has to know about: `/schedule` opens
-   the schedule form with what is already typed, and must never be handed to the
+   it is the one thing here the send path has to know about: `/automate` opens
+   the automation form, pinned to this thread, with what is already typed, and must never be handed to the
    agent as a prompt. They are declared in the same `acp.AvailableCommand` shape
    so the menu draws one list, and they are **shadowed by the agent's**: a
-   runtime that advertises `/schedule` of its own keeps it, and
+   runtime that advertises `/automate` of its own keeps it, and
    `harnessCommandFor` then declines to intercept — a name collision must cost
    the agent's command, never silently swallow it. */
 
 /** The harness's own commands. `_meta` is untouched — these never reach ACP. */
 export const HARNESS_COMMANDS = [
   {
-    name: "schedule",
-    description: "Send this message later, once or on a repeat",
-    input: { hint: "message to schedule (optional)" },
+    name: "automate",
+    description: "Run this prompt in this thread later, once or on a repeat",
+    input: { hint: "prompt to automate (optional)" },
   },
   /* Offered only where `session_config.canCompact` said the runtime takes the
      request — the composer filters on it — and shadowed by any runtime that
@@ -43,14 +43,14 @@ export type HarnessCommandName = (typeof HARNESS_COMMANDS)[number]["name"]
 /* Drawn with its own mark rather than the generic slash, so a row that opens a
    harness surface does not read as one more thing the agent will answer. */
 const HARNESS_ICON: Record<string, LucideIcon> = {
-  schedule: CalendarClock,
+  automate: CalendarClock,
   compact: FoldVertical,
 }
 
 
 /**
- * Read a composed message as a harness command: `/schedule do the thing` →
- * `{ name: "schedule", args: "do the thing" }`, and `null` for anything else —
+ * Read a composed message as a harness command: `/automate do the thing` →
+ * `{ name: "automate", args: "do the thing" }`, and `null` for anything else —
  * including a name the agent also advertises, which stays the agent's.
  *
  * The send path calls this *before* sending, which is what makes these commands
@@ -89,8 +89,8 @@ export function useSlashCommands(
   text: string,
   commands: acp.AvailableCommand[],
   setText: (text: string) => void,
-  /** Harness commands the caller can offer — a draft thread cannot be scheduled
-      (nothing exists to schedule against yet), so it passes none. */
+  /** Harness commands the caller can offer — a draft thread cannot be automated
+      (nothing exists to pin an automation to yet), so it passes none. */
   harness: readonly acp.AvailableCommand[] = HARNESS_COMMANDS
 ): SlashCommandState {
   const [selected, setSelected] = React.useState(0)

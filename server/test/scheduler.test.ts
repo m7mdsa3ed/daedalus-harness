@@ -148,5 +148,28 @@ test("the hour that happens twice fires once", () => {
   assert.equal(second.at, at("2026-11-02T06:30:00Z") + staggerMs(ROUTINE, DAY));
 });
 
+// ---- fixed intervals ----
+
+test("an interval is anchored on its last slot, unstaggered, and rolled past now", () => {
+  const slot = at("2026-03-01T12:00:00Z");
+  const t = { ...base, intervalMs: 600_000, nextFireAt: slot };
+  // Due and fired a little late: the next slot keeps the grid, not the fire time.
+  const next = nextSlot({ ...t, lastFiredAt: slot + 30_000 }, slot + 30_000);
+  assert.equal(next.at, slot + 600_000);
+  // Down for an hour: one future slot on the same grid, not six.
+  assert.equal(nextSlot(t, slot + 3600_000 + 1).at, slot + 4200_000);
+});
+
+test("an interval with no anchor starts one interval from the last fire, else from now", () => {
+  const now = at("2026-03-01T12:00:00Z");
+  assert.equal(nextSlot({ ...base, intervalMs: 600_000 }, now).at, now + 600_000);
+  assert.equal(nextSlot({ ...base, intervalMs: 600_000, lastFiredAt: now - 100_000 }, now).at, now + 500_000);
+});
+
+test("an interval below the one-minute floor is raised to it", () => {
+  const now = at("2026-03-01T12:00:00Z");
+  assert.equal(nextSlot({ ...base, intervalMs: 1000 }, now).at, now + 60_000);
+});
+
 console.log(`\n${passed} passed${failures.length ? `, ${failures.length} failed: ${failures.join(", ")}` : ""}`);
 process.exit(failures.length ? 1 : 0);

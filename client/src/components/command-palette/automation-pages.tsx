@@ -1,8 +1,8 @@
-/* ── The two routine pages ──
-   `RunRoutinePage` is a doing page in the shape of every other second screen
+/* ── The two automation pages ──
+   `RunAutomationPage` is a doing page in the shape of every other second screen
    here: `PaletteItem[]` through `ItemList`, ranked by the palette's own matcher.
 
-   `RoutineActivityPage` is the odd one — a *reading* page in a palette of
+   `AutomationActivityPage` is the odd one — a *reading* page in a palette of
    commands. It is here rather than on the routines index for one reason: the
    question it answers ("what have these been doing while I wasn't looking?") is
    asked from wherever you happen to be, and a standing grant to run commands
@@ -23,13 +23,13 @@ import * as React from "react"
 import { AlertTriangle, Bot, History, Loader2, Zap } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { RUN_STATUS } from "@/components/routines/status"
+import { RUN_STATUS } from "@/components/automations/status"
 import { useSidebar } from "@/components/ui/sidebar"
 import { requestComposerFocus } from "@/lib/composer-focus"
 import { reportError } from "@/lib/errors"
-import { routinePath, routinesPath, threadPath } from "@/lib/router"
-import { useRunRoutine, useRoutines } from "@/lib/queries/routines"
-import { routineRunsKey } from "@/lib/queries/keys"
+import { automationPath, automationsPath, threadPath } from "@/lib/router"
+import { useRunAutomation, useAutomations } from "@/lib/queries/automations"
+import { automationRunsKey } from "@/lib/queries/keys"
 import { useQueryClient } from "@tanstack/react-query"
 import { useServer } from "@/lib/server-context"
 import { api, type Routine, type RoutineRun } from "@/lib/settings"
@@ -63,7 +63,7 @@ const SEEN_KEY = "ui.routineDigestSeenAt"
     (`preflight`), and a plain run there would come back as a `skipped` row the
     user never sees. Sending the dry run instead does what they meant. */
 function fire(routine: Routine, run: (id: string, opts: { dryRun?: boolean }) => Promise<unknown>) {
-  const dryRun = !routine.dryRunCompleted
+  const dryRun = routine.runsIn === "thread" && !routine.dryRunCompleted
   run(routine.id, { dryRun })
     .then(() =>
       toast.success(
@@ -73,15 +73,15 @@ function fire(routine: Routine, run: (id: string, opts: { dryRun?: boolean }) =>
           : undefined
       )
     )
-    .catch((err) => reportError(err, "Couldn't run the routine"))
+    .catch((err) => reportError(err, "Couldn't run the automation"))
 }
 
 /** Every routine as something to fire now. */
-export function RunRoutinePage() {
+export function RunAutomationPage() {
   const palette = usePalette()
   const projects = useProjects()
-  const allRoutines = useRoutines().data ?? []
-  const runRoutine = useRunRoutine()
+  const allRoutines = useAutomations().data ?? []
+  const runRoutine = useRunAutomation()
   const navigate = useNavigate()
 
   const projectName = (id: string) =>
@@ -91,7 +91,7 @@ export function RunRoutinePage() {
     id: `routine:${routine.id}`,
     group: "Run now",
     title: routine.name,
-    keywords: `routine automation ${routine.description ?? ""} ${projectName(routine.projectId)}`,
+    keywords: `automation routine schedule ${routine.description ?? ""} ${projectName(routine.projectId)}`,
     icon: <Zap />,
     muted: !routine.enabled,
     subtitle: routine.description,
@@ -114,11 +114,11 @@ export function RunRoutinePage() {
   items.push({
     id: "routine:manage",
     group: "",
-    title: "Manage routines…",
+    title: "Manage automations…",
     keywords: "new edit triggers autonomy schedule webhook git",
     icon: <Zap />,
     rank: "bottom",
-    onSelect: () => palette.run(() => void navigate(routinesPath())),
+    onSelect: () => palette.run(() => void navigate(automationsPath())),
   })
 
   return <ItemList items={items} query={palette.query} />
@@ -133,9 +133,9 @@ export function RunRoutinePage() {
  * reopening the page within a session redraws from memory while the refresh
  * runs behind it.
  */
-export function RoutineActivityPage() {
+export function AutomationActivityPage() {
   const palette = usePalette()
-  const allRoutines = useRoutines().data ?? []
+  const allRoutines = useAutomations().data ?? []
   const navigate = useNavigate()
   const { setOpenMobile } = useSidebar()
   const query = palette.query.trim().toLowerCase()
@@ -162,7 +162,7 @@ export function RoutineActivityPage() {
     Promise.allSettled(
       routines.map((routine) =>
         qc.fetchQuery({
-          queryKey: routineRunsKey(settings, routine.id, RUNS_PER_ROUTINE),
+          queryKey: automationRunsKey(settings, routine.id, RUNS_PER_ROUTINE),
           queryFn: ({ signal }) =>
             api<RoutineRun[]>(
               settings,
@@ -195,7 +195,7 @@ export function RoutineActivityPage() {
   }, [routines, qc, settings])
 
   const nameOf = (routineId: string) =>
-    routines.find((routine) => routine.id === routineId)?.name ?? "Deleted routine"
+    routines.find((routine) => routine.id === routineId)?.name ?? "Deleted automation"
 
   const runs: RoutineRun[] = fetched
     .filter((run) => !query || nameOf(run.routineId).toLowerCase().includes(query))
@@ -213,7 +213,7 @@ export function RoutineActivityPage() {
     palette.run(() => {
       setOpenMobile(false)
       if (run.sessionId) requestComposerFocus(run.sessionId)
-      void navigate(run.sessionId ? threadPath(run.sessionId) : routinePath(run.routineId))
+      void navigate(run.sessionId ? threadPath(run.sessionId) : automationPath(run.routineId))
     })
 
   const runRows = runs.map((run) =>
@@ -224,12 +224,12 @@ export function RoutineActivityPage() {
      and one of them ("the request never arrived") is a failure, which must
      never be drawn as emptiness. */
   const emptyNote = (): PaletteItem => {
-    if (routines.length === 0) return note("no-routines", "No routines yet.")
+    if (routines.length === 0) return note("no-routines", "No automations yet.")
     if (loading)
       return note("loading", "Reading run history…", <Loader2 className="animate-spin" />)
     if (failed)
       return note("failed", "Couldn't read the run history.", <AlertTriangle />, "warn")
-    if (query) return note("no-match", `No routine named “${palette.query.trim()}” has run.`)
+    if (query) return note("no-match", `No automation named “${palette.query.trim()}” has run.`)
     return note("nothing", "Nothing has run yet.")
   }
 

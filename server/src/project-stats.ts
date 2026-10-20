@@ -24,7 +24,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   db,
   knowledge as knowledgeTable,
-  scheduledMessages,
+  routines,
   sessionEvents,
   sessions as sessionsTable,
   webSearchUsage,
@@ -186,15 +186,15 @@ export async function projectStats(projectId: string, now = Date.now()): Promise
             total: countOf(
               await db
                 .select({ n: sql<number>`count(*)` })
-                .from(scheduledMessages)
-                .where(inArray(scheduledMessages.sessionId, ids))
+                .from(routines)
+                .where(and(eq(routines.runsIn, "session"), inArray(routines.sessionId, ids)))
                 ,
             ),
             enabled: countOf(
               await db
                 .select({ n: sql<number>`count(*)` })
-                .from(scheduledMessages)
-                .where(and(inArray(scheduledMessages.sessionId, ids), eq(scheduledMessages.enabled, 1)))
+                .from(routines)
+                .where(and(eq(routines.runsIn, "session"), inArray(routines.sessionId, ids), eq(routines.enabled, true)))
                 ,
             ),
           }

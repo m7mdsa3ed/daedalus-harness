@@ -48,7 +48,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 import { promisify } from "node:util";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -59,6 +59,7 @@ import {
   routineSkills,
   routineTriggers as triggersTable,
   routines as routinesTable,
+  sessions as sessionsTable,
   type RoutineAction,
   type RoutineActionRecord,
   type RoutineBody,
@@ -72,7 +73,7 @@ import {
   type LinkSet,
   type LinkTables,
 } from "./db/links.js";
-import type { AutonomyPolicy, Stance } from "./autonomy.js";
+import { ASK_EVERYTHING, type AutonomyPolicy, type Stance } from "./autonomy.js";
 import { getProfile } from "./profiles.js";
 import { getProject } from "./projects.js";
 import { getAgent } from "./registry.js";
@@ -137,6 +138,16 @@ const PAYLOAD_MAX = 32 * 1024;
     `totalTimeoutSec` (an hour by default, three at most); this is the outer
     bound so a wait can never outlive the thing it is waiting for. */
 const WORKFLOW_WAIT_CAP_MS = 3 * 60 * 60_000;
+
+/** Consecutive failed runs after which a routine switches itself off. */
+export const AUTO_DISABLE_AFTER = 5;
+
+/** Why a fire did not run: a short `code` (stored as `routine_runs.skip_reason`)
+    and the sentence (`routine_runs.error`). */
+interface Refusal {
+  code: string;
+  error: string;
+}
 
 export class RoutineError extends HttpError {
   declare status: 400 | 404 | 409;
@@ -256,9 +267,17 @@ const RoutineFields = {
   name: z.string().trim().min(1).max(200),
   description: z.string().max(2000).nullable().optional(),
   enabled: z.boolean().optional(),
-  projectId: z.string().min(1),
-  profileId: z.string().min(1),
-  agentId: z.string().min(1),
+  /** `thread` (default) mints a thread per fire; `session` delivers into
+      `sessionId`. For `session` the three ids below are derived from that
+      thread when omitted. For `thread` they are required (checked in
+      `createRoutine`, which answers 400). */
+  runsIn: z.enum(["thread", "session"]).optional(),
+  sessionId: z.string().min(1).nullable().optional(),
+  catchup: z.enum(["once", "none"]).optional(),
+  worktree: z.boolean().optional(),
+  projectId: z.string().min(1).optional(),
+  profileId: z.string().min(1).optional(),
+  agentId: z.string().min(1).optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
   configChoices: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
@@ -266,7 +285,9 @@ const RoutineFields = {
   output: z.record(z.string(), z.unknown()).nullable().optional(),
   onFinish: z.array(ActionSchema).max(8).optional(),
   overlap: z.enum(["skip", "queue"]).optional(),
-  autonomy: AutonomySchema,
+  /** Defaults to ask-everything; a `session` routine delivers into a thread
+      that has its own policy, so it is unused there. */
+  autonomy: AutonomySchema.optional(),
   mcpServerIds: z.array(z.string()).optional(),
   skillIds: z.array(z.string()).optional(),
   commandIds: z.array(z.string()).optional(),
@@ -282,11 +303,13 @@ export type RoutineInput = z.infer<typeof RoutineInputSchema>;
 export type RoutinePatch = z.infer<typeof RoutinePatchSchema>;
 
 const TriggerFields = {
-  kind: z.enum(["schedule", "api", "git"]),
+  kind: z.enum(["schedule", "api", "git", "manual"]),
   enabled: z.boolean().optional(),
   cron: z.string().max(200).nullable().optional(),
   tz: z.string().max(100).nullable().optional(),
   atMs: z.number().int().positive().nullable().optional(),
+  /** Fixed recurrence; one minute at the least (`MIN_FIRE_GAP_MS`). */
+  intervalMs: z.number().int().min(60_000).nullable().optional(),
   condition: z.object({ gitChangedSince: z.literal("lastRun").optional() }).nullable().optional(),
   branch: z.string().max(200).nullable().optional(),
   paths: z.array(z.string().max(400)).max(50).optional(),
@@ -306,7 +329,7 @@ export type TriggerPatch = z.infer<typeof TriggerPatchSchema>;
 // ---------------------------------------------------------------------------
 
 export async function listRoutines(): Promise<Routine[]> {
-  const rows = await db.select().from(routinesTable).orderBy(asc(routinesTable.name));
+  const rows = await db.select().from(routinesTable).where(eq(routinesTable.ephemeral, false)).orderBy(asc(routinesTable.name));
   const links = await readLinks(ROUTINE_LINKS, rows.map((r) => r.id));
   return rows.map((row) => ({ ...row, links: links.get(row.id) ?? emptyLinks() }));
 }
@@ -323,9 +346,30 @@ async function requireRoutine(id: string): Promise<Routine> {
   return routine;
 }
 
-export async function createRoutine(input: RoutineInput): Promise<Routine> {
-  const id = randomUUID();
+/** The profile/agent/project a thread runs under, for a `session` routine. */
+async function ownerOf(sessionId: string) {
+  return (await db
+    .select({ projectId: sessionsTable.projectId, profileId: sessionsTable.profileId, agentId: sessionsTable.agentId })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId))
+    .limit(1))[0];
+}
+
+export async function createRoutine(input: RoutineInput, opts: { id?: string; ephemeral?: boolean } = {}): Promise<Routine> {
+  const id = opts.id ?? randomUUID();
   const now = Date.now();
+  const runsIn = input.runsIn ?? "thread";
+  let { projectId, profileId, agentId } = input;
+  if (runsIn === "session") {
+    if (!input.sessionId) throw new RoutineError("a routine that runs in a thread needs a sessionId");
+    if (input.body.kind !== "prompt") throw new RoutineError("a routine that runs in a thread takes a prompt body");
+    const owner = await ownerOf(input.sessionId);
+    projectId ??= owner?.projectId ?? "";
+    profileId ??= owner?.profileId ?? "";
+    agentId ??= owner?.agentId ?? "";
+  } else if (!projectId || !profileId || !agentId) {
+    throw new RoutineError("projectId, profileId and agentId are required");
+  }
   await db.transaction(async (tx) => {
     await tx.insert(routinesTable)
       .values({
@@ -333,9 +377,14 @@ export async function createRoutine(input: RoutineInput): Promise<Routine> {
         name: input.name,
         description: input.description ?? null,
         enabled: input.enabled ?? true,
-        projectId: input.projectId,
-        profileId: input.profileId,
-        agentId: input.agentId,
+        projectId: projectId!,
+        profileId: profileId!,
+        agentId: agentId!,
+        runsIn,
+        sessionId: runsIn === "session" ? input.sessionId! : null,
+        catchup: input.catchup ?? "once",
+        worktree: input.worktree ?? false,
+        ephemeral: opts.ephemeral ?? false,
         model: input.model ?? "",
         effort: input.effort ?? "",
         configChoices: input.configChoices ?? {},
@@ -343,7 +392,7 @@ export async function createRoutine(input: RoutineInput): Promise<Routine> {
         output: input.output ?? null,
         onFinish: input.onFinish ?? [],
         overlap: input.overlap ?? "skip",
-        autonomy: input.autonomy as AutonomyPolicy,
+        autonomy: (input.autonomy ?? ASK_EVERYTHING) as AutonomyPolicy,
         dryRunCompleted: false,
         createdAt: now,
         updatedAt: now,
@@ -355,11 +404,22 @@ export async function createRoutine(input: RoutineInput): Promise<Routine> {
 
 export async function updateRoutine(id: string, patch: RoutinePatch): Promise<Routine> {
   const current = await requireRoutine(id);
+  const runsIn = patch.runsIn ?? current.runsIn;
+  if (runsIn === "session") {
+    if (!(patch.sessionId !== undefined ? patch.sessionId : current.sessionId)) {
+      throw new RoutineError("a routine that runs in a thread needs a sessionId");
+    }
+    if ((patch.body ?? current.body).kind !== "prompt") throw new RoutineError("a routine that runs in a thread takes a prompt body");
+  }
   await db.transaction(async (tx) => {
     const set: Partial<RoutineRow> = { updatedAt: Date.now() };
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.description !== undefined) set.description = patch.description;
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
+    if (patch.runsIn !== undefined) set.runsIn = patch.runsIn;
+    if (patch.sessionId !== undefined) set.sessionId = patch.sessionId;
+    if (patch.catchup !== undefined) set.catchup = patch.catchup;
+    if (patch.worktree !== undefined) set.worktree = patch.worktree;
     if (patch.projectId !== undefined) set.projectId = patch.projectId;
     if (patch.profileId !== undefined) set.profileId = patch.profileId;
     if (patch.agentId !== undefined) set.agentId = patch.agentId;
@@ -412,7 +472,7 @@ export async function getTrigger(id: string): Promise<RoutineTrigger | undefined
 }
 
 export async function createTrigger(routineId: string, input: TriggerInput): Promise<RoutineTrigger> {
-  requireRoutine(routineId);
+  await requireRoutine(routineId);
   const id = randomUUID();
   await db.insert(triggersTable)
     .values({
@@ -423,6 +483,7 @@ export async function createTrigger(routineId: string, input: TriggerInput): Pro
       cron: input.cron ?? null,
       tz: input.tz ?? null,
       atMs: input.atMs ?? null,
+      intervalMs: input.intervalMs ?? null,
       condition: input.condition ?? null,
       /* Left null on purpose. Computing the first fire is the scheduler's, and
          a clock this file guessed at would be a second answer to the question
@@ -447,14 +508,14 @@ export async function updateTrigger(id: string, patch: TriggerPatch): Promise<Ro
   const current = await getTrigger(id);
   if (!current) throw new RoutineError("unknown trigger", 404);
   const set: Partial<RoutineTrigger> = {};
-  for (const key of ["kind", "enabled", "cron", "tz", "atMs", "condition", "branch", "paths", "debounceMs"] as const) {
+  for (const key of ["kind", "enabled", "cron", "tz", "atMs", "intervalMs", "condition", "branch", "paths", "debounceMs"] as const) {
     if (patch[key] !== undefined) (set as Record<string, unknown>)[key] = patch[key];
   }
   /* Any change to when it fires invalidates the clock, and the sweep recomputes
      a null one. Cheaper and safer than editing `next_fire_at` here: this file
      does not know what "next" means for a cron expression, and a stale slot
      would fire the old schedule once more before correcting itself. */
-  if (patch.cron !== undefined || patch.tz !== undefined || patch.atMs !== undefined) set.nextFireAt = null;
+  if (patch.cron !== undefined || patch.tz !== undefined || patch.atMs !== undefined || patch.intervalMs !== undefined) set.nextFireAt = null;
   await db.update(triggersTable).set(set).where(eq(triggersTable.id, id));
   return (await getTrigger(id))!;
 }
@@ -626,7 +687,7 @@ export async function projectHeadOid(projectId: string): Promise<string | null> 
  */
 export async function recordSkippedRun(
   routineId: string,
-  opts: { source: RoutineSource; triggerId?: string | null; reason: string; headOid?: string | null },
+  opts: { source: RoutineSource; triggerId?: string | null; reason: string; code?: string; headOid?: string | null },
 ): Promise<RoutineRun> {
   const id = randomUUID();
   const now = Date.now();
@@ -643,6 +704,7 @@ export async function recordSkippedRun(
       dryRun: false,
       status: "skipped",
       error: opts.reason,
+      skipReason: opts.code ?? "other",
       output: null,
       verdict: null,
       actions: [],
@@ -702,6 +764,7 @@ interface RunState {
   headOid: string | null;
   status: RoutineRunStatus;
   error: string | null;
+  skipReason: string | null;
   sessionId: string | null;
   output: string;
   outputBytes: number;
@@ -851,6 +914,7 @@ export class RoutineEngine {
       headOid: opts.headOid ?? null,
       status: "running",
       error: null,
+      skipReason: null,
       sessionId: null,
       output: "",
       outputBytes: 0,
@@ -868,9 +932,10 @@ export class RoutineEngine {
     await this.insert(run);
 
     this.runs.set(run.id, run);
+    if (routine.runsIn === "session") return await this.deliverToSession(run);
     const refusal = (await this.preflight(run)) ?? (await this.quotaFloor(run));
     if (refusal) {
-      await this.close(run, "skipped", refusal);
+      await this.close(run, "skipped", refusal.error, { skipReason: refusal.code });
       this.runs.delete(run.id);
       return (await getRun(run.id))!;
     }
@@ -896,9 +961,9 @@ export class RoutineEngine {
 
   /** The synchronous refusals, in the order they cost least to check. Returns
       the reason a `skipped` row should carry, or null to go ahead. */
-  private async preflight(run: RunState): Promise<string | null> {
+  private async preflight(run: RunState): Promise<Refusal | null> {
     const routine = run.routine;
-    if (!routine.enabled) return "the routine is disabled";
+    if (!routine.enabled) return { code: "disabled", error: "the routine is disabled" };
     /* A blanket `allow` is a standing grant to run any command the agent
        chooses in this project's cwd, with no human in the loop, no sandbox and
        no network allowlist. It is refused until one run has completed under
@@ -906,21 +971,21 @@ export class RoutineEngine {
        dismissed dialog. Enforced here and not only in the form: the form is one
        client, and this row is reachable through the API. */
     if (!routine.dryRunCompleted && !run.dryRun && blanketAllow(routine.autonomy)) {
-      return "this routine grants blanket `allow` and has not completed a run yet — run it once forced to ask first";
+      return { code: "blanket-allow", error: "this routine grants blanket `allow` and has not completed a run yet — run it once forced to ask first" };
     }
-    if (!(await getProfile(routine.profileId))) return "this routine's profile no longer exists";
-    if (!(await getProject(routine.projectId))) return "this routine's project no longer exists";
-    if (routine.body.kind === "workflow" && !this.workflows) return "the workflow engine is not available";
-    if (run.chainDepth > MAX_CHAIN_DEPTH) return `routine chaining stopped at ${MAX_CHAIN_DEPTH} deep`;
+    if (!(await getProfile(routine.profileId))) return { code: "profile-missing", error: "this routine's profile no longer exists" };
+    if (!(await getProject(routine.projectId))) return { code: "project-missing", error: "this routine's project no longer exists" };
+    if (routine.body.kind === "workflow" && !this.workflows) return { code: "workflow-unavailable", error: "the workflow engine is not available" };
+    if (run.chainDepth > MAX_CHAIN_DEPTH) return { code: "chain-depth", error: `routine chaining stopped at ${MAX_CHAIN_DEPTH} deep` };
     /* `skip` is the default and it is what stops a nightly review that has
        overrun from becoming two agents in one cwd. A run still waiting its turn
        under `queue` counts as live for this: two queued fires behind one live
        run are two agents in a moment. */
     if (routine.overlap === "skip" && this.liveFor(routine.id).some((r) => r.id !== run.id)) {
-      return "a run of this routine is still going";
+      return { code: "overlap", error: "a run of this routine is still going" };
     }
     if (this.liveRuns >= MAX_LIVE_ROUTINE_RUNS) {
-      return `the machine already has ${this.liveRuns} routine run(s) going`;
+      return { code: "capacity", error: `the machine already has ${this.liveRuns} routine run(s) going` };
     }
     return null;
   }
@@ -935,7 +1000,7 @@ export class RoutineEngine {
    * answer and not a failure, and treating a missing reading as 0% remaining
    * would make every API-key routine permanently unfireable.
    */
-  private async quotaFloor(run: RunState): Promise<string | null> {
+  private async quotaFloor(run: RunState): Promise<Refusal | null> {
     const floor = run.routine.autonomy.minQuotaPercent;
     if (!floor) return null;
     const agent = await getAgent(run.routine.agentId);
@@ -947,13 +1012,59 @@ export class RoutineEngine {
       if (quota.status !== "subscription" || quota.windows.length === 0) return null;
       const used = Math.max(...quota.windows.map((w) => w.usedPercent));
       const left = 100 - used;
-      if (left < floor) return `only ${Math.round(left)}% of the plan is left (this routine asks for ${floor}%)`;
+      if (left < floor) return { code: "quota", error: `only ${Math.round(left)}% of the plan is left (this routine asks for ${floor}%)` };
       return null;
     } catch {
       /* A probe that could not run is not an answer about the plan. Refusing
          the fire on it would mean a missing `claude` binary silently disables
          every routine that named a floor. */
       return null;
+    }
+  }
+
+  // ---- runs in a thread ----
+
+  /**
+   * `runsIn: "session"`: the prompt goes into the routine's own existing thread.
+   *
+   * The decisions that make a run `skipped` (disabled, the thread gone or in
+   * the trash) are made here, before the row is returned, so a sweep sees them
+   * at once. The delivery itself — which may revive a retired thread — is not
+   * awaited: a slow respawn must not hold a sweep that has other routines due.
+   * A delivery is "completed" when the thread accepted the prompt (running or
+   * queued behind its turn); the turn's own outcome is that thread's.
+   */
+  private async deliverToSession(run: RunState): Promise<RunView> {
+    const refusal = this.sessionRefusal(run.routine);
+    if (refusal) {
+      await this.close(run, "skipped", refusal.error, { skipReason: refusal.code });
+      this.runs.delete(run.id);
+      return (await getRun(run.id))!;
+    }
+    run.sessionId = run.routine.sessionId;
+    await this.persist(run);
+    void this.deliverNow(run);
+    return (await getRun(run.id))!;
+  }
+
+  private sessionRefusal(routine: Routine): Refusal | null {
+    if (!routine.enabled) return { code: "disabled", error: "the routine is disabled" };
+    if (routine.body.kind !== "prompt") return { code: "invalid", error: "a routine that runs in a thread takes a prompt body" };
+    const session = routine.sessionId ? this.manager.get(routine.sessionId) : undefined;
+    if (!session) return { code: "thread-missing", error: "the thread no longer exists" };
+    if (session.deletedAt !== null) return { code: "thread-trashed", error: "the thread is in the trash" };
+    return null;
+  }
+
+  private async deliverNow(run: RunState): Promise<void> {
+    const body = run.routine.body as Extract<RoutineBody, { kind: "prompt" }>;
+    try {
+      await promptThread(this.manager, run.routine.sessionId!, firePrompt(body.text, run.payload));
+      await this.close(run, "completed", null);
+    } catch (error) {
+      await this.close(run, "failed", describe(error));
+    } finally {
+      this.runs.delete(run.id);
     }
   }
 
@@ -967,7 +1078,7 @@ export class RoutineEngine {
        or the machine filled up while this fire sat behind another. */
     const refusal = await this.preflight(run);
     if (refusal) {
-      await this.close(run, "skipped", refusal);
+      await this.close(run, "skipped", refusal.error, { skipReason: refusal.code });
       return;
     }
     this.liveRuns += 1;
@@ -1223,10 +1334,16 @@ export class RoutineEngine {
 
   /** Finish the run: status, actions, row. Idempotent — a cancel racing a
       settle must not run the finish actions twice. */
-  private async close(run: RunState, status: RoutineRunStatus, error: string | null, opts: { retire?: Session | null } = {}): Promise<void> {
+  private async close(
+    run: RunState,
+    status: RoutineRunStatus,
+    error: string | null,
+    opts: { retire?: Session | null; skipReason?: string } = {},
+  ): Promise<void> {
     if (terminal(run.status)) return;
     run.status = status;
     run.error = error;
+    run.skipReason = status === "skipped" ? (opts.skipReason ?? "other") : null;
     run.endedAt = Date.now();
     await this.persist(run);
     if (opts.retire) this.manager.retire(opts.retire);
@@ -1239,6 +1356,39 @@ export class RoutineEngine {
       }
     }
     if (run.sessionId && run.routine.onFinish.length) void this.finish(run);
+    if (status === "failed" || run.skipReason?.startsWith("thread-")) await this.pauseOnStreak(run);
+  }
+
+  /**
+   * Five failed runs in a row switch the routine off and say so. "Failed" is a
+   * run that failed, or one that could not be delivered because its thread is
+   * gone; a skip for any other reason (overlap, quota, nothing changed) is not
+   * the routine's fault and neither ends nor extends the streak. Only runs
+   * since the routine was last edited count, so re-enabling it gives it a fresh
+   * five. The notice is a push now; the inbox row is the inbox phase's.
+   */
+  private async pauseOnStreak(run: RunState): Promise<void> {
+    try {
+      const row = (await db.select().from(routinesTable).where(eq(routinesTable.id, run.routine.id)).limit(1))[0];
+      if (!row || !row.enabled) return;
+      const last = await db
+        .select({ status: runsTable.status, skipReason: runsTable.skipReason })
+        .from(runsTable)
+        .where(and(eq(runsTable.routineId, row.id), gt(runsTable.startedAt, row.updatedAt)))
+        .orderBy(desc(runsTable.startedAt))
+        .limit(AUTO_DISABLE_AFTER);
+      const failing = (r: { status: string; skipReason: string | null }) =>
+        r.status === "failed" || (r.status === "skipped" && !!r.skipReason?.startsWith("thread-"));
+      if (last.length < AUTO_DISABLE_AFTER || !last.every(failing)) return;
+      await db.update(routinesTable).set({ enabled: false, updatedAt: Date.now() }).where(eq(routinesTable.id, row.id));
+      await this.deps.notify?.(
+        `${row.name} was paused`,
+        `Disabled after ${AUTO_DISABLE_AFTER} failed runs in a row${run.error ? `: ${run.error}` : ""}`,
+        {},
+      );
+    } catch (error) {
+      console.error("[routines] could not check the failure streak", error);
+    }
   }
 
   /** The `onFinish` actions, once, after the turn settled and before the run's
@@ -1346,6 +1496,7 @@ export class RoutineEngine {
         dryRun: run.dryRun,
         status: run.status,
         error: null,
+        skipReason: null,
         output: null,
         verdict: null,
         actions: [],
@@ -1362,6 +1513,7 @@ export class RoutineEngine {
         sessionId: run.sessionId,
         status: run.status,
         error: run.error,
+        skipReason: run.skipReason,
         output: run.output || null,
         verdict: run.verdict ?? null,
         actions: run.actions,
@@ -1394,6 +1546,33 @@ export function activeRoutineEngine(): RoutineEngine | null {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Send one prompt to an existing thread, reviving its process first if it has
+ * none. A prompt that lands mid-turn is queued behind it (SessionManager.prompt).
+ * Throws when the thread cannot take it; `scheduler.fire` is the swallowing
+ * wrapper, a `session` routine's run records the throw as `failed`.
+ */
+export async function promptThread(manager: SessionManager, sessionId: string, text: string): Promise<void> {
+  const session = manager.get(sessionId);
+  if (!session || session.deletedAt !== null) throw new RoutineError("the thread is gone", 404);
+  if (session.bridge && !session.exited) {
+    // A live bridge may still be booting (acpSessionId unset until session/new
+    // answers); `ready` is the handshake's own promise and cheap once resolved.
+    await session.bridge.ready;
+    await manager.prompt(sessionId, text);
+    return;
+  }
+  // Idle-retired or pre-restart: respawn + session/load, then send.
+  const profile = await getProfile(session.profileId);
+  const project = await getProject(session.projectId);
+  if (!profile || !project) throw new RoutineError("the thread's profile or project no longer exists", 404);
+  await manager.respawn(sessionId, profile, session.agentId, project, session.model, session.effort, { revive: true });
+  const revived = manager.get(sessionId);
+  if (!revived?.bridge || revived.exited) throw new RoutineError("the thread could not be revived", 409);
+  await revived.bridge.ready;
+  await manager.prompt(sessionId, text);
+}
 
 function terminal(status: RoutineRunStatus): boolean {
   return status !== "running";

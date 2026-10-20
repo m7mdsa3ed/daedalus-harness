@@ -48,11 +48,13 @@ async function routineNameFor(sessionId: string | undefined): Promise<string | n
       .limit(1))[0];
     if (!run) return null;
     const routine = (await db
-      .select({ name: routines.name })
+      .select({ name: routines.name, runsIn: routines.runsIn })
       .from(routines)
       .where(eq(routines.id, run.routineId))
       .limit(1))[0];
-    return routine?.name ?? null;
+    /* A `session`-mode run only delivers into a thread that was somebody's own,
+       so that thread is not "a run of" the routine. */
+    return routine && routine.runsIn === "thread" ? routine.name : null;
   } catch {
     return null;
   }

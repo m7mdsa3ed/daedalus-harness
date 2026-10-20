@@ -69,7 +69,9 @@ import {
 import type { SessionManager } from "../sessions.js";
 import { crud } from "./helpers.js";
 
-/* ── Scheduled messages ──
+/* ── Scheduled messages (DEPRECATED alias) ──
+   Thin alias over routines with `runsIn: "session"` (scheduler.ts); new callers
+   use /api/routines. Ids are the routine's.
    Server-delivered prompts for a thread: the client only says "send `text` at
    `time` (opt. recurring)"; the sweep in scheduler.ts owns the firing, so a
    scheduled turn happens whether or not any browser is attached. Schedules a

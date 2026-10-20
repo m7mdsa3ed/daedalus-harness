@@ -6,12 +6,11 @@ import {
   AppWindowIcon,
   BellIcon,
   BotIcon,
-  CalendarClockIcon,
   MessageSquareIcon,
   SquareKanbanIcon,
   SquarePenIcon,
   SquareTerminalIcon,
-  ZapIcon,
+  RepeatIcon,
   type LucideIcon,
 } from "lucide-react"
 
@@ -39,8 +38,7 @@ export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
 const PAGE_ICONS: Record<string, LucideIcon> = {
   home: SquarePenIcon,
   board: SquareKanbanIcon,
-  routines: ZapIcon,
-  schedules: CalendarClockIcon,
+  automations: RepeatIcon,
   notifications: BellIcon,
   agents: BotIcon,
 }

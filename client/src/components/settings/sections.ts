@@ -126,6 +126,7 @@ export const SETTINGS_SECTIONS = [
     sub: [
       { path: "import", page: lazyPage(() => import("./mcp"), "McpImportPage") },
       { path: "browse", page: lazyPage(() => import("./mcp"), "McpBrowsePage") },
+      { path: "browse/detail", page: lazyPage(() => import("./mcp"), "McpRegistryDetailPage") },
       /* A chunk of its own: the contract rendering is a page somebody
          navigates to, and the library list must not carry it. */
       { path: ":entryId/tools", page: lazyPage(() => import("./mcp-detail"), "McpDetailPage") },
