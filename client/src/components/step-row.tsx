@@ -379,6 +379,16 @@ export const StepRow = React.memo(function StepRow({
                   background (`KIND_CHIPS`), and a failed one wears the red a
                   failure claims everywhere else. Absolute so the column's
                   geometry — which the rail is tuned to — does not move. */}
+              {/* An opaque disc under the translucent tint: the run's rail
+                  meets the mark at its edges, and a see-through mark read as
+                  the line broken behind it. It takes the row's hover ground
+                  with the row, so the disc never darkens a hovered line. */}
+              {iconChip && (
+                <span
+                  aria-hidden
+                  className={cn("absolute size-5 rounded-full bg-background transition-colors duration-150", expandable && "group-hover/step:bg-muted")}
+                />
+              )}
               {iconChip && (
                 <span
                   aria-hidden
