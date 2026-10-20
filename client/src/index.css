@@ -1699,12 +1699,14 @@ html[data-window-controls-overlay="true"] {
 }
 
 /* ── A run's rail ──
-   One straight line down the column the header's chevron and every step's
-   mark share, broken only by the marks themselves — so the steps sit *on*
-   the line, from the header to the last one. Measured, not tuned:
-   - the header's chevron and each step's mark are the same 20px slot at the
-     row's content edge, and the rail no longer indents, so the line's centre
-     is 10px in (`--rail-x`, the 1px line centred on it);
+   One straight line down the column every step's mark shares, broken only
+   by the marks themselves — so the steps sit *on* the line, from the header
+   to the last one. Measured, not tuned:
+   - a step's mark is the 20px slot at its row's content edge, so in the
+     row's box the line's centre is 10px in (`--rail-x`, the 1px line centred
+     on it); the rail indents its rows `ps-7` (28px), which puts that column
+     exactly under the first disc of the header's stack (the 20px chevron
+     slot + the header's gap-2), so the line comes down out of that disc;
    - a step's disc is 20px in an `h-6` slot under `py-0.5`: it spans 4px to
      24px down its row (`--rail-mark-top` / `--rail-mark-bottom`), so the piece
      above ends on it and the piece below starts under it;
@@ -1765,12 +1767,13 @@ html[data-window-controls-overlay="true"] {
   top: calc(var(--rail-up) * -1);
   bottom: calc(var(--rail-gap) * -1);
 }
-/* The header's stretch: from just under its chevron (the 14px centre + the
-   size-3.5 glyph's 7px + 1px of air) to its own bottom edge. 13.5px = the
-   row's 4px bleed padding + the slot's 10px centre − half the line. */
+/* The header's stretch: from the bottom edge of its stack's first disc (the
+   20px disc centred 14px down: 24px) to its own bottom edge. 41.5px = the
+   row's 4px bleed padding + the 20px chevron slot + the gap-2 + the disc's
+   10px centre − half the line — the same column as the indented steps' marks. */
 .run-rail-head::after {
-  inset-inline-start: 13.5px;
-  top: 22px;
+  inset-inline-start: 41.5px;
+  top: 24px;
   bottom: 0;
 }
 

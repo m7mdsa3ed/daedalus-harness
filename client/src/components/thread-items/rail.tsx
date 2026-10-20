@@ -8,14 +8,16 @@ import * as React from "react"
 /** How much of a running group stays on screen without being expanded. */
 export const PEEK = 3
 
-/** The list nested steps hang off: one for a run, a subagent's transcript
-    and a shell run's children alike. No indent: a child's mark sits in the
-    column of its parent's chevron (or mark), which is the column the rail is
-    drawn down, so the steps sit on the line (index.css "A run's rail"). Rows
-    keep `space-y-0.5` (2px) so neighbouring hover grounds nearly touch.
+/** The indent nested steps hang off: one for a run, a subagent's transcript
+    and a shell run's children alike, so nested steps read as steps and not as
+    a second kind of list. One step, `ps-7`, is the parent row's title column
+    (the 20px mark slot + the gap-2 to the title), so a child's mark sits under
+    its parent's title — under the first disc of a run header's stack, which
+    is where the rail comes down from (index.css "A run's rail"). Rows keep
+    `space-y-0.5` (2px) so neighbouring hover grounds nearly touch.
     `pt`, not `mt`: inside the animated run clip a margin collapses through the
     moment overflow is restored, so the run shrank 2px after every open. */
-export const RUN_RAIL_CLASS = "run-rail pt-0.5 space-y-0.5"
+export const RUN_RAIL_CLASS = "run-rail pt-0.5 space-y-0.5 ps-7"
 
 /* The rail itself is CSS (`.run-rail` in index.css): one trunk under the
    parent's mark and an elbow into each child's, drawn per row so the line
