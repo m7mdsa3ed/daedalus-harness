@@ -256,7 +256,10 @@ export const ToolRun = React.memo(function ToolRun({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className={cn(
+          "group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted",
+          showing.length > 0 && !branch && "run-rail-head harness-rail-draw"
+        )}
       >
         <span className="flex h-6 w-5 shrink-0 items-center justify-center">
           <ChevronRightIcon
@@ -478,7 +481,10 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
+        className={cn(
+          "group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted",
+          open && "run-rail-head harness-rail-draw"
+        )}
       >
         <span className="flex h-6 w-5 shrink-0 items-center justify-center">
           <ChevronRightIcon
@@ -926,7 +932,7 @@ function SubagentTranscript({
       {active && (
         <div
           aria-label="Subagent working"
-          className="flex items-center gap-2 py-0.5 text-sm leading-6 text-primary"
+          className={cn("flex items-center gap-2 py-0.5 text-sm leading-6 text-primary", RAIL_ELBOW)}
         >
           {/* The steps' mark slot, so the Logo stands in their mark column. */}
           <span className="flex h-6 w-5 shrink-0 items-center justify-center">

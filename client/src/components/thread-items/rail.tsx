@@ -14,18 +14,21 @@ export const PEEK = 3
     `space-y-0.5` (2px) so neighbouring hover grounds nearly touch, one list.
     `pt`, not `mt`: inside the animated run clip a margin collapses through the
     moment overflow is restored, so the run shrank 2px after every open. */
-export const RUN_RAIL_CLASS = "pt-0.5 space-y-0.5 ps-7"
+export const RUN_RAIL_CLASS = "run-rail pt-0.5 space-y-0.5 ps-7"
 
-/* The rail is no longer drawn: nested steps keep the indent under the parent
-   row's icon column and nothing else. The three names stay, empty, so the row
-   tree that places them is unchanged. */
-export const RAIL_ELBOW = "relative"
+/* The rail itself is CSS (`.run-rail` in index.css): one trunk under the
+   parent's mark and an elbow into each child's, drawn per row so the line
+   stretches with a row that opens and folds away with the run's clip. Every
+   piece draws downward as its row arrives (`harness-rail-draw`). */
+export const RAIL_ELBOW = "run-rail-step harness-rail-draw"
 
-/** The rail continuing past a step to the one under it — not drawn. */
-export const RAIL_TAIL = ""
+/** The trunk continuing past a step to the one under it — every step but the
+    last, so the line stops on the last mark. */
+export const RAIL_TAIL = "run-rail-tail"
 
-/** A straight length of the rail, for a row in it that is not a step — not drawn. */
-export const RAIL_THROUGH = "relative"
+/** A straight length of the trunk, for a row on the rail that is not a step
+    (the "N earlier steps" line). */
+export const RAIL_THROUGH = "run-rail-through harness-rail-draw"
 
 /** "N earlier steps" — the top of a peeking rail. The steps' own ground
     (`-mx-1 px-1 py-0.5`, rounded-xl), its text starting at the title column

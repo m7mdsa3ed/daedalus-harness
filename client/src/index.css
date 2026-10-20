@@ -1694,6 +1694,96 @@ html[data-window-controls-overlay="true"] {
   animation: harness-rail-draw var(--dur-slow) var(--ease) backwards;
   animation-delay: calc(min(var(--item-i, 0), 6) * 60ms);
 }
+/* The trunk past a step draws after the elbow into its mark: the line reaches
+   the step, then goes on to the next one — downward, in order. */
+.harness-rail-draw.run-rail-tail::after {
+  animation-delay: calc(min(var(--item-i, 0), 6) * 60ms + 120ms);
+}
+
+/* ── A run's rail ──
+   One trunk under the parent row's mark, and an elbow from it into each
+   child's mark — so the line leaves the header, touches every step, and
+   stops on the last one. Measured, not tuned:
+   - the parent's mark slot is `w-5` at the row's content edge, so its centre
+     is 10px in; children are indented `ps-7` (28px), so in a child's box the
+     trunk is at 10 − 28 = −18px (`--rail-x`, the 1px line centred on it);
+   - a child's mark is the 20px disc in an `h-6` slot under `py-0.5`, so its
+     centre is 14px down (`--rail-mark-y`) and its start edge is at x = 0,
+     which is exactly where the elbow ends;
+   - rows sit `space-y-0.5` apart (`--rail-gap`), which each piece reaches
+     back over so consecutive pieces are one line — the first child's reaches
+     the top of the run's clip, exactly where the header ends;
+   - the header draws the stretch under its own chevron (`.run-rail-head`):
+     the run's height clip is `overflow: hidden` whenever its opening
+     animation did not run, so a first piece reaching *up* past the clip's
+     top edge would be cut off there.
+   Each piece is its row's own pseudo, so a row that opens (a diff, a
+   subagent) stretches its trunk with it, and the run's height clip folds
+   the line away with the rows. Logical properties, so RTL mirrors it. */
+.run-rail {
+  --rail-x: -18.5px;
+  --rail-mark-y: 14px;
+  --rail-gap: 2px;
+}
+.run-rail > * {
+  --rail-up: var(--rail-gap);
+}
+/* The header's stretch: from just under its chevron (the 14px centre + the
+   size-3.5 glyph's 7px + 1px of air) to its own bottom edge, where the run's
+   clip — and the first child's piece — begins. 13.5px = the row's 4px
+   bleed padding + the mark slot's 10px centre − half the line. */
+.run-rail-head {
+  position: relative;
+}
+.run-rail-head::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset-inline-start: 13.5px;
+  top: 22px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.run-rail-step,
+.run-rail-through {
+  position: relative;
+}
+/* The elbow: down the trunk to the mark's centre line, then across into it. */
+.run-rail-step::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset-inline-start: var(--rail-x);
+  top: calc(var(--rail-up) * -1);
+  width: calc(var(--rail-x) * -1);
+  height: calc(var(--rail-mark-y) + var(--rail-up));
+  border-inline-start: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-end-start-radius: 6px;
+}
+/* The trunk going on to the next row, from above the elbow's curve. */
+.run-rail-step.run-rail-tail::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset-inline-start: var(--rail-x);
+  top: calc(var(--rail-mark-y) - 6px);
+  bottom: calc(var(--rail-gap) * -1);
+  width: 1px;
+  background: var(--border);
+}
+/* A row on the rail that is not a step ("N earlier steps"): the trunk passes. */
+.run-rail-through::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset-inline-start: var(--rail-x);
+  top: calc(var(--rail-up) * -1);
+  bottom: calc(var(--rail-gap) * -1);
+  width: 1px;
+  background: var(--border);
+}
 
 /* ── A step assembling itself ──
    `harness-item-in` moves a whole row as one block, which is right for a
