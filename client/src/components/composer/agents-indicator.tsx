@@ -67,6 +67,10 @@ export function useNow(active: boolean): number {
   return now
 }
 
+/** Who it is: the runtime's name for it, else its brief's first words — a
+    worker with no name is still one line, never a paragraph. */
+const agentName = (agent: RunningAgent): string => agent.name || agent.task.split(/[.\n]/)[0] || "Agent"
+
 const formatElapsed = (ms: number): string =>
   ms < 60_000 ? `${Math.max(0, Math.round(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 
@@ -98,7 +102,7 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
             variant="ghost"
             size="icon-xs"
             className={cn(READING_TRIGGER, "text-primary hover:text-primary")}
-            title={`${label} — ${agents.map((agent) => agent.name ?? agent.task).join(", ")}`}
+            title={`${label} — ${agents.map(agentName).join(", ")}`}
             aria-label={label}
           >
             {/* The mark rides inside the pill — one face, not a glyph beside a
@@ -118,18 +122,18 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
       <ReadingPopoverContent
         heading={label}
         headingClassName="harness-shimmer text-primary"
-        action={<OpenInInspector tab="agents" onOpen={() => setOpen(false)} />}
+        action={<OpenInInspector tab="agents" label="Open agents panel" onOpen={() => setOpen(false)} />}
       >
         <ul className={cn("-mx-1 space-y-1 px-1", READING_LIST)}>
           {agents.map((agent) => (
-            <li key={agent.id} className="flex items-start gap-2 text-sm">
+            /* The name only: the brief is a paragraph, and a list of them
+               buried the one fact the count is about — who is out. It stays
+               a hover away (`title`), and whole in the Agents panel. */
+            <li key={agent.id} className="flex items-center gap-2 text-sm" title={agent.task}>
               <span className="grid size-5 shrink-0 place-items-center">
                 <Spinner aria-hidden className="size-3.5 text-primary" />
               </span>
-              <span className="min-w-0 flex-1 leading-5 break-words text-foreground">
-                {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
-                {agent.task}
-              </span>
+              <span className="min-w-0 flex-1 truncate leading-5 text-foreground">{agentName(agent)}</span>
               <span className="shrink-0 text-xs leading-5 tabular-nums text-muted-foreground">
                 {formatElapsed(now - agent.startedAt)}
               </span>
