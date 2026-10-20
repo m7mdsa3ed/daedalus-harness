@@ -377,8 +377,13 @@ export function TaskDetailDialog({
     return (
       <ResponsiveDialog open={!!taskId} onOpenChange={(open) => !open && onClose()} tall>
         <ResponsiveDialogContent className="sm:max-w-3xl">
-          <ResponsiveDialogTitle className="sr-only">Task</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription className="sr-only">Loading</ResponsiveDialogDescription>
+          {/* The loaded header's row, so the corner X has a header to sit in
+              rather than landing on the error's Copy/Retry. */}
+          <ResponsiveDialogHeader className="flex-row items-center gap-2 py-2.5">
+            <ResponsiveDialogTitle className="sr-only">Task</ResponsiveDialogTitle>
+            <ResponsiveDialogDescription className="sr-only">Loading</ResponsiveDialogDescription>
+            <Skeleton aria-hidden className="h-8 w-40 rounded-full" />
+          </ResponsiveDialogHeader>
           {loadError ? (
             <ErrorNote error={loadError} onRetry={() => void detail.refetch()} />
           ) : (

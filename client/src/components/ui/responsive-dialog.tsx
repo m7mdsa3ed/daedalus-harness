@@ -265,7 +265,9 @@ function ResponsiveDialogHeader({ className, ...props }: React.ComponentProps<"h
     <header
       data-slot="dialog-header"
       className={cn(
-        "flex shrink-0 flex-col gap-1.5 border-b pr-14 text-left",
+        /* Clearing the corner X is index.css's (`--dialog-x-room`), not a
+           `pr-*` here: `cn` let the `px-*` below — and any caller's — erase it. */
+        "flex shrink-0 flex-col gap-1.5 border-b text-left [--dialog-x-room:3.5rem]",
         isMobile ? "px-4 py-4" : "px-6 py-5",
         className
       )}
@@ -340,7 +342,10 @@ function ViewerHeader({
   className?: string
 }) {
   return (
-    <div className={cn("flex h-12 shrink-0 items-center gap-2.5 border-b px-4 pr-12", className)}>
+    <div
+      data-slot="dialog-header"
+      className={cn("flex h-12 shrink-0 items-center gap-2.5 border-b px-4 [--dialog-x-room:3.5rem]", className)}
+    >
       {icon && (
         <span
           aria-hidden

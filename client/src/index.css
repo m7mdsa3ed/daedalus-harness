@@ -3589,6 +3589,23 @@ html[data-sidebar-layout="inset"] .dv-render-overlay:not(.dock-nested *) {
     calc(-1 * var(--safe-left));
 }
 
+/* The corner X never sits on a header's own controls. Every dialog, sheet
+   and drawer that draws one puts it absolute at `top-4 right-4` (32px, so it
+   reaches 48px in from the edge), and a header row's trailing buttons, title
+   or toggle ran under it. The room is reserved here, keyed on the X actually
+   being there, and unlayered so a caller's `px-*`/`pr-*` cannot merge it
+   away — which is how the header's own `pr-14` was lost. A header that
+   carries its own padding to the edge (ResponsiveDialog, the viewer bar,
+   SheetHeader) states `--dialog-x-room: 3.5rem`; a stock DialogHeader sits
+   inside the popup's `p-6` and needs only the 2rem past it. */
+:is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]):has(> [data-slot="dialog-close"])
+  [data-slot="dialog-header"] {
+  padding-inline-end: var(--dialog-x-room, 2rem);
+}
+[data-slot="sheet-content"]:has(> [data-slot="sheet-close"]) [data-slot="sheet-header"] {
+  padding-inline-end: 3.5rem;
+}
+
 /* The device's safe-area insets as padding utilities — the home indicator, a
    landscape notch, a status bar drawn under (`viewport-fit=cover`). Tailwind
    has no `pb-safe` of its own, and a class that names one and resolves to
