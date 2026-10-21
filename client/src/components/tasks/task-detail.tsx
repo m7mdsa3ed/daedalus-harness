@@ -1036,7 +1036,7 @@ export function TaskDetailDialog({
                       </header>
                       {editingComment?.id === c.id ? (
                         <div className="mt-2 grid gap-2">
-                          <Textarea value={editingComment.body} onChange={(e) => setEditingComment({ id: c.id, body: e.target.value })} className="min-h-12 text-sm" aria-label="Edit comment" />
+                          <Textarea value={editingComment.body} onChange={(e) => setEditingComment({ id: c.id, body: e.target.value })} className="min-h-12" aria-label="Edit comment" />
                           <div className="flex justify-end gap-2">
                             <Button size="sm" variant="outline" onClick={() => setEditingComment(null)} className="pointer-coarse:h-11">
                               Cancel
@@ -1082,7 +1082,7 @@ export function TaskDetailDialog({
                       }}
                       placeholder="Write a comment… markdown works"
                       aria-label="Comment"
-                      className="min-h-16 text-sm"
+                      className="min-h-16"
                     />
                     <div className="flex items-center justify-end gap-2">
                       <span className="text-xs text-muted-foreground pointer-coarse:hidden">

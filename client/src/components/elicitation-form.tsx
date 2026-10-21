@@ -116,7 +116,10 @@ function ElicitationStep({
         {/* mb-0! because the wrapper's own margin is set by a `:has(~ …)`
             variant that can't see the description through this row. */}
         <QuestionnaireTitle className="mb-0! flex-1 text-sm leading-snug">
-          <QuestionText text={prompt} className="text-sm leading-snug" />
+          <QuestionText
+            text={prompt}
+            className={single ? "font-heading font-medium text-base! leading-snug!" : "leading-snug!"}
+          />
         </QuestionnaireTitle>
         {chip && (
           <Badge variant="secondary" className="mt-px">
@@ -154,7 +157,7 @@ function ElicitationStep({
                   {/* A mockup's whitespace is its layout, so it is drawn verbatim
                       in mono; only a preview that fences its own code is markdown. */}
                   {option.preview.includes("```") ? (
-                    <Prose text={option.preview} />
+                    <Prose text={option.preview} className="harness-code-bare" />
                   ) : (
                     <pre className="font-mono whitespace-pre">{option.preview}</pre>
                   )}
@@ -174,7 +177,6 @@ function ElicitationStep({
           type={field.kind === "number" ? "number" : "text"}
           defaultValue={choices ? undefined : field.defaultValue}
           placeholder={choices ? "Or type your own answer…" : "Type your answer…"}
-          className="text-sm"
         />
       )}
       {/* No children: the primitive's own text already distinguishes a required

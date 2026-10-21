@@ -106,7 +106,7 @@ export function ChipBadge({
   className?: string
 }) {
   return (
-    <Badge className={cn("h-4 min-w-4 px-1 text-[10px] tabular-nums", className)}>{children}</Badge>
+    <Badge className={cn("h-4 min-w-4 px-1 text-[0.625rem] tabular-nums", className)}>{children}</Badge>
   )
 }
 

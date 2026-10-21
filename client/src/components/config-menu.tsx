@@ -129,7 +129,7 @@ export function MenuSearchInput({
       }}
       placeholder={`Search ${label.toLowerCase()}…`}
       aria-label={`Search ${label.toLowerCase()}`}
-      className="mb-1 w-full rounded-xl bg-muted/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
+      className="mb-1 w-full rounded-xl bg-muted/50 px-3 py-2 text-base md:text-sm outline-none placeholder:text-muted-foreground"
     />
   )
 }

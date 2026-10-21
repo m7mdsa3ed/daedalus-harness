@@ -318,7 +318,7 @@ export function CommandPalette({
               closeOnSelect={false}
               className="flex min-h-0 flex-1 flex-col"
             >
-              <CommandMenuInput autoFocus placeholder={PAGE_PLACEHOLDER[page]} />
+              <CommandMenuInput autoFocus className="text-base md:text-sm" placeholder={PAGE_PLACEHOLDER[page]} />
 
               {/* Where the page stack is said. The menu's field takes an icon
                   and not a prefix slot, so the chip is its own row under it —

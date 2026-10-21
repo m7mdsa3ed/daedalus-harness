@@ -310,7 +310,7 @@ export function TaskEditor({ value, onChange, placeholder, className, title }: T
           }}
           spellCheck={false}
           aria-label="Markdown source"
-          className="block min-h-[140px] w-full resize-y bg-transparent px-4 py-3 font-mono text-sm leading-relaxed outline-none"
+          className="block min-h-[140px] w-full resize-y bg-transparent px-4 py-3 font-mono text-base md:text-sm leading-relaxed outline-none"
         />
       ) : (
         <EditorContent editor={editor} />

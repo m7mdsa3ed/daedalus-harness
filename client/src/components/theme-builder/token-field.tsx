@@ -74,7 +74,7 @@ export function TokenField({
         onBlur={() => setDraft(value)}
         spellCheck={false}
         aria-label={`${token} hex (${mode})`}
-        className="h-9 px-0 text-right font-mono text-xs tabular-nums @panel-sm:h-7"
+        className="h-9 px-0 text-right font-mono text-base md:text-xs tabular-nums @panel-sm:h-7"
       />
       {failing && (
         <InputGroupAddon align="inline-end" className="pr-1.5 text-destructive">

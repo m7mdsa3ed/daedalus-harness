@@ -62,11 +62,11 @@ export function SuggestionGroup({
             {/* h-5 grid, not a bare icon: it pins the mark to the first line
                 box, so a two-line row keeps its mark beside the first line. */}
             <span aria-hidden className="grid size-5 shrink-0 place-items-center">
-              <Icon className="size-3.5 text-muted-foreground transition-colors group-hover/suggestion:text-foreground" />
+              <Icon className="size-3 text-muted-foreground transition-colors group-hover/suggestion:text-foreground" />
             </span>
             <span
               className={cn(
-                "min-w-0 flex-1 text-sm leading-5 text-muted-foreground transition-colors group-hover/suggestion:text-foreground",
+                "min-w-0 flex-1 text-xs leading-5 text-muted-foreground transition-colors group-hover/suggestion:text-foreground",
                 kind.mono ? "truncate font-mono" : "line-clamp-2"
               )}
             >

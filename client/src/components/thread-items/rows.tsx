@@ -787,9 +787,9 @@ function SubagentBody({
       {stepThread && (
         <Link
           to={threadPath(stepThread)}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
-          Open thread <ArrowUpRightIcon className="size-3.5" />
+          Open thread <ArrowUpRightIcon className="size-3" />
         </Link>
       )}
       {/* The rail is drawn while the subagent is live even with nothing on it

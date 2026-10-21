@@ -155,7 +155,7 @@ function Entrance({ animate, children }: { animate: boolean; children: React.Rea
     child — the server routes it by the request's id. */
 function AskedBy({ from }: { from: RequestFrom }) {
   return (
-    <p className="mb-1 flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+    <p className="mb-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
       <span className="truncate">
         Asked by <span className="font-medium text-foreground">{from.title}</span>
       </span>
@@ -163,7 +163,7 @@ function AskedBy({ from }: { from: RequestFrom }) {
         to={threadPath(from.sessionId)}
         className="inline-flex shrink-0 items-center gap-1 hover:text-foreground"
       >
-        Open thread <ArrowUpRightIcon className="size-3.5" />
+        Open thread <ArrowUpRightIcon className="size-3" />
       </Link>
     </p>
   )
@@ -900,7 +900,7 @@ export function ThreadView({
                 <MessageScrollerItem messageId="earlier">
                   <div
                     ref={earlierRef}
-                    className="mb-2 flex items-center justify-center gap-2 text-sm text-muted-foreground"
+                    className="mb-2 flex items-center justify-center gap-2 text-muted-foreground"
                   >
                     <Button
                       size="sm"
@@ -911,7 +911,7 @@ export function ThreadView({
                       <ChevronUp data-icon="inline-start" />
                       Load earlier steps
                     </Button>
-                    <span>{thread.earlier} earlier step{thread.earlier === 1 ? "" : "s"}</span>
+                    <span className="text-xs">{thread.earlier} earlier step{thread.earlier === 1 ? "" : "s"}</span>
                   </div>
                 </MessageScrollerItem>
               )}

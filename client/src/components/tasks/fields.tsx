@@ -140,7 +140,7 @@ export function AssigneeAvatar({
   // ponytail: xs is the one size the registry Avatar lacks — a fixed bubble, hence the 10px initials.
   return (
     <Avatar size={size === "md" ? "default" : "sm"} className={cn(size === "xs" && "size-4", className)} title={name ?? "Unassigned"}>
-      <AvatarFallback className={cn("font-medium", size === "xs" && "text-[10px]")}>{name ? initialsOf(name) : "?"}</AvatarFallback>
+      <AvatarFallback className={cn("font-medium", size === "xs" && "text-[0.625rem]")}>{name ? initialsOf(name) : "?"}</AvatarFallback>
     </Avatar>
   )
 }

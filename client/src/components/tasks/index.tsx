@@ -805,7 +805,7 @@ export function BoardWorkspace({ location, actions }: { location: BoardLocation;
             <h1 className="flex min-w-0">
               <DropdownMenuTrigger
                 render={
-                  <Button type="button" variant="ghost" size="sm" className="max-w-[min(24rem,60cqw)] font-heading pointer-coarse:h-11">
+                  <Button type="button" variant="ghost" size="sm" className="max-w-[min(24rem,60cqw)] font-heading text-base pointer-coarse:h-11">
                     <BoardMark board={board} />
                     <span className="truncate">{board.name}</span>
                     <ChevronDown data-icon="inline-end" className="text-muted-foreground" />

@@ -609,24 +609,24 @@ export function ThreadInspector({
       >
         <header className="flex shrink-0 items-center gap-1 border-b pt-[var(--dock-content-overlap,0px)] px-1">
           <TabsList variant="line" className="my-1 min-w-0 flex-1 justify-start overflow-x-auto">
-            <TabsTrigger value="changes" className="text-sm">
+            <TabsTrigger value="changes">
               Source Control
               {changes && changes.files.length > 0 && <Count>{changes.files.length}</Count>}
             </TabsTrigger>
-            <TabsTrigger value="plan" className="text-sm">
+            <TabsTrigger value="plan">
               Plan
               {todos && <Count>{`${done}/${todos.length}`}</Count>}
             </TabsTrigger>
-            <TabsTrigger value="agents" className="text-sm">
+            <TabsTrigger value="agents">
               Agents
               {groups.length > 0 && (
                 <Count>{running > 0 ? `${running}/${groups.length}` : groups.length}</Count>
               )}
             </TabsTrigger>
-            <TabsTrigger value="details" className="text-sm">
+            <TabsTrigger value="details">
               Details
             </TabsTrigger>
-            <TabsTrigger value="tokens" className="text-sm">
+            <TabsTrigger value="tokens">
               Tokens
             </TabsTrigger>
           </TabsList>

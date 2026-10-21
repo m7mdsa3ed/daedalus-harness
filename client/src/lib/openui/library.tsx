@@ -268,7 +268,7 @@ const List = defineComponent({
           <li key={index} className="flex min-w-0 gap-2.5">
             <span className="flex h-[1.625em] w-5 shrink-0 items-center justify-center text-sm">
               {props.numbered ? (
-                <span className="flex size-5 items-center justify-center rounded-md bg-muted text-[10px] font-medium tabular-nums text-muted-foreground">
+                <span className="flex size-5 items-center justify-center rounded-md bg-muted text-[0.625rem] font-medium tabular-nums text-muted-foreground">
                   {index + 1}
                 </span>
               ) : (
@@ -1374,7 +1374,7 @@ const Heatmap = defineComponent({
             {props.columns.map((column, index) => (
               <span
                 key={`${column}-${index}`}
-                className={cn(LABEL, "text-center text-[10px] [overflow-wrap:anywhere] @panel-sm:truncate @panel-sm:text-xs")}
+                className={cn(LABEL, "text-center text-[0.625rem] [overflow-wrap:anywhere] @panel-sm:truncate @panel-sm:text-xs")}
                 title={column}
               >
                 {column}
@@ -1394,7 +1394,7 @@ const Heatmap = defineComponent({
                   return (
                     <span
                       key={`${rowIndex}-${column}-${columnIndex}`}
-                      className="flex aspect-square min-h-5 items-center justify-center rounded-md text-[10px] tabular-nums text-foreground"
+                      className="flex aspect-square min-h-5 items-center justify-center rounded-md text-[0.625rem] tabular-nums text-foreground"
                       style={{ background: Number.isFinite(value) ? `color-mix(in oklch, var(--chart-1) ${intensity}%, var(--muted))` : "var(--muted)", opacity: Number.isFinite(value) ? 1 : 0.45 }}
                       title={`${row.label}, ${column}: ${Number.isFinite(value) ? value : "no value"}`}
                       aria-label={`${row.label}, ${column}: ${Number.isFinite(value) ? value : "no value"}`}

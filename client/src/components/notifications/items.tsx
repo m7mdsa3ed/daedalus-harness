@@ -76,7 +76,7 @@ export function UnreadCount({ count, className }: { count: number; className?: s
   return (
     <span
       className={cn(
-        "grid h-4 min-w-4 place-items-center rounded-pill bg-foreground px-1 text-[10px] leading-none font-semibold text-background tabular-nums",
+        "grid h-4 min-w-4 place-items-center rounded-pill bg-foreground px-1 text-[0.625rem] leading-none font-semibold text-background tabular-nums",
         className
       )}
     >

@@ -190,7 +190,7 @@ export function NewTaskDialog({
             value={draft.title ?? ""}
             onChange={(e) => patch({ title: e.target.value })}
             placeholder="What needs doing?"
-            className="h-11 rounded-none border-0 bg-transparent px-0 text-lg font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
+            className="h-11 rounded-none border-0 bg-transparent px-0 font-heading text-xl leading-snug font-medium md:text-xl shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
 
           <div className="flex flex-wrap items-center gap-2">

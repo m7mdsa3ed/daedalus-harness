@@ -72,7 +72,7 @@ function RenameInput({ item, onRename, className }: { item: ListedItem; onRename
       autoFocus
       defaultValue={item.name}
       aria-label={`Rename ${item.name}`}
-      className={cn("h-6 min-w-0 px-1.5 text-sm", className)}
+      className={cn("h-6 min-w-0 px-1.5", className)}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onFocus={(e) => {

@@ -10,7 +10,7 @@
 export function ThreadWelcome({ draft }: { draft?: boolean }) {
   return (
     <div className="mx-auto flex w-full max-w-[var(--harness-composer-width)] flex-col items-center gap-2 px-4 pb-6 text-center">
-      <p className="text-base font-medium">
+      <p className="font-heading text-base font-medium">
         {draft ? "What are we working on?" : "Thread ready"}
       </p>
       <p className="max-w-xs text-sm text-balance text-muted-foreground">

@@ -421,7 +421,7 @@ function ModelPromptForm({
                 value={form.prompt}
                 onChange={(e) => set({ prompt: e.target.value })}
                 rows={18}
-                className="min-h-72 resize-y font-mono text-sm/relaxed @panel-md:min-h-[26rem]"
+                className="min-h-72 resize-y font-mono text-base/relaxed md:text-sm/relaxed @panel-md:min-h-[26rem]"
                 required
               />
               <p className="text-right text-xs text-muted-foreground tabular-nums">

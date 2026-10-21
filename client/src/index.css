@@ -141,7 +141,10 @@
      body (chat prose, sidebar, settings, controls), `text-xs` the meta and
      caption tier, `text-base` a title. (`--text-xs` used to be raised to 14px
      and the kit written in it, which made every registry badge, kbd and
-     tooltip a body-size block.) */
+     tooltip a body-size block.) `text-caption` is an alias of `text-xs`, so
+     the registry's command menu, which names it, gets the caption tier. */
+  --text-caption: var(--text-xs);
+  --text-caption--line-height: var(--text-xs--line-height);
 
   /* Container breakpoints for the dock (`components/workspace/panel-container`).
      Deliberately the pixel values of `sm:` and `md:` rather than Tailwind's own
@@ -578,10 +581,12 @@
      never step against each other. */
   html {
     background-color: var(--composer);
-    /* The theme's text-size axis. On `html` and nowhere else: every rem in the
-       app is measured from here, so one declaration scales the transcript, the
-       header band and the measure together. */
-    font-size: var(--app-font-size);
+    /* The theme's text-size axis, times the reader's own root size
+       (`--app-font-user`, written by `applyFontSize` as px / 16). On `html`
+       and nowhere else: every rem in the app is measured from here, so one
+       declaration scales the transcript, the header band and the measure
+       together. At the defaults it is 100% × 1, the browser's own size. */
+    font-size: calc(var(--app-font-size) * var(--app-font-user, 1));
   }
 
   * {
@@ -963,14 +968,6 @@
   animation: skeleton-shimmer 2.6s linear infinite;
 }
 
-/* ── Transcript reading size ──
-   The app's body size (`text-sm`) is set for controls, sidebar and settings;
-   a transcript is read, not scanned, so the column nudges the same knob up a
-   step for itself alone. Everything inside — prose, step rows, tool views —
-   sizes its body off `text-sm`, so this is the only place the number changes.
-   The composer wears the same bump: typing is writing, and its textarea reads
-   at the size of the messages it answers, not the control tier (`md:text-sm`
-   on the Textarea primitive would otherwise win halfway up the breakpoints). */
 /* A passage an aside was started on (`aside-highlights.ts`). Only colours
    and decorations apply to a highlight — no cursor, no padding. */
 ::highlight(aside) {
@@ -979,9 +976,44 @@
   text-underline-offset: 3px;
 }
 
-:is(.thread-transcript, [data-slot="composer-card"]) {
+/* ── Transcript reading size ──
+   The app's body size (`text-sm`) is set for chrome — sidebar, settings,
+   menus, every portal; a transcript is read, not scanned, so the read
+   surfaces nudge the same knob up a step for themselves alone: the
+   transcript, the composer card (typing is writing, so the Tiptap editor
+   reads at the size of the messages it answers) and `[data-read-surface]`
+   (the plan's fullscreen reader, portaled outside the transcript). Prose,
+   step rows and tool-view bodies size off `text-sm`, so this is the only
+   place the read number changes. The bump is read text only: a control
+   mounted inside one is reset to the stock 14px below, so a Button reads the
+   same wherever it is, and chrome-like bits inside (chips, captions, counts,
+   status meta) are `text-xs`, which is never bumped. */
+:is(.thread-transcript, [data-slot="composer-card"], [data-read-surface]) {
   --text-sm: 0.9375rem;
   --text-sm--line-height: 1.375rem;
+}
+:is(.thread-transcript, [data-slot="composer-card"], [data-read-surface])
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="tabs-trigger"],
+    [data-slot="questionnaire-actions"]
+  ) {
+  --text-sm: 0.875rem;
+  --text-sm--line-height: calc(1.25 / 0.875);
+}
+
+/* The iOS zoom floor: a field that takes typed text is at least 16px on a
+   phone, as the stock Input/Textarea are (`text-base md:text-sm`). These three
+   cannot say it with a utility — the composer and task editors are Tiptap
+   under an unlayered `.prose`/`.text-sm`, which these selectors outrank, and
+   CommandInput is a registry file. Desktop is untouched. */
+@media (width < 48rem) {
+  [data-slot="composer-card"] .composer-editor,
+  .task-editor .prose,
+  [data-slot="command-input"] {
+    font-size: var(--text-base);
+  }
 }
 
 /* ── Streaming prose: the sweep ──
@@ -1475,9 +1507,10 @@ html[data-window-controls-overlay="true"] {
 
 /* A fence used as a raw payload pane: the surrounding block already supplies
    the frame (border, padding, scroll), so the <pre> keeps only the colours.
-   Without this a tool payload gets two nested boxes. */
+   Without this a tool payload gets two nested boxes. It is sized at the
+   tool-payload code tier (`text-xs`), not the message's 0.875em. */
 .harness-code-bare :where(pre) {
-  @apply m-0 rounded-none border-0 bg-transparent p-0;
+  @apply m-0 rounded-none border-0 bg-transparent p-0 text-xs leading-relaxed;
 }
 .harness-code-bare :where(pre code) {
   @apply block;
@@ -2209,7 +2242,7 @@ html .dockview-theme-abyss {
      kind. It used to be 36px here and the row's height only in the band, which
      is the two of them disagreeing by 12px down the middle of a split. */
   --dv-tabs-and-actions-container-height: var(--app-header-row-h);
-  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-font-size: var(--text-xs);
   --dv-activegroup-visiblepanel-tab-background-color: transparent;
   --dv-activegroup-hiddenpanel-tab-background-color: transparent;
   --dv-inactivegroup-visiblepanel-tab-background-color: transparent;

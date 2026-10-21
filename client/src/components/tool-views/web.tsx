@@ -191,7 +191,7 @@ export function ToolSources({ item }: { item: ToolItem }) {
             data-slot="avatar-group-count"
             onClick={() => setAll(true)}
             title={hosts.slice(ROW_SOURCES).map(([host]) => host).join("\n")}
-            className="relative flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground ring-2 ring-background hover:z-10 hover:text-foreground"
+            className="relative flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full bg-muted text-[0.625rem] text-muted-foreground ring-2 ring-background hover:z-10 hover:text-foreground"
           >
             +{hidden}
           </button>
@@ -232,7 +232,7 @@ function SiteAvatar({ host, url, title }: { host: string; url: string; title?: s
         referrerPolicy="no-referrer"
         className="p-[3px]"
       />
-      <AvatarFallback className="text-[10px] font-medium uppercase">{host.charAt(0)}</AvatarFallback>
+      <AvatarFallback className="text-[0.625rem] font-medium uppercase">{host.charAt(0)}</AvatarFallback>
     </Avatar>
   )
 }

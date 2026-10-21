@@ -172,7 +172,7 @@ export function ThreadStatus({
     last.current = (
       <div className="min-w-0 space-y-1 pl-7 pt-1 text-sm">
           {retry && (
-            <div className="harness-part-in flex items-center gap-2 tabular-nums text-muted-foreground">
+            <div className="harness-part-in flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
               {retry.of && (
                 <span className="flex gap-1" aria-hidden>
                   {Array.from({ length: retry.of }, (_, i) => (
@@ -197,7 +197,7 @@ export function ThreadStatus({
           {bar && (
             <div className="harness-part-in [--part-i:1] flex max-w-xs items-center gap-2">
               <Progress value={bar.done} max={bar.total} className="flex-1 [&_[data-slot=progress-track]]:h-1" />
-              <span className="text-muted-foreground tabular-nums">
+              <span className="text-xs text-muted-foreground tabular-nums">
                 {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
               </span>
             </div>
@@ -260,7 +260,7 @@ export function ThreadStatus({
           {/* The way out of a wait that has stopped looking like one. Cancel
               gives up the wait, never the words: the message goes back in the box. */}
           {cancellable && waited >= CLOCK_MS && (
-            <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-1 text-muted-foreground">
+            <div className="harness-part-in [--part-i:3] flex items-center gap-2 pt-1 text-xs text-muted-foreground">
               <span className="tabular-nums">Waiting {formatElapsed(waited)}</span>
               <Button variant="outline" size="xs" onClick={() => run("cancel")}>
                 Cancel
@@ -290,7 +290,7 @@ export function ThreadStatus({
         />
       </button>
       {showLog && (
-        <ul className="max-h-48 space-y-1 overflow-auto pl-7 pt-1 text-sm text-muted-foreground">
+        <ul className="max-h-48 space-y-1 overflow-auto pl-7 pt-1 text-xs text-muted-foreground">
           {[...log].reverse().map((e, i) => (
             <li key={i} className="flex gap-2">
               <time className="shrink-0 tabular-nums">{clock(e.at)}</time>

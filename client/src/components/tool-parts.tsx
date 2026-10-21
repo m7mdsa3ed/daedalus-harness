@@ -545,7 +545,7 @@ export function PlanFullscreen({
           reading it was the room. */}
       <DialogContent className={VIEWER}>
         <ViewerHeader icon={<ClipboardListIcon />} title={title || "Plan"} />
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-6 py-5">
+        <div data-read-surface className="min-h-0 flex-1 overflow-auto overscroll-contain px-6 py-5">
           <Prose text={plan} />
         </div>
       </DialogContent>
@@ -819,7 +819,7 @@ export function Highlighted({
   className?: string
 }) {
   if (!language) {
-    return <pre className={cn("font-mono text-sm whitespace-pre-wrap", className)}>{code}</pre>
+    return <pre className={cn("font-mono text-xs leading-relaxed whitespace-pre-wrap", className)}>{code}</pre>
   }
   /* A fence closes only on a run at least as long as the one that opened it,
      so one longer than any run in the payload cannot be broken out of. */

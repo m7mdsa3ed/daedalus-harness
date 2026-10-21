@@ -121,7 +121,7 @@ export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> })
           )
         })}
         {hidden > 0 && (
-          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-foreground ring-1 ring-background transition-colors duration-150 group-hover/fold:bg-background group-hover/fold:ring-muted">
+          <span className="relative flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[0.625rem] font-medium text-foreground ring-1 ring-background transition-colors duration-150 group-hover/fold:bg-background group-hover/fold:ring-muted">
             +{hidden}
           </span>
         )}

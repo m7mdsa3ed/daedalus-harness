@@ -35,7 +35,7 @@ export const Steps = defineComponent({
                 )}
                 <span
                   aria-hidden
-                  className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-medium text-primary tabular-nums ring-1 ring-primary ring-inset"
+                  className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[0.625rem] font-medium text-primary tabular-nums ring-1 ring-primary ring-inset"
                 >
                   {index + 1}
                 </span>

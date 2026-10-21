@@ -197,13 +197,17 @@ function storedNumber(key: string, fallback: number, min: number, max: number): 
   return Number.isFinite(value) && value >= min && value <= max ? value : fallback
 }
 
-/** Root font size in px — rem-based layout scales from it. */
+/** Root font size in px — rem-based layout scales from it. Written as
+    `--app-font-user`, a multiplier (px / 16) over the theme's text axis
+    (`html { font-size: calc(var(--app-font-size) * var(--app-font-user)) }`),
+    so the theme axis and the browser's default size both still apply. The
+    default of 16 is × 1. */
 export const FONT_SIZE_DEFAULT = 16
 export const FONT_SIZE_MIN = 12
 export const FONT_SIZE_MAX = 24
 
 function applyFontSize(px: number) {
-  document.documentElement.style.fontSize = `${px}px`
+  document.documentElement.style.setProperty("--app-font-user", String(px / 16))
 }
 
 /** UI scale in percent — scales Tailwind's --spacing unit (default 0.25rem),

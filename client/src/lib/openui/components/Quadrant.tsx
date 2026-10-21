@@ -43,7 +43,7 @@ export const Quadrant = defineComponent({
                     key={slot}
                     className={cn(
                       LABEL,
-                      "absolute max-w-[46%] p-1.5 text-[10px] @panel-sm:text-xs",
+                      "absolute max-w-[46%] p-1.5 text-[0.625rem] @panel-sm:text-xs",
                       slot < 2 ? "top-0" : "bottom-0",
                       slot % 2 === 0 ? "left-0 text-left" : "right-0 text-right"
                     )}
@@ -56,7 +56,7 @@ export const Quadrant = defineComponent({
                 {points.map((point, n) => (
                   <span
                     key={point.index}
-                    className="absolute flex size-5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-[10px] leading-none font-medium text-background tabular-nums"
+                    className="absolute flex size-5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full text-[0.625rem] leading-none font-medium text-background tabular-nums"
                     style={{ left: `${point.x}%`, bottom: `${point.y}%`, background: chartColor(n) }}
                   >
                     {n + 1}
