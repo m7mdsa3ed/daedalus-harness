@@ -17,21 +17,35 @@ import { ASK_AGENT, extractBackgroundTask, extractSubagent, isSubagentLaunch, su
 import type { WorkflowPlanPhase } from "./tools"
 import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
+/** A transcript rule a run may hold: an interrupt notice, or a `config_notice`
+ *  row (a setting changed mid-turn). The only `TextItem` there is room for. */
+export type NoticeItem = TextItem & { kind: "notice" }
+
+/** A thought, which stands where it arrived: the reasoning that produced the
+ *  calls around it ends the run it lands in rather than joining it, so no fold
+ *  can hide thinking behind a counting line that only ever mentions calls. */
+export type ThoughtItem = TextItem & { kind: "thought" }
+
+/** What a run may hold — a call, and a setting changed between two of them.
+ *  Prose is not one, and neither is a thought: a row that is not a call ends the
+ *  run it would have joined. */
+export type RunItem = ToolItem | NoticeItem
+
 /** A run of consecutive calls with the same resolved tool view, folded into
- *  one row (layout-options). Interleaved thinking stays alongside its calls,
- *  and so does a setting changed between two of them. */
+ *  one row (layout-options). A setting changed between two of them rides along,
+ *  in its place. */
 export interface ToolRunGroup {
   kind: "run"
   id: string
-  items: (ToolItem | TextItem)[]
+  items: RunItem[]
 }
 
 /** Consecutive tool calls collected under one parent, split into layout runs. */
 export interface ToolGroup {
   kind: "tool-group"
   id: string
-  items: (ToolItem | TextItem)[]
-  children: Array<ToolItem | TextItem | ToolRunGroup>
+  items: RunItem[]
+  children: Array<RunItem | ToolRunGroup>
 }
 
 /**
@@ -77,6 +91,11 @@ export interface WorkflowGroup {
       server sent it, so the card can draw the steps that have not spawned yet.
       Taken from the first step that carries one: every spawn repeats it. */
   plan?: WorkflowPlanPhase[]
+  /** The run is over — nothing under it is still at work. A native run says so
+      with its task's own state; a harness run has no item of its own, so it is
+      read off its steps (`harnessRunFinished`). The transcript closes a
+      finished one off with a hairline before whatever came next. */
+  finished: boolean
 }
 
 /**
@@ -167,6 +186,27 @@ export function rowTailId(row: Row): string {
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return rowTailId(row.steps[row.steps.length - 1])
   return row.id
+}
+
+/** The row a stack of folds ends in — a `work-fold`'s last inner row, walked
+    the same way `rowTailId` walks it. "Answers only" can put the workflow's
+    card inside a fold, and the rule then hangs off the fold rather than off the
+    card that is no longer a row of its own. */
+function lastInnerRow(row: Row): Row {
+  let last = row
+  while (last.kind === "work-fold" && last.rows.length > 0) last = last.rows[last.rows.length - 1]
+  return last
+}
+
+/** Whether this row opens with the hairline that closes off a workflow run —
+    the row above ended one and the thread went on. A run with nothing after it
+    has no row to carry the rule, so nothing trails the transcript. Purely where
+    a rule goes: no item, order or persistence is read differently for it. */
+export function separatorAfterRun(rows: Row[], index: number): boolean {
+  const above = rows[index - 1]
+  if (!above) return false
+  const tail = lastInnerRow(above)
+  return tail.kind === "workflow-group" && tail.finished
 }
 
 /**
@@ -378,7 +418,7 @@ function nativeWorkflowRun(task: AsyncTaskItem, transcriptDir?: string): Workflo
     }
   })
 
-  return { kind: "workflow-group", id: `workflow:${task.taskId}`, name: task.name, steps, plan }
+  return { kind: "workflow-group", id: `workflow:${task.taskId}`, name: task.name, steps, plan, finished: !running }
 }
 
 /**
@@ -475,12 +515,42 @@ function mergeWorkflowRuns(rows: Row[]): Row[] {
       run.steps.push(row)
       run.plan ??= wf.plan
     } else {
-      const group: WorkflowGroup = { kind: "workflow-group", id: `workflow:${wf.runId}`, name: wf.name, steps: [row], plan: wf.plan }
+      const group: WorkflowGroup = {
+        kind: "workflow-group",
+        id: `workflow:${wf.runId}`,
+        name: wf.name,
+        steps: [row],
+        plan: wf.plan,
+        finished: false,
+      }
       runs.set(wf.runId, group)
       out.push(group)
     }
   }
+  // Read off the whole run: a running step arriving at the end of the list is
+  // what must un-finish it, so the flag is only settled after the loop.
+  for (const run of runs.values()) run.finished = harnessRunFinished(run.steps)
   return out
+}
+
+/**
+ * Whether a harness run has ended, read off its steps — the run has no item of
+ * its own, so the steps' own terminal states are the only record of its end.
+ *
+ * Every step that arrived has settled, and the run is not held. The definition's
+ * `total` is deliberately NOT part of the test: a run that failed or was stopped
+ * never spawns the steps after the one that ended it, so waiting for the full
+ * count would leave every such run reading as live for good. A held run is live
+ * however quiet its steps are.
+ */
+function harnessRunFinished(steps: SubagentGroup[]): boolean {
+  for (const step of steps) {
+    const head = step.head
+    const info = head.kind === "subagent" ? head.workflow : undefined
+    if (info?.paused) return false
+    if (head.kind === "subagent" && head.state === "running") return false
+  }
+  return true
 }
 
 /**
@@ -604,7 +674,12 @@ function subagentActive(
  * is a subagent step with an empty rail, not a generic tool row) and every
  * RFD session item, which is a subagent by definition.
  */
-function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boolean, groupEdits: boolean): Row[] {
+function nestSubagents(
+  items: ThreadItem[],
+  groupTools: boolean,
+  turnActive: boolean,
+  groupEdits: boolean
+): Row[] {
   const heads = new Set<string>()
   for (const item of items) {
     if (item.kind === "tool" || item.kind === "subagent") heads.add(item.id)
@@ -843,15 +918,24 @@ function groupCodexLifecycle(
 /** A setting the person changed mid-turn: the server's `config_notice`, kept as
     a `notice` row flagged `config` (store/items.ts) so a view option can hide
     it. Not a break in the conversation — a line about the run it landed in. */
-const isConfigNotice = (row: Row): row is TextItem => row.kind === "notice" && row.config === true
+const isConfigNotice = (row: Row): row is NoticeItem => row.kind === "notice" && row.config === true
 
 /**
- * Runs of at least two non-edit tool calls, with any thinking between them,
- * become one parent group. Its children split at specialized-view changes,
- * with repeated same-view calls folded into expandable subgroups. Other content
- * stays outside these groups. A leading or trailing thought joins only if the
- * run it borders has at least two calls; a lone tool call remains ungrouped,
- * including while a turn is active.
+ * A stretch of consecutive calls becomes one parent group. Its children split at
+ * specialized-view changes, with repeated same-view calls folded into expandable
+ * subgroups. Other content stays outside these groups — prose, a plan, a
+ * subagent, a `!` command, a thought: a row that is not a call ends the run it
+ * would have joined. A call on its own remains ungrouped, including while a turn
+ * is active.
+ *
+ * **A thought ends the run and stands where it arrived.** The reasoning between
+ * two calls is not what the fold counts, and it is the part a reader most needs
+ * to see: swept in, `call -> think -> call` is one line reading "Reading 2
+ * files" with the thinking hidden behind it, and opening the fold gives back ten
+ * calls to find the three lines that explain them. So a thought is a break like
+ * prose — `think -> read -> think -> edit` is four rows, two of them folds — and
+ * a fold holds calls and the setting changes between them and nothing else. What
+ * a group cannot be is a group of one call: that is still a step, not a fold.
  *
  * A setting changed mid-turn goes *inside* the run when it is between two of
  * its calls, and nowhere else. Between them the agent changed nothing about the
@@ -864,13 +948,11 @@ const isConfigNotice = (row: Row): row is TextItem => row.kind === "notice" && r
  */
 export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
   const out: Row[] = []
-  let items: (ToolItem | TextItem)[] = []
-  /* What arrived between two steps and has not been placed yet: thinking, and
-     the odd setting change. In arrival order, so a notice holds its place among
-     the thoughts around it. */
-  let held: TextItem[] = []
-
-  const toolCount = () => items.filter((item) => item.kind === "tool").length
+  let items: RunItem[] = []
+  /* A setting change that arrived between two steps and has not been placed
+     yet: it rides inside the run when it is between two of its calls, and is a
+     break anywhere else (see `settle`). */
+  let held: NoticeItem[] = []
 
   const flush = () => {
     const tools = items.filter((item): item is ToolItem => item.kind === "tool")
@@ -888,38 +970,32 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
     items = []
   }
 
-  /* Where the held rows go once the run they sat in the middle of is over:
-     thinking joins a run with two calls to be behind (the rule it has always
-     had), a setting change never does — trailing one ends the run, and is drawn
-     after it. Returns the rows that stay outside, in order. */
-  const settle = (): TextItem[] => {
-    const between = held
+  /* A setting change still waiting when a break arrives is trailing, not
+     interior: it is drawn after the run, not folded into it. Only another call
+     arriving puts one inside (the tool branch below), which is what "between two
+     calls" means — the call that settles it is the one that proves it was in the
+     middle and not at the end. */
+  const settle = (): NoticeItem[] => {
+    const waiting = held
     held = []
-    const cut = between.findIndex(isConfigNotice)
-    const joined = cut < 0 ? between : between.slice(0, cut)
-    const outside = cut < 0 ? [] : between.slice(cut)
-    if (toolCount() > 1) {
-      items.push(...joined)
-      return outside
-    }
-    return [...joined, ...outside]
+    return waiting
   }
 
   for (const row of rows) {
     if (row.kind === "tool" && (groupEdits || toolViewOf(row) !== "edit")) {
-      /* Held before a run's first call, a notice is a break rather than a line
-         inside the work: this run starts after it. (Thinking before a first call
-         still rides along — whether the run it borders is a run is the call.) */
-      if (toolCount() === 0 && held.some(isConfigNotice)) {
-        flush()
+      /* Held before a run's first step, a notice is a break rather than a line
+         inside the work: this run starts after it. */
+      if (items.length === 0 && held.length > 0) {
         out.push(...held)
         held = []
       }
       items.push(...held, row)
       held = []
-    } else if (row.kind === "thought" || isConfigNotice(row)) {
+    } else if (isConfigNotice(row)) {
       held.push(row)
     } else {
+      /* Prose, a plan, a subagent, a thought — everything that is not a call —
+         ends the run and is drawn where it arrived. */
       const outside = settle()
       flush()
       out.push(...outside, row)
@@ -932,9 +1008,9 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
 }
 
 /** Split one consecutive sequence into same-view expandable subgroups. */
-function groupSameViewRuns(items: (ToolItem | TextItem)[]): Array<ToolItem | TextItem | ToolRunGroup> {
-  const out: Array<ToolItem | TextItem | ToolRunGroup> = []
-  let run: (ToolItem | TextItem)[] = []
+function groupSameViewRuns(items: RunItem[]): Array<RunItem | ToolRunGroup> {
+  const out: Array<RunItem | ToolRunGroup> = []
+  let run: RunItem[] = []
   let runView: ReturnType<typeof toolViewOf> | null = null
 
   const flush = () => {

@@ -58,7 +58,8 @@ import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
 import { openInNewTab } from "@/lib/workspace/open-threads"
 import { usePins } from "@/lib/pins"
-import { useLayoutOptions } from "@/lib/layout-options"
+import { setLayoutOption, useLayoutOptions } from "@/lib/layout-options"
+import { useAway } from "@/hooks/use-app-visible"
 import { useActiveSpace, useProjects } from "@/lib/queries/catalog"
 import { useActiveChat, useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, inSpace as isInSpace, isListed, type Project, type SessionMeta } from "@/lib/settings"
@@ -155,7 +156,10 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   }, [actions, refreshing])
 
   const statuses = useThreadStatuses()
-  const unread = useUnreadIds(sessions, statuses, activeThreadId)
+  /* Away, nothing on screen has been read — including the thread in front,
+     which is the one you left running when you walked off. */
+  const away = useAway()
+  const unread = useUnreadIds(sessions, statuses, away ? null : activeThreadId)
   const status = React.useCallback(
     (session: SessionMeta): ThreadStatus => statuses.get(session.id) ?? "idle",
     [statuses]
@@ -214,13 +218,16 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   }, [sessions, statuses, inSpace])
 
   /* The thread in front of you is read: stamp it with the activity it showed,
-     now and whenever a turn ends under your eyes. */
+     now and whenever a turn ends under your eyes. Never while the window is
+     away — a turn that lands on the thread you left open was not read by
+     anybody, and stamping it would throw the news away before you came back.
+     Coming back re-runs this, which is the read. */
   const activeSession = sessions.find((session) => session.id === activeThreadId)
   const activeAt = activeSession ? activityAt(activeSession) : 0
   React.useEffect(() => {
-    if (activeSession) markSeen(activeSession)
+    if (!away && activeSession) markSeen(activeSession)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the stamp is the dependency, not the object
-  }, [activeSession?.id, activeAt])
+  }, [away, activeSession?.id, activeAt])
 
   const { byProject, orphans } = React.useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>()
@@ -249,8 +256,8 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
     return byParent
   }, [sessions])
   const env = React.useMemo<SidebarEnv>(
-    () => ({ actions, status, pinSet, projectNames, children }),
-    [actions, status, pinSet, projectNames, children]
+    () => ({ actions, status, pinSet, projectNames, children, unread }),
+    [actions, status, pinSet, projectNames, children, unread]
   )
 
   /* ── Threads arrive a page at a time ──
@@ -345,6 +352,23 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
             >
               {counts.needsYou}
             </Badge>
+          )}
+          {/* What you missed while away, and the way to see only it. The count
+              is the row dots' set, so the two can never disagree. */}
+          {unread.size > 0 && (
+            <button
+              type="button"
+              aria-pressed={filter === "unread"}
+              title={
+                filter === "unread"
+                  ? "Showing unread threads — show every thread"
+                  : `${unread.size} thread${unread.size === 1 ? " has" : "s have"} news since you last looked — show only those`
+              }
+              onClick={() => setLayoutOption("sidebarFilter", filter === "unread" ? "all" : "unread")}
+              className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Badge className="bg-primary/10 text-primary tabular-nums">{unread.size}</Badge>
+            </button>
           )}
           <div className="ml-auto flex h-full items-center gap-1">
             <Button
@@ -466,6 +490,8 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
                   id={project.id}
                   name={project.name}
                   logoUrl={project.logoUrl}
+                  cwd={project.cwd}
+                  description={project.description}
                   sessions={byProject.get(project.id) ?? []}
                   onNewThread={() => startIn(project)}
                   onOpenProject={() => void navigate(projectPath(project.id))}

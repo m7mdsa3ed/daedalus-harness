@@ -139,7 +139,8 @@ export const foldCaughtUp: Fold<"onCaughtUp"> = (
   staged,
   context,
   retry,
-  tps
+  tps,
+  background
 ) => {
   const { host, sink } = ctx
   const id = host.id
@@ -179,6 +180,11 @@ export const foldCaughtUp: Fold<"onCaughtUp"> = (
      the row; it lands here, after the fold, so it is the last word. */
   send({ type: "thread-context", id, context })
   send({ type: "thread-tps", id, tps })
+  /* And whether the agent still has background work going. Handed over rather
+     than folded for the one reason nothing else here needs: the run's beats
+     *are* journaled, so the replay's last word about it is whatever the run was
+     saying when it died — `running`, forever. */
+  send({ type: "background", id, active: !!background })
   flush()
 }
 

@@ -49,6 +49,15 @@ export interface ThreadState {
       not history — so it is handed over on attach like the hold and the queue,
       and null the rest of the time. */
   retry: ThreadRetry | null
+  /** Background work the agent launched is still running (`background` event /
+      `caught_up`). A Claude Code workflow answers its prompt `end_turn` at
+      "launched" and works on for minutes, so `turnActive` is false and the
+      thread is not done — this is what the transcript's own line, every list,
+      and the turn-finished notification read a thread with no turn open by.
+      Absolute and live-only like `retry`: handed over on attach, never
+      journaled, because the run's own journaled beats are the thing that would
+      keep saying `running` after the run died. */
+  background: boolean
   /** Whether the runtime takes pause at all (`session_config.canPause`) —
       the harness's own agent; every other runtime has only Stop. */
   canPause: boolean
@@ -197,6 +206,7 @@ export const emptyThread: ThreadState = {
   pausedReason: null,
   pausedError: null,
   retry: null,
+  background: false,
   canPause: false,
   canCompact: false,
   permissions: [],

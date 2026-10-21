@@ -116,3 +116,22 @@ export function openInNewTab(path?: string): boolean {
   newTabHandler(path)
   return true
 }
+
+/* ── A column beside the tab in front, from outside the dock ──
+   The same bargain, for the other shape a row can ask for: a thread or a page
+   standing *beside* what you are reading rather than in place of it. Only the
+   dock can make a column, so the row asks through here (`openInItems`, which
+   every sidebar menu draws its two "open" rows from) and a caller with no dock
+   falls back to navigating, which is the only thing a popout can do. */
+let besideHandler: ((path: string) => void) | null = null
+
+export function setBesideHandler(handler: ((path: string) => void) | null): void {
+  besideHandler = handler
+}
+
+/** Open a route in a column beside the strip in front. False when there is no dock. */
+export function openBeside(path: string): boolean {
+  if (!besideHandler) return false
+  besideHandler(path)
+  return true
+}

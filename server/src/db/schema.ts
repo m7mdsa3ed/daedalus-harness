@@ -1162,6 +1162,9 @@ export interface WorkflowStepRecord {
   /** A script agent's call (prompt and options, hashed): what a relaunch with
       `resumeFromRunId` matches to reuse this step's output. */
   key?: string;
+  /** What the step's child spent, for the report its parent is sent. */
+  tokens?: number;
+  toolUses?: number;
 }
 
 /**

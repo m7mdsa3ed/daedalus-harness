@@ -77,8 +77,9 @@ export function collectTools(rows: Row[]): ToolItem[] {
   const out: ToolItem[] = []
   for (const row of rows) {
     if (row.kind === "tool") out.push(row)
-    /* A run can carry thoughts between its calls — they are the reasoning,
-       not a step the count line means. */
+    /* A run holds calls, the odd interior setting change and — only when the
+       reader asked for it — one-line thoughts; they are not steps the count
+       line means. */
     else if (row.kind === "run")
       out.push(...row.items.filter((item): item is ToolItem => item.kind === "tool"))
     else if (row.kind === "tool-group") out.push(...collectTools(row.children))
@@ -213,12 +214,11 @@ function summarizeStepResult(report: string): string {
 }
 
 function lastProse(rows: Row[]): string | undefined {
+  /* Prose is never inside a run: it ends one, and stands after it (`RunItem` is
+     a call or a setting change, nothing else). So the newest thing the worker
+     said is the newest `agent` row on the rail, whichever folds sit beside it. */
   for (const row of [...rows].reverse()) {
     if (row.kind === "agent") return row.text
-    if (row.kind === "run" || row.kind === "tool-group") {
-      const text = [...row.items].reverse().find((item) => item.kind === "agent")
-      if (text && "text" in text) return text.text
-    }
   }
   return undefined
 }

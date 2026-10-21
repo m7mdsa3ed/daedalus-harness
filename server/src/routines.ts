@@ -48,7 +48,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 import { promisify } from "node:util";
-import { and, asc, desc, eq, gt } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -620,6 +620,35 @@ export async function getRun(id: string): Promise<RoutineRun | undefined> {
   return (await db.select().from(runsTable).where(eq(runsTable.id, id)).limit(1))[0];
 }
 
+/**
+ * How many runs finished without anybody looking at the result — what the
+ * sidebar's Automations badge counts.
+ *
+ * Unread is a fact about the run and not about a device: an automation runs
+ * with nobody in front of it, so there is no "the person who was there" to
+ * remember. One person opening the run is the run being read, on every device,
+ * the same bargain the notification inbox makes.
+ */
+export async function unreadRunCount(): Promise<number> {
+  return (await db.select({ n: count() }).from(runsTable).where(eq(runsTable.inboxState, "unread")))[0].n;
+}
+
+/** One run's page was opened, so it is read. Only an unread row is written, so
+    a second visit costs nothing and a race with another device is one `UPDATE`. */
+export async function markRunRead(id: string): Promise<boolean> {
+  const res = await db
+    .update(runsTable)
+    .set({ inboxState: "read" })
+    .where(and(eq(runsTable.id, id), eq(runsTable.inboxState, "unread")));
+  return (res.rowCount ?? 0) > 0;
+}
+
+/** Everything unread, read at once — the runs list's "Mark all read". */
+export async function markRunsRead(): Promise<number> {
+  const res = await db.update(runsTable).set({ inboxState: "read" }).where(eq(runsTable.inboxState, "unread"));
+  return res.rowCount ?? 0;
+}
+
 /** The last run of this routine that got as far as recording a git oid — what
     a `gitChangedSince: "lastRun"` condition compares this project's HEAD
     against. Null when the routine has never run against a repo, which is why
@@ -765,6 +794,10 @@ interface RunState {
   status: RoutineRunStatus;
   error: string | null;
   skipReason: string | null;
+  /** Whether a person has seen this run's result. Set to `"unread"` when a
+      run ends and cleared when its page is opened — the badge in the sidebar
+      and the dot on the run's row both read it. */
+  inboxState: "unread" | "read" | "archived" | null;
   sessionId: string | null;
   output: string;
   outputBytes: number;
@@ -915,6 +948,7 @@ export class RoutineEngine {
       status: "running",
       error: null,
       skipReason: null,
+      inboxState: null,
       sessionId: null,
       output: "",
       outputBytes: 0,
@@ -1345,6 +1379,11 @@ export class RoutineEngine {
     run.error = error;
     run.skipReason = status === "skipped" ? (opts.skipReason ?? "other") : null;
     run.endedAt = Date.now();
+    /* A run that ended produced a result nobody was in front of, so unread is
+       the only honest state for it to end in. A `skipped` row is not one: the
+       list would fill with refusals nobody has to read, and its whole reason
+       for existing is that it can be ignored. */
+    if (status !== "skipped") run.inboxState = "unread";
     await this.persist(run);
     if (opts.retire) this.manager.retire(opts.retire);
     /* One run completed is what opens the blanket-`allow` gate. Written for a
@@ -1469,7 +1508,9 @@ export class RoutineEngine {
     const rows = await db.select().from(runsTable).where(eq(runsTable.status, "running"));
     if (rows.length === 0) return;
     await db.update(runsTable)
-      .set({ status: "failed", error: "server restarted", endedAt: Date.now() })
+      /* Unread as well: every one of these ended while nobody was watching,
+         and a restart is exactly the thing you come back to find out about. */
+      .set({ status: "failed", error: "server restarted", endedAt: Date.now(), inboxState: "unread" })
       .where(eq(runsTable.status, "running"));
     console.log(`[routines] closed ${rows.length} run(s) interrupted by the restart`);
   }
@@ -1497,6 +1538,7 @@ export class RoutineEngine {
         status: run.status,
         error: null,
         skipReason: null,
+        inboxState: null,
         output: null,
         verdict: null,
         actions: [],
@@ -1514,6 +1556,7 @@ export class RoutineEngine {
         status: run.status,
         error: run.error,
         skipReason: run.skipReason,
+        inboxState: run.inboxState,
         output: run.output || null,
         verdict: run.verdict ?? null,
         actions: run.actions,

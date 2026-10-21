@@ -33,7 +33,7 @@ import {
   type ElicitationField,
 } from "@/lib/elicitation"
 import type { PendingElicitation } from "@/lib/store"
-import { Prose, ProsePreview } from "./tool-parts"
+import { Prose, ProsePreview } from "@/components/prose"
 import { AskAgentPicker, ASK_PAIR_FIELD } from "./ask-agents"
 import { cn } from "@/lib/utils"
 

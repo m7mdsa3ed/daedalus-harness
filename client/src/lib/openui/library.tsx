@@ -34,7 +34,7 @@
    composer — never an action of their own. */
 import { z } from "zod/v4"
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
-import { Check, ChevronDown, ChevronRight, Image as ImageIcon, Maximize2, MapPin, Minus, Navigation, Plus, Star, X } from "lucide-react"
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, Image as ImageIcon, Maximize2, MapPin, Minus, Navigation, Plus, Star, X } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -76,12 +76,13 @@ import { InteractiveFlowchart } from "@/lib/openui/interactive-flowchart"
 import { usePlacePhoto, type PlacePhoto } from "@/lib/openui/place-photo"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
-import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_DOT, WELL_PAD } from "@/lib/openui/kit"
+import { BODY, Box, BoxHeader, chartColor, FLOW, LABEL, META, PAD, PAD_ROW, SurfaceContext, TITLE, TONE_BAR, TONE_DOT, WELL_PAD } from "@/lib/openui/kit"
 import { UI_GROUPS } from "@/lib/openui/groups"
 import { FileTree } from "@/lib/openui/components/FileTree"
 import { Button, Checkbox, Form, FormControl, Input, Select, SelectItem, Slider, Textarea } from "@/lib/openui/components/interactive"
 import { Quadrant } from "@/lib/openui/components/Quadrant"
 import { Quote } from "@/lib/openui/components/Quote"
+import { LinkAnchor, linkTarget, plainText, RichText } from "@/lib/openui/rich-text"
 import { Sequence } from "@/lib/openui/components/Sequence"
 import { Steps } from "@/lib/openui/components/Steps"
 import { Terminal } from "@/lib/openui/components/Terminal"
@@ -147,9 +148,13 @@ const Section = defineComponent({
   component: ({ props }) => (
     <div className="w-full min-w-0 space-y-1 pt-0.5">
       <h3 className="font-heading text-base leading-snug font-medium break-words text-balance text-foreground">
-        {props.title}
+        <RichText text={props.title} />
       </h3>
-      {props.text && <p className="text-sm leading-relaxed break-words text-pretty text-muted-foreground">{props.text}</p>}
+      {props.text && (
+        <p className="text-sm leading-relaxed break-words text-pretty text-muted-foreground">
+          <RichText text={props.text} />
+        </p>
+      )}
     </div>
   ),
 })
@@ -275,7 +280,9 @@ const List = defineComponent({
                 <span className="size-1.5 rounded-full bg-muted-foreground" />
               )}
             </span>
-            <span className={cn(BODY, "min-w-0 flex-1")}>{item}</span>
+            <span className={cn(BODY, "min-w-0 flex-1")}>
+              <RichText text={item} />
+            </span>
           </li>
         ))}
       </Tag>
@@ -289,7 +296,8 @@ const NUMERIC = /^[-+~]?[$€£¥]?\s?\d[\d,.]*\s?(%|[a-zA-Z]{1,3})?$/
 function numericColumns(columns: string[], rows: string[][]) {
   return columns.map((_, c) => {
     const cells = rows.map((row) => row[c]?.trim() ?? "").filter(Boolean)
-    return cells.length > 0 && cells.every((cell) => NUMERIC.test(cell))
+    // Read through the marks: `**22**` is a figure in bold, not a string.
+    return cells.length > 0 && cells.every((cell) => NUMERIC.test(plainText(cell)))
   })
 }
 
@@ -345,7 +353,7 @@ const Table = defineComponent({
                       muted ? "text-muted-foreground" : "text-foreground"
                     )}
                   >
-                    {(row[0] ?? "").trim() || "—"}
+                    {(row[0] ?? "").trim() ? <RichText text={(row[0] ?? "").trim()} /> : "—"}
                   </p>
                   {facts.length > 0 && (
                     <dl className="min-w-0 space-y-0.5">
@@ -359,7 +367,7 @@ const Table = defineComponent({
                               numeric[fact.index] && "tabular-nums"
                             )}
                           >
-                            {fact.value}
+                            <RichText text={fact.value} />
                           </dd>
                         </div>
                       ))}
@@ -398,7 +406,7 @@ const Table = defineComponent({
                         cellIndex === 0 && !muted && "font-medium"
                       )}
                     >
-                      {row[cellIndex] ?? ""}
+                      <RichText text={row[cellIndex] ?? ""} />
                     </TableCell>
                   ))}
                 </TableRow>
@@ -430,7 +438,9 @@ const Callout = defineComponent({
       size="sm"
       title={props.title}
     >
-      <span className="break-words">{props.text}</span>
+      <span className="break-words">
+        <RichText text={props.text} />
+      </span>
     </Notice>
   ),
 })
@@ -481,7 +491,7 @@ const KeyValue = defineComponent({
           >
             <dt className="min-w-0 text-sm break-words text-muted-foreground">{item.key}</dt>
             <dd className="ms-auto min-w-0 text-end text-sm font-medium break-words text-foreground tabular-nums">
-              {item.value}
+              <RichText text={item.value} />
             </dd>
           </div>
         ))}
@@ -571,8 +581,20 @@ function GeneratedImage({ src, alt, caption }: { src: string; alt: string; capti
   )
 }
 
-/** Short tags. Every chip is the same neutral chip and the tone is a dot, so a
-    row of six statuses reads as one row and not as six colours. */
+/** The one state chip: an outline whose tone is a dot and never a fill, so a
+    column of six statuses reads as a column and not as six colours. `Badges`
+    and a `Rows` row wear the same chip — a status means the same thing in
+    both. */
+function ToneChip({ text, tone }: { text: string; tone?: keyof typeof TONE_DOT }) {
+  return (
+    <Badge variant="outline" className="h-auto max-w-full gap-1.5 whitespace-normal">
+      <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[tone ?? "neutral"])} />
+      <span className="min-w-0 break-words">{text}</span>
+    </Badge>
+  )
+}
+
+/** Short tags. */
 const Badges = defineComponent({
   name: "Badges",
   description: "A row of short tags, each with an optional tone.",
@@ -587,11 +609,166 @@ const Badges = defineComponent({
   component: ({ props }) => (
     <div className="flex w-full min-w-0 flex-wrap gap-1.5">
       {props.items.map((item, index) => (
-        <Badge key={index} variant="outline" className="h-auto max-w-full gap-1.5 whitespace-normal">
-          <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[item.tone ?? "neutral"])} />
-          <span className="min-w-0 break-words">{item.text}</span>
-        </Badge>
+        <ToneChip key={index} text={item.text} tone={item.tone} />
       ))}
+    </div>
+  ),
+})
+
+/* ── Links ──
+   `linkTarget` and `LinkAnchor` (the address allowlist and the one anchor)
+   live in `rich-text.tsx` with the inline markdown that can also draw a link,
+   so a `Rows` href and a `[words](https://…)` in a table cell are the same
+   rule twice, not two rules. */
+
+/** One link: its words, then the host that says where a click goes. */
+const Link = defineComponent({
+  name: "Link",
+  description: "One link: the words to read and the address they open.",
+  props: z.object({
+    label: z.string(),
+    href: z.string(),
+  }),
+  component: ({ props }) => {
+    const url = linkTarget(props.href)
+    // The host is the consent line, and only worth saying when the words do not
+    // already carry it. An address that is not a link is still shown, as text.
+    const address = (url && !props.label.includes(url.host) ? url.host : null) ?? (url ? null : props.href)
+    return (
+      <p className={cn(BODY, "min-w-0")}>
+        {url ? <LinkAnchor url={url}>{props.label}</LinkAnchor> : props.label}
+        {address && <span className={cn(META, "ms-2 break-all")}>{address}</span>}
+      </p>
+    )
+  },
+})
+
+/** A row of a divided list, at the page's own margin. A list is not a frame:
+    inside a `Card` its rows sit on the card's ground under the card's one
+    inset, and beside prose its lines reach the margin the words do. Wrapping
+    either list in `Box` put a recessed well with its own padding inside the
+    card — two insets for one list, and the dividers stopping short of both. */
+const LIST_ROW = "flex w-full min-w-0 items-start gap-3 py-2.5 first:pt-0 last:pb-0 @panel-sm:py-3"
+
+/** Several links: a hairline between them, the facts beside the words. */
+const Links = defineComponent({
+  name: "Links",
+  description: "A list of links, each with an optional line of facts: references, tickets, pages.",
+  props: z.object({
+    items: z.array(z.object({ label: z.string(), href: z.string(), meta: z.string().optional() })),
+  }),
+  component: ({ props }) => (
+    <div className="w-full divide-y">
+      {props.items.map((item, index) => {
+        const url = linkTarget(item.href)
+        const line = [item.meta, url?.host ?? item.href].filter(Boolean).join(" · ")
+        const body = (
+          <>
+            <span className="min-w-0 flex-1 space-y-0.5">
+              <span
+                className={cn(
+                  "block min-w-0 text-sm leading-snug font-medium break-words",
+                  url ? "text-primary" : "text-foreground"
+                )}
+              >
+                {item.label}
+              </span>
+              <span className={cn(META, "block truncate")} title={item.href}>
+                {line}
+              </span>
+            </span>
+            {url && <ArrowUpRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+          </>
+        )
+        return url ? (
+          <a
+            key={index}
+            href={url.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            title={url.href}
+            className={cn(LIST_ROW, "hover:bg-muted")}
+          >
+            {body}
+          </a>
+        ) : (
+          <div key={index} className={LIST_ROW}>
+            {body}
+          </div>
+        )
+      })}
+    </div>
+  ),
+})
+
+/**
+ * A triage list. One row is a thing that needs something done about it — an
+ * issue, a ticket, a PR, a follow-up, a source — so its name comes first, its
+ * state is a chip, and what qualifies it, what it says and where it lives
+ * follow. A `Table` is the right shape when every row is one line of a few
+ * cells; this is the shape a row takes when two of the cells are paragraphs,
+ * which is what a five-column table of triage turned out to be.
+ */
+const Rows = defineComponent({
+  name: "Rows",
+  description: "A triage list: each row a name, an optional state chip, a line of facts, a detail and a link out.",
+  props: z.object({
+    items: z.array(
+      z.object({
+        title: z.string(),
+        status: z.string().optional(),
+        tone: z.enum(["neutral", "info", "success", "warn", "error"]).optional(),
+        meta: z.string().optional(),
+        text: z.string().optional(),
+        href: z.string().optional(),
+      })
+    ),
+  }),
+  component: ({ props }) => (
+    <div className="w-full divide-y">
+      {props.items.map((item, index) => {
+        const url = linkTarget(item.href)
+        const facts = [item.meta, url?.host].filter(Boolean).join(" · ")
+        return (
+          <div key={index} className="min-w-0 space-y-1 py-2.5 first:pt-0 last:pb-0 @panel-sm:py-3">
+            {/* The name starts every row at the same margin and the state sits
+                at the end of it: a chip in front sized each title differently
+                (`urgent` is wider than `high`), so a column of rows read as a
+                ragged column of headings. */}
+            <div className="flex min-w-0 items-start justify-between gap-x-3">
+              {url ? (
+                <LinkAnchor
+                  url={url}
+                  underline={false}
+                  className="flex min-w-0 items-start gap-1 text-sm leading-snug underline-offset-2 hover:underline"
+                >
+                  <span className="min-w-0 break-words">{item.title}</span>
+                  <ArrowUpRight className="mt-0.5 size-3.5 shrink-0" />
+                </LinkAnchor>
+              ) : (
+                <span className="min-w-0 text-sm leading-snug font-medium break-words text-foreground">
+                  <RichText text={item.title} />
+                </span>
+              )}
+              {item.status && (
+                <span className="shrink-0">
+                  <ToneChip text={item.status} tone={item.tone} />
+                </span>
+              )}
+            </div>
+            {facts && (
+              <p className={cn(META, "text-pretty")}>
+                <RichText text={facts} />
+              </p>
+            )}
+            {item.text && (
+              <p className={cn(BODY, "text-pretty")}>
+                <RichText text={item.text} />
+              </p>
+            )}
+          </div>
+        )
+      })}
     </div>
   ),
 })
@@ -638,11 +815,15 @@ const Timeline = defineComponent({
                 <span
                   className={cn("min-w-0 text-sm leading-snug font-medium break-words", status === "pending" && "text-muted-foreground")}
                 >
-                  {item.title}
+                  <RichText text={item.title} />
                 </span>
                 {item.time && <span className={cn(META, "max-w-full tabular-nums")}>{item.time}</span>}
               </div>
-              {item.text && <p className={cn(META, "text-pretty")}>{item.text}</p>}
+              {item.text && (
+                <p className={cn(META, "text-pretty")}>
+                  <RichText text={item.text} />
+                </p>
+              )}
             </div>
           </li>
         )
@@ -675,13 +856,17 @@ const Compare = defineComponent({
             {option.pros?.map((pro, i) => (
               <li key={`p${i}`} className="flex min-w-0 gap-2">
                 <Plus className="mt-[0.3em] size-3.5 shrink-0 text-success" strokeWidth={2.5} />
-                <span className={cn(BODY, "min-w-0")}>{pro}</span>
+                <span className={cn(BODY, "min-w-0")}>
+                  <RichText text={pro} />
+                </span>
               </li>
             ))}
             {option.cons?.map((con, i) => (
               <li key={`c${i}`} className="flex min-w-0 gap-2">
                 <Minus className="mt-[0.3em] size-3.5 shrink-0 text-destructive" strokeWidth={2.5} />
-                <span className={cn(BODY, "min-w-0")}>{con}</span>
+                <span className={cn(BODY, "min-w-0")}>
+                  <RichText text={con} />
+                </span>
               </li>
             ))}
           </ul>
@@ -1148,6 +1333,70 @@ const Progress = defineComponent({
       <ProgressValue className="shrink-0 font-medium text-foreground">{() => props.hint ?? `${Math.round(props.value)}%`}</ProgressValue>
     </UiProgress>
   ),
+})
+
+/**
+ * A whole split into its parts: one bar, each segment as wide as its share,
+ * and the shares listed under it. The compact answer to "where do these add
+ * up" — a pie wants a chart's height and asks the reader to compare angles on
+ * a phone, and six `Stat`s say the counts without ever saying they are one
+ * number's parts.
+ */
+const Breakdown = defineComponent({
+  name: "Breakdown",
+  description: "One bar split into its parts, each part's share listed under the total.",
+  props: z.object({
+    items: z.array(
+      z.object({
+        label: z.string(),
+        value: z.number(),
+        tone: z.enum(["neutral", "info", "success", "warn", "error"]).optional(),
+      })
+    ),
+    title: z.string().optional(),
+  }),
+  component: ({ props }) => {
+    const total = props.items.reduce((sum, item) => sum + Math.max(0, item.value), 0)
+    const spoken = props.items.map((item) => `${item.label} ${item.value}`).join(", ")
+    return (
+      <Box className={cn(PAD, "space-y-2.5")}>
+        {props.title && (
+          <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
+            <p className={LABEL}>{props.title}</p>
+            <p className="text-xs font-medium tabular-nums text-foreground">{total}</p>
+          </div>
+        )}
+        <div
+          className="flex h-2 w-full min-w-0 overflow-hidden rounded-full bg-muted"
+          role="img"
+          aria-label={props.title ? `${props.title}: ${spoken}` : spoken}
+        >
+          {total > 0 &&
+            props.items.map((item, index) => (
+              <span
+                key={index}
+                className={cn("h-full", TONE_BAR[item.tone ?? "neutral"])}
+                style={{ width: `${(Math.max(0, item.value) / total) * 100}%` }}
+              />
+            ))}
+        </div>
+        <ul className="flex min-w-0 flex-wrap gap-x-4 gap-y-1.5">
+          {props.items.map((item, index) => (
+            <li key={index} className="flex min-w-0 items-center gap-1.5">
+              <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[item.tone ?? "neutral"])} />
+              <span className={cn(META, "min-w-0 break-words")}>{item.label}</span>
+              <span className="text-xs font-medium tabular-nums text-foreground">{item.value}</span>
+              {total > 0 && (
+                <span className={cn(META, "tabular-nums")}>
+                  {Math.round((Math.max(0, item.value) / total) * 100)}%
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Box>
+    )
+  },
 })
 
 /** A chart: `labels` x-axis, `series` one mark each, the value at index `i`
@@ -1706,6 +1955,9 @@ const GROUP_NOTES: Record<string, string[]> = {
     "- Write each table row as its own array of strings, in the SAME order as `columns`.",
     "- A short answer is prose; reach for these when the answer is a structure.",
     "- Compare for weighing options, Badges for short statuses, People for who is involved.",
+    "- A link is the words and the address they open: `Link` for one, `Links` for several. Draw the link instead of pasting a URL into a sentence, and never write an address you were not given.",
+    "- `Rows` is the triage list: one row per issue, ticket, pull request, follow-up or source, with a state chip (`status`, `tone`), a line of facts (`meta`), the detail (`text`) and a link out (`href`). It is what a table becomes when two of a row's cells are paragraphs.",
+    "- In `Rows`, `tone` is colour and `status` is the word: always give the status a tone is drawn for, never a colour on its own.",
     "- Use for a pulled quotation or cited excerpt (a line from a document, a person, a spec) that should stand apart from your own prose; not for your own summaries or emphasis.",
     "- text and source are plain strings only: no markdown, no links or URLs as links. Put author, document and section together in source, e.g. \"Jane Doe, Annual Report, section 3\".",
     "- Omit source when there is no attribution. Quote the words verbatim and without surrounding quotation marks; the component marks it as a quote.",
@@ -1750,6 +2002,7 @@ const GROUP_NOTES: Record<string, string[]> = {
   numbers: [
     "- `values` must be the same length as `labels` for Chart; Heatmap rows should match the column count.",
     "- Prefer StatRow for a handful of figures, Sparkline for a compact metric trend, and Chart for a full trend or comparison.",
+    "- Breakdown is for parts of one total: a set of counts that add up (the states of a queue, where the budget went). Give it the tones the parts deserve and let it say the shares; do not repeat the same counts in a table beside it.",
     "- Heatmap shows values across two dimensions; Funnel shows stage retention; Waterfall shows additive increases/decreases and explicit totals.",
     "- Chart kind: line/area for trends, bar for comparisons (stacked for parts of a total), pie/donut for shares of one whole (few slices), radar for scoring options on several axes.",
   ],
@@ -1786,11 +2039,15 @@ export const openuiLibrary = createLibrary({
     Code,
     Chart,
     Progress,
+    Breakdown,
     KeyValue,
     EmptyState,
     Divider,
     Image,
     Badges,
+    Link,
+    Links,
+    Rows,
     Timeline,
     Plan,
     Compare,

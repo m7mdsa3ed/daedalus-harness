@@ -44,6 +44,15 @@ function tpsFields(session: Session): { tps?: TpsStats } {
   return session.tps ? { tps: session.tps } : {};
 }
 
+/* And whether background work is still running — a workflow this thread's
+   agent launched, which outlived the turn that launched it. The one of these
+   hand-overs a replay cannot be trusted with: the run's own beats are journaled
+   updates, so an archive folded from a killed run still ends on its last
+   `running`. Read off the bridge, so a thread with no process says nothing. */
+function backgroundFields(session: Session): { background?: true } {
+  return session.bridge?.background ? { background: true } : {};
+}
+
 /**
  * What the socket router needs from the SessionManager — a port, so this
  * module owns the wire (the attached/replay/caught_up bracket, the command
@@ -261,6 +270,7 @@ export class SessionSocket {
       ...stagedFields(session),
       ...contextFields(session),
       ...tpsFields(session),
+      ...backgroundFields(session),
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
        in the order it was journaled, and from here the peer is live. */
@@ -362,6 +372,7 @@ export class SessionSocket {
       ...stagedFields(session),
       ...contextFields(session),
       ...tpsFields(session),
+      ...backgroundFields(session),
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
   }

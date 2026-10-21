@@ -15,6 +15,10 @@ export interface SidebarEnv {
   /** Parent id -> its live child threads (asks, workflow steps), oldest
       first: drawn under the parent's row, never as rows of their own. */
   children: ReadonlyMap<string, SessionMeta[]>
+  /** Threads with news the reader has not looked at (`useUnreadIds`) — the
+      rows' dot. Computed once by the sidebar, because the sidebar's own count
+      and every row's dot are the same reading. */
+  unread: ReadonlySet<string>
 }
 
 export const SidebarEnvContext = React.createContext<SidebarEnv | null>(null)

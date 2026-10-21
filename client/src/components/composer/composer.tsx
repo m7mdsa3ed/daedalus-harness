@@ -90,6 +90,7 @@ import {
   AutomationsIndicator,
   ChangesIndicator,
   ContextIndicator,
+  RepoIndicator,
   TodoIndicator,
 } from "@/components/composer-status"
 import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
@@ -188,7 +189,12 @@ export interface ComposerHandle {
   quote(excerpt: string): void
 }
 
-export function Composer({
+/* Memoized: `ThreadView` re-renders on every streamed token, and the
+   composer — the Tiptap editor, the indicators, the menus — was re-rendered
+   with it on the urgent pass, holding the *old* deferred thread, before its
+   own low-priority pass with the new one. Every prop it is handed is stable
+   between tokens, so the urgent pass now skips it. */
+export const Composer = React.memo(function Composer({
   sessionId,
   actions,
   thread,
@@ -966,6 +972,7 @@ export function Composer({
                   <AgentsIndicator thread={thread} />
                   {!draft && <AutomationsIndicator sessionId={sessionId} />}
                   <ChangesIndicator changes={changes} />
+                  <RepoIndicator meta={meta} />
                   <ContextIndicator
                     thread={thread}
                     meta={meta}
@@ -1329,4 +1336,4 @@ export function Composer({
       </div>
     </div>
   )
-}
+})

@@ -100,8 +100,10 @@ type Option = {
   description: string
   /** Drawn indented under this switch, which must sit just above it in its
       group. Off, the row is dimmed and inert — its own value is kept, it just
-      has nothing to act on. */
-  parent?: BooleanOption
+      has nothing to act on. Several keys mean every one of them has to be on:
+      the row modifies what those switches together do, so any one of them off
+      leaves it nothing to act on. */
+  parent?: BooleanOption | BooleanOption[]
 }
 
 /** A choice of more than two, drawn as a Segmented under its Row. Plain string
@@ -234,11 +236,11 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
           "Open the agent's reasoning while it streams. It folds away the moment the step finishes — click a row to read a settled one.",
       },
       {
-        key: "thoughtOneLine",
-        icon: AlignLeft,
-        title: "Thinking as one line",
+        key: "thoughtStep",
+        icon: Brain,
+        title: "Thinking as a step",
         description:
-          "Show a thought as just \"Thinking 12s\" while it streams and \"Thought for 12s\" after, with no excerpt of the reasoning. Click the line to read it.",
+          "Draw a thought the way a tool call is drawn — its own mark, the clock as the title, the reasoning one click behind it. Off, thinking keeps its block: the duration over three lines of excerpt.",
       },
       {
         key: "showToolDetails",
@@ -263,9 +265,9 @@ const TRANSCRIPT_GROUPS: Omit<Category, "scope">[] = [
       {
         key: "groupTools",
         icon: Wrench,
-        title: "Group tool calls and thinking",
+        title: "Group the agent's steps",
         description:
-          "Fold consecutive tool calls and the thinking between them into one expandable group.",
+          "Fold consecutive tool calls into one expandable group, so a run of calls reads as one line you can open. Prose and thinking end a group: a row that says something, or reasons something out, stands where it arrived.",
       },
       {
         key: "openRunningGroup",
@@ -590,7 +592,8 @@ function OptionRow({
   changed: boolean
   disabled: boolean
 }) {
-  const { icon, key, title, description, parent } = option
+  const { icon, key, title, description } = option
+  const parents = option.parent === undefined ? [] : [option.parent].flat()
   return (
     /* The whole row is the target — a switch is a small thing to hit on a
        phone. Not a <label>: the Switch is a button, which is not labelable, so
@@ -600,7 +603,7 @@ function OptionRow({
       onClick={disabled ? undefined : () => setLayoutOption(key, !value)}
       className={cn(BLEED, "transition-colors", disabled ? "opacity-50" : "cursor-pointer hover:bg-muted")}
     >
-      <div className={cn(parent && "ml-4 border-l pl-3")}>
+      <div className={cn(parents.length > 0 && "ml-4 border-l pl-3")}>
         <Row {...rowHead(icon, title, value && !disabled, changed)} subtitle={description}>
           {/* Stopped, or the row's own handler would toggle it straight back. */}
           <span onClick={(event) => event.stopPropagation()}>
@@ -731,7 +734,10 @@ export function LayoutSettings({ scope = "transcript" }: { scope?: "transcript" 
           option={option}
           value={options[option.key]}
           changed={changedKeys.has(option.key)}
-          disabled={!!option.parent && !options[option.parent]}
+          disabled={
+            option.parent !== undefined &&
+            [option.parent].flat().some((parent) => !options[parent])
+          }
         />
       ))}
       {entry.visiblePickers.includes("subagentPeek") && (

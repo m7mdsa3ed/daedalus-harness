@@ -36,6 +36,7 @@ import {
   type CloseGuard,
   type OpenPanelOptions,
   type PresetId,
+  type SplitSide,
   type TabGroupRow,
   type WorkspaceDock,
 } from "@/components/workspace/dock-context"
@@ -56,7 +57,15 @@ import {
 } from "@/lib/workspace/layout"
 import { loadActiveSpace } from "@/lib/spaces"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
-import { setActiveChat, setChatFocusHandler, setLeaveHandler, setNewTabHandler, setOpenThreads, setRouteless } from "@/lib/workspace/open-threads"
+import {
+  setActiveChat,
+  setBesideHandler,
+  setChatFocusHandler,
+  setLeaveHandler,
+  setNewTabHandler,
+  setOpenThreads,
+  setRouteless,
+} from "@/lib/workspace/open-threads"
 import { PANEL_SPECS, panelId, pageKey, parsePanel, type PanelDescriptor } from "@/lib/workspace/panels"
 
 const SAVE_DEBOUNCE_MS = 300
@@ -213,7 +222,7 @@ export function useWorkspaceDock(): DockController {
      always — the strip's +, "New tab" — which opens on the New tab page
      (`/`) unless it is told where. */
   const addTab = React.useCallback(
-    (descriptor: PanelDescriptor, replace?: IDockviewPanel) => {
+    (descriptor: PanelDescriptor, place?: { replace?: IDockviewPanel; group?: string; side?: SplitSide }) => {
       const api = apiRef.current
       if (!api) return undefined
       let desc = descriptor
@@ -228,22 +237,35 @@ export function useWorkspaceDock(): DockController {
         id = `page:${key}`
         for (let n = 2; api.getPanel(id); n += 1) id = `page:${key}:${n}`
       }
-      const anchor = replace ?? api.activeGroup?.activePanel
-      const group = anchor?.group ?? api.activeGroup ?? undefined
+      const anchor = place?.replace ?? api.activeGroup?.activePanel
+      /* A strip named by the caller (a drop on *that* strip) wins over the one
+         the tab in front stands in. */
+      const named = place?.group ? api.groups.find((candidate) => candidate.id === place.group) : undefined
+      const group = named ?? anchor?.group ?? api.activeGroup ?? undefined
+      /* A split is made beside the strip it was asked of — the named one, else
+         the one in front — and never on a phone, where the fold takes it away
+         in the next microtask. */
+      const side = place?.side
+      const strip = named ?? api.activeGroup
+      const split = side && strip && isGrid(strip) && !isNarrow() ? strip : undefined
       const added = api.addPanel({
         id,
         component: desc.kind,
         title: PANEL_SPECS[desc.kind].defaultTitle,
         params: desc as unknown as Record<string, unknown>,
-        position: group
-          ? {
-              referenceGroup: group.id,
-              direction: "within" as const,
-              index: anchor && group.panels.includes(anchor) ? group.panels.indexOf(anchor) + 1 : undefined,
-            }
-          : undefined,
+        position: split && side
+          ? { referenceGroup: split.id, direction: side }
+          : group
+            ? {
+                referenceGroup: group.id,
+                direction: "within" as const,
+                index:
+                  anchor && group.panels.includes(anchor) ? group.panels.indexOf(anchor) + 1 : undefined,
+              }
+            : undefined,
       })
-      if (replace) silently(() => api.removePanel(replace))
+      const replaced = place?.replace
+      if (replaced) silently(() => api.removePanel(replaced))
       return added
     },
     [silently]
@@ -265,7 +287,7 @@ export function useWorkspaceDock(): DockController {
           if (here.path !== path) active.api.updateParameters({ kind: "page", path })
           return
         }
-        const added = addTab(target, active)
+        const added = addTab(target, { replace: active })
         const origin = routeOf(active)
         if (added && origin && target.kind === "page") cameFrom.set(added, origin)
         return
@@ -284,14 +306,22 @@ export function useWorkspaceDock(): DockController {
     return true
   }, [navigateActive])
 
-  const openTab = React.useCallback(
-    (path = "/") => {
+  /* ── A route, by name ──
+     The door every surface outside the dock knocks on: a sidebar row's "Open in
+     new tab" (`lib/workspace/open-threads`), a place dropped on the dock
+     (`dock-drop.tsx`), and `openTab` itself, which is the same thing with
+     nothing said about where it lands. A thread is a route and a page is a
+     route, so one function lands both and there is no third shape to forget. */
+  const openRoute = React.useCallback(
+    (path: string, options?: { side?: SplitSide; group?: string }) => {
       const [pathname, query] = path.split("?")
       const sessionId = routedThreadId(pathname, query ? `?${query}` : "")
-      addTab(sessionId ? { kind: "chat", sessionId } : { kind: "page", path })
+      addTab(sessionId ? { kind: "chat", sessionId } : { kind: "page", path }, options)
     },
     [addTab]
   )
+
+  const openTab = React.useCallback((path = "/") => openRoute(path), [openRoute])
 
   const openPage = React.useCallback(
     (path: string, options?: { newTab?: boolean }) => (options?.newTab ? openTab(path) : navigateActive(path)),
@@ -1032,6 +1062,14 @@ export function useWorkspaceDock(): DockController {
     [silently, openPanel]
   )
 
+  /** "Open to the side", asked from outside the dock: a column beside the strip
+      in front. A phone folds it back into that strip, which is the tab the same
+      menu row would have opened — so the row is not offered there. */
+  const openBesideInFront = React.useCallback(
+    (path: string) => openRoute(path, { side: "right" }),
+    [openRoute]
+  )
+
   const cleanupRef = React.useRef<(() => void) | null>(null)
 
   const onReady = React.useCallback(
@@ -1078,6 +1116,7 @@ export function useWorkspaceDock(): DockController {
       publishDockState()
       setChatFocusHandler(focusOpenChat)
       setNewTabHandler(openTab)
+      setBesideHandler(openBesideInFront)
       setLeaveHandler(leavePage)
 
       const flushSave = () => {
@@ -1130,12 +1169,13 @@ export function useWorkspaceDock(): DockController {
         disposables.forEach((disposable) => disposable.dispose())
         setChatFocusHandler(null)
         setNewTabHandler(null)
+        setBesideHandler(null)
         setLeaveHandler(null)
         setActiveChat(null)
         setRouteless(false)
       }
     },
-    [silently, openTab, leavePage]
+    [silently, openTab, openBesideInFront, leavePage]
   )
 
   /* Digits count the tabs in the strip you are looking at. Bound through
@@ -1181,6 +1221,7 @@ export function useWorkspaceDock(): DockController {
       openPage,
       navigateActive,
       openTab,
+      openRoute,
       consumeConsole,
       closePanel,
       closeOthers,
@@ -1230,6 +1271,7 @@ export function useWorkspaceDock(): DockController {
       openPage,
       navigateActive,
       openTab,
+      openRoute,
       consumeConsole,
       closePanel,
       closeOthers,

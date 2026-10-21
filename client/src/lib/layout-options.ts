@@ -107,7 +107,10 @@ export const WITHIN_MS: Record<Exclude<SidebarWithin, "any">, number> = {
 export interface LayoutOptions {
   /** Wall-clock time beside each message and step. */
   showTimestamps: boolean
-  /** Fold runs of consecutive tool calls and interleaved thoughts into one expandable block. */
+  /** Fold runs of consecutive tool calls into one expandable block
+   *  (`groupToolRuns`). Prose and a thought end a run and are drawn where they
+   *  arrived: a fold counts calls, and reasoning folded behind a line that never
+   *  mentions it is reasoning the reader cannot see. */
   groupTools: boolean
   /** Keep the group the agent is still working in open. Off, it folds like a
    *  finished one and peeks its last few steps under the counting line. */
@@ -124,12 +127,13 @@ export interface LayoutOptions {
   /** Pin to the newest content while the agent is streaming. */
   autoScroll: boolean
   /** Open a reasoning row while it streams. It folds once the step finishes;
-   *  off, only its one-line ticker shows. */
+   *  off, a thought stays on its title line while it streams. */
   showThinking: boolean
-  /** A thought is one line — "Thinking 12s" / "Thought for 12s" — with no
-   *  excerpt under it and no live view while it streams. Click still opens
-   *  the full text. */
-  thoughtOneLine: boolean
+  /** Draw a thought the way a tool call is drawn — its own mark, "Thought for
+   *  12s" as the title, the reasoning one click behind it — instead of the
+   *  muted block that stands in the transcript. Off, thinking keeps that block:
+   *  its duration over three lines of excerpt. */
+  thoughtStep: boolean
   /** Soft-wrap long code and diff lines instead of scrolling. */
   codeWrap: boolean
   /** Wider transcript column. */
@@ -243,7 +247,7 @@ export const LAYOUT_DEFAULTS: LayoutOptions = {
   compactDensity: false,
   autoScroll: true,
   showThinking: true,
-  thoughtOneLine: false,
+  thoughtStep: true,
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
@@ -322,7 +326,15 @@ function pick(raw: unknown): Partial<LayoutOptions> {
   const out: Record<string, unknown> = {}
   for (const key of KEYS) {
     const value = source[key]
-    if (typeof LAYOUT_DEFAULTS[key] === "boolean") {
+    if (key === "thoughtStep") {
+      /* "Thinking as one line" was this switch's ancestor and is gone. Its two
+         positions are the two shapes this one picks between — a label alone
+         (a step) and the excerpt block — so a stored pick carries over as it
+         stands. Read only when this key itself is absent, and only for a
+         reader who had made that pick: nothing is written for a default. */
+      if (typeof value === "boolean") out[key] = value
+      else if (typeof source.thoughtOneLine === "boolean") out[key] = source.thoughtOneLine
+    } else if (typeof LAYOUT_DEFAULTS[key] === "boolean") {
       if (typeof value === "boolean") out[key] = value
     } else if (key === "subagentPeek") {
       /* The older count only reached storage when the reader moved it off

@@ -139,6 +139,7 @@ export const StepRow = React.memo(function StepRow({
   control,
   detail,
   foldedTarget,
+  plainBody,
   below,
   firstRow,
   belowFlush = false,
@@ -194,6 +195,12 @@ export const StepRow = React.memo(function StepRow({
   detail?: React.ReactNode
   /** Alternate folded content shown beneath the headline. */
   foldedTarget?: React.ReactNode
+  /** The plain shape's body, as a function of disclosure state — so the SAME
+      nodes are mounted on both sides of the fold. `foldedTarget`/`detail` swap
+      two elements, and a swap is a remount: whatever animates a fold (a
+      thought's height, say) never sees the transition at all. Replaces both of
+      them in the plain shape, and makes the row expandable on its own. */
+  plainBody?: (open: boolean) => React.ReactNode
   /** Content beside the title, on its first row rather than underneath. */
   firstRow?: React.ReactNode
   /** A strip under the header that stays whether or not the row is open —
@@ -295,7 +302,8 @@ export const StepRow = React.memo(function StepRow({
     setLatched(latestDefault.current)
     setChosen(null)
   }, [openSetting, setChosen, setLatched])
-  const expandable = detail !== undefined && detail !== null && detail !== false
+  const expandable =
+    plainBody !== undefined || (detail !== undefined && detail !== null && detail !== false)
   const { calmMotion } = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
   const reduceMotion = calmMotion || systemReducedMotion
@@ -435,7 +443,11 @@ export const StepRow = React.memo(function StepRow({
           )}
           {plain ? (
             <div className="min-w-0 flex-1 text-start text-sm leading-relaxed text-muted-foreground">
-              {!open && foldedTarget ? foldedTarget : detail}
+              {plainBody
+                ? plainBody(open)
+                : !open && foldedTarget
+                  ? foldedTarget
+                  : detail}
             </div>
           ) : (
             <span className="flex min-w-0 flex-1 flex-col">

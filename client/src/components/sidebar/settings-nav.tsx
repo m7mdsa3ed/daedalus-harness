@@ -38,6 +38,9 @@ import {
   sectionOf,
   type SettingsSectionId,
 } from "@/components/settings/sections"
+import { ItemContextMenu } from "@/components/item-context-menu"
+import { openInItems } from "@/components/open-in-menu"
+import { startRouteDrag } from "@/lib/workspace/route-drag"
 import { settingsPath, settingsRootPath } from "@/lib/router"
 
 /** Is the panel in front of you a settings page? See the header: the dock
@@ -61,22 +64,35 @@ export function SettingsNav({ onBack }: { onBack: () => void }) {
     void navigate(path)
   }
 
+  /* A section row navigates the tab in front (that is what a page tab is), so
+     the other two shapes — a tab of its own, a column beside this one — are in
+     its menu. A phone makes no column, so that row is left out there. */
   const row = (
     id: SettingsSectionId | null,
     label: string,
     Icon: (typeof SETTINGS_OVERVIEW)["icon"]
-  ) => (
-    <SidebarMenuItem key={id ?? "overview"}>
-      <SidebarMenuButton
-        tooltip={label}
-        isActive={id === section}
-        onClick={() => go(id ? settingsPath(id) : settingsRootPath())}
-      >
-        <Icon />
-        <span>{label}</span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  )
+  ) => {
+    const path = id ? settingsPath(id) : settingsRootPath()
+    /* A section can be dragged into the dock as well as clicked into the tab in
+       front: same payload as a thread's row, same landing (`dock-drop.tsx`). */
+    const draggable = !isMobile
+    return (
+      <SidebarMenuItem key={id ?? "overview"}>
+        <ItemContextMenu items={openInItems(path, { beside: !isMobile })}>
+          <SidebarMenuButton
+            tooltip={label}
+            isActive={id === section}
+            onClick={() => go(path)}
+            draggable={draggable}
+            onDragStart={draggable ? (event) => startRouteDrag(event, path) : undefined}
+          >
+            <Icon />
+            <span>{label}</span>
+          </SidebarMenuButton>
+        </ItemContextMenu>
+      </SidebarMenuItem>
+    )
+  }
 
   return (
     <>

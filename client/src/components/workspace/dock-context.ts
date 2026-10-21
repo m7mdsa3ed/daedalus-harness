@@ -40,6 +40,10 @@ export interface OpenPanelOptions {
   into?: PanelTarget
 }
 
+/** The four ways a split is made beside the strip it is asked of — the side a
+    new column or row lands on. `within` is not one of them: that is a tab. */
+export type SplitSide = "left" | "right" | "above" | "below"
+
 /** A strip (dockview group id), and optionally the tab to land beside. */
 export interface PanelTarget {
   group: string
@@ -68,6 +72,15 @@ export interface WorkspaceDock {
   navigateActive: (path: string) => void
   /** A new tab, always — the strip's +. On the New tab page unless told where. */
   openTab: (path?: string) => void
+  /**
+   * A route a surface outside the dock asked for by name — the sidebar's row
+   * menus and a place dropped on the dock. The same landing rules `openTab`
+   * keeps, plus the two things a drop can say that a click cannot: which strip
+   * it landed on (`group`) and whether it makes a column or a row beside it
+   * (`side`). A phone folds every split back, so `side` is ignored below `md`
+   * — the route lands as a tab, which is the only shape a phone has.
+   */
+  openRoute: (path: string, options?: { side?: SplitSide; group?: string }) => void
   /** Spend the landing console's tab: the thread started from it takes its
       place rather than standing beside a "New thread" tab that has nothing
       left to do. A no-op unless the console is the active, unpinned tab. */

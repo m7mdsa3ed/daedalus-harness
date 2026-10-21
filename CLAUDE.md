@@ -191,7 +191,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   to a provider that rejects it.
 - **Subagents: the store is flat, the transcript is a tree.** Ownership is resolved in one
   place and lands as `parentId`; consumers reading `thread.items` must ignore `parentId`
-  items where the thread's own are meant. OpenCode 2's children arrive on its own `opencode/session/child_update`, translated on the
+  items where the thread's own are meant. **A running child whose spawn says
+  `capabilities.cancel` has a Stop on its row** (`POST /api/sessions/:id/subagents/:childId/cancel`):
+  an ask is cancelled through its run (the parent is told), a runtime's own child gets ACP
+  `session/cancel` on its id; a workflow step is its card's to stop, never its row's. OpenCode 2's children arrive on its own `opencode/session/child_update`, translated on the
   way in — nothing downstream learns a fourth shape. The Daedalus agent's
   `task` children have stable ids and saved conversation state: use `list_agents` to find a
   child and `send_message` to follow up. A stopped or failed child resumes from its last
@@ -373,7 +376,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   transcript that is not this thread's agent. The parent's model and mode ids never cross to another
   pair — the child starts on its profile's default model and its runtime's default mode.
   Offered to every runtime, Claude Code included (it rivals nothing), one level, and capped
-  apart from workflows. The asked agent sees only the brief. **The user picks the profile and
+  apart from workflows. The asked agent sees only the brief, and runs in the caller's project unless `projectId` names another (`WorkflowStep.projectId`; the parent's worktree is not carried across). **A thread with live children is never idle-retired** (`bridge.background`: runs, asks and a runtime's own background tasks), because retiring the parent cancels them. **The user picks the profile and
   model, per agent per thread** (`sessions.ask_profiles`, seeded by `projects.default_ask_profiles`,
   the "Ask agents" rows of the config menus): read at ask time, so no respawn; unset, the `agents`
   server raises a picker by MCP elicitation (the client draws it as the config menu's rows),

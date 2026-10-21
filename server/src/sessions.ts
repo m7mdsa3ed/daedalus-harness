@@ -669,6 +669,48 @@ export class SessionManager {
       first, the turn-boundary math and the replay framing — extracted to
       session-journal.ts. The manager decides when; the journal knows the table. */
   private log = new SessionJournal(db);
+  /** How long a thread nobody has open keeps its process (`sweepIdle`). */
+  private idleMinutes: number;
+
+  /** The idle sweep, once: retire every thread nobody has had open for
+      `idleMinutes`, except those still working. Its own method so a test can
+      run it at a chosen `now`. */
+  sweepIdle(now = Date.now()): void {
+    for (const s of this.sessions.values()) {
+      /* Not a thread mid-turn: a parent blocked inside a workflow call with
+         no browser open was being retired under it. And never a workflow
+         step, which has no peers by design — its lifetime is its run's. */
+      /* A held turn is still `promptActive`, so it would keep its process
+         alive forever with nobody reading it — whether the runtime held it
+         on a failure or the user paused it. And a pause with no turn open is
+         the other way round: nothing is active, so the ordinary sweep would
+         retire it and the revive would come back unpaused, silently. So any
+         hold is kept off the sweep, and given up on after the same long
+         while — a cancel, which lifts the hold and ends the turn cleanly,
+         parks the queue and leaves no error card — and the ordinary sweep
+         retires it next time round. Generous, because the whole point of a
+         hold is that somebody may come back to it. */
+      const bridge = s.bridge;
+      if (bridge?.paused && bridge.heldSince !== null && s.peers.size === 0) {
+        if (now - bridge.heldSince > HELD_TURN_MAX_MS) {
+          console.warn(`[${s.id.slice(0, 8)}] hold (${bridge.pausedReason}) gave up after ${Math.round(HELD_TURN_MAX_MS / 3_600_000)}h with no reader`);
+          void bridge.cancel().catch(() => {});
+        }
+        continue;
+      }
+      /* Nor a thread whose children are still working (`background`: a live
+         ask or workflow run, or a runtime's own background task) — retiring
+         it cancels them all (`onProcessGone`), and the answer they owe it
+         would have nobody to wake. */
+      if (s.parentSessionId || bridge?.promptActive || bridge?.background) continue;
+      if (!s.exited && s.peers.size === 0 && s.detachedAt && now - s.detachedAt > this.idleMinutes * 60_000) {
+        this.retire(
+          s,
+          `Nobody had this thread open for ${this.idleMinutes} minutes, so its agent process was stopped to free it. The conversation is kept — sending a message starts the agent again.`,
+        );
+      }
+    }
+  }
 
   constructor(
     private events: SessionEvents = {},
@@ -717,39 +759,8 @@ export class SessionManager {
        — see `applyConfig`. */
     setGatewaySessionResolver(async (id) => await this.gatewayStateOf(id));
 
-    const idleMs = idleMinutes * 60_000;
-    setInterval(async () => {
-      for (const s of this.sessions.values()) {
-        /* Not a thread mid-turn: a parent blocked inside a workflow call with
-           no browser open was being retired under it. And never a workflow
-           step, which has no peers by design — its lifetime is its run's. */
-        /* A held turn is still `promptActive`, so it would keep its process
-           alive forever with nobody reading it — whether the runtime held it
-           on a failure or the user paused it. And a pause with no turn open is
-           the other way round: nothing is active, so the ordinary sweep would
-           retire it and the revive would come back unpaused, silently. So any
-           hold is kept off the sweep, and given up on after the same long
-           while — a cancel, which lifts the hold and ends the turn cleanly,
-           parks the queue and leaves no error card — and the ordinary sweep
-           retires it next time round. Generous, because the whole point of a
-           hold is that somebody may come back to it. */
-        const bridge = s.bridge;
-        if (bridge?.paused && bridge.heldSince !== null && s.peers.size === 0) {
-          if (Date.now() - bridge.heldSince > HELD_TURN_MAX_MS) {
-            console.warn(`[${s.id.slice(0, 8)}] hold (${bridge.pausedReason}) gave up after ${Math.round(HELD_TURN_MAX_MS / 3_600_000)}h with no reader`);
-            void bridge.cancel().catch(() => {});
-          }
-          continue;
-        }
-        if (s.parentSessionId || bridge?.promptActive) continue;
-        if (!s.exited && s.peers.size === 0 && s.detachedAt && Date.now() - s.detachedAt > idleMs) {
-          this.retire(
-            s,
-            `Nobody had this thread open for ${idleMinutes} minutes, so its agent process was stopped to free it. The conversation is kept — sending a message starts the agent again.`,
-          );
-        }
-      }
-    }, 60_000).unref();
+    this.idleMinutes = idleMinutes;
+    setInterval(() => this.sweepIdle(), 60_000).unref();
     // Retention is checked at boot and then hourly, so a server that runs for
     // months does not accumulate every thread it ever ran.
     setInterval(async () => this.pruneJournals(), 3_600_000).unref();
@@ -1455,6 +1466,12 @@ export class SessionManager {
       set.delete(fn);
       if (set.size === 0 && this.subscribers.get(id) === set) this.subscribers.delete(id);
     };
+  }
+
+  /** The workflow runner saying whether a thread still has live asks or runs:
+      background work, so the thread does not read done between turns. */
+  setRunsActive(id: string, active: boolean): void {
+    this.sessions.get(id)?.bridge?.setRunsActive(active);
   }
 
   /** A server-side subsystem putting an `update` on a thread's log — the
@@ -3882,6 +3899,11 @@ export class SessionManager {
          newest context reading. */
       waiting: (s.bridge?.pending.size ?? 0) > 0,
       held: !!s.bridge?.paused && s.bridge.pausedReason === "error",
+      /* Work this thread started that is still going with no turn open — a
+         Claude Code workflow, which answers its prompt at "launched" and runs
+         on. A list with no socket to the thread has nothing else to go on, and
+         without it the thread reads done while its workflow works. */
+      backgroundActive: s.bridge?.background ?? false,
       context: s.context ? { used: s.context.used, size: s.context.size } : null,
       cursor: s.eventCount,
       parentSessionId: s.parentSessionId,

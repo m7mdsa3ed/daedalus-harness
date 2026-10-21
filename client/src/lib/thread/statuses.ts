@@ -41,25 +41,44 @@ export function threadStatus(
     thread?.turnActive ?? session.promptActive,
     waiting,
     !!session.lastTurnError,
-    !!thread && thread.phase.kind === "live" && backgroundRunning(thread.items)
+    backgroundOf(session, thread)
   )
 }
 
 /* A native workflow (Claude Code's Workflow tool) is a background task that
    outlives the turn that launched it: the turn ends at "launched", and the run
-   streams `async_task_*` for minutes after. It reads as busy in every list, and
-   ONLY here — `turnActive` stays the turn's, because it is what Stop, the queue
-   and the turn footers mean by "running", and none of them apply to a task the
-   agent is no longer waiting on.
+   works on for minutes after. It reads as busy in every list, and ONLY here —
+   `turnActive` stays the turn's, because it is what Stop, the queue and the
+   turn footers mean by "running", and none of them apply to a task the agent
+   is no longer waiting on.
 
-   Gated on a live phase: a run dies with its process, and a journal replayed
-   from a retired thread still holds its last `running`.
-   ponytail: a respawn mid-run (same thread, new process) kills the run with no
-   terminal state journaled, so the thread reads busy for good; have the bridge
-   journal a `stopped` for open tasks on respawn if that bites.
+   Three sources, in the order they can be believed:
 
-   Cached per items array, because `useThreadStatuses` asks this of every thread
-   on every store write and the array only changes for the thread that wrote. */
+   - a live socket's `background`, which is the server's own answer and moves
+     on both ends of a run (`background` event, `caught_up`) — the only one
+     that knows a run ended while this device was watching;
+   - the row (`SessionMeta.backgroundActive`), read off the server's bridge for
+     a list with no socket to the thread at all — a phone, or a desktop that
+     has never opened it. That is the case this was missing: the transcript's
+     own reading cannot help where there is no transcript;
+   - and, on a server that predates the field, the transcript itself.
+
+   Read from the server rather than only from the journal, because the journal
+   keeps the run's own beats: an archive of a run that died mid-flight ends on
+   its last `running` and would keep the thread busy for good. Which is also
+   why there is no longer a "a respawn mid-run reads busy forever" bug: the new
+   process reports no run, and its answer is the one believed. */
+export function backgroundOf(session: SessionMeta, thread: ThreadState | undefined): boolean {
+  if (session.backgroundActive !== undefined) {
+    return thread?.phase.kind === "live" ? thread.background : session.backgroundActive
+  }
+  return thread ? backgroundRunning(thread.items) : false
+}
+
+/* The transcript's own reading of the same thing, kept for the one case the
+   server cannot answer: a client newer than its server. Cached per items
+   array, because `useThreadStatuses` asks this on every store write and the
+   array only changes for the thread that wrote. */
 const backgroundCache = new WeakMap<ThreadState["items"], boolean>()
 export function backgroundRunning(items: ThreadState["items"]): boolean {
   let running = backgroundCache.get(items)

@@ -4,6 +4,7 @@
    speaking. This is that ladder in one pure function, in the same order, so a
    surface draws one slot and cannot say two things. */
 import { retryWhy, shownRetry, workingMessage } from "@/components/composer/activity-line"
+import { runningAgents } from "@/components/composer/agents-indicator"
 import { describeError } from "@/lib/errors"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
 import { holdOf } from "@/lib/thread/hold"
@@ -19,6 +20,7 @@ export interface ThreadStatus {
     | "starting" | "reviving" | "loading" | "replaying" | "attaching"
     | "reconnecting" | "parked" | "failed"
     | "retrying" | "held" | "sending" | "working" | "waiting"
+    | "background"
     | "archived" | "trashed" | "turn-failed"
   tone: "progress" | "info" | "warn" | "error"
   headline: string
@@ -103,7 +105,10 @@ export function statusFor(thread: ThreadState, waitShown = true): ThreadStatus |
   // A turn held on a failure is the held card's (model picker, Continue), not a line.
   if (hold.byError) return null
   if (line) return null
-  if (!thread.turnActive) return failureStatus(thread)
+  /* Nothing in flight, no hold, no failure left to report — except, sometimes,
+     work the agent launched that outlived the turn. That is neither an ending
+     nor a wait: it is the thread still going with no turn open. */
+  if (!thread.turnActive) return failureStatus(thread) ?? backgroundStatus(thread)
   const retry = shownRetry(thread)
   if (retry) {
     const { attempt, of, delayMs, error } = retry
@@ -155,6 +160,35 @@ function failureStatus(thread: ThreadState): ThreadStatus | null {
     retryLabel: carried ? "Retry (text only)" : undefined,
     itemId: item.id,
     actions,
+  }
+}
+
+/**
+ * The thread's own line while its agent still has background work going and no
+ * turn is open: a Claude Code workflow, which answers its prompt at "launched"
+ * and works on afterwards. Without this the transcript simply fell silent at
+ * the turn's end and the thread read as done while its run was mid-flight —
+ * the one reading a person watching the thread has.
+ *
+ * Its own kind rather than `working`, because `working` is the turn's: it is
+ * what a Stop button, the queue and the composer are about, and none of them
+ * apply to work the agent is no longer waiting on. Named off the run for the
+ * same reason `workingMessage` names a step: at least one agent's `name` here is
+ * the workflow's own, since a native run's steps carry it (`nativeWorkflowRun`).
+ * A run whose per-agent beats never arrived (an unpatched adapter) still has the
+ * totals, so it falls back to the plain sentence rather than saying nothing.
+ */
+function backgroundStatus(thread: ThreadState): ThreadStatus | null {
+  if (!thread.background) return null
+  const agents = runningAgents(thread)
+  const run = agents.find((agent) => agent.name)?.name
+  return {
+    kind: "background",
+    tone: "progress",
+    headline:
+      agents.length > 1 ? `${agents.length} agents still running` : `${run ?? "A workflow"} is still running`,
+    detail:
+      "This turn is over; the workflow it launched is not. Its steps are in the transcript above, and this line goes when the run ends.",
   }
 }
 

@@ -567,6 +567,30 @@ const SCENES = {
   steps: stepUpdates,
   subagents: subagentUpdates,
   workflow: workflowUpdates,
+  /* A native workflow that OUTLIVES its turn, which is what the real one does:
+     Claude Code answers the prompt at "launched" and streams the run after it.
+     `workflow` above finishes inside the turn, so it can never show a thread
+     that is busy with no turn open — the reading the bridge's `background`
+     exists for. This one leaves the run going; `finish:workflow` ends it. */
+  "workflow-live": () => {
+    const air = clientCapabilities?._meta?.jetbrains?.air;
+    if (!Array.isArray(air?.capabilities) || !air.capabilities.includes("asyncTasks")) {
+      return [{ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "(no run: this client did not claim `asyncTasks`)" } }];
+    }
+    return [
+      { sessionUpdate: "async_task_spawned", asyncTaskId: "wt-live", name: "fake-audit-live", taskType: "workflow", description: "Audit the fake repo, in the background", showInTranscript: true, canStop: true, toolCallId: "t7" },
+      {
+        sessionUpdate: "async_task_progress",
+        asyncTaskId: "wt-live",
+        usage: { totalTokens: 1200, toolUses: 2, durationMs: 900 },
+        lastToolName: "Bash",
+        workflowProgress: [
+          { type: "workflow_phase", index: 1, title: "Map" },
+          { type: "workflow_agent", index: 1, label: "read:server", phaseIndex: 1, phaseTitle: "Map", agentId: "a1", state: "progress", tokens: 1200, toolCalls: 2, lastToolName: "Bash", promptPreview: "Map the server routes" },
+        ],
+      },
+    ];
+  },
   questions: questionUpdates,
   other: otherUpdates,
   default: () => [...stepUpdates(), ...subagentUpdates()],
@@ -768,6 +792,29 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
         },
       });
       out({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn", usage: { totalTokens: 5 } } });
+      return;
+    }
+    /* `finish:workflow` ends the run `scene:workflow-live` left going — the
+       other half of a native workflow, which really ends in a turn of its own
+       (the runtime's `<task-notification>` opens it, not a person). */
+    if (asked.includes("finish:workflow")) {
+      out({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "acp-123",
+          update: { sessionUpdate: "async_task_state_update", asyncTaskId: "wt-live", state: "completed", summary: "1 agent, 1 finding" },
+        },
+      });
+      out({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "acp-123",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The audit finished: one finding." } },
+        },
+      });
+      out({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn", usage: { totalTokens: 8 } } });
       return;
     }
     /* `scene:<name>` streams one scene and ends the turn — the whole point of

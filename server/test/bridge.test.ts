@@ -209,6 +209,49 @@ assert.ok(
     "a workflow beat's progress array reaches the browser verbatim",
   );
 }
+/* --- a workflow that outlives its turn ---
+   Claude Code answers a workflow's prompt at "launched" and the run works on,
+   so the thread has no open turn and is not done. `background` is that reading,
+   and it has to reach three places: the live peers (both ends of the run), a
+   peer that attaches in the middle of it (`caught_up`), and the session row,
+   which is all a list with no socket to the thread has. */
+{
+  const live = await manager.create(profile, "fake", project);
+  await live.bridge!.ready;
+  const wsl = new MockWs();
+  assert.equal(await manager.attach(live.id, wsl as never), null);
+  send(wsl, { id: 900, cmd: "prompt", text: "scene:workflow-live" });
+  await waitFor(() => wsl.of("turn_ended").length === 1, "the launching turn to end");
+  assert.deepEqual(
+    wsl.of("background").map((e) => e.active),
+    [true],
+    "a run that outlives its turn is said once, and the turn ending does not take it back",
+  );
+  assert.equal(
+    manager.list().find((s) => s.id === live.id)!.backgroundActive,
+    true,
+    "the row says busy with no turn open",
+  );
+  /* A peer that arrives now — another device, or this one after a reload — is
+     told, rather than left to infer it from a transcript it has to fold first. */
+  const wsl2 = new MockWs();
+  assert.equal(await manager.attach(live.id, wsl2 as never), null);
+  assert.equal(wsl2.of("caught_up")[0].background, true, "an attaching peer is handed the run");
+  /* And the end is the second turn the runtime's own notification opens. */
+  send(wsl, { id: 901, cmd: "prompt", text: "finish:workflow" });
+  await waitFor(() => wsl.of("turn_ended").length === 2, "the finishing turn");
+  assert.deepEqual(wsl.of("background").map((e) => e.active), [true, false], "the end is said once");
+  assert.equal(
+    manager.list().find((s) => s.id === live.id)!.backgroundActive,
+    false,
+    "and the row goes quiet with it",
+  );
+  /* Retired and purged rather than left behind: the cascade assertion further
+     down waits for the event table to empty, so every thread this file mints is
+     one it also takes away. */
+  manager.retire(live);
+  await manager.purge(live.id);
+}
 /* Which children spoke, not how many times: the fake agent's subagent scene is
    the transcript's sample set and grows a worker whenever a row needs one. What
    must not change is that an update of a child's carries that child's id and an

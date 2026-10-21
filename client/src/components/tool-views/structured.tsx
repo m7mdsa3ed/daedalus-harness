@@ -21,11 +21,10 @@ import {
   PANE_MAX_H,
   PANE_PAD,
   PlanFullscreen,
-  Prose,
-  ProsePreview,
   SmartBlock,
   ToolProse,
 } from "@/components/tool-parts"
+import { Prose, ProsePreview } from "@/components/prose"
 import {
   extractFindings,
   extractPlanProposal,

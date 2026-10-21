@@ -369,6 +369,34 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   chunk. `applyTerminalMeta` accumulates the chunks onto `ToolItem.terminal` in
   the store reducer, which is also what makes replay work, since a replayed
   thread runs the same reducer over the same journaled updates.
+  **A call into an MCP server reads as that server, not as a generic call**
+  (`lib/tools/mcp.ts`, `tool-views/mcp.tsx`). Three things were missing and they
+  are the same fact three ways. The row wore its ACP kind's glyph — a wrench for
+  the `other` Claude Code files every MCP tool under, a terminal for Codex's
+  `execute` — so four servers read as four identical marks; it now wears the
+  server's own face, resolved from the library by `mcpServerKey` (case- and
+  punctuation-blind, because `GitHub Work`, `mcp__GitHub_Work__…` and
+  `mcp.GitHub_Work.…` are one name in three spellings) with `catalog: false`,
+  since a transcript row draws what the row holds and a listing read per server
+  mentioned would turn reading a thread into catalog requests. A server nobody
+  in the library names keeps the kind glyph: a guess wearing a logo is worse
+  than a wrench. The row also captioned nothing — `Clickup · Get Task` never
+  said which task — so `mcpSubject` picks the argument that names the thing
+  acted on (`query`, `path`, a task's `name`, and `id` last, because plenty of
+  servers put a workspace's id there) and it is the step's caption. And the
+  answer arrived as MCP's envelope, `{content:[{type:"text",text}],
+  structuredContent, isError}`, drawn as a JSON tree three folds deep around an
+  escaped string; `mcpAnswer` flattens the blocks, lifts `structuredContent`
+  beside them (folded at the root), unwraps the runtime's own `{result, error}`
+  and `{output}` wrappers one level, and says `isError` as a failure. A server
+  that answers a document still gets the tree — it is the same reader, pointed
+  at the letter instead of the envelope — and an answer that arrived as ACP
+  content blocks is drawn once, not twice: `Result` is for the dialect that
+  keeps the reply on the call. The pair in the title is `mcpCallLabel`, which
+  spells the server as a person typed it (`GitHub_Work` is never "Git Hub
+  Work") and drops the vendor's own name from the tool, because Clickup's
+  server names its tools `clickup_get_task`. `mcp.check.mjs` holds the three
+  dialects' shapes.
   **A row's default expansion is the view's own decision, and the view is not known
   when the row mounts.** `opensByDefault` is a column on the same table as `Detail` and
   `hasDetail`, so a diff, a checklist and a plan stand open and everything else is a one-line
@@ -463,13 +491,27 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   step name when there is one, else what the worker was asked to do — so a step
   does not change its name depending on whether it is read inside the run or on
   its own.
-  **A thinking row streams as a ticker**: `RowView`'s `streaming` flag (set by
-  `thread-view.tsx` on the transcript's tail row while `turnActive`, and by the subagent
-  rail on its tail while the child is active) makes the `thought` case draw in-progress —
-  primary icon, elapsed timer, a shimmering title that is the *newest* line's tail
-  (`thoughtPreview`), clipped from the front because the end is the part that is new.
-  Settled, the title is the opening line as before. Derived at view time from position,
-  not from a flag in the store: the reducer never marks a thought done.
+  **A thinking row is a live view while it streams, and its shape is a view option.**
+  `RowView`'s `streaming` flag (set by `thread-view.tsx` on the transcript's tail row while
+  `turnActive`, and by the subagent rail on its tail while the child is active) opens the
+  `thought` case for as long as it is being written (`autoOpen`, so a settled one folds again
+  unless the reader opened it) and ticks the clock that is its title. **Thinking as a step**
+  (`thoughtStep`, on) draws it the way a tool call is drawn — `BrainIcon` in the same mark
+  column, `Thinking 12s` / `Thought for 12s` as the title, the reasoning behind the same
+  disclosure a call's body is behind, and `toolLayout`/`toolVariant` applied to it — so a
+  thought lines up with the calls around it. Off, it is the block, and it is a card: no mark of
+  the row's own and no gutter, because the card draws both. `ThoughtPreview` is a
+  `thought-surface` well under the clock — three lines of reasoning, the last fading into the
+  well (`.thought-preview`'s clamp and mask), so a folded thought says whether opening it is
+  worth the click — and `ThoughtDetail` is the same well holding the whole of it, capped by
+  `THOUGHT_MAX_H` and following itself while it streams. Opening swaps one for the other.
+  Either shape stands where it arrived: a thought ends a run and is never folded into one.
+  **The reasoning's palette rides the prose element itself** (`thought-prose`), which restates
+  `--tw-prose-*` so thinking reads a step below the answer rather than at its body colour — a
+  wrapper class cannot do it, because such a rule would match a descendant and the class and
+  `.prose` are the same element, which is why every thought used to render at the answer's
+  weight. Derived at view time from position, not from a flag in the store: the
+  reducer never marks a thought done.
   **A settled step says how long it took, and both ends come from the journal.** The
   ticker is this device's and dies with the mount that started it, so a reloaded
   transcript had a start and no end and said nothing: a thought now reads the merged
@@ -484,7 +526,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   panel than a roomy one (`@panel-sm:`, the container query)** — because an unbounded
   reasoning block pushes everything after it off the screen, and a fixed cap is wrong in
   both a phone and a desktop. A cap means the box is the thing that scrolls, so
-  `ThoughtDetail` follows *itself*: the transcript's `useFollowStream` measures the
+  `ThoughtBlock` follows *itself*: the transcript's `useFollowStream` measures the
   content element, and a capped box stops growing when it fills, which would leave the
   newest thinking — the part being written — exactly what falls out of view. Settled it
   is inert and opens at the top.
@@ -564,16 +606,22 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   stamping on it would move a thread to the top of the list for having been
   scrolled. Rows written before the column existed read 0 and are backfilled
   from the journal's own `max(at)` in `reload`, once, rather than by a migration.
-  Rows are two lines and title-first: the title wears the running spinner in
-  its trailing slot and an amber badge for a thread waiting on you, and the
-  quiet second line under it carries the agent's own mark, the project and when
-  the thread last spoke (the mark is the agent's alone — the tab's paired
-  agent-over-project stack needs the 28px tab slot, not this line's). The rest —
-  profile, model, start time and, when it says something the start time does
-  not, last active — lives in `ThreadInfoCard` — the
-  header of the row's ⋯ dropdown (it opens from the ⋯, never on hover), which
-  carries the row's actions beside the reading; the right-click menu and, on a phone, long press
-  open the same action list. Every row, label and group draws from
+  Rows are one line and title-first: the agent's own mark (when the row dress
+  asks for it — the tab's paired agent-over-project stack needs the 28px tab
+  slot, not this row's), the title, the project's name where the row names it,
+  and at the trailing edge how long ago the thread last spoke, which the ⋯
+  floats over on hover. The rest —
+  profile, model, the project's path, start time and, when it says something the
+  start time does not, last active — lives in `ThreadInfoCard`, and it is read
+  twice: as the row's **hover card** (`PreviewCard`, 400ms, a reading and
+  nothing more) and as the header of the ⋯ dropdown, which carries the row's
+  actions beside it. **The actions are the ⋯'s and the right-click menu's (long
+  press on a phone) — never the hover card's.** The row's old native `title`
+  ("Needs you · model · project") is gone with it: one hover, one card, rather
+  than a tooltip that said less and a second popover when the two met. A
+  project folder has the same hover card — its note, its path, how many threads
+  it holds, what is running or needs you, and when it last spoke — where the
+  pointer used to get the name it was already over. Every row, label and group draws from
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). There is no plan-usage
   gauge in the sidebar: the plans are listed on Settings › Usage and nowhere else. The
   main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
@@ -691,7 +739,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `-warn`/`-error`); that made the composer wear the state of the *thread*, and it reported a
   dead socket as an entire surface coloured amber. It is a `Notice` at the foot of the
   transcript now (`components/thread-view/thread-status.tsx`), with the wait, the working line and the
-  turn's other stops — so the shelf has no tone and nothing on it is ever wrong.
+  turn's other stops — so the shelf has no tone and nothing on it is ever wrong. The foot is the
+  *pane's*, not the content's: the transcript's content box is `min-h-full`, and the status item
+  carries `mt-auto`, so a thread shorter than the pane — an opening replay, a first turn — rests
+  its live line just above the composer instead of in the middle of the blank paper under the
+  skeleton. It costs nothing once the transcript overflows, where the space is zero.
 - **The toolbar is the card's second row**, reading *what goes in → who answers → what
   happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, run a project command,
   insert a code block, clear), the model/config cluster, the length reading, then voice, pause, stop and
@@ -892,7 +944,15 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   mark, how a pick is worded (`fill`), and optionally `keep` (drop lines that name nothing real)
   — the parser, the strip that hides the fences, the card (`suggestion-group.tsx`, one component
   for every kind) and the picker all read the table, so **a new kind is an entry on each side
-  and no branch anywhere**. A kind that must name something real is told it at spawn by a
+  and no branch anywhere**. **A group is one card of hairline-divided rows, not a bordered pill
+  per line** — a pill each said "four separate things" four times over, and with four kinds on it
+  put thirteen rings around what is an offer rather than a form; it is the app's card of rows
+  (`rounded-xl bg-card ring-1 ring-foreground/10 divide-y`), the same object at one row as at four.
+  The kind's mark sits beside the **caption** and not on every row (four identical glyphs down a
+  column are decoration; one beside the name says which family it is, and the row is left to the
+  words), prose rows are `text-sm` clamped to two lines and shell rows `text-xs` mono truncated to
+  one, and the hover ground comes up across the card's full width — which a ringed pill could not
+  do without a second ring inside the first. A kind that must name something real is told it at spawn by a
   loader (`SUGGEST_LOADERS` in `sessions.ts`, read only while the kind is on): the project's
   helpers and package.json scripts for commands (the client then draws only lines that name one
   the project defines, so a hallucinated `!` is dropped rather than offered), the runner's
@@ -938,10 +998,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **Three view options govern the rows** (`lib/layout-options.ts`). **Show `!` commands** hides them
   outright — the command still ran and the journal still holds it, only the row is silent — and
   **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,
-  `groupShellRuns`). **Group parallel tool calls** folds two or more consecutive tool calls, with
-  any thoughts between them, into one expandable run (`ToolRunGroup`, `groupToolRuns`); a single
-  call stays as its own step. **A setting changed between two of those calls rides inside the
-  run too** (`isConfigNotice`): the agent changed nothing about the work it was doing, and drawn
+  `groupShellRuns`). **Group tool calls** folds a stretch of consecutive *calls* into one
+  expandable run (`ToolRunGroup`/`ToolGroup`, `groupToolRuns`).
+  **A thought ends the run it landed in and stands where it arrived**, whatever shape is drawn
+  for it: a fold counts calls, and thinking folded behind a line reading "Reading 2 files" is
+  reasoning that line throws away — the reader would open ten calls to find the three lines
+  that explain them. So `think -> read -> think -> edit` is four rows, two of them folds, and a
+  run holds calls and the settings changed between them and nothing else (`RunItem` is a call or
+  a notice). What a group cannot be is a group of one call: that is still a step, not a fold.
+  The counting line is the
+  calls': it says what the group did, not what was on screen. **A setting changed between two of
+  those calls rides inside the run too** (`isConfigNotice`): the agent changed nothing about the
+  work it was doing, and drawn
   as a rule across the transcript the notice split one run into two, each counting half of it.
   Before the run's first call or after its last it is still a break — trailing, it is the last
   thing that happened *and* the item the turn's footer anchors on (`turn-footers.ts`), so it is
@@ -1332,6 +1400,19 @@ double-click on a divider evens out the views it separates — in the main dock 
   two windows apart — a zero-height box keeps its last answer rather than reading a hidden tab
   as fully covered, and the constant survives only as the fallback: one frame before the first
   measurement, and the surfaces that are not in a dock at all.
+- **Every place-shaped row outside the dock opens any of three ways, and they are one vocabulary.**
+  A click navigates the tab in front (`navigateActive`); the row's menu adds "Open in new tab" and
+  "Open to the side" (`components/open-in-menu.tsx`, over the doors in
+  `lib/workspace/open-threads.ts`); and the row itself is draggable into the dock. The drag is a
+  native HTML5 one carrying the route (`lib/workspace/route-drag.ts`), because dockview's own drag is
+  pointer-based and internal to its panels — these rows are not its. `dock-drop.tsx` reads the group
+  under the pointer off `DockviewGroupPanel.element`: a band's worth of the top of a group is its
+  strip (a tab there), a quarter of its width or height at an edge is that side of it (a column or a
+  row), and the rest is the group itself. The mark it draws is the half the drop would take, so a
+  side drop is believable before the button is released; `within` covers the group, because the
+  group is what a tab joins. Floats and the bottom panel are not targets — a float would cover the
+  strip the tab is meant to join. A phone is not a target either: `draggable` is off there (the press
+  is the long press that opens the menu) and the fold would take the split back anyway.
 - **Tabs are grouped by dockview's own tab groups, in one instance.** A tab group is a chip
   over a run of tabs in one strip (`api.createTabGroup`/`addPanelToTabGroup`, serialized in
   each group's `tabGroups`, so the layout save carries it with nothing of ours). The tab's

@@ -39,8 +39,11 @@ const MARKED = new Set([
   "run", "tool-group", "shell-run", "work-fold", "subagent-group", "workflow-group", "subagent-batch",
 ])
 export const RAIL_PLAIN = "run-rail-plain"
-export function railPlain(kind: string): string | false {
-  return !MARKED.has(kind) && RAIL_PLAIN
+/** `marked` is for a row that draws a mark without being a kind of its own: a
+    thought is a `thought` either way, but drawn as a step it wears an icon in
+    the column the rail is aiming at, and drawn as a block it is prose. */
+export function railPlain(kind: string, marked = false): string | false {
+  return !(marked || MARKED.has(kind)) && RAIL_PLAIN
 }
 
 /** A straight length of the trunk, for a row on the rail that is not a step

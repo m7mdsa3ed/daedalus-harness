@@ -50,13 +50,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Switch } from "@/components/ui/switch"
 import type { Actions } from "@/lib/actions"
-import { captureError, inlineFromQuery, type InlineError } from "@/lib/errors"
+import { captureError, inlineFromQuery, reportError, type InlineError } from "@/lib/errors"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import {
   useAutomationRuns,
   useAutomationTriggers,
   useAutomations,
   useCancelAutomationRun,
+  useMarkAllAutomationRunsRead,
   useUpdateAutomation,
 } from "@/lib/queries/automations"
 import { automationRunPath, automationsPath, threadPath } from "@/lib/router"
@@ -115,6 +116,11 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
   const moreRuns = useAutomationRuns(automationId, limit, { enabled: limit > PAGE })
   const runsQuery = limit > PAGE && moreRuns.data ? moreRuns : baseRuns
   const runs = runsQuery.data
+  /* Results nobody has opened. The runs list marks each one and clears it when
+     its page is opened; this button is for the reader who has decided they do
+     not need to, and it is the only way the badge in the sidebar goes quiet
+     without visiting every run. */
+  const unreadRuns = runs?.filter((run) => run.inboxState === "unread").length ?? 0
   const runsError = React.useMemo(
     () => inlineFromQuery(runsQuery.error, "Couldn't read this automation's runs"),
     [runsQuery.error]
@@ -134,6 +140,7 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
     [automationsQuery.error]
   )
   const cancelRun = useCancelAutomationRun()
+  const markAllRead = useMarkAllAutomationRunsRead()
   const update = useUpdateAutomation()
   const fire = useFire()
   const toggle = useToggle()
@@ -748,6 +755,23 @@ export function AutomationDetailPage({ automationId, actions }: { automationId: 
         {tab === "runs" && (
           <Section
             hint={`Newest first; skipped runs say why. ${health.tokens.toLocaleString()} tokens across these ${runs?.length ?? 0}.`}
+            action={
+              unreadRuns > 0 ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="pointer-coarse:h-11"
+                  disabled={markAllRead.isPending}
+                  onClick={() =>
+                    void markAllRead
+                      .mutateAsync()
+                      .catch((err) => reportError(err, "Couldn't mark the runs read"))
+                  }
+                >
+                  Mark all read
+                </Button>
+              ) : undefined
+            }
           >
             {runsError ? (
               <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />

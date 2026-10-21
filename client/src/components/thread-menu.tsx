@@ -52,6 +52,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { renderMenuItems, type MenuItemSpec } from "@/components/item-context-menu"
+import { openInItems } from "@/components/open-in-menu"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
 import { ChangelogDialog } from "@/components/changelog-dialog"
 import { useAppMeta } from "@/lib/queries"
@@ -119,7 +120,9 @@ const worktreeItems = (
     ? [{ label: "Remove worktree", icon: <GitBranchIcon />, onClick: () => onRemove(session) }]
     : []
 
-/** The row menu for a live thread — Trash rows get their own two items. */
+/** The row menu for a live thread — Trash rows get their own two items.
+    `beside` is false on a phone, where "Open to the side" would be undone by
+    the fold before the column was read. */
 export function threadMenuItems(
   session: SessionMeta,
   pinned: boolean,
@@ -128,12 +131,18 @@ export function threadMenuItems(
     onDelete: (session: SessionMeta) => void
     onPin: (session: SessionMeta) => void
     onRemoveWorktree?: (session: SessionMeta) => void
-  }
+  },
+  options: { beside?: boolean } = {}
 ): MenuItemSpec[] {
-  /* No "Open in new tab": opening a thread IS opening a tab now (see the route
-     effect in `app-shell`), so the row would have been a second name for the
-     click that opened the menu. */
+  /* ── Open comes first ──
+     Clicking the row navigates the tab in front, which is what a tab is for;
+     the two rows above the separator are the *other* two shapes it can take
+     (`openInItems` — one vocabulary shared with every other place-shaped row in
+     the chrome, and the same one a drag into the dock performs). They are not a
+     second name for the click: one adds a tab and the other splits the dock. */
   return [
+    ...openInItems(threadPath(session.id), options),
+    { type: "separator" },
     renameItem(session, handlers.onRename),
     pinItem(session, pinned, handlers.onPin),
     { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(session) },

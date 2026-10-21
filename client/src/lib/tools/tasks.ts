@@ -146,6 +146,22 @@ const tagNumber = (body: string, name: string): number | undefined => {
 
 /** `[stage] failed: why` — one per line, with wrapped messages continuing. */
 const FAILURE_RE = /^\[([^\]]+)\]\s*(?:failed:)?\s*([\s\S]*)$/
+const HARNESS_FAILURE_RE = /^([^\s:][^:]{0,60}?):\s+([\s\S]*)$/
+
+/** A run's answer as the harness serialises it: `{}` when nothing came back,
+    `{"ask": "…"}` for one step's text. Neither is worth drawing as JSON. */
+function readableResult(result: string | null): string | undefined {
+  // `null` is the runtime's own word for "the task returned nothing" — showing
+  // it would be quoting a placeholder back at the reader.
+  if (!result || ["null", "{}", "[]", '""'].includes(result)) return undefined
+  try {
+    const values = Object.values(JSON.parse(result) as Record<string, unknown>)
+    if (values.length === 1 && typeof values[0] === "string") return values[0].trim() || undefined
+  } catch {
+    /* not JSON — Claude Code's result is prose */
+  }
+  return result
+}
 
 export function parseTaskNotification(text: string): TaskNotification | null {
   const match = TASK_NOTIFICATION_RE.exec(text.trim())
@@ -153,10 +169,13 @@ export function parseTaskNotification(text: string): TaskNotification | null {
   const body = match[1]
 
   const failures: TaskFailure[] = []
-  for (const line of (tagText(body, "failures") ?? "").split("\n")) {
+  /* Claude Code says `[stage] failed: why` under `<failures>`; the harness's own
+     runs (server `notification()`) say `step: why` under `<failed-agents>`. */
+  const failureText = `${tagText(body, "failures") ?? ""}\n${tagText(body, "failed-agents") ?? ""}`
+  for (const line of failureText.split("\n")) {
     const trimmed = line.trim()
     if (!trimmed) continue
-    const failure = FAILURE_RE.exec(trimmed)
+    const failure = FAILURE_RE.exec(trimmed) ?? HARNESS_FAILURE_RE.exec(trimmed)
     if (failure) failures.push({ label: failure[1], message: failure[2].trim() })
     // A message that wrapped onto its own line belongs to the failure above it.
     else if (failures.length > 0) failures[failures.length - 1].message += ` ${trimmed}`
@@ -164,14 +183,12 @@ export function parseTaskNotification(text: string): TaskNotification | null {
 
   const usage = tagText(body, "usage") ?? ""
   const journal = /(\/\S+)\/journal\.jsonl/.exec(tagText(body, "diagnostics") ?? "")
-  // `null` is the runtime's own word for "the task returned nothing" — showing
-  // it would be quoting a placeholder back at the reader.
-  const result = tagText(body, "result")
   return {
     taskId: tagText(body, "task-id") ?? undefined,
     status: tagText(body, "status") ?? undefined,
-    summary: tagText(body, "summary") ?? undefined,
-    result: result && result !== "null" ? result : undefined,
+    // The ask's id is for the agent that has to call `wait_agent`, not the reader.
+    summary: tagText(body, "summary")?.replace(/\s*\(askId [^)]+\)/, ""),
+    result: readableResult(tagText(body, "result")),
     failures,
     transcriptDir: journal?.[1],
     agentCount: tagNumber(usage, "agent_count"),

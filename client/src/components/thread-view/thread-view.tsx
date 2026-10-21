@@ -51,7 +51,7 @@ import { PendingSettings } from "@/components/thread-view/pending-settings"
 import { useThreadStatus } from "@/lib/thread/status"
 import { RowView } from "@/components/thread-items/rows"
 import type { TurnSources } from "@/lib/sources"
-import { buildRows, rowTailId, shareRows, type Row } from "@/lib/transcript-rows"
+import { buildRows, rowTailId, separatorAfterRun, shareRows, type Row } from "@/lib/transcript-rows"
 import { Composer, type ComposerHandle } from "@/components/composer/composer"
 import { ThreadRail } from "@/components/thread-rail"
 import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
@@ -917,9 +917,14 @@ export function ThreadView({
               )}
               {rows.map((row, i) => {
                 /* A hairline above each of your messages (except the first)
-                    separates one turn from the next when Turn dividers is on. */
+                    separates one turn from the next when Turn dividers is on —
+                    and above whatever first follows a workflow run that has
+                    ended, so the run is closed off from what the thread did
+                    next. One line either way: a run's rule is not doubled by a
+                    turn divider. */
                 const isUser = row.kind === "user"
-                const divider = options.stepDividers && isUser && i !== firstUserIndex
+                const divider =
+                  separatorAfterRun(rows, i) || (options.stepDividers && isUser && i !== firstUserIndex)
                 /* Messages sent back to back (steers, a queue draining) read as
                    one run: only its last says the time, like a chat's grouped
                    bubbles — a clock under each said the same minute four times. */
@@ -1017,9 +1022,17 @@ export function ThreadView({
                   approvals and the queue below keep their own rows. */}
               {/* `-ms-3 ps-3` on the status item: `.harness-status` hangs its
                   tone rule 10px left of its box, and the item's paint
-                  containment would clip it. */}
+                  containment would clip it. `mt-auto`, because the content box
+                  is `min-h-full` and this is the foot's own slot: on a thread
+                  shorter than the pane every item sat at the top and the live
+                  line floated in the middle of the blank paper (an opening
+                  replay, a new thread's first turn). The auto margin eats that
+                  free space, so the line rests where the next thing happens —
+                  just above the composer, which is why the reserved dock height
+                  is the padding it stops at. It costs nothing once the
+                  transcript is taller than the pane, where the space is zero. */}
               {status && (
-                <MessageScrollerItem messageId="status" className="-ms-3 ps-3">
+                <MessageScrollerItem messageId="status" className="-ms-3 mt-auto ps-3">
                   <div
                     className={status.tone === "progress" && status.opening ? undefined : "harness-item-in"}
                     style={stagger(0)}

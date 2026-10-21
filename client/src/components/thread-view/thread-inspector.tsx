@@ -165,7 +165,14 @@ function AgentsTab({ thread, groups, onJump }: { thread: ThreadState; groups: Su
   const { agentsView: view } = inspectorPrefs.use()
   const [filter, setFilter] = React.useState<AgentFilter>("all")
   const rows = React.useMemo(
-    () => buildRows(thread.items, options.groupTools, thread.turnActive, false, !options.expandEdits).filter(isAgentRow),
+    () =>
+      buildRows(
+        thread.items,
+        options.groupTools,
+        thread.turnActive,
+        false,
+        !options.expandEdits
+      ).filter(isAgentRow),
     [thread.items, thread.turnActive, options.groupTools, options.expandEdits]
   )
   const entries = React.useMemo(

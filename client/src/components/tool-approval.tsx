@@ -42,11 +42,13 @@ import {
   AgentRequestHeader,
   AgentRequestWell,
 } from "./agent-request"
-import { CHIP, DISCLOSURE, FileBadge, JSON_INPUT_PREVIEW, JsonView, LABEL, PlanFullscreen, Prose } from "./tool-parts"
+import { CHIP, DISCLOSURE, FileBadge, JSON_INPUT_PREVIEW, JsonView, LABEL, PlanFullscreen } from "./tool-parts"
+import { Prose } from "@/components/prose"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "@/components/tool-parts"
 import type { PendingPermission, ToolItem } from "@/lib/store"
 import { isTypingTarget } from "@/lib/shortcuts"
 import {
+  extractMcpCall,
   extractPlanProposalFromPermission,
   permissionToolCall,
   toolDescription,
@@ -407,7 +409,6 @@ export function InlineApproval({
     rawInput: call.rawInput,
     title: call.title,
   })
-  const heading = description ?? call.name ?? call.toolCallId
   /* The file badge rides on the heading row the same way it does on a step row:
      `toolHeading` names the file and strips it out of the prose, so the card
      says "Read" + a `package.json` chip rather than an elided path. */
@@ -418,6 +419,17 @@ export function InlineApproval({
     toolKind: call.kind ?? undefined,
     locations: call.locations ?? [],
   })
+  /* An MCP call's `name` is `mcp__Clickup__create_task` and its title is
+     either the agent's prose or that name again, so the card says what the row
+     says — which integration, which tool — captioned with what it acts on.
+     Every other call keeps the description-or-name it always had. */
+  const mcp = extractMcpCall({
+    title: call.title ?? "",
+    meta: call._meta ?? undefined,
+    rawInput: call.rawInput,
+  })
+  const heading = mcp ? h.title : (description ?? call.name ?? call.toolCallId)
+  const caption = mcp ? h.detail : undefined
 
   return (
     /* A live region: the card appears mid-turn with no focus change of its own,
@@ -437,6 +449,9 @@ export function InlineApproval({
       >
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="min-w-0 break-words">{heading}</span>
+          {caption && (
+            <span className="min-w-0 break-words text-muted-foreground">{caption}</span>
+          )}
           {h.file && <FileBadge file={h.file} filePath={h.filePath} />}
         </span>
       </AgentRequestHeader>

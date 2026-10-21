@@ -37,6 +37,9 @@ const LABEL: Partial<Record<Status["kind"], string>> = {
   working: "Agent working",
   waiting: "Agent working",
   "turn-failed": "Turn failed",
+  /* Not "Agent working": the turn is over, and that label is what Stop and the
+     composer read from. This one is the run the agent left going. */
+  background: "Workflow running",
 }
 
 /** Whole seconds until `at`, ticking once a second only while there is one. */

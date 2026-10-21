@@ -59,7 +59,12 @@ export function markSeen(session: SessionMeta) {
 }
 
 /** Threads whose last turn ended after the reader last looked, and that are
-    idle now — a running or asking thread says so louder than "finished". */
+    idle now — a running or asking thread says so louder than "finished".
+
+    `activeId` is the thread in front of the reader. The caller passes null
+    while the window is away (`useAway`): a thread left on screen and then
+    walked away from has news too, and it is exactly the case "I sent it
+    something and came back later" is about. */
 export function useUnreadIds(
   sessions: readonly SessionMeta[],
   statuses: ReadonlyMap<string, string>,

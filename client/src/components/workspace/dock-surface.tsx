@@ -22,8 +22,9 @@ import {
   TAB_GROUP_COLORS,
   useDock,
   type DockOpeners,
-  type WorkspaceDock as WorkspaceDockApi,
 } from "@/components/workspace/dock-context"
+import type { DockController } from "@/components/workspace/dock"
+import { useRouteDrop } from "@/components/workspace/dock-drop"
 import { syncHeaderOverlap } from "@/components/workspace/dock-header"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
@@ -320,7 +321,7 @@ export function WorkspaceDock({
   onOpenPanel,
 }: DockOpeners & {
   actions: Actions
-  dock: WorkspaceDockApi
+  dock: DockController
   onReady: (api: DockviewApi) => void
 }) {
   /* ── One group on a phone ──
@@ -476,10 +477,24 @@ export function WorkspaceDock({
      redraws each group's actions row. */
   const openers = React.useMemo(() => ({ onNewTab, onOpenPanel }), [onNewTab, onOpenPanel])
 
+  /* ── A place dragged in from the sidebar ──
+     The rows the dock cannot see (a thread, a project, a settings section) are
+     dragged over this box, and where they land is read off the group under the
+     pointer (`dock-drop.tsx`). The box is the dock's own frame, so the mark it
+     draws is in the coordinates the groups report. */
+  const drop = useRouteDrop(dock)
+
   return (
     <DockContext.Provider value={dock}>
       <DockOpenersContext.Provider value={openers}>
-        <DockSurface components={components} onReady={handleReady} />
+        <div
+          ref={drop.ref}
+          {...drop.handlers}
+          className="relative flex min-h-0 flex-1 flex-col"
+        >
+          <DockSurface components={components} onReady={handleReady} />
+          {drop.indicator}
+        </div>
       </DockOpenersContext.Provider>
     </DockContext.Provider>
   )

@@ -7,7 +7,7 @@ import * as React from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
-import { MARKDOWN_COMPONENTS } from "@/components/tool-parts"
+import { MARKDOWN_COMPONENTS } from "@/components/prose"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,

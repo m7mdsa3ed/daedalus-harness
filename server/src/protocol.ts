@@ -1081,6 +1081,14 @@ export type ThreadEvent =
           the queue, so an attaching peer is told rather than left to find the
           menus moved when the turn ends. Absent means nothing staged. */
       staged?: StagedConfig;
+      /** Background work is still running, in the shape the `background` event
+          carries it. One of these hand-overs, and the one a replay can never be
+          right about: the run's `async_task_*` beats *are* journaled
+          (they are ordinary updates), so a transcript folded from the archive
+          of a dead run ends on its last `running` and would claim the thread is
+          busy forever. Said after the replay, so the server's word is last.
+          Absent means nothing is running. */
+      background?: true;
       /** How full the agent says its context window is, from the newest
           `usage_update` this thread has ever produced (`Session.context`).
           Rides here for the same reason the three above do — it is state, not
@@ -1209,6 +1217,21 @@ export type ThreadEvent =
       out, this clears and a `paused` with `reason: "error"` takes its place.
       Only a runtime that owns its own loop can report one. */
   | { ev: "retry"; retry: ThreadRetry | null }
+  /** Background work this thread's agent launched is still running, or is not
+      (`active: false`). Absolute and live-only, exactly like `paused`: it is
+      current state rather than history, so `caught_up` carries it on attach and
+      a replay never redraws a run that has long ended. To every peer including
+      the one that asked.
+
+      It exists because a turn ending is not the thread being done. Claude Code
+      launches a dynamic workflow as a background task and answers its prompt
+      `end_turn` at "launched", so `turn_ended` says the truth and nothing else
+      about the thread — the run works on for minutes. `turnActive` stays the
+      turn's on purpose (Stop, the queue and the turn footers all mean a turn by
+      "running"), so this is the other reading: what the thread is doing when no
+      turn is. Background work is neither an error nor a hold; it is why a
+      thread with nothing in flight is not idle. */
+  | { ev: "background"; active: boolean }
   /** The thread moved to another provider, model or effort *without* being
       restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
       but live-only and not journaled: it is the session row's own state, and a

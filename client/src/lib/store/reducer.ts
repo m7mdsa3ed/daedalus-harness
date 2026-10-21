@@ -94,6 +94,10 @@ export type Action =
   /** The turn is retrying, or has stopped (`retry: null`). Absolute, from the
       `retry` event and the `retry` field of `caught_up`. */
   | { type: "retry"; id: string; retry: ThreadRetry | null }
+  /** Background work the agent launched is still running, or has finished.
+      Absolute, from the `background` event and the `background` field of
+      `caught_up`. */
+  | { type: "background"; id: string; active: boolean }
   /** How the turn that just ended went, onto the *session* row rather than the
       thread: it is what a list draws about a thread nothing is looking at, and
       the server records the same verdict on its own row. `error` is the
@@ -672,6 +676,12 @@ export function reducer(state: State, action: Action): State {
       })
     case "retry":
       return withThread(state, action.id, { retry: action.retry })
+    case "background": {
+      const t = thread(state, action.id)
+      /* No-op when unchanged: the event is only sent on a transition, but a
+         `caught_up` says it every attach. */
+      return t.background === action.active ? state : withThread(state, action.id, { background: action.active })
+    }
     case "mode": {
       const t = thread(state, action.id)
       return t.modes

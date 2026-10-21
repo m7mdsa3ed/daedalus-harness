@@ -143,6 +143,8 @@ export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & {
      the parent's own, drawn as a plain subagent. */
   profileId?: string;
   agentId?: string;
+  /** Run in this project instead of the parent's (its cwd, never the parent's worktree). */
+  projectId?: string;
   /** The pair as a person reads it (`Codex`, `9router`): who answered. The ids
       above are what spawns the child; these are what a transcript that outlives
       the profile can still say. */
@@ -152,6 +154,9 @@ export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & {
   /** The caller's short name for the errand, when it gave one — titles the child
       thread and its row, where `label` names the pair instead. */
   description?: string;
+  /** Continue this child thread instead of spawning one: `continue_agent`, for an
+      ask that failed or timed out with its conversation intact. */
+  resumeSessionId?: string;
 };
 
 /** A validated definition, always in the engine's one shape: a flat step list

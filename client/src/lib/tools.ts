@@ -79,8 +79,15 @@ export type { TodoEntry } from "./tools/todos"
 export { extractTodos } from "./tools/todos"
 
 
-export type { McpCall } from "./tools/mcp"
-export { extractMcpCall } from "./tools/mcp"
+export type { McpAnswer, McpCall } from "./tools/mcp"
+export {
+  extractMcpCall,
+  mcpAnswer,
+  mcpCallLabel,
+  mcpServerKey,
+  mcpServerLabel,
+  mcpSubject,
+} from "./tools/mcp"
 
 export type { HarnessAction, HarnessCall, HarnessEffect, HarnessTable, HarnessVerb } from "./tools/harness"
 export {

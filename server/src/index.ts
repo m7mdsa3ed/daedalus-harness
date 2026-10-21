@@ -126,6 +126,12 @@ const sessions = new SessionManager(
       push.send("The agent has a question", s.title, { sessionId: s.id, event: "questionAsked" }).catch(console.error);
     },
     onTurnEnd: async (s, error, promptText) => {
+      /* Not while the agent still has a workflow going. A native one answers its
+         prompt at "launched" and works on, so a "Turn finished" here is the
+         launch being announced as the end of the work — on the one surface
+         (a lock screen) with nothing beside it to correct it. The run's own end
+         opens a turn of its own, and that one notifies honestly. */
+      if (!error && s.bridge?.background) return;
       /* The thread is the row's title; the body is what the turn was about —
          the message the user sent, and the failure's own line when it failed.
          A notice that said only "Turn finished" told the reader nothing they

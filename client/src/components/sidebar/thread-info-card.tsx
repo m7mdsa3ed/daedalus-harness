@@ -6,8 +6,40 @@ import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import type { ThreadStatus } from "./thread-row"
 
+/** The reading's one shape: a title over a two-column list of label → value.
+    Shared with the folder's hover card (`groups.tsx`), so a thread and a
+    project are read the same way wherever the sidebar shows one. */
+export function ReadingCard({ title, rows }: { title: React.ReactNode; rows: [string, React.ReactNode][] }) {
+  return (
+    <div className="flex flex-col gap-2 text-left text-sm">
+      <p className="text-sm font-medium leading-snug">{title}</p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        {rows.map(([label, value]) => (
+          <React.Fragment key={label}>
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 truncate">{value}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+/** One timestamp, in the shape both cards print it: short month, day, hour and
+    minute, in the reader's own locale. Shared so a thread's "Last active" and
+    a folder's cannot be written two ways. */
+export function readingStamp(ts: number) {
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 /** What the row does not say: the thread's status, who runs it and where,
-    and when it began. It rides on the ⋯ menu, above the actions. */
+    and when it began. It is the row's hover card and the ⋯ menu's header —
+    the actions are the menu's, never the hover card's. */
 export function ThreadInfoCard({
   session,
   state,
@@ -35,13 +67,6 @@ export function ThreadInfoCard({
       ? s.sessions.find((row) => row.id === session.forkedFromSessionId)?.title
       : undefined
   )
-  const when = (ts: number) =>
-    new Date(ts).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
   /* One reading, in the order it matters. The connection states are new here:
      a thread that had lost its socket used to say "Idle" in this card, which is
      the reading the card exists to prevent — and so is the failed turn, which
@@ -85,13 +110,22 @@ export function ThreadInfoCard({
         {project?.name ?? "Other"}
       </span>,
     ],
-    ["Started", when(session.createdAt)],
   ]
+  /* The path is what tells two projects of one name apart, and it is the thing
+     a person copies out of here — the name alone is the least useful half. */
+  if (project?.cwd)
+    rows.push([
+      "Path",
+      <span key="path" className="font-mono text-xs" title={project.cwd}>
+        {project.cwd}
+      </span>,
+    ])
+  rows.push(["Started", readingStamp(session.createdAt)])
   /* The list orders by activity now, so the card says what the position means
      — and only when it differs from the start, since a thread with one turn in
      it would otherwise print the same timestamp twice. */
   if (activityAt(session) - session.createdAt > 60_000)
-    rows.push(["Last active", when(activityAt(session))])
+    rows.push(["Last active", readingStamp(activityAt(session))])
   /* Why it failed, in the card rather than on the row: the row has space for a
      mark, and the card is where a reading is explained. One clipped line like
      every other value here — the failure itself, with its detail and a Retry,
@@ -108,18 +142,6 @@ export function ThreadInfoCard({
     rows.push(["Aside of", asideOfTitle ?? "a thread no longer held"])
     rows.push(["On", <span key="on" title={session.asideQuote}>“{session.asideQuote}”</span>])
   }
-  if (trash && session.deletedAt) rows.push(["Deleted", when(session.deletedAt)])
-  return (
-    <div className="flex flex-col gap-2 text-left text-sm">
-      <p className="text-sm font-medium leading-snug">{session.title}</p>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-        {rows.map(([label, value]) => (
-          <React.Fragment key={label}>
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="min-w-0 truncate">{value}</dd>
-          </React.Fragment>
-        ))}
-      </dl>
-    </div>
-  )
+  if (trash && session.deletedAt) rows.push(["Deleted", readingStamp(session.deletedAt)])
+  return <ReadingCard title={session.title} rows={rows} />
 }

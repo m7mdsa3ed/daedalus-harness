@@ -153,7 +153,20 @@ export function RunList({
       loading={runs === undefined}
       skeletonRows={3}
       actions={actions}
-      mark={(run) => <span className={cn("size-2 shrink-0 rounded-full", runStatus(run.status).dot)} />}
+      /* The status dot is the row's; a run nobody has opened wears a ring
+         around it. Not a second dot: the two would read as two readings of the
+         same thing, and the ring means "this one is new" about exactly the dot
+         it surrounds. */
+      mark={(run) => (
+        <span
+          title={run.inboxState === "unread" ? "Not read yet" : undefined}
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            runStatus(run.status).dot,
+            run.inboxState === "unread" && "ring-2 ring-primary/50 ring-offset-2 ring-offset-background"
+          )}
+        />
+      )}
       viewToggle={compact ? false : undefined}
       search={
         compact

@@ -14,8 +14,8 @@ export const UI_GROUPS: UiGroup[] = [
   {
     id: "text",
     label: "Text",
-    caption: "Tables, lists, callouts, comparisons and quotes for prose-shaped answers.",
-    components: ["List", "Table", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote"],
+    caption: "Tables, lists, links, triage rows, callouts, comparisons and quotes for prose-shaped answers.",
+    components: ["List", "Table", "Callout", "KeyValue", "Badges", "EmptyState", "Compare", "People", "Quote", "Link", "Links", "Rows"],
   },
   {
     id: "interactive",
@@ -29,8 +29,8 @@ export const UI_GROUPS: UiGroup[] = [
   {
     id: "numbers",
     label: "Numbers",
-    caption: "Metrics, charts, heatmaps, funnels and meters.",
-    components: ["StatRow", "Stat", "Sparkline", "Chart", "Heatmap", "Funnel", "Waterfall", "Progress"],
+    caption: "Metrics, charts, share bars, heatmaps, funnels and meters.",
+    components: ["StatRow", "Stat", "Sparkline", "Chart", "Breakdown", "Heatmap", "Funnel", "Waterfall", "Progress"],
   },
   { id: "media", label: "Media", caption: "Images and galleries. Remote images load only on a click.", components: ["Image", "Gallery"] },
   { id: "places", label: "Places", caption: "Google Maps and place cards. Each map is a billed load.", components: ["Map", "CardGrid"] },

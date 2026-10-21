@@ -1732,19 +1732,21 @@ html[data-window-controls-overlay="true"] {
 }
 
 /* ── A run's rail ──
-   One trunk under the header's chevron and a rounded elbow from it into each
-   step's mark — the line leaves the header, branches into every step, and
+   One trunk under the header's mark column and a rounded elbow from it into
+   each step's mark — the line leaves the header, branches into every step, and
    stops on the last. Measured, not tuned:
-   - the header's chevron is the 20px slot at its row's content edge, so its
-     centre is 10px in; the steps are indented `ps-7` (28px), so in a step's
-     box the trunk is at 10 − 28 = −18px (`--rail-x`, the 1px line on it);
+   - the header's mark column is the 20px slot at its row's content edge, where
+     its avatars (or a shell run's disc) begin, so its centre is 10px in; the
+     steps are indented `ps-7` (28px), so in a step's box the trunk is at
+     10 − 28 = −18px (`--rail-x`, the 1px line on it);
    - a step's mark is the 20px disc in an `h-6` slot under `py-0.5`: centred
      14px down (`--rail-mark-y`), its start edge at x = 0, where the elbow
      ends — and the disc is opaque (step-row), so the line meets it rather
      than showing through it;
    - rows sit `space-y-0.5` apart (`--rail-gap`), which each piece reaches
-     back over, the first child's to the top of the run's clip — where the
-     header, which draws the stretch under its own chevron, ends.
+     back over, the first child's to the top of the run's clip — which is the
+     header's own bottom edge, so the line begins there: the header draws no
+     stretch of its own, because the column its mark occupies is filled.
    A row with no mark (a thought's card, prose) takes no elbow: the trunk
    passes beside it (`run-rail-plain`), and ends on its top edge if it is the
    last. Each piece is its row's own pseudo, so an opened row stretches the
@@ -1754,10 +1756,8 @@ html[data-window-controls-overlay="true"] {
    and the pieces meet with a pixel or two of overlap (the elbow leaving the
    trunk, the gap both rows reach over) — stacked, those overlaps read as
    darker ticks down the line. The same weight as a border, mixed solid
-   against the transcript's ground. Declared on the header too, whose stretch
-   is drawn outside the rail. */
-.run-rail,
-.run-rail-head {
+   against the transcript's ground. */
+.run-rail {
   --rail-color: color-mix(in oklab, var(--foreground) 14%, var(--surface, var(--background)));
 }
 .run-rail {
@@ -1769,14 +1769,12 @@ html[data-window-controls-overlay="true"] {
   --rail-up: var(--rail-gap);
 }
 .run-rail-step,
-.run-rail-through,
-.run-rail-head {
+.run-rail-through {
   position: relative;
 }
 .run-rail-step::before,
 .run-rail-tail::after,
-.run-rail-through::before,
-.run-rail-head::after {
+.run-rail-through::before {
   content: "";
   position: absolute;
   pointer-events: none;
@@ -1823,32 +1821,21 @@ html[data-window-controls-overlay="true"] {
   width: 1px;
   background: var(--rail-color);
 }
-/* The header's stretch: from just under its chevron (the 14px centre + the
-   size-3.5 glyph's 7px + 1px of air) to its own bottom edge. 13.5px = the
-   row's 4px bleed padding + the slot's 10px centre − half the line. */
-.run-rail-head::after {
-  inset-inline-start: 13.5px;
-  top: 22px;
-  bottom: 0;
-  width: 1px;
-  background: var(--rail-color);
-}
+/* There is no header stretch: the line begins at the clip's top edge, which is
+   the header's own bottom, because the header's mark column is filled by its
+   avatars rather than by a chevron the trunk could leave from. */
 
 /* ── Drawing it ──
-   One pen, start to end, at one speed: the header's stretch, then each row's
-   elbow — down the trunk, then across into the mark (clip insets, so it is
-   drawn, not faded) — then its tail, then the next row. Every piece is
-   `linear` and starts as the one above it finishes (`--rail-i` is the row's
+   One pen, start to end, at one speed: each row's elbow — down the trunk, then
+   across into the mark (clip insets, so it is drawn, not faded) — then its
+   tail, then the next row. Every piece is `linear` and starts as the one above
+   it finishes (`--rail-i` is the row's
    slot — `useRailSlots`: rows already drawn hold slot 0, new rows follow), so
    it reads as one line drawn top to bottom. The rows' entrance is on an inner
    box, never on the box these pseudos hang off, so the line does not slide
    or fade with its row. Each rule is one class (0,1,1) and sits before the
    reduced-motion and calm blocks, whose `.harness-rail-draw` rules therefore
    still switch it off. */
-.run-rail-head::after {
-  animation: harness-rail-draw 40ms linear backwards;
-  animation-delay: 0ms;
-}
 .run-rail-through::before {
   animation: harness-rail-draw 90ms linear backwards;
   animation-delay: 40ms;
@@ -2005,6 +1992,10 @@ html[data-window-controls-overlay="true"] {
   .harness-busy-ring::after {
     animation: none;
   }
+  /* A breathing halo is motion, and the dot is still a dot without it. */
+  .harness-node-active {
+    animation: none;
+  }
   /* A transition, so it is stopped rather than cancelled — and with nothing to
      transition, `@starting-style` has no effect to begin with, so the sentence
      simply appears at rest. */
@@ -2070,6 +2061,9 @@ html[data-window-controls-overlay="true"] {
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-shimmer {
   background-image: none;
   -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-node-active {
   animation: none;
 }
 
@@ -2144,16 +2138,16 @@ html[data-window-controls-overlay="true"] {
   @apply me-1.5 align-middle accent-primary;
 }
 
-/* Thinking stays muted and assistant-sized; a subtle tint plus the small label
-   separates it from the main response without a border or transcript gutter. */
+/* ── Thinking ──
+   A thought is a card of its own (`ThoughtPreview`/`ThoughtDetail`): the clock
+   as its title line, then the reasoning in a muted well — three lines of it
+   while folded, the last fading into the well, and the whole of it on click. It
+   is never given a step's mark or gutter: what says "this is the agent
+   thinking" is the card, and the mark column belongs to the calls around it. */
 .thought-surface {
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--muted-foreground) 4%, transparent);
   padding: 0.5rem 0.75rem;
-  color: var(--muted-foreground);
-}
-.thought-detail .prose,
-.thought-detail .prose :where(*) {
   color: var(--muted-foreground);
 }
 
@@ -2165,6 +2159,25 @@ html[data-window-controls-overlay="true"] {
   -webkit-line-clamp: 3;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 66%, transparent 100%);
+}
+
+/* The reasoning palette: prose owns its own colour, so it is restated as
+   prose's variables — a wrapper class alone cannot reach it, because the class
+   and `.prose` are the same element, which is why thinking had been rendering
+   at the answer's body colour. Body sits between the answer
+   (foreground) and a muted note, and bold/headings keep their own step up so a
+   long thought keeps its shape instead of flattening into one grey block. */
+.thought-prose.prose {
+  --tw-prose-body: color-mix(in srgb, var(--muted-foreground) 90%, var(--foreground));
+  --tw-prose-headings: color-mix(in srgb, var(--muted-foreground) 55%, var(--foreground));
+  --tw-prose-bold: color-mix(in srgb, var(--muted-foreground) 55%, var(--foreground));
+  --tw-prose-links: color-mix(in srgb, var(--muted-foreground) 70%, var(--foreground));
+  --tw-prose-code: color-mix(in srgb, var(--muted-foreground) 60%, var(--foreground));
+  --tw-prose-quotes: color-mix(in srgb, var(--muted-foreground) 90%, var(--foreground));
+  --tw-prose-bullets: color-mix(in srgb, var(--muted-foreground) 55%, transparent);
+  --tw-prose-counters: var(--muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.65;
 }
 
 /* A path, a URL or a hash in running text is a single unbreakable token, and
@@ -2267,6 +2280,18 @@ html .dockview-theme-abyss {
   --dv-active-sash-color: color-mix(in oklch, var(--primary) 60%, transparent);
   --dv-tab-margin: 0;
   --dv-tab-border-radius: 0;
+}
+
+/* ── A place dragged in from the sidebar, over a preview ──
+   A panel's content is a drop target like the rest of the dock — except the one
+   that is an iframe, which swallows pointer events and with them every
+   `dragover`, so the pointer over a preview was a hole the drop fell through.
+   While one of our drags is in flight (`lib/workspace/route-drag.ts` marks the
+   document) an iframe stops taking the pointer, and the dock underneath answers
+   instead. Scoped to the session dock: the popout windows and the phone's
+   sidebar sheet are not drop targets. */
+html[data-route-drag] .session-dock iframe {
+  pointer-events: none;
 }
 
 /* No rule under the strip. A strip in the header's band never drew one (the

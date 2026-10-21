@@ -12,8 +12,11 @@ import {
   deleteTrigger,
   listRoutines,
   listTriggers,
+  markRunRead,
+  markRunsRead,
   mintTriggerToken,
   revokeTriggerToken,
+  unreadRunCount,
   updateRoutine,
   updateTrigger,
   type RoutineEngine,
@@ -124,6 +127,25 @@ export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void 
      with a run that finished on its own, is not an error. */
   app.post("/api/routines/runs/:runId/cancel", (c) =>
     routine(c, () => ({ stopped: engine.cancelForRun(c.req.param("runId"), "stopped from the UI") })),
+  );
+
+  /* ── what nobody has read ──
+     An automation runs with no one in front of it, so "finished" and "read"
+     are two different moments and the gap between them is the whole point of
+     the badge. The count is small, polled while the app is in front, and kept
+     out of `/api/routines` on purpose: the list is a catalog (rows that
+     change when edited), this is a reading that changes on its own clock. */
+  app.get("/api/routines/runs/unread", (c) => routine(c, async () => ({ count: await unreadRunCount() })));
+
+  /* Opening a run is reading it. Per run and not per routine: the outputs are
+     what the reader missed, and a list of five results is not five readings. */
+  app.post("/api/routines/runs/:runId/read", (c) =>
+    routine(c, async () => ({ read: await markRunRead(c.req.param("runId")) })),
+  );
+
+  /* The list's escape hatch — "I have seen them, stop counting". */
+  app.post("/api/routines/runs/read-all", (c) =>
+    routine(c, async () => ({ read: await markRunsRead() })),
   );
 
   /* ── triggers ──

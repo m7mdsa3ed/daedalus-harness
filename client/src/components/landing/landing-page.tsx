@@ -13,6 +13,13 @@
    and tool pickers all work — while the harness stays told nothing. No list
    draws it (`isListed`), which is what makes minting one per visit harmless.
 
+   The page is a stack of three things and nothing else: the greeting, the box,
+   and one strip of everything else the tab can open (`landing-actions.tsx`,
+   under it). The greeting earns its mark on a page somebody arrives at rather
+   than a thread they are already in, and the strip is one surface instead of a
+   row of floating chips — but neither is a second subject competing with the
+   composer.
+
    What was here before and is not coming back: a headline and a paragraph
    pitching the product to someone who has already connected a server; a band of
    four counts that were inventory rather than news; six feature cards whose
@@ -21,33 +28,18 @@
    without its shelf, its scope row or any of its pickers. */
 import * as React from "react"
 import { useNavigate, useSearchParams } from "react-router"
-import {
-  BellIcon,
-  MessageSquarePlusIcon,
-  RepeatIcon,
-  SettingsIcon,
-  SquareKanbanIcon,
-} from "lucide-react"
 
 import { Composer } from "@/components/composer/composer"
 import { useAttachmentDelivery } from "@/components/composer-attachments"
+import { LandingActions } from "@/components/landing/landing-actions"
 import { LandingSetup } from "@/components/landing/landing-setup"
 import { LandingSkeleton } from "@/components/landing/landing-skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
 import type { Actions } from "@/lib/actions"
 import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
-import { requestComposerFocus } from "@/lib/composer-focus"
-import { ProjectIcon } from "@/components/entity-icon"
-import { Button } from "@/components/ui/button"
 import { PageFrame } from "@/components/page-primitives"
-import {
-  automationsPath,
-  boardPath,
-  projectPath,
-  settingsRootPath,
-  threadPath,
-} from "@/lib/router"
+import { threadPath } from "@/lib/router"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { endVoiceCall } from "@/lib/voice-call"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
@@ -175,10 +167,11 @@ function LandingComposer({ actions }: { actions: Actions }) {
   }, [sessionId])
 
   return (
-    /* The empty thread's own centring, which is most of what this page is: two
-       spacer rows of equal weight with the whole console — greeting, box and
-       the quick actions under it — between them. `@container` because the
-       composer and its shelf are written in the `@panel-*` queries the dock
+    /* The empty thread's own centring, which is most of what this page is: a
+       spacer, the console, and a spacer — the launcher sits at the top of the
+       last one, so the greeting and the box are what the eye lands on centre
+       and the strip hangs under them. `@container` because the composer, its
+       shelf and the strip are written in the `@panel-*` queries the dock
        declares for them, and this page is not in the dock. */
     <div className="@container grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)] pt-[var(--app-header-h)]">
       <span aria-hidden />
@@ -188,7 +181,7 @@ function LandingComposer({ actions }: { actions: Actions }) {
           middle at mid-pane (`KEYBOARD_CENTER_FLOW`, the same recipe the empty
           transcript uses). */}
       <div className={cn("relative min-w-0", KEYBOARD_CENTER_FLOW)}>
-        <ThreadWelcome draft />
+        <ThreadWelcome draft landing />
         {sessionId ? (
           <Composer
             sessionId={sessionId}
@@ -217,51 +210,7 @@ function LandingComposer({ actions }: { actions: Actions }) {
           />
         ) : null}
       </div>
-      <QuickActions
-        projects={projects}
-        onThread={() => sessionId && requestComposerFocus(sessionId)}
-      />
-    </div>
-  )
-}
-
-/* ── The New tab page's quick actions ──
-   A tab is an isolated outlet that can open anything, and this is the page a
-   fresh one opens on. Each action navigates *this* tab, so whatever it opens stays
-   in it — the same route can be open in as many tabs as you like. */
-function QuickActions({
-  projects,
-  onThread,
-}: {
-  projects: ReturnType<typeof useProjects>
-  onThread: () => void
-}) {
-  const navigate = useNavigate()
-  const go = (path: string) => () => void navigate(path)
-  const chip = (onClick: () => void, icon: React.ReactNode, label: React.ReactNode, key?: string) => (
-    <Button key={key} variant="outline" onClick={onClick} className="text-muted-foreground">
-      {icon}
-      {label}
-    </Button>
-  )
-  return (
-    <div className="flex flex-wrap content-start items-start justify-center gap-2 px-4 pt-6">
-      {chip(onThread, <MessageSquarePlusIcon data-icon="inline-start" />, "New thread")}
-      {chip(go(boardPath()), <SquareKanbanIcon data-icon="inline-start" />, "Tasks")}
-      {chip(go(automationsPath()), <RepeatIcon data-icon="inline-start" />, "Automations")}
-      {chip(go("/notifications"), <BellIcon data-icon="inline-start" />, "Inbox")}
-      {chip(go(settingsRootPath()), <SettingsIcon data-icon="inline-start" />, "Settings")}
-      {projects.slice(0, 4).map((project) =>
-        chip(
-          go(projectPath(project.id)),
-          // ProjectIcon does not forward props, so the slot the button spaces by is a wrapper.
-          <span data-icon="inline-start" className="flex size-4 shrink-0 items-center justify-center">
-            <ProjectIcon project={project} className="size-4" />
-          </span>,
-          project.name,
-          project.id
-        )
-      )}
+      <LandingActions projects={projects} />
     </div>
   )
 }

@@ -309,6 +309,8 @@ export class WorkflowRunner {
       /** The errand in the caller's words, as a subagent's `description` is:
           what it is doing, not who is doing it. Titles the child and its row. */
       description?: string;
+      /** Run in another project than the caller's; omitted = the caller's own. */
+      projectId?: string;
       model?: string;
       effort?: string;
       timeoutSec?: number;
@@ -341,6 +343,8 @@ export class WorkflowRunner {
     if (matches.length === 0) throw new WorkflowError(`no profile "${wantProfile}" with agent "${wantAgent}" — available: ${known()}`, 404);
     if (matches.length > 1) throw new WorkflowError(`"${wantProfile}" / "${wantAgent}" matches ${matches.length} pairs — name the profile by id`);
     const pair = matches[0]!;
+    const projectId = input.projectId && input.projectId !== parent.projectId ? input.projectId : undefined;
+    if (projectId && !await getProject(projectId)) throw new WorkflowError(`no project "${projectId}"`, 404);
     if (!pair.installed) throw new WorkflowError(`${pair.agent} is not installed on this server`, 409);
     const description = input.description?.trim() || undefined;
     const step = {
@@ -354,6 +358,7 @@ export class WorkflowRunner {
       agentId: pair.agentId,
       agentName: pair.agent,
       profileName: pair.profile,
+      ...(projectId ? { projectId } : {}),
       model,
       effort: input.effort,
       label: `${pair.agent} · ${pair.profile}`,
@@ -368,6 +373,33 @@ export class WorkflowRunner {
        two of them apart in the message that wakes it. */
     const name = description ? `Ask ${pair.agent}: ${description}` : `Ask ${pair.agent}`;
     return this.launch(parent, { name, steps: [step], phases: [], maxParallel: 1 }, {}, true, true);
+  }
+
+  /**
+   * Pick an ask back up where it stopped: a new one-step run on the *same*
+   * child thread, which keeps its conversation through a timeout, a cancel or a
+   * failure (`retire` kills the process, never the log). The child is the same
+   * row in the transcript — a settled child spawned again is a wake — so the
+   * work reads as one errand. The pair is the original's, copied from its
+   * definition, so nothing is picked or asked a second time.
+   */
+  async continueAsk(parent: Session, askId: string, prompt?: string): Promise<RunView> {
+    const live = this.runs.get(askId);
+    if (live && !terminal(live.status)) throw new WorkflowError("that ask is still running — wait for it instead", 409);
+    const row = (await db.select().from(runsTable).where(eq(runsTable.id, askId)).limit(1))[0];
+    const def = row?.definition as unknown as WorkflowDefinition | undefined;
+    const childId = row?.steps[0]?.sessionId;
+    if (!row || row.parentSessionId !== parent.id || def?.steps.length !== 1) throw new WorkflowError("no such ask on this thread", 404);
+    if (!childId || this.manager.get(childId)?.parentSessionId !== parent.id) {
+      throw new WorkflowError("that ask's thread is gone — start a new ask with ask_agent", 409);
+    }
+    const step = {
+      ...def.steps[0]!,
+      prompt: prompt?.trim() || "Continue where you left off and finish the task.",
+      timeoutSec: undefined,
+      resumeSessionId: childId,
+    } satisfies WorkflowStep;
+    return this.launch(parent, { ...def, steps: [step] }, {}, true, true);
   }
 
   private async launch(parent: Session, def: WorkflowDefinition, inputs: Record<string, unknown>, ask = false, notify = false): Promise<RunView> {
@@ -412,7 +444,7 @@ export class WorkflowRunner {
       ),
       outputs: {},
       abort: new AbortController(),
-      totalTimer: new PausableTimer((def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default) * 1000, () =>
+      totalTimer: new PausableTimer(ask ? NO_LIMIT_MS : (def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default) * 1000, () =>
         this.finishRun(run, "failed", `timed out after ${def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default}s`),
       ),
       stepTimers: new Set(),
@@ -420,6 +452,7 @@ export class WorkflowRunner {
       resumeWaiters: [],
     };
     this.runs.set(run.id, run);
+    this.manager.setRunsActive(parent.id, true);
     await db.insert(runsTable)
       .values({
         id: run.id,
@@ -538,6 +571,7 @@ export class WorkflowRunner {
       resumeWaiters: [],
     };
     this.runs.set(run.id, run);
+    this.manager.setRunsActive(parent.id, true);
     await db.insert(runsTable)
       .values({
         id: run.id,
@@ -629,7 +663,7 @@ export class WorkflowRunner {
   ): Promise<unknown> {
     const script = run.script!;
     const key = createHash("sha256")
-      .update(JSON.stringify([spec.prompt, spec.schema ?? null, spec.model ?? null, spec.effort ?? null, spec.isolation ?? null, spec.agentType ?? null]))
+      .update(JSON.stringify([spec.prompt, spec.schema ?? null, spec.model ?? null, spec.effort ?? null, spec.isolation ?? null, spec.agentType ?? null, spec.projectId ?? null]))
       .digest("hex")
       .slice(0, 32);
     const cached = script.cache.get(key)?.shift();
@@ -640,6 +674,7 @@ export class WorkflowRunner {
     if (spec.agentType && !lead) {
       throw new ScriptError(`agent(…, {agentType}): no slash command is named /${spec.agentType}`);
     }
+    if (spec.projectId && !await getProject(spec.projectId)) throw new ScriptError(`agent(…, {projectId}): no project "${spec.projectId}"`);
     if (!cached) await this.acquireSlot(run);
     if (terminal(run.status) || run.abort.signal.aborted) throw new ScriptError("the run was cancelled");
 
@@ -665,6 +700,7 @@ export class WorkflowRunner {
       ...(spec.model ? { model: spec.model } : {}),
       ...(spec.effort ? { effort: spec.effort } : {}),
       ...(spec.isolation ? { isolation: spec.isolation } : {}),
+      ...(spec.projectId ? { projectId: spec.projectId } : {}),
     };
     if (lead) step.prompt = `${lead.content.replaceAll("$ARGUMENTS", "").trim()}\n\n${spec.prompt}`;
     run.def.steps.push(step);
@@ -767,6 +803,17 @@ export class WorkflowRunner {
     if (quiet) run.notify = false;
     this.finishRun(run, "cancelled", reason);
     return true;
+  }
+
+  /** The person's Stop on an ask's row: its run, found by the child thread it
+      spawned. Not quiet — the parent is told its ask was stopped. Workflow
+      steps are not stopped one by one; their run is. */
+  cancelChild(parentId: string, childId: string): boolean {
+    for (const run of this.runs.values()) {
+      if (!run.ask || run.parent.id !== parentId || terminal(run.status)) continue;
+      if ([...run.steps.values()].some((s) => s.sessionId === childId)) return this.cancel(run.id, "stopped by the user");
+    }
+    return false;
   }
 
   /**
@@ -926,6 +973,8 @@ export class WorkflowRunner {
     let unsubscribe = () => {};
     let text = "";
     let textBytes = 0;
+    let tokens = 0;
+    let toolUses = 0;
     try {
       /* A script wrote this prompt in JavaScript, so it is already whatever
          its author meant — running it through the template engine would eat
@@ -935,8 +984,8 @@ export class WorkflowRunner {
         : renderTemplate(step.prompt, { inputs: run.inputs, steps: run.outputs });
       const profile = await getProfile(step.profileId ?? run.parent.profileId);
       if (!profile) throw new WorkflowError(step.profileId ? "that profile no longer exists" : "this thread's profile no longer exists", 409);
-      const project = await getProject(run.parent.projectId);
-      if (!project) throw new WorkflowError("this thread's project no longer exists", 409);
+      const project = await getProject(step.projectId ?? run.parent.projectId);
+      if (!project) throw new WorkflowError(step.projectId ? "that project no longer exists" : "this thread's project no longer exists", 409);
       const agentId = step.agentId ?? run.parent.agentId;
       /* An ask may name another pair. The parent's model belongs to the
          parent's profile and its mode ids to the parent's runtime, so neither
@@ -952,7 +1001,7 @@ export class WorkflowRunner {
             modeId: run.parent.modeId ?? undefined,
             configOptions: [],
           };
-      child = await this.manager.create(profile, agentId, project, step.model ?? (samePair ? run.parent.model : undefined), step.effort ?? (samePair ? run.parent.effort : undefined), undefined, undefined, run.parent.links, {
+      child = step.resumeSessionId ? await this.resumeChild(run, step.resumeSessionId) : await this.manager.create(profile, agentId, project, step.model ?? (samePair ? run.parent.model : undefined), step.effort ?? (samePair ? run.parent.effort : undefined), undefined, undefined, run.parent.links, {
         parentSessionId: run.parent.id,
         title: run.ask ? `Ask · ${rowNameOf(step)}` : `${run.def.name} · ${step.name}`,
         restore,
@@ -961,7 +1010,7 @@ export class WorkflowRunner {
         /* Unless the script asked for `isolation: 'worktree'`: then a
            checkout of its own, so parallel agents editing files cannot
            collide. Left in place when the step ends, like any thread's. */
-        worktree: step.isolation === "worktree" ? true : run.parent.worktree ?? undefined,
+        worktree: step.isolation === "worktree" ? true : step.projectId ? undefined : run.parent.worktree ?? undefined,
         /* And whether it offers follow-ups, for the same reason: the step's
            answer reads in the parent's transcript, where a missing fence
            would be the inconsistency showing. */
@@ -1044,6 +1093,7 @@ export class WorkflowRunner {
              number a run is actually steered by, and the one a reader means by
              "how much has this spent". */
           if (run.script) run.script.spent += event.usage.outputTokens ?? event.usage.totalTokens ?? 0;
+          tokens += event.usage.totalTokens ?? 0;
           this.manager.emitOn(run.parent.id, {
             ev: "update",
             seq: 0,
@@ -1060,6 +1110,7 @@ export class WorkflowRunner {
         this.manager.emitOn(run.parent.id, { ...event, seq: 0, sessionId: event.sessionId ?? childId });
         if (event.sessionId) return;
         const u = event.update;
+        if (u.sessionUpdate === "tool_call") toolUses += 1;
         if (u.sessionUpdate === "agent_message_chunk" && u.content.type === "text" && textBytes < LIMITS.outputBytes) {
           text += u.content.text;
           textBytes += Buffer.byteLength(u.content.text);
@@ -1084,7 +1135,7 @@ export class WorkflowRunner {
           this.closeStep(run, step.name, "cancelled", run.error ?? "cancelled", childId);
           return;
         }
-        if (outcome.kind === "timeout") throw new WorkflowError(`timed out after ${stepTimeoutSec(step)}s`);
+        if (outcome.kind === "timeout") throw new WorkflowError(`timed out after ${stepTimeoutSec(step, run.ask)}s`);
         if (outcome.error) throw new WorkflowError(outcome.error.message);
         if (outcome.interrupted) throw new WorkflowError("the step's turn was cancelled");
         if (step.output === "text") {
@@ -1114,8 +1165,13 @@ export class WorkflowRunner {
       for (const name of dependentsOf(run.def, step.name)) {
         if (run.steps.get(name)?.status === "pending") this.patchStep(run, name, { status: "skipped", endedAt: Date.now() });
       }
+      /* What it said before it stopped is the one thing a timed-out or failed
+         step can still hand back — its parent reads it, and so does the
+         `continue_agent` that picks it up. */
+      if (text.trim()) this.patchStep(run, step.name, { output: text });
       this.closeStep(run, step.name, "failed", message, child?.id ?? null);
     } finally {
+      this.patchStep(run, step.name, { tokens, toolUses });
       unsubscribe();
       this.liveChildren -= 1;
       if (child) this.manager.retire(child);
@@ -1123,6 +1179,22 @@ export class WorkflowRunner {
       // global one another run was waiting on.
       for (const r of this.runs.values()) this.pump(r);
     }
+  }
+
+  /** The child of an earlier ask, still this parent's, with its process back:
+      a step's end retired it, and `prompt` never starts one — a revive is its
+      own door, the same a send on a retired thread takes (`session/load` of its
+      own conversation). */
+  private async resumeChild(run: Run, id: string): Promise<Session> {
+    const child = this.manager.get(id);
+    if (!child || child.parentSessionId !== run.parent.id) throw new WorkflowError("that ask's thread is gone", 409);
+    if (!child.bridge || child.exited) {
+      const profile = child.profile ?? (await getProfile(child.profileId));
+      const project = child.project ?? (await getProject(child.projectId));
+      if (!profile || !project) throw new WorkflowError("that ask's profile or project no longer exists", 409);
+      await this.manager.respawn(child.id, profile, child.agentId, project, child.model || undefined, child.effort || undefined, { revive: true });
+    }
+    return child;
   }
 
   /** One prompt to the child and the wait for its turn, raced against the
@@ -1142,7 +1214,9 @@ export class WorkflowRunner {
     const result = await Promise.race<{ kind: "settled"; error?: TurnOutcome["error"]; interrupted: boolean } | { kind: "timeout" } | { kind: "cancelled" }>([
       settled.then((o) => ({ kind: "settled" as const, ...o })),
       new Promise((resolve) => {
-        timer = new PausableTimer(stepTimeoutSec(step) * 1000, () => resolve({ kind: "timeout" }));
+        const limit = stepTimeoutSec(step, run.ask);
+        if (limit === null) return;
+        timer = new PausableTimer(limit * 1000, () => resolve({ kind: "timeout" }));
         // Born held if the run is: a step whose child is being paused right
         // now must not have its clock running while it stands.
         if (run.status === "paused") timer.pause();
@@ -1183,6 +1257,10 @@ export class WorkflowRunner {
     run.error = error;
     run.endedAt = Date.now();
     run.totalTimer.clear();
+    this.manager.setRunsActive(
+      run.parent.id,
+      [...this.runs.values()].some((r) => r.parent.id === run.parent.id && !terminal(r.status)),
+    );
     for (const s of run.steps.values()) {
       if (s.status === "pending") this.patchStep(run, s.name, { status: "cancelled", endedAt: run.endedAt });
     }
@@ -1254,9 +1332,15 @@ function terminal(status: WorkflowRunStatus): boolean {
   return status !== "running" && status !== "paused";
 }
 
-function stepTimeoutSec(step: WorkflowStep): number {
-  return step.timeoutSec ?? LIMITS.stepTimeoutSec.default;
+/** Seconds a step may run, or null for no limit — which is an ask's default:
+    an agent asked to do real work was being killed mid-edit at 15 minutes. */
+function stepTimeoutSec(step: WorkflowStep, ask?: boolean): number | null {
+  return step.timeoutSec ?? (ask ? null : LIMITS.stepTimeoutSec.default);
 }
+
+/** A timer's longest span (setTimeout's own ceiling, ~24 days): an ask's whole-run
+    clock, which has no limit to enforce. */
+const NO_LIMIT_MS = 2 ** 31 - 1;
 
 function stateUpdate(childId: string, state: "completed" | "failed" | "cancelled" | "disconnected"): UpdateEvent {
   return {
@@ -1318,26 +1402,51 @@ function jsonClone(value: unknown): unknown {
 }
 
 /** What a finished background run says to its parent thread. Shaped like
-    Claude Code's `<task-notification>`, so an agent that knows one reads the
-    other. The full run stays one `workflow_status` call away. */
+    Claude Code's `<task-notification>` (`<usage>`, `<failures>`, a prose
+    `<result>`, a `<note>`), so an agent that knows one reads the other and the
+    client draws both as one card. The full run stays one `workflow_status`
+    call away. */
 const NOTIFY_BYTES = 32 * 1024;
 /** `ask`: the run is one `ask_agent`, said as an ask and pointing at its own
     tool — a thread may carry the agents server and not the workflow one. */
 export function notification(view: RunView, ask = false): string {
-  const failed = view.steps.filter((s) => s.status === "failed").map((s) => `${s.name}: ${s.error ?? "failed"}`);
-  const body = view.result !== undefined
-    ? JSON.stringify(view.result, null, 2)
-    : JSON.stringify(Object.fromEntries(view.steps.filter((s) => s.status === "completed").map((s) => [s.name, s.output])), null, 2);
+  const failed = view.steps.filter((s) => s.status === "failed");
+  const done = view.steps.filter((s) => s.status === "completed");
+  const asked = ask ? view.steps[0] : undefined;
+  /* An ask's answer is the child's own words, not JSON wrapped around them —
+     and a failed one still carries what it said before it stopped. */
+  const body = asked
+    ? typeof asked.output === "string" ? asked.output : asked.output == null ? "" : JSON.stringify(asked.output, null, 2)
+    : view.result !== undefined
+      ? JSON.stringify(view.result, null, 2)
+      : JSON.stringify(Object.fromEntries(done.map((s) => [s.name, s.output])), null, 2);
   const result = body.length > NOTIFY_BYTES
     ? `${body.slice(0, NOTIFY_BYTES)}\n… (truncated — call ${ask ? "wait_agent with this askId" : "workflow_status with this runId"} for the whole of it)`
     : body;
+  const sum = (key: "tokens" | "toolUses") => view.steps.reduce((n, s) => n + (s[key] ?? 0), 0);
+  const usage = [
+    ...(ask ? [] : [`<agent_count>${view.steps.length}</agent_count>`, `<agents_done>${done.length}</agents_done>`, `<agents_error>${failed.length}</agents_error>`]),
+    `<subagent_tokens>${sum("tokens")}</subagent_tokens>`,
+    `<tool_uses>${sum("toolUses")}</tool_uses>`,
+    `<duration_ms>${Math.max(0, (view.endedAt ?? Date.now()) - view.createdAt)}</duration_ms>`,
+  ];
   return [
     "<task-notification>",
     `<task-id>${view.id}</task-id>`,
     `<status>${view.status}</status>`,
-    `<summary>${ask ? `${view.name} (askId ${view.id})` : `Workflow "${view.name}"`} ${view.status}${view.error ? `: ${view.error}` : ""}</summary>`,
-    ...(failed.length ? [`<failed-agents>\n${failed.join("\n")}\n</failed-agents>`] : []),
-    `<result>\n${result}\n</result>`,
+    `<summary>${ask ? view.name : `Workflow "${view.name}"`} ${view.status}${view.error ? `: ${view.error}` : ""}</summary>`,
+    ...(asked?.sessionId
+      ? [
+          `<note>The task-id is the askId. The asked agent's thread (${asked.sessionId}) keeps its whole conversation; ` +
+            (view.status === "completed"
+              ? "call continue_agent with this askId and a prompt to send it a follow-up."
+              : "call continue_agent with this askId (and a prompt, if it needs steering) to pick it up where it stopped — the result below is only what it said before then.") +
+            "</note>",
+        ]
+      : []),
+    ...(failed.length ? [`<failures>\n${failed.map((s) => `[${s.name}] failed: ${s.error ?? "failed"}`).join("\n")}\n</failures>`] : []),
+    ...(result.trim() && result.trim() !== "{}" ? [`<result>\n${result}\n</result>`] : []),
+    `<usage>${usage.join("")}</usage>`,
     "</task-notification>",
   ].join("\n");
 }

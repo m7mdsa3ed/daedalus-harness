@@ -22,6 +22,7 @@ import {
   automationRunsKey,
   automationTriggersKey,
   automationsKey,
+  unreadAutomationRunsKey,
 } from "./keys"
 import { useApiMutation, useApiQuery } from "./helpers"
 
@@ -126,6 +127,49 @@ export function useCancelAutomationRun() {
     (_stopped, { routineId }) => [automationRunsFamilyKey(settings, routineId)],
     (conn, { runId }) =>
       postJson<{ stopped: boolean }>(conn, `/api/routines/runs/${encodeURIComponent(runId)}/cancel`, {})
+  )
+}
+
+// ---- what nobody has read ----
+
+/**
+ * How many runs finished and have not been read — the sidebar's badge.
+ *
+ * Polled, and the one query here that is: nothing else tells this client a run
+ * ended. An automation settles on the server with no socket event and nobody
+ * in a thread to see it, so the count has to be asked for. Half a minute and
+ * the focus refetch (TanStack asks again when the window comes back) is the
+ * right amount for "you were away": it costs one number, and it is honest the
+ * moment you look.
+ */
+export function useUnreadAutomationRuns() {
+  const settings = useServer()
+  return useApiQuery<{ count: number }>(unreadAutomationRunsKey(settings), "/api/routines/runs/unread", {
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  })
+}
+
+/** Opening a run is reading it. The routine's runs go with it, so the dot on
+    the row the reader just left clears too. */
+export function useMarkAutomationRunRead() {
+  const settings = useServer()
+  return useApiMutation<{ routineId: string; runId: string }, { read: boolean }>(
+    (_result, { routineId }) => [
+      automationRunsFamilyKey(settings, routineId),
+      unreadAutomationRunsKey(settings),
+    ],
+    (conn, { runId }) =>
+      postJson<{ read: boolean }>(conn, `/api/routines/runs/${encodeURIComponent(runId)}/read`, {})
+  )
+}
+
+/** Every unread run at once — the given-up-on-the-dots escape hatch. */
+export function useMarkAllAutomationRunsRead() {
+  const settings = useServer()
+  return useApiMutation<void, { read: number }>(
+    [allAutomationRunsKey(settings), unreadAutomationRunsKey(settings)],
+    (conn) => postJson<{ read: number }>(conn, "/api/routines/runs/read-all", {})
   )
 }
 

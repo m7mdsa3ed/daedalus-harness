@@ -4,8 +4,8 @@ import type { ToolItem } from "../store"
 import { describeCommand } from "./describe"
 import { asRecord, str, vendorMeta } from "./helpers"
 import { extractHarnessCall, harnessOperationLabel, harnessSubject } from "./harness"
-import { extractMcpCall } from "./mcp"
-import { formatMcpName, NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
+import { extractMcpCall, mcpCallLabel, mcpSubject } from "./mcp"
+import { NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
 import { extractSkill } from "./structured"
 import { agentLabel, extractAgentMessage } from "./subagents"
 import { extractToolSearch } from "./tool-search"
@@ -91,8 +91,7 @@ export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | 
   // is not a target, it is the address of one.
   const mcp = extractMcpCall(item)
   if (mcp) {
-    const server = formatMcpName(mcp.server)
-    const tool = formatMcpName(mcp.tool)
+    const { server, tool } = mcpCallLabel(mcp)
     return tool ? `${server} · ${tool}` : server
   }
   const input = asRecord(item.rawInput)
@@ -341,6 +340,21 @@ export function toolHeading(
   const web = webInput({ ...item, title: item.title ?? "" })
   if (web?.query) return { title: `Search the web for ${target}`, prose: true }
   if (web?.url) return { title: `Fetch ${target}`, prose: false }
+  /* An MCP call's row names the integration and the tool, and captions it with
+     the thing acted on. The pair alone is the address of the call, not a fact
+     about it — `Clickup · Get task` never said which task, and the argument
+     that does (`name`, `query`, `path`) is the one a reader is scanning for.
+     After the web rules, which claim the tools that are about a query or a
+     page whichever server answers them. */
+  const mcp = extractMcpCall({ ...item, title: item.title ?? "" })
+  if (mcp) {
+    const { server, tool } = mcpCallLabel(mcp)
+    return {
+      title: tool ? `${server} · ${tool}` : server,
+      detail: mcpSubject(mcp) ?? undefined,
+      prose: false,
+    }
+  }
   const description = toolDescription(item)
   /* The file badge: if the target IS a file, that is the chip, and the
      description's own mention of the path is cut so the sentence doesn't repeat

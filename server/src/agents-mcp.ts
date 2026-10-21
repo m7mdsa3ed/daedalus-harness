@@ -153,9 +153,9 @@ server.registerTool(
   "ask_agent",
   {
     title: "Ask another agent",
-    description: `Give a task to another agent — a different runtime, provider or model — and wait up to waitSec (default ${DEFAULT_WAIT_SEC}, max ${MAX_WAIT_SEC}) for its reply. It runs in a NEW thread on this server, in the same project and working directory as you, and sees NOTHING of this conversation: the prompt is its whole brief, so include the goal, the files involved and what you want back. Its final reply is \`output\`.
+    description: `Give a task to another agent — a different runtime, provider or model — and wait up to waitSec (default ${DEFAULT_WAIT_SEC}, max ${MAX_WAIT_SEC}) for its reply. It runs in a NEW thread on this server, in the same project and working directory as you (unless you pass projectId), and sees NOTHING of this conversation: the prompt is its whole brief, so include the goal, the files involved and what you want back. Its final reply is \`output\`.
 Always pass \`description\`: a short (3-8 word) name for the errand — "Audit the auth flow", "Second opinion on the migration" — which titles the row in the transcript. The row already says which agent answered; the description says what it was asked to do.
-Use list_agents for the names. Pass \`profile\` and \`agent\` ONLY if the user named them; otherwise omit both — the profile and model the user set for that agent on this thread are used, or the user is shown a picker (some profiles have broken or missing credentials, and only they know which). Never pick one on your own or fall back to another after a failure. \`model\` defaults to that profile's own default. If the returned status is "running", do NOT poll: the reply arrives in this thread as a <task-notification> message carrying the askId and its output when the agent finishes. Meanwhile do other work, or end your turn if there is none. Several asks may run at once; the asked agent cannot ask others in turn.`,
+Use list_agents for the names. Pass \`profile\` and \`agent\` ONLY if the user named them; otherwise omit both — the profile and model the user set for that agent on this thread are used, or the user is shown a picker (some profiles have broken or missing credentials, and only they know which). Never pick one on your own or fall back to another after a failure. \`model\` defaults to that profile's own default. If the returned status is "running", do NOT poll: the reply arrives in this thread as a <task-notification> message carrying the askId and its output when the agent finishes. Meanwhile do other work, or end your turn if there is none. Several asks may run at once; the asked agent cannot ask others in turn. An ask that failed, was stopped or needs a follow-up is picked up with continue_agent — it keeps its conversation.`,
     inputSchema: {
       profile: z.string().min(1).optional().describe("Profile name or id from list_agents — only when the user named it; omit to use the thread's pair or let the user pick."),
       agent: z.string().min(1).optional().describe("Agent name or id from list_agents — only when the user named it."),
@@ -166,9 +166,10 @@ Use list_agents for the names. Pass \`profile\` and \`agent\` ONLY if the user n
         .max(120)
         .optional()
         .describe("A short (3-8 word) name for the errand — it titles this ask's row in the transcript. Always give one."),
+      projectId: z.string().min(1).optional().describe("Run in another project (its id, from the harness MCP's projects listing) instead of yours. Omit to work in your own."),
       model: z.string().optional().describe("A model id from that profile's catalog."),
       effort: z.string().optional(),
-      timeoutSec: z.number().int().positive().optional().describe("How long the asked agent may work (default 15 min)."),
+      timeoutSec: z.number().int().positive().optional().describe("An optional cap on how long the asked agent may work. By default it has no limit."),
       waitSec: z.number().int().min(1).max(MAX_WAIT_SEC).optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -177,6 +178,27 @@ Use list_agents for the names. Pass \`profile\` and \`agent\` ONLY if the user n
     try {
       const chosen = await pickPair(body);
       return answer(await call(`/asks?wait=${clampWait(waitSec)}`, { method: "POST", body: JSON.stringify({ ...body, ...chosen }) }));
+    } catch (error) {
+      return failed(error);
+    }
+  },
+);
+
+server.registerTool(
+  "continue_agent",
+  {
+    title: "Continue an ask",
+    description: `Pick an ask back up where it stopped: a failed, timed-out, cancelled or finished one. It is the SAME thread with its whole conversation, so the prompt can be short ("continue", or what to do differently) — it is not a new brief. Waits up to waitSec (default ${DEFAULT_WAIT_SEC}, max ${MAX_WAIT_SEC}) and otherwise reports back as a <task-notification>, like ask_agent. Not for a running ask — wait_agent on that.`,
+    inputSchema: {
+      askId: z.string().min(1).describe("The askId (the task-id of its <task-notification>)."),
+      prompt: z.string().optional().describe("What to tell it; defaults to \"continue where you left off\"."),
+      waitSec: z.number().int().min(1).max(MAX_WAIT_SEC).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ askId, prompt, waitSec }) => {
+    try {
+      return answer(await call(`/asks/${encodeURIComponent(askId)}/continue?wait=${clampWait(waitSec)}`, { method: "POST", body: JSON.stringify({ prompt }) }));
     } catch (error) {
       return failed(error);
     }

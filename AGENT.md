@@ -308,6 +308,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
   so ours is not offered). A definition is **declarative JSON**, never a script. **Every step is a real thread** on the parent's own profile, agent, model,
   effort, persona and links. One level, never a tree. Nothing survives a restart.
+- **A run outlives the turn that launched it, so a turn ending is not the thread being
+  done.** A native workflow answers its prompt at "launched" and works on, so `turnActive`
+  stays false and the thread is not finished: the bridge keeps that fact (`background` — its
+  own event, `caught_up`, and `backgroundActive` on the row, never journaled because the
+  run's beats are) and every reading takes it from there — the lists, the transcript's foot,
+  and the "Turn finished" notification, which is withheld while a run is live.
 - **A run pauses as a state, never as a cancel-and-restart**, and its clocks stand still. A
   restart ends a paused run as it ends a running one.
 - **Asking another agent is the one door to another pair** (`builtin:agents`, `agents-mcp.ts`,
@@ -442,7 +448,21 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   Settings, the first projects) that each navigate *that* tab. A thread started from a project's +
   or ⌘K's ask row mints a draft and opens it in a tab of its own (`startThread`, `openInNewTab`).
   Several mounted views of one thread share its connection: exactly one holder opens it
-  (`useThreadConnection`).
+  (`useThreadConnection`). **`openRoute(path, {group, side})` is the same door generalized**, and
+  `openTab` is it with nothing said about where it lands: `side` is the only thing in the app that
+  puts a route in a new column or row instead of a tab (a drop on a group's edge; the phone's fold
+  takes it back).
+- **A place outside the dock is opened from its menu, or dragged in.** Clicking a sidebar row still
+  navigates the tab in front — that is what a tab is for — so the other two shapes are rows in its
+  context menu: **Open in new tab** and **Open to the side**, written once in
+  `components/open-in-menu.tsx` and used by every place-shaped row (a thread, a project folder, a
+  settings section, a nav destination). `lib/workspace/open-threads.ts` is how a surface outside the
+  dock's tree reaches it, so a surface added tomorrow gets both for one import and cannot spell them
+  differently. The same row is **draggable**: `application/x-daedalus-route` carries the route
+  (`lib/workspace/route-drag.ts`) and `components/workspace/dock-drop.tsx` hit-tests the grid group
+  under the pointer — a strip's band is a tab there, an edge is a split. Never on a phone, where the
+  press is the long press that opens the menu — and a preview's iframe stops taking the pointer while
+  one of these drags is in flight (`html[data-route-drag]`, `index.css`), or the drop fell through it.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **The sidebar has two contents and the *active panel* picks, never a route match of its
@@ -900,9 +920,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   nothing here" (`sm` inline, `lg` page — what `EmptyCard` used to re-spell). Absence and news
   never share a component.
 - **The composer is about what you type; everything about the state of the thread is at the
-  foot of the transcript.** The wait, the working line, a held turn, an approval, a question,
-  the queue — and **this device's connection** — are all at the foot of the transcript
-  (`thread-view.tsx`), where the next thing happens. The connection is a `Notice`
+  foot of the transcript.** The wait, the working line, the workflow the agent left running
+  (a run outlives its turn, so that line is what keeps a thread from reading done), a held
+  turn, an approval, a question, the queue — and **this device's connection** — are all at
+  the foot of the transcript (`thread-view.tsx`), where the next thing happens. The
+  connection is a `Notice`
   (`components/connection-card.tsx`), not a reading: it is a sentence with a button, readable
   in place, and it used to be one on the shelf's floor, where it took the shelf's own ground
   with it. **So nothing on the shelf is ever wrong** — no `tone` prop, no `--shelf-*` token,

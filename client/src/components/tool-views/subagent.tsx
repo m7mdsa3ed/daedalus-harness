@@ -12,9 +12,9 @@ import {
   DetailSection,
   PANE,
   PANE_PAD,
-  Prose,
   SmartBlock,
 } from "@/components/tool-parts"
+import { Prose } from "@/components/prose"
 import { ReportBlock } from "@/components/tool-views/report"
 import { useTaskEvents, watchTask } from "@/lib/task-events"
 import { loadSettings } from "@/lib/settings"

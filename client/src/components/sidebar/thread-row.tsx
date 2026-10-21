@@ -18,8 +18,11 @@ import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu
 import { AgentIcon } from "@/components/entity-icon"
 import { Badge } from "@/components/ui/badge"
 import { ThreadInfoCard } from "./thread-info-card"
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
+import { threadPath } from "@/lib/router"
+import { startRouteDrag } from "@/lib/workspace/route-drag"
 import { shortAge } from "@/lib/time"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
@@ -60,6 +63,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   session,
   state,
   trash,
+  unread,
   pinned,
   showProject,
   project,
@@ -76,6 +80,11 @@ export const ThreadRow = React.memo(function ThreadRow({
   session: SessionMeta
   state: ThreadStatus
   trash: boolean
+  /** A turn ended here after the reader last looked (the sidebar's
+      `useUnreadIds`). The title is what says it — one weight up — rather than
+      a mark beside it: the thing that changed is the thread, and a dot at the
+      trailing end competes with the age for the one slot the row has left. */
+  unread?: boolean
   pinned: boolean
   /** Whether the row names its project. Under a project's own folder it would
       only repeat the folder, so it wears the agent's mark alone. */
@@ -105,42 +114,55 @@ export const ThreadRow = React.memo(function ThreadRow({
      waiting on an answer) is not something to throw away from a menu row —
      stop it first. Disabled with the reason on the row, not hidden. */
   const busy = state === "running" || state === "waiting"
-  /* What the second line used to say, as the row's tooltip. */
-  const reason = trash ? null : state === "waiting" ? "Needs you" : state === "failed" ? "Error — the last turn failed" : null
-  const detail = [reason, session.model, showProject ? project : null].filter(Boolean).join(" · ")
+  /* The device hook, not `useSidebar()`: a context read re-renders past
+     `memo`, so every row in the list re-rendered on each sidebar toggle. */
+  const isMobile = useIsMobile()
   const items = React.useMemo(
     () =>
       trash
         ? trashMenuItems(session, onRestore, onPurge, onRemoveWorktree)
-        : threadMenuItems(session, pinned, {
-            onRename,
-            onDelete,
-            onPin,
-            onRemoveWorktree,
-          }).map((item) =>
+        : threadMenuItems(
+            session,
+            pinned,
+            {
+              onRename,
+              onDelete,
+              onPin,
+              onRemoveWorktree,
+            },
+            /* A phone folds every split back into one strip, so the row that
+               makes one is not offered there (`open-in-menu`). */
+            { beside: !isMobile }
+          ).map((item) =>
             busy && item.type !== "sub" && item.type !== "separator" && item.type !== "icons" && item.destructive
               ? { ...item, disabled: true, hint: "Stop the turn first" }
               : item
           ),
-    [session, trash, pinned, busy, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree]
+    [session, trash, pinned, busy, isMobile, onRename, onDelete, onRestore, onPurge, onPin, onRemoveWorktree]
   )
-  /* The device hook, not `useSidebar()`: a context read re-renders past
-     `memo`, so every row in the list re-rendered on each sidebar toggle. */
-  const isMobile = useIsMobile()
   /* ── One line ──
      The agent's mark, the title, and at the trailing edge the status (a spinner,
      a badge, a glyph) or, when there is none, how long ago the thread last spoke.
-     Model, project and the rest are one hover away (the row's tooltip) and in
-     the ⋯ card — a second line per row halved how many threads fit. */
+     Model, project and the rest are one hover away (the row's card) and in the ⋯ card —
+     a second line per row halved how many threads fit. */
   const age = shortAge(activityAt(session))
   const row = (
-    <span className="flex min-w-0 flex-1 items-center gap-2" title={detail}>
+    <span className="flex min-w-0 flex-1 items-center gap-2">
       {agentIcon && <AgentIcon agentId={session.agentId} className="size-4 shrink-0" />}
       <span
         className={cn(
           "min-w-0 flex-1 truncate",
           (session.exited || trash) && "text-muted-foreground",
           trash && "line-through",
+          /* A turn ended here since the reader last looked: the title itself
+             says it, one weight up. It is the only bold title in the list,
+             which is the whole of why it reads at a glance, and it costs no
+             slot on a row whose trailing edge the age and the ⋯ already share.
+             Weight and not a colour, deliberately: a hue in this column means
+             a state — amber needs you, red failed — and "there is news" is not
+             one of those. Never against a state, which is louder and means
+             now rather than since. */
+          !trash && unread && "font-semibold",
           /* The status is the title's colour, not a mark beside it: amber for a
              thread waiting on you, red for a failed turn, and a shimmer sweeping
              the letters while a turn runs. */
@@ -150,12 +172,16 @@ export const ThreadRow = React.memo(function ThreadRow({
         )}
       >
         {session.title}
+        {unread && <span className="sr-only"> Unread</span>}
       </span>
       {/* An aside is flagged on the row: a thread started from a passage of
-          another (`asideQuote`), whose card names that thread. */}
+          another (`asideQuote`), whose card names that thread and quotes the
+          passage. The words ride along for a screen reader only — the badge's
+          own `title` was a second popover over a row that now has a card. */}
       {session.asideQuote && (
-        <Badge variant="secondary" title={`Aside on: ${session.asideQuote}`}>
+        <Badge variant="secondary">
           Aside
+          <span className="sr-only"> on: {session.asideQuote}</span>
         </Badge>
       )}
       {projectLabel && showProject && (
@@ -171,7 +197,42 @@ export const ThreadRow = React.memo(function ThreadRow({
     </span>
   )
 
-  const card = <ThreadInfoCard session={session} state={state} trash={trash} />
+  const reading = <ThreadInfoCard session={session} state={state} trash={trash} />
+
+  /* The row itself — one button, whichever of the two menus is wrapped round it. */
+  const button = (
+    <SidebarMenuButton
+      data-thread-id={session.id}
+      onClick={() => onOpen(session)}
+      /* Dragged into the dock, a row is the place it stands for: it lands as
+         a tab on a strip, or makes a column beside the group it is dropped
+         on (`dock-drop.tsx`). Not on a phone, where the same press is the
+         long press that opens this menu. */
+      draggable={!trash && !isMobile}
+      onDragStart={
+        trash || isMobile ? undefined : (event) => startRouteDrag(event, threadPath(session.id))
+      }
+      /* A finger resting on the row must not raise the browser's own
+         callout or native context menu — the one context menu is Base
+         UI's, opened on long press. */
+      onContextMenu={(event) => {
+        if (isMobile) event.preventDefault()
+      }}
+      className={cn(
+        FLOAT_ROW,
+        /* A parent's chevron always holds the trailing slot (a button cannot
+           sit inside the row's own button), so the age stops short of it. */
+        fold && "pr-7!",
+        /* A faint wash over the whole row for the two states addressed to
+           the reader, a step stronger on hover. */
+        !trash && state === "waiting" && "bg-warning/10 hover:bg-warning/15",
+        !trash && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
+        isMobile && "select-none [-webkit-touch-callout:none]"
+      )}
+    >
+      {row}
+    </SidebarMenuButton>
+  )
 
   return (
     <SidebarMenuItem
@@ -181,34 +242,34 @@ export const ThreadRow = React.memo(function ThreadRow({
       aria-setsize={setSize}
       aria-posinset={setSize != null && index != null ? index + 1 : undefined}
     >
-      {/* The right-click menu is the row itself — no wrapper DOM — and it is
-          the same list as the ⋯ below, so the two cannot drift apart. On a
-          phone its trigger is the long press the ⋯ is a finger-reach for. */}
-      <ItemContextMenu items={items}>
-        <SidebarMenuButton
-          data-thread-id={session.id}
-          onClick={() => onOpen(session)}
-          /* A finger resting on the row must not raise the browser's own
-             callout or native context menu — the one context menu is Base
-             UI's, opened on long press. */
-          onContextMenu={(event) => {
-            if (isMobile) event.preventDefault()
-          }}
-          className={cn(
-            FLOAT_ROW,
-            /* A parent's chevron always holds the trailing slot (a button cannot
-               sit inside the row's own button), so the age stops short of it. */
-            fold && "pr-7!",
-            /* A faint wash over the whole row for the two states addressed to
-               the reader, a step stronger on hover. */
-            !trash && state === "waiting" && "bg-warning/10 hover:bg-warning/15",
-            !trash && state === "failed" && "bg-destructive/10 hover:bg-destructive/15",
-            isMobile && "select-none [-webkit-touch-callout:none]"
-          )}
-        >
-          {row}
-        </SidebarMenuButton>
-      </ItemContextMenu>
+      {/* Hovering a row is a reading, not a wait: the same card the ⋯ opens,
+          with no actions in it. It waits a beat so walking the list with the
+          pointer does not flash a card per row — and it is not drawn on a
+          phone, which has no hover: the ⋯ and the long press are its doors,
+          and both open the same card.
+
+          The card wraps the right-click menu and not the other way round:
+          `ItemContextMenu` merges its own handlers onto its single child
+          through `render`, so that child has to be an element that reaches the
+          row's button — and a hover-card root renders no DOM of its own. The
+          menu is the row itself either way, no wrapper DOM, and the same list
+          as the ⋯ below, so the two cannot drift apart. On a phone its trigger
+          is the long press the ⋯ is a finger-reach for. */}
+      <HoverCard>
+        <ItemContextMenu items={items}>
+          {isMobile ? button : <HoverCardTrigger delay={400} closeDelay={120} render={button} />}
+        </ItemContextMenu>
+        {!isMobile && (
+          <HoverCardContent
+            side="right"
+            align="start"
+            sideOffset={8}
+            className="w-72 max-w-[calc(var(--float-w)-1rem)] p-3"
+          >
+            {reading}
+          </HoverCardContent>
+        )}
+      </HoverCard>
       {fold && (
         <SidebarMenuAction
           title={`${fold.open ? "Hide" : "Show"} ${fold.count} sub thread${fold.count === 1 ? "" : "s"}`}
@@ -252,7 +313,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           sideOffset={isMobile ? 8 : 4}
           className="w-72 max-w-[calc(var(--float-w)-1rem)]"
         >
-          <div className="px-3 py-2">{card}</div>
+          <div className="px-3 py-2">{reading}</div>
           <DropdownMenuSeparator />
           {renderMenuItems(items, { Item: DropdownMenuItem, Separator: DropdownMenuSeparator })}
         </DropdownMenuContent>

@@ -82,6 +82,11 @@ export const automationRunsFamilyKey = (s: ServerSettings, routineId: string) =>
 /** The prefix every runs key hangs off — for invalidating a routine's runs
     without naming the routine (a delete cascades them all). */
 export const allAutomationRunsKey = (s: ServerSettings) => scope(s).concat(["automation-runs"])
+/** How many runs nobody has read (`GET /api/routines/runs/unread`) — under the
+    runs prefix, so a routine's delete (which cascades its runs) takes it too.
+    "unread" can never be a routine id: those are UUIDs. */
+export const unreadAutomationRunsKey = (s: ServerSettings) =>
+  scope(s).concat(["automation-runs", "unread"])
 export const automationTriggersKey = (s: ServerSettings, routineId: string) =>
   scope(s).concat(["automation-triggers", routineId])
 

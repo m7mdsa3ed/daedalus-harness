@@ -20,9 +20,11 @@ import { AnimatePresence, m, useReducedMotion } from "motion/react"
 import {
   ArrowUpRightIcon,
   BotIcon,
+  BrainIcon,
   ListTodoIcon,
   PlayIcon,
   SparklesIcon,
+  SquareIcon,
   WrenchIcon,
 } from "lucide-react"
 import { ChevronRightIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
@@ -34,7 +36,10 @@ import { SkeletonText } from "@/components/ui/skeletons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { splitOpenuiFences } from "@/lib/openui/fences"
 import { loadAgentTranscript, useAgentTranscript } from "@/lib/agent-transcripts"
-import { loadSettings } from "@/lib/settings"
+import { api, loadSettings } from "@/lib/settings"
+import { reportError } from "@/lib/errors"
+import { useServer } from "@/lib/server-context"
+import { useThreadId } from "@/lib/thread-id-context"
 import {
   DetailSection,
   KIND_CHIPS,
@@ -56,6 +61,7 @@ import {
   ToolSources,
   toolHasDetail,
   toolOpensByDefault,
+  useMcpMark,
 } from "@/components/tool-views"
 import {
   copyText,
@@ -106,7 +112,7 @@ import {
   railPlain,
   useRailSlots,
 } from "@/components/thread-items/rail"
-import { UserMessageText } from "@/components/thread-items/user-message"
+import { UserMessageText, UserMessageFold } from "@/components/thread-items/user-message"
 import {
   childToolTitle,
   extractSubagent,
@@ -120,7 +126,7 @@ import {
   workflowAgentResult,
 } from "@/lib/tools"
 import { buildRows } from "@/lib/transcript-rows"
-import type { Row, SubagentGroup, ToolGroup, ToolRunGroup, WorkFold } from "@/lib/transcript-rows"
+import type { Row, RunItem, SubagentGroup, ToolGroup, ToolRunGroup, WorkFold } from "@/lib/transcript-rows"
 import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn, stagger } from "@/lib/utils"
@@ -140,7 +146,7 @@ export const ToolRun = React.memo(function ToolRun({
   showTimestamps,
   tail,
 }: {
-  items: Array<ToolItem | TextItem>
+  items: RunItem[]
   nestedRows?: ToolGroup["children"]
   showTimestamps?: boolean
   /** This group is the transcript's last row and the turn is still open — the
@@ -148,8 +154,10 @@ export const ToolRun = React.memo(function ToolRun({
       even in the gaps between its calls. */
   tail?: boolean
 }) {
-  /* Thoughts travel inside the group with the calls they explain, but only
-     tool calls contribute to its summary and status. */
+  /* A run's steps are calls and the setting changes between them
+     (`groupToolRuns` — a thought ends a run), and its summary and its status are
+     the calls' own: the counting line says what the group did, which is what a
+     call is for. */
   const tools = items.filter((item): item is ToolItem => item.kind === "tool")
   const failed = tools.filter((item) => item.status === "failed").length
   const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
@@ -157,7 +165,7 @@ export const ToolRun = React.memo(function ToolRun({
   /* One direction for the whole run, from its first call: its steps share a
      rail, and a rail cannot sit on both sides. */
   const dir = textDir(tools[0]?.title)
-  const displayItems: Array<ToolItem | TextItem | ToolRunGroup> = nestedRows ?? items
+  const displayItems: Array<RunItem | ToolRunGroup> = nestedRows ?? items
   const displayLength = displayItems.length
   const view = useLayoutOptionsContext()
   const systemReducedMotion = useReducedMotion()
@@ -269,21 +277,11 @@ export const ToolRun = React.memo(function ToolRun({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className={cn(
-          "group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted",
-          showing.length > 0 && !branch && "run-rail-head harness-rail-draw"
-        )}
+        className="group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
-        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
-          <ChevronRightIcon
-            aria-hidden
-            className={cn(
-              "size-3.5 text-muted-foreground transition-transform duration-200",
-              dir === "rtl" && "-scale-x-100",
-              open && (dir === "rtl" ? "-rotate-90" : "rotate-90")
-            )}
-          />
-        </span>
+        {/* The header starts on its marks — the stack is this row's mark column,
+            and the rail leaves from under it — and what opens the run rides the
+            row's end instead. See below. */}
         <RunAvatarStack items={items} />
         {/* English UI words, isolated: in an RTL run "2 files" would otherwise
             reorder into "files 2". */}
@@ -301,6 +299,19 @@ export const ToolRun = React.memo(function ToolRun({
             count that sits a pixel off the rows it heads reads as a different
             kind of thing than it is. */}
         <StepMeta parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]} />
+        {/* The disclosure, at the row's end: the line is a sentence about what
+            the run did, so the arrow that opens it comes after the sentence
+            rather than in front of it. */}
+        <span className="flex h-6 w-4 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 text-muted-foreground transition-transform duration-200",
+              dir === "rtl" && "-scale-x-100",
+              open && (dir === "rtl" ? "-rotate-90" : "rotate-90")
+            )}
+          />
+        </span>
       </button>
       <AnimatePresence initial={false}>
         {showing.length > 0 && (
@@ -344,6 +355,10 @@ export const ToolRun = React.memo(function ToolRun({
                 className={cn(
                   branch && !already.has(item.id) && "harness-item-in",
                   branch ? "relative flow-root" : RAIL_ELBOW,
+                  /* A run holds calls and notices (`RunItem`), both of which draw
+                     a mark in the column the rail aims at, so nothing on this
+                     rail is plain: the rows the line breaks for — prose, a
+                     thought, a plan — are drawn outside the run they ended. */
                   !branch && railPlain(item.kind),
                   !branch && index < showing.length - 1 && RAIL_TAIL
                 )}
@@ -503,17 +518,10 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className={cn(
-          "group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted",
-          open && "run-rail-head harness-rail-draw"
-        )}
+        className="group/fold -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
-        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-90")}
-          />
-        </span>
+        {/* The fold starts on its marks, like a run's header; the disclosure is
+            at the row's end. */}
         <RunAvatarStack items={tools} />
         {/* English UI words, isolated: in an RTL fold "2 files" would otherwise
             reorder into "files 2". */}
@@ -533,6 +541,13 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
           )}
         </span>
         <StepMeta parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]} />
+        {/* The disclosure, at the row's end — the same place a run's is. */}
+        <span className="flex h-6 w-4 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-90")}
+          />
+        </span>
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -558,7 +573,7 @@ const WorkFoldRow = React.memo(function WorkFoldRow({
             {/* The rail's spacing lives inside the clip, so it collapses with it. */}
             <div className={RUN_RAIL_CLASS}>
               {rows.map((inner, index) => (
-                <div key={inner.id} style={railSlot(inner.id)} className={cn(RAIL_ELBOW, railPlain(inner.kind), index < rows.length - 1 && RAIL_TAIL)}>
+                <div key={inner.id} style={railSlot(inner.id)} className={cn(RAIL_ELBOW, railPlain(inner.kind, inner.kind === "thought" && view.thoughtStep), index < rows.length - 1 && RAIL_TAIL)}>
                   <RowView
                     row={inner}
                     showTimestamps={showTimestamps}
@@ -659,6 +674,9 @@ export const SubagentStep = React.memo(function SubagentStep({
   const hasBody = subagentHasBody(group, stepThread)
   const tokens = view.showTokens ? stepUsage(group) : undefined
   const peek = view.subagentPeek === "always" || (view.subagentPeek === "live" && active)
+  /* Stoppable when the spawn said so and it is still at work. A workflow step
+     is the run's to stop, from its card. */
+  const stoppable = session?.state === "running" && session.capabilities.cancel === true && !session.workflow
 
   if (variant === "body")
     return hasBody ? (
@@ -677,6 +695,7 @@ export const SubagentStep = React.memo(function SubagentStep({
       target={target}
       caption={caption}
       firstRow={ask ? <AskAgentChip ask={ask} /> : undefined}
+      control={stoppable ? <SubagentStop childId={session.sessionId} /> : undefined}
       mono={false}
       startedAt={head.startedAt}
       /* Only a tool head has an ending to hand: the call that launched the
@@ -734,6 +753,44 @@ export const SubagentStep = React.memo(function SubagentStep({
   )
 })
 SubagentStep.displayName = "SubagentStep"
+
+/** Stop on a running child's row. The child's own `subagent_state_update` is
+    what redraws the row, so success leaves the button disabled until it goes. */
+function SubagentStop({ childId }: { childId: string }) {
+  const settings = useServer()
+  const threadId = useThreadId()
+  const [busy, setBusy] = React.useState(false)
+  if (!threadId) return null
+  const stop = async () => {
+    setBusy(true)
+    try {
+      await api(settings, `/api/sessions/${threadId}/subagents/${encodeURIComponent(childId)}/cancel`, {
+        method: "POST",
+        body: "{}",
+      })
+    } catch (err) {
+      setBusy(false)
+      reportError(err, "Couldn't stop the subagent")
+    }
+  }
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      disabled={busy}
+      onClick={(event) => {
+        event.stopPropagation()
+        void stop()
+      }}
+      title="Stop this subagent"
+      className="text-muted-foreground"
+    >
+      <SquareIcon />
+      <span className="sr-only">Stop</span>
+    </Button>
+  )
+}
 
 /**
  * Which helper role a subagent was spawned on and the model it runs on: our
@@ -923,6 +980,7 @@ function SubagentTranscript({
   limit?: number
   onEarlier?: () => void
 }) {
+  const view = useLayoutOptionsContext()
   const rows = limit ? all.slice(-limit) : all
   const hidden = all.length - rows.length
   const railSlot = useRailSlots([...rows.map((row) => row.id), ...(active ? ["working"] : [])], true, hidden > 0)
@@ -934,7 +992,7 @@ function SubagentTranscript({
         </div>
       )}
       {rows.map((row, i) => (
-        <div key={row.id} style={railSlot(row.id)} className={cn(RAIL_ELBOW, railPlain(row.kind), (i < rows.length - 1 || active) && RAIL_TAIL)}>
+        <div key={row.id} style={railSlot(row.id)} className={cn(RAIL_ELBOW, railPlain(row.kind, row.kind === "thought" && view.thoughtStep), (i < rows.length - 1 || active) && RAIL_TAIL)}>
           {/* The entrance on an inner box, so the rail does not slide with it. */}
           <div className="harness-item-in">
             <RowView
@@ -1031,7 +1089,14 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           compact={compactError}
         />
       )
-    case "user":
+    case "user": {
+      /* A background run's report that *started* a turn (the harness's `fire`)
+         is a user item, not a `notice`: it carries the turn id the rail and
+         rewind read. It draws as the same card the `notice` below does. */
+      const reported = parseTaskNotification(item.text)
+      if (reported) {
+        return <TaskNotificationCard id={item.id} task={reported} at={item.at} showTimestamp={showTimestamps} />
+      }
       return (
         <ItemContextMenu
           items={[
@@ -1072,10 +1137,12 @@ export const ThreadItemView = React.memo(function ThreadItemView({
                 >
                   {/* Above the prose, inside the same tinted bubble: what was
                       attached is part of the message, not a note beside it. */}
-                  {item.attachments && item.attachments.length > 0 && (
-                    <MessageAttachments attachments={item.attachments} />
-                  )}
-                  {item.text && <UserMessageText text={item.text} />}
+                  <UserMessageFold>
+                    {item.attachments && item.attachments.length > 0 && (
+                      <MessageAttachments attachments={item.attachments} />
+                    )}
+                    {item.text && <UserMessageText text={item.text} />}
+                  </UserMessageFold>
                 </BubbleContent>
               </Bubble>
             </MessageContent>
@@ -1083,6 +1150,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           </Message>
         </ItemContextMenu>
       )
+    }
     case "agent": {
       const hasOpenui = splitOpenuiFences(item.text, streaming).some((part) => typeof part !== "string")
       return (
@@ -1158,6 +1226,36 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           ? `${streaming ? "Thinking" : "Thought for"} ${formatElapsed(thoughtElapsed)}`
           : undefined
 
+      /* "Thinking as a step": the row is a tool call's shape — a mark in the
+         gutter, the clock as its title, the reasoning where a call's body goes
+         — so it lines up with the calls around it, whether it stands on its own
+         or on a fold's rail (a run never holds it: `groupToolRuns`). The title
+         is the clock for the reason it always was: the whole point of a thought
+         is how long it took, and a label parked at the row's end squeezed the
+         reasoning into the column beside it. */
+      if (view.thoughtStep) {
+        return (
+          <StepRow
+            dir={textDir(reasoning)}
+            status={streaming ? "in_progress" : null}
+            icon={BrainIcon}
+            iconAccent={KIND_COLORS.think}
+            iconChip={KIND_CHIPS.think}
+            toolLayout={view.toolLayout}
+            toolVariant={view.toolVariant}
+            mono={false}
+            target={durationLabel ?? "Thinking"}
+            /* Open for exactly as long as the thought streams: a live view you
+               watch, not a block left standing in the transcript. "Show
+               thinking" arms it: off, the row stays on its title line. */
+            autoOpen={view.showThinking && streaming}
+            openSetting={view.showThinking}
+            persistKey={item.id}
+            metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
+            detail={<ThoughtDetail text={reasoning} streaming={streaming} />}
+          />
+        )
+      }
       return (
         <StepRow
           dir={textDir(reasoning)}
@@ -1165,22 +1263,14 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           status={streaming ? "in_progress" : null}
           metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
           mono={false}
-          /* The row is open for exactly as long as the thought streams: a live
-             view you watch, not a block left standing in the transcript. When
-             folded, it shows three lines of muted reasoning like assistant
-             prose; clicking opens the full text. "Show thinking" arms the live
-             view: off, the excerpt stays folded while the thought streams. */
-          autoOpen={view.showThinking && !view.thoughtOneLine && streaming}
+          /* The block the step shape replaced, kept for a reader who reads
+             thinking as prose: its own clock over the reasoning, three lines of
+             it while folded, and the whole of it on click. */
+          autoOpen={view.showThinking && streaming}
           openSetting={view.showThinking}
           persistKey={item.id}
           target=""
-          foldedTarget={
-            view.thoughtOneLine ? (
-              <ThoughtLabel label={durationLabel} />
-            ) : (
-              <ThoughtPreview text={reasoning} label={durationLabel} />
-            )
-          }
+          foldedTarget={<ThoughtPreview text={reasoning} label={durationLabel} />}
           detail={<ThoughtDetail text={reasoning} streaming={streaming} label={durationLabel} />}
         />
       )
@@ -1283,8 +1373,8 @@ function ThoughtPreview({ text, label }: { text: string; label?: string }) {
   return (
     <div className="thought-surface">
       <ThoughtLabel label={label} />
-      <div className="thought-detail thought-preview">
-        <StreamedProse text={text} streaming={false} />
+      <div className="thought-preview">
+        <StreamedProse text={text} streaming={false} className="thought-prose" />
       </div>
     </div>
   )
@@ -1297,7 +1387,7 @@ function ThoughtDetail({ text, streaming, label }: { text: string; streaming: bo
       <ThoughtLabel label={label} />
       <div ref={follow.viewportRef} className={cn(THOUGHT_MAX_H, "overflow-y-auto overscroll-contain pr-1")}>
         <div ref={follow.contentRef}>
-          <StreamedProse text={text} streaming={streaming} className="thought-detail" />
+          <StreamedProse text={text} streaming={streaming} className="thought-prose" />
         </div>
       </div>
     </div>
@@ -1324,13 +1414,20 @@ const ToolStep = React.memo(function ToolStep({
   const isHarnessTool = toolView === "harness"
   const isSkillTool = toolView === "skill"
   const harnessMark = isHarnessTool ? harnessMarkOf(item) : null
-  const KindIcon = isTodoTool
-    ? ListTodoIcon
-    : harnessMark
-      ? harnessMark.Icon
-      : isSkillTool
-        ? SparklesIcon
-        : KIND_ICONS[kind] ?? WrenchIcon
+  /* An MCP call wears its server's own mark, when the library knows that
+     server — the one fact a row has that its ACP kind's glyph cannot say. The
+     harness server keeps the mark of its own *act* (plus, pencil, bin), which
+     is the same rule one level down: the row says what happened. */
+  const mcpMark = useMcpMark(item)
+  const KindIcon = harnessMark
+    ? harnessMark.Icon
+    : mcpMark
+      ? mcpMark
+      : isTodoTool
+        ? ListTodoIcon
+        : isSkillTool
+          ? SparklesIcon
+          : KIND_ICONS[kind] ?? WrenchIcon
   const view = useLayoutOptionsContext()
   /* Both of these are `tool-views`' to answer, not this row's: whether an
      expansion would hold anything, and whether it should start open, both

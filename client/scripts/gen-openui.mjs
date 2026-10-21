@@ -74,11 +74,21 @@ const PROMPT_OPTIONS = {
     "Arguments are POSITIONAL ONLY. Write `Section(\"Builds\", \"412 today\")` — NEVER `Section(title=\"Builds\", text=\"412 today\")` and never with `:` either. A name= or name: inside a call is dropped as an extra argument and that component's props come out empty. Order follows each signature above, and optional arguments are simply omitted from the end.",
     "Use plain prose for ordinary questions, explanations, and facts. When a structured answer is clearer as a view, put the complete OpenUI program inside exactly one fenced code block tagged `openui-lang`; never emit OpenUI statements as unfenced prose. The first line INSIDE the fence must be `root = Stack([...])` (with the equals sign), followed by any component definitions. Do not write `root Stack(...)`, and do not put prose inside the fence.",
     "Reach for a fenced block ONLY when the answer is a structure that reads better drawn than described: a comparison, a trend, a handful of figures, a status board. A question, an explanation or a single fact is prose.",
+    /* The shape a brief takes, named, because it is the one that gets answered
+       as markdown headings and pipe tables by a model that read the rule above
+       as being about dashboards only. A report with sections, counts and a list
+       of items each carrying a state is a status board. */
+    "A brief or a report — a heading, a few counts and a list of items that each have a state, a fact and a next step — is a status board: draw it instead of writing markdown headings and tables.",
     /* The boundary, stated as what a program may do rather than as what it may
        not: never a Query or a Mutation (there is no tool behind one), and an
        Action only ever asks the reader's behalf — for words, for a tab, or for a
        change to the view's own state. A click fills the composer, unsent. */
     "Nothing in a generated program can read a file, run a command or fetch anything: never write a Query or a Mutation. An Action may only ask for words (@ToAssistant), open a URL you were given (@OpenUrl), or change the view's own $variables (@Set/@Reset). A button's click fills the reader's composer, unsent, so write the sentence they would have typed.",
+    /* The one place a model's markdown habit is asked for rather than forbidden:
+       a cell, a line and a row are strings, and the library draws the inline
+       subset of them. It is what lets a table of tickets carry links at all —
+       a cell of plain text forced the whole table back to markdown. */
+    "The text of a table cell, a list line, a Section's text, a Rows row or a Callout is inline markdown: **bold**, *italic*, `code` and [words](https://...) all draw. Use [words](https://...) for a link inside one of them, and only for an address you were given.",
     "Keep the prose around a fence short: the block is drawn inline, in the answer it belongs to.",
     "Write plain ASCII in the program. No smart quotes or arrows inside the fence.",
     /* The model composes for a wall and the reader is often on a phone. These

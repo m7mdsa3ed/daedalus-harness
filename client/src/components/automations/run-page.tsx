@@ -16,6 +16,7 @@ import {
   useAutomationTriggers,
   useAutomations,
   useCancelAutomationRun,
+  useMarkAutomationRunRead,
 } from "@/lib/queries/automations"
 import { automationPath, threadPath } from "@/lib/router"
 import type { RoutineRun } from "@/lib/settings"
@@ -39,6 +40,17 @@ export function AutomationRunPage({ automationId, runId }: { automationId: strin
   const navigate = useNavigate()
   const back = () => void navigate(automationPath(automationId))
   const name = automation?.name ?? "the automation"
+
+  /* Opening a run is reading it: this page is where the output is, so the dot
+     on the row and the badge in the sidebar clear here and nowhere else. Quiet
+     on failure — the run still reads "unread", which is the truth, and the
+     next visit tries again. */
+  const { mutateAsync: markRead } = useMarkAutomationRunRead()
+  const unread = run?.inboxState === "unread"
+  React.useEffect(() => {
+    if (!unread) return
+    void markRead({ routineId: automationId, runId }).catch(() => {})
+  }, [unread, runId, automationId, markRead])
 
   const failed = runsQuery.error ? runsQuery : deeper && deepQuery.error ? deepQuery : null
   const error = failed ? inlineFromQuery(failed.error, "Couldn't read this automation's runs") : null

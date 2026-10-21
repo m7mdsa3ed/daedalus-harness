@@ -142,13 +142,26 @@ const BUILTIN_MCP_MARKS = {
 
 /** A server's own image when supplied, otherwise the one the harness fetched
     for it (`mcp-logo.ts`, inline in the listing — the browser asks nobody);
-    transport and built-in marks remain the fallback. */
-export function McpIcon({ server, className }: { server?: McpServerDef | null; className?: string }) {
+    transport and built-in marks remain the fallback.
+
+    `catalog` off is for a caller drawing many of these at once — a transcript
+    row wears the mark the *row* holds, and asking every server it mentions for
+    its listing to find an icon would turn reading a thread into a fan of
+    catalog reads. */
+export function McpIcon({
+  server,
+  className,
+  catalog = true,
+}: {
+  server?: McpServerDef | null
+  className?: string
+  catalog?: boolean
+}) {
   /* Three sources, in the order they are trusted: what the row says, what the
      server said about itself when it was last read (the initialize answer's
      `icons`, remembered in the shared catalog query — never a connect of its
      own), and nothing else: the favicon is fetched by the server now. */
-  const catalog = useMcpCatalog(server?.id ?? "", !!server && server.type !== "builtin").data
+  const listed = useMcpCatalog(server?.id ?? "", !!catalog && !!server && server.type !== "builtin").data
   const Icon = server?.type === "builtin"
     ? BUILTIN_MCP_MARKS[server.builtin] ?? WrenchIcon // a built-in the server still sends but this build dropped (video) has no mark
     : server?.type === "http"
@@ -156,7 +169,7 @@ export function McpIcon({ server, className }: { server?: McpServerDef | null; c
       : TerminalIcon
   return (
     <EntityIcon
-      src={server?.type === "builtin" ? undefined : server?.logoUrl || catalog?.serverInfo?.icon}
+      src={server?.type === "builtin" ? undefined : server?.logoUrl || listed?.serverInfo?.icon}
       className={className}
       fallback={<Icon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />}
     />

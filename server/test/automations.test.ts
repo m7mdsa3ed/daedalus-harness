@@ -32,7 +32,10 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
 ]);
 
 const { SessionManager } = await import("../src/sessions.js");
-const { RoutineEngine, createRoutine, createTrigger, getRoutine, getRun, listRoutines, listRuns, listTriggers } = await import("../src/routines.js");
+const {
+  RoutineEngine, createRoutine, createTrigger, getRoutine, getRun, listRoutines, listRuns, listTriggers,
+  markRunRead, markRunsRead, unreadRunCount,
+} = await import("../src/routines.js");
 const { sweepNow, createScheduled, listScheduled, updateScheduled, deleteScheduled, fire } = await import("../src/scheduler.js");
 const { migrateScheduledMessages } = await import("../src/scheduled-migration.js");
 const { emptyLinks } = await import("../src/db/links.js");
@@ -110,6 +113,34 @@ await test("a session-mode routine derives its owner from the thread and deliver
   assert.equal(run.sessionId, thread.id);
   assert.equal(run.skipReason, null);
   await waitFor(async () => (await turnsOf(thread.id)) > before, "the thread to take the prompt");
+});
+
+// A run happens with nobody in front of it, so "finished" and "read" are two
+// moments: the row ends unread, opening it clears it, and a skip — a run that
+// did not happen — never asks to be read at all.
+await test("a finished run is unread until it is opened; a skip is not", async () => {
+  const before = await unreadRunCount();
+  const r = await sessionRoutine(thread.id);
+  const fired = await engine.fire(r.id, { source: "manual" });
+  await waitFor(() => runDone(fired.id), "the run");
+  assert.equal((await getRun(fired.id))!.inboxState, "unread");
+  assert.equal(await unreadRunCount(), before + 1);
+
+  assert.equal(await markRunRead(fired.id), true);
+  assert.equal(await markRunRead(fired.id), false, "a second visit is not a write");
+  assert.equal(await unreadRunCount(), before);
+
+  const off = await sessionRoutine(thread.id, { enabled: false });
+  const skipped = await engine.fire(off.id, { source: "manual" });
+  assert.equal(skipped.status, "skipped");
+  assert.equal((await getRun(skipped.id))!.inboxState, null);
+  assert.equal(await unreadRunCount(), before);
+
+  const again = await sessionRoutine(thread.id);
+  const second = await engine.fire(again.id, { source: "manual" });
+  await waitFor(() => runDone(second.id), "the second run");
+  assert.ok((await markRunsRead()) >= 1);
+  assert.equal(await unreadRunCount(), 0);
 });
 
 await test("a session-mode routine needs a sessionId and a prompt body", async () => {

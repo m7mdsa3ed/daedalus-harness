@@ -970,6 +970,12 @@ export interface SessionMeta {
       outranks it wherever a tab has one. Absent from an older server. */
   waiting?: boolean
   held?: boolean
+  /** Background work this thread's agent launched is still running (a Claude
+      Code workflow, which outlives the turn that launched it). The same kind of
+      snapshot as `waiting` — read off the server's bridge, for a list with no
+      socket to the thread — and what stops a thread reading done while its run
+      works. Absent from an older server. */
+  backgroundActive?: boolean
   /** The newest context reading the server holds (`sessions.context`). */
   context?: { used: number; size: number } | null
   cursor: number
@@ -1124,6 +1130,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.promptActive === b.promptActive &&
     (a.waiting ?? false) === (b.waiting ?? false) &&
     (a.held ?? false) === (b.held ?? false) &&
+    (a.backgroundActive ?? false) === (b.backgroundActive ?? false) &&
     a.context?.used === b.context?.used &&
     a.context?.size === b.context?.size &&
     a.cursor === b.cursor &&

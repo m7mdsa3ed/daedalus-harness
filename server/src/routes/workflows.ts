@@ -15,10 +15,12 @@ const AskInput = z.object({
   agent: z.string().min(1).optional(),
   prompt: z.string().min(1).max(20_000),
   description: z.string().min(1).max(120).optional(),
+  projectId: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
   timeoutSec: z.number().int().positive().optional(),
 });
+const ContinueInput = z.object({ prompt: z.string().max(20_000).optional() });
 const AskChoiceInput = z.object({
   agentId: z.string().min(1),
   profileId: z.string().min(1),
@@ -129,6 +131,23 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     }
   });
 
+  /* An ask that failed, timed out or was stopped, picked up where it stopped —
+     the same child thread, its conversation intact (`continueAsk`). */
+  app.post(`${base}/asks/:id/continue`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = ContinueInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: body.error.issues }, 400);
+    try {
+      const view = await runner.continueAsk(parent, c.req.param("id"), body.data.prompt);
+      const wait = waitSec(c.req.query("wait"));
+      return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
+    } catch (error) {
+      if (error instanceof WorkflowError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
   app.post(`${base}/runs`, async (c) => {
     const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
     if (!parent) return c.json({ error: "not found" }, 404);
@@ -177,6 +196,17 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
       return c.json(await runner.status(id));
     });
   }
+
+  /* Stop a child from its row, whoever owns it: an ask is the runner's,
+     anything else the runtime's own (`session/cancel` on the child's id). */
+  app.post(`/api/sessions/:id/subagents/:childId/cancel`, async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session || session.deletedAt !== null) return c.json({ error: "not found" }, 404);
+    const childId = c.req.param("childId");
+    if (runner.cancelChild(session.id, childId)) return c.json({ cancelled: true });
+    if (await session.bridge?.cancelChild(childId)) return c.json({ cancelled: true });
+    return c.json({ error: "no running child with that id on this thread" }, 404);
+  });
 
   /* The same two for the browser, behind the bearer: addressed by the thread
      the run belongs to, which is also the check — a run id is not a

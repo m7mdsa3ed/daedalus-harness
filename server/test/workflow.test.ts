@@ -11,7 +11,8 @@
 //     the child's turn events still do not
 //   - the loopback key resolves the caller; a step may not start a workflow;
 //     a step is never handed the workflow server
-//   - the parent's process going away cancels its runs
+//   - the parent's process going away cancels its runs, and the idle sweep
+//     never retires a parent whose ask is still running
 //   - ask: another (profile, agent) pair answers as a plain subagent child;
 //     pairs are listed, matched by name, refused when unknown or from a child
 // Run: pnpm test:workflow
@@ -45,7 +46,7 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
 ]);
 
 const { SessionManager, mcpServersFor, workflowServer, agentsServer } = await import("../src/sessions.js");
-const { WorkflowRunner, WorkflowError } = await import("../src/workflows.js");
+const { WorkflowRunner, WorkflowError, notification } = await import("../src/workflows.js");
 const { mcpServers } = await import("../src/library.js");
 const { getConfig } = await import("../src/config.js");
 const { db, schema } = await import("../src/db/index.js");
@@ -652,6 +653,36 @@ await test("an ask's description names the child thread and its row", async () =
   assert.equal(spawn.name, "Audit the auth flow", "and so is the row it draws as");
 });
 
+await test("an ask has no clock of its own, and a finished one is continued on the same thread", async () => {
+  const view = await runner.ask(parent, { profile: "p2", agent: "fake2", prompt: "echo:first", description: "Second thoughts" });
+  assert.equal([...(runner as unknown as { runs: Map<string, { stepTimers: Set<unknown> }> }).runs.values()].at(-1)!.stepTimers.size, 0, "no step timer is armed");
+  const first = await runner.wait(view.id, 20_000);
+  assert.equal(first?.status, "completed", first?.error ?? "");
+  const childId = first!.steps[0].sessionId!;
+  await assert.rejects(async () => runner.continueAsk(parent, "no-such-ask"), (e: unknown) => e instanceof WorkflowError && e.status === 404);
+  const before = updatesOf(ws, "subagent_spawned").length;
+  const again = await runner.continueAsk(parent, view.id, "echo:second");
+  const done = await runner.wait(again.id, 20_000);
+  assert.equal(done?.status, "completed", done?.error ?? "");
+  assert.equal(done!.steps[0].sessionId, childId, "the same child thread, not a new one");
+  assert.equal(done!.steps[0].output, "second");
+  const spawn = updatesOf(ws, "subagent_spawned").slice(before)[0]!.update as { subagentSessionId: string; name: string };
+  assert.equal(spawn.subagentSessionId, childId, "said again on the parent as a wake of the same row");
+  assert.equal(spawn.name, "Second thoughts");
+});
+
+await test("a notification is Claude Code's shape: usage, failures, prose result, a note", () => {
+  const step = { name: "ask", phase: null, status: "failed" as const, sessionId: "child-1", attempt: 1, output: "half an answer", error: "timed out after 900s", startedAt: 1, endedAt: 2, tokens: 1200, toolUses: 7 };
+  const text = notification({ id: "a1", name: "Ask Fake: audit", status: "failed", error: "step \"ask\" failed: timed out after 900s", createdAt: 1000, endedAt: 4000, steps: [step] }, true);
+  assert.match(text, /<failures>\n\[ask\] failed: timed out after 900s\n<\/failures>/);
+  assert.match(text, /<result>\nhalf an answer\n<\/result>/, "the partial words, not JSON around them");
+  assert.match(text, /<usage><subagent_tokens>1200<\/subagent_tokens><tool_uses>7<\/tool_uses><duration_ms>3000<\/duration_ms><\/usage>/);
+  assert.match(text, /<note>.*child-1.*continue_agent/s);
+  assert.doesNotMatch(text, /failed-agents|askId a1/);
+  const empty = notification({ id: "a2", name: "Ask Fake", status: "failed", error: "x", createdAt: 0, endedAt: 1, steps: [{ ...step, output: null }] }, true);
+  assert.doesNotMatch(empty, /<result>/, "nothing said, nothing drawn");
+});
+
 await test("ask refuses an unknown pair, and a child may not ask", async () => {
   await assert.rejects(async () => runner.ask(parent, { profile: "other", agent: "fake", prompt: "x" }), (e: unknown) => e instanceof WorkflowError && e.status === 404);
   const child = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, { parentSessionId: parent.id, title: "step" });
@@ -709,6 +740,25 @@ await test("the agents builtin resolves to the agents server, and to nothing for
   assert.equal(servers[0].name, "agents");
   assert.ok((servers[0] as { env: { name: string; value: string }[] }).env.some((e) => e.name === "AGENTS_URL" && e.value.endsWith(`/${parent.id}`)));
   assert.equal((await mcpServersFor(links, project, getConfig(), null, null)).servers.length, 0);
+});
+
+await test("the idle sweep spares a parent with a running ask, then retires it", async () => {
+  // Nobody attached, and past this manager's 1-minute idle window.
+  const quiet = await manager.create(profile, "fake", project);
+  const bridge = quiet.bridge!;
+  await bridge.ready;
+  const later = Date.now() + 5 * 60_000;
+  // A question no policy answers keeps the asked agent at work until it is cancelled.
+  const view = await runner.ask(quiet, { profile: "p2", agent: "fake2", prompt: "perm-noallow" });
+  await waitFor(async () => (await runner.status(view.id))?.steps[0].sessionId != null, "the ask's child");
+  assert.ok(bridge.background, "a live ask is the parent's background work");
+  manager.sweepIdle(later);
+  assert.equal(quiet.exited, false, "not retired while its ask runs");
+  assert.equal((await runner.status(view.id))?.status, "running", "and the ask was not cancelled");
+  runner.cancel(view.id);
+  await waitFor(() => !bridge.background, "the ask's end clears it");
+  manager.sweepIdle(later);
+  assert.equal(quiet.exited, true, "retired once nothing is left working");
 });
 
 for (const s of manager.list()) if (!s.exited) manager.retire(manager.get(s.id)!);

@@ -160,6 +160,13 @@ export function useTranscriptJump() {
   )
 }
 
+/** The pin's release, for a row that grows because the reader opened it (a
+    folded message). Same bargain as a jump: the growth is what they asked to
+    read, so it must not be handed straight back to the end of the transcript. */
+export function useFollowRelease(): (() => void) | undefined {
+  return React.useContext(JumpPrepContext)?.release
+}
+
 /** Whether the reader is holding something in this row. */
 function held(el: HTMLElement): boolean {
   if (el.contains(document.activeElement)) return true

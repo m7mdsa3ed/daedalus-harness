@@ -9,7 +9,8 @@ import { AvatarGroup } from "@/components/ui/avatar"
 import { KIND_CHIPS, KIND_COLORS, KIND_ICONS } from "@/components/tool-parts"
 import { toolKindOf, toolViewOf, webInput } from "@/lib/tools"
 import { cn } from "@/lib/utils"
-import type { TextItem, ToolItem } from "@/lib/store"
+import type { RunItem } from "@/lib/transcript-rows"
+import type { ToolItem } from "@/lib/store"
 
 /** Natural-language summary: "reading 10 files, running 28 shell commands". */
 const KIND_VERBS: Record<string, string> = {
@@ -79,15 +80,14 @@ const RUN_AVATARS = 6
 
 /** One circular tool mark per call, in arrival order, like the web source
     stack. Remaining calls collapse into a `+N` avatar. */
-export function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> }) {
+export function RunAvatarStack({ items }: { items: RunItem[] }) {
+  /* One mark per call: a run holds calls and setting changes, and a setting
+     change is a rule in the list rather than an act to draw a mark for. */
   const marks = items.flatMap((item) => {
-    if (item.kind === "tool") {
-      const kind = toolKindOf(item)
-      const webSearch = toolViewOf(item) === "websearch"
-      return [{ id: item.id, title: item.title, kind, colorKind: webSearch ? "search" : kind }]
-    }
-    if (item.kind === "thought") return [{ id: item.id, title: "Thinking", kind: "think", colorKind: "think" }]
-    return []
+    if (item.kind !== "tool") return []
+    const kind = toolKindOf(item)
+    const webSearch = toolViewOf(item) === "websearch"
+    return [{ id: item.id, title: item.title, kind, colorKind: webSearch ? "search" : kind }]
   })
   const shown = marks.slice(0, RUN_AVATARS)
   const hidden = marks.length - shown.length

@@ -71,5 +71,16 @@ export const TONE_DOT = {
   error: "bg-destructive",
 } as const
 
+/** The same five tones as an area rather than a dot — a share bar's segments.
+    The neutral one is part-filled: a section of a bar in full `--foreground`
+    reads as a selected state rather than as "none of the above". */
+export const TONE_BAR = {
+  neutral: "bg-muted-foreground/30",
+  info: "bg-primary/80",
+  success: "bg-success/80",
+  warn: "bg-warning/80",
+  error: "bg-destructive/80",
+} as const
+
 /** Colours are the app's `--chart-*` tokens. */
 export const chartColor = (index: number) => `var(--chart-${(index % 5) + 1})`

@@ -1,5 +1,6 @@
 import * as React from "react"
-import { CodeBlock, JsonView, LABEL, PANE, Prose, SmartBlock } from "@/components/tool-parts"
+import { CodeBlock, JsonView, LABEL, PANE, SmartBlock } from "@/components/tool-parts"
+import { Prose } from "@/components/prose"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { isTable, parseReport, reportShape, type ReportTone } from "@/lib/tools/report"

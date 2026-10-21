@@ -6,6 +6,7 @@ import type { TextItem } from "../store"
 import { splitStderr } from "../errors"
 import { recordThreadError } from "./record-error"
 import { isRecoverableClose } from "./phase"
+import { backgroundRunning } from "./statuses"
 import { makeReplaySink } from "./replay-buffer"
 import {
   foldAttached,
@@ -370,7 +371,18 @@ export function makeThreadCallbacks(
         // every reload — on a phone, as a push. And not for a turn the queue
         // is about to continue: "finished" would announce a pause that is not
         // there.
-        notifyThreadEvent("turnFinished", id, host.titleOf(), noticeDetail(promptText))
+        /* Nor while the agent still has background work going. A Claude Code
+           workflow answers its prompt at "launched", so the turn really did
+           end — and the work did not: "Turn finished" here announces the
+           launch as the end of it, on a lock screen where nothing else can
+           correct it. The run says so itself when it ends, by opening the turn
+           the runtime's own notification carries. Read off the server's fact,
+           with the transcript's own reading as the fallback for a server that
+           predates it. */
+        const thread = getState().threads[id]
+        if (!thread?.background && !(thread && backgroundRunning(thread.items))) {
+          notifyThreadEvent("turnFinished", id, host.titleOf(), noticeDetail(promptText))
+        }
       }
     },
     onQueue: (items) => send({ type: "queue", id, items }),
@@ -394,6 +406,9 @@ export function makeThreadCallbacks(
     },
     onRetry: (retry) => {
       send({ type: "retry", id, retry })
+    },
+    onBackground: (active) => {
+      send({ type: "background", id, active })
     },
     onCaughtUp: (...args) => foldCaughtUp(ctx, ...args),
     onRewind: (...args) => foldRewind(ctx, ...args),

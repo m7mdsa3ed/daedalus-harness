@@ -82,6 +82,8 @@ export interface ScriptHooks {
     effort?: string;
     /** `'worktree'`: the agent works in a git worktree of its own. */
     isolation?: "worktree";
+    /** Harness extension: run in another project (its id) rather than the parent's. */
+    projectId?: string;
     /** A library command's name, the harness's stand-in for a custom subagent type. */
     agentType?: string;
   }): Promise<unknown>;
@@ -263,6 +265,7 @@ export async function runScript(opts: {
       ...(typeof options?.model === "string" ? { model: options.model } : {}),
       ...(typeof options?.effort === "string" ? { effort: options.effort } : {}),
       ...(isolation ? { isolation } : {}),
+      ...(typeof options?.projectId === "string" && options.projectId ? { projectId: options.projectId } : {}),
       ...(typeof options?.agentType === "string" && options.agentType.trim() ? { agentType: options.agentType.trim() } : {}),
     });
   }

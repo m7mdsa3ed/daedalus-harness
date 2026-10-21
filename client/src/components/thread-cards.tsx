@@ -36,13 +36,13 @@ import {
   KIND_COLORS,
   KIND_ICONS,
   LABEL,
-  Prose,
   ProseWithOpenui,
   ShellPane,
   SmartBlock,
   SourceChip,
   Timestamp,
 } from "@/components/tool-parts"
+import { Prose } from "@/components/prose"
 import { TodoList } from "@/components/tool-views"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Message, MessageContent } from "@/components/ui/message"
@@ -346,17 +346,19 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
   showTimestamp?: boolean
 }) {
   const [open, setOpen] = useRowState(id, false)
-  const failed = task.failures.length > 0
+  const failed = task.failures.length > 0 || task.status === "failed"
   /* Every stage of a fan-out usually fails for ONE reason (a rate limit, a
      dead endpoint). Listing it five times buries the sentence; the stages that
      share a message are named together in front of it. */
   const grouped = React.useMemo(() => {
     const byMessage = new Map<string, string[]>()
     for (const failure of task.failures) {
+      // A lone stage's reason is usually already the tail of the summary.
+      if (task.summary?.includes(failure.message)) continue
       byMessage.set(failure.message, [...(byMessage.get(failure.message) ?? []), failure.label])
     }
     return [...byMessage.entries()].map(([message, labels]) => ({ message, labels }))
-  }, [task.failures])
+  }, [task.failures, task.summary])
 
   const stats = [
     task.agentCount !== undefined && `${task.agentCount} agents`,
@@ -817,14 +819,8 @@ export const ShellRun = React.memo(function ShellRun({
         onClick={() => setChoice(!open)}
         className="-mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-start transition-colors duration-150 hover:bg-muted"
       >
-        {/* The folded run's own header: the fold ground, the chevron in the
-            mark slot, then the kind's disc where a run draws its avatars. */}
-        <span className="flex h-6 w-5 shrink-0 items-center justify-center">
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-90")}
-          />
-        </span>
+        {/* The folded run's own header: the kind's disc in the mark slot where a
+            run draws its avatars, and the chevron at the row's end. */}
         <span
           aria-hidden
           className={cn(
@@ -846,6 +842,13 @@ export const ShellRun = React.memo(function ShellRun({
         <StepMeta
           parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]}
         />
+        {/* The disclosure, at the row's end — the same place a run's is. */}
+        <span className="flex h-6 w-4 shrink-0 items-center justify-center">
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-90")}
+          />
+        </span>
       </button>
       {open && (
         /* The folded tool run's indent and clip: the commands are a group,

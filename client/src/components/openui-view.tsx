@@ -30,7 +30,7 @@
 import * as React from "react"
 import { Renderer, type ActionEvent } from "@openuidev/react-lang"
 import { Notice } from "@/components/notice"
-import { Prose } from "@/components/tool-parts"
+import { Prose } from "@/components/prose"
 import { useOpenuiActions } from "@/lib/openui/actions"
 import { openuiLibrary } from "@/lib/openui/library"
 

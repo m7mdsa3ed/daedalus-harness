@@ -17,7 +17,14 @@ import {
   Trash2Icon,
 } from "lucide-react"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
-import { DISCLOSURE, DetailSection, JsonView, PANE, PANE_PAD, SmartBlock } from "@/components/tool-parts"
+import {
+  DISCLOSURE,
+  DetailSection,
+  FieldList,
+  JsonView,
+  PANE,
+  SmartBlock,
+} from "@/components/tool-parts"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
@@ -172,21 +179,6 @@ const EFFECT_VARIANT: Record<HarnessEffect, "secondary" | "default" | "destructi
   read: "secondary",
   write: "default",
   destroy: "destructive",
-}
-
-/** A record as a key/value grid — keys in their own column so the eye reads
-    down the values, the way the table reads down a column. */
-function FieldList({ fields }: { fields: { key: string; value: string }[] }) {
-  return (
-    <dl className={cn(PANE_PAD, "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm")}>
-      {fields.map((field) => (
-        <React.Fragment key={field.key}>
-          <dt className="font-mono text-muted-foreground">{field.key}</dt>
-          <dd className="min-w-0 break-words text-foreground">{field.value}</dd>
-        </React.Fragment>
-      ))}
-    </dl>
-  )
 }
 
 /** A list result as the few columns that name each row, capped, with the whole

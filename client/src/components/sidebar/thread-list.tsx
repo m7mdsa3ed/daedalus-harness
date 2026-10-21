@@ -98,7 +98,7 @@ export const ThreadList = React.memo(function ThreadList({
   const byCreated = options.sidebarSort === "created"
   const navigate = useNavigate()
   const activeThreadId = useActiveChat()
-  const { actions, status, pinSet, projectNames, children } = useSidebarEnv()
+  const { actions, status, pinSet, projectNames, children, unread } = useSidebarEnv()
   const { isMobile, setOpenMobile } = useSidebar()
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
@@ -155,6 +155,7 @@ export const ThreadList = React.memo(function ThreadList({
       session={session}
       state={trash ? "idle" : status(session)}
       trash={trash}
+      unread={!trash && unread.has(session.id)}
       pinned={pinSet.has(session.id)}
       showProject={showProject ?? !grouped}
       agentIcon={options.sidebarAgentIcon}

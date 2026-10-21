@@ -15,6 +15,7 @@ import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
 import { listModelRoles } from "./model-roles.js";
 import type {
+  AsyncTaskState,
   AttachmentRef,
   AutoAnswer,
   AutonomyAnswer,
@@ -735,6 +736,28 @@ export class AcpBridge implements ConnectionRoute {
       something a replay should say again. */
   retry: ThreadRetry | null = null;
   readonly pending = new Map<string, PendingRequest>();
+  /** The AIR async tasks this process launched, by task id, with the state the
+      runtime last gave each one. A finished task keeps its terminal state rather
+      than being dropped, so a late beat for it is recognised rather than taken
+      for a run of its own.
+      Today that is one kind of thing: a Claude Code dynamic workflow
+      (`taskType: "workflow"`), which the CLI starts in the background and
+      which **outlives the turn that launched it** — the prompt answers
+      `end_turn` at "launched", and the run goes on for minutes after. So the
+      turn is genuinely over and the thread is not: without this, every list
+      that reads a thread says it is done while its workflow is still working.
+      Read off the updates the bridge already forwards, never inferred from the
+      turn — and it dies with the process, which is the honest answer for a run
+      that dies with it (and what an attaching peer is told on `caught_up`). */
+  private readonly backgroundTasks = new Map<string, AsyncTaskState>();
+  /** The last `background` said to the peers, so a task's every beat does not
+      re-render every list on every device. Absolute event, sent on change. */
+  private backgroundSaid = false;
+  /** The harness's own runs for this thread (an ask, a workflow) are still going
+      — said by the runner, which is who knows. A run is not an AIR task, so the
+      lifecycle above never sees it; without this the thread reads done the moment
+      the turn that started the ask ends. */
+  private runsActive = false;
 
   private readonly host: BridgeHost;
   /** This thread's spans (bridge-trace.ts) — told, never asked. */
@@ -1388,6 +1411,11 @@ export class AcpBridge implements ConnectionRoute {
       const child = (update as { subagentSessionId?: unknown }).subagentSessionId;
       if (typeof child === "string") this.children.add(child);
     }
+    /* Background work, which outlives the turn that launched it and is the one
+       reason a thread with no turn open is still busy. Not while a
+       `session/load` is restating history: a replayed spawn is the agent
+       re-narrating a run, not a new one starting. */
+    if (own && !this.historyReplay) this.trackBackground(update);
     // Session-level updates change what `captureRestoreState` will report, so
     // they are tracked here as well as forwarded. Forwarded either way: the
     // reducer on the other end already handles both variants. A child's
@@ -2252,6 +2280,53 @@ export class AcpBridge implements ConnectionRoute {
     );
   }
 
+  /** Whether this thread's agent has background work still running. Read by
+      every list about a thread nobody is watching (the session row's
+      `backgroundActive`) and handed to a peer on `caught_up`, so "still
+      working, no turn open" is a fact about the thread rather than a guess the
+      browser makes from a transcript it had to have open to see. */
+  get background(): boolean {
+    if (this.runsActive) return true;
+    for (const state of this.backgroundTasks.values()) if (state === "running") return true;
+    return false;
+  }
+
+  /** The runner's word on whether this thread has live asks/workflow runs. */
+  setRunsActive(active: boolean): void {
+    this.runsActive = active;
+    this.sayBackground();
+  }
+
+  /** Follow the AIR async-task lifecycle for the only kind of task that is user
+      work: a dynamic workflow. The rest — a backgrounded shell command, a
+      monitor, a subagent the CLI keeps warm — is already drawn where it is (its
+      own tool call) and is not what a thread reading busy means, which is the
+      same line the client's own reducer draws. */
+  private trackBackground(update: SessionUpdate): void {
+    if (update.sessionUpdate === "async_task_spawned") {
+      if (update.taskType !== "workflow") return;
+      this.backgroundTasks.set(update.asyncTaskId, "running");
+    } else if (update.sessionUpdate === "async_task_state_update") {
+      /* A state for a task this bridge never saw start is a stray — the run
+         outlived a respawn, and the new process is not reporting it. */
+      if (!this.backgroundTasks.has(update.asyncTaskId)) return;
+      this.backgroundTasks.set(update.asyncTaskId, update.state);
+    } else return;
+    this.sayBackground();
+  }
+
+  private sayBackground(): void {
+    const active = this.background;
+    /* Absolute, live-only, and said on change only — current state like the
+       hold and the retry beside it, so `caught_up` carries it for a peer that
+       attaches mid-run and a replay never redraws a run that has long ended.
+       Every peer including the one that asked: a workflow launched from a
+       phone has to read busy on the laptop. */
+    if (active === this.backgroundSaid) return;
+    this.backgroundSaid = active;
+    this.host.emit({ ev: "background", active });
+  }
+
   /** Absolute, so saying it twice is harmless — but a peer re-rendering the
       composer for an unchanged retry is not, and a turn ending is allowed to
       clear a retry that was never set. */
@@ -2333,6 +2408,15 @@ export class AcpBridge implements ConnectionRoute {
        with `cancelled` — and a question left open here would be handed to every
        later attacher as if the cancelled turn were still waiting on it. */
     this.settleAll();
+  }
+
+  /** Stop one of the runtime's own children: ACP's `session/cancel` on the
+      child's id, what the RFD's `capabilities.cancel` offers. False for an id
+      this process never spawned. */
+  async cancelChild(childId: string): Promise<boolean> {
+    if (!this.children.has(childId)) return false;
+    await this.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId: childId });
+    return true;
   }
 
   /**

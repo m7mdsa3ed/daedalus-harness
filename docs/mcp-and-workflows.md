@@ -448,6 +448,27 @@ beside Import in Settings › MCP.
   `subagentActive`, because that reads the parent's turn and a dynamic workflow's whole
   nature is to outlive the turn that launched it.
 
+  **Because it outlives the turn, a turn ending is not the thread being done** — and that
+  is a fact about the *thread*, not about a transcript somebody had to have open to see.
+  The run's prompt answers `end_turn` at "launched", so `turnActive` is false while the
+  workflow works, and every surface that read only that called the thread finished. So the
+  bridge follows the AIR async-task lifecycle for the one task kind that is user work
+  (`AcpBridge.background`: `taskType: "workflow"`, both ends, never during a `session/load`
+  replay) and says it three ways: the absolute live-only `background` event to every peer,
+  `caught_up.background` for one that attaches mid-run, and `backgroundActive` on the
+  session row for a list with no socket at all (a phone, a desktop that has never opened
+  the thread). The client reads them in that order (`backgroundOf`), with the transcript's
+  own scan as the fallback for a server that predates the field. It is handed over rather
+  than replayed for a reason particular to this one: **the run's beats are journaled**, so
+  an archive of a run that died mid-flight ends on its last `running` and would keep the
+  thread busy for good — which is also why a respawn mid-run no longer strands the reading.
+  Three surfaces read it: the foot of the transcript (`statusFor`'s `background` rung, which
+  names the run), every list (`markFor` reads it as running, with `turnActive` still the
+  turn's — Stop, the queue and the turn footers are about a turn), and the "Turn finished"
+  notification, which is **withheld** while a run is live: it would announce the launch as
+  the end of the work, and the run says so itself when it ends, in the turn the runtime's
+  own `<task-notification>` opens.
+
   first on purge. `workflow_runs` is the opposite: one row per run with a `steps` JSON
   column (the only queries are "runs of this thread" and "what was running when the server
   stopped"), and it *does* cascade off the parent, which only a purge deletes. A child is
@@ -479,7 +500,7 @@ beside Import in Settings › MCP.
   **The rest of Claude Code's script surface rides doors that already existed.**
   `agent(…, {isolation: 'worktree'})` is `manager.create({worktree: true})` — a checkout of
   the step's own, left in place like any thread's. `agentType` is a library command's name,
-  its body prepended to the step's prompt (an unknown one is refused by name). `workflow(nameOrRef, args)` runs a child script inside the same run —
+  its body prepended to the step's prompt (an unknown one is refused by name). `projectId` is ours, not Claude Code's: the step runs in that project's cwd instead of the parent's (never the parent's worktree, which is a path inside the parent's repository); `ask_agent` takes the same field. `workflow(nameOrRef, args)` runs a child script inside the same run —
   one agent counter, its phases drawn under `▸ <name>`, one level. Saved workflows are files
   in **Claude Code's own directories** (`workflow-saved.ts`: `<project>/.claude/workflows/`
   and `~/.claude/workflows/` or `$CLAUDE_CONFIG_DIR/workflows/`, keyed by `meta.name`, the
@@ -509,7 +530,21 @@ beside Import in Settings › MCP.
   store and a revive is always `session/load` there. Swapping the agent would lose the
   conversation. So the other pairs are *called*, never switched to. The `agents` server
   (`builtin:agents`, a library row like the others) offers `list_agents`, `ask_agent`,
-  `wait_agent` and `cancel_agent`, over the workflow runner's own loopback.
+  `wait_agent`, `cancel_agent` and `continue_agent`, over the workflow runner's own loopback.
+- **An ask has no clock unless the caller gives it one.** `stepTimeoutSec(step, ask)` is
+  null for an ask and the run's own timer is `NO_LIMIT_MS`: the 15-minute step default killed an
+  agent mid-edit, which a workflow's bounded step can afford and an errand cannot. `timeoutSec` on
+  `ask_agent` is an opt-in cap. **A failed, timed-out or stopped ask keeps its thread**
+  (`retire` ends the process, never the log), so `continue_agent` (`WorkflowRunner.continueAsk`,
+  `POST …/asks/:id/continue`) is a new one-step run whose step carries `resumeSessionId`: the
+  same child, spawned again on the parent (the client reads a settled child spawned again as a
+  wake), its process revived by the prompt. A failed step keeps what the child had said
+  (`output`), which is what the notification's `<result>` carries.
+- **The notification is Claude Code's shape**, so the client draws one card for both:
+  `<usage>` (`subagent_tokens`, `tool_uses`, `duration_ms`, plus the agent counts for a
+  workflow), `<failures>` as `[step] failed: why`, a prose `<result>` (an ask's own words, not
+  JSON around them) and a `<note>` naming the thread and `continue_agent`. Old journals keep
+  `<failed-agents>` and the JSON result — `parseTaskNotification` reads both.
 - **An ask is a one-step workflow run** (`WorkflowRunner.ask` → `launch`), its step carrying
   `profileId`/`agentId`/`agentName`/`profileName`/`label`, plus the caller's `description`
   when it gave one (`rowNameOf`: the errand titles the child thread and its row, where `label`

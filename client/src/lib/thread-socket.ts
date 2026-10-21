@@ -286,7 +286,14 @@ export interface ThreadCallbacks {
         it is state, it is never journaled, and a backoff is exactly the window
         a peer is most likely to attach in. Null means not retrying. */
     retry: ThreadRetry | null,
-    tps: TpsStats | null
+    tps: TpsStats | null,
+    /** Whether background work is still running — a workflow the agent
+        launched, which outlived the turn that launched it. Handed over here
+        rather than folded from the replay for a reason specific to this one:
+        the run's own beats *are* journaled, so an archive of a run that died
+        mid-flight still ends on its last `running`. A server that predates the
+        field says nothing, which reads as `false`. */
+    background?: boolean
   ) => void
   /** The turn is held at a step boundary, or released. Absolute, live-only,
       to every peer — the one that asked included. Carries *why*: `"user"` is
@@ -298,6 +305,10 @@ export interface ThreadCallbacks {
       peer. The step before `onPaused` with an `"error"` hold: if the attempts
       run out, this clears and that arrives in its place. */
   onRetry: (retry: ThreadRetry | null) => void
+  /** Background work the agent launched is still running, or has finished.
+      Absolute and live-only like `onPaused`, and the reading that keeps a
+      thread from looking done between a workflow's launch and its end. */
+  onBackground: (active: boolean) => void
   /** The journal position this device has folded up to, as it moves — so the
       cursor a reconnect resumes from describes what is actually on screen and
       not merely what was there when this socket attached. Raised on every
@@ -654,6 +665,9 @@ export class ThreadSocket {
       }
       case "retry":
         this.callbacks.onRetry(event.retry)
+        return
+      case "background":
+        this.callbacks.onBackground(event.active)
         return
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that
