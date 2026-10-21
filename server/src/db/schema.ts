@@ -271,6 +271,13 @@ export const agents = pgTable("agents", {
   /** The runtime's own tools a harness MCP server replaces, and how to switch
       them off. Null = its built-ins stay on beside ours. */
   builtinTools: jsonb("builtin_tools").$type<BuiltinToolOverrides>(),
+  /** Which of the runtime's saved files explains its prompt
+      (`registry.ts › AgentDef.promptFiles`). Null = inferred from the transcript. */
+  promptFiles: text("prompt_files").$type<"claude-jsonl" | "codex-rollout" | "opencode-sqlite">(),
+  /** Which OpenTelemetry dialect this runtime exports to the harness
+      (`registry.ts › AgentDef.telemetryVia`). Null = nothing exported, and the
+      bridge derives its model and tool spans. */
+  telemetryVia: text("telemetry_via").$type<"claude-otlp">(),
   /** How to ask this runtime's plain CLI for the built-in model catalog a
       generated one is modelled on. Null = no catalog is generated for it. */
   catalogProbe: jsonb("catalog_probe").$type<CatalogProbe>(),

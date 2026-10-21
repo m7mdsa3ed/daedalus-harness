@@ -531,7 +531,9 @@ app.on("web-contents-created", (_event, contents) => {
     prefs.contextIsolation = true
     prefs.sandbox = true
     params.partition = PREVIEW_PARTITION
-    if (!isWebUrl(params.src)) event.preventDefault()
+    /* about:blank is the docked DevTools' host (`preview-devtools-open`), which
+       must not have navigated before DevTools takes it over. */
+    if (!isWebUrl(params.src) && params.src !== "about:blank") event.preventDefault()
   })
   contents.on("did-attach-webview", (_e, guest) => {
     /* A popup is a link the person followed out of the page: the real
@@ -685,6 +687,20 @@ ipcMain.handle("preview-pick-cancel", (event, guestId) => {
   const guest = webContents.fromId(guestId)
   if (!guest || guest.isDestroyed() || guest.hostWebContents !== event.sender) return
   guest.executeJavaScript("window.__daedalusPickerCleanup && window.__daedalusPickerCleanup()", true).catch(() => {})
+})
+/* Docked DevTools: the panel mounts a blank `<webview>` under the page and the
+   guest's DevTools render into it instead of a window of their own. One host
+   per guest, for the guest's life — the panel hides it rather than closing, so
+   a host is never handed over twice. */
+ipcMain.handle("preview-devtools-open", (event, guestId, hostId) => {
+  const guest = webContents.fromId(guestId)
+  const host = webContents.fromId(hostId)
+  if (!guest || !host || guest.isDestroyed() || host.isDestroyed()) return false
+  if (guest.hostWebContents !== event.sender || host.hostWebContents !== event.sender) return false
+  if (guest.isDevToolsOpened()) guest.closeDevTools()
+  guest.setDevToolsWebContents(host)
+  guest.openDevTools()
+  return true
 })
 ipcMain.handle("preview-console-read", (event, guestId) => {
   const guest = webContents.fromId(guestId)

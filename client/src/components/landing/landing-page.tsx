@@ -29,21 +29,18 @@
 import * as React from "react"
 import { useNavigate, useSearchParams } from "react-router"
 
-import { Composer } from "@/components/composer/composer"
-import { useAttachmentDelivery } from "@/components/composer-attachments"
 import { LandingActions } from "@/components/landing/landing-actions"
+import { LandingConsoleContext, type LandingConsole } from "@/components/landing/landing-console"
 import { LandingSetup } from "@/components/landing/landing-setup"
 import { LandingSkeleton } from "@/components/landing/landing-skeleton"
-import { ThreadWelcome } from "@/components/thread-view/welcome"
+import { ThreadDock } from "@/components/workspace/thread-dock"
 import type { Actions } from "@/lib/actions"
-import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { PageFrame } from "@/components/page-primitives"
 import { threadPath } from "@/lib/router"
-import { useSessionMeta, useThread } from "@/lib/store"
+import { useSessionMeta } from "@/lib/store"
 import { endVoiceCall } from "@/lib/voice-call"
 import { emptyDefaults, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
-import { cn } from "@/lib/utils"
 import type { SettingsSectionId } from "@/components/settings/sections"
 
 export function LandingPage({
@@ -139,8 +136,6 @@ function LandingComposer({ actions }: { actions: Actions }) {
   }, [projectId, actions])
 
   const meta = useSessionMeta(sessionId)
-  const thread = useThread(sessionId)
-  const delivery = useAttachmentDelivery(meta, thread)
 
   /* Voice mode is the composer's own (its bar rides beside the pill). A first
      message *spoken* reaches `actions.send` without the box's `beforeSend`, so
@@ -166,51 +161,33 @@ function LandingComposer({ actions }: { actions: Actions }) {
     }
   }, [sessionId])
 
+  /* The thread dock is what makes the panels (Source Control, a shell, the
+     preview) reachable before a first message: the + over the transcript is the
+     same one every thread has. The centring, the welcome and the composer are
+     the empty thread's own (`ThreadView`); this page only supplies what makes
+     it a console (`landing-console.ts`). */
+  const landing = React.useMemo<LandingConsole>(
+    () => ({
+      strip: <LandingActions projects={projects} />,
+      /* Awaited after the words have been taken and before the send, so the
+         route changes while `actions.send` is still in flight — the order
+         `startThread` has always used: the thread is already spawning while
+         its transcript is opening. `sent` first, because the navigation is
+         what runs the cleanup that would otherwise throw this draft away
+         mid-send. */
+      beforeSend: async () => {
+        sent.current = true
+        void navigate(threadPath(sessionId))
+        return true
+      },
+    }),
+    [projects, navigate, sessionId]
+  )
+
+  if (!sessionId) return null
   return (
-    /* The empty thread's own centring, which is most of what this page is: a
-       spacer, the console, and a spacer — the launcher sits at the top of the
-       last one, so the greeting and the box are what the eye lands on centre
-       and the strip hangs under them. `@container` because the composer, its
-       shelf and the strip are written in the `@panel-*` queries the dock
-       declares for them, and this page is not in the dock. */
-    <div className="@container grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)] pt-[var(--app-header-h)]">
-      <span aria-hidden />
-      {/* Nothing on this page scrolls, so the browser has nothing to scroll a
-          focused box into view with — the composer rides the soft keyboard
-          itself, and by half, because the rows above and below already put its
-          middle at mid-pane (`KEYBOARD_CENTER_FLOW`, the same recipe the empty
-          transcript uses). */}
-      <div className={cn("relative min-w-0", KEYBOARD_CENTER_FLOW)}>
-        <ThreadWelcome draft landing />
-        {sessionId ? (
-          <Composer
-            sessionId={sessionId}
-            actions={actions}
-            thread={thread}
-            meta={meta}
-            delivery={delivery}
-            /* The console draws the call above the box, so it asks for the
-               button the same way a thread view does. */
-            voiceCall
-            /* This page is the box: nothing else on it can be typed into, and
-               its draft is not the routed thread, so the composer's own rule
-               (focus a routed draft) never fired here. */
-            autoFocus
-            /* Awaited after the words have been taken and before the send, so
-               the route changes while `actions.send` is still in flight — the
-               order `startThread` has always used: the thread is already
-               spawning while its transcript is opening. `sent` first, because
-               the navigation is what runs the cleanup that would otherwise
-               throw this draft away mid-send. */
-            beforeSend={async () => {
-              sent.current = true
-              void navigate(threadPath(sessionId))
-              return true
-            }}
-          />
-        ) : null}
-      </div>
-      <LandingActions projects={projects} />
-    </div>
+    <LandingConsoleContext.Provider value={landing}>
+      <ThreadDock key={sessionId} sessionId={sessionId} actions={actions} />
+    </LandingConsoleContext.Provider>
   )
 }

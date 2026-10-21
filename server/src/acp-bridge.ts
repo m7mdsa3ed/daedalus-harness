@@ -705,6 +705,9 @@ export interface BridgeOptions {
       presence is what makes such a runtime pausable; absent, only a runtime
       that advertises its own pause is. */
   pauseHookUrl?: string;
+  /** The runtime exports its own model and tool spans over OTLP
+      (`AgentDef.telemetryVia`, `otlp.ts`), so they are not derived from ACP. */
+  otlpTraced?: boolean;
 }
 
 export class AcpBridge implements ConnectionRoute {
@@ -832,6 +835,7 @@ export class AcpBridge implements ConnectionRoute {
   /** This thread is held through the harness's hooks rather than the
       runtime's own pause (`BridgeOptions.pauseHookUrl`). */
   private readonly pauseViaHooks: boolean;
+  private readonly otlpTraced: boolean;
 
   /** `stream` is the transport, not the process: `agentStream(proc)` for a
       child on stdio (the only kind today), and whatever carries ndJSON frames
@@ -845,6 +849,7 @@ export class AcpBridge implements ConnectionRoute {
     this.mcpServers = opts.mcpServers;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
     this.pauseViaHooks = !!opts.pauseHookUrl;
+    this.otlpTraced = opts.otlpTraced === true;
     this.conn = conn;
     this.connection = conn.rpc;
     conn.attach(this);
@@ -2112,7 +2117,7 @@ export class AcpBridge implements ConnectionRoute {
   /** Whether the runtime sends spans of its own (bridge-trace.ts). */
   get selfTraced(): boolean {
     const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
-    return Boolean(meta?.[TRACE_CAPABILITY]);
+    return Boolean(meta?.[TRACE_CAPABILITY]) || this.otlpTraced;
   }
 
   /** A runtime's own finished spans, filed under this thread. */

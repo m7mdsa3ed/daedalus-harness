@@ -100,7 +100,8 @@ export function saveThreadLayout(sessionId: string, layout: SerializedDockview):
   const { by } = layouts.get()
   const next = { ...by }
   delete next[sessionId]
-  next[sessionId] = layout
+  // ponytail: the transcript alone is the default, so it is not stored — a throwaway draft would otherwise age real layouts out.
+  if (Object.keys(layout.panels).length > 1) next[sessionId] = layout
   const keys = Object.keys(next)
   for (const key of keys.slice(0, Math.max(0, keys.length - KEEP))) delete next[key]
   layouts.set({ by: next })

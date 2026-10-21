@@ -35,7 +35,8 @@ import { defaultProfileFor, getProfile, listProfiles, profileBaseUrl, profileSup
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor, type AgentDef } from "./registry.js";
 import type { WorkspaceLayout } from "./db/schema.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
-import { clearGatewayPrompts, takeGatewayPrompt } from "./gateway-token-breakdown.js";
+import { setOtlpThreadCheck, otlpUrlFor } from "./otlp.js";
+import { promptPrefixOf, refreshPromptPrefix, type PromptFilesFormat } from "./prompt-files.js";
 import { pauseHookUrlFor } from "./pause-hooks.js";
 import { HttpError } from "./http-error.js";
 import * as git from "./git.js";
@@ -413,6 +414,12 @@ export interface Session {
       thread whose profile has no base URL (the virtual Default) does not, and
       nothing about its provider can be changed under it. */
   viaGateway: boolean;
+  /** The saved-file format that explains this runtime's prompt
+      (`AgentDef.promptFiles`), read at spawn; null = inferred from the transcript. */
+  promptFiles: PromptFilesFormat | null;
+  /** The newest file reading whose item lists went out on a usage update, so
+      the lists are said once and carried forward, as the agent's own are. */
+  promptPrefixSent: number;
   /** True only while this process has the profile-provided web-search MCP. */
   websearchViaMcp: boolean;
   /** toolCallIds of in-flight web-search/fetch calls, so a streamed update for
@@ -758,6 +765,9 @@ export class SessionManager {
        credentials and model behind a running child are still ours to change"
        — see `applyConfig`. */
     setGatewaySessionResolver(async (id) => await this.gatewayStateOf(id));
+    /* A runtime's own OpenTelemetry is filed under the thread its URL names, so
+       the receiver asks whether there is one before it writes a span for it. */
+    setOtlpThreadCheck((id) => this.sessions.has(id));
 
     this.idleMinutes = idleMinutes;
     setInterval(() => this.sweepIdle(), 60_000).unref();
@@ -865,6 +875,8 @@ export class SessionManager {
         // revived — the spawn that revives it sets them from the row it reads.
         spawnProfileId: row.profileId,
         viaGateway: false,
+        promptFiles: null,
+        promptPrefixSent: 0,
         websearchViaMcp: false,
         websearchCalls: new Set(),
       };
@@ -1247,7 +1259,8 @@ export class SessionManager {
    * shown the result and being told again would double it.
    */
   private emit(session: Session, event: ThreadEvent, except?: Peer, mirrored = false): void {
-    if (event.ev === "turn_started" || event.ev === "turn_ended") clearGatewayPrompts(session.id);
+    const filesId = session.liveAcpSessionId ?? session.acpSessionId;
+    if (session.promptFiles && filesId && event.ev === "turn_started") refreshPromptPrefix(session.promptFiles, filesId);
     if (
       event.ev === "update" &&
       !event.historyReplay &&
@@ -1262,15 +1275,34 @@ export class SessionManager {
       const breakdown = daedalus.breakdown && typeof daedalus.breakdown === "object"
         ? daedalus.breakdown as Record<string, unknown>
         : null;
-      if (!breakdown) {
-        const gateway = takeGatewayPrompt(session.id, update.used);
-        if (gateway) {
+      if (!breakdown && session.promptFiles && filesId) {
+        /* The runtime does not measure its own prompt, so what its own files say
+           it held: the static part (system, tools, MCP) and what they do not
+           hold. The reading is the cache's; the next one is scheduled. */
+        refreshPromptPrefix(session.promptFiles, filesId);
+        const prefix = promptPrefixOf(session.promptFiles, filesId);
+        if (prefix) {
+          const fresh = prefix.version !== session.promptPrefixSent;
+          session.promptPrefixSent = prefix.version;
           event = {
             ...event,
             update: {
               ...update,
               sessionUpdate: "usage_update",
-              _meta: { ...meta, daedalus: { ...daedalus, breakdown: gateway } },
+              _meta: {
+                ...meta,
+                daedalus: {
+                  ...daedalus,
+                  prefix: {
+                    source: "files",
+                    system: prefix.system,
+                    tools: prefix.tools,
+                    mcp: prefix.mcp,
+                    missing: prefix.missing,
+                    ...(fresh ? { items: prefix.items } : {}),
+                  },
+                },
+              },
             },
           };
         }
@@ -1974,6 +2006,8 @@ export class SessionManager {
       cancelReason: null,
       spawnProfileId: profile.id,
       viaGateway: false,
+      promptFiles: null,
+      promptPrefixSent: 0,
       websearchViaMcp: false,
       websearchCalls: new Set(),
     };
@@ -2075,6 +2109,8 @@ export class SessionManager {
     if (allowlist) sweepSubagentRoles(threadCwd(session, project), allowlist);
     session.spawnProfileId = profile.id;
     session.viaGateway = !!gatewayUrlFor(profile.id, session.agentId, profileBaseUrl(profile, session.agentId), session.id);
+    session.promptFiles = agent?.promptFiles ?? null;
+    session.promptPrefixSent = 0;
     /* Resolved once and handed to both halves, because which half uses it is
        the agent's business and not this one's: `spawnAgent` places it in the
        env for an `"env"` agent, `AcpBridge` puts it in the handshake `_meta`
@@ -2160,6 +2196,7 @@ export class SessionManager {
          its row names the door; the URL names the thread, not the process, so
          a shared process's sessions are held one at a time. */
       pauseHookUrl: agent?.pauseVia === "acp-meta" ? pauseHookUrlFor(session.id) || undefined : undefined,
+      otlpTraced: !!agent?.telemetryVia && !!otlpUrlFor(session.id),
       /* The profile may opt out of Codex's fallback-metadata notice; the
          bridge is where it is dropped, so this is where the flag lands (see
          acp-bridge.ts). */

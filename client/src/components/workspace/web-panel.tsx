@@ -27,6 +27,7 @@ import type { IDockviewPanelProps } from "dockview-react"
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  BugIcon,
   CrosshairIcon,
   EraserIcon,
   ExternalLinkIcon,
@@ -210,6 +211,26 @@ function GuestView({
   return <webview ref={viewRef as unknown as React.Ref<HTMLWebViewElement>} src={initial} className="flex h-full w-full bg-white" />
 }
 
+/**
+ * The docked DevTools' host: a blank `<webview>` that main hands the guest's
+ * DevTools to once it is attached. Keyed on the guest by its caller, because a
+ * host is taken over once and never given back.
+ */
+function DevtoolsHost({ guestId }: { guestId: number }) {
+  const ref = React.useRef<WebviewElement | null>(null)
+  React.useEffect(() => {
+    const view = ref.current
+    if (!view) return
+    const onReady = () => {
+      window.desktop?.previewDevtools?.open(guestId, view.getWebContentsId()).catch(() => {})
+    }
+    /* Once: the DevTools frontend loading into the host fires dom-ready again. */
+    view.addEventListener("dom-ready", onReady, { once: true })
+    return () => view.removeEventListener("dom-ready", onReady)
+  }, [guestId])
+  return <webview ref={ref as unknown as React.Ref<HTMLWebViewElement>} src="about:blank" className="flex h-full w-full" />
+}
+
 const VIEWPORTS = [
   { id: "desktop", label: "Desktop", icon: MonitorIcon, width: null },
   { id: "tablet", label: "Tablet", icon: TabletIcon, width: 834 },
@@ -267,6 +288,15 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
 
   const threadId = useThreadDockSession()
   const [guestId, setGuestId] = React.useState<number | null>(null)
+
+  /* ── Docked DevTools ──
+     Mounted on first open for the guest it was opened on, then only hidden:
+     closing would spend the host, and a new guest needs a new one. */
+  const [devtoolsFor, setDevtoolsFor] = React.useState<number | null>(null)
+  const [devtoolsOpen, setDevtoolsOpen] = React.useState(false)
+  const devtoolsMounted = guestId !== null && devtoolsFor === guestId
+  const devtoolsShown = devtoolsMounted && devtoolsOpen
+  const canDevtools = GUEST && !!window.desktop?.previewDevtools
 
   /* ── Pick element ──
      The person points at something on the page, and the panel turns the click
@@ -640,6 +670,25 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           </Button>
         )}
 
+        {canDevtools && (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="DevTools"
+            aria-pressed={devtoolsShown}
+            title={devtoolsShown ? "Hide DevTools" : "Show DevTools for this page"}
+            className={cn(devtoolsShown && "text-primary")}
+            disabled={guestId === null}
+            onClick={() => {
+              if (devtoolsShown) return setDevtoolsOpen(false)
+              setDevtoolsFor(guestId)
+              setDevtoolsOpen(true)
+            }}
+          >
+            <BugIcon />
+          </Button>
+        )}
+
         <Button
           size="icon-xs"
           variant="ghost"
@@ -778,6 +827,31 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           </>
         ) : null}
       </div>
+
+      {/* ── DevTools ──
+          The guest's own Chrome DevTools, docked under the page like the
+          console. Hidden, never unmounted, while the guest lives. */}
+      {devtoolsMounted && guestId !== null && (
+        <div className={cn("flex h-[45%] min-h-40 shrink-0 flex-col border-t", !devtoolsShown && "hidden")}>
+          <PanelToolbar className="gap-2">
+            <BugIcon className="text-muted-foreground" />
+            <span className="text-xs font-medium">DevTools</span>
+            <div className="flex-1" />
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Hide DevTools"
+              title="Hide"
+              onClick={() => setDevtoolsOpen(false)}
+            >
+              <XIcon />
+            </Button>
+          </PanelToolbar>
+          <div className="min-h-0 flex-1">
+            <DevtoolsHost key={guestId} guestId={guestId} />
+          </div>
+        </div>
+      )}
 
       {/* ── The page's console ──
           Below the page, the way a browser does it: the page keeps the room it

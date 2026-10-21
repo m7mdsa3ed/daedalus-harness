@@ -1047,6 +1047,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A profile preset is a starting point, never a stored kind**: nothing about it is saved on
   the profile.
 
+## Changelog → `CHANGELOG.md`
+
+- **Nothing is committed without its changelog line.** Before every commit, add each
+  user- or developer-visible feature, change, removal or fix the commit carries to
+  `CHANGELOG.md`, under `## [Unreleased]` (create it above the newest release if absent),
+  in a `### YYYY-MM-DD` section for the day the work was done, newest day first. Check the
+  diff, not your memory of the session: work from other threads in the tree goes in too.
+- **One line per bullet** — `server/src/meta.ts` parses the file line by line for
+  `GET /api/meta` — led by a bold sentence stating the new behaviour, then what it does
+  and how. Name removals as removals; skip pure churn (formatting, lockfiles, test drift).
+- **A release** renames `[Unreleased]` to `[x.y.z] - date` and bumps the root
+  `package.json` in the same commit; the day sections stay as they are.
+
 ## Testing
 
 - **No visual testing**: don't drive the UI with Playwright/browser automation or take

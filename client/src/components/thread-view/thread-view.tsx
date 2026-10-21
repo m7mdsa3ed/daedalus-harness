@@ -82,6 +82,7 @@ import { useThreadKeys } from "@/components/thread-view/thread-keys"
 import { useWaitShown } from "@/components/thread-view/starting-line"
 import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
+import { LandingConsoleContext } from "@/components/landing/landing-console"
 import { ThreadInspector } from "@/components/thread-view/thread-inspector"
 import { QuoteSelection } from "@/components/thread-view/quote-selection"
 import { AsideWindow, type AsideAt } from "@/components/thread-view/aside-window"
@@ -639,6 +640,8 @@ export function ThreadView({
   /* Whether the composer sits centred under the welcome — an empty thread's
      layout — or docked at the foot, which a mini window always wants. */
   const centred = empty && !pinComposer
+  /* Set only by the New tab page, whose draft this is (`landing-console.ts`). */
+  const landing = React.useContext(LandingConsoleContext)
   /* The stand-in for a transcript that is on its way: opening, nothing folded
      yet, and not a draft (which has no transcript to wait for). Gated out here
      rather than inside the component because a `MessageScrollerItem` that
@@ -1234,7 +1237,7 @@ export function ThreadView({
               ),
         )}
       >
-        {centred && <ThreadWelcome draft={meta?.draft} />}
+        {centred && <ThreadWelcome draft={meta?.draft} landing={!!landing} />}
         <Composer
           ref={composerApiRef}
           sessionId={sessionId}
@@ -1244,6 +1247,8 @@ export function ThreadView({
           delivery={delivery}
           changes={latestChanges}
           voiceCall
+          autoFocus={landing ? true : undefined}
+          beforeSend={landing?.beforeSend}
           /* Scroll, and the box gets out of the way: `follow.pinned` is false
              once a gesture has taken the reader away from the tail — the same
              state the scroll-to-end button draws — and reaching the bottom
@@ -1274,7 +1279,7 @@ export function ThreadView({
       {aside && <AsideWindow at={aside} actions={actions} onClose={closeAside} />}
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
-      <span aria-hidden className="col-start-1 row-start-3" />
+      <div className="col-start-1 row-start-3 min-w-0">{centred && landing?.strip}</div>
     </div>
     </InspectorContext.Provider>
     </FilePreviewContext.Provider>

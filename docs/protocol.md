@@ -1019,6 +1019,15 @@ under what.
   duration is request *and* decode; `daedalus.ttft_ms` is the first chunk), a tool span from
   `tool_call` to its terminal status, a subagent under the tool call that spawned it. Never both:
   a self-tracing runtime's calls would be drawn twice and its tokens counted twice.
+- **A runtime that exports OpenTelemetry reports itself** (`AgentDef.telemetryVia`, a dialect:
+  `"claude-otlp"`; `server/src/otlp.ts`). Its env template names `{otlpUrl}` —
+  `/otlp/<key>/<threadId>`, the derived key in the path being the credential, outside `/api` like
+  `/gw` — and it posts OTLP/JSON to `…/v1/traces` and `…/v1/logs`. Its interaction is hung under
+  the harness's `session/prompt` span that was running (`requestSpanAt`), a model call is
+  `chat <model>` with the provider's exact usage, a tool is `execute_tool <name>`, and
+  **`AcpBridge.selfTraced` is true for it**, so the bridge derives none of those: never both. Identity
+  attributes a runtime stamps on every span (email, account and organisation ids) are dropped on the
+  way in. Verified end to end against Claude Code on a subscription login, env only — no gateway.
 - **For every runtime**: the handshake (`session/new|load|resume`), permission and elicitation
   waits with their outcome, and `retry`/`paused`/`cancel`/`steer` as span events.
 - **`kind` is decided at write time** (`daedalus.kind`, else the GenAI operation), so the list
@@ -1029,6 +1038,59 @@ under what.
 - **Export is standard OTLP** when `OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT` is set — the harness
   exports its spans, the agent exports its own from the same env. Not backed up: a restored
   install starts recording afresh. Deleting a thread cascades its spans.
+
+## What a prompt held: four sources, one rule
+
+The Tokens panel divides each request's prompt by part. **Where the division comes
+from is per request, in this order, and a request is only ever read by the first that
+answers** (`sessions.ts` `emit`, on the `usage_update`):
+
+1. **The agent's own measurement** (`_meta.daedalus.breakdown`, `source: "agent"`) —
+   our runtime tokenizes what it sends, so it needs nothing from anyone else.
+2. **The runtime's saved files** (`_meta.daedalus.prefix`, `source: "files"`) —
+   `server/src/prompt-files.ts`, chosen by `AgentDef.promptFiles` (a **format**, never
+   an id): `claude-jsonl` (the session JSONL's `prompt_snapshot` and context
+   attachments), `codex-rollout` (`base_instructions` and the developer/environment
+   messages) and `opencode-sqlite` (`instruction_state`). It carries the *static*
+   part only — system, tools, MCP — and the client still reads the history off the
+   transcript. **This is the one place the server reads a runtime's own files**; import
+   stays ACP's `session/list`, because this reads a file the runtime already wrote to
+   *explain* a request, never to resume or list a conversation. The read is off the
+   event path (`refreshPromptPrefix` schedules it, `promptPrefixOf` is a cache read, a
+   JSONL is read from where it stopped), so the first update of a thread may carry none.
+3. **The transcript** — about four characters a token; what is left is "Agent overhead".
+
+**The request itself is the better source, and it lives on the span, not on the usage
+update.** When a runtime hands over the request it sent — Claude Code's raw API body over
+OTLP (`OTEL_LOG_RAW_API_BODIES=file:<dir>`, read from that thread's own directory only,
+**never any other path**, and deleted once read), or the GenAI attributes `@ai-sdk/otel`
+puts on every `chat` span of our own agent (`gen_ai.system_instructions`,
+`gen_ai.tool.definitions`, `gen_ai.input.messages`) — `prompt-parts.ts` counts the system
+prompt, tools, MCP tools and the conversation and scales them to the provider's total for
+*that request*, and the result is written beside the model span as
+**`daedalus.prompt_parts`** (not `daedalus.prompt`, which is the person's own words on a
+turn's span). It is counted from the whole attribute at ingest, because storage caps one
+value at 256KB and a long thread's messages are past it. A user message's
+`<system-reminder>` blocks are the runtime's context (instructions, skills, MCP guidance),
+so they count as system under "Injected context", not as the person's words. The Trajectory
+draws it ("Prompt by part" on a model span, `components/trajectory/prompt-parts.tsx`); the
+Tokens panel still reads usage updates, so folding the two into one panel is the next step.
+
+**Counting never holds the event loop.** The gateway shim used to buffer, parse and tokenize
+every `/messages` and `/chat/completions` request (43–156 ms of the single loop per model
+request, for a 50k–400k-token prompt); that is gone, and the shim reads a body only for the
+two repairs that need one (Codex's namespace tools and a moved thread's model). `prompt-parts.ts`
+counts each piece separately, gives the loop back every few milliseconds, and remembers a text
+by its hash, so a step pays for what is new. A journal written while the shim still split its
+requests keeps its `source: "gateway"` breakdowns and the client still draws them — **an old
+reader is never deleted**.
+
+**`missing` is part of the answer.** Each file reader says what its file does not hold (Codex:
+tool schemas; OpenCode: its own system prompt and tool schemas; Claude Code: nothing,
+unless the version predates `prompt_snapshot`), and the panel says it back in a warning
+above the numbers. With nothing missing the file's tokenizer gap is spread over every
+part; with something missing the known parts are never inflated and the unknown part is
+the named overhead. Old journal rows keep the shape they had; nothing is rebuilt for them.
 
 ## Durable agent processes (`DAEDALUS_SANDBOX=hosted`)
 

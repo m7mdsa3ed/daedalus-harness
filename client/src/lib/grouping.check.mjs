@@ -13,9 +13,52 @@ const edit = (id) => ({ kind: "tool", id, title: id, status: "completed", toolKi
 const prose = (id) => ({ kind: "agent", id, text: "said something" })
 const notice = (id, config = true) => ({ kind: "notice", id, text: "Model: A -> B", ...(config ? { config: true } : {}) })
 const kinds = (rows) => rows.map((row) => row.kind).join(",")
+/* A call into an MCP server, the way a runtime announces it: the flattened name
+   is the whole identity, and `other` is the kind every MCP tool arrives under. */
+const mcp = (id, server, tool = "get_error") => ({
+  kind: "tool",
+  id,
+  title: `mcp__${server}__${tool}`,
+  status: "completed",
+  toolKind: "other",
+  content: [],
+})
 
 // A run of two calls is one row, and its steps keep arrival order.
 assert.equal(kinds(buildRows([tool("a"), tool("b")], true)), "run", "two calls fold")
+
+// Consecutive calls to ONE MCP server are one run: the integration is the group.
+{
+  const out = buildRows([mcp("a", "Bugsnag"), mcp("b", "Bugsnag", "list_projects")], true)
+  assert.equal(kinds(out), "run", `one server folds into one run, got ${kinds(out)}`)
+  assert.deepEqual(out[0].items.map((item) => item.id), ["a", "b"])
+}
+
+// Two servers' calls are two groups, never one "mcp" run — the whole point of
+// keying a run by the integration.
+{
+  const out = buildRows([mcp("a", "Bugsnag"), mcp("b", "Clickup")], true)
+  assert.equal(kinds(out), "tool-group", `two servers do not fold together, got ${kinds(out)}`)
+  assert.deepEqual(out[0].children.map((child) => child.id), ["a", "b"])
+}
+
+// Interleaved: no run reorders, so each stretch of one server stands alone, and
+// the group holds them in arrival order.
+{
+  const out = buildRows([mcp("a", "Bugsnag"), mcp("b", "Clickup"), mcp("c", "Bugsnag")], true)
+  assert.equal(kinds(out), "tool-group", `interleaved servers group, got ${kinds(out)}`)
+  assert.deepEqual(out[0].children.map((child) => child.id), ["a", "b", "c"])
+}
+
+// The same server either side of another's call is two stretches, not one run.
+{
+  const out = buildRows(
+    [mcp("a", "Bugsnag"), mcp("b", "Bugsnag"), mcp("c", "Clickup"), mcp("d", "Bugsnag"), mcp("e", "Bugsnag")],
+    true
+  )
+  assert.equal(kinds(out), "tool-group")
+  assert.deepEqual(out[0].children.map((child) => child.kind), ["run", "tool", "run"])
+}
 
 // A setting changed BETWEEN two calls is part of the run, in its place.
 {

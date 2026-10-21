@@ -3,7 +3,7 @@
      ../server/node_modules/.bin/tsx src/lib/token-breakdown.check.mjs   (from client/)
 */
 import assert from "node:assert/strict"
-import { promptParts, requestDetail, spendTime, subagentSpend, sumPromptParts, tokensByTurn } from "./token-breakdown.ts"
+import { promptParts, requestDetail, spanPromptParts, spendTime, subagentSpend, sumPromptParts, tokensByTurn } from "./token-breakdown.ts"
 import { applySessionUpdate } from "./store/session-update.ts"
 const total = (rows) => rows.reduce((n, r) => n + r.tokens, 0)
 const tool = (id, title, out) => ({ kind: "tool", id, name: "read_file", title, rawInput: { path: title }, content: [{ type: "content", content: { type: "text", text: out } }], locations: [], status: "completed", startedAt: 0 })
@@ -80,5 +80,50 @@ assert.equal(total(requestDetail(two.turns[0].steps, 1, two.entries, p2.parts).t
   const [child] = subagentSpend(list)
   assert.equal(child.durationMs, 42_000, "running time only, over both wakes")
   assert.equal(spendTime(child), "42s")
+}
+// --- saved files (a runtime's own record of its prompt) ---
+{
+  const sum = (parts) => Object.values(parts).reduce((n, v) => n + v, 0)
+  const prefix = (missing, extra = {}) => ({ daedalus: { prefix: { source: "files", system: 3000, tools: 1500, mcp: 500, missing, ...extra } } })
+  // Everything saved: the tokenizer gap is spread over every part, none is "overhead".
+  const full = tokensByTurn(items, { a1: { used: 12000, size: 100000, _meta: prefix([]) } }, {})
+  const f = promptParts(full.turns[0].steps[0])
+  assert.equal(f.source, "files")
+  assert.deepEqual(f.missing, [])
+  assert.equal(sum(f.parts), 12000, "parts sum to used")
+  assert.ok(f.parts.overhead <= 2, "nothing missing leaves only rounding in overhead")
+  assert.ok(f.parts.system > 3000 && f.parts.tools > 1500, "the gap is shared, not parked")
+  // Something missing: the known parts stay as counted and the gap is the named overhead.
+  const gap = tokensByTurn(items, { a1: { used: 12000, size: 100000, _meta: prefix(["tool schemas"]) } }, {})
+  const g = promptParts(gap.turns[0].steps[0])
+  assert.deepEqual(g.missing, ["tool schemas"])
+  assert.equal(sum(g.parts), 12000)
+  assert.equal(g.parts.system, 3000, "a missing part does not inflate the known ones")
+  assert.ok(g.parts.overhead > 4000, "what the file cannot say is the overhead")
+  // A prefix bigger than the request is scaled down to fit and never goes negative.
+  const tight = promptParts({ ...gap.turns[0].steps[0], update: { used: 1000, size: 1, _meta: prefix(["tool schemas"]) } })
+  assert.equal(sum(tight.parts), 1000)
+  assert.ok(Object.values(tight.parts).every((n) => n >= 0))
+  // Item lists ride the first reading and carry forward like the agent's own.
+  const withItems = prefix([], { items: { system: [{ name: "System prompt > A", tokens: 1 }], tools: [{ name: "Bash", tokens: 1 }], mcp: [{ name: "mcp__gh__pr", tokens: 1 }] } })
+  const two = tokensByTurn([...items, { kind: "agent", id: "a2", text: "more" }], { a1: { used: 12000, size: 1, _meta: withItems }, a2: { used: 12100, size: 1, _meta: prefix([]) } }, {})
+  const p2 = promptParts(two.turns[0].steps[1])
+  const detail = requestDetail(two.turns[0].steps, 1, two.entries, p2.parts)
+  assert.deepEqual(detail.tools.map((r) => r.name), ["Bash"], "files' item lists carry forward")
+  assert.equal(detail.mcp[0].name, "gh · pr", "MCP tools are named by server")
+  // No prefix at all is still the transcript inference.
+  assert.equal(promptParts(tokensByTurn(items, { a1: { used: 5000, size: 1 } }, {}).turns[0].steps[0]).source, "transcript")
+}
+// --- a model span's own account of its prompt (daedalus.prompt_parts) ---
+{
+  const attr = JSON.stringify({ source: "otlp", total: 1000, system: 400, tools: 300, mcp: 50, conversation: 250, user: 100, assistant: 50, results: 80, overhead: 0,
+    items: { system: [{ name: "System prompt > A", tokens: 400 }], tools: [{ name: "Bash", tokens: 300 }], mcp: [] } })
+  const got = spanPromptParts({ "daedalus.prompt_parts": attr })
+  assert.equal(got.total, 1000)
+  assert.equal(got.parts.history, 20, "what the role split did not name is the unsplit history")
+  assert.equal(Object.values(got.parts).reduce((n, v) => n + v, 0), 1000, "the parts add up to the total")
+  assert.equal(got.items.tools[0].name, "Bash")
+  assert.equal(spanPromptParts({}), null, "a span with no parts says nothing")
+  assert.equal(spanPromptParts({ "daedalus.prompt_parts": attr.slice(0, 50) }), null, "an elided (cut) value is not guessed at")
 }
 console.log("token breakdown checks ok")

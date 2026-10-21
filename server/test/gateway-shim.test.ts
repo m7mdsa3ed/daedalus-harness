@@ -11,7 +11,6 @@ import { createServer } from "node:http";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { db, profiles as profilesTable } from "../src/db/index.js";
-import { estimateGatewayPrompt, gatewayPromptTotal, recordGatewayPrompt, takeGatewayPrompt, tapGatewaySse } from "../src/gateway-token-breakdown.js";
 import {
   chatCompletionToMessage,
   configureGatewayShim,
@@ -41,56 +40,6 @@ function test(name: string, fn: () => void | Promise<void>): Promise<void> {
 }
 
 /* ── the pure half ── */
-
-await test("gateway estimates prompt roles and tool schemas against the provider total", () => {
-  const result = estimateGatewayPrompt({
-    instructions: "Follow project rules.",
-    tools: [
-      { type: "function", name: "Read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } } } },
-      { type: "function", name: "mcp__docs__search", description: "Search docs", parameters: { type: "object" } },
-    ],
-    messages: [
-      { role: "user", content: "Find the config." },
-      { role: "assistant", content: "I will search." },
-      { role: "tool", content: "Found it." },
-    ],
-  }, 200);
-  assert.equal(result.total, 200);
-  assert.equal(result.system, result.items.system.reduce((sum, item) => sum + item.tokens, 0));
-  assert.equal(result.tools, result.items.tools.reduce((sum, item) => sum + item.tokens, 0));
-  assert.equal(result.mcp, result.items.mcp.reduce((sum, item) => sum + item.tokens, 0));
-  assert.ok(result.mcp > 0);
-  assert.equal(result.system + result.tools + result.mcp + result.conversation + result.overhead, 200);
-  assert.ok(result.user > 0 && result.assistant > 0 && result.results > 0);
-});
-
-await test("gateway breakdowns match the usage total and do not consume unrelated counts", () => {
-  const request = { instructions: "Rules", messages: [{ role: "user", content: "Question" }] };
-  recordGatewayPrompt("correlation-test", request, 120);
-  assert.equal(takeGatewayPrompt("correlation-test", 99), undefined);
-  const match = takeGatewayPrompt("correlation-test", 120)!;
-  assert.equal(match.total, 120);
-  assert.equal(match.system + match.tools + match.mcp + match.conversation + match.overhead, 120);
-});
-
-await test("prompt counts are read from Anthropic, OpenAI, and Responses usage", () => {
-  assert.equal(gatewayPromptTotal({ type: "message_start", message: { usage: { input_tokens: 80, cache_read_input_tokens: 20 } } }), 100);
-  assert.equal(gatewayPromptTotal({ usage: { prompt_tokens: 120, prompt_tokens_details: { cached_tokens: 70 } } }), 120);
-  assert.equal(gatewayPromptTotal({ type: "response.completed", response: { usage: { input_tokens: 90, cache_creation_input_tokens: 10 } } }), 100);
-});
-
-await test("stream tap preserves response bytes and extracts provider prompt usage", async () => {
-  const chunks = [
-    new TextEncoder().encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":42}}}\n\n'),
-    new TextEncoder().encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'),
-  ];
-  let index = 0;
-  const source = new ReadableStream<Uint8Array>({ pull(controller) { if (index < chunks.length) controller.enqueue(chunks[index++]!); else controller.close(); } });
-  let usage: number | null = null;
-  const tapped = await new Response(tapGatewaySse(source, (total) => { usage = total; })).text();
-  assert.equal(tapped, new TextDecoder().decode(chunks[0]) + new TextDecoder().decode(chunks[1]));
-  assert.equal(usage, 42);
-});
 
 const completion = {
   id: "chatcmpl-1",
@@ -620,7 +569,7 @@ let thread: GatewaySession = {
 setGatewaySessionResolver(async (id) => (id === "sess-1" ? thread : undefined));
 const sessionBase = gatewayUrlFor("gw-test", "codex", "x", "sess-1");
 
-await test("a streamed Responses request records its exact provider total and estimate", async () => {
+await test("a streamed Responses request is forwarded and read back whole", async () => {
   const response = await fetch(`${sessionBase}/v1/responses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -634,11 +583,6 @@ await test("a streamed Responses request records its exact provider total and es
   });
   const output = await response.text();
   assert.match(output, /response\.completed/);
-  const breakdown = takeGatewayPrompt("sess-1", 240);
-  assert.ok(breakdown);
-  assert.equal(breakdown.total, 240);
-  assert.equal(breakdown.mcp, breakdown.items.mcp.reduce((sum, item) => sum + item.tokens, 0));
-  assert.equal(breakdown.system + breakdown.tools + breakdown.mcp + breakdown.conversation + breakdown.overhead, 240);
 });
 
 await test("a thread forwards untouched until its model has actually moved", async () => {

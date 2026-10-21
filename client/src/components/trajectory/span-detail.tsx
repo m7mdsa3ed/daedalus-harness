@@ -13,6 +13,7 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { inlineFromQuery } from "@/lib/errors"
 import { useSpanDetail } from "@/lib/queries/trace"
+import { PROMPT_PARTS_ATTR, spanPromptParts } from "@/lib/token-breakdown"
 import { formatTokens, formatTps } from "@/lib/tokens"
 import {
   PROMPT_KEYS,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/trajectory"
 import { cn } from "@/lib/utils"
 import { KIND, fmtClock, fmtMs, spanText } from "./kinds"
+import { PromptParts } from "./prompt-parts"
 
 /** Payload attributes drawn as their own blocks, in this order. */
 const PAYLOADS: [key: string, label: string][] = [
@@ -42,6 +44,7 @@ const PAYLOADS: [key: string, label: string][] = [
 const SHOWN = new Set([
   ...PAYLOADS.map(([key]) => key),
   "daedalus.ttft_ms",
+  PROMPT_PARTS_ATTR,
   "gen_ai.client.operation.time_to_first_chunk",
   "gen_ai.usage.input_tokens",
   "gen_ai.usage.output_tokens",
@@ -149,6 +152,12 @@ export function SpanDetail({
             .filter(([, v]) => v !== null)
             .map(([k, v]) => [k, formatTokens(v!)])}
         />
+      )}
+
+      {span.kind === "model" && spanPromptParts(span.attributes) && (
+        <Section title="Prompt by part">
+          <PromptParts span={span} />
+        </Section>
       )}
 
       {span.kind === "model" && hasPrompt(listed) && (

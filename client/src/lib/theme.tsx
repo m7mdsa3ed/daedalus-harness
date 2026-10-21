@@ -321,6 +321,10 @@ declare global {
         pick: (guestId: number) => Promise<PickedElement | null>
         cancel: (guestId: number) => void
       }
+      /** The Preview's docked DevTools (web-panel.tsx `DevtoolsHost`). */
+      previewDevtools?: {
+        open: (guestId: number, hostId: number) => Promise<boolean>
+      }
       /** electron-updater: `check` resolves once a found update has downloaded. */
       update?: {
         check: () => Promise<{ available: boolean; version?: string }>

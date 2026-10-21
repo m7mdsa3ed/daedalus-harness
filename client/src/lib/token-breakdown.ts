@@ -18,9 +18,16 @@
    messages, the assistant's replies, tool results — about four characters a
    token) is the part the harness can see, and what is left of the request's
    total is "Agent overhead", the system prompt and tool schemas that live
-   inside that agent's own process and are not ours to split. Gateway-backed
-   requests can estimate prompt parts from the proxied request and provider
-   usage, but framing and agent-internal content remain overhead. */
+   inside that agent's own process and are not ours to split. A journal written
+   while the gateway shim still split its requests carries `source: "gateway"`
+   breakdowns, which are drawn as they were; the shim no longer produces them.
+
+   The third source is the runtime's own saved files (`server/src/prompt-files.ts`):
+   the static part of a request — system, tools, MCP — counted from what the
+   runtime wrote down, with the history still read off the transcript. It also
+   says what the file does *not* hold (`missing`), and that is the one place
+   "Agent overhead" is a named gap rather than a guess: tool schemas the runtime
+   never saved are in it, and the panel says so. */
 import type * as acp from "@daedalus/acp"
 
 import type { ThreadItem } from "@/lib/store/items"
@@ -68,6 +75,30 @@ export function promptBreakdown(usage: acp.UsageUpdate | null | undefined): Prom
       }
 }
 
+/** The static part of a request as a runtime's saved files describe it. Counts
+    are the server's tokenizer's, so only their proportions are trusted; `missing`
+    is what the file does not hold, in words. `items` rides the first reading
+    after a change and is carried forward by `prefixItemsOf`. */
+export interface PromptPrefix {
+  system: number
+  tools: number
+  mcp: number
+  missing: string[]
+}
+
+export function promptPrefix(usage: acp.UsageUpdate | null | undefined): PromptPrefix | null {
+  const raw = vendorMeta(usage?._meta, "daedalus")?.prefix
+  if (raw === null || typeof raw !== "object") return null
+  const r = raw as Record<string, unknown>
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0)
+  return {
+    system: num(r.system),
+    tools: num(r.tools),
+    mcp: num(r.mcp),
+    missing: Array.isArray(r.missing) ? r.missing.filter((m): m is string => typeof m === "string") : [],
+  }
+}
+
 /* ── What a prompt held ── */
 
 export type PromptKey = "system" | "tools" | "mcp" | "user" | "assistant" | "results" | "history" | "overhead"
@@ -95,7 +126,10 @@ const NO_PARTS: PromptParts = { system: 0, tools: 0, mcp: 0, user: 0, assistant:
 export interface RequestParts {
   parts: PromptParts
   inferred: boolean
-  source: "agent" | "gateway" | "transcript"
+  source: "agent" | "gateway" | "files" | "transcript"
+  /** What the source could not say, as the runtime's files told it. Only
+      `files` has any; for `transcript` the panel says the general thing. */
+  missing: string[]
 }
 
 /** One request's prompt by part. Null only where there is nothing to divide:
@@ -107,6 +141,7 @@ export function promptParts(step: TurnStep): RequestParts | null {
     return {
       inferred: split.source === "gateway",
       source: split.source,
+      missing: [],
       parts: {
         ...NO_PARTS,
         system: split.system,
@@ -123,6 +158,28 @@ export function promptParts(step: TurnStep): RequestParts | null {
   const { used } = step.update
   const h = step.history
   const counted = h.user + h.assistant + h.results
+  const prefix = promptPrefix(step.update)
+  if (prefix && used > 0) {
+    const known = prefix.system + prefix.tools + prefix.mcp
+    const all = known + counted
+    if (all > 0) {
+      /* The files hold the whole prefix when nothing is missing, so the gap
+         between their tokenizer and the provider's is spread over every part
+         (nothing is "overhead"). With something missing, that part is real and
+         unmeasured — it is what is left once the known parts are taken out, and
+         the known ones are only ever scaled *down* to fit. */
+      const scale = prefix.missing.length === 0 ? used / all : Math.min(1, used / all)
+      const take = (n: number, room: number) => Math.min(room, Math.round(n * scale))
+      const system = take(prefix.system, used)
+      const mcp = take(prefix.mcp, used - system)
+      const tools = take(prefix.tools, used - system - mcp)
+      const user = take(h.user, used - system - mcp - tools)
+      const assistant = take(h.assistant, used - system - mcp - tools - user)
+      const results = take(h.results, used - system - mcp - tools - user - assistant)
+      const overhead = used - system - mcp - tools - user - assistant - results
+      return { inferred: true, source: "files", missing: prefix.missing, parts: { ...NO_PARTS, system, tools, mcp, user, assistant, results, overhead } }
+    }
+  }
   if (!(used > 0) || counted === 0) return null
   /* A transcript longer than the prompt it fed (a compaction the runtime did not
      announce, a tokenizer that runs long) is scaled down to fit, and the
@@ -132,7 +189,7 @@ export function promptParts(step: TurnStep): RequestParts | null {
   const user = Math.round(h.user * scale)
   const assistant = Math.min(used - user, Math.round(h.assistant * scale))
   const results = Math.min(used - user - assistant, Math.round(h.results * scale))
-  return { inferred: true, source: "transcript", parts: { ...NO_PARTS, user, assistant, results, overhead: used - user - assistant - results } }
+  return { inferred: true, source: "transcript", missing: [], parts: { ...NO_PARTS, user, assistant, results, overhead: used - user - assistant - results } }
 }
 
 /** Requests' prompts added up — what was *billed*, since each request re-sends
@@ -150,6 +207,61 @@ export function sumPromptParts(steps: TurnStep[]): { parts: PromptParts; total: 
     for (const key of Object.keys(parts) as PromptKey[]) parts[key] += one.parts[key]
   }
   return requests > 0 ? { parts, total: Object.values(parts).reduce((n, v) => n + v, 0), requests, inferred } : null
+}
+
+/* ── A model span's own account of its prompt ──
+   A runtime that reports its OpenTelemetry (`server/src/otlp.ts`), or the AI
+   SDK's spans of our own agent, has the server divide the request on arrival and
+   write the result beside the span as `daedalus.prompt_parts` — the same shape as
+   `breakdown`, scaled to the provider's total for *that* request. Read here so
+   the Trajectory draws it with the same parts, labels and swatches as the panel
+   above. */
+
+/** The span attribute the server writes a request's parts to. */
+export const PROMPT_PARTS_ATTR = "daedalus.prompt_parts"
+
+export interface SpanPromptParts {
+  total: number
+  source: string
+  parts: PromptParts
+  items: Record<"system" | "tools" | "mcp", { name: string; tokens: number }[]>
+}
+
+export function spanPromptParts(attributes: Record<string, unknown>): SpanPromptParts | null {
+  const raw = attributes[PROMPT_PARTS_ATTR]
+  let r: Record<string, unknown> | null = null
+  try {
+    const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
+    r = parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+  if (!r) return null
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0)
+  const total = num(r.total)
+  if (total === 0) return null
+  const [user, assistant, results] = [num(r.user), num(r.assistant), num(r.results)]
+  const list = (v: unknown): { name: string; tokens: number }[] =>
+    Array.isArray(v)
+      ? v.filter((i): i is { name: string; tokens: number } => typeof i?.name === "string" && typeof i?.tokens === "number")
+      : []
+  const items = (r.items ?? {}) as Record<string, unknown>
+  return {
+    total,
+    source: typeof r.source === "string" ? r.source : "agent",
+    parts: {
+      ...NO_PARTS,
+      system: num(r.system),
+      tools: num(r.tools),
+      mcp: num(r.mcp),
+      user,
+      assistant,
+      results,
+      history: Math.max(0, num(r.conversation) - user - assistant - results),
+      overhead: num(r.overhead),
+    },
+    items: { system: list(items.system), tools: list(items.tools), mcp: list(items.mcp) },
+  }
 }
 
 /* ── What the provider billed ── */
@@ -337,7 +449,8 @@ interface PrefixItem {
 /** The static prefix's item lists our runtime sends on the first step of each
     attempt (`agent/src/token-breakdown.ts`). */
 function prefixItemsOf(update: acp.UsageUpdate): Record<"system" | "tools" | "mcp", PrefixItem[]> | null {
-  const raw = (vendorMeta(update._meta, "daedalus")?.breakdown as { items?: unknown } | undefined)?.items
+  const meta = vendorMeta(update._meta, "daedalus")
+  const raw = (meta?.breakdown as { items?: unknown } | undefined)?.items ?? (meta?.prefix as { items?: unknown } | undefined)?.items
   if (!raw || typeof raw !== "object") return null
   const list = (v: unknown): PrefixItem[] =>
     Array.isArray(v)

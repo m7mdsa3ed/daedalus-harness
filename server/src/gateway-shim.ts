@@ -80,7 +80,6 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { derive } from "./loopback-secret.js";
 
 import { getProfile, profileBaseUrl } from "./profiles.js";
-import { gatewayPromptTotal, recordGatewayPrompt, tapGatewaySse } from "./gateway-token-breakdown.js";
 
 /** Constant-time string comparison for path-carried credentials — an equality
     that short-circuits on the first differing byte leaks how much of a guessed
@@ -608,12 +607,11 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   const isResponses = /\/responses\/?$/.test(parsed.rest);
   const rewriting = thread?.rewriteModel === true && (isResponses || /\/messages\/?$/.test(parsed.rest));
   let body: BodyInit | null = req.body;
-  let promptBody: Json | null = null;
   let namespaces: string[] = [];
   let renames: Record<string, RenamedTool> = {};
   if (
     req.method === "POST" &&
-    (isResponses || rewriting || /\/messages\/?$|\/chat\/completions\/?$/.test(parsed.rest)) &&
+    (isResponses || rewriting) &&
     /application\/json/i.test(req.headers.get("content-type") ?? "")
   ) {
     const text = await req.text();
@@ -640,8 +638,6 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
         }
       }
       if (edited) body = JSON.stringify(flat ? flat.body : parsedBody);
-      const forwarded = typeof body === "string" ? JSON.parse(body) as Json : parsedBody;
-      if (forwarded.stream === true && parsed.kind === "s") promptBody = forwarded;
     } catch {
       /* not JSON after all — forwarded as read */
     }
@@ -692,25 +688,8 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
      `text/event-stream` and is piped as it arrives. Errors keep their status
      and their body — the SDK reads `error.message` from either shape. */
   const contentType = upstream.headers.get("content-type") ?? "";
-  if (promptBody && parsed.kind === "s" && upstream.ok && /application\/json/i.test(contentType)) {
-    const text = await upstream.text();
-    try {
-      const total = gatewayPromptTotal(JSON.parse(text));
-      if (total !== null) recordGatewayPrompt(parsed.id, promptBody, total);
-    } catch {
-      // Leave non-JSON successes untouched; no usage breakdown is available.
-    }
-    if (!/\/messages\/?$/.test(parsed.rest)) return new Response(text, { status: upstream.status, headers: out });
-    const { body: normalized, rewritten } = normalizeMessagesResponse(text);
-    if (rewritten) console.log(`[gateway-shim] rewrote an OpenAI-shaped reply from ${baseUrl} into an Anthropic message`);
-    return new Response(normalized, { status: upstream.status, headers: out });
-  }
   if (upstream.ok && /\/messages\/?$/.test(parsed.rest) && /application\/json/i.test(contentType)) {
     const text = await upstream.text();
-    let reply: unknown;
-    try { reply = JSON.parse(text); } catch { reply = null; }
-    const total = gatewayPromptTotal(reply);
-    if (promptBody && parsed.kind === "s" && total !== null) recordGatewayPrompt(parsed.id, promptBody, total);
     const { body: normalized, rewritten } = normalizeMessagesResponse(text);
     if (rewritten) console.log(`[gateway-shim] rewrote an OpenAI-shaped reply from ${baseUrl} into an Anthropic message`);
     return new Response(normalized, { status: upstream.status, headers: out });
@@ -718,9 +697,6 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   if (upstream.ok && upstream.body && /text\/event-stream/i.test(contentType)) {
     let stream: ReadableStream<Uint8Array> = upstream.body;
     if (namespaces.length) stream = stream.pipeThrough(renamespaceSse(namespaces, renames));
-    if (promptBody && parsed.kind === "s") {
-      stream = tapGatewaySse(stream, (total) => recordGatewayPrompt(parsed.id, promptBody!, total));
-    }
     return new Response(stream, { status: upstream.status, headers: out });
   }
   if (namespaces.length && upstream.ok && upstream.body) {

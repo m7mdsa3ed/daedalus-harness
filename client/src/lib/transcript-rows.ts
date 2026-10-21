@@ -13,7 +13,17 @@
    that draw the top level (thread-items), and thread-view already imports
    those — the types have to live somewhere both can reach without a cycle. */
 import type { AsyncTaskItem, ShellItem, SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
-import { ASK_AGENT, extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId, toolKindOf, toolViewOf } from "./tools"
+import {
+  ASK_AGENT,
+  extractBackgroundTask,
+  extractMcpCall,
+  extractSubagent,
+  isSubagentLaunch,
+  mcpServerKey,
+  subagentItemId,
+  toolKindOf,
+  toolViewOf,
+} from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
 import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
@@ -922,8 +932,8 @@ const isConfigNotice = (row: Row): row is NoticeItem => row.kind === "notice" &&
 
 /**
  * A stretch of consecutive calls becomes one parent group. Its children split at
- * specialized-view changes, with repeated same-view calls folded into expandable
- * subgroups. Other content stays outside these groups — prose, a plan, a
+ * changes of `runKeyOf` — the resolved view, and for an MCP call the server that
+ * took it — with repeated same-key calls folded into expandable subgroups. Other content stays outside these groups — prose, a plan, a
  * subagent, a `!` command, a thought: a row that is not a call ends the run it
  * would have joined. A call on its own remains ungrouped, including while a turn
  * is active.
@@ -956,8 +966,8 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
 
   const flush = () => {
     const tools = items.filter((item): item is ToolItem => item.kind === "tool")
-    const views = new Set(tools.map(toolViewOf))
-    if (tools.length > 1 && views.size === 1) {
+    const keys = new Set(tools.map(runKeyOf))
+    if (tools.length > 1 && keys.size === 1) {
       out.push({ kind: "run", id: items[0].id, items })
     } else if (tools.length > 1) {
       out.push({
@@ -1007,26 +1017,57 @@ export function groupToolRuns(rows: Row[], groupEdits = false): Row[] {
   return out
 }
 
-/** Split one consecutive sequence into same-view expandable subgroups. */
+/* Cached per item object, like `TOOL_VIEW_CACHE`: the store replaces an item
+   whenever its content changes, so identity is an exact key and a hit can never
+   be stale. Worth it because the fold asks this on every streamed chunk. */
+const RUN_KEY_CACHE = new WeakMap<ToolItem, string>()
+
+/**
+ * What a run is a run OF.
+ *
+ * The resolved view — plus, for a call into an MCP server, *which* server. A
+ * dozen calls to four integrations all resolve to the `mcp` view, and folding
+ * them into one line said "Running 12 tools" about a stretch that was four
+ * different integrations' work: the first thing a reader scans for is which
+ * integration acted, and the ACP kind is the last thing that can say it. So the
+ * server is part of the key, and each server's consecutive calls fold together
+ * (`Clickup · 4 calls`) instead of all of them under one `mcp` heading.
+ *
+ * Consecutive is the whole rule, deliberately: a run never reorders the steps
+ * it holds, because a call's result is often what the next call was for. Two
+ * stretches to the same server with another server's calls between them are two
+ * runs, and the fold's own line still counts them together (`summarise`).
+ */
+function runKeyOf(item: ToolItem): string {
+  const cache = RUN_KEY_CACHE.get(item)
+  if (cache !== undefined) return cache
+  const view = toolViewOf(item)
+  const call = view === "mcp" ? extractMcpCall(item) : null
+  const key = call ? `mcp:${mcpServerKey(call.server)}` : view
+  RUN_KEY_CACHE.set(item, key)
+  return key
+}
+
+/** Split one consecutive sequence into same-key expandable subgroups. */
 function groupSameViewRuns(items: RunItem[]): Array<RunItem | ToolRunGroup> {
   const out: Array<RunItem | ToolRunGroup> = []
   let run: RunItem[] = []
-  let runView: ReturnType<typeof toolViewOf> | null = null
+  let runKey: string | null = null
 
   const flush = () => {
     if (run.filter((item) => item.kind === "tool").length > 1)
       out.push({ kind: "run", id: run[0].id, items: run })
     else out.push(...run)
     run = []
-    runView = null
+    runKey = null
   }
 
   for (const item of items) {
     if (item.kind === "tool") {
-      const view = toolViewOf(item)
-      if (runView !== null && runView !== view) flush()
+      const key = runKeyOf(item)
+      if (runKey !== null && runKey !== key) flush()
       run.push(item)
-      runView = view
+      runKey = key
     } else {
       run.push(item)
     }

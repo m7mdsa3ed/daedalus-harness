@@ -87,6 +87,7 @@ export {
   mcpServerKey,
   mcpServerLabel,
   mcpSubject,
+  mcpTintIndex,
 } from "./tools/mcp"
 
 export type { HarnessAction, HarnessCall, HarnessEffect, HarnessTable, HarnessVerb } from "./tools/harness"

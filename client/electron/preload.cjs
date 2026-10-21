@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld("desktop", {
     pick: (guestId) => ipcRenderer.invoke("preview-pick", guestId),
     cancel: (guestId) => ipcRenderer.invoke("preview-pick-cancel", guestId),
   },
+  /** Docked DevTools: render the guest's DevTools into the blank host webview. */
+  previewDevtools: {
+    open: (guestId, hostId) => ipcRenderer.invoke("preview-devtools-open", guestId, hostId),
+  },
   /** electron-updater (main.cjs "Updates"): `check` resolves `{available, version?}`
       once a found update has downloaded; `install` quits into it, and rejects
       when nothing has been downloaded. Absent where main runs no updater. */

@@ -380,23 +380,38 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   since a transcript row draws what the row holds and a listing read per server
   mentioned would turn reading a thread into catalog requests. A server nobody
   in the library names keeps the kind glyph: a guess wearing a logo is worse
-  than a wrench. The row also captioned nothing — `Clickup · Get Task` never
-  said which task — so `mcpSubject` picks the argument that names the thing
-  acted on (`query`, `path`, a task's `name`, and `id` last, because plenty of
-  servers put a workspace's id there) and it is the step's caption. And the
-  answer arrived as MCP's envelope, `{content:[{type:"text",text}],
-  structuredContent, isError}`, drawn as a JSON tree three folds deep around an
-  escaped string; `mcpAnswer` flattens the blocks, lifts `structuredContent`
-  beside them (folded at the root), unwraps the runtime's own `{result, error}`
-  and `{output}` wrappers one level, and says `isError` as a failure. A server
-  that answers a document still gets the tree — it is the same reader, pointed
-  at the letter instead of the envelope — and an answer that arrived as ACP
-  content blocks is drawn once, not twice: `Result` is for the dialect that
-  keeps the reply on the call. The pair in the title is `mcpCallLabel`, which
-  spells the server as a person typed it (`GitHub_Work` is never "Git Hub
-  Work") and drops the vendor's own name from the tool, because Clickup's
-  server names its tools `clickup_get_task`. `mcp.check.mjs` holds the three
-  dialects' shapes.
+  than a wrench. **The row is then two facts in two shapes**: the tool is the
+  title ("Get Task" is what happened) and the integration is a chip beside it
+  (`McpServerChip`, the same `CHIP` a file gets), because a mono `Server · Tool`
+  only reads as a sentence when it is one — when one half is a *place*, a chip is
+  this app's answer for it. **Each integration wears its own colour** — the
+  chip's wash and ink, the disc behind its mark, and the disc it gets in a run's
+  stack — and nobody assigns it: `mcpTintIndex` derives it from the server's name
+  (FNV-1a with one avalanche step, because a plain multiply left eight
+  integrations on six colours), and `MCP_TINTS` is ordered *across* the wheel
+  rather than along it, so two buckets that do collide are the two furthest
+  apart in hue. The same server is the same colour on every device, and a server
+  somebody adds tomorrow has one before anyone opens Settings. `toolHeading`
+  still returns the joined pair as `title` (the approval card, the inspector and
+  the composer's activity line have no chip slot), and carries the halves on
+  `integration` for the row that does. It also captions the row with the subject (`mcpSubject` — the argument
+  that names the thing: a `query`, a `path`, a task's `name`, with `id` last
+  because plenty of servers put a workspace's id there), so `Clickup · Get Task`
+  no longer means an unnamed task. And the answer arrived as MCP's envelope,
+  `{content:[{type:"text",text}], structuredContent, isError}`, drawn as a JSON
+  tree three folds deep around an escaped string; `mcpAnswer` flattens the
+  blocks, unwraps the runtime's own `{result, error}` and `{output}` wrappers one
+  level, and says `isError` as a failure. `structuredContent` is read as the
+  answer *only* when the server sent no text at all: it never earns a section of
+  its own, so the pane a call draws is the same pane whatever the server put the
+  reply in — which is the rule this view is held to, and why a two-column
+  exchange layout was drawn here once and taken back out. A server that answers a document still gets the tree —
+  it is the same reader, pointed at the letter instead of the envelope — and an
+  answer that arrived as ACP content blocks is drawn once, not twice. The pair in
+  the title is `mcpCallLabel`, which spells the server as a person typed it
+  (`GitHub_Work` is never "Git Hub Work") and drops the vendor's own name from
+  the tool, because Clickup's server names its tools `clickup_get_task`.
+  `mcp.check.mjs` holds the three dialects' shapes.
   **A row's default expansion is the view's own decision, and the view is not known
   when the row mounts.** `opensByDefault` is a column on the same table as `Detail` and
   `hasDetail`, so a diff, a checklist and a plan stand open and everything else is a one-line
@@ -1007,7 +1022,15 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   run holds calls and the settings changed between them and nothing else (`RunItem` is a call or
   a notice). What a group cannot be is a group of one call: that is still a step, not a fold.
   The counting line is the
-  calls': it says what the group did, not what was on screen. **A setting changed between two of
+  calls': it says what the group did, not what was on screen.
+  **A run is keyed by the integration it went to, not only by the layout** (`runKeyOf`): every
+  MCP call resolves to the same `mcp` view, so thirty calls to four servers used to fold into one
+  line reading "Running 30 tools" over a stack of six identical wrenches. The server is part of
+  the key, so one integration's *consecutive* calls fold together, and the counting line and the
+  stack are by integration too ("Bugsnag 6 calls · Clickup 4 calls", one mark per server rather
+  than one per call). Consecutive is deliberate: **a run never reorders the steps it holds**,
+  because a call's result is often what the next call was for — so interleaved servers are
+  several stretches inside one group, and that group's own line is what counts them together. **A setting changed between two of
   those calls rides inside the run too** (`isConfigNotice`): the agent changed nothing about the
   work it was doing, and drawn
   as a rule across the transcript the notice split one run into two, each counting half of it.
@@ -2070,7 +2093,8 @@ enabled ones), the landing chips and the palette name the same noun. Code is
     provider. A native workflow step's transcript is still fetched only when its row opens
     (`loadAgentTranscript`). A sheet closes itself on a jump.
   - **Details** — model, workspace, usage, workflow runs and history.
-  - **Tokens** (`thread-view/tokens-panel.tsx`, arithmetic in `lib/token-breakdown.ts`,
+  - **A model span's detail draws its prompt by part** (`trajectory/prompt-parts.tsx`, read from `daedalus.prompt_parts` by `spanPromptParts`): the same parts, labels and swatches as the Tokens tab, each static part opening onto its items, for any runtime whose request the server could divide (Claude Code over OTLP, our agent's GenAI attributes).
+- **Tokens** (`thread-view/tokens-panel.tsx`, arithmetic in `lib/token-breakdown.ts`,
     checked by `token-breakdown.check.mjs`) — two readings kept apart. **Billed** is the
     provider's own count (new input, cache read, cache write, output, reasoning — exact,
     every runtime), headlined by its total. **Prompt** is what a request held, drawn as one
@@ -2082,7 +2106,11 @@ enabled ones), the landing chips and the palette name the same noun. Code is
     up to the part. The prefix lists ride our runtime's first step of each attempt
     (`_meta.daedalus.breakdown.items`) and carry forward to the steps after it; the history
     lists are the transcript the request carried. For our runtime the parts are
-    **measured**; for any other they are **inferred**: the transcript up to the request is
+    **measured**; a request that went through the gateway shim (any runtime on a profile with a
+    base URL) was **estimated from its body** by the gateway shim in an older version (those rows still draw); a runtime that keeps its prompt
+    in its own saved files (`AgentDef.promptFiles`) gets its **static part from those files**
+    (system, tools, MCP — `docs/protocol.md` "What a prompt held"), with a **Not available**
+    warning naming what its file does not hold; for any other they are **inferred**: the transcript up to the request is
     counted at about four characters a token, a finished compaction replaces what preceded
     it, and what is left of the request's `used` is "Agent overhead" — the system prompt and
     tool schemas inside that agent's process, which have no item list. Every figure carries

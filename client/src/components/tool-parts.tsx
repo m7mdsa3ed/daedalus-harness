@@ -42,6 +42,7 @@ import {
   fileRangeOf,
   formatRange,
   hostOf,
+  mcpTintIndex,
   safeJson,
   shortPath,
   splitCommand,
@@ -113,6 +114,38 @@ export const KIND_CHIPS: Record<string, string> = {
   fetch: "bg-teal-500/12",
   switch_mode: "bg-indigo-500/12",
   other: "bg-slate-500/12",
+}
+
+/* One accent per MCP integration, for the chip that names it and the disc the
+   run stack turns behind its logo. The hue is *derived* (`mcpTintIndex`), not
+   assigned: a server somebody adds tomorrow gets a colour without a table anyone
+   has to edit, and the same server is the same colour everywhere — the bargain
+   `InitialMark` makes for a project. Twelve, from the palette the kind tints
+   already use, because a transcript holds a handful of integrations and the
+   whole job is telling them apart at a glance. */
+export const MCP_TINTS: { wash: string; accent: string }[] = [
+  /* Deliberately not in spectrum order. The modulus hands out neighbours, and
+     two neighbouring entries are drawn side by side in the same transcript — so
+     the order alternates across the wheel instead (rose, teal, amber, indigo…),
+     and the buckets that collide are the ones furthest apart in hue. */
+  { wash: "bg-rose-500/12", accent: "text-rose-600 dark:text-rose-300" },
+  { wash: "bg-teal-500/12", accent: "text-teal-600 dark:text-teal-300" },
+  { wash: "bg-amber-500/12", accent: "text-amber-600 dark:text-amber-300" },
+  { wash: "bg-indigo-500/12", accent: "text-indigo-600 dark:text-indigo-300" },
+  { wash: "bg-lime-500/12", accent: "text-lime-700 dark:text-lime-300" },
+  { wash: "bg-fuchsia-500/12", accent: "text-fuchsia-600 dark:text-fuchsia-300" },
+  { wash: "bg-sky-500/12", accent: "text-sky-600 dark:text-sky-300" },
+  { wash: "bg-orange-500/12", accent: "text-orange-600 dark:text-orange-300" },
+  { wash: "bg-violet-500/12", accent: "text-violet-600 dark:text-violet-300" },
+  { wash: "bg-emerald-500/12", accent: "text-emerald-600 dark:text-emerald-300" },
+  { wash: "bg-pink-500/12", accent: "text-pink-600 dark:text-pink-300" },
+  { wash: "bg-cyan-500/12", accent: "text-cyan-600 dark:text-cyan-300" },
+]
+
+/** The colour one MCP integration wears: a wash for its chip and for the disc
+    behind its mark, and the hue's own ink for the word on it. */
+export function mcpTint(server: string): { wash: string; accent: string } {
+  return MCP_TINTS[mcpTintIndex(server, MCP_TINTS.length)]
 }
 
 /* Prose palette + code/table styling live in index.css, so both themes come

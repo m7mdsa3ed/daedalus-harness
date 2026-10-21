@@ -169,6 +169,13 @@ export function toolDescription(item: {
  */
 export interface ToolHeading {
   title: string
+  /** The pair a row wears as two parts, when what acted on what is *two* facts
+      rather than one sentence: an MCP call names the integration and the tool,
+      and the row draws the tool in its title with the integration on a chip
+      beside it (`StepRow`'s `chip`). `title` still holds the joined pair, so a
+      surface with no chip slot — the approval card, the inspector, the
+      composer's activity line — reads what it always read. */
+  integration?: { server: string; tool: string }
   /** The command/path/pattern, when the title is prose *about* it. */
   detail?: string
   /** The title is a sentence, not an identifier — don't set it in mono. */
@@ -351,6 +358,7 @@ export function toolHeading(
     const { server, tool } = mcpCallLabel(mcp)
     return {
       title: tool ? `${server} · ${tool}` : server,
+      integration: tool ? { server, tool } : undefined,
       detail: mcpSubject(mcp) ?? undefined,
       prose: false,
     }

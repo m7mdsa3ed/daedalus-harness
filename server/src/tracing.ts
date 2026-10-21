@@ -31,9 +31,10 @@ import {
   type ReadableSpan,
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
 
 import { db, traceSpans } from "./db/index.js";
+import { PROMPT_PARTS_ATTR, partsOf, shapeFromGenAi } from "./prompt-parts.js";
 import {
   TRACE_LIST_VALUE_LIMIT,
   type TraceAttributeValue,
@@ -275,6 +276,11 @@ export function ingest(sessionId: string, params: TraceNotificationParams): void
   for (const span of params.spans) {
     if (!span || typeof span.spanId !== "string" || typeof span.traceId !== "string") continue;
     const attributes = capAttributes(span.attributes);
+    /* The request itself is on a `chat` span — system instructions, tool
+       definitions, input messages — as the AI SDK wrote it, and storage caps one
+       value at 256KB, so it is divided here, from the whole value, and the
+       result written beside it once counted (`daedalus.prompt_parts`). */
+    void annotateRequestParts(sessionId, span.spanId, span.attributes as Record<string, unknown>);
     const start = Number(span.start);
     const end = span.end === null || span.end === undefined ? start : Number(span.end);
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
@@ -299,6 +305,60 @@ export function ingest(sessionId: string, params: TraceNotificationParams): void
     );
   }
   schedule();
+}
+
+/* ── What a request held, written beside the span that made it ── */
+
+/** Merge attributes into a stored span. Waits for the queue first, so a span
+    ingested a moment ago is there to update; false if there is still no such
+    span (a thread purged, or a span that never arrived). */
+export async function annotateSpan(
+  sessionId: string,
+  spanId: string,
+  patch: Record<string, TraceAttributeValue>,
+): Promise<boolean> {
+  const value = JSON.stringify(capAttributes(patch));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await flush();
+    const rows = await db
+      .update(traceSpans)
+      .set({ attributes: sql`${traceSpans.attributes} || ${value}::jsonb` })
+      .where(and(eq(traceSpans.sessionId, sessionId), eq(traceSpans.spanId, spanId)))
+      .returning({ spanId: traceSpans.spanId });
+    if (rows.length > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+async function annotateRequestParts(sessionId: string, spanId: string, attributes: Record<string, unknown>): Promise<void> {
+  try {
+    const shape = shapeFromGenAi(attributes);
+    if (!shape) return;
+    /* OpenAI-compatible: `input_tokens` already includes what was cached. */
+    const total = Number(attributes["gen_ai.usage.input_tokens"]);
+    const parts = await partsOf(shape, total, "agent");
+    if (parts) await annotateSpan(sessionId, spanId, { [PROMPT_PARTS_ATTR]: JSON.stringify(parts) });
+  } catch (error) {
+    console.warn(`[tracing] could not divide a request's prompt: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+/** The harness's own `session/prompt` span that was running at `ms` — what a
+    runtime's interaction hangs under when it reports itself over OTLP. */
+export async function requestSpanAt(sessionId: string, ms: number): Promise<{ traceId: string; spanId: string } | null> {
+  for (const span of open.values()) {
+    if (span.attributes[SESSION_ATTR] !== sessionId || span.attributes[KIND_ATTR] !== "request") continue;
+    if (toMs(span.startTime) <= ms + 1000) return { traceId: span.spanContext().traceId, spanId: span.spanContext().spanId };
+  }
+  await flush();
+  const [row] = await db
+    .select({ traceId: traceSpans.traceId, spanId: traceSpans.spanId, end: traceSpans.end })
+    .from(traceSpans)
+    .where(and(eq(traceSpans.sessionId, sessionId), eq(traceSpans.kind, "request"), lte(traceSpans.start, ms + 1000)))
+    .orderBy(desc(traceSpans.start))
+    .limit(1);
+  return row && row.end >= ms - 1000 ? { traceId: row.traceId, spanId: row.spanId } : null;
 }
 
 /* ── Reading ── */

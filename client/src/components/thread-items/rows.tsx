@@ -46,6 +46,7 @@ import {
   KIND_COLORS,
   KIND_ICONS,
   SmartBlock,
+  mcpTint,
   THOUGHT_MAX_H,
   Timestamp,
 } from "@/components/tool-parts"
@@ -61,6 +62,7 @@ import {
   ToolSources,
   toolHasDetail,
   toolOpensByDefault,
+  McpServerChip,
   useMcpMark,
 } from "@/components/tool-views"
 import {
@@ -1446,6 +1448,15 @@ const ToolStep = React.memo(function ToolStep({
      A subagent's step drops the child's name its runtime may have prefixed —
      the rail it sits in is already headed by that name. */
   const heading = toolHeading(item.parentId ? { ...item, title: childToolTitle(item) } : item)
+  /* An MCP call is two facts, and the row draws them as two shapes: the tool in
+     the title ("Get Task" is what happened) and the integration on a chip beside
+     it. `heading.title` still holds the pair for every surface with no chip slot
+     — the approval card, the inspector, the composer's activity line. */
+  const integration = heading.integration
+  /* The integration's own colour behind its mark, so a column of MCP rows is
+     told apart by hue as well as by logo — derived from the server's name
+     (`mcpTint`), never assigned, so a server nobody has met yet still gets one. */
+  const integrationTint = integration ? mcpTint(integration.server) : null
 
   return (
     <StepRow
@@ -1463,19 +1474,22 @@ const ToolStep = React.memo(function ToolStep({
       iconChip={
         harnessMark
           ? harnessMark.chip
-          : isTodoTool
-            ? "bg-primary/12"
-            : isSkillTool
-              ? "bg-purple-500/12"
-              : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
+          : integrationTint
+            ? integrationTint.wash
+            : isTodoTool
+              ? "bg-primary/12"
+              : isSkillTool
+                ? "bg-purple-500/12"
+                : KIND_CHIPS[webSearch ? "search" : kind] ?? KIND_CHIPS.other
       }
       toolLayout={view.toolLayout}
       toolVariant={view.toolVariant}
-      target={heading.title}
+      target={integration ? integration.tool : heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
          typed is still in the body, which is where it is read once the line
          above it says what the call was for. */
       caption={view.showToolCommand ? heading.detail : undefined}
+      chip={integration ? <McpServerChip label={integration.server} /> : undefined}
       file={heading.file}
       filePath={heading.filePath}
       fileRange={fileRangeOf(item) ?? undefined}

@@ -105,6 +105,31 @@ export function mcpCallLabel(call: McpCall): { server: string; tool: string } {
   return { server, tool: trimmed }
 }
 
+/**
+ * Which of an integration's colours a server wears.
+ *
+ * Derived from its name, the same bargain `InitialMark` makes for a project's
+ * initial: a server somebody adds tomorrow gets a colour without anyone
+ * choosing one, and the same server is the same colour on every device and in
+ * every transcript. Normalised through `mcpServerKey` first, so the dialects'
+ * three spellings of one name cannot come out as three colours.
+ *
+ * Pure and here rather than beside the palette, because *which* colour is a fact
+ * about the name and *what colour* is drawing (`MCP_TINTS`, `tool-parts.tsx`).
+ */
+export function mcpTintIndex(server: string, count: number): number {
+  if (count <= 0) return 0
+  /* FNV-1a with one avalanche step: the multiply alone leaves the low bits — the
+     bits a modulus reads — poorly mixed, so eight integrations landed on six
+     colours. Spreading them is the whole job of this function. */
+  let hash = 0x811c9dc5
+  for (const ch of mcpServerKey(server)) {
+    hash = (hash ^ ch.charCodeAt(0)) >>> 0
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return ((hash ^ (hash >>> 13)) >>> 0) % count
+}
+
 /* The argument keys that name the thing an MCP tool acted on, best first.
    A server's arguments are its own vocabulary, but these are the same word in
    most of them — and `Clickup · Get task` on a row has not told the reader

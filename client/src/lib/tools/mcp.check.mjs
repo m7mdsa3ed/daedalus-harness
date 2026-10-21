@@ -6,7 +6,15 @@
 */
 import assert from "node:assert"
 
-import { extractMcpCall, mcpAnswer, mcpCallLabel, mcpServerKey, mcpServerLabel, mcpSubject } from "./mcp.ts"
+import {
+  extractMcpCall,
+  mcpAnswer,
+  mcpCallLabel,
+  mcpServerKey,
+  mcpServerLabel,
+  mcpSubject,
+  mcpTintIndex,
+} from "./mcp.ts"
 import { toolHeading } from "./heading.ts"
 
 // Claude Code / OpenCode: flattened name, arguments as the raw input.
@@ -49,6 +57,20 @@ assert.deepEqual(mcpCallLabel({ server: "context7", tool: "query-docs" }), {
   tool: "Query Docs",
 })
 
+// The colour an integration wears: derived, stable, and the same in every
+// dialect — a server cannot be two colours because two runtimes spell it
+// differently.
+assert.equal(mcpTintIndex("Clickup", 12), mcpTintIndex("clickup", 12))
+assert.equal(mcpTintIndex("GitHub_Work", 12), mcpTintIndex("GitHub Work", 12))
+assert.ok(mcpTintIndex("Clickup", 12) >= 0 && mcpTintIndex("Clickup", 12) < 12)
+assert.equal(mcpTintIndex("", 0), 0, "a palette with no entries still answers")
+{
+  // The three integrations that share a transcript most often get three
+  // colours, not two-plus-a-collision.
+  const hues = new Set(["Clickup", "Bugsnag", "GitHub Work"].map((name) => mcpTintIndex(name, 12)))
+  assert.equal(hues.size, 3, `colliding integrations: ${[...hues].join(",")}`)
+}
+
 // The subject: the argument that names the thing acted on, never the workspace id.
 assert.equal(mcpSubject({ server: "s", tool: "t", arguments: { name: "Fix login", id: "900" } }), "Fix login")
 assert.equal(mcpSubject({ server: "s", tool: "t", arguments: { owner: "o", repo: "r", path: "src/a.ts" } }), "src/a.ts")
@@ -79,6 +101,11 @@ assert.equal(mcpAnswer({ server: "s", tool: "t" }, { text: "the letter" }).text,
 // A bare object IS the answer, so it stays the document it is.
 assert.equal(mcpAnswer({ server: "s", tool: "t", result: { count: 2 } }).text, '{\n  "count": 2\n}')
 
+// The answer as a document: the tree a view draws, and the count it labels with.
+assert.deepEqual(mcpAnswer({ server: "s", tool: "t", result: { content: [{ type: "text", text: "[1,2,3]" }] } }).document, [1, 2, 3])
+assert.equal(mcpAnswer({ server: "s", tool: "t", result: { content: [{ type: "text", text: "prose" }] } }).document, undefined)
+assert.equal(mcpAnswer({ server: "s", tool: "t", result: { content: [{ type: "text", text: "{}" }] } }).document !== undefined, true)
+
 // The row: the integration and the tool in the title, the subject as its caption.
 const heading = toolHeading({
   title: "mcp__Clickup__create_task",
@@ -86,6 +113,14 @@ const heading = toolHeading({
   rawInput: { name: "Fix login", list_id: "901" },
 })
 assert.equal(heading.title, "Clickup · Create Task")
+// The row draws those two halves as two shapes: the tool in the title, the
+// integration on a chip. `title` keeps the pair for surfaces with no chip slot.
+assert.deepEqual(heading.integration, { server: "Clickup", tool: "Create Task" })
+assert.equal(
+  toolHeading({ title: "mcp__web-search__web_search", meta: {}, rawInput: { query: "x" } }).integration,
+  undefined,
+  "a web search is not an integration"
+)
 assert.equal(
   toolHeading({ title: "mcp__GitHub_Work__search_code", meta: {}, rawInput: { query: "Socket" } }).title,
   // The runtime lowercased the prefix, so the case of "GitHub" is gone before

@@ -133,6 +133,7 @@ export const StepRow = React.memo(function StepRow({
   file,
   filePath,
   fileRange,
+  chip,
   label,
   status,
   metric,
@@ -176,6 +177,11 @@ export const StepRow = React.memo(function StepRow({
   /** The lines the row was about, so opening the badge lands on them and tints
       them rather than opening the file at the top. */
   fileRange?: FileRange
+  /** A chip after the target for what acted rather than what was acted on: the
+      MCP integration that took the call (`McpServerChip`). Its own slot beside
+      `file` because the two say the same kind of thing — the row, then the thing
+      it happened to or through — and a row never has both. */
+  chip?: React.ReactNode
   /** The trailing word. Optional: a row whose leading icon already says what
       kind of step it is (every tool, plan and compaction row does) prints
       nothing here, and only a failure claims the column. A node, so a live row
@@ -462,6 +468,7 @@ export const StepRow = React.memo(function StepRow({
                 >
                   {open && openTarget !== undefined ? openTarget : target}
                 </span>
+                {chip}
                 {file && <FileBadge file={file} filePath={filePath} range={fileRange} />}
               </div>
               {caption && (

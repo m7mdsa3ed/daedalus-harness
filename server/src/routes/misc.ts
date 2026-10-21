@@ -6,6 +6,7 @@ import { SEARCH_LIMIT, searchEvents } from "../search.js";
 import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listAllKnowledge, listKnowledge } from "../knowledge.js";
 import { BundleSchema, exportBundle, importBundle } from "../backup.js";
 import { proxyGatewayRequest } from "../gateway-shim.js";
+import { handleOtlp } from "../otlp.js";
 import { handlePauseHook } from "../pause-hooks.js";
 import { proxyMcpRequest } from "../mcp-shim.js";
 import { getProfileQuota, getQuota, quotaCwd } from "../quota.js";
@@ -337,6 +338,11 @@ export function miscRoutes(
      the path is the credential, and the answer is only ever late, never "no"
      (pause-hooks.ts). */
   app.post("/ph/*", (c) => handlePauseHook(c.req.raw));
+
+  /* A runtime's own OpenTelemetry — spans and the events that name its request
+     bodies — mounted the same way: the derived key in the path is the
+     credential, and it is filed under the thread the path names (otlp.ts). */
+  app.all("/otlp/*", (c) => handleOtlp(c.req.raw));
 
   /* The MCP OAuth shim, mounted the same way and for the same reason: the
      credential is in the path, the route is outside /api, and what it fronts

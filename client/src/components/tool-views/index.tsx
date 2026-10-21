@@ -43,7 +43,7 @@ import type { ToolItem } from "@/lib/store"
    between its brief and its report, and `thread-cards.tsx` draws a checklist
    from ACP's plan channel), plus the row-level strips. */
 export { TodoList, ToolAnswers } from "@/components/tool-views/structured"
-export { useMcpMark } from "@/components/tool-views/mcp"
+export { McpServerChip, useMcpMark } from "@/components/tool-views/mcp"
 export { AskAgentChip, BriefSection, SubagentBrief, SubagentReport } from "@/components/tool-views/subagent"
 export { ToolSources } from "@/components/tool-views/web"
 export type { McpToolView, McpToolViewProps } from "@/components/tool-views/mcp-registry"

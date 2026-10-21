@@ -32,6 +32,7 @@ import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
+import { configureOtlp } from "./otlp.js";
 import { configurePauseHooks } from "./pause-hooks.js";
 import { Push } from "./push.js";
 import { addNotification } from "./notifications.js";
@@ -67,6 +68,9 @@ configureMcpShim({ port: config.port });
 /* And for a runtime paused through its own hooks: they call `/ph/<key>/<id>`,
    which answers only while the thread is not paused (pause-hooks.ts). */
 configurePauseHooks({ port: config.port });
+/* And for a runtime that reports its own OpenTelemetry: it posts to
+   `/otlp/<key>/<threadId>` (otlp.ts), which files it under that thread. */
+configureOtlp({ port: config.port });
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 await seedAgents();
@@ -269,7 +273,7 @@ app.use("/api/sessions/:id/spans/:spanId", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /gw/* + /mx/* + /wf/* + /hm/* + /rt/* are outside /api with the key-in-path
+   and /gw/* + /otlp/* + /mx/* + /wf/* + /hm/* + /rt/* are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)

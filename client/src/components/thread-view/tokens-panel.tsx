@@ -20,6 +20,7 @@ import * as React from "react"
 import { ChevronRightIcon } from "lucide-react"
 
 import { Empty } from "@/components/empty"
+import { Notice } from "@/components/notice"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import {
@@ -48,6 +49,26 @@ const about = (n: number) => `~${formatTokens(n)}`
 const sum = (parts: PromptParts) => Object.values(parts).reduce((n, v) => n + v, 0)
 /** The columns the request chart draws, newest last — more would be slivers. */
 const CHART_MAX = 48
+
+const SOURCE_TAG: Record<Request["source"], string> = {
+  agent: "agent breakdown",
+  gateway: "gateway estimate",
+  files: "saved-file estimate",
+  transcript: "transcript estimate",
+}
+
+/** The sentence for a part the picked request's source could not see. Said at
+    the top of the Prompt card, above the numbers it qualifies, because "Agent
+    overhead" otherwise reads as a measurement. Null when everything is known. */
+function unavailable(selected: Request): string | null {
+  if (selected.source === "files" && selected.missing.length > 0)
+    return `This agent does not save ${listed(selected.missing)}. Their tokens are in Agent overhead, so that row is the part that cannot be split.`
+  if (selected.source === "transcript")
+    return "This agent does not expose its system prompt, tool schemas or MCP tools to the harness, so they are one figure: Agent overhead. Your messages, replies and tool results are estimated from the transcript."
+  return null
+}
+
+const listed = (items: string[]) => (items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} or ${items.at(-1)}`)
 
 /** A figure tile inside an `InspectorCard` body: its corner is the card's
     less the body's padding (`frame-2xl` / `frame-p-3` → `rounded-inner`). */
@@ -296,7 +317,9 @@ function PromptRows({
 
 interface Request {
   number: number
-  source: "agent" | "gateway" | "transcript"
+  source: "agent" | "gateway" | "files" | "transcript"
+  /** What the runtime's saved files do not hold (`source: "files"` only). */
+  missing: string[]
   /** Position in the thread's flat list of requests. */
   index: number
   step: TurnStep
@@ -454,7 +477,7 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
 
       {spend.length > 0 && <SubagentsBlock spend={spend} />}
 
-      <InspectorCard title="Prompt" hint={selected ? <Tag>{selected.source === "agent" ? "agent breakdown" : selected.source === "gateway" ? "gateway estimate" : "transcript estimate"}</Tag> : undefined}>
+      <InspectorCard title="Prompt" hint={selected ? <Tag>{SOURCE_TAG[selected.source]}</Tag> : undefined}>
         {selected && all ? (
           <>
             <RequestChart requests={requests} picked={selected.number} onPick={setPicked} />
@@ -476,6 +499,11 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
                 {largest.label} lead at {pct(selected.parts[largest.key], selectedTotal)}
                 {selected.step.update.size > 0 && !windowEstimated(selected.step.update) && ` · ${pct(selected.step.update.used, selected.step.update.size)} of the window`}
               </p>
+            )}
+            {unavailable(selected) && (
+              <Notice tone="warn" size="sm" className="mt-2" title="Not available">
+                {unavailable(selected)}
+              </Notice>
             )}
             <StackBar
               className="mt-2 h-2.5"
@@ -504,9 +532,15 @@ export function TokensPanel({ thread }: { thread: ThreadState }) {
                 )}
                 {requests.some((request) => request.source === "gateway") && (
                   <p>
-                    Gateway estimates tokenize the request body and use the provider's prompt total. System text, tool schemas,
-                    and message roles are estimated separately; framing and agent-internal prompt content remain overhead.
-                    Tokenizer differences can shift these estimates.
+                    Gateway estimates (recorded by an earlier version) tokenized the request body and scaled each part to the provider's prompt total, so every
+                    part shares the tokenizer difference. Treat them as proportions.
+                  </p>
+                )}
+                {requests.some((request) => request.source === "files") && (
+                  <p>
+                    Saved-file estimates count what the runtime wrote down about its prompt (system prompt, tool schemas, MCP
+                    instructions, skills, project rules) with the harness's tokenizer, then scale every part to the request's
+                    total. Your messages, replies and tool results are still read off the transcript.
                   </p>
                 )}
                 {requests.some((request) => request.source === "transcript") && (

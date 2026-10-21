@@ -14,6 +14,7 @@ import {
   type WorkspaceLayout,
 } from "./db/index.js";
 import { gatewayUrlFor } from "./gateway-shim.js";
+import { otlpBodiesFor, otlpUrlFor, type TelemetryDialect } from "./otlp.js";
 import { writeCodexModelCatalog } from "./model-catalog.js";
 import type { ModelRole } from "./model-roles.js";
 import { modelPromptsFilePath } from "./model-prompts.js";
@@ -244,6 +245,37 @@ export interface AgentDef {
    */
   builtinTools?: BuiltinToolOverrides | null;
   /**
+   * Which of the runtime's own saved files says what its prompts were made of
+   * (`prompt-files.ts`), for a runtime whose requests the harness cannot see
+   * (no gateway profile, or a subscription login).
+   *
+   *  - `"claude-jsonl"`: `<config>/projects/*\/<session>.jsonl`, whose
+   *    `prompt_snapshot` and context attachments hold the system prompt, the
+   *    tool schemas, MCP instructions, skills and project rules.
+   *  - `"codex-rollout"`: `$CODEX_HOME/sessions/**\/rollout-*-<session>.jsonl`,
+   *    which holds the system prompt and the developer/environment messages —
+   *    and no tool schemas.
+   *  - `"opencode-sqlite"`: OpenCode's `opencode.db`, whose `instruction_state`
+   *    holds the injected context (environment, MCP guidance, skills, the tool
+   *    listing) — and neither its own system prompt nor tool schemas.
+   *
+   * Each reader says what its file does not hold (`missing`), and the Tokens
+   * panel says it back. Null = nothing is read, and the prompt is inferred from
+   * the transcript. A format, never an id, so a fork that keeps a runtime's
+   * files keeps the reading.
+   */
+  promptFiles?: "claude-jsonl" | "codex-rollout" | "opencode-sqlite" | null;
+  /**
+   * Whether this runtime exports OpenTelemetry to the harness (`otlp.ts`), and in
+   * whose dialect: `"claude-otlp"` = Claude Code's `claude_code.*` spans and
+   * `api_request_body` events, delivered to the `{otlpUrl}` its env template
+   * names. The env carries the switches (it is the user's to edit); this column
+   * is the one fact the bridge needs — *the runtime reports its own model and
+   * tool spans, so do not derive them from ACP as well*. Null = it exports
+   * nothing, and the bridge derives them. A dialect, never an id.
+   */
+  telemetryVia?: TelemetryDialect | null;
+  /**
    * The plain CLI to ask for the built-in model catalog a generated one is
    * modelled on (`model-catalog.ts`), for a runtime whose env template names
    * `{codexModelCatalog}`.
@@ -418,6 +450,18 @@ function withOpencodeModelPrefix(env: Record<string, string>): Record<string, st
 const OPENCODE_CONFIG =
   '{"permission":"allow","instructions":["{personaFile}"],"model":"{baseUrl?daedalus/}{model}","provider":{"daedalus":{"npm":"{baseUrl?@ai-sdk/openai-compatible}","name":"{baseUrl?Daedalus}","options":{"baseURL":"{baseUrl}","apiKey":"{apiKey}"},"models":{"{model}":{"name":"{model}"}}}}}';
 
+/* Seeds 31 and 32 sent this provider through the gateway shim
+   (`{gatewayUrl}`, `includeUsage`) so the shim could split its requests. The
+   split is read from the runtime's saved files now, so the hop bought nothing
+   and cost a request buffer; seed 33 takes it back, only where the template is
+   exactly what those seeds wrote. */
+const OPENCODE_CONFIG_SHIMMED =
+  '{"permission":"allow","instructions":["{personaFile}"],"model":"{baseUrl?daedalus/}{model}","provider":{"daedalus":{"npm":"{baseUrl?@ai-sdk/openai-compatible}","name":"{baseUrl?Daedalus}","options":{"baseURL":"{gatewayUrl}","apiKey":"{apiKey}","includeUsage":true},"models":{"{model}":{"name":"{model}"}}}}}';
+
+function withoutOpencodeGateway(env: Record<string, string>): Record<string, string> {
+  return env.OPENCODE_CONFIG_CONTENT === OPENCODE_CONFIG_SHIMMED ? { ...env, OPENCODE_CONFIG_CONTENT: OPENCODE_CONFIG } : env;
+}
+
 /** The template seeds 12–21 converge on (after the three moves above), and the
     env keys it read through `{env:…}`. Only an exact match is replaced — a
     template someone edited is theirs, and so are its vars. */
@@ -522,6 +566,42 @@ const CATALOG_PROBES: Record<string, CatalogProbe> = {
   codex: { kind: "codex-cli", command: process.env.DAEDALUS_CODEX_CLI ?? "codex", args: ["debug", "models"] },
 };
 
+/** Which OpenTelemetry dialect a runtime exports; see `AgentDef.telemetryVia`. */
+const TELEMETRY_VIA: Record<string, TelemetryDialect> = {
+  "claude-code": "claude-otlp",
+};
+
+/** What turns Claude Code's exporter on, pointed at `{otlpUrl}`. Every value is
+    empty when there is no endpoint (a probe, a server that has not booted its
+    receiver), so the key prunes away and the runtime exports nowhere rather than
+    to its default collector. Bodies go to a directory of the thread's own
+    (`{otlpBodies}`) and are deleted once read. */
+const CLAUDE_OTLP_ENV: Record<string, string> = {
+  CLAUDE_CODE_ENABLE_TELEMETRY: "{otlpUrl?1}",
+  CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: "{otlpUrl?1}",
+  OTEL_TRACES_EXPORTER: "{otlpUrl?otlp}",
+  OTEL_LOGS_EXPORTER: "{otlpUrl?otlp}",
+  OTEL_METRICS_EXPORTER: "{otlpUrl?none}",
+  OTEL_EXPORTER_OTLP_PROTOCOL: "{otlpUrl?http/json}",
+  OTEL_EXPORTER_OTLP_ENDPOINT: "{otlpUrl}",
+  OTEL_LOG_RAW_API_BODIES: "{otlpBodies}",
+  OTEL_LOG_TOOL_DETAILS: "{otlpUrl?1}",
+  OTEL_LOGS_EXPORT_INTERVAL: "{otlpUrl?1000}",
+  OTEL_TRACES_EXPORT_INTERVAL: "{otlpUrl?1000}",
+};
+
+/** Seed 34: the switches, added where absent — a value the user set is theirs. */
+function withClaudeOtlp(env: Record<string, string>): Record<string, string> {
+  return { ...CLAUDE_OTLP_ENV, ...env };
+}
+
+/** Which saved file explains a runtime's prompt; see `AgentDef.promptFiles`. */
+const PROMPT_FILES: Record<string, NonNullable<AgentDef["promptFiles"]>> = {
+  "claude-code": "claude-jsonl",
+  codex: "codex-rollout",
+  opencode: "opencode-sqlite",
+};
+
 /** What of a runtime's own configuration the library may import, by home-relative
     path. `*` is one directory level — Claude Code's plugin marketplaces. */
 const DISCOVERY: Record<string, AgentDiscovery> = {
@@ -562,7 +642,7 @@ const AGENT_ICONS: Record<string, string> = {
   daedalus: "app",
 };
 
-type Seed20 = Pick<AgentDef, "workspaceLayout" | "builtinTools" | "catalogProbe" | "discovery" | "install" | "icon">;
+type Seed20 = Pick<AgentDef, "workspaceLayout" | "builtinTools" | "catalogProbe" | "discovery" | "install" | "icon" | "promptFiles" | "telemetryVia">;
 
 /** Everything seed 20 states about a row. */
 function seed20(id: string): Seed20 {
@@ -573,6 +653,8 @@ function seed20(id: string): Seed20 {
     discovery: DISCOVERY[id] ?? null,
     install: INSTALL_COMMANDS[id] ?? null,
     icon: AGENT_ICONS[id] ?? null,
+    promptFiles: PROMPT_FILES[id] ?? null,
+    telemetryVia: TELEMETRY_VIA[id] ?? null,
   };
 }
 
@@ -841,11 +923,14 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seed 28 moves rules from `_meta.systemPrompt` to the AIR extension's
     // `customInstructions` (`personaVia: "air-meta"`, claude-agent-acp ≥ 0.89).
     // Only the old default moves; a door the user picked stays.
-    since: 28,
+    // Seed 32 says which saved file explains its prompt (`promptFiles`); seed 34
+    // makes it export OpenTelemetry to the harness (`telemetryVia`, the OTEL_*
+    // keys in `CLAUDE_OTLP_ENV`).
+    since: 34,
     backfill: (existing) => ({
-      env: withoutSubagentModelKey(
+      env: withClaudeOtlp(withoutSubagentModelKey(
         withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
-      ),
+      )),
       quotaProbe: withProbeLogin(existing.quotaProbe, QUOTA_PROBES["claude-code"]),
       liveConfig: existing.liveConfig ?? "acp",
       personaVia: !existing.personaVia || existing.personaVia === "acp-meta" ? "air-meta" : existing.personaVia,
@@ -867,6 +952,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
         ANTHROPIC_API_KEY: "{apiKey}",
         ANTHROPIC_BASE_URL: "{gatewayUrl}",
         ANTHROPIC_MODEL: modelVar("model"),
+        ...CLAUDE_OTLP_ENV,
       }),
     ),
     spawnCategories: SPAWN_CATEGORIES,
@@ -914,7 +1000,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // skills and prompts only under `$CODEX_HOME`, never per project, so there
     // is nowhere in a cwd to write them and pretending otherwise is what the
     // old `.claude` write did.
-    since: 20,
+    // Seed 32 says which saved file explains its prompt (`promptFiles`).
+    since: 32,
     introduced: 2,
     backfill: (existing) => ({
       env: withCodexPersonaKey(withCodexGatewayUrl(withCodexCatalogKey(existing.env))),
@@ -979,10 +1066,13 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // spawned it with (exit 1 on every thread), and sends its children itself
     // (`opencode/session/child_update`, subagent-update.ts). And it replaces
     // the provider block (`withOpencodeProvider`), which 2.x broke both ways.
-    since: 30,
+    // Seed 31 sent it through the gateway shim and seed 33 takes that back
+    // (`withoutOpencodeGateway`); seed 32 says which saved file explains its
+    // prompt (`promptFiles`).
+    since: 33,
     introduced: 1,
     backfill: (existing) => ({
-      env: withOpencodeProvider(withOpencodeBypass(withOpencodePersonaKey(withOpencodeModelPrefix(existing.env)))),
+      env: withoutOpencodeGateway(withOpencodeProvider(withOpencodeBypass(withOpencodePersonaKey(withOpencodeModelPrefix(existing.env))))),
       personaVia: existing.personaVia ?? "env",
       ...backfill20(existing),
     }),
@@ -1127,6 +1217,8 @@ export async function seedAgents(): Promise<void> {
           pauseVia: agent.pauseVia ?? null,
           workspaceLayout: agent.workspaceLayout ?? null,
           builtinTools: agent.builtinTools ?? null,
+          promptFiles: agent.promptFiles ?? null,
+          telemetryVia: agent.telemetryVia ?? null,
           catalogProbe: agent.catalogProbe ?? null,
           discovery: agent.discovery ?? null,
           install: agent.install ?? null,
@@ -1156,6 +1248,8 @@ export async function seedAgents(): Promise<void> {
         pauseVia: existing.pauseVia ?? agent.pauseVia ?? null,
         workspaceLayout: existing.workspaceLayout ?? agent.workspaceLayout ?? null,
         builtinTools: existing.builtinTools ?? agent.builtinTools ?? null,
+        promptFiles: existing.promptFiles ?? agent.promptFiles ?? null,
+        telemetryVia: existing.telemetryVia ?? agent.telemetryVia ?? null,
         catalogProbe: existing.catalogProbe ?? agent.catalogProbe ?? null,
         discovery: existing.discovery ?? agent.discovery ?? null,
         install: existing.install ?? agent.install ?? null,
@@ -1267,6 +1361,8 @@ export async function resetAgent(id: string): Promise<AgentDef | undefined> {
       pauseVia: seed.pauseVia ?? null,
       workspaceLayout: seed.workspaceLayout ?? null,
       builtinTools: seed.builtinTools ?? null,
+      promptFiles: seed.promptFiles ?? null,
+      telemetryVia: seed.telemetryVia ?? null,
       catalogProbe: seed.catalogProbe ?? null,
       discovery: seed.discovery ?? null,
       install: seed.install ?? null,
@@ -1573,6 +1669,11 @@ export function resolveSpawn(
     gatewayUrl:
       gatewayUrlFor(profile.id, agent.id, profileBaseUrl(profile, agent.id), sessionId) ||
       profileBaseUrl(profile, agent.id),
+    /* Where this runtime reports its own telemetry (`otlp.ts`), and the private
+       directory its raw request bodies are written to. Both are empty for a
+       runtime that exports none, or when there is no thread to name. */
+    otlpUrl: agent.telemetryVia && sessionId ? otlpUrlFor(sessionId) : "",
+    otlpBodies: agent.telemetryVia && sessionId ? otlpBodiesFor(sessionId) : "",
     model: resolvedModel,
     /* Always the session model: a profile means "run everything on this
        model", and the cheap side-jobs (the auto-mode classifier) and the alias
